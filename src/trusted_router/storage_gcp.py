@@ -115,6 +115,11 @@ from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
 from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
 from trusted_router.storage_gcp_byok import SpannerByok
+from trusted_router.storage_gcp_channel_failover import (
+    bind_session_pool,
+    channel_failover_enabled,
+    install_spanner_channel_failover,
+)
 from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
 )
@@ -482,6 +487,7 @@ class SpannerStore(OperationalAnalyticsReads):
         try:
             from google.cloud import spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
+            from google.cloud.spanner_v1.database import Database
         except ImportError as exc:  # pragma: no cover - exercised in prod image.
             raise RuntimeError("Install google-cloud-spanner for persistent GCP storage") from exc
 
@@ -516,18 +522,20 @@ class SpannerStore(OperationalAnalyticsReads):
         # sessions. Deploys pin the value explicitly; eight remains a safe
         # standalone default under the 2 GiB container limit.
         pool_size = int(os.environ.get("TR_SPANNER_POOL_SIZE", "8"))
-        self._database = (
-            spanner.Client(
-                project=project_id,
-                credentials=credentials,
-                disable_builtin_metrics=True,
-            )
-            .instance(spanner_instance_id)
-            .database(
-                spanner_database_id,
-                pool=FixedSizePool(size=pool_size),
-            )
-        )
+        instance = spanner.Client(
+            project=project_id,
+            credentials=credentials,
+            disable_builtin_metrics=True,
+        ).instance(spanner_instance_id)
+        pool = FixedSizePool(size=pool_size)
+        # What instance.database() does, in two steps. A FixedSizePool fills
+        # itself when bound, through the first client database.spanner_api
+        # builds, so the failover client has to be in place before the bind.
+        # If the bind fails on it, the bind is retried on the SDK's own client.
+        # The deadlines wrap whichever client is left, and the watch observes it.
+        self._database = Database(spanner_database_id, instance, pool=pool)
+        install_spanner_channel_failover(self._database, enabled=channel_failover_enabled())
+        bind_session_pool(self._database, pool)
         configure_spanner_rpc_deadlines(self._database)
         watch_spanner_transport(self._database)
         # Composed feature stores. Each owns its own logic and is importable

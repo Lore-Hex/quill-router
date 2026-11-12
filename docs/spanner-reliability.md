@@ -318,6 +318,30 @@ search the window there by logger name (`google.auth*`, `grpc*`). The
 [November 10 report](incidents/2026-11-10-one-instance-spanner-stall.md) has
 the full table and what the watch does not cover.
 
+The main store also moves its own traffic to a second connection when the
+first stops answering and the second answers
+(`trusted_router.storage_gcp_channel_failover`). It suspects a stall after
+three `DEADLINE_EXCEEDED` in a row, or a call waiting three seconds with no
+answer since it started (checked as calls start and end, and every second
+while any are in flight), then sends the same cheap call on both connections
+under a two second deadline:
+
+- `spanner channel failover client=… reason=deadline_streak|waiting
+  stalled_ms=… waiting=… deadline_streak=… probe_ms=… failovers=…`
+  (WARNING): the second connection answered, the first did not, traffic moved.
+  At most one a minute per instance. `stalled_ms` runs from the start of the
+  first call that got no answer. The old connection is closed 65 seconds
+  later.
+- `spanner channel probe kept client=… reason=… standby=answered|silent
+  active=answered|silent stalled_ms=… probe_ms=…`: a suspected stall that did
+  not move traffic. `standby=silent active=silent` means every connection was
+  failing, so the fault was not this instance's connection.
+- `spanner channel failover dropped client=… error_class=…` (WARNING) at
+  startup: creating the session pool failed on the failover client, so the
+  store retried it on the SDK's own client and runs without failover.
+
+`TR_SPANNER_CHANNEL_FAILOVER=0` in the rollout's `ENV_VARS` turns it off.
+
 Do not restart the instance on a database-dependent check, and do not reset
 the channel across the fleet.
 
