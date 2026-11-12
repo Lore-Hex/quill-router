@@ -109,6 +109,7 @@
       "status": 1,
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
+      "retirement_at": "2026-11-19T00:00:00Z",
       "created": 1700000000,
       "routable": false,
       "input_token_price_per_m": 60000,

@@ -106,6 +106,9 @@ OPENAI_GPT5_O3_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
 # GPT-5.4-Nano" shuts these down on 1 Apr 2027 (date only, so 00:00 UTC
 # conservatively). No email notice was found.
 OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT = datetime(2027, 4, 1, 0, 0, tzinfo=UTC)
+# Sail Research's November 12 notice retires openai/gpt-oss-120b on
+# 19 Nov 2026 (date only, so 00:00 UTC conservatively); requests then fail.
+SAIL_GPT_OSS_120B_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1426,6 +1429,18 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"gpt-5.4-nano", "gpt-5.4-nano-2026-03-17"}),
         effective_at=OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-6-luna",),
+    ),
+    # Sail Research's November 12 notice (Gmail thread 1a1d15409596a394)
+    # retires openai/gpt-oss-120b on 2026-11-19 (date only; 00:00 UTC
+    # conservatively); requests fail after that date. The notice names no
+    # replacement and Sail's catalogue (docs.sailresearch.com/models) lists no
+    # gpt-oss successor, so none is quoted. Retire only Sail's route; other
+    # providers' gpt-oss-120b routes stay.
+    _Retirement(
+        provider="sail-research",
+        model_ids=frozenset({"openai/gpt-oss-120b"}),
+        upstream_ids=frozenset({"openai/gpt-oss-120b"}),
+        effective_at=SAIL_GPT_OSS_120B_RETIREMENT_AT,
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
