@@ -173,7 +173,7 @@
     }
   ],
   "source": "https://api.abliteration.ai/v1/models",
-  "generated_at": "2026-11-12T04:12:36Z",
+  "generated_at": "2026-11-12T07:25:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }

@@ -241,7 +241,8 @@
       "id": "bytedance/glm-4-7-251222",
       "upstream_id": "glm-4-7-251222",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "gpt-oss-120b",
@@ -260,7 +261,8 @@
       "id": "bytedance/gpt-oss-120b-250805",
       "upstream_id": "gpt-oss-120b-250805",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "hitem3d-2-0",
@@ -377,7 +379,8 @@
       "id": "bytedance/seed-1-6-250615",
       "upstream_id": "seed-1-6-250615",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "seed-1-6",
@@ -396,7 +399,8 @@
       "id": "bytedance/seed-1-6-250915",
       "upstream_id": "seed-1-6-250915",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "seed-1-6-flash",
@@ -415,7 +419,8 @@
       "id": "bytedance/seed-1-6-flash-250615",
       "upstream_id": "seed-1-6-flash-250615",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "seed-1-6-flash",
@@ -434,7 +439,8 @@
       "id": "bytedance/seed-1-6-flash-250715",
       "upstream_id": "seed-1-6-flash-250715",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "seed-1-8",
@@ -773,7 +779,8 @@
       "id": "bytedance/seedance-1-5-pro-251215",
       "upstream_id": "seedance-1-5-pro-251215",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-12"
     },
     {
       "display_name": "dreamina-seedance-2-0",
@@ -1341,7 +1348,7 @@
   ],
   "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
   "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
-  "generated_at": "2026-11-12T04:12:36Z",
+  "generated_at": "2026-11-12T07:25:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 60
 }
