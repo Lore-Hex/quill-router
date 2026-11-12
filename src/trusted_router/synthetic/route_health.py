@@ -164,11 +164,23 @@ def evaluate_route_health(
 # unserved_route_holds.py), so they are deliberately stricter than the
 # route-configuration alert above: at least six consecutive configured-route
 # probes, all answered with a model-not-served class, spanning at least three
-# hours, the newest within two. Transient classes (timeouts, 429/5xx) and
+# hours, the newest within twelve. Transient classes (timeouts, 429/5xx) and
 # probe_config_error break the streak, as does any success.
+#
+# The freshness and gap bounds are sized to the real probe cadence, not to a
+# steady one. Configured-route probes are rotation picks: uniform over ~80
+# providers, then uniform over that provider's models (probes.
+# choose_rotation_target). One route is probed a few times a day at random
+# intervals; gaps of 6-11 hours between two probes of the same route are
+# routine (makora/meta-models/muse-spark-open-816b-a42b-nvfp4, 2026-11-11
+# 19:00Z to 11-12 05:30Z). With a two-hour newest bound and a six-hour gap
+# bound no real streak ever qualified (#2504 held nothing while two routes
+# had failed every probe for over a day). Freshness is still proven: the
+# sibling success must fall within UNSERVED_SIBLING_SUCCESS_WINDOW, so the
+# monitors are probing this provider now and its account serves.
 UNSERVED_MIN_SAMPLES = 6
 UNSERVED_MIN_SPAN = dt.timedelta(hours=3)
-UNSERVED_MAX_AGE = dt.timedelta(hours=2)
+UNSERVED_MAX_AGE = dt.timedelta(hours=12)
 # provider_auth_config counts only together with the sibling rule below: a 403
 # on one model while the same key serves another model is per-model access,
 # not a broken credential.
@@ -178,7 +190,11 @@ _UNSERVED_ERROR_TYPES = frozenset({"unsupported_route", "provider_auth_config"})
 # the failure may be ours (a broken adapter, a revoked key, a blocked egress)
 # and holding routes one by one would hide a provider-wide problem.
 UNSERVED_SIBLING_SUCCESS_WINDOW = dt.timedelta(hours=6)
-UNSERVED_MAX_PROBE_GAP = dt.timedelta(hours=6)
+# A held route is not probed for the whole hold (scripts/pricing/
+# unserved_route_holds.HOLD_HOURS, 24h), so a gap this long separates two
+# episodes. It must stay well under the hold length and well over the
+# routine gap between two rotation picks of one route; a test pins both.
+UNSERVED_MAX_PROBE_GAP = dt.timedelta(hours=16)
 
 
 @dataclass(frozen=True)
