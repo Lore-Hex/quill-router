@@ -41,7 +41,7 @@
 .page .trpr .press-list a{flex:1;display:flex;flex-direction:column;gap:12px;padding:26px 30px;color:#edf8f5;text-decoration:none}
 .trpr .press-list a+a{border-top:1px solid #33403a}
 .trpr .press-list a:hover{background:#151c18}
-.trpr .press-src{display:flex;align-items:center;justify-content:space-between;color:#c0e1ff}
+.trpr .press-src{display:flex;align-items:center}
 .trpr .press-src img{display:block;width:auto;height:22px;filter:brightness(0) invert(1)}
 .trpr .press-src img.li{height:28px}
 .trpr .press-q{font-size:18px;line-height:1.45;color:#dfe6e1}
