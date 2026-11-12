@@ -88,6 +88,7 @@ def test_gcp_list_keys_uses_workspace_index() -> None:
 
 def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     from google.cloud import spanner, spanner_v1
+    from google.cloud.spanner_v1 import database as spanner_database
 
     spanner_calls: list[dict[str, Any]] = []
     pool_sizes: list[int] = []
@@ -103,17 +104,18 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
         def instance(self, _instance_id: str) -> FakeSpannerClient:
             return self
 
-        def database(self, _database_id: str, **_kwargs: Any) -> object:
-            # `pool=FixedSizePool(size=N)` is passed in production to
-            # bound resident memory; accept-and-ignore here.
-            return object()
-
     class FakePool:
+        # `pool=FixedSizePool(size=N)` is passed in production to bound
+        # resident memory; binding it is accepted and ignored here.
         def __init__(self, *, size: int) -> None:
             pool_sizes.append(size)
 
+        def bind(self, _database: object) -> None:
+            pass
+
     monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
     monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
+    monkeypatch.setattr(spanner_database, "Database", lambda *_args, **_kwargs: object())
     monkeypatch.delenv("TR_SPANNER_POOL_SIZE", raising=False)
 
     SpannerStore(
@@ -136,11 +138,16 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     assert pool_sizes == [8]
 
 
-def test_gcp_store_watches_the_transport_of_its_own_database(monkeypatch: Any) -> None:
+def _construct_store_recording_order(monkeypatch: Any) -> tuple[object, list[tuple[Any, ...]]]:
     from google.cloud import spanner, spanner_v1
+    from google.cloud.spanner_v1 import database as spanner_database
 
     database = object()
-    prepared: list[tuple[str, object]] = []
+    prepared: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.install_spanner_channel_failover",
+        lambda target, *, enabled: prepared.append(("failover", target, enabled)),
+    )
     monkeypatch.setattr(
         "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
         lambda target: prepared.append(("deadlines", target)),
@@ -154,22 +161,57 @@ def test_gcp_store_watches_the_transport_of_its_own_database(monkeypatch: Any) -
         def __init__(self, **_kwargs: Any) -> None:
             pass
 
-        def instance(self, _instance_id: str) -> FakeSpannerClient:
-            return self
+        def instance(self, _instance_id: str) -> str:
+            return "instance"
 
-        def database(self, _database_id: str, **_kwargs: Any) -> object:
-            return database
+    class FakePool:
+        def __init__(self, *, size: int) -> None:
+            pass
+
+        def bind(self, target: object) -> None:
+            prepared.append(("bind", target))
+
+    def fake_database(database_id: str, instance: str, *, pool: FakePool) -> object:
+        prepared.append(("database", database_id, instance, type(pool).__name__))
+        return database
 
     monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
-    monkeypatch.setattr(spanner_v1, "FixedSizePool", lambda *, size: None)
+    monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
+    monkeypatch.setattr(spanner_database, "Database", fake_database)
 
     SpannerStore(
         project_id="project",
         spanner_instance_id="spanner",
         spanner_database_id="database",
     )
+    return database, prepared
 
-    assert prepared == [("deadlines", database), ("watch", database)]
+
+def test_gcp_store_builds_its_client_on_the_failover_channel_before_the_pool_fills(
+    monkeypatch: Any,
+) -> None:
+    """A FixedSizePool fills on bind through the first client the database
+    builds, and the deadlines and the watch work on that same client."""
+    monkeypatch.delenv("TR_SPANNER_CHANNEL_FAILOVER", raising=False)
+
+    database, prepared = _construct_store_recording_order(monkeypatch)
+
+    assert prepared == [
+        ("database", "database", "instance", "FakePool"),
+        ("failover", database, True),
+        ("bind", database),
+        ("deadlines", database),
+        ("watch", database),
+    ]
+
+
+def test_gcp_store_channel_failover_kill_switch(monkeypatch: Any) -> None:
+    monkeypatch.setenv("TR_SPANNER_CHANNEL_FAILOVER", "0")
+
+    database, prepared = _construct_store_recording_order(monkeypatch)
+
+    assert ("failover", database, False) in prepared
+    assert ("bind", database) in prepared
 
 
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
