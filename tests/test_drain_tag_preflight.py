@@ -329,8 +329,15 @@ def test_the_rollout_asserts_the_reservation_before_it_runs_anything_else() -> N
     # not take the reservation again. That holds because the first command
     # `deploy` runs is the reservation assert, which refuses a lease this run
     # no longer owns, before any step that changes a serving revision.
-    runs = [step["run"] for step in _jobs()["deploy"]["steps"] if "run" in step]
-    assert runs[0] == "bash scripts/deploy/deploy_mutex.sh assert"
+    deploy = _jobs()["deploy"]
+    assert "continue-on-error" not in deploy
+    steps = deploy["steps"]
+    at = next(i for i, step in enumerate(steps) if "run" in step)
+    assert steps[at]["run"] == "bash scripts/deploy/deploy_mutex.sh assert"
+    assert "if" not in steps[at] and "continue-on-error" not in steps[at]
+    # Only checkout and sign-in come before it, so nothing reaches production first.
+    assert [step.get("uses", "").split("@")[0] for step in steps[:at]] == [
+        "actions/checkout", "google-github-actions/auth", "google-github-actions/setup-gcloud"]
 
 
 def test_the_regions_asked_are_the_regions_rolled_out() -> None:
