@@ -392,3 +392,98 @@ def test_vertex_serves_gemini_3_8_flash() -> None:
     from trusted_router.catalog import MODEL_ENDPOINTS
 
     assert f"{MODEL}@google-vertex/prepaid" in MODEL_ENDPOINTS
+
+
+_GEMINI4 = ("gemini-4-argon", "gemini-4-carbon")
+
+
+def _serving_row(native_id: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "id": f"google/{native_id}", "upstream_id": native_id, "routable": True,
+        "context_length": 1_048_576, "max_output_tokens": 32_768,
+        "input_token_price_per_m": 2_000_000, "output_token_price_per_m": 10_000_000,
+        **extra,
+    }
+
+
+def _gemini4_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, html: str, existing: list[dict[str, Any]]
+) -> Path:
+    manifest = tmp_path / "google-vertex.json"
+    manifest.write_text(json.dumps({"provider": "google-vertex", "models": existing}))
+    day = date(2026, 11, 12)
+    monkeypatch.setattr(vertex, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(vertex, "_authorization", lambda: ({}, "project"))
+    monkeypatch.setattr(
+        vertex, "_live_model_ids", lambda headers: {row["upstream_id"] for row in existing}
+    )
+    monkeypatch.setattr(vertex, "_metadata", lambda: {
+        row["id"]: {"context_length": 1_048_576, "max_output_tokens": 32_768}
+        for row in existing
+    })
+    monkeypatch.setattr(vertex, "fetch_html", lambda url: html)
+    monkeypatch.setattr(vertex, "parse", lambda html: vertex_prices.parse(html, as_of=day))
+    monkeypatch.setattr(
+        vertex, "cache_write_held", lambda html: vertex_prices.cache_write_held(html, as_of=day)
+    )
+    monkeypatch.setattr(vertex, "_probe", lambda headers, project, mid: (True, 200))
+    return manifest
+
+
+def _unrecognized_gemini4_page() -> str:
+    # The 2026-11-12 failure: Google renamed a column and the parser skipped
+    # the whole Gemini 4 table. Simulate the next rename, and keep one other
+    # table so the page as a whole still parses.
+    page = _gemini4_cache_write_page().replace("Cache read", "Cache hit")
+    return page + _table(_rates("Gemini 3.8 Flash"))
+
+
+def test_vertex_serving_models_that_lose_their_price_fail_the_provider_not_the_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = [_serving_row(mid) for mid in _GEMINI4] + [_serving_row("gemini-3.8-flash")]
+    manifest = _gemini4_fetch(tmp_path, monkeypatch, _unrecognized_gemini4_page(), existing)
+    before = manifest.read_text()
+    with pytest.raises(RuntimeError, match="lost their official price") as raised:
+        vertex.fetch()
+    assert "google/gemini-4-argon" in str(raised.value)
+    assert "google/gemini-4-carbon" in str(raised.value)
+    assert "gemini-3.8-flash" not in str(raised.value)
+    # The refresh keeps a failed provider's committed manifest.
+    assert manifest.read_text() == before
+
+
+def test_vertex_price_regression_guard_passes_a_page_that_parses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Positive control for the guard above: the same rows on the real page.
+    existing = [_serving_row(mid) for mid in _GEMINI4]
+    _gemini4_fetch(tmp_path, monkeypatch, _gemini4_cache_write_page(), existing)
+    result = vertex.fetch()
+    assert {f"google/{mid}" for mid in _GEMINI4} <= result.prices.keys()
+
+
+def test_vertex_price_regression_guard_ignores_models_already_held_or_retired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = [
+        _serving_row("gemini-4-argon", retirement_at="2026-11-01T00:00:00Z"),
+        _serving_row("gemini-4-carbon", routable=False, routable_reason="operator-hold"),
+        _serving_row("gemini-3.8-flash"),
+    ]
+    _gemini4_fetch(tmp_path, monkeypatch, _unrecognized_gemini4_page(), existing)
+    result = vertex.fetch()
+    assert set(result.prices) == {MODEL}
+
+
+def test_vertex_price_regression_guard_still_holds_unbillable_cache_write_tariffs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A serving model that starts publishing a cache-write tariff is held on
+    # purpose (ModelPrice cannot bill it); that is not a parser regression.
+    html = _gemini4_cache_write_page().replace("Gemini 4 Hydrogen", "Gemini 4 Pro")
+    existing = [_serving_row(mid) for mid in (*_GEMINI4, "gemini-4-pro")]
+    _gemini4_fetch(tmp_path, monkeypatch, html, existing)
+    result = vertex.fetch()
+    assert "google/gemini-4-pro" not in result.prices
+    assert {f"google/{mid}" for mid in _GEMINI4} <= result.prices.keys()
