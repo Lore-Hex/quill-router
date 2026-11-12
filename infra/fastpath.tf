@@ -212,8 +212,9 @@ locals {
   # approved), Joseph's call on 2026-11-12. The exposure bound is the
   # allowance times 250 per workspace. They land with the pin of the first
   # release that takes -allowance-tier2 and -allowance-tier1 (#2542), and
-  # the required tier is lowered to 1 in the same change; each node takes
-  # them by docs/runbooks/fastpath-deploy.md, "Lowering the required tier".
+  # the required tier is lowered to 1 in the same change. Only a node
+  # created from the script that reads them takes them (15 and 16 below);
+  # docs/runbooks/fastpath-deploy.md, "Lowering the required tier".
   # The enabler's tier is lowered after every node runs them.
   fastpath_allowance_tier2 = "250000000"
   fastpath_allowance_tier1 = "100000000"
@@ -468,9 +469,17 @@ resource "google_compute_instance" "fastpath_node" {
   # of -required-tier, -allowance or -floor from their attributes. The same
   # release and metadata; 11 and 12 were drained, left the edge backend one
   # apply before their removal, then were removed.
+  #
+  # 15 and 16 take the places of 13 and 14 the same way, for the lower
+  # tiers' allowances (#2542): the script 13 and 14 run, from before it,
+  # passes neither -allowance-tier2 nor -allowance-tier1 from their
+  # attributes. The same release and metadata; 13 and 14 are drained, leave
+  # the edge backend one apply before their removal, then are removed.
   for_each = {
     "tr-fastpath-13" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-14" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id

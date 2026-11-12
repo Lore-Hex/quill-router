@@ -332,8 +332,18 @@ def test_the_runbook_lowers_the_tier_with_todays_values() -> None:
     section = runbook[runbook.index("## Lowering the required tier"):]
     section = section[:section.index("\n## ")]
     flags = (f"-required-tier {REQUIRED_TIER} -allowance {ALLOWANCE} -floor {FLOOR} "
-             f"-allowance-tier2 {ALLOWANCE_TIER2} -allowance-tier1 {ALLOWANCE_TIER1}")
+             f"-allowance-tier2 {ALLOWANCE_TIER2} -allowance-tier1 {ALLOWANCE_TIER1} -fleet-audit")
     ready = (f"ready $WS -required-tier {REQUIRED_TIER} -floor {FLOOR} "
              f"-allowance-tier2 {ALLOWANCE_TIER2} -allowance-tier1 {ALLOWANCE_TIER1}")
     order = [section.index(step) for step in (flags, ready, "TR_FASTPATH_ENABLER_REQUIRED_TIER")]
     assert order == sorted(order), order
+
+
+def test_the_lower_allowances_reach_the_fleet_on_new_nodes() -> None:
+    """A node keeps the script it was created with, so the script that reads
+    the lower allowances reaches the fleet only on nodes added under new
+    names; 13 and 14 (from before #2542) stay until 15 and 16 serve."""
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    assert "ignore_changes = [metadata_startup_script]" in tf
+    for node in ("tr-fastpath-15", "tr-fastpath-16"):
+        assert re.search(rf'^\s*"{node}"\s*=\s*{{ zone = "us-central1-[ab]"', tf, re.M), node
