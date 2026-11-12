@@ -24,6 +24,7 @@ from scripts.pricing.providers import (
     nebius,
     novita,
     openai,
+    sail_research,
     scaleway,
     system1models,
     system1models_eu,
@@ -43,7 +44,7 @@ class Case:
     model: str
     native: str
     cutoff: datetime
-    replacement: str
+    replacement: str | None
 
 
 _CASES = [
@@ -107,6 +108,8 @@ _CASES = [
          datetime(2027, 4, 1, tzinfo=UTC), "openai/gpt-6-sol"),
     Case("openai", "openai/gpt-5.4-nano", "gpt-5.4-nano",
          datetime(2027, 4, 1, tzinfo=UTC), "openai/gpt-6-luna"),
+    Case("sail-research", "openai/gpt-oss-120b", "openai/gpt-oss-120b",
+         datetime(2026, 11, 19, tzinfo=UTC), None),
     Case("deepinfra", "inclusionai/ling-3.1-flash", "inclusionAI/Ling-3.1-flash",
          datetime(2026, 11, 15, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("tinfoil", "moonshotai/kimi-k3", "kimi-k3",
@@ -258,6 +261,7 @@ _MANIFESTS = {
     "tencent": tencent.MANIFEST_PATH,
     "databricks": databricks.MANIFEST_PATH,
     "openai": openai.MANIFEST_PATH,
+    "sail-research": sail_research.MANIFEST_PATH,
 }
 
 
@@ -279,7 +283,8 @@ def test_route_routed_before_substitution_retired_after(
     assert retired(case.provider, case.model, at=case.cutoff)
     assert retired(case.provider, "unknown-canonical", case.native, at=case.cutoff)
     assert not retired("unaffected-provider", case.model, case.native, at=case.cutoff)
-    assert not retired(case.provider, case.replacement, at=case.cutoff)
+    if case.replacement is not None:
+        assert not retired(case.provider, case.replacement, at=case.cutoff)
     endpoints = {}
     for slug in (case.provider, "unaffected-provider"):
         endpoint = ModelEndpoint(
@@ -304,8 +309,9 @@ def test_replacement_is_quoted_and_manifest_annotated(case: Case) -> None:
         and entry.effective_at == case.cutoff
     ]
     assert len(entries) == 1
-    assert entries[0].replacement_model_ids == (case.replacement,)
+    expected = () if case.replacement is None else (case.replacement,)
+    assert entries[0].replacement_model_ids == expected
     rows = {row["id"]: row for row in json.loads(_MANIFESTS[case.provider].read_text())["models"]}
     assert rows[case.model]["upstream_id"] == case.native
     assert rows[case.model]["retirement_at"] == case.cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
-    assert rows[case.model]["replacement_model_id"] == case.replacement
+    assert rows[case.model].get("replacement_model_id") == case.replacement
