@@ -410,7 +410,14 @@ def test_a_route_still_unserved_at_expiry_is_held_again(tmp_path: Path) -> None:
     )
 
 
-def test_analytics_unavailable_changes_nothing(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_analytics_unavailable_preserves_unexpired_holds(tmp_path: Path, monkeypatch, capsys) -> None:
+    class FrozenDatetime(dt.datetime):
+        @classmethod
+        def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
+            return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+    # The CLI uses wall time; keep the six-hour hold unexpired on every run.
+    monkeypatch.setattr(holds, "datetime", FrozenDatetime)
     held = _row("z-ai/glm-5.1", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
                 **{holds.HELD_AT_FIELD: "2026-11-11T12:00:00Z"})
     phala = _manifest(tmp_path, "phala", [held, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
