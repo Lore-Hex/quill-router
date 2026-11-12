@@ -1677,9 +1677,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
     # Microsoft Foundry direct deployments in eastus2. Availability and exact
     # regional list prices are synchronized from Azure's account-scoped model,
-    # quota, deployment, and Retail Prices APIs. Do not infer ZDR from Azure's
-    # enterprise positioning: this route stays Standard until Lore Hex has an
-    # applicable written retention agreement and verifies account enforcement.
+    # quota, deployment, and Retail Prices APIs. The approved managed Foundry
+    # account is scoped further by the exact-route review in managed_retention;
+    # partner-hosted services and future models never inherit this approval.
     "azure": Provider(
         slug="azure",
         name="Microsoft Azure AI Foundry",
@@ -1687,15 +1687,20 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_zero_data_retention=False,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-11-12",
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "No provider-ZDR, confidential-compute, or E2EE claim is currently "
-            "tracked for TrustedRouter's Microsoft Foundry account. Azure model "
-            "availability and pricing are synchronized directly from the account."
+            "ZDR is approved for reviewed TR-funded Azure-hosted Foundry routes. Microsoft "
+            "approved modified abuse monitoring on November 12, 2026, and "
+            "ContentLogging=false was verified on TrustedRouter's serving resource. "
+            "Partner-hosted services, Azure Speech previews, unreviewed models and "
+            "customer BYOK credentials are not covered. This is policy-backed ZDR, not upstream confidential "
+            "compute or E2EE."
         ),
         provider_policy_url=(
-            "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy"
+            "https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy"
         ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
