@@ -63,17 +63,26 @@ def test_the_units_name_the_role_the_migration_creates() -> None:
 def test_no_writer_of_the_shared_environment_file_can_override_the_role() -> None:
     """systemd lets EnvironmentFile= override Environment=, and a blank value
     turns the role off, so every writer of the file must write the password alone."""
-    writers = [
-        path for path in (ROOT / "scripts").rglob("*.sh")
-        if re.search(r"cat > /etc/tr-clickhouse-ingest\.env\b", path.read_text())
-    ]
+    def writes_it(text: str) -> bool:
+        # Directly, or through ENV_FILE (the node-side scripts' name for it).
+        return bool(
+            re.search(r"cat > /etc/tr-clickhouse-ingest\.env\b", text)
+            or (
+                re.search(r'^ENV_FILE="[^"]*/etc/tr-clickhouse-ingest\.env"', text, re.M)
+                and re.search(r'(?:replace_file|cat >|tee|>) "\$ENV_FILE"', text)
+            )
+        )
+
+    writers = [path for path in (ROOT / "scripts").rglob("*.sh") if writes_it(path.read_text())]
     assert {path.name for path in writers} == {
-        "clickhouse_live_ingestion.sh", "clickhouse_cluster.sh",
+        "clickhouse_live_ingestion.sh", "clickhouse_cluster.sh", "rotate_tr_password.sh",
     }
     for path in writers:
         text = path.read_text()
         assert DATABASE_ROLE_ENV not in text, path.name
-        assert re.search(r"printf 'CH_PASSWORD=%s\\n' \"\$password\" \|", text), path.name
+        # The only line any of them prints into the file is the password.
+        printed = re.findall(r"printf '([A-Z_]+)=%s\\n'", text)
+        assert set(printed) == {"CH_PASSWORD"}, path.name
 
 
 def test_the_live_deploy_refreshes_every_role_unit_before_reloading_and_restarting() -> None:
