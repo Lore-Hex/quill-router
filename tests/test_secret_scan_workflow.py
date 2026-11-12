@@ -85,17 +85,24 @@ def test_scan_is_redacted_and_limited_to_the_added_commits() -> None:
     command = re.search(r"gitleaks git .*?\.$", run, re.S)
     assert command is not None
     flags = command.group(0).split()
-    for flag in ("--redact", "--exit-code", "--config", '--log-opts="$range"'):
+    for flag in ("--redact", "--exit-code", "--config", '--log-opts="--diff-merges=first-parent', '$range"'):
         assert flag in flags, flag
     assert flags[flags.index("--exit-code") + 1] == "1"
     assert flags[flags.index("--config") + 1] == ".gitleaks.toml"
     assert not any(flag.startswith("--redact=") for flag in flags)  # Full redaction only.
+    # Both ends must resolve before the scan, and the count is its own command.
+    assert 'git rev-parse --verify --quiet "${end}^{commit}"' in run
+    assert 'count=$(git rev-list --count "$range")' in run
 
 
 def test_allowlists_extend_the_default_rules_and_stay_rule_scoped() -> None:
     config = tomllib.loads((ROOT / ".gitleaks.toml").read_text())
     assert config["extend"] == {"useDefault": True}
-    assert "rules" not in config  # No default rule is replaced or weakened.
+    # Rules may only be added: none may reuse a default rule's id.
+    default_ids = {"generic-api-key", "jwt", "github-pat", "aws-access-token", "gcp-api-key"}
+    for rule in config.get("rules", []):
+        assert rule["id"].startswith("trustedrouter-"), rule["id"]
+        assert rule["id"] not in default_ids
     assert "allowlist" not in config  # The legacy unscoped form.
     assert config["allowlists"]
     for allowlist in config["allowlists"]:
@@ -116,3 +123,13 @@ def test_gitleaksignore_holds_only_commented_fingerprints() -> None:
             # Every group of fingerprints sits under a comment saying why.
             assert previous.startswith("#") or fingerprint.fullmatch(previous), line
         previous = line
+
+
+def test_trustedrouter_key_formats_have_rules() -> None:
+    rules = {r["id"]: re.compile(r["regex"]) for r in tomllib.loads((ROOT / ".gitleaks.toml").read_text())["rules"]}
+    api_key = "sk-tr-v1-" + "A" * 43
+    session = "trsess-v1-" + "b" * 43
+    assert rules["trustedrouter-api-key"].search(f'TR = "{api_key}"')
+    assert rules["trustedrouter-api-key"].search(f'{{"Authorization": "Bearer {api_key}"}}')
+    assert rules["trustedrouter-session-token"].search(f"cookie={session}")
+    assert not rules["trustedrouter-api-key"].search("sk-tr-v1-short")

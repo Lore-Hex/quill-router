@@ -14,6 +14,21 @@
 [extend]
 useDefault = true
 
+# TrustedRouter's own credentials (src/trusted_router/security.py new_api_key:
+# prefix, "-", secrets.token_urlsafe(32) = 43 url-safe characters). The default
+# rules miss them outside an Authorization header.
+[[rules]]
+id = "trustedrouter-api-key"
+description = "TrustedRouter API key"
+regex = '''sk-tr-v1-[A-Za-z0-9_-]{43}'''
+keywords = ["sk-tr-v1-"]
+
+[[rules]]
+id = "trustedrouter-session-token"
+description = "TrustedRouter console session token"
+regex = '''trsess-v1-[A-Za-z0-9_-]{43}'''
+keywords = ["trsess-v1-"]
+
 [[allowlists]]
 description = """Generated, deterministic test vectors. JWS/JWT strings are \
 signed with keys whose seeds are committed beside them; the generic-api-key \

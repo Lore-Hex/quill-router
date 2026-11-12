@@ -97,3 +97,29 @@ b5df8e76e38114cc3beb41eff402841f62173b58:src/trusted_router/services/resale.py:g
 d053388cacb5f75ef01bf3c027665e89654cf4f3:src/trusted_router/spend_leases.py:generic-api-key:403
 137d594e26c99c1f80073cfe98cbf6d08d312528:src/trusted_router/synthetic/components.py:generic-api-key:194
 2cebf4b8480bdc1319a16e86a4dc09e372dc9fb8:src/trusted_router/synthetic/components.py:generic-api-key:211
+
+# Merge commits, scanned with --diff-merges=first-parent since 2026-11-12: the same
+# known-fake values, field names and test constants as the entries above, re-shown
+# in a merge's diff (domain-separation labels, hash and idempotency fields, the
+# Adyen test HMAC key, a fake raw key, template curl examples).
+09f4c83a411e550b8fec3de742a7b5e887e8b46a:fastpath/internal/edge/shadow_full_test.go:generic-api-key:738
+1f56513aff1fb0d4f44a29add8cff7f825c5f9ba:tests/test_async_settle_pilot_tools.py:generic-api-key:149
+206fc7aa6152508951e7b4e32056dd10aaded787:fastpath/internal/edge/shadow_full_test.go:generic-api-key:703
+216486bfc6182083a6318fa683ca8c57590367fb:tests/test_adyen_billing.py:generic-api-key:20
+3657596c88b531d0fce837a58a3fca49947204ab:src/trusted_router/regional_billing.py:generic-api-key:55
+3657596c88b531d0fce837a58a3fca49947204ab:tests/test_regional_quota_r2a.py:generic-api-key:617
+38928d8bbf41caa63ca5a9f76833078a764732b1:fastpath/internal/edge/shadow_full_test.go:generic-api-key:1134
+38928d8bbf41caa63ca5a9f76833078a764732b1:fastpath/internal/gwauth/request_test.go:generic-api-key:16
+4fbb81d8bb644b7a0e026fdf6aab271b0381d91b:fastpath/internal/gwauth/request_test.go:generic-api-key:16
+620e0ca00f77707f0ad56f656a049adbe4fa84dd:fastpath/internal/edge/async_test.go:jwt:471
+6238546847b3cf46159c4686e3c0d5106e394141:tests/test_adyen_billing.py:generic-api-key:20
+6dd7cdc08198b9e5b4442ebd4b6c498e511bd2ab:fastpath/internal/edge/shadow_full_test.go:generic-api-key:703
+76e5034d35cb034c88f1dc02c13dcf82c9e00713:docs/design/async-settle-outbox-v1.md:jwt:189
+76e5034d35cb034c88f1dc02c13dcf82c9e00713:tests/test_video_execution_replay.py:generic-api-key:173
+76e5034d35cb034c88f1dc02c13dcf82c9e00713:tests/test_video_execution_replay.py:generic-api-key:190
+787840147f4b10f87c727f3a4a08161bc0813942:tests/test_adyen_billing.py:generic-api-key:20
+9426dcaf99d16a8474193107c903f28f4a9545aa:tests/test_oauth_and_console.py:generic-api-key:688
+e99c1416b4d25212f94724026d2f9372936b9ad6:src/trusted_router/templates/console/welcome.html:curl-auth-header:147
+f389e3dc77d7f2faef765fd745f1eb8bece77b4b:src/trusted_router/templates/console/welcome.html:curl-auth-header:147
+f5118df473eceb7b1e7d80f80d7d37d525798e6f:tests/test_token_exchange_evidence.py:generic-api-key:61
+fb4a99aafef1cdee772210adf194a73f27027d6a:src/trusted_router/services/resale.py:generic-api-key:234
