@@ -57,6 +57,20 @@ def _table_tab(table: Tag, soup: BeautifulSoup) -> str | None:
 
 
 def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
+    prices = _scan(html, as_of=as_of)[0]
+    if not prices:
+        raise ValueError("vertex: no standard global Gemini text prices found")
+    return prices
+
+
+def cache_write_held(html: str, *, as_of: date | None = None) -> frozenset[str]:
+    """Models withheld only because they publish a cache-write tariff we cannot bill."""
+    return _scan(html, as_of=as_of)[1]
+
+
+def _scan(
+    html: str, *, as_of: date | None = None
+) -> tuple[dict[str, ModelPrice], frozenset[str]]:
     today = as_of or datetime.now(UTC).date()
     parts: dict[str, dict[str, tuple[int, int, int | None, int | None]]] = {}
     unbillable: set[str] = set()
@@ -151,6 +165,4 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
                     PriceTier(None, *high),
                 ]
             )
-    if not prices:
-        raise ValueError("vertex: no standard global Gemini text prices found")
-    return prices
+    return prices, frozenset(unbillable)
