@@ -9,8 +9,9 @@ now serving. That refusal is correct, but it arrives late: the primary region
 has already taken the new revision by the time a secondary refuses.
 
 This asks the tag question from a service document, before anything rolls
-out. It asks every region, including one the rollout would pass over because
-it already serves the new revision: the next release would be refused there.
+out. It asks every region that is not held (TR_DEPLOY_HOLD_REGIONS), including
+one the rollout would pass over because it already serves the new revision:
+the next release would be refused there.
 The rollout's other checks of the outgoing revision still run at rollout
 time. It reads; it never changes a tag.
 """
