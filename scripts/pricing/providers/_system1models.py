@@ -23,6 +23,35 @@ BASE_URL = "https://api.decisionmodels.io/v1"
 URL = f"{BASE_URL}/models"
 PRICING_URL = "https://decisionmodels.io/pricing"
 PRO_LEGACY_UNTIL = date(2026, 11, 12)
+# Both regional accounts existed (and were billed) by this instant: the EU
+# account's EUR receipts are dated 2026-10-12, the day Decision Models emailed
+# the November tariff to existing accounts.
+ACCOUNTS_CREATED_BY = datetime(2026, 10, 12, tzinfo=UTC)
+
+
+def _account_rates(rates: Any) -> Any:
+    """The tariff our accounts are billed at, not the new-account list.
+
+    From 2026-11-12 the top-level price is the new-account list (S1-LAUNCH-7)
+    and ``existing_accounts`` carries the previous list that accounts created
+    before ``accounts_created_before`` keep (decisionmodels.io/pricing:
+    "Accounts created before then are billed at the previous list").
+    Reading the top level priced every Pro route at $0.097/$0.103, an
+    unapproved 2.5x spike, so the refresh held the whole provider and kept the
+    expired discount rows. A malformed block fails closed.
+    """
+    if not isinstance(rates, dict) or "existing_accounts" not in rates:
+        return rates
+    existing = rates["existing_accounts"]
+    if not isinstance(existing, dict):
+        raise ValueError("malformed existing-account tariff")
+    raw = existing.get("accounts_created_before")
+    if not isinstance(raw, str):
+        raise ValueError("existing-account tariff has no account cutoff")
+    cutoff = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if cutoff.tzinfo is None:
+        raise ValueError("existing-account cutoff is not a UTC instant")
+    return existing if ACCOUNTS_CREATED_BY < cutoff else rates
 
 
 def _input_price(rates: Any, tier: str) -> int:
@@ -86,7 +115,7 @@ class System1Catalog:
                 continue
             rates = item.get("prices")
             try:
-                amount = _input_price(rates, self.tier)
+                amount = _input_price(_account_rates(rates), self.tier)
                 image_rates = rates.get("image_requests")
                 image_amount = None
                 if image_rates is not None:
