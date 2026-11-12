@@ -59,12 +59,12 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
   /* Waiting: a short, quiet rule until the step has a result. */
   --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M8 12 L16 12'/%3E%3C/svg%3E");opacity:.35}
 [data-state="ok"]>.step-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M4.5 12.5 L9.5 17.5 L19.5 7'/%3E%3C/svg%3E")}
-[data-state="wait"]>.step-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.53 16.7 A8 8 0 0 1 16.7 5.53 M18.47 7.3 A8 8 0 0 1 7.3 18.47'/%3E%3Cpath d='M3.5 20.5 L20.5 3.5'/%3E%3C/svg%3E")}
 [data-state="bad"]>.step-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.5 5.5 L18.5 18.5'/%3E%3Cpath d='M18.5 5.5 L5.5 18.5'/%3E%3C/svg%3E")}
-/* A step's result is read out by screen readers; it shows only when a step did not pass,
+/* A step's result is read out by screen readers; it shows only when a step failed (a step still
+   waiting on a newer record keeps the quiet dash; the verdict below says why),
    as one line in body text. Measured values stay available to assistive technology. */
 .step-result,.steps li>code{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.steps li[data-state="wait"] .step-result,.steps li[data-state="bad"] .step-result{position:static;width:auto;height:auto;overflow:visible;clip-path:none;white-space:normal;font-weight:500}
+.steps li[data-state="bad"] .step-result{position:static;width:auto;height:auto;overflow:visible;clip-path:none;white-space:normal;font-weight:500}
 .steps li{position:relative}
 .check-foot{display:flex;flex-wrap:wrap;align-items:center;gap:16px 32px;margin-top:32px}
 .check-foot .btn{cursor:pointer}
@@ -99,7 +99,7 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
   -webkit-mask:var(--icon) center/24px 24px no-repeat;mask:var(--icon) center/24px 24px no-repeat;
   --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M8 12 L16 12'/%3E%3C/svg%3E");opacity:.35}
 [data-verdict="verified"] .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M4.5 12.5 L9.5 17.5 L19.5 7'/%3E%3C/svg%3E")}
-:is([data-verdict="pending"],[data-verdict="incomplete"]) .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.53 16.7 A8 8 0 0 1 16.7 5.53 M18.47 7.3 A8 8 0 0 1 7.3 18.47'/%3E%3Cpath d='M3.5 20.5 L20.5 3.5'/%3E%3C/svg%3E")}
+:is([data-verdict="pending"],[data-verdict="incomplete"]) .verdict-icon{display:none}
 :is([data-verdict="mismatch"],[data-verdict="failed"]) .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.5 5.5 L18.5 18.5'/%3E%3Cpath d='M18.5 5.5 L5.5 18.5'/%3E%3C/svg%3E")}
 .mv3-gateway .steps li{border-top-color:var(--ink)}
 
@@ -173,3 +173,6 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
   .mv3-panel{padding:20px}
   .mv3-checks,.mv3-record-body,.mv3-ways{margin-top:32px}
 }
+
+/* External links: the kit arrow-up-right icon, in the link colour. */
+.mv3-ext{display:inline-block;width:.75em;height:.75em;margin-left:.3em;vertical-align:-.02em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter}
