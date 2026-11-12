@@ -42,6 +42,16 @@ SPANNER_DATABASE = "trusted-router"
 CLICKHOUSE_URL = "http://localhost:8123/"
 DIRECTORY_TABLE = "tr.workspace_directory"
 MAP_TABLE = "tr.tenant_workspace_map"
+SOURCE_VIEW = "tr_workspace_directory_source"
+# View column -> workspace body key. Each value is the field's JSON text.
+VIEW_FIELDS = {
+    "workspace_id": "id",
+    "name": "name",
+    "deleted": "deleted",
+    "owner_user_id": "owner_user_id",
+    "federated_home": "federated_home",
+    "created_at": "created_at",
+}
 
 
 class WorkspaceSource(Protocol):
@@ -81,7 +91,14 @@ def _clickhouse_datetime(value: Any, *, field: str) -> str:
 
 
 class SpannerWorkspaceSource:
-    """Read only workspace entity bodies from the system of record."""
+    """Read the workspace directory fields from the system of record.
+
+    The rows come from ``tr_workspace_directory_source``, a definer-rights view
+    over the workspace entities (scripts/deploy/migrate_clickhouse_node_role.sh).
+    It returns only the six fields the projection reads, each as its JSON text
+    or NULL when the body lacks it, so a node running as the
+    ``tr_clickhouse_node`` database role never reads ``tr_entities`` itself.
+    """
 
     def __init__(
         self,
@@ -92,33 +109,43 @@ class SpannerWorkspaceSource:
         database_role: str | None = None,
     ) -> None:
         from google.cloud import spanner
-        from google.cloud.spanner_v1 import param_types
 
         self._database = open_database(
             spanner.Client(project=project, disable_builtin_metrics=True).instance(instance),
             database,
             database_role,
         )
-        self._pt = param_types
 
     def fetch(self) -> list[Mapping[str, Any]]:
         with self._database.snapshot() as snapshot:
             values = snapshot.execute_sql(
-                "SELECT body FROM tr_entities WHERE kind=@kind ORDER BY id LIMIT 50001",
-                params={"kind": "workspace"},
-                param_types={"kind": self._pt.STRING},
+                "SELECT " + ", ".join(VIEW_FIELDS) + " "
+                f"FROM {SOURCE_VIEW} ORDER BY id LIMIT 50001",
                 timeout=30,
                 request_options={"priority": "PRIORITY_LOW", "request_tag": "tr_growth_directory"},
             )
             bodies: list[Mapping[str, Any]] = []
             for row in values:
-                body = json.loads(str(row[0]))
-                if not isinstance(body, dict):
-                    raise ValueError("workspace body is not a JSON object")
-                bodies.append(body)
+                bodies.append(_view_body(row))
                 if len(bodies) > 50_000:
                     raise ValueError("workspace directory row budget exceeded")
             return bodies
+
+
+def _view_body(row: Any) -> dict[str, Any]:
+    """Rebuild the workspace body keys the projection reads from one view row.
+
+    A NULL column is a key the body did not have, so it stays absent here,
+    exactly as it was absent from the entity body.
+    """
+    values = list(row)
+    if len(values) != len(VIEW_FIELDS):
+        raise ValueError("workspace directory view returned an unexpected row shape")
+    return {
+        key: json.loads(str(value))
+        for key, value in zip(VIEW_FIELDS.values(), values, strict=True)
+        if value is not None
+    }
 
 
 class ClickHouseDirectoryWriter:

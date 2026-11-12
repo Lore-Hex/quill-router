@@ -989,10 +989,9 @@ The node programs that touch Spanner (`ingest_outbox`,
 `ingest_operational_outbox`, `refresh_workspace_directory`,
 `verify_spanner_delivery` and the REST-based `rollup_reservation_overruns`)
 connect to database `trusted-router` with the node service account's
-database-wide access. The plan is to move them to a Spanner fine-grained-access
+database-wide access. They are moving to a Spanner fine-grained-access
 database role with table-level privileges. Fine-grained access is granted per
-table, so nothing they run may need `tr_entities`. This is step 1 of that
-change.
+table, so nothing they run may need `tr_entities`.
 
 **Heartbeat table.** The drain's heartbeat has a table of its own,
 `tr_operational_outbox_heartbeat (id STRING(64), body STRING(MAX),
@@ -1027,13 +1026,33 @@ the role is turned on.
 (`clickhouse/_spanner_role.py`). Unset or blank, the database is opened exactly
 as before. Set, the client programs open it with `database_role=<role>` and the
 REST rollup creates its session with `{"session": {"creatorRole": "<role>"}}`.
-Nothing sets it yet.
 
-Not in this step, and coming in a follow-up: the database role itself, its
-table grants, a definer-rights view replacing `refresh_workspace_directory`'s
-`tr_entities` workspace read, the IAM bindings that let the node service
-account use the role, setting the variable on the nodes, and retiring the
-legacy heartbeat write and read.
+**The role (step 2).** `scripts/deploy/migrate_clickhouse_node_role.sh`
+(idempotent; run by the production deploy's `migrate-schema` job after every
+table it grants on, by `scripts/deploy-gcp.sh`, and by both node deploys before
+they ship the node code) creates:
+
+- `tr_workspace_directory_source`, a `SQL SECURITY DEFINER` view over the
+  workspace entities. It returns `id` and the six fields the directory refresh
+  projects (`workspace_id`, `name`, `deleted`, `owner_user_id`,
+  `federated_home`, `created_at`), each as its JSON text or NULL when the body
+  lacks it. `refresh_workspace_directory` reads only this view.
+- the database role `tr_clickhouse_node`, with SELECT and DELETE on the two
+  analytics outboxes, SELECT, INSERT and UPDATE on the heartbeat table, SELECT
+  on `tr_generation` and `tr_reservation`, and SELECT on the view. It has no
+  privilege on `tr_entities`.
+
+`infra/clickhouse_node_role.tf` gives the node service account
+`roles/spanner.fineGrainedAccessUser` and `roles/spanner.databaseRoleUser`,
+the latter conditioned on this one role. Neither narrows anything while the
+account also holds `roles/spanner.databaseUser`.
+
+Remaining, in order: set `TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node` in the
+node units and redeploy the nodes; confirm the dedicated heartbeat row is fresh
+and every node job succeeds as the role; then remove the account's
+`roles/spanner.databaseUser` binding (and the grant in
+`scripts/deploy/clickhouse_cluster.sh`), and retire the legacy heartbeat write
+and read.
 
 ## Alerts and capacity
 

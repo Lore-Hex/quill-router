@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
+import clickhouse.refresh_workspace_directory as refresh_module
 from clickhouse.refresh_workspace_directory import main, refresh_workspace_directory
 from trusted_router.storage_operational_analytics import analytics_surrogate
 
@@ -160,3 +165,102 @@ def test_the_refresh_is_scheduled_and_installed() -> None:
     assert "tr-clickhouse-workspace-directory.service" in installer
     assert "tr-clickhouse-workspace-directory.timer" in installer
     assert "systemctl enable --now tr-clickhouse-workspace-directory.timer" in installer
+
+
+def _view_row(body: Mapping[str, Any]) -> list[str | None]:
+    """What tr_workspace_directory_source returns for an entity body.
+
+    JSON_QUERY yields each field's JSON text, or NULL when the key is absent or
+    its value is JSON null.
+    """
+    keys = ("id", "name", "deleted", "owner_user_id", "federated_home", "created_at")
+    return [
+        None if body.get(key) is None else json.dumps(body[key], separators=(",", ":"))
+        for key in keys
+    ]
+
+
+class _FakeSnapshot:
+    def __init__(self, rows: list[list[str | None]], calls: list[dict[str, Any]]) -> None:
+        self._rows = rows
+        self._calls = calls
+
+    def __enter__(self) -> _FakeSnapshot:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def execute_sql(self, sql: str, **kwargs: Any) -> list[list[str | None]]:
+        self._calls.append({"sql": sql, **kwargs})
+        return self._rows
+
+
+def _view_source(rows: list[list[str | None]]) -> tuple[Any, list[dict[str, Any]]]:
+    calls: list[dict[str, Any]] = []
+    source = object.__new__(refresh_module.SpannerWorkspaceSource)
+    source._database = SimpleNamespace(snapshot=lambda: _FakeSnapshot(rows, calls))
+    return source, calls
+
+
+_PARITY_BODIES: list[dict[str, Any]] = [
+    {
+        "id": "ws-owned",
+        "name": 'Quote "and" unicode é',
+        "owner_user_id": "user-1",
+        "created_at": "2026-08-20T12:34:56Z",
+        "email": "never-read@example.test",
+    },
+    {"id": "ws-deleted", "name": "Gone", "deleted": True, "owner_user_id": "user-2",
+     "created_at": "2026-08-21T01:02:03+00:00"},
+    {"id": "ws-federated", "name": "Fed", "owner_user_id": "user-3",
+     "federated_home": {"region": "eu"}, "created_at": "2026-08-22T00:00:00Z"},
+    {"id": "ws-empty-home", "name": "Empty", "owner_user_id": "user-4",
+     "federated_home": "", "deleted": False, "created_at": "2026-08-23T00:00:00Z"},
+    {"id": "ws-null-owner", "name": "Null", "owner_user_id": None,
+     "created_at": "2026-08-24T00:00:00Z"},
+]
+
+
+def test_the_view_rows_project_exactly_as_the_entity_bodies_did() -> None:
+    refreshed_at = dt.datetime(2026, 11, 12, 3, tzinfo=dt.UTC)
+    source, calls = _view_source([_view_row(body) for body in _PARITY_BODIES])
+
+    bodies = source.fetch()
+
+    assert [
+        refresh_module._project_workspace(body, refreshed_at=refreshed_at) for body in bodies
+    ] == [
+        refresh_module._project_workspace(body, refreshed_at=refreshed_at)
+        for body in _PARITY_BODIES
+    ]
+    assert all("email" not in body for body in bodies)
+    [call] = calls
+    assert call["sql"] == (
+        "SELECT workspace_id, name, deleted, owner_user_id, federated_home, created_at "
+        "FROM tr_workspace_directory_source ORDER BY id LIMIT 50001"
+    )
+    assert "params" not in call
+
+
+def test_a_field_the_body_lacks_stays_absent_and_a_required_one_still_fails() -> None:
+    source, _ = _view_source([[None, '"No id"', None, None, None, '"2026-08-24T00:00:00Z"']])
+
+    [body] = source.fetch()
+
+    assert body == {"name": "No id", "created_at": "2026-08-24T00:00:00Z"}
+    with pytest.raises(KeyError):
+        refresh_module._project_workspace(body, refreshed_at=dt.datetime.now(dt.UTC))
+
+
+def test_a_view_row_of_another_shape_is_refused() -> None:
+    source, _ = _view_source([['"ws"', '"name"']])
+    with pytest.raises(ValueError, match="unexpected row shape"):
+        source.fetch()
+
+
+def test_the_refresh_never_reads_entity_bodies_itself() -> None:
+    source = (ROOT / "clickhouse/refresh_workspace_directory.py").read_text()
+    code = source.split('"""', 2)[2]
+    assert "FROM tr_entities" not in code
+    assert "kind=@kind" not in code

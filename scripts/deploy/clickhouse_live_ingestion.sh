@@ -49,6 +49,11 @@ GCP_PROJECT_ID="$PROJECT" \
 SPANNER_INSTANCE_ID="${SPANNER_INSTANCE_ID:-trusted-router-nam6}" \
 SPANNER_DATABASE_ID="${SPANNER_DATABASE_ID:-trusted-router}" \
   "${SCRIPT_DIR}/migrate_operational_outbox_heartbeat.sh"
+# The workspace directory refresh reads the role's view; create it first too.
+GCP_PROJECT_ID="$PROJECT" \
+SPANNER_INSTANCE_ID="${SPANNER_INSTANCE_ID:-trusted-router-nam6}" \
+SPANNER_DATABASE_ID="${SPANNER_DATABASE_ID:-trusted-router}" \
+  "${SCRIPT_DIR}/migrate_clickhouse_node_role.sh"
 
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
 trap 'clickhouse_role_lock_release; rm -f "$archive"' EXIT

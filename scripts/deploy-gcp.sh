@@ -30,6 +30,7 @@ bash "${SCRIPT_DIR}/deploy/migrate_generation_records.sh" --apply
 bash "${SCRIPT_DIR}/deploy/migrate_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_operational_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_operational_outbox_heartbeat.sh"
+bash "${SCRIPT_DIR}/deploy/migrate_clickhouse_node_role.sh"
 bash "${SCRIPT_DIR}/deploy/image.sh"
 bash "${SCRIPT_DIR}/deploy/secrets.sh"
 bash "${SCRIPT_DIR}/deploy/rollout.sh"
