@@ -141,19 +141,46 @@ video?.addEventListener('playing',()=>{document.getElementById('film').classList
   });
 })();
 
-/* Code that runs past the edge: fade the hidden side, offer an arrow while more is to the right. */
+/* Code that runs past the edge: show the strip's scroll arrow while more is to the right. */
 document.querySelectorAll('.code-scroll').forEach(box => {
   const code = box.querySelector('.code'), next = box.querySelector('.code-next');
-  const update = () => {
-    const left = code.scrollLeft > 2, right = code.scrollLeft + code.clientWidth < code.scrollWidth - 2;
-    box.classList.toggle('can-left', left); box.classList.toggle('can-right', right); next.hidden = !right;
-  };
+  const update = () => { next.hidden = code.scrollLeft + code.clientWidth >= code.scrollWidth - 2; };
   next.addEventListener('click', () => code.scrollBy({left: code.clientWidth * .75,
     behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'}));
   code.addEventListener('scroll', update, {passive:true});
   window.addEventListener('resize', update);
   if ('ResizeObserver' in window) new ResizeObserver(update).observe(code);
   document.fonts.ready.then(update); update();
+});
+
+/* Code block copy button: copies the code, says "Copied" and announces it in the block's status line. */
+document.querySelectorAll('.v3-code-copy').forEach(button => {
+  const box = button.closest('.v3-code'), pre = box.querySelector('pre');
+  const status = document.getElementById(button.dataset.status || '') || box.querySelector('[role="status"]');
+  const label = button.getAttribute('aria-label');
+  let timer;
+  const text = () => {
+    const lines = pre.querySelectorAll('.l');
+    // Blank lines hold a no-break space for layout; they copy as empty lines.
+    return lines.length ? [...lines].map(line => line.textContent.replace(/\u00a0/g, ' ').trimEnd()).join('\n') : pre.textContent;
+  };
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(text());
+      if (status) status.textContent = button.dataset.copied || 'Copied.';
+      button.setAttribute('aria-label', 'Copied');
+      button.classList.add('done');
+      clearTimeout(timer);
+      timer = setTimeout(() => { button.setAttribute('aria-label', label); button.classList.remove('done'); }, 2000);
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      if (status) status.textContent = button.dataset.copyFailed || 'Copy unavailable here. The code is selected for you to copy manually.';
+    }
+  });
 });
 
 /* Show directional controls only when more market links are out of view. */

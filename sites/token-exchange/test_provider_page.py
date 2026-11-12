@@ -1,5 +1,6 @@
 """The provider landing page is public; its confidential source deck is not."""
 
+import re
 import tempfile
 import unittest
 from html.parser import HTMLParser
@@ -88,7 +89,8 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn(f'<link rel="canonical" href="{url}">', self.page)
         self.assertIn(f'<meta property="og:url" content="{url}">', self.page)
         self.assertTrue((self.root / "assets" / "archivo.woff2").is_file())
-        self.assertTrue((self.root / "assets" / "og-new-york.png").is_file())
+        image = re.search(r'<meta property="og:image" content="https://nytokenexchange.com/assets/([^"?]+)', self.page).group(1)
+        self.assertTrue((self.root / "assets" / image).is_file())
         for market in load_markets():
             sitemap = (self.root / market["slug"] / "sitemap.xml").read_text()
             self.assertEqual(url in sitemap, market["slug"] == "new-york")

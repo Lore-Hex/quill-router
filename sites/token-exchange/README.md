@@ -609,9 +609,15 @@ expired chain, an altered measurement, an altered signature, a forged root and a
 leaf certificate re-keyed by an attacker. Gateway tokens are signed in the test with
 a throwaway RSA key served as the mocked Google key set.
 
+The Maple page is a NYTE shell page (`nyte_v2.PAGES["maple"]`, body
+`nyte-v2/maple-v3.html`, sheet `maple-v3.css`, tabs `maple-v3.js`) in brand v3 by
+default. Adding `"maple"` to `old_brand_pages` in `nyte-brand-v3.json` restores `verified-maple.html`,
+and the build then publishes `assets/verified.css` and `assets/badge.css` again.
+
 To publish, upload only `verified/<provider>` (content type `text/html`),
-`verified/<provider>.html`, `assets/verified.css`, `assets/verified.js`, the
-updated `badge` and `badge.html`, and `new-york/sitemap.xml`.
+`verified/<provider>.html`, `assets/verified.js`, the `assets/nyte-v2/` sheets and
+scripts the page names, the updated `badge` and `badge.html`, and
+`new-york/sitemap.xml`.
 
 ### Homepage routing demo
 

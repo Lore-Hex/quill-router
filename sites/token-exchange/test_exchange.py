@@ -639,7 +639,7 @@ class ExchangeTests(unittest.TestCase):
                 if market["slug"] == "new-york":
                     from nyte_v2 import PAGES
                     paths += [entry["route"] for key, entry in PAGES.items()
-                              if key != "home" and entry.get("builder") != "anchor"] + ["/badge"] + ["/verified/maple"]
+                              if key != "home" and entry.get("builder") != "anchor"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],

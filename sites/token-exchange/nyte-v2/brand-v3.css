@@ -294,20 +294,20 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   .cw-intro{padding-bottom:0}
 }
 
-/* Pages rebuilt in brand v3 (home-v3, api-v3): kit grid, eyebrow bar, buttons,
+/* Pages rebuilt in brand v3 (home-v3, api-v3, badge-v3, maple-v3): kit grid, eyebrow bar, buttons,
    chips, Band and closing field. Page sheets load after this and add their own. */
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .wrap{max-width:1440px;padding:0 64px}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main section{padding:128px 0}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main :is(h1,h2,h3,p,blockquote,figure){margin:0}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main h2{font-size:clamp(40px,5vw,72px);line-height:1;font-weight:300;letter-spacing:-.015em}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .lede{font-size:22px;line-height:1.45;max-width:640px;color:inherit}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .wrap{max-width:1440px;padding:0 64px}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main section{padding:128px 0}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main :is(h1,h2,h3,p,blockquote,figure){margin:0}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main h2{font-size:clamp(40px,5vw,72px);line-height:1;font-weight:300;letter-spacing:-.015em}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .lede{font-size:22px;line-height:1.45;max-width:640px;color:inherit}
 .v3-bar{display:block;width:40px;height:4px;background:var(--ink)}
 .v3-label{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn{min-height:48px;height:48px;padding:0 22px;gap:10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans)}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn-primary{background:var(--orange);border-color:var(--ink)}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
-:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns{gap:12px}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btn{min-height:48px;height:48px;padding:0 22px;gap:10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans)}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btn-primary{background:var(--orange);border-color:var(--ink)}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+:where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btns{gap:12px}
 .v3-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1.5px solid var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em;white-space:nowrap}
 .v3-band{display:block;width:100%;height:120px}
 .v3-cta .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
@@ -315,20 +315,58 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .v3-cta h2{margin-top:32px}
 .v3-cta .lede{margin-top:24px}
 .v3-cta .btns{grid-column:8/span 5;justify-content:flex-end}
-[data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap{max-width:1440px;padding:0 64px}
-[data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer{padding-inline:max(64px,calc((100% - 1312px)/2));--globe-bleed:64px}
+[data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap,[data-nyte-page="badge"] header .wrap,[data-nyte-page="maple"] header .wrap{max-width:1440px;padding:0 64px}
+[data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer,[data-nyte-page="badge"] .site-footer,[data-nyte-page="maple"] .site-footer{padding-inline:max(64px,calc((100% - 1312px)/2));--globe-bleed:64px}
 @media (max-width:1100px){
   .v3-cta .wrap{grid-template-columns:1fr;row-gap:32px}
   .v3-cta .wrap>div:first-child,.v3-cta .btns{grid-column:1;justify-content:flex-start}
 }
 @media (max-width:600px){
-  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .wrap{padding:0 20px}
-  :where([data-nyte-page="home"],[data-nyte-page="api"]) main section{padding:72px 0}
-  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .lede{font-size:20px}
-  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns{flex-direction:column;align-items:stretch;width:100%}
-  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns .btn{flex:none;width:100%;justify-content:center;font-size:16px;padding:0 16px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .wrap{padding:0 20px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main section{padding:72px 0}
+  :where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .lede{font-size:20px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btns{flex-direction:column;align-items:stretch;width:100%}
+  :where([data-nyte-page="home"],[data-nyte-page="api"],[data-nyte-page="badge"],[data-nyte-page="maple"]) main .btns .btn{flex:none;width:100%;justify-content:center;font-size:16px;padding:0 16px}
   .v3-cta h2{margin-top:24px}
   .v3-cta .lede{margin-top:16px}
-  [data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap{padding:0 20px}
-  [data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer{padding-inline:20px}
+  [data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap,[data-nyte-page="badge"] header .wrap,[data-nyte-page="maple"] header .wrap{padding:0 20px}
+  [data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer,[data-nyte-page="badge"] .site-footer,[data-nyte-page="maple"] .site-footer{padding-inline:20px}
+}
+
+/* Visually hidden, still read by screen readers. */
+.v3-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* Code block (NYTE code block standard; kit CodeBlock). Ink panel; a header strip with the
+   language label and an icon-only copy button; Mono 14/1.7 at every width; lines never wrap,
+   and the shared .code-next arrow (app.js), in the header strip beside copy, scrolls wide code. No gradient fade. */
+.v3-code{position:relative;min-width:0;background:var(--ink);color:var(--cream)}
+.v3-code-head{display:flex;align-items:center;justify-content:space-between;gap:16px;height:48px;padding:0 2px 0 28px;border-bottom:1.5px solid var(--dark-rule)}
+.v3-code-head .v3-label{color:var(--ink-2-dark)}
+.v3-code-copy{display:flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:0;background:transparent;color:var(--cream);cursor:pointer}
+.v3-code-copy svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
+.v3-code-copy .v3-code-done,.v3-code-copy.done .v3-code-icon{display:none}
+.v3-code-copy.done .v3-code-done{display:block}
+.v3-code-copy:hover{background:var(--dark-sunken)}
+.v3-code-copy:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
+.v3-code .code{min-width:0;overflow-x:auto;background:var(--ink)}
+.v3-code .code:focus-visible{outline:2px solid var(--cream);outline-offset:-2px}
+.v3-code pre{width:max-content;min-width:100%;margin:0;padding:24px 28px;font:400 14px/1.7 var(--font-mono);color:var(--cream);white-space:pre}
+.v3-code pre:has(> .l){padding:24px 0}
+.v3-code pre span.l{display:block;padding:0 28px}
+.v3-code pre code{font:inherit;color:inherit}
+.v3-code .s{color:var(--lime)}
+.v3-code .s.y{color:var(--yellow)}
+.v3-code .k,.v3-code .c{color:var(--ink-2-dark)}
+.v3-code .chg{background:var(--dark-sunken);box-shadow:none;color:var(--cream)}
+.v3-code-tools{display:flex;flex:none;align-items:center;gap:4px}
+.v3-code .code-next[hidden]{display:none}
+.v3-code .code-next{display:flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:0;background:transparent;color:var(--cream);cursor:pointer}
+.v3-code .code-next svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
+.v3-code .code-next:hover{background:var(--dark-sunken)}
+.v3-code .code-next:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
+@media (max-width:600px){
+  .v3-code-head{padding-left:20px}
+  .v3-code pre{padding:20px}
+  .v3-code pre:has(> .l){padding:20px 0}
+  .v3-code pre span.l{padding:0 20px}
 }
