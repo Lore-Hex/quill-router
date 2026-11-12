@@ -336,8 +336,8 @@ never publish at once. That is why takeover below is fenced and manual.
      unless the value is exactly `publisher`; a failed read also refuses. Set
      node 1 to `publisher` and nodes 2 and 3 to `standby`. A stopped unit is
      not a fence: enabled timers start again after a reboot, and the
-     public-snapshot timer fires 30 s after boot (`OnBootSec=30s`; the
-     calendar timers are `Persistent=true` and catch up on boot). Instance
+     timers are calendar timers with `Persistent=true`, so each one whose
+     time passed while the node was down fires right after boot. Instance
      metadata survives reboots and can be changed while the VM is stopped, so
      the role key fences a node before it boots.
    - Built: `scripts/deploy/clickhouse_worker_role.sh` (`status`, `fence`,

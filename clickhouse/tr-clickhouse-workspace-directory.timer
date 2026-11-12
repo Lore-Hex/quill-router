@@ -2,8 +2,7 @@
 Description=Refresh the ClickHouse workspace directory every 30 minutes
 
 [Timer]
-OnBootSec=10min
-OnUnitActiveSec=30min
+OnCalendar=*-*-* *:00/30:00
 RandomizedDelaySec=5min
 Persistent=true
 

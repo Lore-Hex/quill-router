@@ -2,8 +2,7 @@
 Description=Rebuild TrustedRouter synthetic ClickHouse rollups
 
 [Timer]
-OnBootSec=3m
-OnUnitActiveSec=5m
+OnCalendar=*-*-* *:00/5:00
 RandomizedDelaySec=20s
 Persistent=true
 

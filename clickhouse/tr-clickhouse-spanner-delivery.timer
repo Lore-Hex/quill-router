@@ -2,8 +2,7 @@
 Description=Verify TrustedRouter Spanner to ClickHouse delivery every 30 minutes
 
 [Timer]
-OnBootSec=7m
-OnUnitActiveSec=30m
+OnCalendar=*-*-* *:07/30:00
 RandomizedDelaySec=30s
 Persistent=true
 
