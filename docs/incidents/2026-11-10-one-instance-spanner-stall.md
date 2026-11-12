@@ -171,3 +171,37 @@ source this module does not write.
 [Issue #1813](https://github.com/Lore-Hex/quill-router/issues/1813) stays
 open. The October 15 and October 22 stalls it tracks had a different shape:
 some calls succeeded during them.
+
+## Second occurrence, 2026-11-12
+
+**TR Gateway: billing path 5xx** fired at 08:53Z for one authorize that
+returned 503 after 20.01 seconds. It was the first stall since the channel and
+credential lines shipped, and it read as the third row of the table above.
+
+- One us-central1 instance (revision `trusted-router-01835-pml`). Its first
+  failed read was at 08:52:37Z (the 500 ms async admission probes), its last at
+  08:53:12Z: about 35 seconds. Every Spanner call on it reached its deadline in
+  that window: the fastpath enabled-copy read every five seconds, the Stage D
+  policy refresh, the auto-refill drain, and the request paths (authorize,
+  heartbeat, video job claim, each `spanner_rpc_elapsed_ms=20002`). Three
+  requests returned 503. A settle at 08:53:17Z took 108 ms.
+- No other instance logged `DeadlineExceeded` in that window.
+- **Channel:** no `spanner channel state` line during the stall or after it.
+  The last transition was 08:42:59Z: `READY` to `IDLE` after 3,599,996 ms (the
+  one-hour connection age limit), then `CONNECTING`, then `READY` within 10 ms.
+  The stall began ten minutes into that new connection, and the connection
+  never left `READY`.
+- **Credentials:** refresh lines at 08:35:27Z and 09:01:41Z, both
+  `inline=False`, 19 to 21 ms. Nothing in the window.
+
+So the connection neither failed nor was replaced: its streams stopped
+answering and then started again on the same connection. The token was not
+involved. This rules out the refresh, and it makes a shorter gRPC keepalive an
+unlikely fix: keepalive closes a connection whose pings go unanswered, and a
+connection that comes back without a transition was probably still answering
+pings while its streams were stuck.
+
+Two occurrences in three days (85 s on November 10, 35 s here), each on one
+instance, each ending on its own. The remaining option is a bounded retry of
+the billing path's read-only lookups on a second Spanner connection that does
+not share the stuck one. That changes the hot path and is not in this note.
