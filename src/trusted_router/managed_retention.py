@@ -27,6 +27,7 @@ VERTEX_SAFETY_URL = (
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/abuse-monitoring"
 )
 BEDROCK_RETENTION_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
+AZURE_DATA_URL = "https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy"
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,15 @@ BEDROCK_RUNTIME_ZDR = RetentionPolicy(
     "other models. It is policy-backed ZDR, not confidential compute or E2EE.",
     BEDROCK_RETENTION_URL, reviewed_on="2026-10-29",
 )
+AZURE_OPENAI_ZDR = RetentionPolicy(
+    "zero_retention", "ZDR - TR-funded Azure OpenAI",
+    "This reviewed Azure OpenAI chat route uses TrustedRouter's approved managed "
+    "resource, verified with ContentLogging=false on November 12, 2026. Prompts and "
+    "completions are not stored for abuse monitoring or reviewed by humans; "
+    "automated real-time safety checks may still run. Stateful services, other "
+    "Foundry publishers, unreviewed models and BYOK are outside this approval.",
+    AZURE_DATA_URL, maximum_days=0, human_review=False, reviewed_on="2026-11-12",
+)
 
 # Frozen review, not generated from provider manifests. Discovery must never
 # append to this allowlist automatically. A mutable cross-model alias such as
@@ -134,6 +144,7 @@ _OPENAI_REVIEWED_IDS = frozenset({
 # Exact canonical/upstream pairs prevent a catalog alias from changing the
 # deployed model while retaining its predecessor's privacy approval.
 REVIEWED_ROUTES: dict[tuple[str, str, str], RetentionPolicy] = {
+    ("azure", "openai/gpt-5-mini", "gpt-5-mini"): AZURE_OPENAI_ZDR,
     **{("amazon-bedrock", model, profile): BEDROCK_RUNTIME_ZDR
        for model, profile in BEDROCK_RUNTIME_PROFILES.items()},
     **{("openai", f"openai/{name}", name): OPENAI_ZDR for name in _OPENAI_REVIEWED_IDS},
@@ -161,10 +172,10 @@ _VERTEX_DURABLE_MODELS = frozenset({
 def managed_retention_policy(
     provider: str, model_id: str, upstream_id: str | None, usage_type: str,
 ) -> RetentionPolicy | None:
-    if provider not in {"openai", "google-vertex", "amazon-bedrock"}:
+    if provider not in {"openai", "google-vertex", "amazon-bedrock", "azure"}:
         return None
     source = {"openai": OPENAI_DATA_URL, "google-vertex": VERTEX_DATA_URL,
-              "amazon-bedrock": BEDROCK_RETENTION_URL}[provider]
+              "amazon-bedrock": BEDROCK_RETENTION_URL, "azure": AZURE_DATA_URL}[provider]
     if usage_type != "Credits":
         return RetentionPolicy(
             "unverified", "Customer account retention - unverified",
@@ -192,6 +203,14 @@ def managed_retention_policy(
 
 
 def provider_retention_notice(provider: str) -> str | None:
+    if provider == "azure":
+        return (
+            "Modified abuse monitoring is approved and ContentLogging=false was "
+            "verified on the managed Azure resource on November 12, 2026. Only "
+            "the reviewed Azure OpenAI chat routes qualify for ZDR. Other Foundry "
+            "publishers, future models, stateful services and BYOK require separate "
+            "review. Automated real-time safety checks may still run."
+        )
     if provider == "amazon-bedrock":
         return (
             "ZDR is scoped to the reviewed managed Claude US Runtime profiles, "
