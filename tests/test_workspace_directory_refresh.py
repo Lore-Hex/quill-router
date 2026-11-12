@@ -159,7 +159,7 @@ def test_the_refresh_is_scheduled_and_installed() -> None:
     assert "EnvironmentFile=/etc/tr-clickhouse-ingest.env" in service
     assert "ProtectSystem=strict" in service
 
-    assert "OnUnitActiveSec=30min" in timer
+    assert "OnCalendar=*:0/30" in timer
     assert "Persistent=true" in timer
 
     assert "tr-clickhouse-workspace-directory.service" in installer

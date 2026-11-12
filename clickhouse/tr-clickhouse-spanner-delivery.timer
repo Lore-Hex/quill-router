@@ -2,8 +2,12 @@
 Description=Verify TrustedRouter Spanner to ClickHouse delivery every 30 minutes
 
 [Timer]
-OnBootSec=7m
-OnUnitActiveSec=30m
+# Wall-clock schedule, not OnBootSec/OnUnitActiveSec. OnUnitActiveSec counts
+# from the service's last run, so restarting this timer more than one interval
+# after that run leaves it with no next trigger at all: on 2026-11-11 the #2486
+# roll restarted the workspace directory timer and it never fired again.
+# Persistent only applies to OnCalendar, and catches up one missed run.
+OnCalendar=*:7/30
 RandomizedDelaySec=30s
 Persistent=true
 
