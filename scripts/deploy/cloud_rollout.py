@@ -35,6 +35,9 @@ PLANES = {
     "azure": ("https://azure.trustedrouter.com", "https://api-azure.trustedrouter.com"),
 }
 SHA = re.compile(r"[a-f0-9]{7,40}")
+# How long a lease check tolerates an unhealthy protected cloud before refusing.
+PROTECTED_OUTAGE_GRACE_SECONDS = 180
+PROTECTED_RETRY_SECONDS = 15
 MAX_BYTES = 1_048_576
 # A repository name can be re-created after a rename; its immutable id cannot.
 GITHUB_REPOSITORY_IDS = {
@@ -222,8 +225,31 @@ def state_record(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 class Coordinator:
     def __init__(self, store: Store, probe: Callable[[str], str] | None = None,
-                 now: Callable[[], float] = time.time) -> None:
+                 now: Callable[[], float] = time.time,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
         self.store, self.probe, self.now = store, probe or probe_cloud, now
+        self.sleep = sleep
+
+    def protected_release(self, cloud: str) -> str:
+        """Probe the protected cloud, riding out a short outage.
+
+        A one-minute blip on the protected cloud used to abort a GCP rollout
+        that had already passed its whole canary, and the aborted drain then
+        blocked every later rollout (2026-11-11). Unhealthy is retried for
+        PROTECTED_OUTAGE_GRACE_SECONDS; a changed release is never retried.
+        """
+        attempts = PROTECTED_OUTAGE_GRACE_SECONDS // PROTECTED_RETRY_SECONDS + 1
+        for attempt in range(attempts):
+            try:
+                return self.probe(cloud)
+            except Refused as exc:
+                if attempt == attempts - 1:
+                    raise
+                print(f"cloud_rollout.retry: {exc}; retrying in "
+                      f"{PROTECTED_RETRY_SECONDS}s ({attempt + 1}/{attempts - 1})",
+                      file=sys.stderr)
+                self.sleep(PROTECTED_RETRY_SECONDS)
+        raise Refused(f"{cloud} is not a verified healthy holdback")
 
     def transaction(self, change: Callable[[dict[str, Any]], Any]) -> Any:
         for _ in range(8):
@@ -294,7 +320,7 @@ class Coordinator:
                 if lease["state"] != "active" or lease["expires_at"] <= self.now():
                     raise Refused("lease blocked or expired; recovery required, slot remains reserved")
                 protected = state["holdback"]
-                if self.probe(protected["cloud"]) != protected["release"]:
+                if self.protected_release(protected["cloud"]) != protected["release"]:
                     raise Refused("protected cloud release changed")
                 _, current = self.store.read()
                 if current == generation:

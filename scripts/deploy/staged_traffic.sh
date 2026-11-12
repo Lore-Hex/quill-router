@@ -41,6 +41,7 @@ DRAIN_TAG="staged-drain"
 DRAIN_TAG_OWNED=0
 DRAIN_PENDING=0
 DRAIN_MINUTES="${TR_REVISION_DRAIN_MINUTES:-15}"
+STALE_DRAIN_QUIET_MINUTES=60
 
 log() { echo "[staged-traffic ${REGION}] $*"; }
 
@@ -84,6 +85,82 @@ raise SystemExit(0 if floor > 0 and ready else 1)
   DRAIN_TAG_OWNED=1
   cloud_run_probe_tag_reconcile \
     "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG" "$OLD_REV"
+}
+
+# An interrupted earlier rollout can leave the drain tag on a revision that is
+# no longer OLD_REV. prepare_revision_drain refuses to replace it, and before
+# this check that refusal came only after the 10% and 50% canaries, so every
+# rollout rolled back until someone removed the tag by hand (2026-11-11: five
+# failed GCP rollouts in five hours). Settle it here, before any traffic moves.
+# The tag is retired only when its revision serves 0% and Cloud Run logged no
+# request for it for STALE_DRAIN_QUIET_MINUTES: the "inspect traffic and
+# complete the drain" step the retention message asks for. Successful request
+# lines are 10% sampled (infra/logging_sampling.tf), so the quiet window is an
+# hour rather than one 15-minute drain. Anything else, or
+# any failure to prove it, stops this rollout before traffic moves.
+retire_stale_revision_drain() {
+  local resolved document since hits
+  resolved="$(cloud_run_probe_tag_revision \
+    "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG")" || {
+    log "could not read the ${DRAIN_TAG} tag; refusing to start the ramp"
+    return 1
+  }
+  if [ -z "$resolved" ] || [ "$resolved" = "$OLD_REV" ]; then
+    return 0
+  fi
+  stale_drain_refused() {
+    log "CRITICAL: ${DRAIN_TAG} is left on ${resolved} from an interrupted rollout: $1. No traffic moved."
+    echo "::error title=Stale ${DRAIN_TAG} tag in ${REGION}::${resolved}: $1. Once it serves no requests, run: gcloud run services update-traffic ${SERVICE} --region=${REGION} --project=${PROJECT_ID} --remove-tags=${DRAIN_TAG} --quiet"
+    return 1
+  }
+  if [ "$resolved" = "$NEW_REV" ]; then
+    stale_drain_refused "it names the revision being rolled out"
+    return 1
+  fi
+  document="$(gcloud run services describe "$SERVICE" \
+    --region="$REGION" --project="$PROJECT_ID" --format=json)" || {
+    stale_drain_refused "could not read the traffic split"
+    return 1
+  }
+  if ! printf '%s' "$document" | python3 -c '
+import json, sys
+revision = sys.argv[1]
+try:
+    traffic = json.load(sys.stdin)["status"]["traffic"]
+    serving = any(e.get("revisionName") == revision and int(e.get("percent") or 0) > 0
+                  for e in traffic)
+except (KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+raise SystemExit(1 if serving else 0)
+' "$resolved"; then
+    stale_drain_refused "it still carries traffic, or the split could not be read"
+    return 1
+  fi
+  since="$(python3 -c '
+import datetime, sys
+moment = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))
+print(moment.strftime("%Y-%m-%dT%H:%M:%SZ"))
+' "$STALE_DRAIN_QUIET_MINUTES")" || {
+    stale_drain_refused "could not compute the quiet window"
+    return 1
+  }
+  hits="$(gcloud logging read \
+    "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND resource.labels.location=\"${REGION}\" AND resource.labels.revision_name=\"${resolved}\" AND log_id(\"run.googleapis.com/requests\") AND timestamp>=\"${since}\"" \
+    --project="$PROJECT_ID" --limit=1 --format='value(timestamp)')" || {
+    stale_drain_refused "could not read its request logs"
+    return 1
+  }
+  if [ -n "$hits" ]; then
+    stale_drain_refused "it served a request at ${hits}, within the last ${STALE_DRAIN_QUIET_MINUTES} minutes"
+    return 1
+  fi
+  deploy_mutex_assert || return 1
+  if ! cloud_run_probe_tag_remove "$SERVICE" "$REGION" "$PROJECT_ID" "$DRAIN_TAG"; then
+    stale_drain_refused "removing the tag failed"
+    return 1
+  fi
+  log "retired stale ${DRAIN_TAG} tag on ${resolved}: 0% traffic and no requests in ${STALE_DRAIN_QUIET_MINUTES} minutes"
+  echo "::warning title=Retired stale ${DRAIN_TAG} tag in ${REGION}::${resolved} was left by an interrupted rollout; it served no requests for ${STALE_DRAIN_QUIET_MINUTES} minutes, so its tag was removed before this ramp."
 }
 
 cleanup_revision_drain() {
@@ -446,6 +523,10 @@ if [ -z "$OLD_REV" ]; then
   fi
   finish_final_baseline
   exit 0
+fi
+
+if ! retire_stale_revision_drain; then
+  exit 1
 fi
 
 # 10% canary

@@ -46,8 +46,10 @@ def system():
             raise rollout.Refused("unhealthy")
         return health[cloud]
 
-    coordinator = rollout.Coordinator(store, probe, lambda: clock[0])
-    return SimpleNamespace(store=store, health=health, clock=clock, coordinator=coordinator)
+    sleeps = []
+    coordinator = rollout.Coordinator(store, probe, lambda: clock[0], sleeps.append)
+    return SimpleNamespace(store=store, health=health, clock=clock,
+                           coordinator=coordinator, sleeps=sleeps)
 
 
 def acquire(system, cloud, component="control-plane"):
@@ -159,6 +161,47 @@ def test_protected_cloud_drift_or_outage_stops_forward_progress(system):
     system.health["azure"] = None
     with pytest.raises(rollout.Refused):
         system.coordinator.check("gcp", first["operation_id"])
+
+
+def test_protected_cloud_blip_inside_grace_does_not_abort_the_rollout(system):
+    # 2026-11-11: a minute-long Azure blip aborted a GCP rollout that had
+    # already passed its canary; the retained drain tag then failed every
+    # later rollout for five hours.
+    first = acquire(system, "gcp")
+    acquire(system, "aws")
+    calls = []
+    real = system.coordinator.probe
+
+    def flaky(cloud):
+        calls.append(cloud)
+        if cloud == "azure" and len(calls) <= 4:
+            raise rollout.Refused("azure is not a verified healthy holdback")
+        return real(cloud)
+
+    system.coordinator.probe = flaky
+    system.coordinator.check("gcp", first["operation_id"])
+    assert calls == ["azure"] * 5
+    assert system.sleeps == [rollout.PROTECTED_RETRY_SECONDS] * 4
+
+
+def test_protected_cloud_outage_past_grace_still_refuses(system):
+    first = acquire(system, "gcp")
+    acquire(system, "aws")
+    system.health["azure"] = None
+    with pytest.raises(rollout.Refused, match="unhealthy"):
+        system.coordinator.check("gcp", first["operation_id"])
+    retries = rollout.PROTECTED_OUTAGE_GRACE_SECONDS // rollout.PROTECTED_RETRY_SECONDS
+    assert system.sleeps == [rollout.PROTECTED_RETRY_SECONDS] * retries
+    assert sum(system.sleeps) == rollout.PROTECTED_OUTAGE_GRACE_SECONDS
+
+
+def test_protected_cloud_release_change_is_never_retried(system):
+    first = acquire(system, "gcp")
+    acquire(system, "aws")
+    system.health["azure"] = "b" * 40
+    with pytest.raises(rollout.Refused, match="release changed"):
+        system.coordinator.check("gcp", first["operation_id"])
+    assert system.sleeps == []
 
 
 def test_failed_final_health_does_not_release_slot(system):
