@@ -855,7 +855,7 @@ def _wallet_email_csrf(client: TestClient) -> str:
     return match.group(1)
 
 
-def test_wallet_email_submit_rejects_duplicate_account_email(client: TestClient) -> None:
+def test_wallet_email_submit_does_not_attach_or_reveal_a_taken_email(client: TestClient) -> None:
     STORE.ensure_user("taken@example.com")
     user = STORE.create_wallet_user("0x" + "7" * 40)
     raw_token, _ = STORE.create_auth_session(
@@ -872,8 +872,9 @@ def test_wallet_email_submit_rejects_duplicate_account_email(client: TestClient)
         data={"email": "Taken@Example.com", "csrf_token": _wallet_email_csrf(client)},
     )
 
-    assert response.status_code == 409
-    assert "already has an account" in response.text
+    assert response.status_code == 200
+    assert "already has an account" not in response.text
+    assert "/auth/wallet/email/verify" not in response.text
     assert STORE.get_user(user.id).email is None
 
 
