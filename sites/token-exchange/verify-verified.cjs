@@ -362,8 +362,8 @@ const panel = (page, id) => Promise.all([
       assert.deepEqual(await shown(), ['way-commands']);
       assert.deepEqual(await selected(), ['false', 'true', 'false']);
       if (width < 600) {
-        // Long commands run past the panel: the /confidential arrow slides them along.
-        const next = page.locator('#way-commands .code-next');
+        // Long commands run past the panel: the shared arrow in the header strip slides them along.
+        const next = page.locator('#way-commands .v3-code-head .code-next');
         await next.waitFor({state: 'visible'});
         await next.click();
         await page.waitForFunction(() => document.querySelector('#way-commands .code').scrollLeft > 0);

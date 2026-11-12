@@ -109,7 +109,8 @@ class VerifiedPageTests(unittest.TestCase):
         self.assertLess(manual.index('id="agent-prompt"'), manual.index('id="manual-commands"'))
         # Both panels use the shared code block: a labelled header strip with an icon-only copy.
         self.assertIn('<span class="v3-label">Prompt</span><button class="v3-code-copy" type="button" aria-label="Copy prompt">', self.page)
-        self.assertIn('<span class="v3-label">Shell</span><button class="v3-code-copy" type="button" aria-label="Copy commands">', self.page)
+        self.assertIn('<span class="v3-label">Shell</span><span class="v3-code-tools"><button class="code-next" type="button" aria-label="Scroll code right" hidden>', self.page)
+        self.assertIn('<button class="v3-code-copy" type="button" aria-label="Copy commands">', self.page)
         self.assertNotIn("data-copy=", self.page)
         # Readable and selectable without JavaScript; only the copy buttons and tab row need it.
         self.assertIn('<div class="mv3-tabs" role="tablist" aria-label="Ways to check" hidden>', self.page)
