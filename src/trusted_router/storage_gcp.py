@@ -116,6 +116,7 @@ from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
 from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
 from trusted_router.storage_gcp_byok import SpannerByok
 from trusted_router.storage_gcp_channel_failover import (
+    bind_session_pool,
     channel_failover_enabled,
     install_spanner_channel_failover,
 )
@@ -530,10 +531,11 @@ class SpannerStore(OperationalAnalyticsReads):
         # What instance.database() does, in two steps. A FixedSizePool fills
         # itself when bound, through the first client database.spanner_api
         # builds, so the failover client has to be in place before the bind.
-        # The deadlines wrap that client and the watch observes it.
+        # If the bind fails on it, the bind is retried on the SDK's own client.
+        # The deadlines wrap whichever client is left, and the watch observes it.
         self._database = Database(spanner_database_id, instance, pool=pool)
         install_spanner_channel_failover(self._database, enabled=channel_failover_enabled())
-        pool.bind(self._database)
+        bind_session_pool(self._database, pool)
         configure_spanner_rpc_deadlines(self._database)
         watch_spanner_transport(self._database)
         # Composed feature stores. Each owns its own logic and is importable

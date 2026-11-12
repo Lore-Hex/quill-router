@@ -214,6 +214,54 @@ def test_gcp_store_channel_failover_kill_switch(monkeypatch: Any) -> None:
     assert ("bind", database) in prepared
 
 
+def test_gcp_store_binds_on_the_sdks_own_client_when_the_failover_bind_fails(
+    monkeypatch: Any,
+) -> None:
+    from types import SimpleNamespace
+
+    from google.cloud import spanner, spanner_v1
+    from google.cloud.spanner_v1 import database as spanner_database
+
+    closed: list[bool] = []
+    database = SimpleNamespace(
+        _spanner_api=SimpleNamespace(transport=SimpleNamespace(close=lambda: closed.append(True)))
+    )
+    binds: list[object] = []
+
+    def install(target: Any, *, enabled: bool) -> None:
+        target._trusted_router_channel_failover = True
+
+    class FakePool:
+        def __init__(self, *, size: int) -> None:
+            pass
+
+        def bind(self, target: Any) -> None:
+            binds.append(target._spanner_api)
+            if len(binds) == 1:
+                raise RuntimeError("sessions not created")
+
+    monkeypatch.setattr("trusted_router.storage_gcp.install_spanner_channel_failover", install)
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines", lambda _target: None
+    )
+    monkeypatch.setattr("trusted_router.storage_gcp.watch_spanner_transport", lambda _target: None)
+    monkeypatch.setattr(
+        spanner, "Client", lambda **_kwargs: SimpleNamespace(instance=lambda _id: "instance")
+    )
+    monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
+    monkeypatch.setattr(spanner_database, "Database", lambda *_args, **_kwargs: database)
+
+    SpannerStore(
+        project_id="project",
+        spanner_instance_id="spanner",
+        spanner_database_id="database",
+    )
+
+    # The second bind runs with no client built, so the SDK builds its own.
+    assert len(binds) == 2 and binds[1] is None
+    assert closed == [True]
+
+
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     store, db = make_fake_store()
     store._write_entity(

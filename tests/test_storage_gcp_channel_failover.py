@@ -12,6 +12,7 @@ connect. Nothing in this file leaves the machine.
 from __future__ import annotations
 
 import functools
+import gc
 import logging
 import threading
 import time
@@ -25,6 +26,7 @@ import pytest
 
 from trusted_router import storage_gcp_channel_failover as failover
 from trusted_router.storage_gcp_channel_failover import (
+    CHECK_INTERVAL_SECONDS,
     FAILOVER_INTERVAL_SECONDS,
     OWN_CONNECTION,
     PROBE_INTERVAL_SECONDS,
@@ -146,10 +148,10 @@ class _Channel:
         self.closed = False
         self.reply: Callable[[str, Any], _Call] = lambda method, request: _Call(OK, method)
 
-    def unary_unary(self, method: str, **_: Any) -> _Callable:
+    def unary_unary(self, method: str, *_args: Any, **_kwargs: Any) -> _Callable:
         return _Callable(self, method, streaming=False)
 
-    def unary_stream(self, method: str, **_: Any) -> _Callable:
+    def unary_stream(self, method: str, *_args: Any, **_kwargs: Any) -> _Callable:
         return _Callable(self, method, streaming=True)
 
     def subscribe(self, callback: Any, try_to_connect: bool = False) -> None:
@@ -181,6 +183,12 @@ class _Rig(SimpleNamespace):
 
     def tick(self, seconds: float) -> None:
         self.clock.now += seconds
+
+    def retirements(self) -> list[Callable[[], None]]:
+        return [target for delay, target in self.scheduled if delay == RETIRE_AFTER_SECONDS]
+
+    def checks(self) -> list[Callable[[], None]]:
+        return [target for delay, target in self.scheduled if delay == CHECK_INTERVAL_SECONDS]
 
 
 @pytest.fixture
@@ -241,15 +249,16 @@ def test_fails_over_after_deadlines_in_a_row_when_only_the_standby_answers(
     assert (active.calls(), standby.calls()) == (3, 1)
     assert active.calls(PROBE.method) == standby.calls(PROBE.method) == 1
     assert _messages(caplog) == [
-        "spanner channel failover client=primary reason=deadline_streak stalled_ms=1500 "
+        "spanner channel failover client=primary reason=deadline_streak stalled_ms=1000 "
         "waiting=0 deadline_streak=3 probe_ms=200 failovers=1"
     ]
     (record,) = caplog.records
     assert record.levelno == logging.WARNING
     # A new standby is built, and the old channel is closed after the grace period.
     assert len(rig.channels) == 3
-    ((delay, retire),) = rig.scheduled
-    assert delay == RETIRE_AFTER_SECONDS > 20.0
+    (retire,) = rig.retirements()
+    # Past the 20 second budget and BatchCreateSessions' 60 second default.
+    assert RETIRE_AFTER_SECONDS > 60.0
     assert not active.closed
     retire()
     assert active.closed
@@ -292,11 +301,11 @@ def test_spanner_wide_silence_never_moves_traffic(rig: _Rig, caplog: Any) -> Non
         _fail(call, 3, rig)  # inside the probe interval: no second round
 
     assert rig.channel._active.channel is active
-    assert len(rig.channels) == 2 and not rig.scheduled
+    assert len(rig.channels) == 2 and not rig.retirements()
     assert active.calls(PROBE.method) == standby.calls(PROBE.method) == 1
     assert _messages(caplog) == [
         "spanner channel probe kept client=primary reason=deadline_streak standby=silent "
-        "active=silent stalled_ms=1500 probe_ms=0"
+        "active=silent stalled_ms=1000 probe_ms=0"
     ]
     assert caplog.records[0].levelno == logging.INFO
 
@@ -353,8 +362,112 @@ def test_a_real_answer_during_the_probe_keeps_the_traffic(rig: _Rig, caplog: Any
     assert rig.channel._active.channel is active
     assert _messages(caplog) == [
         "spanner channel probe kept client=primary reason=deadline_streak standby=answered "
-        "active=silent stalled_ms=1500 probe_ms=100"
+        "active=silent stalled_ms=1000 probe_ms=100"
     ]
+
+
+def test_a_stream_that_ends_ok_is_an_answer_and_leaves_nothing_in_flight(rig: _Rig) -> None:
+    """Most reads are ExecuteStreamingSql: a stream counts when it ends."""
+    active = rig.channels[0]
+    pending = _Call(code=None)
+    active.reply = lambda method, request: pending if method == STREAMING_SQL else _Call(DEADLINE)
+    lane = rig.channel._active
+    _fail(rig.channel.unary_unary(EXECUTE_SQL), 2, rig)
+    assert lane.deadline_streak == 2
+
+    rig.tick(0.5)
+    assert rig.channel.unary_stream(STREAMING_SQL)(b"request") is pending
+    assert len(lane.inflight) == 1
+    rig.tick(0.25)
+    pending.finish(OK)
+
+    assert lane.inflight == {}
+    assert lane.last_answer == rig.clock.now
+    assert lane.deadline_streak == 0
+
+
+def test_a_future_that_ends_ok_is_an_answer_and_leaves_nothing_in_flight(rig: _Rig) -> None:
+    active = rig.channels[0]
+    pending = _Call(code=None)
+    lane = rig.channel._active
+    call = rig.channel.unary_unary(EXECUTE_SQL)
+    active.reply = _silent
+    _fail(call, 2, rig)
+
+    active.reply = lambda method, request: pending
+    rig.tick(0.5)
+    assert call.future(b"request") is pending
+    assert len(lane.inflight) == 1
+    rig.tick(0.25)
+    pending.finish(OK)
+
+    assert lane.inflight == {}
+    assert lane.last_answer == rig.clock.now
+    assert lane.deadline_streak == 0
+
+
+def test_a_stream_that_reaches_its_deadline_extends_the_streak(rig: _Rig) -> None:
+    active, standby = rig.channels
+    standby.reply = _answers_probe
+    pending = _Call(code=None)
+    active.reply = lambda method, request: pending if method == STREAMING_SQL else _Call(DEADLINE)
+    _fail(rig.channel.unary_unary(EXECUTE_SQL), 2, rig)
+    rig.channel.unary_stream(STREAMING_SQL)(b"request")
+
+    pending.finish(DEADLINE)
+
+    assert rig.channel._active.channel is standby
+
+
+def test_the_stall_check_runs_while_calls_wait_and_never_when_idle(rig: _Rig, caplog: Any) -> None:
+    """A stuck connection may see no call start or end: a timer looks instead."""
+    active, standby = rig.channels
+    standby.reply = _answers_probe
+    pending = _Call(code=None)
+    active.reply = lambda method, request: pending if method == STREAMING_SQL else _Call(DEADLINE)
+    stream = rig.channel.unary_stream(STREAMING_SQL)
+    assert rig.checks() == []
+
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        stream(b"request")
+        stream(b"request")  # one timer, however many calls
+        (check,) = rig.checks()
+        rig.scheduled.clear()
+        rig.tick(CHECK_INTERVAL_SECONDS)
+        check()
+        (check,) = rig.checks()  # still waiting: armed again
+        rig.scheduled.clear()
+        rig.tick(STALL_SECONDS - CHECK_INTERVAL_SECONDS)
+        check()
+
+    assert _messages(caplog) == [
+        "spanner channel failover client=primary reason=waiting stalled_ms=3000 "
+        "waiting=2 deadline_streak=0 probe_ms=0 failovers=1"
+    ]
+    # The timer already armed finds nothing in flight on the new channel and
+    # stops; none runs again until a call starts.
+    (check,) = rig.checks()
+    rig.scheduled.clear()
+    check()
+    assert rig.checks() == []
+    rig.channel.unary_unary(EXECUTE_SQL)(b"request")
+    (check,) = rig.checks()
+    rig.scheduled.clear()
+    check()
+    assert rig.checks() == []
+
+
+def test_stalled_time_starts_with_the_first_call_that_got_no_answer(rig: _Rig, caplog: Any) -> None:
+    """Not with the last answer: an idle connection has not been stalled all along."""
+    rig.channels[0].reply = _silent
+    rig.channels[1].reply = _answers_probe
+    rig.tick(600.0)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        _fail(rig.channel.unary_unary(EXECUTE_SQL), 3, rig)
+
+    assert _messages(caplog)[0].startswith(
+        "spanner channel failover client=primary reason=deadline_streak stalled_ms=1000 "
+    )
 
 
 def test_an_answer_resets_the_deadline_streak(rig: _Rig) -> None:
@@ -542,6 +655,54 @@ def test_switched_off_leaves_the_sdk_to_build_its_own_client(caplog: Any) -> Non
     assert _messages(caplog) == ["spanner channel failover off client=primary"]
 
 
+class _Pool:
+    def __init__(self, *failures: Exception) -> None:
+        self.failures = list(failures)
+        self.binds = 0
+
+    def bind(self, database: Any) -> None:
+        self.binds += 1
+        if self.failures:
+            raise self.failures.pop(0)
+
+
+def test_a_failed_bind_on_the_failover_client_is_retried_on_the_sdks(caplog: Any) -> None:
+    closed: list[bool] = []
+    transport = SimpleNamespace(close=lambda: closed.append(True))
+    database = SimpleNamespace(
+        _spanner_api=SimpleNamespace(transport=transport),
+        _trusted_router_channel_failover=True,
+    )
+    pool = _Pool(RuntimeError(PRIVATE_TEXT))
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        failover.bind_session_pool(database, pool)
+
+    assert pool.binds == 2
+    assert closed == [True]
+    assert database._spanner_api is None
+    assert _messages(caplog) == [
+        "spanner channel failover dropped client=primary error_class=RuntimeError"
+    ]
+    assert "private" not in caplog.text
+
+
+def test_a_failed_bind_without_failover_is_the_callers() -> None:
+    database = SimpleNamespace(_spanner_api=object())
+    pool = _Pool(RuntimeError("no sessions"))
+    with pytest.raises(RuntimeError, match="no sessions"):
+        failover.bind_session_pool(database, pool)
+    assert pool.binds == 1
+
+    retried = SimpleNamespace(
+        _spanner_api=SimpleNamespace(transport=SimpleNamespace(close=lambda: None)),
+        _trusted_router_channel_failover=True,
+    )
+    pool = _Pool(RuntimeError("first"), RuntimeError("second"))
+    with pytest.raises(RuntimeError, match="second"):
+        failover.bind_session_pool(retried, pool)
+    assert pool.binds == 2
+
+
 def test_install_never_raises(caplog: Any) -> None:
     with caplog.at_level(logging.INFO, logger=LOGGER):
         failover.install_spanner_channel_failover(object())
@@ -647,6 +808,22 @@ def test_real_grpc_moves_off_a_connection_that_stopped_answering(
         assert channel.unary_unary("/test/Call")(b"after", timeout=5) == b"after"
         assert list(channel.unary_stream("/test/Stream")(b"s", timeout=5)) == [b"s", b"s"]
         assert server.peers[-1] != stuck
+        active = channel._active
+        assert active.inflight == {}
+        # A stream given up before its end leaves when it is cancelled...
+        abandoned = channel.unary_stream("/test/Stream")(b"s", timeout=5)
+        assert next(abandoned) == b"s"
+        assert len(active.inflight) == 1
+        abandoned.cancel()
+        _wait_for(lambda: active.inflight == {})
+        assert active.deadline_streak == 0
+        # ...or, dropped without a cancel, when its deadline comes.
+        dropped = channel.unary_stream("/test/Stream")(b"s", timeout=0.5)
+        assert next(dropped) == b"s"
+        assert len(active.inflight) == 1
+        del dropped
+        gc.collect()
+        _wait_for(lambda: active.inflight == {})
     finally:
         channel.close()
 
@@ -703,6 +880,7 @@ class _SpannerLane(_Channel):
         super().__init__(tag)
         self.kwargs = kwargs
         self.silent = False
+        self.refuse_sessions = False
         self.unavailable_once: set[str] = set()
         self.reply = self._spanner
 
@@ -717,6 +895,8 @@ class _SpannerLane(_Channel):
         if name in self.unavailable_once:
             self.unavailable_once.discard(name)
             return _Call(grpc.StatusCode.UNAVAILABLE)
+        if name == "BatchCreateSessions" and self.refuse_sessions:
+            return _Call(grpc.StatusCode.PERMISSION_DENIED)
         if name == "BatchCreateSessions":
             sessions = [
                 spanner_v1.Session(name=f"{request.database}/sessions/{self.name}-{index}")
@@ -843,6 +1023,31 @@ def test_real_sdk_client_runs_on_the_failover_channel(
     assert len(sdk_lanes) == 3
     pool.put(session)
     transport.close()
+
+
+def test_pool_fills_on_the_sdks_own_client_when_the_failover_client_fails(
+    sdk_lanes: list[_SpannerLane], caplog: Any
+) -> None:
+    from google.cloud.spanner_v1 import FixedSizePool
+
+    pool = FixedSizePool(size=2)
+    database = _sdk_database(_metadata_server_credentials(), pool)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        failover.install_spanner_channel_failover(database)
+        sdk_lanes[0].refuse_sessions = True
+        failover.bind_session_pool(database, pool)
+
+    assert _messages(caplog) == [
+        "spanner channel failover armed client=primary",
+        "spanner channel failover dropped client=primary error_class=PermissionDenied",
+    ]
+    assert [lane.closed for lane in sdk_lanes[:2]] == [True, True]
+    (sdk_own,) = sdk_lanes[2:]
+    assert OWN_CONNECTION not in sdk_own.kwargs["options"]
+    ((created, _timeout),) = sdk_own.requests("BatchCreateSessions")
+    assert created.session_count == 2
+    assert pool.get().name.rsplit("/", 1)[-1] in {"lane2-0", "lane2-1"}
+    database.spanner_api.transport.close()
 
 
 def test_every_lane_signs_with_the_credentials_the_watch_prepares(monkeypatch: Any) -> None:

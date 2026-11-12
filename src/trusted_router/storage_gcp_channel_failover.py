@@ -22,14 +22,15 @@ connection does not. A Spanner-wide problem leaves the standby silent too, so
 it never moves traffic: an application-side reset across the fleet is what
 the October 15 report advised against. A slow but answering connection
 answers the probe, so it does not move traffic either. At most one move a
-minute. The old channel is closed 30 seconds later, by when every call it
-carried has reached its deadline.
+minute. The old channel is closed 65 seconds later, by when every call the
+store sends on it has reached its deadline.
 
 Only fixed words and numbers leave this module, as in the transport watch.
 """
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import os
@@ -52,9 +53,15 @@ DEADLINE_STREAK = 3
 PROBE_TIMEOUT_SECONDS = 2.0
 PROBE_INTERVAL_SECONDS = 5.0
 FAILOVER_INTERVAL_SECONDS = 60.0
-# Longer than the 20 second transaction budget, so closing the old channel
-# cancels nothing a caller is still waiting on.
-RETIRE_AFTER_SECONDS = 30.0
+# While calls are in flight, how often the stall check runs without a call
+# starting or ending. Nothing runs while the channel is idle.
+CHECK_INTERVAL_SECONDS = 1.0
+# Longer than every deadline on a call the store sends: the 20 second
+# transaction budget, and the generated defaults on the session RPCs the
+# deadline wrapper does not cover (BatchCreateSessions 60 seconds; Create,
+# Get and DeleteSession 30). Closing the old channel cancels nothing a caller
+# is still waiting on.
+RETIRE_AFTER_SECONDS = 65.0
 # gRPC shares one connection between channels with the same target and
 # arguments. Without this the standby would ride the stuck connection.
 OWN_CONNECTION = ("grpc.use_local_subchannel_pool", 1)
@@ -144,6 +151,8 @@ class _Lane:
         self.channel = channel
         self.last_answer = now
         self.deadline_streak = 0
+        # When the first call of the current streak started.
+        self.streak_since = now
         self.inflight: dict[int, float] = {}
         self._callables: dict[_Key, Any] = {}
 
@@ -174,12 +183,18 @@ class _Lane:
         self.last_answer = max(self.last_answer, now)
         self.deadline_streak = 0
 
-    def stall(self, now: float) -> str | None:
+    def deadline(self, started: float) -> None:
+        if self.deadline_streak == 0:
+            self.streak_since = started
+        self.deadline_streak += 1
+
+    def stall(self, now: float) -> tuple[str, float] | None:
+        """Why the connection looks stuck, and since when a caller has waited."""
         if self.deadline_streak >= DEADLINE_STREAK:
-            return "deadline_streak"
+            return "deadline_streak", self.streak_since
         waiting = [start for start in self.inflight.values() if start >= self.last_answer]
         if waiting and now - min(waiting) >= STALL_SECONDS:
-            return "waiting"
+            return "waiting", min(waiting)
         return None
 
 
@@ -219,6 +234,7 @@ class FailoverChannel(grpc.Channel):
         self._subscriptions: list[tuple[Callable[..., Any], bool]] = []
         self._next_call = 0
         self._probing = False
+        self._checking = False
         self._last_probe = float("-inf")
         self._last_failover = float("-inf")
         self._failovers = 0
@@ -319,6 +335,10 @@ class FailoverChannel(grpc.Channel):
             token = self._next_call
             self._next_call += 1
             lane.inflight[token] = now
+            check = not self._checking
+            self._checking = True
+        if check:
+            self._check_later()
         self._probe_later(suspicion)
         try:
             return lane, token, lane.callable(key)
@@ -330,11 +350,11 @@ class FailoverChannel(grpc.Channel):
         try:
             now = self._clock()
             with self._lock:
-                lane.inflight.pop(token, None)
+                started = lane.inflight.pop(token, now)
                 if _answered(status):
                     lane.answered(now)
                 elif status == grpc.StatusCode.DEADLINE_EXCEEDED:
-                    lane.deadline_streak += 1
+                    lane.deadline(started)
                 suspicion = self._suspect(now)
             self._probe_later(suspicion)
         except Exception:  # noqa: BLE001 - bookkeeping never fails a call.
@@ -366,6 +386,27 @@ class FailoverChannel(grpc.Channel):
 
     # Detection and failover
 
+    def _check_later(self) -> None:
+        try:
+            self._schedule(CHECK_INTERVAL_SECONDS, self._check)
+        except Exception:  # noqa: BLE001 - the next call to start arms it again.
+            with self._lock:
+                self._checking = False
+
+    def _check(self) -> None:
+        """A stall leaves calls waiting and may start none: look without one."""
+        try:
+            with self._lock:
+                suspicion = self._suspect(self._clock())
+                again = bool(self._active.inflight) and not self._closed
+                self._checking = again
+            if again:
+                self._check_later()
+            self._probe_later(suspicion)
+        except Exception:  # noqa: BLE001 - the next call to start arms it again.
+            with self._lock:
+                self._checking = False
+
     def _suspect(self, now: float) -> _Suspicion | None:
         """Called with the lock held. Claims the next probe round, if one is due."""
         if (
@@ -375,16 +416,17 @@ class FailoverChannel(grpc.Channel):
             or now - self._last_failover < FAILOVER_INTERVAL_SECONDS
         ):
             return None
-        reason = self._active.stall(now)
-        if reason is None:
+        stall = self._active.stall(now)
+        if stall is None:
             return None
+        reason, since = stall
         self._probing = True
         self._last_probe = now
         return _Suspicion(
             active=self._active,
             standby=self._standby,
             reason=reason,
-            stalled_ms=max(0, round((now - self._active.last_answer) * 1000)),
+            stalled_ms=max(0, round((now - since) * 1000)),
             started=now,
         )
 
@@ -556,7 +598,35 @@ def install_spanner_channel_failover(
     if api is None:
         return
     database._spanner_api = api
+    database._trusted_router_channel_failover = True
     logger.info("spanner channel failover armed client=%s", name)
+
+
+def bind_session_pool(database: Any, pool: Any, *, name: str = "primary") -> None:
+    """``pool.bind(database)``, falling back to the SDK's own client.
+
+    A FixedSizePool creates its sessions on bind, the first RPCs the store
+    sends. If that fails on the failover client, the client is dropped and
+    the bind is tried once more on the client the SDK builds, as before this
+    module existed. A second failure is the caller's, as it always was.
+    """
+    try:
+        pool.bind(database)
+        return
+    except Exception as exc:
+        if not getattr(database, "_trusted_router_channel_failover", False):
+            raise
+        logger.warning(
+            "spanner channel failover dropped client=%s error_class=%s",
+            name,
+            type(exc).__name__,
+        )
+    # The SDK's own client replaces it, whatever closing this one does.
+    with contextlib.suppress(Exception):
+        database._spanner_api.transport.close()
+    database._spanner_api = None
+    database._trusted_router_channel_failover = False
+    pool.bind(database)
 
 
 def _failover_spanner_api(database: Any, name: str) -> Any:
