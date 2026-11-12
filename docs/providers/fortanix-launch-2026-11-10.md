@@ -40,6 +40,36 @@ The locally vendored provider icon is converted from the official
 https://www.fortanix.com/favicon.ico, retrieved November 10, 2026. The social
 preview uses the repository renderer and counts only the public model/route.
 
+## Context Window
+
+The public route has a **1,048,576-token total context window**, including
+input and requested output. The previous 131,072 value was inherited from
+the restricted test model, not Fortanix's serving configuration. The private
+test model keeps its historical limit.
+
+Verified on November 12, 2026, with the operator-approved existing provider
+credential held only in memory:
+
+- Fortanix's authenticated `https://ctf.armet.ai/v1/models` returned
+  `id=GLM-5.3-Flash`, `max_model_len=1048576`.
+- One bounded direct request reported 1,047,000 prompt tokens and 31 output
+  tokens, returned the synthetic checkpoints at the beginning, middle, and
+  end correctly, and finished with `stop`. This verifies near-limit input,
+  not every token at the boundary, throughput, or long-output capacity.
+- Local token counts used the publisher's tokenizer at revision
+  `46a050bec13002ad29ee795c16e61cf4fa3c4a9c`, without remote code execution.
+  Its count matched the provider's reported prompt usage exactly.
+- An earlier 120K request returned HTTP 200 but a local response-wrapper
+  parsing error made that attempt inconclusive. It was retained, not replayed.
+
+The publisher also documents a
+[1M native context](https://docs.z.ai/guides/vlm/glm-5.3-flash), but the serving
+claim above rests on Fortanix's own metadata and direct inference, not solely
+the native specification. This correction does not add an output-limit,
+vision, tool-calling, or other capability claim, or change the tariff.
+Direct provider testing is not verification of the deployed router path;
+verify the public catalog and admission after the normal GCP rollout.
+
 ## Release Acceptance
 
 Source changes, local tests, and a merged PR do not establish live serving.

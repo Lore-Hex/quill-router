@@ -1925,6 +1925,7 @@ _fortanix_public_model = replace(
     _fortanix_model,
     id=fortanix_launch.MODEL_ID,
     name="GLM 5.3 Flash (Fortanix)",
+    context_length=fortanix_launch.CONTEXT_LENGTH,
     internal_only=False,
     supported_parameters=("max_tokens",),
     prompt_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,

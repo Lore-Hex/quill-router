@@ -5,6 +5,9 @@ from trusted_router.pricing import _customer_price, _flat_tier
 
 MODEL_ID = "fortanix/glm-5.3-flash"
 NATIVE_ID = "GLM-5.3-Flash"
+# Fortanix /v1/models max_model_len; near-limit inference verified 2026-11-12.
+# See docs/providers/fortanix-launch-2026-11-10.md, Context Window.
+CONTEXT_LENGTH = 1_048_576
 # Joseph confirmed zero supplier charges, no campaign cap and no fixed end
 # date on 2026-11-10. Do not turn that into a permanent provider price claim.
 SUPPLIER_COST_MICRO_PER_M = 0
