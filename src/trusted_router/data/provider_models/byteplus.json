@@ -1341,7 +1341,7 @@
   ],
   "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
   "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
-  "generated_at": "2026-11-12T00:34:18Z",
+  "generated_at": "2026-11-12T02:02:29Z",
   "price_scale": "microdollars_per_million",
   "model_count": 60
 }

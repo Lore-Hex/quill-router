@@ -3,7 +3,7 @@
   "provider": "cohere",
   "source": "https://docs.cohere.com/docs/cohere-embed",
   "pricing_source": "https://cohere.com/pricing",
-  "generated_at": "2026-11-12T00:34:18Z",
+  "generated_at": "2026-11-12T02:02:29Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3,
   "models": [
