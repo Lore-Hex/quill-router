@@ -48,8 +48,9 @@ func TestMain(m *testing.M) {
 // TestStoreReadinessAsksTheStoreWithTheFleetsConfiguration: the readiness
 // that main wires reaches the database by its path and reads as a grant
 // would with the configuration given, not the defaults: a tier-1 workspace
-// with credit is refused for a fleet that needs tier 3, taken for one that
-// needs tier 1, and refused again for a floor its credit does not clear.
+// with credit is refused for a fleet that needs tier 3, refused for one that
+// needs tier 1 with no tier-1 allowance, taken once tiers 2 and 1 have one,
+// and refused again for a floor its credit does not clear.
 func TestStoreReadinessAsksTheStoreWithTheFleetsConfiguration(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
@@ -73,8 +74,13 @@ func TestStoreReadinessAsksTheStoreWithTheFleetsConfiguration(t *testing.T) {
 		t.Fatalf("a fleet that needs tier 3: %v", err)
 	}
 	cfg.RequiredTier = 1
+	err = storeReadiness(ctx, emulator.Path("loadgen"), cfg, []string{ws})
+	if err == nil || !strings.Contains(err.Error(), string(store.RefusedTierAllowance)) {
+		t.Fatalf("a fleet that needs tier 1, no tier-1 allowance: %v", err)
+	}
+	cfg.AllowanceTier2, cfg.AllowanceTier1 = 100_000_000, 25_000_000
 	if err := storeReadiness(ctx, emulator.Path("loadgen"), cfg, []string{ws}); err != nil {
-		t.Fatalf("a fleet that needs tier 1: %v", err)
+		t.Fatalf("a fleet that needs tier 1, with a tier-1 allowance: %v", err)
 	}
 	cfg.Floor = 100
 	err = storeReadiness(ctx, emulator.Path("loadgen"), cfg, []string{ws})
@@ -239,24 +245,30 @@ func TestTheRunStartsOnlyOnceTheWorkspacesAreReady(t *testing.T) {
 	args := []string{"-front", srv.URL, "-mix", mix, "-rate", "100", "-duration", "50ms", "-seed", "1",
 		"-workspace", "ws-a, ws-b", "-database", "projects/p/instances/i/databases/d"}
 	var asked []string
-	var tier, floor int64
+	var tier, floor, tier2, tier1 int64
 	notReady := func(_ context.Context, database string, cfg store.Config, workspaces []string) error {
 		asked = append(asked, database)
 		asked = append(asked, workspaces...)
-		tier, floor = cfg.RequiredTier, cfg.Floor
+		tier, floor, tier2, tier1 = cfg.RequiredTier, cfg.Floor, cfg.AllowanceTier2, cfg.AllowanceTier1
 		return errors.New("workspace ws-b is not ready for the load: the workspace is not enabled for the fast path")
 	}
 	err := run(args, io.Discard, notReady)
 	if err == nil || !strings.Contains(err.Error(), "ws-b is not ready") ||
 		!slices.Equal(asked, []string{"projects/p/instances/i/databases/d", "ws-a", "ws-b"}) ||
-		tier != service.Defaults().Store.RequiredTier || floor != service.Defaults().Store.Floor {
-		t.Fatalf("a workspace not ready: %v, asked %q, tier %d floor %d", err, asked, tier, floor)
+		tier != service.Defaults().Store.RequiredTier || floor != service.Defaults().Store.Floor || tier2 != 0 ||
+		tier1 != 0 {
+		t.Fatalf("a workspace not ready: %v, asked %q, tier %d floor %d, allowances %d %d", err, asked, tier, floor,
+			tier2, tier1)
 	}
 	// The fleet's tier and floor reach the readiness, as the fast path's
 	// own flags set them.
 	if err := run(append(args, "-required-tier", "3", "-floor", "25"), io.Discard, notReady); err == nil ||
 		tier != 3 || floor != 25 {
 		t.Fatalf("-required-tier 3 -floor 25: %v, tier %d floor %d", err, tier, floor)
+	}
+	if err := run(append(args, "-allowance-tier2", "100000000", "-allowance-tier1", "25000000"), io.Discard,
+		notReady); err == nil || tier2 != 100_000_000 || tier1 != 25_000_000 {
+		t.Fatalf("-allowance-tier2 100000000 -allowance-tier1 25000000: %v, allowances %d %d", err, tier2, tier1)
 	}
 	mu.Lock()
 	if len(seen) != 0 {

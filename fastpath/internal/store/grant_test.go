@@ -133,19 +133,25 @@ func TestGrantRefusesWhatTheDesignRefuses(t *testing.T) {
 }
 
 // TestTheRequiredTierIsTheNodes: a workspace at tier 2 is granted under
-// today's RequiredTier 1 and refused under 3 (docs/design/fast-admission-
-// widening.md, (b)); an operator's override to 3 with its identity met is
+// RequiredTier 1 with a tier-2 allowance, refused for its allowance under
+// RequiredTier 1 without one, and refused for the tier under 3 whatever its
+// allowance (docs/design/fast-admission-widening.md, (b)); an operator's
+// override to 3 with its identity met is
 // granted, Python having written the effective tier on every shard beside
 // the override's; an override whose effective tier stayed 1 is still
 // refused, since the grant reads the effective tier, not the override's.
 func TestTheRequiredTierIsTheNodes(t *testing.T) {
 	ctx := context.Background()
 	today := spikeStore(t, func(c *Config) { c.RequiredTier = 1 })
-	widened := spikeStore(t)
+	lowered := spikeStore(t, func(c *Config) { c.RequiredTier, c.AllowanceTier2 = 1, c.Allowance })
+	widened := spikeStore(t, func(c *Config) { c.AllowanceTier2 = c.Allowance })
 	ws := seedWorkspace(t, 100, 100)
 	setRows(t, ws, map[string]any{"trust_tier": int64(2)})
-	if got, err := today.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != "" {
-		t.Fatalf("tier 2 under RequiredTier 1: %+v %v", got, err)
+	if got, err := today.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != RefusedTierAllowance {
+		t.Fatalf("tier 2 under RequiredTier 1 with no tier-2 allowance: %+v %v", got, err)
+	}
+	if got, err := lowered.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != "" {
+		t.Fatalf("tier 2 under RequiredTier 1 with a tier-2 allowance: %+v %v", got, err)
 	}
 	before := readRows(t, ws)
 	if got, err := widened.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != RefusedTier {

@@ -206,6 +206,17 @@ locals {
   fastpath_required_tier = "3"
   fastpath_allowance     = "1000000000"
   fastpath_floor         = "20000000"
+  # The lower tiers' allowances (docs/design/fast-admission-widening.md
+  # (b)), in microdollars: "0" is none, so a tier-2 or tier-1 workspace takes
+  # no lease whatever the required tier, and the startup script passes no
+  # -allowance-tier2 or -allowance-tier1 for "0", so the pinned release need
+  # not take them yet. Dark: with the required tier at 3 neither is read. A
+  # later change sets them, each at most the tier above's, re-pins to a
+  # release that takes the flags, and only then lowers
+  # fastpath_required_tier, and takes each node by the money settings step
+  # of docs/runbooks/fastpath-deploy.md.
+  fastpath_allowance_tier2 = "0"
+  fastpath_allowance_tier1 = "0"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -494,6 +505,8 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-required-tier     = local.fastpath_required_tier
     fastpath-allowance         = local.fastpath_allowance
     fastpath-floor             = local.fastpath_floor
+    fastpath-allowance-tier2   = local.fastpath_allowance_tier2
+    fastpath-allowance-tier1   = local.fastpath_allowance_tier1
   }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {

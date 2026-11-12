@@ -1175,12 +1175,18 @@ class Settings(BaseSettings):
     # include list (at most 32, exempt from the rank and from the bypass
     # exclusion) comes from scripts/deploy/fastpath_lists.sh. A workspace
     # joins with unspent credit of at least the enable balance and leaves
-    # under the disable balance (section 4(b)).
+    # under the disable balance (section 4(b)). It joins at the required
+    # tier or above, 3 by default: that must never be below the fast path
+    # nodes' required tier in effect (infra/fastpath.tf
+    # fastpath_required_tier, the node's -required-tier), or the enabler
+    # would turn on workspaces every grant refuses; it is lowered only after
+    # the nodes' is, and the nodes' raised only after it is.
     fastpath_enabler_mode: Literal["off", "dry-run", "apply"] = "off"
     fastpath_enabler_max_rank: int = Field(default=0, ge=0)
     fastpath_enabler_include: str = ""
     fastpath_enabler_enable_balance_micro: int = Field(default=100_000_000, gt=0)
     fastpath_enabler_disable_balance_micro: int = Field(default=40_000_000, gt=0)
+    fastpath_enabler_required_tier: int = Field(default=3, ge=1, le=3)
     _fastpath_enabler_include_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Which keys with day, week or month spend windows the pilot covers
     # (docs/design/fast-admission-e2-key-windows.md section 5): `off` none,

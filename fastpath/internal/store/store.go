@@ -40,13 +40,33 @@ type Config struct {
 	// for the spike's correctness runs.
 	MaxLife time.Duration
 	Grace   time.Duration
-	// Allowance caps a workspace's exposure, across its regions and shards;
-	// Floor is the headroom a grant leaves outside leases; RequiredTier is
-	// the trust tier that allows leases (§4.2, §4.7, §4.11). The spike has
-	// one tier, so one allowance.
-	Allowance    int64
-	Floor        int64
-	RequiredTier int64
+	// Allowance caps a tier-3 workspace's exposure, across its regions and
+	// shards, and AllowanceTier2 and AllowanceTier1 a tier-2 and a tier-1
+	// workspace's: the allowance a grant weighs is the one of the
+	// workspace's tier, the least of its rows' with a latched row at zero
+	// (rowsRefuse). A tier with no allowance, 0, takes no lease, nor does
+	// tier 0, which has none; the lower tiers' are 0 unless set, so only
+	// tier 3 is leased (docs/design/fast-admission-widening.md, (b)). Floor
+	// is the headroom a grant leaves outside leases; RequiredTier is the
+	// trust tier that allows leases (§4.2, §4.7, §4.11).
+	Allowance      int64
+	AllowanceTier2 int64
+	AllowanceTier1 int64
+	Floor          int64
+	RequiredTier   int64
+}
+
+// AllowanceAt is the allowance of a workspace at the tier, 0 for none.
+func (c Config) AllowanceAt(tier int64) int64 {
+	switch tier {
+	case 3:
+		return c.Allowance
+	case 2:
+		return c.AllowanceTier2
+	case 1:
+		return c.AllowanceTier1
+	}
+	return 0
 }
 
 // MaxSetting bounds every duration in Config.
@@ -95,6 +115,10 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	}
 	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {
 		return nil, errors.New("store: the allowance must be positive, the floor not negative, and the tier 0 to 3")
+	}
+	// A lower tier never gets more than a higher one: 0 is none.
+	if cfg.AllowanceTier1 < 0 || cfg.AllowanceTier1 > cfg.AllowanceTier2 || cfg.AllowanceTier2 > cfg.Allowance {
+		return nil, errors.New("store: the tiers' allowances must be 0 or more and not rise as the tier falls")
 	}
 	return &Store{client: client, cfg: cfg}, nil
 }

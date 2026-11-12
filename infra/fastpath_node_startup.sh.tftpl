@@ -95,15 +95,24 @@ esac
 # leaves, in microdollars, from fastpath-required-tier, fastpath-allowance
 # and fastpath-floor. Each flag is passed only when its attribute is there,
 # so a node without them runs the release's defaults, today's values: tier
-# 1, the allowance 1 << 50, no floor. The pinned release must take
+# 1, the allowance 1 << 50, no floor, and no allowance for tiers 2 and 1. The pinned release must take
 # -allowance and -floor before either attribute is set
 # (tests/test_fastpath_money_settings.py). Each is held here to the bounds
 # the release holds it to (service.CheckMoney), so a value it would refuse,
 # stopping the whole process restarted into the same refusal, stops the
 # script instead and the unit keeps what it had.
+# The lower tiers' allowances, fastpath-allowance-tier2 and
+# fastpath-allowance-tier1 (-allowance-tier2, -allowance-tier1; -allowance
+# is tier 3's), are passed only when set and not 0: 0 or absent is none, the
+# release's default, so tiers 2 and 1 take no lease and a release from
+# before the flags still starts. Each set is held to the allowance's bounds
+# and to the release's order, tier 1's at most tier 2's at most the
+# allowance (1 << 50 when fastpath-allowance is absent).
 required_tier="$(attribute fastpath-required-tier)" || exit 1
 allowance="$(attribute fastpath-allowance)" || exit 1
 floor="$(attribute fastpath-floor)" || exit 1
+allowance_tier2="$(attribute fastpath-allowance-tier2)" || exit 1
+allowance_tier1="$(attribute fastpath-allowance-tier1)" || exit 1
 # A whole number of at most 16 digits with no leading zero, from $2 to
 # 1 << 50.
 money_setting() {
@@ -133,6 +142,26 @@ if [ -n "$floor" ]; then
     exit 1
   fi
   money_flags="$money_flags -floor $floor"
+fi
+tier3_allowance=1125899906842624
+if [ -n "$allowance" ]; then
+  tier3_allowance="$allowance"
+fi
+tier2_allowance=0
+if [ -n "$allowance_tier2" ] && [ "$allowance_tier2" != 0 ]; then
+  if ! money_setting "$allowance_tier2" 10000000 || [ "$allowance_tier2" -gt "$tier3_allowance" ]; then
+    echo "fastpath: fastpath-allowance-tier2 is 0, 10000000 to the allowance in microdollars, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  tier2_allowance="$allowance_tier2"
+  money_flags="$money_flags -allowance-tier2 $allowance_tier2"
+fi
+if [ -n "$allowance_tier1" ] && [ "$allowance_tier1" != 0 ]; then
+  if ! money_setting "$allowance_tier1" 10000000 || [ "$allowance_tier1" -gt "$tier2_allowance" ]; then
+    echo "fastpath: fastpath-allowance-tier1 is 0, 10000000 to the tier-2 allowance in microdollars, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  money_flags="$money_flags -allowance-tier1 $allowance_tier1"
 fi
 # The edge's routing snapshot and shadow comparator (docs/design/
 # routing-snapshot-v1.md, E2) run when the instance's metadata names the
