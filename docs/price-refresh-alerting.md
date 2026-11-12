@@ -28,6 +28,9 @@ unchanged.
   with a 60-minute grace period, so even a GitHub-wide scheduling outage or a
   broken observer can be detected outside GitHub. The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.
+  The external observer runs on `tr-clickhouse-3`
+  (`scripts/ops/install_price_refresh_observer.sh`); moving or rebuilding that
+  host means reinstalling it first.
 
 The first observed failure sends immediately. Each error class sends at most
 once per six hours across runs. Recovery closes the GitHub monitoring issue
