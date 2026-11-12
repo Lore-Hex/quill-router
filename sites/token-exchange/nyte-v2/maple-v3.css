@@ -99,7 +99,7 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
   -webkit-mask:var(--icon) center/24px 24px no-repeat;mask:var(--icon) center/24px 24px no-repeat;
   --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M8 12 L16 12'/%3E%3C/svg%3E");opacity:.35}
 [data-verdict="verified"] .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M4.5 12.5 L9.5 17.5 L19.5 7'/%3E%3C/svg%3E")}
-:is([data-verdict="pending"],[data-verdict="incomplete"]) .verdict-icon{display:none}
+[data-verdict="incomplete"] .verdict-icon{display:none}
 :is([data-verdict="mismatch"],[data-verdict="failed"]) .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.5 5.5 L18.5 18.5'/%3E%3Cpath d='M18.5 5.5 L5.5 18.5'/%3E%3C/svg%3E")}
 .mv3-gateway .steps li{border-top-color:var(--ink)}
 
@@ -174,8 +174,8 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
   .mv3-checks,.mv3-record-body,.mv3-ways{margin-top:32px}
 }
 
-/* External links: the kit arrow-up-right icon, in the link colour. */
-.mv3-ext{display:inline-block;width:.75em;height:.75em;margin-left:.3em;vertical-align:-.02em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter}
+/* Link arrows (kit icons), in the link colour. */
+[data-nyte-page="maple"] main a:not(.btn)>svg{display:inline-block;width:.75em;height:.75em;margin-left:.3em;vertical-align:-.02em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter}
 /* A step still waiting on a newer NYTE record (data-state="wait") is left out of the list;
    the verdict above it says where the check stands. */
 .steps li[data-state="wait"]{display:none}

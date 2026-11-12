@@ -148,6 +148,13 @@ class VerifiedPageTests(unittest.TestCase):
         self.assertIn("/assets/analytics.js?v=", self.page)
         self.assertNotIn("{{", self.page)
         self.assertEqual(self.page.count('class="v3-band"'), 1)
+        # Outside links carry the shared kit arrow, never the ↗ character.
+        self.assertNotIn("↗", self.page)
+        self.assertEqual(self.page.count(nyte_v2.ARROW_UP_RIGHT), 8)
+        # With /badge and this page in v3, only verified.js is published from the pre-v3 assets.
+        self.assertTrue((self.root / "assets" / "verified.js").exists())
+        for name in ("badge.css", "verified.css", "badge.js"):
+            self.assertFalse((self.root / "assets" / name).exists(), name)
         self.assertIn("maple", json.loads((HERE / "nyte-brand-v3.json").read_text())["pages"])
         # Removing "maple" from nyte-brand-v3.json restores the pre-v3 page, with its sheets.
         rollback = nyte_v2.BRAND_V3_PAGES - {"maple"}

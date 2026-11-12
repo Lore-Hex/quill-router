@@ -463,7 +463,7 @@ def render_nyte(
     for field in ("title", "description"):
         if f"og_{field}" in entry:
             tag = f'<meta property="og:{field}" content="{html.escape(entry["og_" + field], quote=True)}">'
-            result = re.sub(rf'<meta property="og:{field}" content="[^"]*">', lambda _: tag, result, count=1)
+            result = re.sub(rf'<meta property="og:{field}" content="[^"]*">', lambda _, tag=tag: tag, result, count=1)
     if page in {"providers", "badge"}:
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')
     def tracked(match: re.Match[str]) -> str:

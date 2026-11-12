@@ -141,13 +141,10 @@ video?.addEventListener('playing',()=>{document.getElementById('film').classList
   });
 })();
 
-/* Code that runs past the edge: fade the hidden side, offer an arrow while more is to the right. */
+/* Code that runs past the edge: show the strip's scroll arrow while more is to the right. */
 document.querySelectorAll('.code-scroll').forEach(box => {
   const code = box.querySelector('.code'), next = box.querySelector('.code-next');
-  const update = () => {
-    const left = code.scrollLeft > 2, right = code.scrollLeft + code.clientWidth < code.scrollWidth - 2;
-    box.classList.toggle('can-left', left); box.classList.toggle('can-right', right); next.hidden = !right;
-  };
+  const update = () => { next.hidden = code.scrollLeft + code.clientWidth >= code.scrollWidth - 2; };
   next.addEventListener('click', () => code.scrollBy({left: code.clientWidth * .75,
     behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'}));
   code.addEventListener('scroll', update, {passive:true});

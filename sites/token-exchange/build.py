@@ -181,10 +181,16 @@ def build(output: Path) -> None:
     # /badge and the provider evidence pages are NYTE shell pages (nyte_v2.PAGES).
     # verified.js runs the evidence checks in both designs. The other files serve only
     # pre-v3 pages: badge.css both of them, verified.css the evidence page, badge.js /badge.
+    badge_v3 = uses_brand_v3("badge")
     evidence_v3 = all(uses_brand_v3(provider) for provider in VERIFIED_PROVIDERS)
-    pre_v3 = (() if uses_brand_v3("badge") and evidence_v3 else ("badge.css",)) + (
-        () if evidence_v3 else ("verified.css",)) + (() if uses_brand_v3("badge") else ("badge.js",))
-    for name in ("verified.js",) + pre_v3:
+    shared = ["verified.js"]
+    if not badge_v3:
+        shared += ["badge.js"]
+    if not evidence_v3:
+        shared += ["verified.css"]
+    if not (badge_v3 and evidence_v3):
+        shared += ["badge.css"]
+    for name in shared:
         shutil.copyfile(HERE / name, assets / name)
     build_badges(assets / "badges")
     build_press(output)

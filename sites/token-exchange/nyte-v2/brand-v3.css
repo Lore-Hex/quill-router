@@ -348,7 +348,6 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .v3-code-copy.done .v3-code-done{display:block}
 .v3-code-copy:hover{background:var(--dark-sunken)}
 .v3-code-copy:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
-.v3-code-body{position:relative}
 .v3-code .code{min-width:0;overflow-x:auto;background:var(--ink)}
 .v3-code .code:focus-visible{outline:2px solid var(--cream);outline-offset:-2px}
 .v3-code pre{width:max-content;min-width:100%;margin:0;padding:24px 28px;font:400 14px/1.7 var(--font-mono);color:var(--cream);white-space:pre}

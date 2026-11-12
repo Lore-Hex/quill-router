@@ -451,13 +451,12 @@
   document.querySelectorAll('[data-copy]').forEach(copy => {
     if (!navigator.clipboard) return;
     copy.hidden = false;
-    const label = copy.querySelector('[data-copy-label]') || copy; // keeps an icon beside the word
     copy.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(document.getElementById(copy.dataset.copy).textContent);
-        label.textContent = 'Copied';
+        copy.textContent = 'Copied';
       } catch {
-        label.textContent = 'Select the text to copy';
+        copy.textContent = 'Select the text to copy';
       }
     });
   });
