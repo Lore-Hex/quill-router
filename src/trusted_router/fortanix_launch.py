@@ -141,6 +141,8 @@ class LaunchOfferFacts:
     price_label: str
     price_phrase: str
     lowest_glm_flash_price: bool
+    # One per-1M price when input and output bill the same, else None.
+    unit_price: str | None = None
 
 
 def _cents_label(microdollars_per_million: int) -> str:
@@ -191,4 +193,5 @@ def launch_offer_facts() -> LaunchOfferFacts | None:
         price_label=price_label,
         price_phrase=price_phrase,
         lowest_glm_flash_price=lowest,
+        unit_price=_cents_label(prompt) if prompt == completion else None,
     )

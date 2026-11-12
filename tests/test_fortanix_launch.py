@@ -459,3 +459,26 @@ def test_offer_seo_reverts_when_gate_turns_off(monkeypatch):
     llms, full = _llms_texts()
     assert "Introductory offer" not in llms and MODEL_ID not in llms
     assert "offer=introductory" not in full
+
+
+def test_pricing_page_leads_its_hero_facts_with_the_live_offer_price(client):
+    page = BeautifulSoup(client.get("/pricing").text, "html.parser")
+    rows = page.select(".public-hero-metrics > div")
+    assert rows[0].has_attr("data-launch-offer-metric")
+    assert rows[0].strong.get_text() == "1¢"
+    assert rows[0].a["href"] == f"/models/{MODEL_ID}"
+    assert rows[1].strong.get_text() == "One"
+
+
+def test_offer_metric_stays_on_the_pricing_page(client):
+    assert "data-launch-offer-metric" not in client.get("/docs").text
+
+
+def test_pricing_offer_metric_disappears_with_the_offer(client, monkeypatch):
+    route = endpoints_for_model(MODEL_ID)[0]
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS,
+        route.id,
+        replace(route, completion_price_microdollars_per_million_tokens=20_000),
+    )
+    assert "data-launch-offer-metric" not in client.get("/pricing").text

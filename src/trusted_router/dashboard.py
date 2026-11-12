@@ -2663,6 +2663,7 @@ def _env() -> Environment:
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
     env.globals["fortanix_launch_offer"] = fortanix_launch_offer
+    env.globals["launch_offer_facts"] = launch_offer_facts
     env.globals["decide_url"] = decide_url
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
