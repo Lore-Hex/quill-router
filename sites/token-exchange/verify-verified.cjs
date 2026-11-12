@@ -387,7 +387,7 @@ const panel = (page, id) => Promise.all([
       await page.keyboard.press('ArrowRight');
       assert.deepEqual(await selected(), ['false', 'false', 'true']);
       assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-sources');
-      assert.equal(await page.locator('#way-sources a').count(), 7);
+      assert.equal(await page.locator('#way-sources a').count(), 8);
       await page.keyboard.press('ArrowRight');
       assert.deepEqual(await selected(), ['true', 'false', 'false']);
       await page.keyboard.press('End');

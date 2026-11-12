@@ -28,7 +28,7 @@
           <li data-step="provider" data-state="waiting"><i class="step-icon" aria-hidden="true"></i><div><h3>Compare with Maple’s published approval</h3><p>Maple publishes the fingerprint (PCR0) of each release it approves in its open-source repository.</p><p class="step-result">Waiting</p></div><code hidden></code></li>
           <li data-step="nyte" data-state="waiting"><i class="step-icon" aria-hidden="true"></i><div><h3>Compare with the build NYTE reproduced</h3><p>NYTE rebuilds Maple’s enclave from the public source and records the fingerprint it gets. A match means the running code is the published code.</p><p class="step-result">Waiting</p></div><code hidden></code></li>
         </ol>
-        <div class="check-foot"><button class="btn btn-secondary rerun" type="button">Run both checks again</button><a href="/assets/verified.js">Read the script that does this</a></div>
+        <div class="check-foot"><button class="btn btn-secondary rerun" type="button">Run both checks again</button></div>
       </div>
     </div>
   </section>
@@ -113,6 +113,7 @@ curl -s <span class="s">https://raw.githubusercontent.com/Lore-Hex/quill-cloud-p
         </div>
         <div class="mv3-panel" id="way-sources" role="tabpanel" aria-labelledby="tab-sources">
           <ul class="sources">
+            <li><a href="/assets/verified.js">The script that runs the checks above</a><p>Plain JavaScript, served by this page. Read it before you trust it.</p></li>
             <li><a href="https://github.com/MaplePrivacyLabs/Maple/blob/master/services/opensecret/docs/PCR_VERIFICATION.md">Maple’s guide to verifying its enclave<svg class="mv3-ext" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 19 L15.5 8.5"/><path d="M8 5 L19 5 L19 16"/></svg></a><p>How to decode the document and rebuild the image yourself.</p></li>
             <li><a href="https://maple.ai/proof">Maple’s own proof page<svg class="mv3-ext" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 19 L15.5 8.5"/><path d="M8 5 L19 5 L19 16"/></svg></a><p>Maple’s explanation of what the enclave protects.</p></li>
             <li><a href="https://github.com/MaplePrivacyLabs/Maple/blob/master/services/opensecret/pcrProdHistory.json">Maple’s signed release history<svg class="mv3-ext" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 19 L15.5 8.5"/><path d="M8 5 L19 5 L19 16"/></svg></a><p>Every production fingerprint Maple has approved.</p></li>

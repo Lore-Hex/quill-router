@@ -117,7 +117,7 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
 /* AI agent and Commands use the shared code block (.v3-code in brand-v3.css); the prompt
    is prose, so it wraps in the body face inside the same panel. */
 .mv3-panel.mv3-code-panel{padding:0}
-[data-nyte-page="maple"] main .v3-code pre.agent-prompt{width:auto;white-space:pre-wrap;overflow-wrap:normal;font:400 17px/1.55 var(--font-sans)}
+[data-nyte-page="maple"] main .v3-code pre.agent-prompt{width:auto;white-space:pre-wrap;overflow-wrap:normal;font:400 14px/1.7 var(--font-mono)}
 .sources{list-style:none;margin:0;padding:0}
 .sources li{padding:14px 0;border-top:1px solid var(--dark-rule)}
 .sources li:first-child{padding-top:0;border-top:0}
