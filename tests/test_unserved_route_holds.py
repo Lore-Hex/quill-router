@@ -108,7 +108,8 @@ def test_streak_shorter_than_three_hours_is_not_evidence() -> None:
 
 def test_too_few_or_stale_failures_are_not_evidence() -> None:
     assert _evaluate(_streak("phala", "z-ai/glm-5.1", count=5, every=60) + [_sibling_success()]) == []
-    assert _evaluate(_streak("phala", "z-ai/glm-5.1", newest=180) + [_sibling_success()]) == []
+    stale = int(route_health.UNSERVED_MAX_AGE.total_seconds() // 60) + 60
+    assert _evaluate(_streak("phala", "z-ai/glm-5.1", newest=stale) + [_sibling_success()]) == []
 
 
 def test_a_recent_success_breaks_the_streak() -> None:
@@ -191,6 +192,96 @@ def test_non_synthetic_samples_and_unconfigured_routes_are_ignored() -> None:
     assert _evaluate(samples) == []
     assert _evaluate(_streak("phala", "z-ai/glm-5.1") + [_sibling_success()],
                      routes=[("phala", "other/model")]) == []
+
+
+# --- production probe cadence ----------------------------------------------
+#
+# Configured-route probes are random rotation picks, so one route is probed a
+# few times a day at irregular intervals. #2504's six-hour gap and two-hour
+# freshness bounds rejected every real streak; these model the two routes it
+# was built for, as Sentry showed them at the 2026-11-12 09:47Z evaluation.
+
+
+def _probes_at(provider: str, model: str, hours_ago: list[float],
+               **kwargs: Any) -> list[ProviderBenchmarkSample]:
+    return [_sample(provider, model, minutes_ago=round(hours * 60), **kwargs) for hours in hours_ago]
+
+
+# QUILL-ROUTER-FZ: failing for over 48h, roughly one probe every four hours,
+# the newest almost four hours before the evaluation, an overnight run of
+# Cloudflare 403s in the middle of the "model not found" answers.
+_LYCEUM_ROUTE = ("lyceum", "moonshotai/kimi-k3.1-pro")
+_LYCEUM_HOURS = [3.8, 6.9, 15.2, 18.4, 24.1, 31.5, 34.0, 40.2, 46.7]
+
+
+def _lyceum_streak() -> list[ProviderBenchmarkSample]:
+    provider, model = _LYCEUM_ROUTE
+    return [
+        *_probes_at(provider, model, _LYCEUM_HOURS[:2], error_status=404),
+        *_probes_at(provider, model, _LYCEUM_HOURS[2:5], status="unsupported",
+                    error_type="provider_auth_config", error_status=403),
+        *_probes_at(provider, model, _LYCEUM_HOURS[5:], error_status=404),
+    ]
+
+
+# QUILL-ROUTER-G7: "Model not available.", one 10.5h gap overnight.
+_MAKORA_ROUTE = ("makora", "meta-models/muse-spark-open-816b-a42b-nvfp4")
+_MAKORA_HOURS = [4.3, 14.8, 16.1, 18.9, 20.2, 22.7, 24.5, 27.0]
+
+
+def test_lyceum_kimi_at_production_cadence_is_evidence() -> None:
+    sibling = _probes_at("lyceum", "z-ai/glm-5.3", [1.5], status="success")
+    found = evaluate_unserved_routes(
+        _Store(_lyceum_streak() + sibling),  # type: ignore[arg-type]
+        routes=[_LYCEUM_ROUTE, ("lyceum", "z-ai/glm-5.3")], now=NOW,
+    )
+    assert [(route.provider, route.model) for route in found] == [_LYCEUM_ROUTE]
+    assert found[0].samples == len(_LYCEUM_HOURS)
+    assert found[0].error_types == ("provider_auth_config", "unsupported_route")
+
+
+def test_makora_muse_spark_across_an_overnight_gap_is_evidence() -> None:
+    samples = _probes_at(*_MAKORA_ROUTE, _MAKORA_HOURS, error_status=404) + _probes_at(
+        "makora", "z-ai/glm-5.3", [0.7, 2.9], status="success",
+    )
+    routes = [_MAKORA_ROUTE, ("makora", "z-ai/glm-5.3")]
+    assert _evaluate(samples, routes) == [_MAKORA_ROUTE]
+
+
+def test_production_cadence_still_needs_a_fresh_sibling_success() -> None:
+    routes = [_LYCEUM_ROUTE, ("lyceum", "z-ai/glm-5.3")]
+    assert _evaluate(_lyceum_streak(), routes) == []
+    # Last sibling success before the window: the monitors may have stopped,
+    # or the provider broke for every model.
+    stale = _probes_at("lyceum", "z-ai/glm-5.3", [6.5], status="success")
+    assert _evaluate(_lyceum_streak() + stale, routes) == []
+
+
+def test_production_cadence_transient_head_still_breaks_the_streak() -> None:
+    routes = [_LYCEUM_ROUTE, ("lyceum", "z-ai/glm-5.3")]
+    sibling = _probes_at("lyceum", "z-ai/glm-5.3", [1.5], status="success")
+    for error_type, error_status in (("ReadTimeout", None), ("upstream_error", 503),
+                                     ("probe_config_error", 400)):
+        head = _probes_at(*_LYCEUM_ROUTE, [2.0], status="error", error_type=error_type,
+                          error_status=error_status)
+        assert _evaluate(_lyceum_streak() + head + sibling, routes) == []
+    recovered = _probes_at(*_LYCEUM_ROUTE, [2.0], status="success")
+    assert _evaluate(_lyceum_streak() + recovered + sibling, routes) == []
+
+
+def test_a_gap_longer_than_the_bound_still_splits_episodes() -> None:
+    gap_hours = route_health.UNSERVED_MAX_PROBE_GAP.total_seconds() / 3600 + 0.5
+    hours = [1.0, 1.0 + gap_hours, *(1.0 + gap_hours + 2.5 * i for i in range(1, 7))]
+    samples = _probes_at("phala", "z-ai/glm-5.1", hours) + [_sibling_success()]
+    assert _evaluate(samples) == []
+
+
+def test_gap_bound_sits_between_routine_cadence_and_the_hold() -> None:
+    # Longer than the routine gap between two picks of one route (10.5h seen
+    # on makora), shorter than a hold, during which the route is not probed.
+    gap = route_health.UNSERVED_MAX_PROBE_GAP
+    assert dt.timedelta(hours=12) <= gap <= dt.timedelta(hours=holds.HOLD_HOURS) - dt.timedelta(hours=6)
+    assert route_health.UNSERVED_MAX_AGE < dt.timedelta(hours=holds.HOLD_HOURS)
 
 
 # --- public endpoint --------------------------------------------------------
