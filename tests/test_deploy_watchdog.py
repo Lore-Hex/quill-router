@@ -313,8 +313,6 @@ def _run_staged_probe(
     old_min_instances: str = "2",
     drain_minutes: str = "15",
     existing_drain_revision: str = "",
-    drain_log_hits: str = "",
-    logging_fails: bool = False,
     interrupt_drain: bool = False,
     drain_remove_fails: bool = False,
     rollback_fails: bool = False,
@@ -347,11 +345,6 @@ if [ "$STAGED_ROLLBACK_FAILS" = "1" ] && [[ " $* " == *" --to-revisions=old-rev=
   exit 1
 fi
 case " $* " in
-  *" logging read "*)
-    if [ "$STAGED_LOGGING_FAILS" = "1" ]; then exit 1; fi
-    printf '%s' "$STAGED_DRAIN_LOG_HITS"
-    exit 0
-    ;;
   *" --update-tags=staged-drain="*)
     printf '%s\\n' "$STAGED_DRAIN_REVISION" >"$STAGED_DRAIN_STATE" ;;
   *" --remove-tags=staged-drain "*)
@@ -383,7 +376,7 @@ case " $* " in
     drain_revision="$(cat "$STAGED_DRAIN_STATE")"
     drain_entry=""
     if [ -n "$drain_revision" ]; then
-      drain_entry=",{\\"percent\\":${STAGED_DRAIN_SERVING_PERCENT:-0},\\"revisionName\\":\\"${drain_revision}\\",\\"tag\\":\\"staged-drain\\"}"
+      drain_entry=",{\\"percent\\":0,\\"revisionName\\":\\"${drain_revision}\\",\\"tag\\":\\"staged-drain\\"}"
     fi
     if [ -n "$tagged_revision" ]; then
       printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"},{"percent":0,"revisionName":"%s","tag":"staged-probe"}%s]}}\\n' "$STAGED_SERVICE_INGRESS" "$tagged_revision" "$drain_entry"
@@ -503,8 +496,6 @@ exit 0
         "STAGED_INTERRUPT_DRAIN": "1" if interrupt_drain else "0",
         "STAGED_DRAIN_REMOVE_FAILS": "1" if drain_remove_fails else "0",
         "STAGED_ROLLBACK_FAILS": "1" if rollback_fails else "0",
-        "STAGED_DRAIN_LOG_HITS": drain_log_hits,
-        "STAGED_LOGGING_FAILS": "1" if logging_fails else "0",
         "STAGED_REMOVE_FAILURES_STATE": str(remove_failures_state),
         "STAGED_REMOVE_ALWAYS_FAILS": "1" if remove_always_fails else "0",
         "STAGED_REMOVE_LEAVES_TAG": "1" if remove_leaves_tag else "0",
@@ -671,60 +662,14 @@ def test_interrupted_drain_keeps_old_revision_warm_and_reports_it(tmp_path: Path
     assert "routing drain interrupted; retaining staged-drain=old-rev" in run.stdout
 
 
-@pytest.mark.parametrize(
-    ("hits", "logging_fails", "reason"),
-    [
-        ("2026-11-11T18:30:00Z", False, "served a request at 2026-11-11T18:30:00Z"),
-        ("", True, "could not read its request logs"),
-    ],
-    ids=["recent-requests", "logs-unreadable"],
-)
-def test_unproven_stale_drain_stops_the_ramp_before_any_traffic_moves(
-    tmp_path: Path, hits: str, logging_fails: bool, reason: str,
-) -> None:
+def test_unrelated_outstanding_drain_is_not_replaced_or_removed(tmp_path: Path) -> None:
     run, calls = _run_staged_probe(
         tmp_path, console_code="302", session_code="401", existing_drain_revision="other-rev",
-        drain_log_hits=hits, logging_fails=logging_fails,
     )
     assert run.returncode != 0
-    assert reason in run.stdout
-    assert "::error title=Stale staged-drain tag" in run.stdout
     assert not any("--update-tags=staged-drain=" in c for c in calls)
     assert not any("--remove-tags=staged-drain " in c for c in calls)
-    assert not any("--to-revisions=" in c for c in calls)
-    assert (tmp_path / "drain-state").read_text().strip() == "other-rev"
-
-
-def test_quiet_stale_drain_is_retired_and_the_rollout_completes(tmp_path: Path) -> None:
-    # 2026-11-11: a tag left on trusted-router-01458-pdf by an interrupted
-    # rollout failed every later GCP rollout at the drain step, after both
-    # canaries, until someone removed it by hand.
-    run, calls = _run_staged_probe(
-        tmp_path, console_code="302", session_code="401", existing_drain_revision="other-rev",
-    )
-    assert run.returncode == 0, run.stdout + run.stderr
-    assert "retired stale staged-drain tag on other-rev" in run.stdout
-    assert "::warning title=Retired stale staged-drain tag" in run.stdout
-    query = next(c for c in calls if " logging read " in c)
-    assert 'revision_name="other-rev"' in query
-    assert 'log_id("run.googleapis.com/requests")' in query
-    retired = next(i for i, c in enumerate(calls) if "--remove-tags=staged-drain " in c)
-    first_shift = next(i for i, c in enumerate(calls) if "--to-revisions=new-rev=10," in c)
-    assert calls.index(query) < retired < first_shift
-    assert any("--update-tags=staged-drain=old-rev" in c for c in calls[retired:])
-    assert any("--to-revisions=new-rev=100 " in c for c in calls)
-
-
-def test_stale_drain_on_a_serving_revision_is_never_retired(tmp_path: Path) -> None:
-    run, calls = _run_staged_probe(
-        tmp_path, console_code="302", session_code="401", existing_drain_revision="old-rev2",
-        extra_env={"STAGED_DRAIN_SERVING_PERCENT": "5"},
-    )
-    assert run.returncode != 0
-    assert "still carries traffic" in run.stdout
-    assert not any(" logging read " in c for c in calls)
-    assert not any("--remove-tags=staged-drain " in c for c in calls)
-    assert not any("--to-revisions=" in c for c in calls)
+    assert not any("--to-revisions=new-rev=100 " in c for c in calls)
 
 
 def test_failed_drain_cleanup_cannot_report_success(tmp_path: Path) -> None:

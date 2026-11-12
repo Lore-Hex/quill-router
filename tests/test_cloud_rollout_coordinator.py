@@ -43,11 +43,16 @@ def system():
 
     def probe(cloud):
         if health[cloud] is None:
-            raise rollout.Refused("unhealthy")
+            raise rollout.Unhealthy("unhealthy")
         return health[cloud]
 
     sleeps = []
-    coordinator = rollout.Coordinator(store, probe, lambda: clock[0], sleeps.append)
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    coordinator = rollout.Coordinator(store, probe, lambda: clock[0], sleep)
     return SimpleNamespace(store=store, health=health, clock=clock,
                            coordinator=coordinator, sleeps=sleeps)
 
@@ -164,9 +169,8 @@ def test_protected_cloud_drift_or_outage_stops_forward_progress(system):
 
 
 def test_protected_cloud_blip_inside_grace_does_not_abort_the_rollout(system):
-    # 2026-11-11: a minute-long Azure blip aborted a GCP rollout that had
-    # already passed its canary; the retained drain tag then failed every
-    # later rollout for five hours.
+    # 2026-11-11: a minute-long Azure blip failed this check at the end of a
+    # GCP rollout that had already passed its canary and drain watch.
     first = acquire(system, "gcp")
     acquire(system, "aws")
     calls = []
@@ -175,7 +179,7 @@ def test_protected_cloud_blip_inside_grace_does_not_abort_the_rollout(system):
     def flaky(cloud):
         calls.append(cloud)
         if cloud == "azure" and len(calls) <= 4:
-            raise rollout.Refused("azure is not a verified healthy holdback")
+            raise rollout.Unhealthy("azure is not a verified healthy holdback")
         return real(cloud)
 
     system.coordinator.probe = flaky
@@ -188,20 +192,115 @@ def test_protected_cloud_outage_past_grace_still_refuses(system):
     first = acquire(system, "gcp")
     acquire(system, "aws")
     system.health["azure"] = None
-    with pytest.raises(rollout.Refused, match="unhealthy"):
+    with pytest.raises(rollout.Unhealthy, match="unhealthy"):
         system.coordinator.check("gcp", first["operation_id"])
-    retries = rollout.PROTECTED_OUTAGE_GRACE_SECONDS // rollout.PROTECTED_RETRY_SECONDS
-    assert system.sleeps == [rollout.PROTECTED_RETRY_SECONDS] * retries
-    assert sum(system.sleeps) == rollout.PROTECTED_OUTAGE_GRACE_SECONDS
+    assert sum(system.sleeps) <= rollout.PROTECTED_OUTAGE_GRACE_SECONDS
+    assert sum(system.sleeps) > rollout.PROTECTED_OUTAGE_GRACE_SECONDS - rollout.PROTECTED_RETRY_SECONDS
 
 
-def test_protected_cloud_release_change_is_never_retried(system):
+def test_grace_is_wall_clock_so_slow_probes_use_it_up(system):
+    # A blackholed host costs about a minute per probe (3 x 15 s timeouts);
+    # the grace must bound elapsed time, not the number of attempts.
     first = acquire(system, "gcp")
     acquire(system, "aws")
-    system.health["azure"] = "b" * 40
-    with pytest.raises(rollout.Refused, match="release changed"):
+    started = system.clock[0]
+    calls = []
+
+    def slow_outage(cloud):
+        calls.append(cloud)
+        system.clock[0] += 60
+        raise rollout.Unhealthy("timed out")
+
+    system.coordinator.probe = slow_outage
+    with pytest.raises(rollout.Unhealthy):
         system.coordinator.check("gcp", first["operation_id"])
+    assert len(calls) == 3
+    assert system.clock[0] - started <= rollout.PROTECTED_OUTAGE_GRACE_SECONDS + 60
+
+
+def test_journal_conflicts_share_one_grace(system):
+    # Each pass sees a 100 s outage, then a journal write by another owner.
+    # A per-pass budget would retry for 8 x 100 s; one budget stops at 180 s.
+    first = acquire(system, "gcp")
+    acquire(system, "aws")
+    started = system.clock[0]
+    real = system.coordinator.probe
+    outage_ends = [started + 100]
+
+    def outage_then_conflict(cloud):
+        if system.clock[0] < outage_ends[0]:
+            raise rollout.Unhealthy("blip")
+        outage_ends[0] = system.clock[0] + 100
+        record, generation = system.store.read()
+        system.store.write(record, generation)
+        return real(cloud)
+
+    system.coordinator.probe = outage_then_conflict
+    with pytest.raises(rollout.Unhealthy):
+        system.coordinator.check("gcp", first["operation_id"])
+    assert system.clock[0] - started <= rollout.PROTECTED_OUTAGE_GRACE_SECONDS
+
+
+@pytest.mark.parametrize("change", ["release", "evidence"])
+def test_protected_cloud_evidence_problems_are_never_retried(system, change):
+    first = acquire(system, "gcp")
+    acquire(system, "aws")
+    if change == "release":
+        system.health["azure"] = "b" * 40
+    else:
+        def wrong_cloud(cloud):
+            raise rollout.Refused("azure is not a verified healthy holdback")
+        system.coordinator.probe = wrong_cloud
+    with pytest.raises(rollout.Refused) as raised:
+        system.coordinator.check("gcp", first["operation_id"])
+    assert not isinstance(raised.value, rollout.Unhealthy)
     assert system.sleeps == []
+
+
+def test_lease_that_expires_during_the_wait_is_refused(system):
+    first = system.coordinator.acquire("gcp", "manual:gcp", "control-plane", 60)
+    acquire(system, "aws")
+    real = system.coordinator.probe
+
+    def outage_past_expiry(cloud):
+        if system.clock[0] <= first["expires_at"]:
+            raise rollout.Unhealthy("blip")
+        return real(cloud)
+
+    system.coordinator.probe = outage_past_expiry
+    with pytest.raises(rollout.Refused, match="expired"):
+        system.coordinator.check("gcp", first["operation_id"])
+    assert system.sleeps
+
+
+@pytest.mark.parametrize(
+    ("responses", "unhealthy"),
+    [
+        ({"health": {"status": "degraded"}}, True),
+        ({"health_error": OSError("timed out")}, True),
+        ({"api_base_url": "https://api-aws.trustedrouter.com/v1"}, False),
+        ({"after_release": "b" * 40}, False),
+    ],
+    ids=["health-not-ok", "transport", "wrong-cloud", "release-changing"],
+)
+def test_probe_separates_availability_from_evidence(monkeypatch, responses, unhealthy):
+    reads = []
+
+    def fake_fetch(url):
+        reads.append(url)
+        if url.endswith("/trust/control-plane.json"):
+            release = responses.get("after_release") if len(reads) > 1 else None
+            return {"release": release or "a" * 40,
+                    "api_base_url": responses.get("api_base_url",
+                                                  "https://api-azure.trustedrouter.com/v1")}
+        if "health_error" in responses:
+            raise responses["health_error"]
+        return responses.get("health", {"status": "ok"})
+
+    monkeypatch.setattr(rollout, "fetch", fake_fetch)
+    with pytest.raises(rollout.Refused) as raised:
+        rollout.probe_cloud("azure")
+    assert isinstance(raised.value, rollout.Unhealthy) is unhealthy
 
 
 def test_failed_final_health_does_not_release_slot(system):

@@ -35,7 +35,7 @@ PLANES = {
     "azure": ("https://azure.trustedrouter.com", "https://api-azure.trustedrouter.com"),
 }
 SHA = re.compile(r"[a-f0-9]{7,40}")
-# How long a lease check tolerates an unhealthy protected cloud before refusing.
+# How long one lease check tolerates an unhealthy protected cloud, wall clock.
 PROTECTED_OUTAGE_GRACE_SECONDS = 180
 PROTECTED_RETRY_SECONDS = 15
 MAX_BYTES = 1_048_576
@@ -48,6 +48,10 @@ GITHUB_REPOSITORY_IDS = {
 
 class Refused(RuntimeError):
     """Unknown or unsafe evidence; do not mutate production."""
+
+
+class Unhealthy(Refused):
+    """A cloud did not answer healthy. Lease checks may ride this out briefly."""
 
 
 class Busy(Refused):
@@ -175,22 +179,27 @@ def probe_cloud(cloud: str) -> str:
     not a substitute for those gates or proof of an inference request.
     """
     plane, gateway = PLANES[cloud]
+    message = f"{cloud} is not a verified healthy holdback"
     try:
         before = fetch(f"{plane}/trust/control-plane.json")
-        if fetch(f"{plane}/health").get("status") != "ok":
-            raise Refused("control plane unhealthy")
-        if fetch(f"{gateway}/health").get("status") != "ok":
-            raise Refused("gateway unhealthy")
+        plane_ok = fetch(f"{plane}/health").get("status") == "ok"
+        gateway_ok = fetch(f"{gateway}/health").get("status") == "ok"
         after = fetch(f"{plane}/trust/control-plane.json")
-        release = before.get("release")
-        api_base = before.get("api_base_url")
-        if (before != after or not isinstance(release, str)
-                or not SHA.fullmatch(release)
-                or not isinstance(api_base, str) or api_base.rstrip("/") != f"{gateway}/v1"):
-            raise Refused("cloud-local release evidence missing, changing, or wrong cloud")
-        return release
     except (OSError, ValueError, Refused) as exc:
-        raise Refused(f"{cloud} is not a verified healthy holdback") from exc
+        raise Unhealthy(message) from exc
+    if not plane_ok or not gateway_ok:
+        raise Unhealthy(message) from Refused(
+            "control plane unhealthy" if not plane_ok else "gateway unhealthy")
+    release = before.get("release")
+    api_base = before.get("api_base_url")
+    if (before != after or not isinstance(release, str)
+            or not SHA.fullmatch(release)
+            or not isinstance(api_base, str) or api_base.rstrip("/") != f"{gateway}/v1"):
+        # Evidence, not availability: a release changing mid-probe or the wrong
+        # cloud answering is never retried.
+        raise Refused(message) from Refused(
+            "cloud-local release evidence missing, changing, or wrong cloud")
+    return release
 
 
 def state_record(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -230,26 +239,23 @@ class Coordinator:
         self.store, self.probe, self.now = store, probe or probe_cloud, now
         self.sleep = sleep
 
-    def protected_release(self, cloud: str) -> str:
-        """Probe the protected cloud, riding out a short outage.
+    def protected_release(self, cloud: str, deadline: float) -> str:
+        """Probe the protected cloud, riding out a short outage until deadline.
 
         A one-minute blip on the protected cloud used to abort a GCP rollout
-        that had already passed its whole canary, and the aborted drain then
-        blocked every later rollout (2026-11-11). Unhealthy is retried for
-        PROTECTED_OUTAGE_GRACE_SECONDS; a changed release is never retried.
+        that had already passed its whole canary (2026-11-11). Only Unhealthy
+        is retried; wrong or changing release evidence refuses at once, and a
+        release that differs from the recorded one is refused by the caller.
         """
-        attempts = PROTECTED_OUTAGE_GRACE_SECONDS // PROTECTED_RETRY_SECONDS + 1
-        for attempt in range(attempts):
+        while True:
             try:
                 return self.probe(cloud)
-            except Refused as exc:
-                if attempt == attempts - 1:
+            except Unhealthy as exc:
+                if self.now() + PROTECTED_RETRY_SECONDS > deadline:
                     raise
                 print(f"cloud_rollout.retry: {exc}; retrying in "
-                      f"{PROTECTED_RETRY_SECONDS}s ({attempt + 1}/{attempts - 1})",
-                      file=sys.stderr)
+                      f"{PROTECTED_RETRY_SECONDS}s", file=sys.stderr)
                 self.sleep(PROTECTED_RETRY_SECONDS)
-        raise Refused(f"{cloud} is not a verified healthy holdback")
 
     def transaction(self, change: Callable[[dict[str, Any]], Any]) -> Any:
         for _ in range(8):
@@ -312,6 +318,8 @@ class Coordinator:
         return self.transaction(change)
 
     def check(self, cloud: str, operation: str) -> dict[str, Any]:
+        # One outage budget per check, shared by every journal-conflict pass.
+        deadline = self.now() + PROTECTED_OUTAGE_GRACE_SECONDS
         for _ in range(8):
             try:
                 raw, generation = self.store.read()
@@ -320,8 +328,10 @@ class Coordinator:
                 if lease["state"] != "active" or lease["expires_at"] <= self.now():
                     raise Refused("lease blocked or expired; recovery required, slot remains reserved")
                 protected = state["holdback"]
-                if self.protected_release(protected["cloud"]) != protected["release"]:
+                if self.protected_release(protected["cloud"], deadline) != protected["release"]:
                     raise Refused("protected cloud release changed")
+                if lease["expires_at"] <= self.now():
+                    raise Refused("lease blocked or expired; recovery required, slot remains reserved")
                 _, current = self.store.read()
                 if current == generation:
                     return lease
