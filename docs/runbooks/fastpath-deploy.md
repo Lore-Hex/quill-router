@@ -596,6 +596,46 @@ values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
 The way back is the attributes removed and each node taken the same way,
 which returns it to today's values.
 
+## Lowering the required tier: the lower tiers' allowances
+
+`docs/design/fast-admission-widening.md` (b). Since 2026-11-12 the node also
+takes `-allowance-tier2` and `-allowance-tier1`, from the metadata attributes
+`fastpath-allowance-tier2` and `fastpath-allowance-tier1`; "0" or absent passes
+no flag, and that tier takes no lease. The values are $250 for tier 2 and $100
+for tier 1, each at most the tier above's, with the required tier lowered to 1.
+Tier 0 never takes a lease. In this order, each step done before the next:
+
+1. **The pin and the values together.** One change in `infra/fastpath.tf` pins
+   a release whose command takes both flags and sets
+   `fastpath_required_tier = "1"`, `fastpath_allowance_tier2 = "250000000"` and
+   `fastpath_allowance_tier1 = "100000000"`; `tests/test_fastpath_money_settings.py`
+   holds the pin to a release that takes them.
+2. **Each node, one at a time, the other serving,** as "Taking a pinned
+   release": mark it leaving, wait for its leases, reset it, wait for the
+   startup script, and restart onto the installed binary if the running one
+   differs. Read the running arguments back
+   (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`):
+   they must end in
+   `-required-tier 1 -allowance 1000000000 -floor 20000000 -allowance-tier2 250000000 -allowance-tier1 100000000`
+   before the next node is touched. A reset kills the pilot watches on the
+   watch node; restart them afterwards (`docs/runbooks/fastpath-p1.md`).
+3. **Readiness, with the lower tiers' allowances.** `fastpathctl ready`
+   defaults both lower allowances to 0, so without them every tier-1 or tier-2
+   workspace reads as refused (`RefusedTierAllowance`):
+
+   ```bash
+   /opt/fastpath/fastpathctl -database $DB ready $WS -required-tier 1 -floor 20000000 -allowance-tier2 250000000 -allowance-tier1 100000000
+   ```
+
+4. **Only then the enabler.** A separate change lowers
+   `TR_FASTPATH_ENABLER_REQUIRED_TIER` in `scripts/deploy/fastpath_enabler_job.sh`
+   to 1; `tests/test_fastpath_enabler_deploy.py` refuses an enabler tier below
+   the nodes'. Lowered first, the enabler would turn on workspaces every grant
+   still refuses, which costs each of their requests a front-door hop.
+
+The way back is the required tier at 3 again (the lower allowances are then
+not read), taken by each node the same way, and the enabler's tier first.
+
 ## Streams on the lease: the release order
 
 `docs/design/fast-admission-streams.md` §10 ships streams in increments,

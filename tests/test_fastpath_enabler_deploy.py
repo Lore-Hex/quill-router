@@ -116,7 +116,7 @@ def test_the_enablers_tier_is_never_below_the_nodes() -> None:
     below it, the enabler would turn on workspaces every grant refuses. So
     the nodes' is lowered first and the enabler's after, and a change that
     lowers the enabler's alone fails here."""
-    assert _job_required_tier() >= _nodes_required_tier() == 3
+    assert _job_required_tier() >= _nodes_required_tier() == 1
 
 
 def test_the_tier_check_reads_each_literal() -> None:

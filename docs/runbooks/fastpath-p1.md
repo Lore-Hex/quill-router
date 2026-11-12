@@ -103,7 +103,9 @@ FRONT=$(gcloud spanner databases execute-sql trusted-router --instance=trusted-r
    `fastpath/internal/service/service.go`, which a node runs unless its
    metadata names the money settings, "The money settings" in
    `fastpath-deploy.md`; once the nodes run them, the generator is given
-   the same two),
+   the same two, and with the required tier below 3 also the nodes'
+   `-allowance-tier2` and `-allowance-tier1`, which default to 0 and would
+   otherwise read a lower-tier workspace as refused),
    and refuses to start otherwise. Past any of W3's ceilings for P1, or
    once the watch cannot see, it stops the generator and turns the
    workspace off, exiting 3 and printing why
