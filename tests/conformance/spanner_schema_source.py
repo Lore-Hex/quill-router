@@ -84,11 +84,17 @@ REVIEWED_DDL_STATEMENTS = {
       JSON_QUERY(e.body, '\$.created_at') AS created_at
     FROM tr_entities AS e
     WHERE e.kind = 'workspace'""": "definer-rights workspace directory view",
-        """CREATE ROLE tr_clickhouse_node;
-GRANT SELECT, DELETE ON TABLE tr_analytics_outbox, tr_operational_analytics_outbox TO ROLE tr_clickhouse_node;
-GRANT SELECT, INSERT, UPDATE ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node;
-GRANT SELECT ON TABLE tr_generation, tr_reservation TO ROLE tr_clickhouse_node;
-GRANT SELECT ON VIEW tr_workspace_directory_source TO ROLE tr_clickhouse_node""": "ClickHouse node role and table grants",
+        "CREATE ROLE tr_clickhouse_node": "ClickHouse node role",
+        "GRANT SELECT ON TABLE tr_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT DELETE ON TABLE tr_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_operational_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT DELETE ON TABLE tr_operational_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT INSERT ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT UPDATE ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_generation TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_reservation TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON VIEW tr_workspace_directory_source TO ROLE tr_clickhouse_node": "ClickHouse node grant",
     },
 }
 for _file in ("migrate_spend_lease.sh", "migrate_typed_counters.sh"):

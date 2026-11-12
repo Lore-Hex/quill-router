@@ -103,6 +103,7 @@ ensure_service_account() {
     --instance="$SPANNER_INSTANCE_ID" \
     --member="serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" \
     --role=roles/spanner.databaseUser \
+    --condition=None \
     --quiet >/dev/null
 }
 

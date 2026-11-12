@@ -11,10 +11,11 @@
 # nodes set TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node and the node service
 # account holds the fine-grained-access IAM bindings (infra/clickhouse_node_role.tf).
 #
-# Additive and idempotent. Each object is checked in INFORMATION_SCHEMA first,
-# and a check that cannot read the schema fails the run instead of reading as
-# absent. The grants are applied with the role, so a database that already has
-# the role keeps the grants it was given; change them with a new migration.
+# Additive and idempotent. The view, the role and each single privilege are
+# checked in INFORMATION_SCHEMA first and applied only when missing, so a run
+# that stopped partway is completed by the next one. A check that cannot read
+# the schema fails the run instead of reading as absent. An existing view is
+# kept as it is; change its definition with a new migration.
 set -euo pipefail
 
 PROJECT="${GCP_PROJECT_ID:-quill-cloud-proxy}"
@@ -52,18 +53,40 @@ fi
 
 roles=$(count "SELECT COUNT(*) FROM INFORMATION_SCHEMA.ROLES
                WHERE role_name='tr_clickhouse_node'") || exit $?
-if [ "${roles:-0}" != "0" ]; then
+if [ "${roles:-0}" = "0" ]; then
+  gcloud spanner databases ddl update "$DATABASE" \
+    --project="$PROJECT" \
+    --instance="$INSTANCE" \
+    --ddl="CREATE ROLE tr_clickhouse_node"
+  echo "created tr_clickhouse_node"
+else
   echo "tr_clickhouse_node exists"
-  exit 0
 fi
 
-gcloud spanner databases ddl update "$DATABASE" \
-  --project="$PROJECT" \
-  --instance="$INSTANCE" \
-  --ddl="CREATE ROLE tr_clickhouse_node;
-GRANT SELECT, DELETE ON TABLE tr_analytics_outbox, tr_operational_analytics_outbox TO ROLE tr_clickhouse_node;
-GRANT SELECT, INSERT, UPDATE ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node;
-GRANT SELECT ON TABLE tr_generation, tr_reservation TO ROLE tr_clickhouse_node;
-GRANT SELECT ON VIEW tr_workspace_directory_source TO ROLE tr_clickhouse_node"
+# add_privilege STATEMENT OBJECT PRIVILEGE: apply one single-privilege statement
+# unless the role already holds that privilege. ROLE_TABLE_GRANTS lists privileges on tables and views.
+add_privilege() {
+  local granted
+  granted=$(count "SELECT COUNT(*) FROM INFORMATION_SCHEMA.ROLE_TABLE_GRANTS
+                   WHERE grantee='tr_clickhouse_node' AND table_schema=''
+                   AND table_name='$2' AND privilege_type='$3'") || exit $?
+  if [ "${granted:-0}" != "0" ]; then
+    return 0
+  fi
+  gcloud spanner databases ddl update "$DATABASE" \
+    --project="$PROJECT" \
+    --instance="$INSTANCE" \
+    --ddl="$1"
+  echo "granted $3 on $2"
+}
 
-echo "created tr_clickhouse_node"
+add_privilege "GRANT SELECT ON TABLE tr_analytics_outbox TO ROLE tr_clickhouse_node" tr_analytics_outbox SELECT
+add_privilege "GRANT DELETE ON TABLE tr_analytics_outbox TO ROLE tr_clickhouse_node" tr_analytics_outbox DELETE
+add_privilege "GRANT SELECT ON TABLE tr_operational_analytics_outbox TO ROLE tr_clickhouse_node" tr_operational_analytics_outbox SELECT
+add_privilege "GRANT DELETE ON TABLE tr_operational_analytics_outbox TO ROLE tr_clickhouse_node" tr_operational_analytics_outbox DELETE
+add_privilege "GRANT SELECT ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node" tr_operational_outbox_heartbeat SELECT
+add_privilege "GRANT INSERT ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node" tr_operational_outbox_heartbeat INSERT
+add_privilege "GRANT UPDATE ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node" tr_operational_outbox_heartbeat UPDATE
+add_privilege "GRANT SELECT ON TABLE tr_generation TO ROLE tr_clickhouse_node" tr_generation SELECT
+add_privilege "GRANT SELECT ON TABLE tr_reservation TO ROLE tr_clickhouse_node" tr_reservation SELECT
+add_privilege "GRANT SELECT ON VIEW tr_workspace_directory_source TO ROLE tr_clickhouse_node" tr_workspace_directory_source SELECT

@@ -170,11 +170,13 @@ def test_the_refresh_is_scheduled_and_installed() -> None:
 def _view_row(body: Mapping[str, Any]) -> list[str | None]:
     """What tr_workspace_directory_source returns for an entity body.
 
-    JSON_QUERY yields each field's JSON text, or NULL when the key is absent.
+    JSON_QUERY yields each field's JSON text, or NULL when the key is absent or
+    its value is JSON null.
     """
     keys = ("id", "name", "deleted", "owner_user_id", "federated_home", "created_at")
     return [
-        json.dumps(body[key], separators=(",", ":")) if key in body else None for key in keys
+        None if body.get(key) is None else json.dumps(body[key], separators=(",", ":"))
+        for key in keys
     ]
 
 
