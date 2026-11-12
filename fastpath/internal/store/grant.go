@@ -30,10 +30,13 @@ const (
 	RefusedInDebt     Refusal = "the workspace is in debt"
 	RefusedPaused     Refusal = "the workspace's billing is paused"
 	RefusedTier       Refusal = "the workspace is below the tier that allows leases"
-	RefusedAllowance  Refusal = "the lease would take the workspace's exposure past its allowance"
-	RefusedFloor      Refusal = "the lease would leave less headroom outside leases than the floor"
-	RefusedLeaseID    Refusal = "the lease ID is another lease's"
-	RefusedNotServing Refusal = "the owner is not a member serving at that epoch"
+	// RefusedTierAllowance: the workspace is at or above the required tier,
+	// and its tier's allowance is 0, none (Config.AllowanceAt).
+	RefusedTierAllowance Refusal = "the workspace's tier has no allowance for leases"
+	RefusedAllowance     Refusal = "the lease would take the workspace's exposure past its allowance"
+	RefusedFloor         Refusal = "the lease would leave less headroom outside leases than the floor"
+	RefusedLeaseID       Refusal = "the lease ID is another lease's"
+	RefusedNotServing    Refusal = "the owner is not a member serving at that epoch"
 )
 
 // GrantRequest asks for a lease of Amount, L, for a workspace's shard. The
@@ -71,11 +74,12 @@ type GrantResult struct {
 // refuses an owner that is not a member serving at the epoch named, read in
 // the transaction, so a grant and its owner's leaving are one before the
 // other and a node leaving owns no lease granted after (NodeStatus); it
-// refuses a workspace that is marked in debt, paused, latched or below
-// Config.RequiredTier; a lease that would take the workspace's exposure past
-// Config.Allowance; and one that would leave its signed headroom less than
-// Config.Floor. Otherwise it reserves L on donor shards in ascending order,
-// each up to its headroom, and writes the lease, its donors and an expiry
+// refuses a workspace that is marked in debt, paused, latched, below
+// Config.RequiredTier or at a tier with no allowance; a lease that would take
+// the workspace's exposure past its tier's allowance (Config.AllowanceAt);
+// and one that would leave its signed headroom less than Config.Floor.
+// Otherwise it reserves L on donor shards in ascending order, each up to its
+// headroom, and writes the lease, its donors and an expiry
 // Config.Window past Spanner's time. A refused grant writes nothing.
 func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error) {
 	if req.Workspace == "" || req.LeaseID == "" || req.Region == "" || req.Owner.Node == "" || req.Amount <= 0 {
@@ -113,7 +117,7 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil {
 			return err
 		}
-		signed, refused := s.rowsRefuse(rows)
+		signed, tier, refused := s.rowsRefuse(rows)
 		if refused != "" {
 			out.Refused = refused
 			return nil
@@ -122,11 +126,13 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil {
 			return err
 		}
-		// Compared so nothing wraps: the allowance is positive and L is, so
-		// their difference fits; the signed sum is exact.
+		// Compared so nothing wraps: the tier's allowance is positive, or
+		// rowsRefuse refused it, and L is, so their difference fits; the
+		// signed sum is exact.
+		allowance := s.cfg.AllowanceAt(tier)
 		floor := new(big.Int).Add(big.NewInt(s.cfg.Floor), big.NewInt(req.Amount))
 		switch {
-		case exposure > s.cfg.Allowance-req.Amount:
+		case exposure > allowance-req.Amount:
 			out.Refused = RefusedAllowance
 		case signed.Cmp(floor) < 0:
 			out.Refused = RefusedFloor
@@ -339,34 +345,31 @@ func anyTrue(values []bool) bool {
 }
 
 // rowsRefuse is the refusal the credit rows alone give a grant, before its
-// amount is weighed, and the rows' signed headroom: the debt mark, a pause,
-// or the workspace's tier, the least of its rows' with a latched row at
-// zero, below the tier a lease needs.
-func (s *Store) rowsRefuse(rows creditRows) (*big.Int, Refusal) {
+// amount is weighed, the rows' signed headroom, and the workspace's tier, the
+// least of its rows' with a latched row at zero: the debt mark, a pause, the
+// tier below the tier a lease needs, or a tier with no allowance.
+func (s *Store) rowsRefuse(rows creditRows) (*big.Int, int64, Refusal) {
 	signed := new(big.Int)
-	tier := int64(3)
-	for i, h := range rows.headroom {
+	tier := rows.tier()
+	for _, h := range rows.headroom {
 		signed.Add(signed, big.NewInt(h))
-		t := rows.tiers[i]
-		if rows.latched[i] {
-			t = 0
-		}
-		tier = min(tier, t)
 	}
 	switch {
 	case rows.marked():
-		return signed, RefusedInDebt
+		return signed, tier, RefusedInDebt
 	case anyTrue(rows.paused):
-		return signed, RefusedPaused
+		return signed, tier, RefusedPaused
 	case tier < s.cfg.RequiredTier:
-		return signed, RefusedTier
+		return signed, tier, RefusedTier
+	case s.cfg.AllowanceAt(tier) == 0:
+		return signed, tier, RefusedTierAllowance
 	}
-	return signed, ""
+	return signed, tier, ""
 }
 
 // GrantReadiness says why a grant to the workspace would be refused before
 // any amount is weighed, read only: the switch, then the rows' refusals
-// (rowsRefuse), then the floor, which the rows' headroom together must be
+// (rowsRefuse), the tier's allowance among them, then the floor, which the rows' headroom together must be
 // above for a lease of anything. It is "" for a workspace a grant could
 // reach: the load generator asks before it starts (rollout P1), so a run
 // against a workspace not enabled, not funded or below the tier never
@@ -385,7 +388,7 @@ func (s *Store) GrantReadiness(ctx context.Context, workspace string) (Refusal, 
 	if err != nil {
 		return "", err
 	}
-	signed, refused := s.rowsRefuse(rows)
+	signed, _, refused := s.rowsRefuse(rows)
 	if refused != "" {
 		return refused, nil
 	}

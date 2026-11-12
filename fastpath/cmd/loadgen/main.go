@@ -9,8 +9,8 @@
 // With -workspace the load spreads over the workspaces named, instead of
 // ws-0 on; with -database the run starts only once each is enabled, funded
 // and at the tier that allows leases, read from the store as a grant reads
-// (rollout P1) with the fleet's -required-tier and -floor, and otherwise
-// says which is not and why.
+// (rollout P1) with the fleet's -required-tier, -floor, -allowance-tier2 and
+// -allowance-tier1, and otherwise says which is not and why.
 package main
 
 import (
@@ -89,6 +89,10 @@ func run(args []string, out io.Writer, ready readiness) error {
 		"the trust tier the fleet's leases need (the fast path's -required-tier), for the readiness")
 	fs.Int64Var(&storeCfg.Floor, "floor", storeCfg.Floor,
 		"the headroom the fleet's grants leave outside leases (the fast path's -floor), for the readiness")
+	fs.Int64Var(&storeCfg.AllowanceTier2, "allowance-tier2", storeCfg.AllowanceTier2,
+		"a tier-2 workspace's allowance, 0 for none (the fast path's -allowance-tier2), for the readiness")
+	fs.Int64Var(&storeCfg.AllowanceTier1, "allowance-tier1", storeCfg.AllowanceTier1,
+		"a tier-1 workspace's allowance, 0 for none (the fast path's -allowance-tier1), for the readiness")
 	heartbeat := fs.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
 	openHeartbeat := fs.Bool("open-heartbeat", false,
 		"the boot declares the heartbeat at stream open: each stream's authorize says so, and its first heartbeat is sent as it opens")

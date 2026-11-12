@@ -1,7 +1,7 @@
 """The fast path's money settings (docs/design/fast-admission-widening.md,
-(b)): the node's -required-tier, -allowance and -floor, passed by the
-startup script from instance metadata alone, and the floor held against the
-runtime catalog's prices."""
+(b)): the node's -required-tier, -allowance, -floor, -allowance-tier2 and
+-allowance-tier1, passed by the startup script from instance metadata alone,
+and the floor held against the runtime catalog's prices."""
 
 from __future__ import annotations
 
@@ -25,6 +25,9 @@ SCRIPT = ROOT / "infra" / "fastpath_node_startup.sh.tftpl"
 pytestmark = pytest.mark.xdist_group("fastpath-pinned-source")
 
 _MONEY_ATTRIBUTES = ("fastpath-required-tier", "fastpath-allowance", "fastpath-floor")
+# The lower tiers' allowances: "0" or absent passes nothing, so they reach
+# the unit only once set, and the pinned release must take them only then.
+_TIER_ATTRIBUTES = {"fastpath-allowance-tier2": "allowance-tier2", "fastpath-allowance-tier1": "allowance-tier1"}
 
 # The design's values; the deploy runbook names the same ones.
 REQUIRED_TIER = 3
@@ -89,6 +92,72 @@ def test_without_the_attributes_the_unit_passes_no_money_flag() -> None:
     """Absent, the node runs the release's defaults, today's values."""
     assert _flags() == []
     assert _flags(**dict.fromkeys(_MONEY_ATTRIBUTES, "")) == []
+    assert _flags(**dict.fromkeys(_TIER_ATTRIBUTES, "")) == []
+
+
+def test_the_tier_allowances_pass_only_when_set_and_not_zero() -> None:
+    """A lower tier's allowance at "0", none, passes no flag, as absent does,
+    so the release's default, none, holds; set, each follows the others in
+    the unit's order."""
+    assert _flags(**dict.fromkeys(_TIER_ATTRIBUTES, "0")) == []
+    assert _flags(**{"fastpath-required-tier": "3", "fastpath-allowance": str(ALLOWANCE),
+                     "fastpath-floor": str(FLOOR), **dict.fromkeys(_TIER_ATTRIBUTES, "0")}) == [
+        "-required-tier", "3", "-allowance", "1000000000", "-floor", "20000000"]
+    assert _flags(**{"fastpath-allowance": str(ALLOWANCE), "fastpath-allowance-tier2": "100000000",
+                     "fastpath-allowance-tier1": "25000000"}) == [
+        "-allowance", "1000000000", "-allowance-tier2", "100000000", "-allowance-tier1", "25000000"]
+    assert _flags(**{"fastpath-allowance-tier2": "100000000", "fastpath-allowance-tier1": "0"}) == [
+        "-allowance-tier2", "100000000"]
+    # Absent, the allowance is the release's 1 << 50, which bounds tier 2's.
+    assert _flags(**{"fastpath-allowance-tier2": str(1 << 50)}) == ["-allowance-tier2", str(1 << 50)]
+    # Equal tiers are in order.
+    assert _flags(**{"fastpath-allowance": "10000000", "fastpath-allowance-tier2": "10000000",
+                     "fastpath-allowance-tier1": "10000000"}) == [
+        "-allowance", "10000000", "-allowance-tier2", "10000000", "-allowance-tier1", "10000000"]
+
+
+def test_the_script_holds_the_tier_allowances_to_the_releases_bounds_and_order() -> None:
+    """A lower tier's allowance the release would refuse, out of the
+    allowance's bounds or above the tier above's, stops the script first."""
+    least_allowance, _least_floor, most = _bounds()
+    for value in (str(least_allowance - 1), str(most + 1), "1000", "00", "0100000000", "1e8", "-100000000",
+                  "100000000 -roles auditor", "9" * 17, "$100"):
+        _refused("fastpath-allowance-tier2 is 0, 10000000 to the allowance", **{"fastpath-allowance-tier2": value})
+        _refused("fastpath-allowance-tier1 is 0, 10000000 to the tier-2 allowance",
+                 **{"fastpath-allowance-tier2": str(most), "fastpath-allowance-tier1": value})
+    _refused("fastpath-allowance-tier2 is 0, 10000000 to the allowance",
+             **{"fastpath-allowance": str(ALLOWANCE), "fastpath-allowance-tier2": str(ALLOWANCE + 1)})
+    _refused("fastpath-allowance-tier1 is 0, 10000000 to the tier-2 allowance",
+             **{"fastpath-allowance-tier2": "100000000", "fastpath-allowance-tier1": "100000001"})
+    # Tier 1 with tier 2 at none, or absent, is above it.
+    for tier2 in ("0", ""):
+        _refused("fastpath-allowance-tier1 is 0, 10000000 to the tier-2 allowance",
+                 **{"fastpath-allowance-tier2": tier2, "fastpath-allowance-tier1": "25000000"})
+
+
+def test_terraform_keeps_the_tier_allowances_dark() -> None:
+    """Terraform names both attributes at "0", none, and leaves the required
+    tier at 3; a value other than "0" there needs a pinned release that
+    takes its flag, which HEAD's command does."""
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    assert re.search(r'^\s*fastpath_required_tier\s*=\s*"3"$', tf, re.M)
+    head = _command_flags((ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8"))
+    assert set(_TIER_ATTRIBUTES.values()) <= head, sorted(set(_TIER_ATTRIBUTES.values()) - head)
+    script = SCRIPT.read_text(encoding="utf-8")
+    pinned = re.search(r'fastpath_release\s*=\s*"([0-9a-f]{40})"', tf)
+    assert pinned
+    for attribute, flag in _TIER_ATTRIBUTES.items():
+        local = attribute.replace("-", "_")
+        value = re.search(rf'^\s*{local}\s*=\s*"(\d+)"$', tf, re.M)
+        assert value, local
+        assert re.search(rf"^\s*{attribute}\s*=\s*local\.{local}$", tf, re.M), attribute
+        assert f"$(attribute {attribute})" in script, attribute
+        assert flag not in _unit_flags(script)
+        if value.group(1) != "0":
+            taken = _command_flags(_source_at(pinned.group(1), "fastpath/cmd/fastpath/main.go"))
+            assert flag in taken, flag
+    assert re.search(r'^\s*fastpath_allowance_tier2\s*=\s*"0"$', tf, re.M)
+    assert re.search(r'^\s*fastpath_allowance_tier1\s*=\s*"0"$', tf, re.M)
 
 
 def test_the_attributes_render_the_flags_in_the_units_order() -> None:

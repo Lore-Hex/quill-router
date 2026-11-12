@@ -46,6 +46,8 @@ func TestTheNodeRefusesItsMoneyFlagsOutOfBoundsOrDropped(t *testing.T) {
 	}{
 		{[]string{"-floor", "20"}, "the floor is"},
 		{[]string{"-allowance", "1000"}, "the allowance is"},
+		{[]string{"-allowance-tier2", "1000"}, "the tier-2 allowance is"},
+		{[]string{"-allowance", "100000000", "-allowance-tier2", "200000000"}, "must not rise as the tier falls"},
 		{[]string{"-roles", "admission", "stray", "-required-tier", "3"}, "after the flags"},
 	} {
 		if err := runWith(t, c.args...); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -55,14 +57,34 @@ func TestTheNodeRefusesItsMoneyFlagsOutOfBoundsOrDropped(t *testing.T) {
 }
 
 // TestTheMoneyFlagsDefaultToTodaysValues: a node given none runs tier 1,
-// the allowance 1 << 50 and no floor, as before the flags.
+// the allowance 1 << 50 and no floor, as before the flags, and no allowance
+// for tiers 2 and 1, so they take no lease.
 func TestTheMoneyFlagsDefaultToTodaysValues(t *testing.T) {
 	cfg, err := parseMoney()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st := cfg.Store; st.RequiredTier != 1 || st.Allowance != 1<<50 || st.Floor != 0 {
-		t.Fatalf("tier %d, allowance %d, floor %d", st.RequiredTier, st.Allowance, st.Floor)
+	if st := cfg.Store; st.RequiredTier != 1 || st.Allowance != 1<<50 || st.Floor != 0 ||
+		st.AllowanceTier2 != 0 || st.AllowanceTier1 != 0 {
+		t.Fatalf("tier %d, allowance %d (tier 2 %d, tier 1 %d), floor %d", st.RequiredTier, st.Allowance,
+			st.AllowanceTier2, st.AllowanceTier1, st.Floor)
+	}
+}
+
+// TestTheTierAllowanceFlagsSetTheStore: -allowance-tier2 and
+// -allowance-tier1 reach the store's configuration as given, and -allowance
+// stays tier 3's.
+func TestTheTierAllowanceFlagsSetTheStore(t *testing.T) {
+	cfg, err := parseMoney("-required-tier", "1", "-allowance", "1000000000", "-allowance-tier2", "100000000",
+		"-allowance-tier1", "25000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := cfg.Store
+	if st.AllowanceAt(3) != 1_000_000_000 || st.AllowanceAt(2) != 100_000_000 || st.AllowanceAt(1) != 25_000_000 ||
+		st.AllowanceAt(0) != 0 {
+		t.Fatalf("allowances by tier 3 to 0: %d %d %d %d", st.AllowanceAt(3), st.AllowanceAt(2), st.AllowanceAt(1),
+			st.AllowanceAt(0))
 	}
 }
 
@@ -87,6 +109,10 @@ func TestTheMoneyFlagsAreRefusedOutOfBounds(t *testing.T) {
 		{"-allowance", "1e9"}, {"-allowance", "9223372036854775808"}, {"-allowance", "0x3b9aca00"},
 		{"-allowance", "1_000_000_000"}, {"-allowance", "+1000000000"}, {"-floor", "020000000"}, {"-required-tier", "03"},
 		{"-floor", "-1"}, {"-floor", "20"}, {"-floor", "999999"}, {"-floor", "1125899906842625"}, {"-floor", "$20"},
+		{"-allowance-tier2", "-1"}, {"-allowance-tier2", "9999999"}, {"-allowance-tier2", "1125899906842625"},
+		{"-allowance-tier2", "0100000000"}, {"-allowance-tier1", "9999999"}, {"-allowance-tier1", "10000000"},
+		{"-allowance", "100000000", "-allowance-tier2", "100000001"},
+		{"-allowance-tier2", "10000000", "-allowance-tier1", "10000001"},
 	} {
 		if _, err := parseMoney(args...); err == nil {
 			t.Errorf("%q was taken", args)
@@ -94,7 +120,9 @@ func TestTheMoneyFlagsAreRefusedOutOfBounds(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"-required-tier", "0"}, {"-allowance", "10000000"}, {"-allowance", "1125899906842624"}, {"-floor", "0"},
-		{"-floor", "1000000"}, {"-floor", "1125899906842624"},
+		{"-floor", "1000000"}, {"-floor", "1125899906842624"}, {"-allowance-tier2", "0"}, {"-allowance-tier1", "0"},
+		{"-allowance-tier2", "10000000"}, {"-allowance-tier2", "1125899906842624"},
+		{"-allowance-tier2", "10000000", "-allowance-tier1", "10000000"},
 	} {
 		if _, err := parseMoney(args...); err != nil {
 			t.Errorf("%q: %v", args, err)
