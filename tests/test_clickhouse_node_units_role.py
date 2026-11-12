@@ -23,7 +23,18 @@ def _programs(unit: Path) -> list[str]:
 
 
 def _uses_spanner(program: str) -> bool:
-    return "clickhouse._spanner_role" in (UNITS / f"{program}.py").read_text()
+    """Opens Spanner through the client library or the REST API, by any route."""
+    source = (UNITS / f"{program}.py").read_text()
+    return any(
+        marker in source
+        for marker in ("google.cloud import spanner", "google.cloud.spanner", "spanner.googleapis.com")
+    )
+
+
+def test_every_program_that_opens_spanner_honours_the_role_variable() -> None:
+    for path in UNITS.glob("*.py"):
+        if path.name != "_spanner_role.py" and _uses_spanner(path.stem):
+            assert "clickhouse._spanner_role" in path.read_text(), path.name
 
 
 def test_every_unit_whose_program_opens_spanner_uses_the_role_and_no_other_does() -> None:
@@ -49,13 +60,20 @@ def test_the_units_name_the_role_the_migration_creates() -> None:
     assert f'--ddl="CREATE ROLE {ROLE}"' in migration
 
 
-def test_the_role_is_set_in_the_unit_not_the_rewritten_environment_file() -> None:
-    """Deploys rewrite /etc/tr-clickhouse-ingest.env with the password alone."""
-    for unit in UNITS.glob("tr-clickhouse-*.service"):
-        text = unit.read_text()
-        if DATABASE_ROLE_ENV in text:
-            assert text.index(DATABASE_ROLE_ENV) < text.index("EnvironmentFile=")
-    assert DATABASE_ROLE_ENV not in LIVE_DEPLOY.read_text()
+def test_no_writer_of_the_shared_environment_file_can_override_the_role() -> None:
+    """systemd lets EnvironmentFile= override Environment=, and a blank value
+    turns the role off, so every writer of the file must write the password alone."""
+    writers = [
+        path for path in (ROOT / "scripts").rglob("*.sh")
+        if re.search(r"cat > /etc/tr-clickhouse-ingest\.env\b", path.read_text())
+    ]
+    assert {path.name for path in writers} == {
+        "clickhouse_live_ingestion.sh", "clickhouse_cluster.sh",
+    }
+    for path in writers:
+        text = path.read_text()
+        assert DATABASE_ROLE_ENV not in text, path.name
+        assert re.search(r"printf 'CH_PASSWORD=%s\\n' \"\$password\" \|", text), path.name
 
 
 def test_the_live_deploy_refreshes_every_role_unit_before_reloading_and_restarting() -> None:

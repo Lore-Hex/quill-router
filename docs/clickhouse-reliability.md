@@ -1058,8 +1058,16 @@ already installed, so one live deploy moves every Spanner program to the role.
 To roll back, revert the unit line and run the live deploy again; the
 account's database-wide access is still in place until step 4.
 
+The live deploy updates the publisher only. A standby keeps the unit files from
+its own install (`install_standby.sh`), and a takeover starts those, so a
+standby installed before this change runs its programs without the role.
+
 Remaining, in order: run the live deploy; confirm the dedicated heartbeat row
-is fresh and every node job succeeds as the role; then remove the account's
+is fresh and every node job succeeds as the role; reinstall each standby
+(`clickhouse_worker_role.sh standby --node <standby> --apply`) and confirm its
+five installed units carry `TR_SPANNER_DATABASE_ROLE`, since after the next
+step a takeover onto a standby without it would fail every Spanner call; then
+remove the account's
 `roles/spanner.databaseUser` binding (and the grant in
 `scripts/deploy/clickhouse_cluster.sh`), and retire the legacy heartbeat write
 and read.
