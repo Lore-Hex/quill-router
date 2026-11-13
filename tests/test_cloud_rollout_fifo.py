@@ -480,6 +480,22 @@ def test_client_waits_its_turn_then_holds_the_lease(system):
     assert 100 <= fake.t < 200
 
 
+def test_client_never_logs_its_ticket_which_becomes_the_lease_fence(system, capsys):
+    holder = hold(system, "gcp", QCP.format(1), "gateway")
+
+    def release_later(fake):
+        if "gcp" in system.store.record["leases"] and \
+                system.store.record["leases"]["gcp"]["operation_id"] == holder["operation_id"]:
+            system.coordinator.release("gcp", holder["operation_id"], True)
+
+    fake = FakeTime(system, release_later)
+    lease = rollout.acquire_in_order(system.coordinator, "gcp", QR.format(2), "control-plane", 3600, 600,
+                                     stopped=lambda _: False, sleep=fake.sleep, monotonic=fake.monotonic)
+    output = capsys.readouterr()
+    assert "cloud_rollout.queued" in output.err
+    assert lease["operation_id"] not in output.err + output.out
+
+
 def test_client_that_times_out_removes_only_its_own_ticket(system):
     hold(system, "gcp")
     other = enqueue(system, "gcp", QCP.format(1), "gateway")

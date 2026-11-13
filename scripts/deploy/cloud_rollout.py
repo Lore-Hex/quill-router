@@ -731,7 +731,8 @@ def acquire_in_order(coordinator: Coordinator, cloud: str, owner: str, component
     coordinator.validate_ttl(ttl)
     deadline = monotonic() + wait
     ticket = coordinator.enqueue(cloud, owner, component, wait)
-    print(f"cloud_rollout.queued: ticket {ticket} for {cloud}", file=sys.stderr)
+    # The ticket becomes the lease fence; never print it to (public) logs.
+    print(f"cloud_rollout.queued: waiting for {cloud}", file=sys.stderr)
     admitted = False
     next_prune = monotonic() + PRUNE_INTERVAL_SECONDS
     try:

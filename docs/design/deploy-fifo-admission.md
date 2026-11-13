@@ -118,6 +118,10 @@ plus `tools/cloud-rollout-source.json`), so one protocol serves both.
 - **Client loop.** `acquire_in_order` enqueues once, polls every 20 seconds,
   prunes stopped waiters at most every 5 minutes, and dequeues on timeout,
   error or SIGTERM. `TR_DEPLOY_WAIT_SECONDS=0` keeps the single-attempt path.
+  Pruning by owner status needs a `gh` credential with `actions:read`; the
+  quill-router admit step has none today, so there a dead waiter is only
+  skipped and then expires at its deadline (the gateway's admit step has one).
+  The ticket becomes the lease fence, so it is never printed to logs.
 
 **Compatibility.** Older clients do not read `queue` but copy it back
 unchanged, because they rewrite the record they read. Until quill-cloud-proxy
