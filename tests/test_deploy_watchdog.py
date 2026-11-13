@@ -1302,17 +1302,55 @@ def test_a_baseline_during_a_europe_outage_does_not_blind_us_central1(monkeypatc
 
 
 @pytest.mark.parametrize("row", [
-    {"status": "up", "effective_status": "down", "age_seconds": 960},     # aged out by the status page
-    {"status": "down", "effective_status": "down", "age_seconds": 960},   # recorded down, but long ago
-    {"status": "down", "effective_status": "degraded", "age_seconds": 500},
+    {"status": "up", "effective_status": "down", "age_seconds": 960},     # silent past the limit
+    {"status": "down", "effective_status": "down", "age_seconds": 960},   # recorded down, then silent
 ])
-@pytest.mark.parametrize("probe", ["gateway_authorize", "gateway_settle"])
-def test_a_stale_row_is_never_evidence(probe: str, row: dict) -> None:
+@pytest.mark.parametrize("probe", ["gateway_authorize", "gateway_settle", "provider_fallback"])
+def test_a_silent_row_is_evidence_against_its_monitors_own_region_only(probe: str, row: dict) -> None:
+    # Each monitor ingests through its own region's control plane: a silent
+    # Europe row is Europe's evidence, never the settle region's (us-central1).
     watchdog = _load_watchdog()
-    checks = [_cp("up", "us-central1"), {**_cp("down", "us-central1", probe), **row}]
+    checks = [_cp("up", "us-central1"), _cp("up", "us-central1", "gateway_settle"),
+              {**_cp("down", "europe-west4", probe), **row}]
+    assert watchdog.control_plane_per_region(checks, ["us-central1", "europe-west4"], _routes(watchdog)) == {
+        "us-central1": "up", "europe-west4": "down"}
+
+
+@pytest.mark.parametrize("probe", ["gateway_authorize", "gateway_settle"])
+def test_a_late_row_is_not_evidence_and_does_not_block(probe: str) -> None:
+    # Older than the TTL but under the silent limit: degraded, as on main.
+    watchdog = _load_watchdog()
+    checks = [_cp("up", "us-central1"), {**_cp("down", "us-central1", probe),
+                                         "effective_status": "degraded", "age_seconds": 500}]
     if probe == "gateway_settle":
         checks.append(_cp("up", "us-central1", "gateway_settle"))
     assert watchdog.control_plane_per_region(checks, ["us-central1"], _routes(watchdog)) == {"us-central1": "up"}
+
+
+def test_a_silent_monitor_rolls_back_its_own_region(monkeypatch, tmp_path: Path) -> None:
+    # Review round 3: a broken europe-west4 control plane silences its own
+    # monitor (ingest goes through it). Main catches this; so must the canary.
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, _fixture("status-2026-11-13"), _fixture("ew4_silent_16min"))
+    monkeypatch.setattr(watchdog.time, "sleep", lambda _s: None)
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(sys, "argv", ["watchdog.py", "--regions", "europe-west4", "--duration-min", "15",
+                                      "--rollback-after", "1", "--slo-class", "router_core", "--baseline-grace-sec", "0"])
+    assert watchdog.main() == 1
+    assert "rollback_regions=europe-west4\n" in output.read_text()
+
+
+def test_a_dead_europe_monitor_rolls_back_europe_and_never_us_central1(monkeypatch, tmp_path: Path) -> None:
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, _fixture("status-2026-11-13"), _fixture("ew4_monitor_dead"))
+    monkeypatch.setattr(watchdog.time, "sleep", lambda _s: None)
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(sys, "argv", ["watchdog.py", "--regions", "us-central1,europe-west4", "--duration-min", "3",
+                                      "--rollback-after", "2", "--slo-class", "router_core", "--baseline-grace-sec", "0"])
+    assert watchdog.main() == 1
+    assert "rollback_regions=europe-west4\n" in output.read_text()
 
 
 def test_a_fresh_row_within_the_ttl_counts() -> None:

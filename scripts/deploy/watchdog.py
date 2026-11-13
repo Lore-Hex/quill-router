@@ -20,12 +20,17 @@ serves), following the load balancer's routes:
     settle is us-central1's evidence. The route and hosts are read from the
     live URL map (`gcloud compute url-maps describe`), falling back with a
     warning to infra/; if the two disagree, settle is inconclusive.
-Only fresh samples count: a row whose effective status differs from what it
-recorded, or that is older than CURRENT_SAMPLE_TTL_SECONDS, is a dead or
-late monitor, not evidence. A settle row counts only while the same
-monitor's authorize row is fresh and up: when a monitor's authorize fails it
-writes no settle, and its last settle row must not be blamed on the region
-serving settle. A sample that depends on two stages served by different
+Freshness decides what a row is evidence of. A fresh row (effective status
+equals what it recorded, no older than CURRENT_SAMPLE_TTL_SECONDS) is
+attributed by route as above. A row the status page reports `down` because
+its probe went silent past its limit is evidence against the monitor's own
+region only: each monitor ingests its samples through its own region's
+control plane (TR_SYNTHETIC_INGEST_URL on the load balancer), so a broken
+control plane there silences it; it is never credited to the region serving
+settle. A late row in between (degraded) is not evidence and, as before,
+never blocks. A settle row counts only while the same monitor's authorize row
+is fresh and up: when a monitor's authorize fails it writes no settle, and
+its last settle row must not be blamed on the region serving settle. A sample that depends on two stages served by different
 regions counts for neither. A check that names a `target_region` is
 attributed to it.
 The enclave-only probes (`tls_health`, `attestation_nonce`) never call the
@@ -364,11 +369,22 @@ def control_plane_per_region(checks: Iterable[object], regions: Iterable[str], r
             continue
         if probe_type not in CONTROL_PLANE_ROUTER_CORE_PROBES:
             continue
-        if not fresh(check):
-            stale += 1
-            continue
-        region = control_plane_region(check, routes, authorize_up)
         status = normalize_watchdog_status(check.get("effective_status") or check.get("status"))
+        if not fresh(check):
+            if status != "down":
+                # Late (older than the TTL, under the silent limit): not
+                # evidence, and non-blocking as it always was.
+                stale += 1
+                continue
+            # Silent past the status page's limit while other probes report.
+            # Each monitor ingests its samples through its own region's
+            # control plane, so a broken control plane there silences it:
+            # that is evidence against the monitor's own region only, never
+            # the region serving its settle route.
+            region = check.get("target_region") or (
+                check.get("monitor_region") if check.get("target") == CONTROL_PLANE_TARGET else None)
+        else:
+            region = control_plane_region(check, routes, authorize_up)
         if region not in regions or status == "unknown":
             continue
         if SEVERITY[status] > SEVERITY.get(worst.get(region, ""), -1):
