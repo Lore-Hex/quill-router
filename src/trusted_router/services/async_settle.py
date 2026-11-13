@@ -12,8 +12,9 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import quote
 
 from cryptography.hazmat.primitives import serialization
@@ -49,11 +50,33 @@ from trusted_router.storage_models import (
 from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.web_fetch import FETCH_MODEL_ID
 
+if TYPE_CHECKING:
+    from trusted_router.routes.internal.fastpath_async_ticket import EdgeTicketRequest
+
 CACHE_SECONDS = 5.0
-TIER_CAPS = {2: 25_000_000, 3: 100_000_000}
+# Admission thresholds on a workspace's unsettled async cost, in microdollars,
+# by trust tier. A tier with no entry is never admitted.
+TIER_CAPS = {1: 100_000, 2: 25_000_000, 3: 100_000_000}
+# Tiers whose threshold the pilot override may lower and never raise.
+PILOT_CAP_LOWERS_ONLY = frozenset({1})
 # Enclaves reject future-issued tickets without clock tolerance. Backdate the
 # whole window, preserving the 300s contract bound (240s remain at default TTL).
 TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS = 60
+
+
+def admission_cap(tier: object, pilot_cap: int) -> int | None:
+    """The unsettled-cost threshold for a trust tier, or None when not admitted.
+
+    Every admission decision and every prediction of one takes its threshold
+    here. A nonzero pilot override replaces the threshold of tiers 2 and 3,
+    including with a larger value. For tier 1 it only ever lowers it.
+    """
+    if type(tier) is not int or tier not in TIER_CAPS:
+        return None
+    cap = TIER_CAPS[tier]
+    if not pilot_cap:
+        return cap
+    return min(cap, pilot_cap) if tier in PILOT_CAP_LOWERS_ONLY else pilot_cap
 
 
 @dataclass(frozen=True)
@@ -136,11 +159,12 @@ class AdmissionCache:
             self.evaluated_at[workspace_id] = now
             now = self.clock()
             value, health = cached[1], self.health
+            cap = admission_cap(value.tier, pilot_cap) if value is not None else None
             return bool(
                 0 <= now - cached[0] < CACHE_SECONDS
-                and value is not None and type(value.tier) is int and value.tier in TIER_CAPS
+                and value is not None and cap is not None
                 and type(value.pending_micro) is int and value.pending_micro >= 0
-                and value.pending_micro + queued_micro <= (pilot_cap or TIER_CAPS[value.tier])
+                and value.pending_micro + queued_micro <= cap
                 and health is not None and 0 <= now - health.observed_at < CACHE_SECONDS
                 and 0 <= health.p95_age_seconds <= 5
             )
@@ -322,41 +346,128 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         # byte for byte (shape B): no ticket, no status URL. The enclave
         # binds async settlement only from async_eligible true. The edge
         # composes this answer for non-pilots from admission_workspaces, and
-        # for fast-path workspaces outside the overlap list (which
-        # async_settle_pilot_allows leaves out even with an empty pilot set)
-        # from admission_excluded_workspaces; pilots pass to Python, which
-        # checks their stored enclave region here
+        # from admission_excluded_workspaces for the workspaces
+        # async_settle_pilot_allows leaves out whatever the pilot set says:
+        # under the explicit list, the fast-path workspaces outside the
+        # overlap list; in all mode with no pilot set, the reserved list
+        # (fast-admission-widening.md section 9.1). Without edge tickets,
+        # pilots pass to Python, which checks their stored enclave region here
         # (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5).
+        # A request the pilot leased gets the same answer unless its
+        # workspace is on the overlap list: its settle goes through the
+        # lease (docs/design/fast-admission-widening.md section 9.1).
         if (not settings.async_settle_admission_enabled
-                or not settings.async_settle_pilot_allows(authorization.workspace_id)
+                or not settings.async_settle_admits_request(
+                    authorization.workspace_id, leased=authorization.fastpath_envelope is not None)
                 or not settings.async_settle_negotiation_region_allowed(authorization.region)):
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result
-        eligible = bool(runtime.admission is not None
-                        and timing.eligible(runtime.admission, authorization.workspace_id,
-                                            settings.async_settle_pilot_cap_micro, projection=True))
-        issued = int(time.time()) if now is None else now
-        valid_from = issued - TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS
-        signer = runtime.signer
-        claims = dict(
-            authorization_id=authorization.id,
-            generation_id=generation_id_for_authorization(authorization.id),
-            workspace_id=authorization.workspace_id, key_id=authorization.key_hash,
-            invocation_nonce=authorization.invocation_nonce, billing_authority="local",
-            journal_region=runtime.effective_journal_region, epoch=runtime.epoch, snapshot_version=1,
-            snapshot_hash=digest, route_type=requested.route_type, streamed=requested.streamed,
-            reservation_id=authorization.credit_reservation_id, settle_origin="typed",
-            async_eligible=eligible, iss=signer.trusted.iss, aud=signer.trusted.aud,
-            iat=valid_from, exp=valid_from + settings.async_settle_ticket_ttl_seconds,
+        eligible, ticket, status_url = sign_ticket(
+            authorization_id=authorization.id, workspace_id=authorization.workspace_id,
+            key_hash=authorization.key_hash, invocation_nonce=authorization.invocation_nonce,
+            reservation_id=authorization.credit_reservation_id, requested=requested,
+            digest=digest, runtime=runtime, settings=settings, now=now,
         )
-        ticket = signer.sign(claims, issued)
         result.update(billing_snapshot=snapshot.model_dump(mode="json"),
                       billing_snapshot_hash=digest, settlement_ticket=ticket,
                       async_eligible=eligible,
-                      settlement_status_url="/v1/settlements/" + quote(authorization.id + ".settle", safe=""))
+                      settlement_status_url=status_url)
     except Exception:
         return {"async_eligible": False}  # Never invalidate a committed hold.
     return result
+
+
+def sign_ticket(*, authorization_id: str, workspace_id: str, key_hash: str,
+                invocation_nonce: str | None, reservation_id: str, requested: Eligibility,
+                digest: str, runtime: Runtime, settings: Settings,
+                now: int | None = None) -> tuple[bool, str, str]:
+    """The shared admission answer and ticket claims for validated local facts."""
+    eligible = bool(runtime.admission is not None
+                    and timing.eligible(runtime.admission, workspace_id,
+                                        settings.async_settle_pilot_cap_micro, projection=True))
+    issued = int(time.time()) if now is None else now
+    valid_from = issued - TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS
+    signer = runtime.signer
+    if signer is None:
+        raise ValueError("ticket authority")
+    claims = dict(
+        authorization_id=authorization_id,
+        generation_id=generation_id_for_authorization(authorization_id),
+        workspace_id=workspace_id, key_id=key_hash,
+        invocation_nonce=invocation_nonce, billing_authority="local",
+        journal_region=runtime.effective_journal_region, epoch=runtime.epoch, snapshot_version=1,
+        snapshot_hash=digest, route_type=requested.route_type, streamed=requested.streamed,
+        reservation_id=reservation_id, settle_origin="typed",
+        async_eligible=eligible, iss=signer.trusted.iss, aud=signer.trusted.aud,
+        iat=valid_from, exp=valid_from + settings.async_settle_ticket_ttl_seconds,
+    )
+    ticket = signer.sign(claims, issued)
+    return eligible, ticket, "/v1/settlements/" + quote(authorization_id + ".settle", safe="")
+
+
+def edge_ticket(*, body: EdgeTicketRequest, settings: Settings, runtime: Runtime | None,
+                typed: bool, now: int | None = None) -> dict[str, Any]:
+    """Sign catalog-verified edge facts; failure never changes the edge's hold."""
+    started = time.monotonic()
+    reason, outcome, eligible_label = "error", "refused", "na"
+    refused: dict[str, Any] = {"async_eligible": False}
+    try:
+        if not settings.fastpath_edge_async_ticket_allows(body.workspace_id):
+            reason = "workspace"
+            return refused
+        if not settings.async_settle_negotiation_region_allowed(body.region):
+            reason = "region"
+            return refused
+        if (runtime is None or runtime.signer is None or runtime.epoch < 1
+                or not runtime.effective_journal_region):
+            reason = "authority"
+            return refused
+        if not typed:
+            reason = "records"
+            return refused
+        issued = int(time.time()) if now is None else now
+        if abs(issued - body.priced_at) > 300:
+            reason = "price_instant"
+            return refused
+        from trusted_router.catalog import effective_endpoint, endpoint_for_id
+
+        endpoints = []
+        for endpoint_id in body.candidate_endpoint_ids:
+            endpoint = endpoint_for_id(endpoint_id)
+            if endpoint is None:
+                reason = "endpoint"
+                return refused
+            endpoints.append(endpoint)
+        at = datetime.fromtimestamp(body.priced_at, UTC)
+        effective = [effective_endpoint(endpoint, at=at) for endpoint in endpoints]
+        requested = Eligibility(route_type=body.route_type, streamed=body.streamed)
+        try:
+            require_eligible(requested)
+            snapshot = build_snapshot(effective, requested)
+        except ValueError:
+            reason = "snapshot"
+            return refused
+        digest = canonical_hash(snapshot)
+        if digest != body.billing_snapshot_hash:
+            reason = "hash"
+            return refused
+        eligible, ticket, status_url = sign_ticket(
+            authorization_id=body.authorization_id, workspace_id=body.workspace_id,
+            key_hash=body.key_hash, invocation_nonce=body.invocation_nonce,
+            reservation_id=body.reservation_id, requested=requested, digest=digest,
+            runtime=runtime, settings=settings, now=now,
+        )
+        outcome, reason, eligible_label = "issued", "none", "yes" if eligible else "no"
+        return {"async_eligible": eligible, "settlement_ticket": ticket,
+                "settlement_status_url": status_url}
+    except Exception:
+        reason = "error"
+        return refused
+    finally:
+        timing.logger.info(
+            "metric=async_settle_edge_ticket outcome=%s reason=%s eligible=%s elapsed_ms=%d",
+            outcome, reason, eligible_label, int((time.monotonic() - started) * 1000),
+        )
 
 
 # The requested parameters an async-v1 authorize may name; any other makes

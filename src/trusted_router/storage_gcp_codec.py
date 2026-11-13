@@ -50,3 +50,12 @@ def normalize_email(value: str) -> str:
     if "@" not in normalized:
         normalized = f"{normalized}@trustedrouter.local"
     return normalized
+
+
+#: Entity kind of the per-email-domain starter-credit counter.
+SIGNUP_CREDIT_DOMAIN_KIND = "signup_credit_domain"
+
+
+def email_domain(normalized_email: str) -> str:
+    """Domain part of an already-normalized address."""
+    return normalized_email.rsplit("@", 1)[-1]

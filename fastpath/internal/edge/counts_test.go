@@ -58,12 +58,16 @@ func TestTheDecideLineReadsBackAsItsCounts(t *testing.T) {
 		t.Fatalf("the lines: %+v", lines)
 	}
 	got, want := lines[0], h.edge.DecideCounts()
+	totals := h.edge.decider.total
 	if !maps.Equal(got.Counts, map[string]int64{"answered": want.Answered, "read_back": want.ReadBack,
-		"unavailable": want.Unavailable, "refunded": want.Refunded, "refund_failed": want.RefundFailed}) ||
+		"unavailable": want.Unavailable, "refunded": want.Refunded, "refund_failed": want.RefundFailed,
+		"ticket_call_ms_sum": totals.ticketCall.sum, "ticket_call_ms_max": totals.ticketCall.max,
+		"ticket_wait_ms_sum": totals.ticketWait.sum, "ticket_wait_ms_max": totals.ticketWait.max,
+		"insert_call_ms_sum": totals.insertCall.sum, "insert_call_ms_max": totals.insertCall.max}) ||
 		!maps.Equal(got.ByName["unavailable_by_code"], want.UnavailableByCode) ||
 		!maps.Equal(got.ByName["passed"], want.Passed) || !maps.Equal(got.ByName["slow"], want.Slow) ||
 		!maps.Equal(got.ByName["windows"], want.Windows) ||
-		!maps.Equal(got.ByName["decided_via"], want.DecidedVia) || len(got.ByName) != 5 {
+		!maps.Equal(got.ByName["decided_via"], want.DecidedVia) || !maps.Equal(got.ByName["tickets"], want.Tickets) || len(got.ByName) != 6 {
 		t.Fatalf("read back %+v, counted %+v", got, want)
 	}
 	// Each answer, the 200 and the 503, by its decide row's source: the

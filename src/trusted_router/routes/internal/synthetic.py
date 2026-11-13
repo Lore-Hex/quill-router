@@ -19,6 +19,10 @@ from starlette.concurrency import run_in_threadpool
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.operational_analytics import (
+    is_analytics_unavailable,
+    log_analytics_unavailable,
+)
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
@@ -42,6 +46,7 @@ from trusted_router.synthetic.route_health import (
     report_catalog_freshness,
     report_image_generation_failures,
     report_route_health,
+    report_route_health_unevaluable,
     report_video_generation_failures,
 )
 from trusted_router.types import ErrorType
@@ -566,9 +571,24 @@ def register(router: APIRouter) -> None:
         slot = _admit_operation("route_health")
         try:
             await run_in_threadpool(report_catalog_freshness)
-            flags = await run_in_threadpool(evaluate_route_health, STORE)
+            try:
+                flags = await run_in_threadpool(evaluate_route_health, STORE)
+            except Exception as exc:
+                if not is_analytics_unavailable(exc):
+                    raise
+                # Blind, not healthy: no route was evaluated. Say so in the
+                # body and raise one grouped alert instead of a 500 per pass.
+                log_analytics_unavailable(log, "synthetic_route_health", exc)
+                await run_in_threadpool(report_route_health_unevaluable, exc)
+                return {
+                    "data": {
+                        "flagged": [],
+                        "evaluated": False,
+                        "reason": "analytics_unavailable",
+                    }
+                }
             await run_in_threadpool(report_route_health, flags)
-            return {"data": {"flagged": [asdict(flag) for flag in flags]}}
+            return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
 

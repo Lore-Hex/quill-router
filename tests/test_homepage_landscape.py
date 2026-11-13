@@ -32,8 +32,10 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(client: TestCli
     response = client.get("/")
     assert response.status_code == 200
     page = BeautifulSoup(response.text, "html.parser")
-    for section in ("top", "request", "models", "migrate", "verify", "pricing", "customers", "faq"):
+    for section in ("top", "request", "models", "migrate", "verify", "press", "pricing", "customers", "faq"):
         assert page.select_one(f"section#{section}")
+    order = [section["id"] for section in page.select("section[id]")]
+    assert order.index("verify") < order.index("press") < order.index("pricing")
     # The production smoke test checks this heading on the live homepage.
     assert LANDSCAPE_MULTICLOUD_HEADING in page.select_one("section#verify").get_text()
     assert len(page.select("[data-mobile-disclosure][open]")) == 7

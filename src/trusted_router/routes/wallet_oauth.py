@@ -12,7 +12,9 @@ console points them to. The address is NOT written to the account when the
 form is submitted: the emailed link carries it, the one-shot token is bound
 to it, and only a click on that link attaches it, already verified. Writing
 an unverified address first would reserve it in the email index, and a later
-OAuth sign-in with that address would land in the wallet account.
+OAuth sign-in with that address would land in the wallet account. An
+address another account owns gets a notice instead of a link, and the form
+answers the same way, so it never says which addresses have accounts.
 """
 
 from __future__ import annotations
@@ -44,8 +46,15 @@ from trusted_router.billing_policy import WALLET_EMAIL_ATTACH_PATH
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
-from trusted_router.services.email import build_verification_email, get_email_service
-from trusted_router.signup_gate import require_new_account_creation
+from trusted_router.services.email import (
+    build_email_in_use_notice,
+    build_verification_email,
+    get_email_service,
+)
+from trusted_router.signup_gate import (
+    require_wallet_account_creation,
+    wallet_account_creation_allowed,
+)
 from trusted_router.storage import STORE, AuthSession, User
 from trusted_router.storage_models import (
     EMAIL_ATTACH_ALREADY_VERIFIED,
@@ -96,12 +105,15 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
-        if not settings.new_signups_enabled and STORE.find_user_by_wallet(body.address) is None:
-            # The emergency signup brake must stop durable challenge growth as
+        if (
+            not wallet_account_creation_allowed(settings)
+            and STORE.find_user_by_wallet(body.address) is None
+        ):
+            # A closed signup switch must stop durable challenge growth as
             # well as account creation. Returning wallets still receive a
             # challenge; unknown addresses fail after one bounded read and
             # before nonce generation or either challenge write.
-            require_new_account_creation(settings)
+            require_wallet_account_creation(settings)
         request_domain = request_control_domain(request, settings)
         domain = (
             settings.siwe_domain
@@ -155,7 +167,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
 
         existing_user = STORE.find_user_by_wallet(body.address)
         if existing_user is None:
-            require_new_account_creation(settings)
+            require_wallet_account_creation(settings)
         user = existing_user or STORE.create_wallet_user(body.address)
         if user.disabled:
             raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)
@@ -226,15 +238,8 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 _form_page(session=session, error="Enter a valid email address."),
                 status_code=400,
             )
-        existing = STORE.find_user_by_email(email_normalized)
-        if existing is not None and existing.id != user.id:
-            return HTMLResponse(
-                _form_page(
-                    session=session,
-                    error="That email already has an account — sign in with that provider.",
-                ),
-                status_code=409,
-            )
+        # Counted before the ownership check, so a taken address costs the
+        # same send as a free one and the cap cannot tell them apart.
         if not _attach_send_allowed(user.id):
             return HTMLResponse(
                 _form_page(
@@ -244,24 +249,35 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 status_code=429,
             )
 
-        # The token is bound to this exact address through its purpose, so a
-        # link minted for one address can never verify a different one.
-        raw_token, _ = STORE.create_verification_token(
-            user_id=user.id,
-            purpose=_attach_purpose(email_normalized),
-            ttl_seconds=VERIFICATION_TTL_SECONDS,
-        )
-        verify_url = _verify_url(request, raw_token, email_normalized)
-        attribution = request_attribution(request)
-        touch = attribution.last_touch if attribution is not None else {}
-        message = build_verification_email(
-            to=email_normalized,
-            verification_url=verify_url,
-            from_name=settings.ses_from_name,
-            acquisition_source=touch.get("utm_source"),
-            acquisition_medium=touch.get("utm_medium"),
-            acquisition_campaign=touch.get("utm_campaign"),
-        )
+        existing = STORE.find_user_by_email(email_normalized)
+        verify_url: str | None = None
+        if existing is not None and existing.id != user.id:
+            # The response must not say the address has an account: any wallet
+            # session could then test addresses one by one. The mailbox owner
+            # learns it from this notice instead, and nothing is attached.
+            message = build_email_in_use_notice(
+                to=email_normalized,
+                from_name=settings.ses_from_name,
+            )
+        else:
+            # The token is bound to this exact address through its purpose, so
+            # a link minted for one address can never verify a different one.
+            raw_token, _ = STORE.create_verification_token(
+                user_id=user.id,
+                purpose=_attach_purpose(email_normalized),
+                ttl_seconds=VERIFICATION_TTL_SECONDS,
+            )
+            verify_url = _verify_url(request, raw_token, email_normalized)
+            attribution = request_attribution(request)
+            touch = attribution.last_touch if attribution is not None else {}
+            message = build_verification_email(
+                to=email_normalized,
+                verification_url=verify_url,
+                from_name=settings.ses_from_name,
+                acquisition_source=touch.get("utm_source"),
+                acquisition_medium=touch.get("utm_medium"),
+                acquisition_campaign=touch.get("utm_campaign"),
+            )
         sent = get_email_service(settings).send(message)
         if not sent and not _inline_link_allowed(settings):
             # Showing the link inline would verify an address without access

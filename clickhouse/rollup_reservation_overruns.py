@@ -21,6 +21,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from clickhouse._spanner_role import database_role
+
 PROJECT = "quill-cloud-proxy"
 SPANNER_INSTANCE = "trusted-router-nam6"
 SPANNER_DATABASE = "trusted-router"
@@ -151,8 +153,22 @@ def build_clickhouse_rows(
 class SpannerReservationSource:
     """Read settled reservations through Spanner REST using ADC credentials."""
 
-    def __init__(self, *, project: str, instance: str, database: str) -> None:
+    # The fine-grained-access role the REST session is created as, or None for
+    # the service account's database-wide access (clickhouse/_spanner_role.py).
+    # A class default so a source built without __init__ is the role-less one.
+    _database_role: str | None = None
+
+    def __init__(
+        self,
+        *,
+        project: str,
+        instance: str,
+        database: str,
+        database_role: str | None = None,
+    ) -> None:
         from google.auth import default
+
+        self._database_role = database_role
 
         self._database_url = (
             "https://spanner.googleapis.com/v1/projects/"
@@ -204,7 +220,14 @@ class SpannerReservationSource:
         window_start: dt.datetime,
         window_end: dt.datetime,
     ) -> list[Mapping[str, Any]]:
-        session = self._request_json(f"{self._database_url}/sessions", body={})
+        # CreateSession: an empty body unless a role is configured, in which
+        # case the session (and every statement on it) runs as that role.
+        session_request: dict[str, Any] = (
+            {}
+            if self._database_role is None
+            else {"session": {"creatorRole": self._database_role}}
+        )
+        session = self._request_json(f"{self._database_url}/sessions", body=session_request)
         session_name = str(session.get("name") or "")
         if not session_name:
             raise ValueError("Spanner createSession response omitted the session name")
@@ -336,6 +359,7 @@ def main(
         project=args.project,
         instance=args.spanner_instance,
         database=args.spanner_database,
+        database_role=database_role(),
     )
     selected_writer = writer
     if not args.dry_run and selected_writer is None:

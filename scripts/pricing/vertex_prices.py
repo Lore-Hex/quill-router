@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup, Tag
 from scripts.pricing.base import ModelPrice, PriceTier
 
 _MODEL = re.compile(
-    r"^Gemini (\d+(?:\.\d+)?) (Pro|Flash(?:[ -]Lite)?|Argon)( Preview| Cyber)?$", re.I
+    r"^Gemini (\d+(?:\.\d+)?) (Pro|Flash(?:[ -]Lite)?|Argon|Carbon)( Preview| Cyber)?$", re.I
 )
 _DATE = re.compile(r"\b(through|starting) ([A-Za-z]+ \d{1,2}, \d{4})\b", re.I)
 
@@ -57,8 +57,23 @@ def _table_tab(table: Tag, soup: BeautifulSoup) -> str | None:
 
 
 def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
+    prices = _scan(html, as_of=as_of)[0]
+    if not prices:
+        raise ValueError("vertex: no standard global Gemini text prices found")
+    return prices
+
+
+def cache_write_held(html: str, *, as_of: date | None = None) -> frozenset[str]:
+    """Models withheld only because they publish a cache-write tariff we cannot bill."""
+    return _scan(html, as_of=as_of)[1]
+
+
+def _scan(
+    html: str, *, as_of: date | None = None
+) -> tuple[dict[str, ModelPrice], frozenset[str]]:
     today = as_of or datetime.now(UTC).date()
     parts: dict[str, dict[str, tuple[int, int, int | None, int | None]]] = {}
+    unbillable: set[str] = set()
     soup = BeautifulSoup(html, "html.parser")
     for table in soup.find_all("table"):
         rows = table.find_all("tr")
@@ -66,7 +81,11 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
             continue
         headers = [c.get_text(" ", strip=True).lower() for c in rows[0].find_all(["th", "td"])]
         header = " ".join(headers)
-        if headers[:2] != ["model", "type"] or "cached input" not in header:
+        # Google calls the cache-hit column "Cached input" on older tables and
+        # "Cache read" on Gemini 4 tables (renamed 2026-11-12 with Hydrogen).
+        if headers[:2] != ["model", "type"] or not (
+            "cached input" in header or "cache read" in header
+        ):
             continue
         tab = _table_tab(table, soup)
         if tab is not None and tab not in {"standard", "standard model"}:
@@ -75,12 +94,19 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
             continue
         regional = len(headers) > 2 and headers[2] == "region"
         offset = 3 if regional else 2
+        # A trailing "Cache write" column carries a third input tariff that
+        # ModelPrice cannot bill. Strip it from the column contract and hold
+        # any model whose input row publishes a real cache-write price.
+        writes = [i for i, h in enumerate(headers) if "cache write" in h]
+        if writes and writes != [len(headers) - 1]:
+            raise ValueError("vertex: cache write column moved")
+        width = len(headers) - len(writes)
         tiered = "200k" in header
         # Flat tables must positively identify the tariff. Identical headers
         # are used in the standard, priority and batch tabs.
         if not tiered and tab not in {"standard", "standard model"}:
             continue
-        if len(headers) != offset + (4 if tiered else 2):
+        if width != offset + (4 if tiered else 2):
             raise ValueError("vertex: standard token table columns changed")
         model_id: str | None = None
         kind = ""
@@ -106,7 +132,9 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
             )
             if direction is None:
                 continue
-            values = cells[offset:]
+            values = cells[offset:width]
+            if direction == "input" and writes and cells[writes[0]] != "N/A":
+                unbillable.add(model_id)
             if not tiered:
                 values = [values[0], values[0], values[1], values[1]]
             rate = (
@@ -121,8 +149,9 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
             parts[model_id][direction] = rate
     prices: dict[str, ModelPrice] = {}
     for model_id, rates in parts.items():
-        if set(rates) != {"input", "output"}:
-            # An incomplete SKU is not a price. The adapter records and holds
+        if set(rates) != {"input", "output"} or model_id in unbillable:
+            # An incomplete SKU is not a price, and neither is one with a
+            # cache-write tariff we cannot bill. The adapter records and holds
             # that route without discarding other fully priced models.
             continue
         inp, out = rates["input"], rates["output"]
@@ -136,6 +165,4 @@ def parse(html: str, *, as_of: date | None = None) -> dict[str, ModelPrice]:
                     PriceTier(None, *high),
                 ]
             )
-    if not prices:
-        raise ValueError("vertex: no standard global Gemini text prices found")
-    return prices
+    return prices, frozenset(unbillable)

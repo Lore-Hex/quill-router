@@ -43,6 +43,7 @@ from trusted_router.routing import chat_route_endpoint_candidates
     ("google-vertex", "google/gemini-2.5-flash", "gemini-2.5-flash", "zero_retention"),
     ("google-vertex", "google/gemini-3.8-flash", "gemini-3.8-flash", "durable_cache"),
     ("google-vertex", "google/gemini-4-argon", "gemini-4-argon", "durable_cache"),
+    ("google-vertex", "google/gemini-4-carbon", "gemini-4-carbon", "unverified"),
     ("google-vertex", "google/gemini-4-argon-cyber", "gemini-4-argon-cyber", "safety_retention"),
     ("google-vertex", "anthropic/claude-fable-5.1", "claude-fable-5-1", "safety_retention"),
     ("google-vertex", "anthropic/claude-mythos", "claude-mythos", "safety_retention"),

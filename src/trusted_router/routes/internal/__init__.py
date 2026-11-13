@@ -65,6 +65,13 @@ def register_edge_policy_routes(router: APIRouter) -> None:
     fastpath_edge_policy.register(router)
 
 
+def register_edge_async_ticket_routes(router: APIRouter) -> None:
+    """Import and register the sign-only route only while its switch is on."""
+    from . import fastpath_async_ticket
+
+    fastpath_async_ticket.register(router)
+
+
 def register_operator_internal_routes(router: APIRouter) -> None:
     """Register operator controls only when their dedicated token is configured."""
     admin.register(router)
@@ -89,6 +96,7 @@ def register_internal_routes(router: APIRouter) -> None:
 
 __all__ = [
     "register_control_internal_routes",
+    "register_edge_async_ticket_routes",
     "register_edge_policy_routes",
     "register_external_webhook_routes",
     "register_gateway_internal_routes",

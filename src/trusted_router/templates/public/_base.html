@@ -41,6 +41,7 @@
 </head>
 <body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
+  {% block promotion %}{% endblock %}
   <main id="main" class="wrap public-wrap">
     {% block hero %}
     {% if hero_pitch is defined and hero_pitch %}

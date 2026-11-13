@@ -435,7 +435,9 @@ def test_live_ingestion_restarts_every_daemon_whose_code_it_ships() -> None:
     # The operational drains restart through the guarded loop: both units are
     # named, and the loop both restarts and re-asserts activeness. The guard
     # exists because the postgres variant only exists on the AWS/Azure nodes.
-    loop = script[script.index("for unit in") : script.index("done", script.index("for unit in"))]
+    # The first loop refreshes installed unit files; the restart loop follows.
+    start = script.index("for unit in", script.index("systemctl daemon-reload"))
+    loop = script[start : script.index("done", start)]
     assert "tr-clickhouse-operational-ingest.service" in loop
     assert "tr-clickhouse-operational-ingest-postgres.service" in loop
     assert "systemctl restart" in loop
@@ -463,8 +465,12 @@ def test_operational_deploy_verifies_table_presence_before_replica_sync() -> Non
 
 def test_replicated_migrate_only_accepts_on_cluster_alter_files() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_replicated_migrate.sh").read_text()
-    assert "clusterAllReplicas('$1', system.one)" in script
-    assert "clusterAllReplicas('$1', system.tables)" in script
+    # Each node is asked itself. A cluster table function makes the first node
+    # sign in to the others as `default`, which tr-default-user.xml removes
+    # (verified on 26.8.36.3: AUTHENTICATION_FAILED from the second replica).
+    assert "FROM clusterAllReplicas" not in script
+    assert "FROM system.clusters WHERE cluster = '$1' HAVING countIf(is_local) = 1" in script
+    assert "FROM system.tables WHERE database = 'tr' AND name = '$1'" in script
     assert "no 'ALTER TABLE ... ON CLUSTER' statement found" in script
     assert "failed on a replica" in script
     # Every replicated regional migration is one this applier can check.
@@ -478,17 +484,21 @@ def test_replicated_migrate_only_accepts_on_cluster_alter_files() -> None:
 
 
 MIGRATION_017 = "clickhouse/017_regional_coverage_replicated.sql"
-REPLICAS_QUERY = "SELECT hostName() FROM clusterAllReplicas('trustedrouter', system.one) ORDER BY 1 FORMAT TSV"
+REPLICAS_QUERY = (
+    "SELECT hostName(), count() FROM system.clusters WHERE cluster = 'trustedrouter' "
+    "HAVING countIf(is_local) = 1 FORMAT TSV"
+)
 TABLES_QUERY = (
-    "SELECT hostName() FROM clusterAllReplicas('trustedrouter', system.tables) "
-    "WHERE database = 'tr' AND name = 'spend_lease_shadow' ORDER BY 1 FORMAT TSV"
+    "SELECT hostName() FROM system.tables WHERE database = 'tr' AND name = 'spend_lease_shadow' FORMAT TSV"
 )
 ALL_REPLICAS = "tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3"
 APPLIED = "10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t0\t\t1\t0\n10.128.0.34\t9000\t0\t\t0\t0"
 
 # A gcloud that records each call's argv and stdin, and answers a statement by
 # what it reads: the script now sends SQL on the ssh session's stdin, which
-# the shared deploy harness drains unread.
+# the shared deploy harness drains unread. Like a real node, each one answers
+# only for itself: its own name if it is a replica of the cluster (with the
+# number of replicas its configuration lists) or has the table.
 RECORDING_GCLOUD = r"""#!/usr/bin/env bash
 set -euo pipefail
 d="$STUB_DIR"
@@ -498,10 +508,19 @@ cat > "$d/call.$n.stdin"
 case " $* " in *" projects describe "*) echo 44325983244; exit 0 ;; esac
 statement="$(cat "$d/call.$n.stdin")"
 if [ -f "$d/fail_on" ] && [[ "$statement" == *"$(cat "$d/fail_on")"* ]]; then exit 46; fi
+node=""
+for argument in "$@"; do
+  case "$argument" in tr-clickhouse-*) node="$argument" ;; esac
+done
+present="$d/present"
 case "$statement" in
-  *"system.one"*) cat "$d/replicas" ;;
-  *"name = 'second_table'"*) cat "$d/present_second" 2>/dev/null || cat "$d/present" ;;
-  *"system.tables"*) cat "$d/present" ;;
+  *"system.clusters"*)
+    if grep -qx "$node" "$d/replicas"; then printf '%s\t%s\n' "$node" "$(cat "$d/cluster_size")"; fi ;;
+  *"system.tables"*)
+    if [[ "$statement" == *"name = 'second_table'"* ]] && [ -f "$d/present_second" ]; then
+      present="$d/present_second"
+    fi
+    grep -x "$node" "$present" || true ;;
   *) cat "$d/statuses" ;;
 esac
 """
@@ -516,13 +535,16 @@ def _run_replicated_migrate(
     migration: str = MIGRATION_017,
     present_second: str | None = None,
     fail_on: str | None = None,
+    replicas: str = ALL_REPLICAS,
+    cluster_size: int = 3,
 ) -> SimpleNamespace:
     stub = tmp_path / "stub"
     stub.mkdir()
     gcloud = stub / "gcloud"
     gcloud.write_text(RECORDING_GCLOUD)
     gcloud.chmod(0o755)
-    (stub / "replicas").write_text(ALL_REPLICAS + "\n")
+    (stub / "replicas").write_text(replicas + "\n")
+    (stub / "cluster_size").write_text(f"{cluster_size}\n")
     (stub / "present").write_text(present_on + "\n")
     (stub / "statuses").write_text(statuses + "\n")
     if present_second is not None:
@@ -561,7 +583,36 @@ def test_replicated_migrate_refuses_when_a_target_table_is_missing_on_a_replica(
     assert run.returncode != 0
     assert "tr.spend_lease_shadow is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
     assert "CREATE TABLE IF NOT EXISTS tr.spend_lease_shadow ON CLUSTER trustedrouter" in run.stderr
-    assert REPLICAS_QUERY in run.stdins and TABLES_QUERY in run.stdins
+    # One session per node for each question; no node is asked about another.
+    assert run.stdins.count(REPLICAS_QUERY) == 3 and run.stdins.count(TABLES_QUERY) == 3
+    asked = [
+        next(arg for arg in call if arg.startswith("tr-clickhouse-"))
+        for call, statement in zip(run.calls, run.stdins, strict=True)
+        if statement == TABLES_QUERY
+    ]
+    assert asked == ["tr-clickhouse-1", "tr-clickhouse-2", "tr-clickhouse-3"]
+    assert not _applied(run)
+
+
+@pytest.mark.parametrize(
+    ("replicas", "cluster_size"),
+    [
+        # The cluster lists a replica that is not one of the nodes asked.
+        (ALL_REPLICAS, 4),
+        # A node asked does not count itself a replica of this cluster.
+        ("tr-clickhouse-1\ntr-clickhouse-2", 3),
+        # No node knows the cluster at all.
+        ("", 3),
+    ],
+)
+def test_replicated_migrate_refuses_a_cluster_that_is_not_exactly_the_nodes_asked(
+    tmp_path: Path, replicas: str, cluster_size: int
+) -> None:
+    run = _run_replicated_migrate(
+        tmp_path, present_on=ALL_REPLICAS, apply=True, replicas=replicas, cluster_size=cluster_size,
+    )
+    assert run.returncode != 0
+    assert "cluster trustedrouter does not consist of exactly the nodes that answered" in run.stderr
     assert not _applied(run)
 
 
@@ -616,11 +667,12 @@ def test_replicated_migrate_checks_every_table_of_a_migration(tmp_path: Path) ->
     )
     assert run.returncode != 0
     assert "tr.second_table is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
-    assert sum("system.tables" in statement for statement in run.stdins) == 2
+    # Two tables, each asked of all three nodes.
+    assert sum("system.tables" in statement for statement in run.stdins) == 6
     assert not _applied(run, migration.read_text().rstrip("\n"))
 
 
-@pytest.mark.parametrize("fail_on", ["system.one", "name = 'spend_lease_shadow'", "ADD COLUMN"])
+@pytest.mark.parametrize("fail_on", ["system.clusters", "name = 'spend_lease_shadow'", "ADD COLUMN"])
 def test_replicated_migrate_stops_on_a_failed_remote_command(tmp_path: Path, fail_on: str) -> None:
     """A remote failure at any step (replica listing, presence check, apply)
     stops the script with that status and never reports the migration applied."""

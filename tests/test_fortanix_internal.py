@@ -27,7 +27,6 @@ from trusted_router.routing_candidates import (
 )
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
-from trusted_router.synthetic.probes import rotation_candidates
 
 MODEL = "trustedrouter/fortanix-test"
 KEY = "sk-tr-internal-fortanix-fixture"
@@ -39,8 +38,9 @@ def test_reference_tariff_native_id_and_conservative_privacy() -> None:
     assert not model.byok_available
     assert model_to_openrouter_shape(model)["trustedrouter"]["internal_only"]
     provider = PROVIDERS["fortanix"]
-    assert provider.internal_only and not provider.supports_byok
+    assert not provider.internal_only and not provider.supports_byok
     assert not provider.provider_zero_data_retention
+    assert provider.prepaid_zero_data_retention
     assert not provider.provider_confidential_compute
     assert not provider.provider_e2ee
     routes = endpoints_for_model(MODEL)
@@ -78,13 +78,12 @@ def test_only_explicit_internal_route_can_select_fortanix() -> None:
     assert [(m.id, e.provider) for m, e in routes] == [(MODEL, "fortanix")]
     for pool in (auto_candidate_models, cheap_candidate_models, fast_candidate_models, monitor_candidate_models):
         assert all(model.id != MODEL for model in pool())
-    assert all(provider.slug != "fortanix" for provider in providers_for_display())
-    assert "fortanix" not in rotation_candidates()
+    assert any(provider.slug == "fortanix" for provider in providers_for_display())
     with pytest.raises(HTTPException):
         require_custom_model_base_model(MODEL)
 
 
-@pytest.mark.parametrize("provider", [{"zdr": True}, {"min_privacy": "confidential"}, {"usage": "byok"}])
+@pytest.mark.parametrize("provider", [{"min_privacy": "confidential"}, {"usage": "byok"}])
 def test_private_test_does_not_satisfy_byok_or_privacy_filters(provider) -> None:
     with pytest.raises(HTTPException):
         chat_route_endpoint_candidates({"model": MODEL, "provider": provider}, Settings(environment="test"))
@@ -112,12 +111,12 @@ def test_every_gateway_cloud_admits_the_probe_key(region: str) -> None:
 def test_internal_test_is_absent_from_public_surfaces(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 200
-    assert "fortanix" not in response.text.lower()
+    assert "trustedrouter/fortanix-test" not in response.text.lower()
+    assert "Fortanix internal test" not in response.text
     assert "armet.ai" not in response.text.lower()
 
 
 @pytest.mark.parametrize("path", [
-    "/providers/fortanix", "/providers/fortanix/performance",
     "/models/trustedrouter/fortanix-test", "/models/trustedrouter/fortanix-test/pricing",
 ])
 def test_guessed_private_pages_do_not_publish_a_listing(client: TestClient, path: str) -> None:
@@ -193,4 +192,4 @@ def test_internal_tariff_does_not_block_public_refresh_or_exempt_public_routes(m
 
     assert failures() == []
     monkeypatch.setitem(MODELS, MODEL, replace(MODELS[MODEL], internal_only=False))
-    assert any("NO price source" in message for message in failures())
+    assert any("differ from the exact operator-approved launch tariff" in message for message in failures())

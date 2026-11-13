@@ -86,7 +86,10 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "-required-tier", "-1", "ready", "ws"}, {"-database", "d", "ready", "ws", "-floor", "-1"},
 		{"-database", "d", "ready", "ws", "-floor", "1125899906842625"}, {"-database", "d", "ready", "ws", "-nope"},
 		{"-database", "d", "-floor", "20", "status", "ws"}, {"-database", "d", "ready", "ws", "-floor", "020000000"},
-		{"-database", "d", "ready", "ws", "-required-tier", "0x3"}} {
+		{"-database", "d", "ready", "ws", "-required-tier", "0x3"},
+		{"-database", "d", "ready", "ws", "-allowance-tier2", "1000"},
+		{"-database", "d", "ready", "ws", "-allowance-tier1", "10000000"},
+		{"-database", "d", "ready", "ws", "-allowance-tier2", "-1"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -801,8 +804,9 @@ func TestAuditHoldsEachShardAndSumsExactly(t *testing.T) {
 // TestReadySaysWhetherAGrantCouldReachTheWorkspace: ready asks the grant's
 // own check with the money settings given, read only, and exits 0 when a
 // grant could reach the workspace and 3 with the refusal when one would be
-// refused: not enabled; a shard at tier 2 under -required-tier 3 but not
-// under today's tier 1; the override's tier 3 (the effective tier Python
+// refused: not enabled; a shard at tier 2 under today's tier 1 with no
+// tier-2 allowance, and ready once -allowance-tier2 gives it one, but not
+// under -required-tier 3 whatever its allowance; the override's tier 3 (the effective tier Python
 // writes on every shard) passing; headroom at the floor refused and above it
 // passing. The settings go before the command or after the workspace.
 func TestReadySaysWhetherAGrantCouldReachTheWorkspace(t *testing.T) {
@@ -849,14 +853,26 @@ func TestReadySaysWhetherAGrantCouldReachTheWorkspace(t *testing.T) {
 		t.Fatalf("a workspace never enabled: exit %d, %v", code, got)
 	}
 	ws := seed(100_000_000, 2)
-	if code, got := ready("ready", ws); code != 0 || got["ready"] != true || got["refused"] != "" ||
-		got["required_tier"] != float64(1) || got["floor"] != float64(0) {
-		t.Fatalf("tier 2 at today's settings: exit %d, %v", code, got)
+	if code, got := ready("ready", ws); code != notDone || got["ready"] != false ||
+		got["refused"] != string(store.RefusedTierAllowance) || got["required_tier"] != float64(1) ||
+		got["floor"] != float64(0) || got["allowance_tier2"] != float64(0) || got["allowance_tier1"] != float64(0) {
+		t.Fatalf("tier 2 at today's settings, no tier-2 allowance: exit %d, %v", code, got)
+	}
+	for _, args := range [][]string{
+		{"ready", ws, "-allowance-tier2", "100000000"},
+		{"-allowance-tier2", "100000000", "ready", ws},
+		{"ready", ws, "-allowance-tier2", "100000000", "-allowance-tier1", "25000000"},
+	} {
+		if code, got := ready(args...); code != 0 || got["ready"] != true || got["refused"] != "" ||
+			got["allowance_tier2"] != float64(100_000_000) {
+			t.Fatalf("%q, tier 2 with an allowance: exit %d, %v", args, code, got)
+		}
 	}
 	for _, args := range [][]string{
 		{"ready", ws, "-required-tier", "3", "-floor", "20000000"},
 		{"-required-tier", "3", "-floor", "20000000", "ready", ws},
 		{"-floor", "20000000", "ready", ws, "-required-tier", "3"},
+		{"ready", ws, "-required-tier", "3", "-floor", "20000000", "-allowance-tier2", "100000000"},
 	} {
 		if code, got := ready(args...); code != notDone || got["ready"] != false ||
 			got["refused"] != string(store.RefusedTier) || got["required_tier"] != float64(3) ||

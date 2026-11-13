@@ -629,10 +629,9 @@ func Decide(in DecideInputs) Decided {
 		BootKid:                in.Request.Boot.Kid,
 	}
 	if r.Async.V1 {
-		// The additions Python splices in (shape A or B); the policy's
-		// object is present (asyncPolicyPass) and its admission does not
-		// cover the workspace (asyncAdmissionPass), so Python answers it as
-		// with admission off (asyncComposeInput).
+		// The additions Python splices in (shape A or B). Edge tickets
+		// may upgrade B after the durable insert; other covered workspaces
+		// still pass at asyncAdmissionPass.
 		compose.Async = asyncComposeInput(r.Async, *policy.AsyncSettle, key.WorkspaceID)
 	}
 	staged, err := gwauth.Stage(compose)
@@ -733,12 +732,12 @@ func asyncPolicyPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, s *routing
 // asyncAdmissionPass is an async-v1 request's admission gate, once the key's
 // workspace is known (asyncPolicyPass passed, so the policy's object is
 // present): PassAsyncAdmission when Python's admission covers the workspace
-// (a ticket is Python's), else "": admission off, admission_workspaces
+// without edge tickets, else "": admission off, admission_workspaces
 // leaves the workspace out, or admission_excluded_workspaces names it (a
 // fast-path workspace, section 4.5), and Python answers it as with
 // admission off (docs/design/fast-admission-e2-g15-async.md section 4.1).
 func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspace string) string {
-	if r.Async.V1 && p.AsyncSettle.Admits(workspace) {
+	if r.Async.V1 && p.AsyncSettle.Admits(workspace) && !p.AsyncSettle.Tickets(workspace) {
 		return PassAsyncAdmission
 	}
 	return ""
@@ -747,10 +746,11 @@ func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspa
 // asyncComposeInput is the async input Stage composes for the workspace: the
 // policy's object as that workspace sees it, admission on only when it covers
 // the workspace (Admits), not a literal false, so that were the admission
-// gate skipped, Stage refuses a covered workspace (a ticket is Python's).
+// gate skipped, Stage refuses a covered workspace without edge tickets.
 func asyncComposeInput(r gwauth.AsyncRequest, p routingsnapshot.AsyncSettle, workspace string) *gwauth.AsyncInput {
+	tickets := p.Tickets(workspace)
 	p.AdmissionEnabled = p.Admits(workspace)
-	return &gwauth.AsyncInput{Request: r, Policy: p}
+	return &gwauth.AsyncInput{Request: r, Policy: p, WantTicket: tickets}
 }
 
 func composeTags(tags []gwauth.Tag) []gwauth.ComposeTag {
@@ -917,7 +917,8 @@ func workspacePass(w gwstate.WorkspaceFacts) string {
 
 // creditPass is what the workspace's credit rows say (store.CreditState):
 // a pause cause on any row (the entity's are WorkspaceFacts'), debt, a
-// latch or a tier below the grant's, or any refusal the grant would make.
+// latch, a tier below the grant's or one with no allowance, or any refusal
+// the grant would make.
 func creditPass(r gwstate.Read) string {
 	c := r.CreditState
 	switch {
@@ -927,7 +928,7 @@ func creditPass(r gwstate.Read) string {
 		return PassWorkspacePaused
 	case c.InDebt || c.Refused == store.RefusedInDebt:
 		return PassWorkspaceInDebt
-	case c.Latched || c.Refused == store.RefusedTier:
+	case c.Latched || c.Refused == store.RefusedTier || c.Refused == store.RefusedTierAllowance:
 		return PassWorkspaceTier
 	case c.Refused != "":
 		return PassWorkspaceRefused

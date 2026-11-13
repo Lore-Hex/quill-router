@@ -9,7 +9,11 @@ unchanged.
 ## Signals
 
 * **Refresh failed:** installation, authentication, parser, coverage, publication,
-  timeout, and active cancellation failures send an error. Superseded queued
+  deploy-check, timeout, and active cancellation failures send an error. The
+  deploy check is the job's last step (stage `deploy_dispatch`): it fails when
+  it cannot tell whether a waiting snapshot needs a rollout, when its dispatch
+  of `deploy.yml` fails, and when a snapshot is past the limit but main's head
+  already had a deploy run that delivered nothing. Superseded queued
   cancellations are not incidents. The observer scans recent completions too,
   so coalesced completion notifications do not silently hide a recent failure.
 * **Catalog stale:** no validated refresh in six hours sends a separate error.
@@ -24,6 +28,9 @@ unchanged.
   with a 60-minute grace period, so even a GitHub-wide scheduling outage or a
   broken observer can be detected outside GitHub. The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.
+  The external observer runs on `tr-clickhouse-3`
+  (`scripts/ops/install_price_refresh_observer.sh`); moving or rebuilding that
+  host means reinstalling it first.
 
 The first observed failure sends immediately. Each error class sends at most
 once per six hours across runs. Recovery closes the GitHub monitoring issue

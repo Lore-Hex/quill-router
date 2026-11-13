@@ -3,7 +3,9 @@
 Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
 #2396) and PR 7 built (§11); the rollout is at WS4 (§8.2), with the
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
-and `max_rank` 10 since 2026-11-10. This is the short note the production
+since WS3, the required tier lowered to 1 with the lower tiers' allowances
+since 2026-11-13 ((b), amended) and `max_rank` 10 since 2026-11-13. This is
+the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
@@ -127,9 +129,11 @@ reconciler rather than at workspaces, the enabler raises
 
 | Setting | Value | Node flag |
 |---|---|---|
-| Required tier | 3 | `-required-tier 3` (exists, `cmd/fastpath/main.go:73`; the node's unit passes none today) |
+| Required tier | 1 since 2026-11-13 (3 from WS0 until then) | `-required-tier` (exists, `cmd/fastpath/main.go:73`) |
 | Allowance, tier 3 | 1,000,000,000 microdollars ($1,000) per workspace | `-allowance` (new) |
-| Allowance, tiers 0 to 2 | none: refused by the required tier | |
+| Allowance, tier 2 | 250,000,000 microdollars ($250) since 2026-11-13 (0 until then) | `-allowance-tier2` (metadata `fastpath-allowance-tier2`) |
+| Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
+| Allowance, tier 0 | none, always: no flag | |
 | Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
 | Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $100 | enabler setting |
 | Enabler's balance to disable | unspent credit under $40 | enabler setting |
@@ -140,11 +144,52 @@ reconciler rather than at workspaces, the enabler raises
   stolen card that cleared also has. The design requires the grant to
   enforce the tier before any workspace but the operator's is leased. The
   nodes run tier 1 today (§10), so this lands first (PR 1).
-- **One allowance, not a table.** The effective tier is at most 3
-  (`trust_tiers.py:277`), so with the required tier at 3 only one tier ever
-  holds a lease and `store.Config`'s single `Allowance` is the whole table.
-  A per-tier table is built when the required tier is lowered, which stays
-  Joseph's call (§9 of the design).
+- **A table per tier, dark below tier 3.** The effective tier is at most 3
+  (`trust_tiers.py:277`). `store.Config` holds one allowance per leased
+  tier: `Allowance` (tier 3, `-allowance`), `AllowanceTier2`
+  (`-allowance-tier2`) and `AllowanceTier1` (`-allowance-tier1`), in
+  microdollars, the lower two 0 unless set; tier 0 has none. A grant takes
+  the workspace's tier as the required-tier check reads it (the least of its
+  credit rows' `trust_tier`, a latched row's counted as 0) and weighs the
+  lease against that tier's allowance, so a tier-2 workspace's exposure is
+  capped by tier 2's, not tier 3's. A tier at or above the required tier
+  whose allowance is 0 is refused
+  (`RefusedTierAllowance`, "the workspace's tier has no allowance for
+  leases"), by the grant, by `GrantReadiness` (`fastpathctl ready`, which
+  takes `-allowance-tier2` and `-allowance-tier1` for it, as `loadgen`
+  does) and in the gateway's credit state, which the edge passes at
+  `workspace.tier`. Each nonzero allowance is at least `TopUps.Max` and at
+  most `MaxMoney`, as tier 3's is, and they never rise as the tier falls:
+  tier 1's ≤ tier 2's ≤ tier 3's (`service.CheckMoney`, `store.New`, and the
+  startup script for its attributes). The startup script passes
+  `-allowance-tier2` and `-allowance-tier1` only for a nonzero attribute, so
+  `"0"` needs no release that takes them.
+  - **Amended 2026-11-12: tiers 1 and 2 leased, at $100 and $250.** Joseph
+    lowered the required tier to 1 with a tier-2 allowance of $250 and a
+    tier-1 allowance of $100, by the change described next: #2545 pinned a
+    release that takes the flags with the three values, nodes 15 and 16
+    took them (`fastpath-deploy.md`, "Lowering the required tier"), and the
+    enabler's tier followed. A tier-1 workspace's worst case is so about
+    $25,000 of charges against $100 of holds (the bound below), and tier
+    3's reasoning ("Tier 3" above) is kept as the record of WS0.
+  - **Tiers 1 and 2 stayed off until then.** Both allowances were 0 in
+    Terraform and the required tier stayed 3, so nothing below tier 3 is leased: with the
+    required tier at 3 the lower allowances are never read, and with it
+    lowered alone they would refuse every lease below tier 3. Leasing tier 2
+    or 1 is a separate change, which stays Joseph's call (§9 of the
+    design): it sets that tier's allowance, re-pins to a release that takes
+    the flags, then lowers `fastpath_required_tier`, each node taken by the
+    runbook's money settings step, and only then lowers the enabler's
+    `TR_FASTPATH_ENABLER_REQUIRED_TIER` (§5.7).
+  - **The bound per tier.** The exposure argument below holds per tier: a
+    workspace's worst case is its tier's allowance times 250, so a tier-2
+    allowance of A permits about 250 × A of charges against A of holds per
+    workspace, each overrun reserved by its shortfall write and stopped by
+    the debt mark (§4.7). The lower tiers have less history behind them
+    (tier 1 is one succeeded payment, which a stolen card that cleared also
+    has), which is why a lower tier's allowance is never above a higher
+    one's, and why each is sized by that bound rather than by honest
+    traffic.
 - **$1,000, as exposure.** §9 sizes an allowance by the exposure it
   permits, not by honest traffic: the allowance times the largest ratio of
   bill to hold a tier-3 workspace can route to. That ratio has no fixed
@@ -166,7 +211,8 @@ reconciler rather than at workspaces, the enabler raises
     so the holds that can overrun under leases are never more than today's
     path would allow the workspace. What leases add is the windows of
     §4.13 (one write, the auditor's lag on a lost write, the state cache's
-    age), not a larger base. Only tier-3 workspaces get there: a 30-day
+    age), not a larger base. Until the 2026-11-13 amendment only tier-3
+    workspaces got there: a 30-day
     payment history, $50 paid, an approved owner and no dispute, or an
     operator's override with an approved owner (the P1 synthetic workspace
     alone by identity bypass, §8.2).
@@ -658,6 +704,15 @@ in `rollout.sh` reaches them. So:
   default), the thresholds of (b), and the async pilot, overlap and shadow
   lists and probe keys it reads from the same secrets and literals the
   control plane does.
+- `TR_FASTPATH_ENABLER_REQUIRED_TIER` (1 to 3, 3 by default; 1 in the
+  job's literal since 2026-11-13, after the nodes) is the tier a workspace needs to be enabled. It must be at
+  least the nodes' required tier in effect (`fastpath_required_tier` in
+  `infra/fastpath.tf`, the node's `-required-tier`): below it, the enabler
+  would turn on workspaces every grant refuses, each paying a front door
+  hop to be passed. So it is lowered only after every node runs the lower
+  tier, and the nodes' is raised only after it; above the nodes' it only
+  enables fewer. A test holds the job's literal at or above the Terraform
+  local.
 - During a deploy the job and the control plane can briefly disagree on
   the exclude list. A row written for a workspace the control plane
   excludes is inert, since neither door covers it, and the next run
@@ -848,9 +903,9 @@ Any alert, or any bar missed, is the way back (§8.3), then the cause.
 | WS1 | `fastpathctl hold-backfill` run (PR 4); the enabler in `dry-run` | four consecutive runs whose reports were read: every current pilot workspace eligible, every exclusion of (c) counted where it should be, and `unheld_disabled` (§5.4) zero: no `enabled = false` row anywhere without a hold |
 | WS2 | Entry, in this order: every node's release, and so every `fastpathctl` in use, carries PR 4; `hold-backfill` run again, which holds any stop an older node made since WS1's run (it is idempotent, and the enabler has written no disable yet); a dry-run report taken after it with `unheld_disabled` zero; `fastpathctl enabler arm`, which checks the same itself. Then the enabler in `apply` with `max_rank` 0 (it keeps the include list and enables nobody new); then, once a run's report shows the enabled set within the include list and nothing to disable, `TR_FASTPATH_PILOT_ALL=true` with the explicit list emptied | 2,000 leased settles under all mode; no `workspace` pass from Python for an enabled workspace (its switch copy works) |
 | WS3 | The wildcard row on for `gcp`, `us-central1`, then the include list's own on rows deleted, so they decide under the wildcard | 2,000 authorizes with `decided.via` `wildcard`; no `edge_decide_unavailable_sustained` |
-| WS4 | `max_rank` 10: the ten largest tier-3 workspaces | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
+| WS4 | `max_rank` 10: the ten largest workspaces at or above the enabler's required tier (1 since 2026-11-13) | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
 | WS5 | `max_rank` 100 | 20,000 leased settles from the step's workspaces, and at least 50 granted |
-| WS6 | PR 7 (the 503) deployed; `max_rank` unbounded: every tier-3 workspace | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
+| WS6 | PR 7 (the 503) deployed; `max_rank` unbounded: every workspace at or above the enabler's required tier | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
 
 **The P1 synthetic workspace at tier 3.** An override does not reach tier
 3 by itself: `effective_trust_tier` caps it at 1 unless the owner's
@@ -924,6 +979,13 @@ Fastest first, each narrower than the next:
 7. `TR_FASTPATH_PILOT_ENABLED=false`: every new authorize takes today's
    path at once.
 
+**With a reserved list pinned (§9.1).** Two of these steps move the
+reserved pin in the same deploy, or the settings refuse to start and the
+previous revision keeps serving: step 4 for a workspace on
+`TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` (take it off that list as it
+goes on the exclude list), and `TR_FASTPATH_PILOT_ALL=false` (empty the
+reserved list). The other steps leave the reserved pin as it is.
+
 ## 9. Async admission
 
 Today `async_settle_pilot_allows(w)` is false for `w` in
@@ -954,14 +1016,14 @@ is every covered workspace, unbounded.
 - The publisher's `admission_excluded_workspaces` is the async pilot set's
   members that `async_settle_fastpath_excludes` names, so it stays bounded by
   the async pilot set's 32.
-- Two validators refuse to start a process with all mode on and:
-  - async admission on with an empty async pilot set, since "every
-    workspace" for async and "every workspace" for the fast path cannot
-    both hold and the published exclusion would be unbounded;
-  - an async pilot workspace on neither `fastpath_pilot_exclude` nor the
-    overlap list. The operator says which path each async pilot workspace
-    takes; turning all mode on never moves one silently.
-- With both validators met, `admission_excluded_workspaces` is empty and
+- A validator refuses to start a process with all mode on and an async
+  pilot workspace on neither `fastpath_pilot_exclude` nor the overlap
+  list. The operator says which path each async pilot workspace takes;
+  turning all mode on never moves one silently. (A second validator,
+  refusing async admission on with an empty async pilot set, held until
+  §9.1 gave that setting a meaning.)
+- With a named async pilot set and the validator met,
+  `admission_excluded_workspaces` is empty and
   absent, so the async object of the policy is byte-identical to today's
   and Go's `AsyncSettle.Admits` needs no change. A workspace the enabler
   turns on is covered and not in the async pilot set, so async admission
@@ -972,6 +1034,95 @@ is every covered workspace, unbounded.
 - `TestTheAsyncAdmissionVectors` gains all-mode rows, generated by
   `scripts/fastpath/edge_policy_vectors.py`, so Go's answer per workspace is
   held to Python's.
+
+### 9.1 Async admission for every workspace
+
+§9 kept the two paths apart by workspace, which under all mode left async
+settle to the async pilot set alone: every other workspace is one the fast
+path covers. §4.13's rule is about requests, "async settle takes no
+request the fast path takes", and a workspace the fast path covers still
+sends requests the fast path does not take: every authorize the pilot does
+not lease (the workspace is not enabled, the key or route is outside the
+lease's terms, or the node declined). Those settle synchronously today.
+This section admits them.
+
+**The setting.** All mode on, async admission on, and
+`TR_ASYNC_SETTLE_PILOT_WORKSPACES` empty. Before this section that refused
+to start. It now means:
+
+- **Per workspace.** `async_settle_pilot_allows(w)` is true for every
+  workspace but those on `TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES`
+  (the reserved list: at most 32, all mode only, none on the overlap list,
+  none on `fastpath_pilot_exclude`, empty by default).
+  `async_settle_fastpath_excludes(w)` is membership of the reserved list
+  here, and `fastpath_covers(w)` otherwise as in §9. The overlap list
+  wins over both.
+- **Per request.** `async_settle_admits_request(w, leased=...)` is false
+  for an authorization the pilot leased (`fastpath_envelope` set) unless
+  `w` is on the overlap list, and `async_settle_pilot_allows(w)`
+  otherwise. `async_settle.snapshot_projection` reads it where it read
+  the workspace rule, so a leased authorization gets the admission-off
+  answer (shape B, no ticket, no status URL, no admission cache read) and
+  settles through its lease. With a named pilot set or the explicit list
+  the request rule changes no answer: a leased workspace outside the
+  overlap list is already left out
+  (`test_the_request_rule_changes_no_answer_of_the_workspace_rule_it_replaces`).
+- **The settle.** Unchanged. The handler has the ticket's claims and reads
+  the workspace rule. A leased authorization holds no ticket, so it never
+  reaches the handler's accept path; one ticketed before a process took
+  the setting, or an overlap workspace's, is accepted and finishes through
+  its lease in the drain, once, as #2309 arranged.
+- **The policy.** `admission_workspaces` is absent (every workspace) and
+  `admission_excluded_workspaces` is the reserved list, absent when that is
+  empty. Both are encodings the deployed Go reader already accepts, so no
+  node changes: `AsyncSettle.Admits` is true for every workspace but the
+  reserved ones. The vectors gain these rows
+  (`scripts/fastpath/edge_policy_vectors.py`, `:reserved=`), and
+  `TestTheAsyncAdmissionVectors` holds Go's answer to Python's on each.
+
+**What it costs at the edge with edge tickets off.** Only Python signs
+a ticket, so the edge passes every async-v1 authorize of an
+admitted workspace to Python (`policy.async_admission`), leasable or not,
+and answers async-v1 itself only for the reserved list. A workspace whose
+async-v1 authorizes the edge should keep answering goes on the reserved
+list and keeps §9's behaviour; it then gets no async settle. A sync
+authorize is untouched: the edge decides it as before. Letting the edge
+answer the leasable async-v1 authorizes of an admitted workspace needs the
+edge to tell them apart before it passes, a Go change this section does
+not make. The sign-only extension in [Edge tickets](fast-admission-e2-g15-async.md#edge-tickets)
+lets the edge answer admitted workspaces while Python keeps the signing key.
+
+**Named pilot set in all mode.** §9 exactly, and the reserved list is
+ignored: the pilot set already says who is admitted. That is the way back,
+one pin: name the pilot set again and admission returns to it.
+
+**Who is admitted in practice.** Admission is the precondition, not the
+whole test. A request still needs the async-v1 header, an eligible
+snapshot, a negotiation region, a tier with a pending-cost cap and room
+under it (`TR_ASYNC_SETTLE_PILOT_CAP_MICRO` bounds each workspace's
+pending cost); anything else settles synchronously as before.
+
+**Order of rollout.** A process on the previous code refuses to start on
+the new pins, so the code reaches every region first and the pins follow.
+Between pins, instances disagree only one way that matters: a ticket from
+an instance with the new pins reaching a settle instance with the old
+answers `sync_required` `not_eligible`, and the enclave settles
+synchronously.
+
+**The deployed pins (2026-11-10).** `scripts/deploy/rollout.sh` pins an
+empty `TR_ASYNC_SETTLE_PILOT_WORKSPACES`, the overlap list unchanged (the
+operator workspace) and `TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` as
+the enabler's include list less the overlap list, so the workspaces the
+enabler was told to keep on the fast path stay there and every other
+workspace is admitted. The probes' workspaces on `TR_FASTPATH_PILOT_EXCLUDE`
+are admitted with everyone else: the fast path never takes them, so they
+have nothing to reserve. The reserved list cannot name them either, so with
+the pilot set empty no pin keeps an excluded workspace off async settle;
+the way to do that is to name the pilot set again, which brings back §9's
+rule for every workspace. The shared vectors carry this shape (an empty
+pilot set, a reserved list and an exclude list). `test_the_deployed_pins_admit_every_workspace_but_the_reserved_list`
+holds the pins to this paragraph, and a workspace added to the include
+list fails it until the reserved pin says which path the workspace takes.
 
 ## 10. What the code says that the documents do not
 

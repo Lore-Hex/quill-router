@@ -100,7 +100,15 @@ GCP_PROJECT_ID="$PROJECT_ID" \
 SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
 SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
   "${SCRIPT_DIR}/migrate_operational_analytics_outbox.sh"
+GCP_PROJECT_ID="$PROJECT_ID" \
+SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
+SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
+  "${SCRIPT_DIR}/migrate_operational_outbox_heartbeat.sh"
 "${SCRIPT_DIR}/migrate_generation_records.sh" --apply
+GCP_PROJECT_ID="$PROJECT_ID" \
+SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
+SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
+  "${SCRIPT_DIR}/migrate_clickhouse_node_role.sh"
 
 log "creating replicated operational tables"
 schema="$(cat "$SCHEMA")"

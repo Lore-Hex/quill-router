@@ -2,9 +2,11 @@
 #
 # Pulls each keyed provider's published prices, runs a self-healing
 # parser layer (LLM-rewrites the parser when validation fails), and
-# auto-commits the resulting snapshot to main. Existing deploy.yml
-# triggers on the snapshot path via its `src/**` filter — staged
-# regional rollout + per-region watchdog already guard the deploy.
+# auto-commits the resulting snapshot to main. The snapshot lives under
+# `src/`, so the next deploy.yml rollout of main ships it; the job's last
+# step dispatches deploy.yml for a snapshot no rollout has carried for a
+# few hours. Staged regional rollout + per-region watchdog guard either
+# deploy.
 #
 # Trust shape:
 #   * Network IO and URL choice live in scripts/pricing/providers/
@@ -41,7 +43,7 @@ concurrency:
 permissions:
   id-token: write   # for Workload Identity Federation
   contents: write   # push the generated snapshot branch
-  actions: write    # dispatch ci.yml + deploy.yml for a new snapshot
+  actions: write    # dispatch ci.yml for a new snapshot, deploy.yml for a waiting one
   statuses: write   # bridge exact-SHA CI checks to protected-push statuses
   issues: write     # upsert the durable model-discovery coverage alert
                     # (GITHUB_TOKEN-pushed commits don't auto-trigger
@@ -267,6 +269,13 @@ jobs:
           uv run python -m scripts.pricing.transcription | tee /tmp/transcription-summary.txt
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
           uv run python -m scripts.pricing.openrouter_reasoning
+
+      - name: Hold listed routes the provider refuses to serve
+        # Applies /route-health/unserved.json (sustained model-not-served
+        # configured-route probes) to the provider manifests and lifts expired
+        # holds. Unavailable evidence holds nothing and cannot block prices.
+        continue-on-error: true
+        run: uv run python -m scripts.pricing.unserved_route_holds | tee -a /tmp/refresh-summary.txt
 
       - name: Sanity-check for price spikes + record deltas
         run: |
@@ -531,6 +540,14 @@ jobs:
 
             ci_passed=""
             ci_run_id=""
+            # One automatic rerun of only the failed jobs per exact-SHA run: a
+            # single timing flake in one shard otherwise discarded the whole
+            # hour's snapshot (2026-11-10). The rerun is the same run and SHA;
+            # the run must still conclude success over every job, and its jobs
+            # rerun unchanged. Polls of the old attempt are ignored until the
+            # rerun's attempt appears. It shares this round's 120-minute poll
+            # budget, so MAX_ROUNDS and the round deadline bound it as before.
+            ci_rerun_attempt=""
             # Keep exact-SHA completion mandatory, but allow the test matrix
             # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
             for _ in $(seq 1 480); do
@@ -540,7 +557,7 @@ jobs:
                 # read, and on timeout cancelled, in its place.
                 run_json=$(gh run view "${ci_run_id}" \
                   --repo "${GITHUB_REPOSITORY}" \
-                  --json databaseId,headSha,status,conclusion)
+                  --json databaseId,headSha,status,conclusion,attempt)
                 if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
                   echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
                   exit 1
@@ -551,18 +568,35 @@ jobs:
                   --workflow ci.yml \
                   --branch "${BRANCH}" \
                   --event workflow_dispatch \
-                  --json databaseId,headSha,status,conclusion \
+                  --json databaseId,headSha,status,conclusion,attempt \
                   --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
               fi
               if [ -n "${run_json}" ]; then
                 status=$(jq -r .status <<<"${run_json}")
                 conclusion=$(jq -r .conclusion <<<"${run_json}")
                 ci_run_id=$(jq -r .databaseId <<<"${run_json}")
-                echo "  ci run ${ci_run_id}: status=${status} conclusion=${conclusion:-<pending>}"
+                attempt=$(jq -r '.attempt // 1' <<<"${run_json}")
+                echo "  ci run ${ci_run_id} attempt ${attempt}: status=${status} conclusion=${conclusion:-<pending>}"
+                if [ -n "${ci_rerun_attempt}" ] && [ "${attempt}" -lt "${ci_rerun_attempt}" ]; then
+                  # The rerun was requested; this is still the failed attempt.
+                  sleep 15
+                  continue
+                fi
                 if [ "${status}" = "completed" ]; then
                   if [ "${conclusion}" = "success" ]; then
                     ci_passed=1
                     break
+                  fi
+                  if [ "${conclusion}" = "failure" ] && [ -z "${ci_rerun_attempt}" ]; then
+                    echo "::warning title=Snapshot CI rerun::ci run ${ci_run_id} attempt ${attempt} failed; rerunning its failed jobs once"
+                    if ! gh run rerun "${ci_run_id}" --failed --repo "${GITHUB_REPOSITORY}"; then
+                      echo "could not rerun the failed jobs of ci run ${ci_run_id}"
+                      exit 1
+                    fi
+                    ci_rerun_attempt=$((attempt + 1))
+                    echo "ci_rerun=${ci_run_id}:${ci_rerun_attempt}" >> "$GITHUB_OUTPUT"
+                    sleep 15
+                    continue
                   fi
                   echo "generated snapshot CI concluded '${conclusion}'"
                   exit 1
@@ -674,14 +708,11 @@ jobs:
               exit 1
             fi
 
-            # GITHUB_TOKEN pushes do not start push-triggered workflows. The
-            # exact SHA already has a successful ci.yml run, so dispatch the
-            # staged deploy; deploy.yml independently verifies that same SHA.
-            # Discovered live on 2026-05-13: hourly bot was committing
-            # but TR's deployed catalog was stuck on a 3-phala-endpoint
-            # snapshot for hours because deploy.yml never auto-fired.
-            gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
-            echo "  dispatched deploy.yml for new snapshot"
+            # GITHUB_TOKEN pushes do not start push-triggered workflows, so
+            # this push starts no deploy. The snapshot lives under src/ and
+            # rides the next control-plane rollout of main. This job's last
+            # step dispatches deploy.yml for a snapshot that waited too long
+            # for one (scripts/deploy/price_snapshot_deploy.py).
             echo "validated=true" >> "$GITHUB_OUTPUT"
             exit 0
           done
@@ -816,3 +847,34 @@ jobs:
               gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file /tmp/held-issue.md
             fi
           fi
+
+      - name: Deploy a price snapshot no rollout has carried
+        # A snapshot push starts no deploy: a GITHUB_TOKEN push never starts a
+        # push-triggered workflow. On 2026-05-13 the hourly bot was committing
+        # while the deployed catalog stayed stuck for hours, because
+        # deploy.yml never fired for its commits. A snapshot now rides the
+        # next control-plane rollout, and this step is the backstop: it
+        # dispatches deploy.yml once a snapshot has waited too long for one
+        # (the rule is in scripts/deploy/price_snapshot_deploy.py). It runs on
+        # every hourly run, also when this run published nothing or an earlier
+        # step failed, because the snapshot that waits was published by an
+        # earlier run.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          decision=$(python3 -m scripts.deploy.price_snapshot_deploy --repo "${GITHUB_REPOSITORY}")
+          case "${decision}" in
+            dispatch)
+              gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" -f track_main=true
+              echo "  dispatched deploy.yml for a waiting snapshot"
+              ;;
+            wait)
+              echo "  no deploy dispatched"
+              ;;
+            *)
+              echo "unexpected decision: '${decision}'"
+              exit 1
+              ;;
+          esac

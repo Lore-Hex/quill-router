@@ -553,13 +553,14 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=-:overlap=-:exclude=-",
+   "name": "publisher:all:admission=false:pilots=-:overlap=-:exclude=-:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "",
     "fastpath": "",
     "overlap": "",
-    "pilots": ""
+    "pilots": "",
+    "reserved": ""
    }
   },
   {
@@ -571,13 +572,90 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-",
+   "name": "publisher:all:admission=false:pilots=-:overlap=-:exclude=-:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=-:overlap=-:exclude=-:reserved=ws-synthetic-pilot-2,ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": "ws-synthetic-pilot-2,ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": ""
+    "pilots": "",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-:reserved=ws-synthetic-pilot-2,ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": "ws-synthetic-pilot-2,ws-synthetic-neither"
    }
   },
   {
@@ -589,13 +667,14 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a:overlap=-:exclude=ws-synthetic-async-a",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a:overlap=-:exclude=ws-synthetic-async-a:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "ws-synthetic-async-a",
     "fastpath": "",
     "overlap": "",
-    "pilots": "ws-synthetic-async-a"
+    "pilots": "ws-synthetic-async-a",
+    "reserved": ""
    }
   },
   {
@@ -607,13 +686,52 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a:overlap=-:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "ws-synthetic-async-a",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "ws-synthetic-async-a",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": "ws-synthetic-async-a"
+    "pilots": "ws-synthetic-async-a",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "ws-synthetic-async-a",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -625,13 +743,33 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=-:exclude=ws-synthetic-async-a,ws-synthetic-pilot-1",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=-:exclude=ws-synthetic-async-a,ws-synthetic-pilot-1:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "ws-synthetic-async-a,ws-synthetic-pilot-1",
     "fastpath": "",
     "overlap": "",
-    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1"
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=-:exclude=ws-synthetic-async-a,ws-synthetic-pilot-1:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -643,13 +781,33 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "ws-synthetic-async-a",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1"
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -661,13 +819,33 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=-:exclude=ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=-:exclude=ws-synthetic-pilot-1,ws-synthetic-pilot-2:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
     "fastpath": "",
     "overlap": "",
-    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2"
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=-:exclude=ws-synthetic-pilot-1,ws-synthetic-pilot-2:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -679,13 +857,147 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=false:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-pilot-2",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-pilot-2:reserved=-",
    "settings": {
     "admission": false,
     "exclude": "ws-synthetic-pilot-2",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2"
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-pilot-2:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-pilot-2",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": true,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=-:exclude=-:reserved=-",
+   "settings": {
+    "admission": true,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_excluded_workspaces\":[\"ws-synthetic-neither\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=-:exclude=-:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_excluded_workspaces\":[\"ws-synthetic-neither\",\"ws-synthetic-pilot-2\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=-:exclude=-:reserved=ws-synthetic-pilot-2,ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": "ws-synthetic-pilot-2,ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": true,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-:reserved=-",
+   "settings": {
+    "admission": true,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_excluded_workspaces\":[\"ws-synthetic-neither\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_excluded_workspaces\":[\"ws-synthetic-neither\",\"ws-synthetic-pilot-2\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=ws-synthetic-pilot-1:exclude=-:reserved=ws-synthetic-pilot-2,ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": "ws-synthetic-pilot-2,ws-synthetic-neither"
    }
   },
   {
@@ -697,13 +1009,14 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a:overlap=-:exclude=ws-synthetic-async-a",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a:overlap=-:exclude=ws-synthetic-async-a:reserved=-",
    "settings": {
     "admission": true,
     "exclude": "ws-synthetic-async-a",
     "fastpath": "",
     "overlap": "",
-    "pilots": "ws-synthetic-async-a"
+    "pilots": "ws-synthetic-async-a",
+    "reserved": ""
    }
   },
   {
@@ -715,13 +1028,52 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a:overlap=-:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "ws-synthetic-async-a",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=-",
    "settings": {
     "admission": true,
     "exclude": "ws-synthetic-async-a",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": "ws-synthetic-async-a"
+    "pilots": "ws-synthetic-async-a",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "ws-synthetic-async-a",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -733,13 +1085,33 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=-:exclude=ws-synthetic-async-a,ws-synthetic-pilot-1",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=-:exclude=ws-synthetic-async-a,ws-synthetic-pilot-1:reserved=-",
    "settings": {
     "admission": true,
     "exclude": "ws-synthetic-async-a,ws-synthetic-pilot-1",
     "fastpath": "",
     "overlap": "",
-    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1"
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=-:exclude=ws-synthetic-async-a,ws-synthetic-pilot-1:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -751,13 +1123,33 @@
     "ws-synthetic-pilot-2": false
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=-",
    "settings": {
     "admission": true,
     "exclude": "ws-synthetic-async-a",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1"
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-async-a\",\"ws-synthetic-pilot-1\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-async-a,ws-synthetic-pilot-1:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "ws-synthetic-async-a,ws-synthetic-pilot-1",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -769,13 +1161,33 @@
     "ws-synthetic-pilot-2": true
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=true:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=-:exclude=ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=-:exclude=ws-synthetic-pilot-1,ws-synthetic-pilot-2:reserved=-",
    "settings": {
     "admission": true,
     "exclude": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
     "fastpath": "",
     "overlap": "",
-    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2"
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=-:exclude=ws-synthetic-pilot-1,ws-synthetic-pilot-2:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {
@@ -787,13 +1199,109 @@
     "ws-synthetic-pilot-2": true
    },
    "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
-   "name": "publisher:all:admission=true:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-pilot-2",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-pilot-2:reserved=-",
    "settings": {
     "admission": true,
     "exclude": "ws-synthetic-pilot-2",
     "fastpath": "",
     "overlap": "ws-synthetic-pilot-1",
-    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2"
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": ""
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_workspaces\":[\"ws-synthetic-pilot-1\",\"ws-synthetic-pilot-2\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-pilot-2\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=ws-synthetic-pilot-1,ws-synthetic-pilot-2:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-pilot-2:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-pilot-2",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "ws-synthetic-pilot-1,ws-synthetic-pilot-2",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=-:overlap=-:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": false,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": false,
+    "ws-synthetic-pilot-2": false
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":false,\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=false:pilots=-:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": false,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_excluded_workspaces\":[\"ws-synthetic-neither\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=-:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
+   }
+  },
+  {
+   "accept": true,
+   "admits": {
+    "ws-synthetic-async-a": true,
+    "ws-synthetic-neither": false,
+    "ws-synthetic-pilot-1": true,
+    "ws-synthetic-pilot-2": true
+   },
+   "body": "{\"accepted_image_digests\":[\"sha256:5070204bd1f3bd1ee9fb1eaa35404a72af58741480967427b54d690e47472229\",\"sha256:a76331c6d0bc1b42a444f0131dbd1fb265e7831cb9a41122b5d663d68d897476\",\"sha256:f195028e79389cc074741d123093bf35fef1fb679035ba40fc12100204168861\"],\"async_settle\":{\"admission_enabled\":true,\"admission_excluded_workspaces\":[\"ws-synthetic-neither\"],\"edge_decide\":false,\"ticket_authority\":true,\"typed_records\":true},\"async_settle_shadow_policy\":\"shadow-v2\",\"async_settle_shadow_workspaces\":[\"ws-synthetic-async-shadow\"],\"configured_regions\":[\"us-central1\",\"europe-west4\",\"us-east4\"],\"fastpath_pilot_all\":true,\"fastpath_pilot_enabled\":true,\"fastpath_pilot_exclude\":[\"ws-synthetic-async-a\"],\"fastpath_pilot_regions\":[\"us-central1\"],\"fastpath_pilot_workspaces\":[],\"gateway_authorize_max_in_flight_per_key\":4,\"internal_models\":[\"trustedrouter/fortanix-test\",\"trustedrouter/monitor\"],\"issued_at\":1792368000,\"kind\":\"tr-edge-policy\",\"monitor_lookup_hash\":\"e4b55020e0693f129b6580f704d47899e84dfbca5169d6b0f92a4b0159bed9b9\",\"multi_region_enabled\":true,\"not_after\":1792368060,\"plane\":{\"cloud\":\"gcp\",\"region\":\"us-central1\"},\"primary_region\":\"us-central1\",\"records_durable\":true,\"refresh_at\":1792368015,\"stage_d\":{\"eligibility_enabled\":true,\"heartbeat_enabled\":true,\"pilot_workspaces\":[\"ws-synthetic-stage-d-a\",\"ws-synthetic-stage-d-b\"],\"require_heartbeat_declaration\":false},\"v\":1}",
+   "name": "publisher:all:admission=true:pilots=-:overlap=ws-synthetic-pilot-1:exclude=ws-synthetic-async-a:reserved=ws-synthetic-neither",
+   "settings": {
+    "admission": true,
+    "exclude": "ws-synthetic-async-a",
+    "fastpath": "",
+    "overlap": "ws-synthetic-pilot-1",
+    "pilots": "",
+    "reserved": "ws-synthetic-neither"
    }
   },
   {

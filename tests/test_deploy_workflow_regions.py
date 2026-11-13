@@ -93,6 +93,13 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
     assert 'gcloud run revisions describe "${active_revision}"' in smoke
     assert '[ "${active_release}" != "${SHA}" ]' in smoke
     assert '[ "${retired_secret_count}" != "0" ]' in smoke
+    retired = smoke.split("retired_secret_count=$(jq -r '", 1)[1].split("' <<<", 1)[0]
+    for name in (
+        "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD",
+        "TR_OPS_CHAT_WEBHOOK_SECRET",
+        "TR_OPS_CHAT_WEBHOOK_URLS",
+    ):
+        assert f'.name == "{name}"' in retired
 
 
 def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
@@ -373,8 +380,8 @@ def test_full_convergence_jobs_need_rollout_secondaries() -> None:
     )[0]
     verify = workflow.split("\n  verify-cloud-complete:\n", 1)[1]
 
-    assert "needs: [rollout-secondaries, admit-cloud]" in companion
-    assert "needs: [rollout-secondaries]" in verify
+    assert "needs: [rollout-secondaries, admit-cloud, select-release]" in companion
+    assert "needs: [rollout-secondaries, select-release]" in verify
     assert "needs.rollout-secondaries.result != 'skipped'" in verify
 
 
@@ -469,7 +476,7 @@ def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_ke
     end = workflow.index("\n  confirm-still-on-main:", sync)
     section = workflow[sync:end]
 
-    assert "needs: [gate-on-ci, admit-cloud]" in section
+    assert "needs: [gate-on-ci, admit-cloud, select-release]" in section
     assert "trustedrouter-aws-access-key-id" in section
     assert "gcloud secrets versions access latest" in section
     assert "secrets.TR_AWS_ACCESS_KEY_ID" not in section
@@ -584,14 +591,15 @@ def test_enclave_inventory_is_separate_from_live_control_plane_regions() -> None
 def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
     worker = jobs["settle-drain-worker"]
-    assert worker["needs"] == ["rollout-secondaries", "admit-cloud"]
+    assert worker["needs"] == ["rollout-secondaries", "admit-cloud", "select-release"]
     assert jobs["rollout-secondaries"]["needs"] == ["deploy"]
     assert worker["env"]["TR_DEPLOY_HOLD_REGIONS"] == "${{ vars.TR_DEPLOY_HOLD_REGIONS }}"
     assert worker["env"]["REGION"] == "us-central1"
     script = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
     assert 'REGION=us-central1' in script
     assert script.index('deploy_region_is_held "$REGION"') < script.index('gc run deploy')
-    # R3 admits the customer and probe pilots; protection stays on and router fast drain stays off.
+    # Admission covers every workspace since 2026-11-10 (an empty pilot set in
+    # all mode); protection stays on and router fast drain stays off.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     expected = {
         "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED": "false",
@@ -599,7 +607,10 @@ def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> No
         "TR_ASYNC_SETTLE_PROTECTION": "true",
         "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED": "true",
         "TR_ASYNC_SETTLE_HANDOFF_MODE": "memory",
-        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "",
+        "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d",
+        "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES":
+            "84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8",
     }
     for pin, value in expected.items():
         # Exactly one literal assignment per pin; no caller inheritance or later override.

@@ -107,11 +107,13 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # routing until a reviewed adapter release, not an attestation bypass.
         ("phala", "z-ai/glm-5.3"),
         ("phala", "z-ai/glm-5.3-flash"),
-        # NEAR AI GLM 5.3 Flash was held October 15 to November 2026 while the
-        # gateway sidecar refused its drifted attestation. quill-cloud-proxy
-        # #720 re-pinned both pool members to their reviewed dstack 0.5.12
-        # identities. GCP, AWS (45ff2be8) and Azure (629438f2) gateways all
-        # run that release, so the route is available from every gateway.
+        # NEAR AI GLM 5.3 Flash was held October 15 to November 9, and again
+        # November 12, while the gateway sidecar refused its drifted
+        # attestation. Released November 12, 2026: quill-cloud-proxy #755
+        # (4a17b292) re-pinned NEAR's gpu03 member (instance 19aea169,
+        # compose c900dc73, 271-action history e196ae72). Only the GCP fleet
+        # runs that release, so the route is gated to it in
+        # EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL below.
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
@@ -174,12 +176,21 @@ BASETEN_SYSTEMONE_MODEL_IDS: frozenset[str] = frozenset({
 # to a fleet before it can serve these. Older gateways send hosted decisions to
 # /evaluate, which Baseten does not serve.
 BASETEN_SYSTEMONE_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+# NEAR AI's November 12 attestation re-pin (quill-cloud-proxy #755, 4a17b292)
+# is live only on the GCP fleet. AWS (45ff2be8) and Azure (629438f2) gateways
+# still embed the pre-re-pin near_ai_policy.json, refuse NEAR's current
+# attestation and would return 502. Remove when AWS/Azure gateways run
+# quill-cloud-proxy >= 4a17b292 (QCP #755).
+NEAR_AI_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
 # Regolo's decision adapter also requires a cloud-local credential. The Azure
 # bundle has no Regolo entry; only the GCP fleet is verified for this route.
 EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
     ("cloudflare-workers-ai", "cloudflare/clairic"): CLAIRIC_GATEWAY_REGIONS,
     ("regolo", "cloudflare/clef-flash"): frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"}),
     **{("baseten", model_id): BASETEN_SYSTEMONE_GATEWAY_REGIONS for model_id in BASETEN_SYSTEMONE_MODEL_IDS},
+    # Remove when AWS/Azure gateways run quill-cloud-proxy >= 4a17b292 (NEAR
+    # policy re-pin, QCP #755).
+    ("near-ai", "z-ai/glm-5.3-flash"): NEAR_AI_GATEWAY_REGIONS,
 }
 
 # Fugu reports additive provider-side orchestration tokens only after a call.

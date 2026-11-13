@@ -83,10 +83,10 @@ from trusted_router.competitor_comparisons import (
 )
 from trusted_router.config import Settings
 from trusted_router.content.blog import (
-    BLOG_POSTS,
-    BLOG_POSTS_BY_SLUG,
     FEATURED_SLUGS,
     BlogPost,
+    published_post,
+    published_posts,
 )
 from trusted_router.content.company_signin import COMPANY_SIGNIN_PAGES, company_signin_context
 from trusted_router.content.legal import (
@@ -100,6 +100,7 @@ from trusted_router.content.legal import (
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
+from trusted_router.fortanix_launch import fortanix_launch_offer
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -116,7 +117,9 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
     PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
 )
-from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
+from trusted_router.provider_contracts import (
+    INPUT_ONLY_PROVIDER_MODELS,
+)
 from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.provider_locations import (
     provider_geography,
@@ -2621,6 +2624,7 @@ def _env() -> Environment:
     env.filters["seo_title"] = seo_title
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["fortanix_launch_offer"] = fortanix_launch_offer
     env.globals["decide_url"] = decide_url
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
@@ -2807,7 +2811,7 @@ def _newest_first(posts: Iterable[BlogPost]) -> list[BlogPost]:
 def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     return tuple(
         BlogIndexPost(post=post, image=_blog_og_image(settings, post))
-        for post in _newest_first(BLOG_POSTS)
+        for post in _newest_first(published_posts())
     )
 
 
@@ -2822,7 +2826,7 @@ def _featured_blog_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     blog index should not 500 because somebody renamed a post, but it also
     should not silently show one card where two were intended.
     """
-    featured = [BLOG_POSTS_BY_SLUG[slug] for slug in FEATURED_SLUGS if slug in BLOG_POSTS_BY_SLUG]
+    featured = [post for slug in FEATURED_SLUGS if (post := published_post(slug)) is not None]
     return tuple(
         BlogIndexPost(post=post, image=_blog_og_image(settings, post))
         for post in _newest_first(featured)
@@ -2894,7 +2898,7 @@ def _blog_index_json_ld(settings: Settings) -> str:
                     "datePublished": post.published_date,
                     "description": post.description,
                 }
-                for post in BLOG_POSTS
+                for post in published_posts()
             ],
         },
     )
@@ -3526,7 +3530,7 @@ def public_blog_index_html(settings: Settings) -> str:
 
 
 def public_blog_post_html(settings: Settings, slug: str) -> str | None:
-    post = BLOG_POSTS_BY_SLUG.get(slug)
+    post = published_post(slug)
     if post is None:
         return None
     site_url = f"https://{settings.trusted_domain}{post.href}"
@@ -4829,7 +4833,7 @@ def sitemap_core_xml(settings: Settings) -> str:
     doc_paths = (f"/{slug}" for slug in PUBLIC_PAGES if slug == "docs" or slug.startswith("docs/"))
     for path in dict.fromkeys((*SEO_CORE_PATHS, *doc_paths)):
         paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
-    for post in BLOG_POSTS:
+    for post in published_posts():
         paths.append((post.href, "monthly", "0.7"))
     return _sitemap_urlset(domain, paths)
 

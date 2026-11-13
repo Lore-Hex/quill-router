@@ -23,3 +23,8 @@ proofs/states/
 # Terraform working directories (provider binaries, state cache)
 .terraform/
 infra/.terraform.lock.hcl
+
+# Local exports of production logs. They carry workspace and key identifiers
+# and must never be committed to this public repository.
+/encl*.json
+*.log

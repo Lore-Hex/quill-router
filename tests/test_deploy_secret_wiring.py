@@ -168,8 +168,11 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     )
     assert "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD" not in mandatory_block
     assert (
-        'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
-    )
+        "REMOVE_SECRET_ENVS=(\n"
+        '  "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD"\n'
+        '  "TR_OPS_CHAT_WEBHOOK_SECRET"\n'
+        ")\n"
+    ) in rollout
     assert "trustedrouter-google-ads-conversion-feed-password" not in rollout
     assert "gc secrets list --format='value(name)'" in rollout
     assert 'grep -Fxq -- "$secret_name" <<<"$OPTIONAL_SECRET_NAMES"' in rollout
@@ -180,18 +183,33 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     assert '"${REMOVE_SECRETS_ARGS[@]}"' in rollout
 
 
-def test_deploy_wires_three_cloud_ops_chat_support_fanout() -> None:
+def test_deploy_no_longer_wires_the_retired_ops_chat_support_fanout() -> None:
+    """The experiment ended: nothing provisions, grants or binds its secret,
+    and the next rollout drops the binding the deployed service still has."""
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
 
-    assert "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com," in rollout
-    assert "https://b.trustedrouter.com,https://c.allyrouter.com" in rollout
-    assert "trustedrouter-ops-chat-webhook-secret" in rollout
-    assert '"OPS_SUPPORT_HOOK_SECRET"' in secrets
-    assert (
-        'grant_tr_deploy_secret_access "trustedrouter-ops-chat-webhook-secret"'
-        in secrets
-    )
+    for script in (rollout, secrets):
+        assert "TR_OPS_CHAT_WEBHOOK_URLS" not in script
+        assert "trustedrouter-ops-chat-webhook-secret" not in script
+        assert "OPS_SUPPORT_HOOK_SECRET" not in script
+        assert "a.uptimerouter.com" not in script
+        assert "b.trustedrouter.com" not in script
+        assert "c.allyrouter.com" not in script
+    assert "TR_OPS_CHAT_WEBHOOK_SECRET" not in secrets
+
+    # Plain values are replaced wholesale on every deploy, so leaving the
+    # variable out of ENV_VARS is what removes it from the service.
+    assert '--set-env-vars "${SET_ENV_VARS}|TR_SERVING_REGION=${target}"' in rollout
+    assert "--update-env-vars" not in rollout
+    # Secret bindings are updated in place and survive until named for
+    # removal: the retired list is the only mention left, and it is not
+    # also offered as a binding.
+    assert '--update-secrets "$UPDATE_SECRETS"' in rollout
+    assert rollout.count("TR_OPS_CHAT_WEBHOOK_SECRET") == 1
+    retired = rollout.split("REMOVE_SECRET_ENVS=(", 1)[1].split(")", 1)[0]
+    assert '"TR_OPS_CHAT_WEBHOOK_SECRET"' in retired
+    assert "add_secret_env_if_exists" not in retired
 
 
 def test_deploy_keeps_retired_user_models_disabled() -> None:

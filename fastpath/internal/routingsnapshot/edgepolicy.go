@@ -36,7 +36,8 @@ var (
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
 // missing one (async_settle, its admission_workspaces and
-// admission_excluded_workspaces, fastpath_pilot_key_windows,
+// admission_excluded_workspaces, edge_tickets, edge_ticket_workspaces,
+// fastpath_pilot_key_windows,
 // fastpath_edge_streams, fastpath_pilot_all, fastpath_pilot_exclude and
 // fastpath_stream_ceiling alone may be absent), a float, a duplicate key,
 // null anywhere but monitor_lookup_hash, and a body that is not its own
@@ -168,8 +169,9 @@ func (p *EdgePolicy) KeyWindowsMode() string {
 // AsyncSettle is the policy's async_settle object, four booleans the
 // publishing Python process reads from its settings and its async-settle
 // runtime when it signs (docs/design/fast-admission-e2-g15-async.md section
-// 3.4), and the optional admission_workspaces. Each boolean is required
-// inside the object; no other member is allowed. The edge's decide pipeline
+// 3.4). The four booleans are required. Only admission_workspaces,
+// admission_excluded_workspaces, edge_tickets and edge_ticket_workspaces
+// may also appear, as optional members. The edge's decide pipeline
 // reads them (edge/decide.go, G15c).
 type AsyncSettle struct {
 	// AdmissionEnabled is settings.async_settle_admission_enabled.
@@ -191,6 +193,9 @@ type AsyncSettle struct {
 	// (docs/design/fast-admission-e2-g15-async.md section 4.5): Python
 	// answers a workspace it names as with admission off, so the edge
 	// composes that answer. Absent excludes none. Admits reads it.
+	// With fastpath_pilot_all and no AdmissionWorkspaces it is Python's
+	// reserved list (docs/design/fast-admission-widening.md section 9.1):
+	// workspaces outside admission; edge tickets can cover the others.
 	AdmissionExcludedWorkspaces *[]string `json:"admission_excluded_workspaces,omitempty"`
 	// TicketAuthority is whether the publisher holds a ticket signer, an
 	// authority epoch of at least 1 and a non-empty journal region.
@@ -201,6 +206,20 @@ type AsyncSettle struct {
 	// EdgeDecide is fastpath_edge_decide_async: whether the edge may answer
 	// an async-v1 authorize itself.
 	EdgeDecide bool `json:"edge_decide"`
+	// EdgeTickets is optional, present only when true (absent when off,
+	// never false): Python's sign-only route is up
+	// (POST /internal/fastpath/async-ticket), so the edge answers an
+	// async-v1 authorize of a workspace Python's admission covers itself
+	// and asks Python for the signed settlement ticket while its own
+	// commit is in flight (docs/design/fast-admission-e2-g15-async.md,
+	// the edge tickets section). Present only with AdmissionEnabled.
+	// Tickets reads it.
+	EdgeTickets *bool `json:"edge_tickets,omitempty"`
+	// EdgeTicketWorkspaces is optional: the workspaces EdgeTickets covers,
+	// sorted and unique, 1 to maxAdmissionWorkspaces of them, present only
+	// with EdgeTickets. Absent with EdgeTickets is every workspace Admits
+	// covers. Tickets reads it.
+	EdgeTicketWorkspaces *[]string `json:"edge_ticket_workspaces,omitempty"`
 }
 
 // maxAdmissionWorkspaces bounds admission_workspaces as
@@ -212,7 +231,7 @@ const maxAdmissionWorkspaces = 32
 // admission_workspaces absent or naming it, and admission_excluded_workspaces
 // not naming it. Python answers a request it does not cover exactly as with
 // admission off (shape A or B, no ticket), which the edge composes; one it
-// covers is Python's to ticket.
+// covers needs Python to sign its ticket, optionally through edge tickets.
 func (a *AsyncSettle) Admits(workspace string) bool {
 	if !a.AdmissionEnabled {
 		return false
@@ -223,13 +242,36 @@ func (a *AsyncSettle) Admits(workspace string) bool {
 	return a.AdmissionWorkspaces == nil || slices.Contains(*a.AdmissionWorkspaces, workspace)
 }
 
+// Tickets is whether the edge answers the workspace's async-v1 authorize
+// itself and asks Python for the ticket: EdgeTickets on, the workspace one
+// Python's admission covers (Admits), and EdgeTicketWorkspaces absent or
+// naming it. A covered workspace it does not name stays Python's to answer.
+func (a *AsyncSettle) Tickets(workspace string) bool {
+	if a.EdgeTickets == nil || !*a.EdgeTickets || !a.Admits(workspace) {
+		return false
+	}
+	return a.EdgeTicketWorkspaces == nil || slices.Contains(*a.EdgeTicketWorkspaces, workspace)
+}
+
 func (a *AsyncSettle) validate() error {
+	if a.EdgeTickets != nil {
+		if !*a.EdgeTickets {
+			return errors.New("async_settle.edge_tickets is absent when off, never false")
+		}
+		if !a.AdmissionEnabled {
+			return errors.New("async_settle.edge_tickets requires admission_enabled")
+		}
+	}
+	if a.EdgeTicketWorkspaces != nil && a.EdgeTickets == nil {
+		return errors.New("async_settle.edge_ticket_workspaces requires edge_tickets")
+	}
 	for _, member := range []struct {
 		name string
 		set  *[]string
 	}{
 		{"admission_workspaces", a.AdmissionWorkspaces},
 		{"admission_excluded_workspaces", a.AdmissionExcludedWorkspaces},
+		{"edge_ticket_workspaces", a.EdgeTicketWorkspaces},
 	} {
 		w := member.set
 		if w == nil {

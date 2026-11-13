@@ -10,7 +10,7 @@
 # acked; and one on the fleet audit's summary line gone quiet. What each
 # means and what to do: docs/runbooks/fastpath-alerts.md.
 #
-# The channels exist already (the reliability scripts made them) and are
+# The channel exists already (the reliability scripts made it) and is
 # read here, not managed. The applying identity's role adds and changes
 # policies but cannot delete one (trustedRouterAlertReconciler,
 # scripts/deploy/gateway_reliability_iam.sh): a change that replaces a
@@ -21,15 +21,9 @@ data "google_monitoring_notification_channel" "fastpath_oncall" {
   display_name = "TrustedRouter Spanner on-call"
 }
 
-data "google_monitoring_notification_channel" "fastpath_ops_chat" {
-  project      = local.gcp_project_id
-  display_name = "TrustedRouter ops chat gcp"
-}
-
 locals {
   fastpath_alert_channels = [
     data.google_monitoring_notification_channel.fastpath_oncall.name,
-    data.google_monitoring_notification_channel.fastpath_ops_chat.name,
   ]
   # The subscriptions held to the ten-minute lag. The auditor's has its own
   # policies below: a member wedged on it holds its leases' keys shut.

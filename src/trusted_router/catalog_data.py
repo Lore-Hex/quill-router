@@ -157,7 +157,8 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
     ),
     "fortanix": (
         "Checked the operator-supplied POC catalog and conformance report. "
-        "Neither declares inference location or the contracting entity; no country filter claim."
+        "The contracting entity is not established; the November 10 Santa Clara "
+        "inference declaration does not establish headquarters. No corporate country filter claim."
     ),
     "zro": (
         "Checked zro.moonmath.ai/docs/privacy and its API documentation. These "
@@ -1676,9 +1677,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
     # Microsoft Foundry direct deployments in eastus2. Availability and exact
     # regional list prices are synchronized from Azure's account-scoped model,
-    # quota, deployment, and Retail Prices APIs. Do not infer ZDR from Azure's
-    # enterprise positioning: this route stays Standard until Lore Hex has an
-    # applicable written retention agreement and verifies account enforcement.
+    # quota, deployment, and Retail Prices APIs. The approved managed Foundry
+    # account is scoped further by the exact-route review in managed_retention;
+    # partner-hosted services and future models never inherit this approval.
     "azure": Provider(
         slug="azure",
         name="Microsoft Azure AI Foundry",
@@ -1686,15 +1687,20 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_zero_data_retention=False,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-11-12",
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "No provider-ZDR, confidential-compute, or E2EE claim is currently "
-            "tracked for TrustedRouter's Microsoft Foundry account. Azure model "
-            "availability and pricing are synchronized directly from the account."
+            "ZDR is approved for reviewed TR-funded Azure-hosted Foundry routes. Microsoft "
+            "approved modified abuse monitoring on November 12, 2026, and "
+            "ContentLogging=false was verified on TrustedRouter's serving resource. "
+            "Partner-hosted services, Azure Speech previews, unreviewed models and "
+            "customer BYOK credentials are not covered. This is policy-backed ZDR, not upstream confidential "
+            "compute or E2EE."
         ),
         provider_policy_url=(
-            "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy"
+            "https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy"
         ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
@@ -2486,12 +2492,21 @@ PROVIDERS: dict[str, Provider] = {
     "fortanix": Provider(
         slug="fortanix",
         name="Fortanix",
-        internal_only=True,
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
         provider_zero_data_retention=False,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-11-10",
         provider_confidential_compute=False,
         provider_e2ee=False,
+        provider_policy=(
+            "Zero data retention for TrustedRouter's managed GLM-5.3-Flash route, "
+            "confirmed by the operator on November 10, 2026. This account-scoped "
+            "declaration does not establish provider-wide retention terms, "
+            "confidential compute, or provider-side end-to-end encryption."
+        ),
+        provider_policy_url="https://github.com/Lore-Hex/quill-router/blob/main/docs/providers/fortanix-launch-2026-11-10.md",
     ),
     "maple": Provider(
         slug="maple",

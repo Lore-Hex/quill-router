@@ -496,13 +496,13 @@
         "request_id_header": "X-Request-Id",
         "account_quota_error_codes": []
       },
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 20000
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 445000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-11-10T12:35:19Z",
+  "generated_at": "2026-11-12T09:26:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

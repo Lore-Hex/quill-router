@@ -7,7 +7,9 @@
 #   scripts/deploy/clickhouse_node_config.sh --apply --drop-renamed-logs
 #
 # It carries G2 (the /tr_health handler and its user) and G5 (system-log
-# retention) from docs/design/clickhouse-high-availability.md. Nodes go in the
+# retention) from docs/design/clickhouse-high-availability.md, and the lockdown:
+# no built-in `default` user, no outbound table functions, and no metadata
+# server for the ClickHouse user (docs/clickhouse-reliability.md). Nodes go in the
 # order tr-clickhouse-3, -2, then -1, the writer host last. Each node refuses to
 # restart unless it is healthy, and does not return until /tr_health answers 200
 # and its Keeper voter has rejoined, so the next node starts from a full quorum.

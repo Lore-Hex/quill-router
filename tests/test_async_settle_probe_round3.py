@@ -480,8 +480,6 @@ def credential_setting(field, key):
         value = key
     if field == 'operator_token':
         extras['operator_identities'] = 'fixture@invalid.example'
-    if field == 'ops_chat_webhook_secret':
-        extras['ops_chat_webhook_urls'] = 'https://fixture.invalid/hooks'
     if field == 'federation_settlement_home_token':
         extras['federation_home_base_url'] = 'https://fixture.invalid'
     return {field: value, **extras}

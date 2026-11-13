@@ -156,7 +156,10 @@ func Defaults() Config {
 		MaxOutstanding: 1000,
 		Store: store.Config{LiveFor: 3 * time.Second, Window: 30 * time.Second, Skew: 2 * time.Second,
 			PublishDeadline: 5 * time.Second, MaxLife: maxLife, Grace: time.Minute, Allowance: 1 << 50,
-			RequiredTier: 1},
+			// Tiers 2 and 1 have no allowance, so take no lease, until a
+			// deployment sets theirs (docs/design/fast-admission-widening.md,
+			// (b)).
+			AllowanceTier2: 0, AllowanceTier1: 0, RequiredTier: 1},
 		Ring:   time.Second,
 		Switch: time.Second,
 		Owner: owner.Config{AnswerWait: 5 * time.Second, HeartbeatEvery: 30 * time.Second, RenewEvery: 5 * time.Second,
@@ -306,8 +309,8 @@ func (c Config) valid() error {
 // (b)), in microdollars, which the node's flags and fastpathctl ready hold
 // to, and the node's startup script with them.
 const (
-	// MaxMoney bounds the allowance and the floor: Defaults' allowance,
-	// 1 << 50, which bounds nothing.
+	// MaxMoney bounds the allowances and the floor: Defaults' tier-3
+	// allowance, 1 << 50, which bounds nothing.
 	MaxMoney int64 = 1 << 50
 	// MinFloor is the least floor but none, a dollar, so a floor written in
 	// dollars is refused.
@@ -341,18 +344,31 @@ func (m Money) Set(s string) error {
 var plainDecimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // CheckMoney says what is wrong with the store's money settings, nil when
-// nothing is: the tier leases need 0 to 3; the allowance at least the
-// owner's largest top-up, so one can be granted (a figure written in
-// dollars is below it), and at most MaxMoney; the floor none, or MinFloor
-// to MaxMoney.
+// nothing is: the tier leases need 0 to 3; the allowance, tier 3's, at
+// least the owner's largest top-up, so one can be granted (a figure written
+// in dollars is below it), and at most MaxMoney; tier 2's and tier 1's each
+// none, 0, or within the same bounds, and no lower tier's above a higher
+// one's; the floor none, or MinFloor to MaxMoney.
 func CheckMoney(c Config) error {
 	st := c.Store
+	tierAllowance := func(v int64) bool {
+		return v == 0 || v >= c.Owner.TopUps.Max && v <= MaxMoney
+	}
 	switch {
 	case st.RequiredTier < 0 || st.RequiredTier > 3:
 		return fmt.Errorf("service: the required tier is 0 to 3, not %d", st.RequiredTier)
 	case st.Allowance < c.Owner.TopUps.Max || st.Allowance > MaxMoney:
 		return fmt.Errorf("service: the allowance is %d to %d microdollars, not %d", c.Owner.TopUps.Max, MaxMoney,
 			st.Allowance)
+	case !tierAllowance(st.AllowanceTier2):
+		return fmt.Errorf("service: the tier-2 allowance is 0 or %d to %d microdollars, not %d", c.Owner.TopUps.Max,
+			MaxMoney, st.AllowanceTier2)
+	case !tierAllowance(st.AllowanceTier1):
+		return fmt.Errorf("service: the tier-1 allowance is 0 or %d to %d microdollars, not %d", c.Owner.TopUps.Max,
+			MaxMoney, st.AllowanceTier1)
+	case st.AllowanceTier2 > st.Allowance || st.AllowanceTier1 > st.AllowanceTier2:
+		return fmt.Errorf("service: the allowances must not rise as the tier falls: tier 3 %d, tier 2 %d, tier 1 %d",
+			st.Allowance, st.AllowanceTier2, st.AllowanceTier1)
 	case st.Floor != 0 && (st.Floor < MinFloor || st.Floor > MaxMoney):
 		return fmt.Errorf("service: the floor is 0 or %d to %d microdollars, not %d", MinFloor, MaxMoney, st.Floor)
 	}

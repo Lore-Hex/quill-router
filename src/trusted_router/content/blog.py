@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass(frozen=True)
@@ -101,10 +102,12 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
             "routing each task to the right one. Today we launch three: Prometheus 4.0, "
             "Liberty 4.0 and Polyphemus 1.0."
         ),
-        published_date="2026-11-04",
+        published_date="2026-11-11",
         source_label="Joseph Perla",
         source_url=None,
         body_html="""
+<p><strong>In the news:</strong> <a href="https://venturebeat.com/technology/trustedrouter-launches-three-new-encrypted-fusion-models-that-combine-multiple-llms-including-one-exclusively-with-u-s-model-providers">Read VentureBeat's coverage of our three new combo models</a>.</p>
+
 <p>Many models beat one model. We call these combo models: you send one request to one model id, and underneath it there are many models doing the work. Some combos fuse, where a panel of models each answers and a synthesizer writes the final answer from all of them. Some combos route, where we look at the task and send it to the model best suited to it. Either way you write the same code you would for a single model.</p>
 
 <p>Why does a panel beat its best member? Because models fail in different places. One hallucinates a date, another misses a primary source, a third gets the math wrong. A good synthesizer keeps what survives cross-examination and drops the rest. On hard research tasks, we typically see a fused panel score about 20% higher than the best single model sitting on it. It even works when every member is the same model: run one model several times, fuse its own answers, and it gets better too.</p>
@@ -116,6 +119,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <p><strong>Liberty 4.0</strong> (<span class="mono">trustedrouter/liberty-4.0</span>) is all American. NVIDIA's Nemotron 3 Ultra, Reflection's Beam and Meta's Muse Spark each answer, and Muse Spark then fuses the answers into one. If one model is down, Liberty fuses whatever came back, and if Muse Spark is down, Beam steps in to fuse. It takes up to 1M tokens of context, and every call goes only to US-based providers. If you need to know where your model came from and who served it, this is the answer.</p>
 
 <p><strong>Polyphemus 1.0</strong> (<span class="mono">trustedrouter/polyphemus-1.0</span>) is a routing combo. It reads your task, picks the right model for it, and runs that model, so you get the strengths of many models under one id. It remembers your session so follow-up turns stay cache-friendly.</p>
+
+<p>Combos also cost less. At list prices, Liberty 4.0 and Prometheus 4.0 cost roughly 60% less than Claude Fable 5.1, and Polyphemus 1.0 costs 60 to 80% less, depending on the model it picks.</p>
 
 <p>All three are live on TrustedRouter now. Same key, same base URL, one model id. Stop picking a model. Pick a combo.</p>
 """,
@@ -2443,3 +2448,31 @@ The model already knows the truth. Whether you hear it depends on whose server y
 )
 
 BLOG_POSTS_BY_SLUG: dict[str, BlogPost] = {post.slug: post for post in BLOG_POSTS}
+
+#: The blog's day turns over at midnight US Eastern standard time. A fixed
+#: offset, because the serving image is not guaranteed to carry a tz database
+#: and a missing one would take the whole blog down.
+_BLOG_DAY = timezone(timedelta(hours=-5))
+
+
+def blog_today() -> str:
+    return datetime.now(_BLOG_DAY).date().isoformat()
+
+
+def published_posts(today: str | None = None) -> tuple[BlogPost, ...]:
+    """The posts a reader may see: everything dated today or earlier.
+
+    A post with a later `published_date` is embargoed. It is left out of the
+    index, the sitemap and the structured data, and its own URL is a 404, so
+    dating a post ahead is all it takes to hold it and nothing has to be
+    deployed on the day.
+    """
+    day = today or blog_today()
+    return tuple(post for post in BLOG_POSTS if post.published_date <= day)
+
+
+def published_post(slug: str, today: str | None = None) -> BlogPost | None:
+    post = BLOG_POSTS_BY_SLUG.get(slug)
+    if post is None or post.published_date > (today or blog_today()):
+        return None
+    return post

@@ -84,7 +84,7 @@
     "card_version": 2,
     "model_count": 12,
     "name": "Microsoft Azure AI Foundry",
-    "privacy": "Policy documented",
+    "privacy": "TR-funded ZDR",
     "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "azure"
@@ -190,10 +190,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 18,
+    "route_count": 16,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -314,6 +314,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
+  "fortanix": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Fortanix",
+    "privacy": "TR-funded ZDR",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "fortanix"
+  },
   "friendli": {
     "card_version": 2,
     "model_count": 5,
@@ -334,19 +343,19 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
   "google-vertex": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Google Vertex AI",
     "privacy": "TR-funded ZDR",
-    "route_count": 14,
+    "route_count": 15,
     "route_mode": "Prepaid",
     "slug": "google-vertex"
   },
@@ -568,10 +577,10 @@
   },
   "muna": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 2,
     "name": "Muna",
     "privacy": "Policy documented",
-    "route_count": 1,
+    "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "muna"
   },
@@ -892,10 +901,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 17,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 30,
+    "route_count": 31,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
@@ -1027,10 +1036,10 @@
   },
   "zro": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 4,
     "name": "Zro (MoonMath)",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "zro"
   }

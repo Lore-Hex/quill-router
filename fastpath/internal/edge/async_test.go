@@ -2,6 +2,7 @@ package edge
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
 // G15c (docs/design/fast-admission-e2-g15-async.md §4.4, §6.1, §6.2): P6's
@@ -120,7 +122,20 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: passed %q, want a decision", c.Name, d.Pass)
 				continue
 			}
-			if !checkAnswered(t, c, d.ForShadow()) {
+			if c.Expect.AsyncShape == "C" {
+				h := ticketEdge(t, f, c, goldenTicketTransport(t, c))
+				outcome, code := insertOf(t, c)
+				h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return outcome }, code
+				rec := h.send(t, c)
+				if rec.Code != 200 || withGoldenTiming(rec.Body.Bytes()) != c.Expect.Response {
+					t.Errorf("%s: shape C differs from Python", c.Name)
+					continue
+				}
+				if h.edge.DecideCounts().Tickets["spliced"] != 1 || !rowsAreGoldens(t, c, h.rows.inserted()[0]) {
+					t.Errorf("%s: ticket not spliced or stored rows differ", c.Name)
+					continue
+				}
+			} else if !checkAnswered(t, c, d.ForShadow()) {
 				continue
 			}
 			if c.Expect.Affinity != nil && !checkAffinity(t, c, d) {
@@ -176,7 +191,7 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 	}
 	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason (%d streams composed "+
 		"for the shadow)", answered, shapes, passes, shadowStreams)
-	if answered != 49 || shapes["A"] != 19 || shapes["B"] != 29 || shapes["none"] != 1 || passes != 26 ||
+	if answered != 52 || shapes["C"] != 3 || shapes["A"] != 19 || shapes["B"] != 29 || shapes["none"] != 1 || passes != 26 ||
 		shadowStreams != 1 {
 		t.Fatalf("answered %d (%v), passes %d, shadow streams %d: not the goldens' counts", answered, shapes, passes,
 			shadowStreams)
@@ -224,6 +239,11 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		for _, on := range []bool{false, true} {
 			c := withEdgeDecide(t, f, golden, on)
 			h := newDecideEdge(t, f, c, py)
+			if golden.Expect.AsyncShape == "C" {
+				h.edge.tickets.client.Transport = goldenTicketTransport(t, golden)
+				outcome, code := insertOf(t, golden)
+				h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return outcome }, code
+			}
 			hits := py.hits.Load()
 			rec := h.send(t, c)
 			reached := py.hits.Load() - hits
@@ -253,7 +273,7 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		}
 	}
 	t.Logf("%d async-v1 requests passed with edge_decide false, %d answered with it true", dark, answered)
-	if dark != 49 || answered != dark {
+	if dark != 52 || answered != dark {
 		t.Fatalf("dark %d, answered %d: not the goldens' counts", dark, answered)
 	}
 }
@@ -357,6 +377,18 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		if golden.Expect.Outcome != "answer" || golden.Expect.Affinity != nil {
 			continue
 		}
+		if golden.Expect.AsyncShape == "C" {
+			// Exercise these requests under the original policy too.
+			golden = withAsyncSettle(t, f, golden, func(a *routingsnapshot.AsyncSettle) {
+				a.EdgeTickets, a.EdgeTicketWorkspaces = nil, nil
+			})
+			golden.Expect.Response = string(mutated(t, golden.Expect.Response, func(d pyjson.Object) pyjson.Object {
+				d = slices.DeleteFunc(d, func(m pyjson.Member) bool {
+					return m.Key == "settlement_ticket" || m.Key == "settlement_status_url"
+				})
+				return setMember(d, "async_eligible", false)
+			}))
+		}
 		ws := golden.Facts.Key.WorkspaceID
 		if ws == "" {
 			t.Fatalf("%s: no workspace", golden.Name)
@@ -400,9 +432,9 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		}
 	}
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
-	// 46 answered async-v1 goldens and the one without the header, which
+	// 49 answered async-v1 goldens and the one without the header, which
 	// every variant decides.
-	if covered != 4*46 || composed != 3*46+7 {
+	if covered != 4*49 || composed != 3*49+7 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
 	}
 }

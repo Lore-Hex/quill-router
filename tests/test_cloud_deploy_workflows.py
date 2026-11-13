@@ -104,14 +104,14 @@ def test_pull_request_validation_cannot_cancel_a_pending_infra_apply() -> None:
 def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
     worker = jobs["settle-drain-worker"]
-    assert worker["needs"] == ["rollout-secondaries", "admit-cloud"]
+    assert worker["needs"] == ["rollout-secondaries", "admit-cloud", "select-release"]
     assert worker["if"] == "github.repository == 'Lore-Hex/quill-router'"
     assert worker["continue-on-error"] is False
     assert worker["env"]["TR_DEPLOY_MUTEX_OPERATION"] == "${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}"
     assert worker["env"]["TR_DEPLOY_MUTEX_CLOUD"] == "gcp"
     assert worker["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - workflow expression
     steps = worker["steps"]
-    assert steps[0] == {"uses": "actions/checkout@v7", "with": {"ref": "${{ github.sha }}"}}
+    assert steps[0] == {"uses": "actions/checkout@v7", "with": {"ref": "${{ needs.select-release.outputs.commit }}"}}
     assert any(s.get("uses") == "google-github-actions/auth@v3" for s in steps)
     assert steps[-1]["run"] == "bash scripts/deploy/settle_drain_worker.sh"
     assert "if" not in steps[-1] and "continue-on-error" not in steps[-1]
@@ -125,7 +125,7 @@ def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout()
 def test_settle_worker_checkout_uses_full_verified_release_identity(tmp_path: Path) -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
     # checkout treats abbreviated SHAs as branch/tag names. The prepared tag
-    # remains short, but every checkout must use the caller's full commit.
+    # remains short, but every checkout must use the selected train's full commit.
     git = shutil.which("git")
     bash = shutil.which("bash")
     assert git and bash
@@ -143,7 +143,7 @@ def test_settle_worker_checkout_uses_full_verified_release_identity(tmp_path: Pa
     verify = jobs["build-image"]["steps"][1]["run"]
     subprocess.run([bash, "-c", verify], cwd=tmp_path, env=env, check=True, capture_output=True)  # noqa: S603
     expression = jobs["settle-drain-worker"]["steps"][0]["with"]["ref"]
-    resolved_ref = expression.replace("${{ github.sha }}", full_sha).replace("${{ inputs.sha }}", short_sha)
+    resolved_ref = expression.replace("${{ needs.select-release.outputs.commit }}", full_sha)
     assert resolved_ref == full_sha
 
 
@@ -161,6 +161,7 @@ def test_worker_uses_same_release_hotfix_decision_as_parent(hotfix: bool) -> Non
     # releases fall through to CI. The script harness covers pending CI in both.
     prefix = parent[:parent.index('echo "waiting for CI')]
     script = prefix.replace("${{ inputs.hotfix }}", str(hotfix).lower()) + "echo CI_REQUIRED\n"
+    script = script.replace("${{ inputs.track_main }}", "false")
     result = subprocess.run(  # noqa: S603 - local workflow decision, no cloud commands
         [shutil.which("bash") or "/bin/bash", "-c", script], capture_output=True, text=True, check=True,
     )

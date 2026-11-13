@@ -92,10 +92,12 @@
       "id": "deepseek/deepseek-v4-pro-0813",
       "upstream_id": "deepseek/deepseek-v4-pro-0813",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 44000
+      "cached_input_token_price_per_m": 44000,
+      "missing_since": "2026-11-11",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K3",
@@ -160,10 +162,12 @@
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai-org/glm-5.2",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "missing_since": "2026-11-11",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4 Flash Latest",
@@ -276,11 +280,33 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "Kimi K3.1 Pro",
+      "title": "moonshotai/kimi-k3.1-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "moonshotai/kimi-k3.1-pro",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     }
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-11-10T12:35:19Z",
+  "generated_at": "2026-11-12T09:26:20Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 12
+  "model_count": 13
 }

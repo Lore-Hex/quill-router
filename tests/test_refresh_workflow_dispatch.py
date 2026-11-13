@@ -10,10 +10,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts.deploy.price_snapshot_deploy import SNAPSHOT_SUBJECT_PREFIX
 from scripts.pricing.refresh_inputs import refresh_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 REFRESH_INPUTS = refresh_inputs()
+DEPLOY_DISPATCH = 'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" -f track_main=true'
 # External commands in the extracted step. Shell builtins/functions (echo,
 # test/[ /[[, trap, cleanup_branch, etc.) need no executable. The allowlisted
 # PATH also makes a newly introduced, unlisted command fail rather than escape.
@@ -118,6 +120,18 @@ def remove_publication_guard(script: str, guard: str) -> str:
     elif guard == "skip_branch_push":
         before = 'git push --force origin "HEAD:refs/heads/${BRANCH}"'
         after = f"if false; then {before}; fi"
+    elif guard == "deploy_dispatch":
+        # Put back the deploy dispatch publication made after its main push.
+        before = "# GITHUB_TOKEN pushes do not start"
+        after = f"{DEPLOY_DISPATCH}\n{before}"
+    elif guard == "stale_attempt":
+        # Read the failed attempt, still visible just after the rerun request,
+        # as the rerun's own answer.
+        before = 'if [ -n "${ci_rerun_attempt}" ] && [ "${attempt}" -lt "${ci_rerun_attempt}" ]; then'
+        after = "if false; then"
+    elif guard == "unbounded_rerun":
+        before = 'if [ "${conclusion}" = "failure" ] && [ -z "${ci_rerun_attempt}" ]; then'
+        after = 'if [ "${conclusion}" = "failure" ]; then'
     elif guard == "input_check":
         # Carry a snapshot whatever main changed.
         before = 'if ! git diff --quiet "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"; then'
@@ -186,10 +200,11 @@ class PublicationRepo:
         move_main: str | None = None, changed: bool = True, mutation: str | None = None,
         advance_main: dict[str, object] | None = None, premove: str | None = None,
         inputs: bool = True,
-        run_states: list[tuple[str, str | None]] | None = None,
+        run_states: list[tuple[str, str | None] | tuple[str, str | None, int]] | None = None,
         status_fault: str | None = None,
         status_missing_reads: int = 0,
         polls: list[list[dict[str, object]]] | None = None,
+        rerun_fault: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
@@ -197,10 +212,13 @@ class PublicationRepo:
             self.git("add", str(snapshot))
         states = run_states if run_states is not None else [("completed", conclusion)]
         # `polls` is the listing at each poll, verbatim; otherwise one run per poll.
+        # A third element is the run attempt; gh reports 1 before any rerun.
         scenario: dict[str, object] = {"polls": polls if polls is not None else [[{
             "databaseId": 1234, "headSha": self.base if wrong_sha else "$DISPATCHED_SHA",
-            "status": status, "conclusion": outcome,
-        }] for status, outcome in states]}
+            "status": state[0], "conclusion": state[1], **({"attempt": state[2]} if len(state) == 3 else {}),
+        }] for state in states]}
+        if rerun_fault:
+            scenario["rerun_fault"] = rerun_fault
         if move_main:
             peer = self.root / "peer"
             self.git("clone", "-q", str(self.root / "origin.git"), str(peer))
@@ -347,10 +365,11 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
 
 def assert_snapshot_published(
     repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, status_gets: int = 5,
-    rounds: int = 1,
+    rounds: int = 1, reruns: tuple[str, ...] = (),
 ) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
-    assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"
+    assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "".join(
+        f"ci_rerun={rerun}\n" for rerun in reruns) + "validated=true\n"
     shas = repo.dispatched_shas
     assert len(shas) == rounds, f"Expected {rounds} exact-SHA CI dispatches, got {len(shas)}"
     dispatched_sha = shas[-1]
@@ -365,9 +384,13 @@ def assert_snapshot_published(
         "Successful CI must use the dispatched SHA"
     )
     assert successful[-1]["headSha"] == dispatched_sha, "Successful CI must use the dispatched SHA"
-    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds + [
-        repo.dispatch("deploy.yml", "main"),
-    ]
+    # A published snapshot rides the next rollout: publication dispatches its
+    # exact-SHA CI runs and nothing else. The job's last step decides about a
+    # deploy (tests/test_price_snapshot_deploy.py).
+    assert not any(call[:3] == ["workflow", "run", "deploy.yml"] for call in repo.calls), (
+        "Publication must not dispatch deploy.yml"
+    )
+    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds
     status_calls = [call for call in repo.calls if call[0] == "api"]
     posts = [call for call in status_calls if "POST" in call]
     gets = [call for call in status_calls if "--method" not in call]
@@ -385,10 +408,6 @@ def assert_snapshot_published(
         in call for call in posts
     )
     assert_status_bridge_precedes_main_push(repo)
-    events = repo.events
-    push = next(i for i, e in enumerate(events) if e[0] == "git" and "HEAD:refs/heads/main" in e)
-    deploy = next(i for i, e in enumerate(events) if e[:4] == ["gh", "workflow", "run", "deploy.yml"])
-    assert push < deploy, "deploy.yml must be dispatched only after main is pushed"
 
 
 def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
@@ -411,7 +430,7 @@ def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
 
 
 def assert_ci_completed_before_publication(
-    repo: PublicationRepo, states: list[tuple[str, str | None]],
+    repo: PublicationRepo, states: list[tuple[str, str | None]] | list[tuple[str, str | None, int]],
 ) -> None:
     polls = [(i, event) for i, event in enumerate(repo.events) if event[0] == "poll"]
     answers = [json.loads(event[2]) for _, event in polls]
@@ -422,7 +441,7 @@ def assert_ci_completed_before_publication(
             assert any(completed < i for completed in successful_completions), (
                 "Publication occurred before the completed successful CI answer"
             )
-    assert [(answer["status"], answer["conclusion"]) for answer in answers] == states, (
+    assert [(answer["status"], answer["conclusion"]) for answer in answers] == [state[:2] for state in states], (
         "Must keep polling until CI completes"
     )
     assert all(event[3] == repo.base for _, event in polls), "Main changed before CI completed"
@@ -461,6 +480,40 @@ def test_publication_promotes_only_the_successful_generated_sha(publication_repo
     assert_snapshot_published(publication_repo, publication_repo.run())
 
 
+def test_publication_step_has_no_deploy_dispatch(publication_script: str) -> None:
+    commands = [line for line in publication_script.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("deploy.yml" in line for line in commands), "Only a comment may name deploy.yml here"
+    assert "gh workflow run deploy.yml" not in publication_script
+    # Other workflows are still dispatched from here, so the check above is not vacuous.
+    assert any("gh workflow run ci.yml" in line for line in commands)
+
+
+def test_deploy_dispatch_from_publication_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(mutation="deploy_dispatch")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.dispatched_sha != publication_repo.base
+    assert publication_repo.dispatches[-1] == publication_repo.dispatch("deploy.yml", "main") + [
+        "-f", "track_main=true",
+    ]
+    with pytest.raises(AssertionError, match="Publication must not dispatch deploy.yml"):
+        assert_snapshot_published(publication_repo, result)
+
+
+@pytest.mark.parametrize("carried", [False, True])
+def test_published_snapshot_subject_is_the_one_the_deploy_check_looks_for(
+    publication_repo: PublicationRepo, carried: bool,
+) -> None:
+    # scripts/deploy/price_snapshot_deploy.py finds waiting snapshots on main
+    # by this subject, also after the snapshot was carried onto a newer main.
+    result = publication_repo.run(premove="docs/unrelated.md" if carried else None)
+    assert_snapshot_published(publication_repo, result)
+    origin = publication_repo.root / "origin.git"
+    subject = publication_repo.git("log", "-1", "--format=%s", "refs/heads/main", cwd=origin)
+    assert re.fullmatch(re.escape(SNAPSHOT_SUBJECT_PREFIX) + r": \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", subject), subject
+    if carried:
+        assert_carried_onto(publication_repo, publication_repo.moved)
+
+
 @pytest.mark.parametrize("mutation, message", [
     ("unverified_commit", "Status endpoints must use the dispatched SHA"),
     ("unverified_commit_before_dispatch", "Remote main must equal the dispatched SHA"),
@@ -486,9 +539,80 @@ def test_missing_remote_dispatch_ref_mutation_is_detected(publication_repo: Publ
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled"])
 def test_publication_rejects_unsuccessful_ci(publication_repo: PublicationRepo, conclusion: str) -> None:
-    result = publication_repo.run(conclusion=conclusion)
+    # A failure gets one rerun of its failed jobs; a rerun that fails again,
+    # or any other unsuccessful conclusion, withholds the snapshot.
+    states: list[tuple[str, str | None, int]] = [("completed", conclusion, 1)]
+    if conclusion == "failure":
+        states.append(("completed", "failure", 2))
+    result = publication_repo.run(run_states=states)
     assert_snapshot_withheld(publication_repo, result)
     assert f"CI concluded '{conclusion}'" in result.stdout
+    assert len(reruns(publication_repo)) == (1 if conclusion == "failure" else 0)
+
+
+def reruns(repo: PublicationRepo) -> list[list[str]]:
+    return [call for call in repo.calls if call[:2] == ["run", "rerun"]]
+
+
+def flaky_then_green() -> list[tuple[str, str | None, int]]:
+    # The second answer is the failed attempt, still reported just after the
+    # rerun request; the rerun's attempt 2 then runs and passes.
+    return [("completed", "failure", 1), ("completed", "failure", 1),
+            ("in_progress", None, 2), ("completed", "success", 2)]
+
+
+def test_a_single_flaky_ci_failure_is_rerun_once_then_published(publication_repo: PublicationRepo) -> None:
+    states = flaky_then_green()
+    result = publication_repo.run(run_states=states)
+    assert_snapshot_published(publication_repo, result, reruns=("1234:2",))
+    assert_ci_completed_before_publication(publication_repo, states)
+    repo = publication_repo.env["GITHUB_REPOSITORY"]
+    # Only the failed jobs of the exact run that failed, once.
+    assert reruns(publication_repo) == [["run", "rerun", "1234", "--failed", "--repo", repo]]
+    events = publication_repo.events
+    rerun_at = next(i for i, event in enumerate(events) if event[:3] == ["gh", "run", "rerun"])
+    published_at = [i for i, event in enumerate(events)
+                    if event[:2] == ["gh", "api"] or (event[0] == "git" and "HEAD:refs/heads/main" in event)]
+    assert published_at and all(rerun_at < i for i in published_at)
+    assert "rerunning its failed jobs once" in result.stdout
+
+
+def test_the_failed_attempt_is_never_read_as_the_rerun(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(run_states=flaky_then_green(), mutation="stale_attempt")
+    # Without the attempt check the stale failure ends the gate before the
+    # rerun reports: the snapshot a green rerun would publish is discarded.
+    assert_snapshot_withheld(publication_repo, result)
+    assert len(reruns(publication_repo)) == 1
+
+
+@pytest.mark.parametrize("mutation", [None, "unbounded_rerun"])
+def test_only_one_rerun_per_snapshot_ci_run(publication_repo: PublicationRepo, mutation: str | None) -> None:
+    states = [("completed", "failure", 1), ("completed", "failure", 2), ("completed", "failure", 3)]
+    result = publication_repo.run(run_states=states, mutation=mutation)
+    assert_snapshot_withheld(publication_repo, result)
+    # The bound, not the scenario, is what stops a second rerun.
+    if mutation is None:
+        assert len(reruns(publication_repo)) == 1
+    else:
+        assert len(reruns(publication_repo)) == 3  # one per failed attempt
+
+
+def test_a_failed_rerun_request_withholds_the_snapshot(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(run_states=flaky_then_green(), rerun_fault="error")
+    assert_snapshot_withheld(publication_repo, result)
+    assert "could not rerun the failed jobs of ci run 1234" in result.stdout
+
+
+def test_the_rerun_shares_the_round_poll_budget(publication_repo: PublicationRepo) -> None:
+    # A rerun that never finishes still stops at the 120-minute (480-poll)
+    # limit, and the run it waited for is cancelled by id.
+    result = publication_repo.run(run_states=[("completed", "failure", 1), ("in_progress", None, 2)])
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI did not pass within 120 minutes" in result.stdout
+    calls = publication_repo.calls
+    assert len([call for call in calls if call[:2] in (["run", "list"], ["run", "view"])]) == 480
+    assert len(reruns(publication_repo)) == 1
+    assert calls[-1] == ["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]
 
 
 def test_publication_times_out_when_only_another_sha_passed(publication_repo: PublicationRepo) -> None:
@@ -508,8 +632,9 @@ def listing_with_a_second_run() -> list[list[dict[str, object]]]:
                 "status": status, "conclusion": conclusion}
     other = {"databaseId": 5678, "headSha": "$DISPATCHED_SHA",
              "status": "completed", "conclusion": "success"}
+    rerun_failed = dict(ours("completed", "failure"), attempt=2)
     return [[ours("in_progress", None)], [other, ours("in_progress", None)],
-            [other, ours("completed", "failure")]]
+            [other, ours("completed", "failure")], [other, rerun_failed]]
 
 
 def test_poll_sticks_to_the_run_the_listing_first_selected(publication_repo: PublicationRepo) -> None:
@@ -517,11 +642,12 @@ def test_poll_sticks_to_the_run_the_listing_first_selected(publication_repo: Pub
     assert_snapshot_withheld(publication_repo, result)
     assert "CI concluded 'failure'" in result.stdout
     answers = [json.loads(event[2]) for event in publication_repo.events if event[0] == "poll"]
-    assert [answer["databaseId"] for answer in answers] == [1234, 1234, 1234]
+    assert [answer["databaseId"] for answer in answers] == [1234, 1234, 1234, 1234]
     repo = publication_repo.env["GITHUB_REPOSITORY"]
     assert [call for call in publication_repo.calls if call[:2] == ["run", "view"]] == [
-        ["run", "view", "1234", "--repo", repo, "--json", "databaseId,headSha,status,conclusion"],
-    ] * 2
+        ["run", "view", "1234", "--repo", repo, "--json", "databaseId,headSha,status,conclusion,attempt"],
+    ] * 3
+    assert reruns(publication_repo) == [["run", "rerun", "1234", "--failed", "--repo", repo]]
     assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 1
 
 
@@ -664,7 +790,10 @@ def test_publication_does_nothing_without_staged_changes(publication_repo: Publi
 
 @pytest.mark.parametrize("conclusion", ["success", "failure"])
 def test_publication_waits_for_completed_ci(publication_repo: PublicationRepo, conclusion: str) -> None:
-    states = [("in_progress", None), ("in_progress", None), ("completed", conclusion)]
+    states: list[tuple[str, str | None, int]] = [
+        ("in_progress", None, 1), ("in_progress", None, 1), ("completed", conclusion, 1)]
+    if conclusion == "failure":
+        states += [("in_progress", None, 2), ("completed", "failure", 2)]
     result = publication_repo.run(run_states=states)
     assert_ci_completed_before_publication(publication_repo, states)
     if conclusion == "success":
@@ -767,7 +896,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     )
     branch_ci_dispatch = "gh workflow run ci.yml \\\n"
     deploy_dispatch = (
-        'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"'
+        'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" -f track_main=true'
     )
 
     assert 'BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"' in workflow
@@ -893,7 +1022,13 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt /tmp/transcription-summary.txt; do" in held_issue
     assert 'for summary in ${summaries}; do' in held_issue
     assert "sed -n '/^Held for price review/,/^$/p' \"${summary}\"" in held_issue
-    alert = workflow[workflow.index(final_alert) :]
+    # The slice ends where the job's last step begins. That step is no issue
+    # alert: it decides about a deploy and fails on purpose when it cannot
+    # (tests/test_price_snapshot_deploy.py).
+    deploy_check = "- name: Deploy a price snapshot no rollout has carried"
+    held_price = workflow.index("- name: Reconcile held-price issue")
+    assert workflow.index(final_alert) < held_price < workflow.index(deploy_check)
+    alert = workflow[workflow.index(final_alert) : workflow.index(deploy_check)]
     assert "COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}" in alert
     assert 'title="[bot] Model discovery coverage gaps"' in alert
     assert "gh issue create" in alert

@@ -227,5 +227,35 @@ def build_verification_email(
     )
 
 
+def build_email_in_use_notice(*, to: str, from_name: str = "TrustedRouter") -> EmailMessage:
+    """Sent instead of a verification link when a wallet account asks to add
+    an address another account already owns, so the form itself never says
+    whether an address has an account."""
+    subject = f"Your email address and {from_name}"
+    text = (
+        f"Someone signed in to {from_name} with a crypto wallet asked to add this "
+        "email address to their account.\n\n"
+        f"This address already belongs to a {from_name} account, so nothing was "
+        "changed. If that was you, sign in with the provider you used to create "
+        "that account instead.\n\n"
+        "If you didn't ask for this, you can ignore this email."
+    )
+    html = (
+        f"<p>Someone signed in to {from_name} with a crypto wallet asked to add this "
+        "email address to their account.</p>"
+        f"<p>This address already belongs to a {from_name} account, so nothing was "
+        "changed. If that was you, sign in with the provider you used to create "
+        "that account instead.</p>"
+        "<p>If you didn't ask for this, you can ignore this email.</p>"
+    )
+    return EmailMessage(
+        to=to,
+        subject=subject,
+        text_body=text,
+        html_body=html,
+        mail_class="email_in_use_notice",
+    )
+
+
 def get_email_service(settings: Settings) -> EmailService:
     return EmailService(settings)

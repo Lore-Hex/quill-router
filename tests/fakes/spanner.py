@@ -4096,6 +4096,15 @@ def _execute_sql(
         ]
         cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[rec.get(c) for c in cols] for rec in recs if rec is not None]
+    if sql == "SELECT 1 FROM tr_key_limit WHERE key_hash=@kh LIMIT 1":
+        pks = txn._typed_pks("tr_key_limit") if txn is not None else db.typed.get("tr_key_limit", {})
+        for pk in pks:
+            if pk[0] == params["kh"]:
+                rec = (txn._typed_current("tr_key_limit", pk) if txn is not None
+                       else db.typed["tr_key_limit"][pk])
+                if rec is not None:
+                    return [[1]]
+        return []
     if "FROM tr_key_limit WHERE key_hash=@kh" in sql:
         # `shard` may be a literal 0 in the SQL (window/typed-usage point reads)
         # rather than a bound param (reserve_key classification).

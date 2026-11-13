@@ -42,11 +42,12 @@ MUTATIONS = [
        '"TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE=${TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE:-/secrets/async-settle/ticket.pem}"')],
      'tests/test_async_settle_ticket.py::test_rollout_never_inherits_key_file'),
     ('cap-arithmetic-exclusive', 'src/trusted_router/services/async_settle.py',
-     [('value.pending_micro <= (pilot_cap or TIER_CAPS[value.tier])',
-       'value.pending_micro < (pilot_cap or TIER_CAPS[value.tier])')],
+     [('value.pending_micro + queued_micro <= cap',
+       'value.pending_micro + queued_micro < cap')],
      'tests/test_async_settle_proof_faults.py::test_cap_semantics'),
     ('pilot-min-instead-of-override', 'src/trusted_router/services/async_settle.py',
-     [('(pilot_cap or TIER_CAPS[value.tier])', '(min(pilot_cap, TIER_CAPS[value.tier]) if pilot_cap else TIER_CAPS[value.tier])')],
+     [('    return min(cap, pilot_cap) if tier in PILOT_CAP_LOWERS_ONLY else pilot_cap',
+       '    return min(cap, pilot_cap)')],
      'tests/test_async_settle_proof_faults.py::test_cap_semantics'),
 
 ]

@@ -196,7 +196,7 @@ class NavigationRegistryTests(unittest.TestCase):
             # Bottom row: legal links only. TrustedRouter's related sites share the "Powered by" line.
             legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
             labels = re.findall(r'>([^<>]+)</a>', legal)
-            self.assertEqual(labels, (['Trust center'] if key == 'providers' else []) + ['Media kit', 'Privacy', 'Terms'])
+            self.assertEqual(labels, (['Trust center'] if key in ('providers', 'badge') else []) + ['Media kit', 'Privacy', 'Terms'])
             related = re.search(r'<nav class="footer-related" aria-label="More from TrustedRouter">(.*?)</nav>', footer, re.S).group(1)
             # Outbound TrustedRouter links carry campaign parameters; compare without them.
             self.assertEqual([(href.split('?', 1)[0], text) for href, text in

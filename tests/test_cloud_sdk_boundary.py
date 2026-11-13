@@ -44,6 +44,8 @@ ALLOWED = {
     # Bounded native Spanner evidence adapter; no money-writing APIs.
     "storage_gcp_async_settle_shadow.py",
     "storage_gcp_batch_dml.py",
+    # Builds the SDK's own Spanner transport around a failover channel.
+    "storage_gcp_channel_failover.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
     # Opt-in v2 owns a separate native client, metadata adapter and GCS attachment transport.
@@ -73,9 +75,6 @@ ALLOWED = {
     # boto3 talks to Amazon SES to send transactional mail. SES is reachable
     # from any cloud; this is a vendor choice, not a deployment coupling.
     "services/email.py",
-    # SES account suppression is the matching vendor-side feedback adapter.
-    # It keeps hard bounces and complaints blocked across every sender.
-    "services/ses_suppression.py",
 }
 
 CLOUD_SDK_ROOTS = {"google", "boto3", "botocore", "azure"}

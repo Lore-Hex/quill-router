@@ -56,7 +56,7 @@ Fields, all required:
   and the set is non-empty (an empty set admits every workspace, which is the
   member absent). Python answers a workspace the set leaves out as with
   admission off, so the edge composes that answer and passes only the
-  workspaces it names (docs/design/fast-admission-e2-g15-async.md section
+  workspaces it names while edge tickets are off (docs/design/fast-admission-e2-g15-async.md section
   4.1). A second optional member, ``admission_excluded_workspaces``: the
   fast-path pilot workspaces outside ``async_settle_fastpath_overlap_workspaces``
   that admission would otherwise cover (all of them with no
@@ -65,7 +65,15 @@ Fields, all required:
   when that is present: async settle takes no request the fast path takes
   (section 4.5). Go reads a workspace as covered when admission is on, the
   first member is absent or names it, and the second does not name it.
-  ``null`` and an empty array are refused for both.
+  ``null`` and an empty array are refused for both. In all mode with an
+  empty async pilot set the second member is the reserved list
+  (``async_settle_fastpath_reserved_workspaces``,
+  docs/design/fast-admission-widening.md section 9.1) and the first is
+  absent: every other workspace is admitted. Optional ``edge_tickets: true``
+  requires admission enabled. Its optional ``edge_ticket_workspaces`` is a
+  sorted, unique set of 1 to 32 ids; absent means every workspace admission
+  covers. Both members are absent with the edge-ticket switch off; null and
+  false are refused.
 
 Five fields are optional:
 
@@ -107,7 +115,7 @@ from __future__ import annotations
 
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from trusted_router.billing_snapshot import Digest, Frozen, Identity, UInt, canonical_bytes
 
@@ -171,10 +179,31 @@ class EdgeAsyncSettle(Frozen):
         default=None, exclude_if=lambda value: value is None,
     )
 
+    edge_tickets: Literal[True] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    edge_ticket_workspaces: tuple[WorkspaceId, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("edge_tickets", mode="before")
+    @classmethod
+    def tickets_true(cls, value: object) -> object:
+        if value is not None and value is not True:
+            raise ValueError("edge_tickets is absent when off, never null or false")
+        return value
+
     @model_validator(mode="after")
     def admission_set(self) -> Self:
+        if "edge_tickets" in self.model_fields_set and self.edge_tickets is not True:
+            raise ValueError("edge_tickets is absent when off, never null or false")
+        if self.edge_tickets and not self.admission_enabled:
+            raise ValueError("edge_tickets requires admission_enabled")
+        if "edge_ticket_workspaces" in self.model_fields_set and not self.edge_tickets:
+            raise ValueError("edge_ticket_workspaces requires edge_tickets")
         for name, workspaces in (("admission_workspaces", self.admission_workspaces),
-                                 ("admission_excluded_workspaces", self.admission_excluded_workspaces)):
+                                 ("admission_excluded_workspaces", self.admission_excluded_workspaces),
+                                 ("edge_ticket_workspaces", self.edge_ticket_workspaces)):
             if workspaces is None:
                 if name in self.model_fields_set:
                     raise ValueError(f"{name} is absent when it names none, never null")

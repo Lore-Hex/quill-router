@@ -20,27 +20,40 @@ from trusted_router.services.async_settle import (
     Admission,
     AdmissionCache,
     DrainHealth,
+    admission_cap,
 )
 from trusted_router.services.async_settle_handler import admission_reason
 from trusted_router.storage_gcp_async_settle import async_reservation_admission_statement
 
+# (tier, pilot override) -> threshold, written out by hand so the table never
+# follows the code under test. None means the tier is not admitted. Tier 1's
+# threshold is $0.10 and an override can only lower it.
+CAP_TABLE = {
+    (0, 0): None, (0, 50_000): None, (0, 5_000_000): None, (0, 200_000_000): None,
+    (1, 0): 100_000, (1, 50_000): 50_000, (1, 5_000_000): 100_000, (1, 200_000_000): 100_000,
+    (2, 0): 25_000_000, (2, 50_000): 50_000, (2, 5_000_000): 5_000_000,
+    (2, 200_000_000): 200_000_000,
+    (3, 0): 100_000_000, (3, 50_000): 50_000, (3, 5_000_000): 5_000_000,
+    (3, 200_000_000): 200_000_000,
+}
 
-@pytest.mark.parametrize('tier,default', [(1, 0), (2, 25_000_000), (3, 100_000_000)])
-@pytest.mark.parametrize('pilot', [0, 5_000_000, 200_000_000])
+
+@pytest.mark.parametrize('tier,pilot', sorted(CAP_TABLE))
 @pytest.mark.parametrize('delta', [-1, 0, 1])
-def test_cap_semantics(env, tier, default, pilot, delta):
-    cap = pilot or default
-    amount = max(0, cap + delta)
+def test_cap_semantics(env, tier, pilot, delta):
+    cap = CAP_TABLE[tier, pilot]
+    amount = max(0, (pilot if cap is None else cap) + delta)
     cache = AdmissionCache(lambda _: Admission(amount, tier), clock=lambda: 10)
     cache.health = DrainHealth(10, 0)
     env[2].admission = cache
-    assert cache.eligible('ws-v1', pilot) is (tier != 1 and amount <= cap)
+    assert admission_cap(tier, pilot) == cap
+    assert cache.eligible('ws-v1', pilot) is (cap is not None and amount <= cap)
     reason = admission_reason(env[2], 'ws-v1', pilot)
-    if tier == 1:
+    if cap is None:
         assert reason == 'not_eligible'
     elif amount > cap:
         assert reason == 'cap_exceeded'
-    assert TIER_CAPS == {2: 25_000_000, 3: 100_000_000}
+    assert TIER_CAPS == {1: 100_000, 2: 25_000_000, 3: 100_000_000}
 
 
 def test_two_replica_stale_cap(env):

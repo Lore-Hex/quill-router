@@ -8,6 +8,19 @@ text_log drops to information, /tr_health answers 200 with 17 replicated tables
 and 500 with 16 or with one detached, the built-in handlers keep working, and
 tr_health is refused outside its networks and cannot read tr data. These tests
 pin that content and execute both scripts against stubs.
+
+The lockdown (no `default` user, no outbound table functions, no metadata
+server for the server process) was verified on ClickHouse 26.8.36.3 in Docker on
+2026-11-11 by running apply_node_config.sh --apply on a node installed the way
+clickhouse_startup.sh installs it. Before: a query with no credentials answers
+200 and the clickhouse user reaches the metadata address. After: system.users
+lists only named users, that query answers 401, url() and remote() fail with
+UNACCEPTABLE_URL, ON CLUSTER statements and replication still work, and the
+clickhouse user's connection to the metadata address is reset while root's is
+not. A second run changes nothing and leaves one firewall rule. With each
+protection undone in turn the script refused. One finding is pinned below:
+SELECT count() FROM url(...) answers 1 without fetching anything, even when the
+connection is refused, so the probe has to read the body.
 """
 
 from __future__ import annotations
@@ -28,6 +41,7 @@ CONFIG_DIR = ROOT / "scripts/deploy/clickhouse-node-config"
 WRAPPER = ROOT / "scripts/deploy/clickhouse_node_config.sh"
 DESIGN = ROOT / "docs/design/clickhouse-high-availability.md"
 BASH = shutil.which("bash") or "/bin/bash"
+REAL_INSTALL = shutil.which("install") or "/usr/bin/install"
 
 # The system-log sections ClickHouse 26.7.1.1315's default config.xml enables
 # with no TTL and no custom <engine> (derived by parsing that file from the
@@ -103,6 +117,63 @@ def test_health_user_is_passwordless_read_only_and_network_restricted() -> None:
     assert profile.findtext("readonly") == "1"
 
 
+def test_the_default_user_is_removed_and_no_other_user_is_touched() -> None:
+    users = _xml("tr-default-user.xml").find("users")
+    assert users is not None
+    assert [(child.tag, child.attrib) for child in users] == [("default", {"remove": "remove"})]
+
+
+def test_no_host_is_allowed_for_outbound_table_functions() -> None:
+    root = _xml("tr-egress.xml")
+    assert [child.tag for child in root] == ["remote_url_allow_hosts"]
+    # An empty element refuses every host. A missing one allows them all.
+    allowed = root.find("remote_url_allow_hosts")
+    assert allowed is not None
+    assert list(allowed) == [] and not (allowed.text or "").strip()
+
+
+def _code(name: str) -> str:
+    lines = (CONFIG_DIR / name).read_text().splitlines()
+    return "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+
+
+def test_the_metadata_block_rejects_the_server_user_and_spares_the_resolver() -> None:
+    helper = CONFIG_DIR / "tr-clickhouse-metadata-block.sh"
+    # git archive ships the mode, and systemd will not run a file without it.
+    assert os.access(helper, os.X_OK)
+    code = " ".join(_code(helper.name).split())
+    assert (
+        "RULE=( -d 169.254.169.254/32 -p tcp ! --dport 53 -m owner --uid-owner clickhouse "
+        "-j REJECT --reject-with tcp-reset )"
+    ) in code
+    # Asked for before it is added, so a restart does not stack copies.
+    assert 'if ! iptables -w -C OUTPUT "${RULE[@]}" 2>/dev/null; then iptables -w -I OUTPUT "${RULE[@]}" fi' in code
+    assert "set -euo pipefail" in code
+
+
+def test_the_server_cannot_start_without_the_metadata_block() -> None:
+    assert _code("tr-metadata-block.conf").split() == [
+        "[Service]",
+        "ExecStartPre=+/usr/local/sbin/tr-clickhouse-metadata-block",
+    ]
+    # The path systemd runs is the path the node script installs.
+    script = (CONFIG_DIR / "apply_node_config.sh").read_text()
+    assert 'METADATA_BLOCK="${ROOT}/usr/local/sbin/tr-clickhouse-metadata-block"' in script
+    assert '"tr-clickhouse-metadata-block.sh|${METADATA_BLOCK}|run"' in script
+    assert 'DROP_IN_D="${ROOT}/etc/systemd/system/clickhouse-server.service.d"' in script
+
+
+def test_the_url_probe_reads_the_body_and_tries_once() -> None:
+    # Verified on 26.8.36.3: count() over url() answers 1 with the connection
+    # refused, and a refused connection is retried for about 98 s by default.
+    script = (CONFIG_DIR / "apply_node_config.sh").read_text()
+    probes = [line for line in script.splitlines() if "FROM url(" in line and not line.startswith("#")]
+    assert len(probes) == 1
+    assert "SELECT length(raw_blob) FROM url('${METADATA_URL}', 'RawBLOB')" in probes[0]
+    assert "SETTINGS http_max_tries = 1" in probes[0]
+    assert "count()" not in probes[0]
+
+
 # --- the node script, executed against a scratch root and stub commands ---
 
 VOTERS = ("10.0.0.1", "10.0.0.2", "10.0.0.3")
@@ -124,14 +195,48 @@ PY
 state="$STUB_STATE"
 case "$name" in
   curl)
-    # Answer the next queued status code; 200 once the queue is empty.
-    code=200
-    if [ -s "$state/curl-codes" ]; then
-      code="$(head -1 "$state/curl-codes")"
-      tail -n +2 "$state/curl-codes" > "$state/curl-codes.next"
-      mv "$state/curl-codes.next" "$state/curl-codes"
-    fi
-    printf '%s' "$code"
+    url="${@: -1}"
+    case "$url" in
+      *169.254.169.254*)
+        # Root asking the metadata server: curl's exit status is the answer.
+        exit "$(cat "$state/metadata-root-rc" 2>/dev/null || echo 0)"
+        ;;
+      *query=SELECT*)
+        # A query with no credentials.
+        printf '%s' "$(cat "$state/anonymous-code" 2>/dev/null || echo 401)"
+        ;;
+      *)
+        # /tr_health: 404 until the server has restarted, where a test says
+        # so; otherwise the next queued status code, 200 once the queue is
+        # empty.
+        code=200
+        if [ -e "$state/health-needs-restart" ]; then
+          code=404
+        elif [ -s "$state/curl-codes" ]; then
+          code="$(head -1 "$state/curl-codes")"
+          tail -n +2 "$state/curl-codes" > "$state/curl-codes.next"
+          mv "$state/curl-codes.next" "$state/curl-codes"
+        fi
+        printf '%s' "$code"
+        ;;
+    esac
+    ;;
+  systemctl)
+    # A restart is what loads the server configuration (config.d).
+    case " $* " in
+      *" restart "*) rm -f "$state/health-needs-restart" ;;
+    esac
+    ;;
+  runuser)
+    # The same request as the clickhouse user: 7 is "connection refused".
+    exit "$(cat "$state/metadata-clickhouse-rc" 2>/dev/null || echo 7)"
+    ;;
+  iptables)
+    [ -e "$state/fail-iptables" ] && { echo "iptables: Permission denied" >&2; exit 4; }
+    case " $* " in
+      *" -C "*) [ -e "$state/rule-present" ] || exit 1 ;;
+      *" -I "*) : > "$state/rule-present" ;;
+    esac
     ;;
   clickhouse-client)
     host=local
@@ -142,6 +247,15 @@ case "$name" in
     done
     query="${@: -1}"
     case "$query" in
+      *"FROM url("*)
+        if [ -e "$state/url-open" ]; then
+          printf '1042\n'
+        else
+          cat "$state/url-error" 2>/dev/null >&2 \
+            || echo "Code: 491. DB::Exception: URL \"http://169.254.169.254/\" is not allowed in configuration file, see <remote_url_allow_hosts>. (UNACCEPTABLE_URL)" >&2
+          exit 235
+        fi
+        ;;
       *"FROM system.replicas"*) cat "$state/replicas-$host" 2>/dev/null || printf '0\t17\n' ;;
       *"FROM system.tables"*)
         [ -e "$state/fail-system-tables" ] && { echo "Connection refused" >&2; exit 210; }
@@ -150,6 +264,8 @@ case "$name" in
     esac
     ;;
   hostname) printf 'tr-clickhouse-test\n' ;;
+  # Recorded, then done for real: the tests read the files it leaves.
+  install) exec "$STUB_REAL_INSTALL" "$@" ;;
   keeper-probe)
     host="$1"
     if [ -e "$state/keeper-$host" ]; then
@@ -165,6 +281,24 @@ exit 0
 """
 
 
+# Where each shipped file lands on a node.
+INSTALLED = {
+    "etc/clickhouse-server/users.d/tr-health.xml": "tr-health-user.xml",
+    "etc/clickhouse-server/users.d/tr-default-user.xml": "tr-default-user.xml",
+    "etc/clickhouse-server/config.d/tr-system-logs.xml": "tr-system-logs.xml",
+    "etc/clickhouse-server/config.d/tr-health.xml": "tr-health.xml",
+    "etc/clickhouse-server/config.d/tr-egress.xml": "tr-egress.xml",
+    "usr/local/sbin/tr-clickhouse-metadata-block": "tr-clickhouse-metadata-block.sh",
+    "etc/systemd/system/clickhouse-server.service.d/tr-metadata-block.conf": "tr-metadata-block.conf",
+}
+LOCKED_DOWN = "no query without credentials, no url(), and no metadata server for the ClickHouse user"
+RULE = [
+    "-d", "169.254.169.254/32", "-p", "tcp", "!", "--dport", "53",
+    "-m", "owner", "--uid-owner", "clickhouse",
+    "-j", "REJECT", "--reject-with", "tcp-reset",
+]
+
+
 class Node:
     def __init__(self, tmp_path: Path) -> None:
         self.root = tmp_path / "node"
@@ -178,12 +312,16 @@ class Node:
         self.state.mkdir()
         self.bin = tmp_path / "bin"
         self.bin.mkdir()
-        for name in ("systemctl", "curl", "clickhouse-client", "hostname", "sleep", "keeper-probe"):
+        for name in (
+            "systemctl", "curl", "clickhouse-client", "hostname", "sleep", "keeper-probe",
+            "runuser", "iptables", "install",
+        ):
             stub = self.bin / name
             stub.write_text(STUB)
             stub.chmod(0o755)
         self.log = tmp_path / "calls.jsonl"
         self.log.write_text("")
+        self.env: dict[str, str] = {}
 
     def run(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.log.write_text("")
@@ -192,12 +330,14 @@ class Node:
             "HOME": str(self.root),
             "STUB_LOG": str(self.log),
             "STUB_STATE": str(self.state),
+            "STUB_REAL_INSTALL": REAL_INSTALL,
             "TR_NODE_ROOT": str(self.root),
             "TR_FILE_OWNER": subprocess.check_output(["id", "-un"], text=True).strip(),  # noqa: S607
             "TR_FILE_GROUP": subprocess.check_output(["id", "-gn"], text=True).strip(),  # noqa: S607
             "TR_KEEPER_PROBE": str(self.bin / "keeper-probe"),
             "TR_WAIT_TRIES": "4",
             "TR_WAIT_SECONDS": "0",
+            **self.env,
         }
         return subprocess.run(  # noqa: S603 - fixed script under test
             [BASH, str(self.bundle / "apply_node_config.sh"), *args],
@@ -208,31 +348,32 @@ class Node:
             check=False,
         )
 
+    def sequence(self) -> list[list[str]]:
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
     def calls(self, name: str) -> list[list[str]]:
-        rows = [json.loads(line) for line in self.log.read_text().splitlines()]
-        return [row[1:] for row in rows if row[0] == name]
+        return [row[1:] for row in self.sequence() if row[0] == name]
+
+    def health_polls(self) -> list[list[str]]:
+        return [call for call in self.calls("curl") if "tr_health" in call[-1]]
 
     def installed(self) -> dict[str, str]:
         found = {}
-        for relative in (
-            "etc/clickhouse-server/config.d/tr-system-logs.xml",
-            "etc/clickhouse-server/config.d/tr-health.xml",
-            "etc/clickhouse-server/users.d/tr-health.xml",
-        ):
+        for relative in INSTALLED:
             path = self.root / relative
             if path.exists():
                 found[relative] = path.read_text()
         return found
 
     def install_current(self, *, users: bool = True, configs: bool = True) -> None:
-        if configs:
-            for name in ("tr-system-logs.xml", "tr-health.xml"):
-                shutil.copy(CONFIG_DIR / name, self.root / "etc/clickhouse-server/config.d" / name)
-        if users:
-            shutil.copy(
-                CONFIG_DIR / "tr-health-user.xml",
-                self.root / "etc/clickhouse-server/users.d/tr-health.xml",
-            )
+        for relative, source in INSTALLED.items():
+            if "/users.d/" in relative and not users:
+                continue
+            if "/config.d/" in relative and not configs:
+                continue
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(CONFIG_DIR / source, destination)
 
 
 @pytest.fixture
@@ -244,10 +385,11 @@ def test_report_only_changes_nothing(node: Node) -> None:
     result = node.run()
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("differs") == 3
+    assert result.stdout.count("differs") == len(INSTALLED) == 7
     assert "--apply would restart clickhouse-server" in result.stdout
     assert node.installed() == {}
     assert node.calls("systemctl") == [] and node.calls("clickhouse-client") == []
+    assert node.calls("iptables") == [] and node.calls("runuser") == []
 
 
 def test_apply_installs_restarts_once_and_waits_for_health(node: Node) -> None:
@@ -257,14 +399,15 @@ def test_apply_installs_restarts_once_and_waits_for_health(node: Node) -> None:
 
     assert result.returncode == 0, result.stderr
     assert node.installed() == {
-        "etc/clickhouse-server/config.d/tr-system-logs.xml": (CONFIG_DIR / "tr-system-logs.xml").read_text(),
-        "etc/clickhouse-server/config.d/tr-health.xml": (CONFIG_DIR / "tr-health.xml").read_text(),
-        "etc/clickhouse-server/users.d/tr-health.xml": (CONFIG_DIR / "tr-health-user.xml").read_text(),
+        relative: (CONFIG_DIR / source).read_text() for relative, source in INSTALLED.items()
     }
-    assert node.calls("systemctl") == [["restart", "clickhouse-server"]]
+    # systemd rereads its units before the one restart, so that restart
+    # already runs the metadata block as a start step.
+    assert node.calls("systemctl") == [["daemon-reload"], ["restart", "clickhouse-server"]]
     # It kept polling /tr_health until the 200.
-    assert len(node.calls("curl")) == 3
+    assert len(node.health_polls()) == 3
     assert "/tr_health answers 200 and the cluster is whole" in result.stdout
+    assert LOCKED_DOWN in result.stdout
     # Every voter was asked before the restart, not just this node's.
     assert {call[0] for call in node.calls("keeper-probe")} == set(VOTERS)
     # The users.d identity is installed before the restart that needs it.
@@ -280,6 +423,267 @@ def test_a_current_node_is_left_alone(node: Node) -> None:
     assert result.returncode == 0, result.stderr
     assert "configuration already current" in result.stdout
     assert node.calls("systemctl") == []
+    # The lockdown is still tried on a node with nothing to change.
+    assert LOCKED_DOWN in result.stdout
+
+
+def test_the_metadata_block_is_root_owned_runs_before_the_restart_and_is_not_stacked(
+    node: Node,
+) -> None:
+    result = node.run("--apply")
+
+    assert result.returncode == 0, result.stderr
+    helper = node.root / "usr/local/sbin/tr-clickhouse-metadata-block"
+    drop_in = node.root / "etc/systemd/system/clickhouse-server.service.d/tr-metadata-block.conf"
+    # Not writable by the server's group or anyone else, unlike the 0640
+    # clickhouse-owned XML beside it.
+    assert helper.stat().st_mode & 0o777 == 0o755
+    assert drop_in.stat().st_mode & 0o777 == 0o644
+    # Mode alone would pass with the server's user as owner, who could then
+    # rewrite both. The script runs as root, so naming no owner is what makes
+    # them root's; the XML is handed to the server's user by name.
+    owned = {call[-1]: call for call in node.calls("install")}
+    assert set(owned) == {str(node.root / relative) for relative in INSTALLED}
+    for destination, call in owned.items():
+        handed_over = "-o" in call or "-g" in call
+        assert handed_over == destination.endswith(".xml"), call
+    # Asked for, absent, so inserted: all before the server restarts.
+    assert node.calls("iptables") == [["-w", "-C", "OUTPUT", *RULE], ["-w", "-I", "OUTPUT", *RULE]]
+    names = [row[:2] for row in node.sequence()]
+    assert names.index(["iptables", "-w"]) < names.index(["systemctl", "restart"])
+    # The clickhouse user, not root, is who must be refused.
+    assert node.calls("runuser")[0][:4] == ["-u", "clickhouse", "--", "curl"]
+    assert node.calls("runuser")[0][-1] == "http://169.254.169.254/"
+
+    again = node.run("--apply")
+
+    assert again.returncode == 0, again.stderr
+    assert node.calls("systemctl") == []
+    assert node.calls("iptables") == [["-w", "-C", "OUTPUT", *RULE]]
+
+
+def test_a_node_without_iptables_is_refused_before_anything_changes(node: Node) -> None:
+    # The helper refuses without iptables, and the drop-in makes the helper a
+    # step of every server start. Installing either first would leave a server
+    # that keeps running and then cannot start again.
+    node.env["TR_IPTABLES_COMMAND"] = "iptables-that-is-not-installed"
+
+    report = node.run()
+
+    assert report.returncode == 0, report.stderr
+    assert "iptables is not installed; --apply would refuse" in report.stdout
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "refusing to change tr-clickhouse-test: iptables is not installed" in result.stderr
+    assert "apt-get install -y iptables" in result.stderr
+    assert node.installed() == {}
+    assert node.calls("install") == [] and node.calls("systemctl") == []
+    assert node.calls("iptables") == [] and node.calls("keeper-probe") == []
+    assert LOCKED_DOWN not in result.stdout
+
+
+def test_a_current_node_without_iptables_is_still_refused(node: Node) -> None:
+    # Nothing to install is not the same as nothing to check: the rule is
+    # applied on every run, and this node could not apply it.
+    node.install_current()
+    node.env["TR_IPTABLES_COMMAND"] = "iptables-that-is-not-installed"
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "iptables is not installed" in result.stderr
+    assert node.calls("systemctl") == [] and node.calls("iptables") == []
+
+
+def test_report_says_nothing_about_iptables_when_it_is_installed(node: Node) -> None:
+    assert "iptables" not in node.run().stdout
+
+
+def test_the_iptables_check_looks_for_the_real_program_where_root_keeps_it() -> None:
+    # Every refusal test above names a program that does not exist, so none of
+    # them would notice the default being some other program, or the check
+    # missing /usr/sbin, where iptables lives and a non-login PATH may not look.
+    script = " ".join(_code("apply_node_config.sh").split())
+    assert (
+        'iptables_installed() { PATH="${PATH}:/usr/sbin:/sbin" '
+        'command -v "${TR_IPTABLES_COMMAND:-iptables}" >/dev/null 2>&1 }'
+    ) in script
+    # The helper looks in the same places for the same program.
+    helper = " ".join(_code("tr-clickhouse-metadata-block.sh").split())
+    assert 'PATH="${PATH}:/usr/sbin:/sbin" if ! command -v iptables >/dev/null 2>&1; then' in helper
+
+
+DROP_IN = "etc/systemd/system/clickhouse-server.service.d/tr-metadata-block.conf"
+
+
+def test_the_start_step_is_installed_only_after_the_block_has_worked(node: Node) -> None:
+    result = node.run("--apply")
+
+    assert result.returncode == 0, result.stderr
+    steps = [
+        "rule" if row[:3] == ["iptables", "-w", "-I"]
+        else "drop-in" if row[0] == "install" and row[-1].endswith("tr-metadata-block.conf")
+        else "daemon-reload" if row[:2] == ["systemctl", "daemon-reload"]
+        else "restart" if row[:2] == ["systemctl", "restart"]
+        else ""
+        for row in node.sequence()
+    ]
+    assert [step for step in steps if step] == ["rule", "drop-in", "daemon-reload", "restart"]
+
+
+def test_every_file_is_installed_once(node: Node) -> None:
+    # The install runs in two passes, around the block. Neither may repeat
+    # or skip the other's files.
+    result = node.run("--apply")
+
+    assert result.returncode == 0, result.stderr
+    destinations = [call[-1] for call in node.calls("install")]
+    assert sorted(destinations) == sorted(str(node.root / relative) for relative in INSTALLED)
+
+
+def test_a_node_that_cannot_add_the_rule_does_not_get_the_start_step(node: Node) -> None:
+    # iptables is there and refuses (a missing kernel module, say). With the
+    # drop-in installed the server would keep running and fail its next start.
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "the start step that requires the block was not installed, so the server can still start" in result.stderr
+    assert DROP_IN not in node.installed()
+    assert not any(call[-1].endswith("tr-metadata-block.conf") for call in node.calls("install"))
+    # systemd was told nothing and the server was not touched.
+    assert node.calls("systemctl") == []
+    # The helper is in place, so the next run only has to succeed.
+    assert "usr/local/sbin/tr-clickhouse-metadata-block" in node.installed()
+
+    (node.state / "fail-iptables").unlink()
+    again = node.run("--apply")
+
+    assert again.returncode == 0, again.stderr
+    assert node.installed()[DROP_IN] == (CONFIG_DIR / "tr-metadata-block.conf").read_text()
+    assert ["daemon-reload"] in node.calls("systemctl")
+    assert LOCKED_DOWN in again.stdout
+
+
+def test_a_failed_block_leaves_the_restart_for_the_next_run(node: Node) -> None:
+    # A node that has never had this configuration: /tr_health answers only
+    # once a restart has loaded config.d. The run that fails at the block
+    # stops before its restart, so the next run must still know one is owed.
+    (node.state / "health-needs-restart").write_text("")
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    installed = node.installed()
+    # The files that work with the server running are in: the default user is
+    # closed at once.
+    assert "etc/clickhouse-server/users.d/tr-default-user.xml" in installed
+    assert "etc/clickhouse-server/users.d/tr-health.xml" in installed
+    # The files that need a restart are not, so they still differ next time.
+    assert not [relative for relative in installed if "/config.d/" in relative]
+    assert node.calls("systemctl") == []
+
+    (node.state / "fail-iptables").unlink()
+    again = node.run("--apply")
+
+    assert again.returncode == 0, again.stderr
+    assert ["restart", "clickhouse-server"] in node.calls("systemctl")
+    assert node.installed() == {
+        relative: (CONFIG_DIR / source).read_text() for relative, source in INSTALLED.items()
+    }
+    assert LOCKED_DOWN in again.stdout
+
+
+def test_a_failing_block_on_a_node_that_already_has_the_start_step_says_so(node: Node) -> None:
+    node.install_current()
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "the block is already a step of every server start" in result.stderr
+    assert "the server will not start again until this is fixed" in result.stderr
+    assert "was not installed" not in result.stderr
+    assert node.calls("systemctl") == []
+
+
+def test_a_failing_block_with_an_older_start_step_on_the_node_says_the_same(node: Node) -> None:
+    # The drop-in on the node differs from the shipped one, so this run would
+    # have replaced it. The server still cannot start: the old one is there.
+    node.install_current()
+    older = "[Service]\n# an earlier version\nExecStartPre=+/usr/local/sbin/tr-clickhouse-metadata-block\n"
+    (node.root / DROP_IN).write_text(older)
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "the block is already a step of every server start" in result.stderr
+    assert "was not installed" not in result.stderr
+    # The older drop-in is left as it was.
+    assert (node.root / DROP_IN).read_text() == older
+    assert node.calls("systemctl") == []
+
+
+# What the node still does with one protection undone, and what the script says.
+# Each row was reproduced on a real 26.8.36.3 node on 2026-11-11.
+UNDONE = [
+    (("anonymous-code", "200"), "a query with no credentials was not refused with 401"),
+    (("url-open", ""), "ClickHouse on tr-clickhouse-test fetched a URL with url()"),
+    (
+        # remote_url_allow_hosts open, and only the firewall rule stopped it.
+        ("url-error", "Code: 1000. DB::Exception: Connection refused. (POCO_EXCEPTION)\n"),
+        "url() on tr-clickhouse-test failed, but not because the host is not allowed",
+    ),
+    (
+        ("metadata-root-rc", "7"),
+        "root on tr-clickhouse-test cannot reach the metadata server, so the block cannot be checked",
+    ),
+    (
+        ("metadata-clickhouse-rc", "0"),
+        "the ClickHouse user on tr-clickhouse-test was not refused by the metadata server (curl exit 0)",
+    ),
+    (
+        # A timeout is not the rule's answer either: something else is in the way.
+        ("metadata-clickhouse-rc", "28"),
+        "the ClickHouse user on tr-clickhouse-test was not refused by the metadata server (curl exit 28)",
+    ),
+    (
+        ("fail-iptables", ""),
+        "could not block the metadata server for the ClickHouse server on tr-clickhouse-test",
+    ),
+]
+UNDONE_IDS = [
+    "default-user-still-answers",
+    "url-fetches",
+    "url-stopped-only-by-the-firewall",
+    "metadata-server-down",
+    "server-user-reaches-metadata",
+    "server-user-times-out",
+    "rule-cannot-be-installed",
+]
+
+
+@pytest.mark.parametrize("current", [False, True], ids=["first-apply", "nothing-to-change"])
+@pytest.mark.parametrize(("setup", "message"), UNDONE, ids=UNDONE_IDS)
+def test_success_is_not_reported_while_a_protection_is_missing(
+    node: Node, setup: tuple[str, str], message: str, current: bool
+) -> None:
+    # The files being in place proves nothing: another users.d file can bring
+    # `default` back, and a rule ahead of ours can let the server through.
+    if current:
+        node.install_current()
+    (node.state / setup[0]).write_text(setup[1])
+
+    result = node.run("--apply")
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert LOCKED_DOWN not in result.stdout
 
 
 def test_a_users_only_change_reloads_without_a_restart(node: Node) -> None:
@@ -290,7 +694,8 @@ def test_a_users_only_change_reloads_without_a_restart(node: Node) -> None:
     assert result.returncode == 0, result.stderr
     assert node.calls("systemctl") == []
     assert "etc/clickhouse-server/users.d/tr-health.xml" in node.installed()
-    assert len(node.calls("curl")) >= 1
+    assert "etc/clickhouse-server/users.d/tr-default-user.xml" in node.installed()
+    assert len(node.health_polls()) >= 1
 
 
 DEGRADED = [
@@ -382,7 +787,8 @@ def test_health_that_never_recovers_fails_the_node(node: Node) -> None:
 
     assert result.returncode != 0
     assert "/tr_health did not answer 200 or the cluster is not whole" in result.stderr
-    assert node.calls("systemctl") == [["restart", "clickhouse-server"]]
+    assert node.calls("systemctl") == [["daemon-reload"], ["restart", "clickhouse-server"]]
+    assert LOCKED_DOWN not in result.stdout
 
 
 def test_a_failed_system_tables_query_fails_the_apply(node: Node) -> None:
@@ -527,7 +933,14 @@ def test_wrapper_rolls_nodes_three_two_one_and_ships_the_committed_bundle(tmp_pa
             "scripts/deploy/clickhouse-node-config/tr-system-logs.xml",
             "scripts/deploy/clickhouse-node-config/tr-health.xml",
             "scripts/deploy/clickhouse-node-config/tr-health-user.xml",
+            *(f"scripts/deploy/clickhouse-node-config/{source}" for source in INSTALLED.values()),
         } <= names
+        # The mode travels with the archive: the node runs the helper as shipped.
+        with tarfile.open(call["stdin_file"]) as bundle:
+            helper = bundle.getmember(
+                "scripts/deploy/clickhouse-node-config/tr-clickhouse-metadata-block.sh"
+            )
+        assert helper.mode & 0o111
     # Every node is checked for an external IP before any node is touched.
     first_ssh = calls.index(ssh[0])
     assert [call["argv"][3] for call in calls[:first_ssh]] == [

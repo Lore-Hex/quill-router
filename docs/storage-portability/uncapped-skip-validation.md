@@ -14,9 +14,23 @@ usage on shard zero if the recorded shard disappeared. It emits the committed
 `key_usage_shard_fallback_total` counter event (value 1) and a warning naming the
 key, missing shard and amount. Both text and structured log fields carry the
 metric. This is a log-based counter event, not a newly provisioned Cloud
-Monitoring metric. If shard zero cannot book either, it raises `RuntimeError`
+Monitoring metric. If shard zero cannot book either, one primary-key-prefix
+read in the same transaction checks whether any shard still has counters.
+When none remain, settlement completes with the existing workspace credit
+amounts, statements and order; it never writes new key counters. The committed
+warning carries `usage_unbooked=True`, `key_hash`, `hold_micro=0`, the recorded
+`shard`, `actual_micro` and `book_to_byok`. Exactly one WARNING starts with
+`metric=key_usage_unbooked_total value=1 ` and includes the key, shard, amount
+and BYOK flag in both text and structured fields. It emits neither the generic
+missing-release warning nor the shard-recovery metric. A replay is already
+settled and emits no new warning.
+
+If any other shard still has counters, the original `RuntimeError` remains,
 with reservation ID, key, shard, actual amount and usage type. Transactional
 claims roll back and the outbox retains the frozen usage for retry/dead-letter.
+The extra read occurs only after both booking locations fail; settlements that
+already succeeded retain their exact statement sequence. Snapshot reaping can
+book positive usage and follows this rule; zero-usage reaper refunds do not.
 No schema flag distinguishes skip reservations from legacy zero-hold records,
 so this protection deliberately covers both. Held/capped deleted-key handling,
 keyless pre-migration credit reservations, zero-usage refunds, usage display, and #1101's hot-row releases LAST in the same

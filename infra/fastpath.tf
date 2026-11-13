@@ -107,7 +107,14 @@ locals {
   # 51e8fabc1: model/provider/workload ranking with stable speed bands and
   # a ZDR preference (#2436). The reader requires ranking.model_workload;
   # upgrade both nodes before relying on the new routing order in the edge.
-  fastpath_release        = "2be22f1520f5921f33d1afb49d8e4d4354f71532"
+  # d23591a1f: main with edge tickets (#2506, #2510): the edge asks Python
+  # for an async-v1 settlement ticket only for a workspace the policy's
+  # async_settle.edge_tickets member names, which Python publishes only with
+  # TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES set, unset in rollout.sh; so the
+  # nodes answer as the release before until that switch moves. It also
+  # carries every provider's async rules (#2451) and all-mode admission by
+  # request (#2466), both already live on the Python side.
+  fastpath_release        = "949c757f6794c7a17a09d7065cf8245100efccd5"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -181,7 +188,8 @@ locals {
   # each node takes the flag by the runbook's unit rewrite, not a reset.
   fastpath_fleet_audit = true
   # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
-  # section 8.2): a lease needs effective trust tier 3, a workspace's
+  # section 8.2): a lease needs effective trust tier 3 (1 since 2026-11-13,
+  # with the lower tiers' allowances below), a tier-3 workspace's
   # allowance is $1,000 and a lease leaves at least $20 of the balance, in
   # microdollars. The startup script passes each as -required-tier,
   # -allowance and -floor (8af87998a and later take all three). A reset
@@ -196,9 +204,21 @@ locals {
   # largest lease under $4 and the lease spend far under a quarter of the
   # allowance; a lease tops up at most $10. Rollback: remove the three
   # and take each node the same way, which restores the release's defaults.
-  fastpath_required_tier = "3"
+  fastpath_required_tier = "1"
   fastpath_allowance     = "1000000000"
   fastpath_floor         = "20000000"
+  # The lower tiers' allowances (docs/design/fast-admission-widening.md
+  # (b)), in microdollars, each at most the tier above's: $250 for tier 2
+  # (paid, owner identity approved) and $100 for tier 1 (paid, identity not
+  # approved), Joseph's call on 2026-11-12. The exposure bound is the
+  # allowance times 250 per workspace. They land with the pin of the first
+  # release that takes -allowance-tier2 and -allowance-tier1 (#2542), and
+  # the required tier is lowered to 1 in the same change. Only a node
+  # created from the script that reads them takes them (15 and 16 below);
+  # docs/runbooks/fastpath-deploy.md, "Lowering the required tier".
+  # The enabler's tier is lowered after every node runs them.
+  fastpath_allowance_tier2 = "250000000"
+  fastpath_allowance_tier1 = "100000000"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -450,9 +470,15 @@ resource "google_compute_instance" "fastpath_node" {
   # of -required-tier, -allowance or -floor from their attributes. The same
   # release and metadata; 11 and 12 were drained, left the edge backend one
   # apply before their removal, then were removed.
+  #
+  # 15 and 16 took the places of 13 and 14 the same way, for the lower
+  # tiers' allowances (#2542): the script 13 and 14 ran, from before it,
+  # passed neither -allowance-tier2 nor -allowance-tier1 from their
+  # attributes. The same release and metadata; 13 and 14 were drained, left
+  # the edge backend one apply before their removal, then were removed.
   for_each = {
-    "tr-fastpath-13" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-14" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id
@@ -487,6 +513,8 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-required-tier     = local.fastpath_required_tier
     fastpath-allowance         = local.fastpath_allowance
     fastpath-floor             = local.fastpath_floor
+    fastpath-allowance-tier2   = local.fastpath_allowance_tier2
+    fastpath-allowance-tier1   = local.fastpath_allowance_tier1
   }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {

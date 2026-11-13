@@ -164,11 +164,6 @@ details.was[open] summary{margin-bottom:12px}
 .trs a.go{font-size:13.5px;color:#edf8f5;border-bottom:1px solid #3A443D;padding-bottom:1px;text-decoration:none;align-self:flex-start;margin-top:auto}
 .trs .q{padding:32px 36px 28px;display:flex;flex-direction:column;justify-content:center;gap:16px;background:#070A08}
 .trs blockquote{margin:0;font-family:var(--heading-font, Archivo),Arial,sans-serif;font-style:italic;font-size:24px;line-height:1.32;color:#edf8f5;text-wrap:balance}
-.trs .press{grid-column:1/-1;border-top:1px solid #29332D;display:flex;align-items:center;gap:22px;padding:16px 32px}
-.trs .press .src{font:600 15px/1 var(--sans);color:#edf8f5;letter-spacing:-.01em;white-space:nowrap}
-.trs .press .src small{display:block;font:500 10px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#adbbb2;margin-bottom:4px}
-.trs .press p{margin:0;font-size:14.5px;line-height:1.45;color:#C3C9C3;flex:1}
-.trs .press a{font-size:13.5px;color:#edf8f5;border-bottom:1px solid #3A443D;padding-bottom:1px;text-decoration:none;white-space:nowrap}
 /* faq mock */
 .trf{background:#050706;color:#edf8f5;font-family:var(--sans);padding:72px 48px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr);gap:56px;align-items:start}
 .trf h2{margin:0;font-family:var(--heading-font, Archivo),Arial,sans-serif;font-weight:400;font-size:36px;line-height:1.1;letter-spacing:-.01em;color:#edf8f5;text-wrap:balance;position:sticky;top:0}
@@ -215,7 +210,6 @@ details.was[open] summary{margin-bottom:12px}
   .trp .ph2{flex-direction:column;align-items:flex-start}
   .trs .sp{grid-template-columns:1fr}
   .trs .stat{border-right:0;border-bottom:1px solid #29332D}
-  .trs .press{flex-direction:column;align-items:flex-start}
   .trf{grid-template-columns:1fr;gap:28px}
   .trft .cols{grid-template-columns:repeat(2,1fr)}
   .trft .base{flex-direction:column;align-items:flex-start;gap:12px}

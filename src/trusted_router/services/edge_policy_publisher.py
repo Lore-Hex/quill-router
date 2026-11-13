@@ -192,8 +192,10 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
       existed. With a pilot set, the members ``async_settle_fastpath_excludes``
       names, so at most its 32 in all mode too
       (docs/design/fast-admission-widening.md section 9); without one, the
-      explicit fast-path set's, at most 32. All mode with admission on and no
-      pilot set is refused by the settings, and raises here.
+      explicit fast-path set's, at most 32, or in all mode the reserved list
+      (``async_settle_fastpath_reserved_workspace_ids``, section 9.1), at
+      most 32: every other workspace is admitted. Without edge tickets,
+      the edge passes its async-v1 authorizes to Python.
 
     Python answers a workspace they leave out as with admission off
     (``async_settle.snapshot_projection``), which the edge composes itself
@@ -203,10 +205,6 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
     pilots = settings.async_settle_pilot_workspace_ids
     if pilots:
         excluded = frozenset(ws for ws in pilots if settings.async_settle_fastpath_excludes(ws))
-    elif settings.fastpath_pilot_all:
-        # Settings.validate_fastpath_pilot_all refuses this: the exclusion
-        # would be every covered workspace. Fail the signing, never publish it.
-        raise ValueError("all mode with async admission on needs an async pilot set")
     else:
         excluded = settings.async_settle_fastpath_excluded_workspace_ids
     return {
@@ -253,6 +251,10 @@ def settings_facts(
             "ticket_authority": ticket_authority,
             "typed_records": typed_records,
             **admission_workspaces(settings),
+            **({"edge_tickets": True, **(
+                {"edge_ticket_workspaces": sorted(settings.fastpath_edge_async_ticket_workspace_ids)}
+                if "*" not in settings.fastpath_edge_async_ticket_workspace_ids else {}
+            )} if settings.fastpath_edge_async_tickets_enabled and settings.async_settle_admission_enabled else {}),
         },
         # Optional, published only when not off (docs/design/
         # fast-admission-e2-key-windows.md section 5): the default body stays

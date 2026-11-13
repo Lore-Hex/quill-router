@@ -22,7 +22,9 @@ the members' other spellings, refused by both readers, with all-mode rows
 (docs/design/fast-admission-widening.md section 9, PR 5): the same
 combinations with the explicit fast-path set empty and every async pilot
 workspace outside the overlap list on the exclude list, as the settings
-require, and the all-mode golden files (sections 6.3 and 11, PR 3) to
+require, each with and without a reserved list (section 9.1: with the async
+pilot set empty, every workspace is admitted but the reserved list's), and
+the all-mode golden files (sections 6.3 and 11, PR 3) to
 fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the publisher's
 body from the golden settings in all mode (fastpath_pilot_all and
 fastpath_pilot_exclude, the explicit list emptied), signed alike, and the
@@ -31,7 +33,9 @@ optional fastpath_stream_ceiling member's vectors
 fastpath/testdata/edge_policy_stream_ceiling_v1.json: the publisher's body
 with the setting off and on, and the member's other spellings, each with
 whether both readers accept it and what the member says. Workspace
-ids, digests and the monitor key are synthetic.
+ids, digests and the monitor key are synthetic. Edge-ticket member cases
+are written to fastpath/testdata/edge_policy_tickets_v1.json, with expected
+Tickets coverage and refused spellings for both readers.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
 
@@ -74,6 +78,7 @@ from trusted_router.services.routing_snapshot_publisher import plane_of  # noqa:
 OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_v1.body.json"
 OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_v1.manifest.json"
 OUTPUT_STREAMS = ROOT / "fastpath" / "testdata" / "edge_policy_streams_v1.json"
+OUTPUT_TICKETS = ROOT / "fastpath" / "testdata" / "edge_policy_tickets_v1.json"
 OUTPUT_ADMISSION = ROOT / "fastpath" / "testdata" / "edge_policy_admission_v1.json"
 OUTPUT_ALL_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.body.json"
 OUTPUT_ALL_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.manifest.json"
@@ -137,6 +142,7 @@ def fixture_settings(**overrides: object) -> Settings:
         async_settle_enabled=False,
         async_settle_protection=False,
         fastpath_edge_decide_async=False,
+        fastpath_edge_async_ticket_workspaces="",
         # Off, as deployed: the body carries no fastpath_pilot_key_windows,
         # the member Go nodes accept only from e2-key-windows increment 2.
         fastpath_pilot_key_windows="off",
@@ -245,6 +251,15 @@ ADMISSION_PROBES = ("ws-synthetic-async-a", "ws-synthetic-neither", "ws-syntheti
 ADMISSION_PILOTS = ("", "ws-synthetic-async-a", "ws-synthetic-async-a,ws-synthetic-pilot-1",
                     "ws-synthetic-pilot-1,ws-synthetic-pilot-2")
 ADMISSION_OVERLAPS = ("", "ws-synthetic-pilot-1")
+# All mode's reserved lists (docs/design/fast-admission-widening.md section
+# 9.1): with a named async pilot set, none or one workspace outside it; with
+# the pilot set empty, also a list of two, given unsorted.
+ADMISSION_RESERVED = ("", "ws-synthetic-neither")
+ADMISSION_RESERVED_NO_PILOTS = (*ADMISSION_RESERVED, "ws-synthetic-pilot-2,ws-synthetic-neither")
+# The deployed shape (section 9.1, "The deployed pins"): the pilot set empty,
+# a reserved list, and a workspace on the fast path's exclude list, which
+# async admission then covers like any other.
+ADMISSION_EXCLUDE_NO_PILOTS = "ws-synthetic-async-a"
 # The members' spellings the publisher never writes, each refused by both
 # readers, spliced into the async_settle object of the all-workspaces body
 # (admission on, no pilot set, no fast-path set), and one into the
@@ -261,11 +276,13 @@ ADMISSION_OFF_REFUSED = ("excluded_admission_off", '"admission_excluded_workspac
 
 
 def admission_settings(admission: bool, pilots: str, overlap: str, fastpath: str,
-                       exclude: str | None = None) -> Settings:
+                       exclude: str | None = None, reserved: str = "") -> Settings:
     """The admission settings; with ``exclude`` set, all mode (the explicit
-    fast-path set then empty, and the typed Spanner store it requires)."""
+    fast-path set then empty, and the typed Spanner store it requires), and
+    ``reserved`` its reserved list."""
     pilot_all = {} if exclude is None else dict(
-        fastpath_pilot_all=True, fastpath_pilot_exclude=exclude, storage_backend="spanner-clickhouse")
+        fastpath_pilot_all=True, fastpath_pilot_exclude=exclude, storage_backend="spanner-clickhouse",
+        async_settle_fastpath_reserved_workspaces=reserved)
     return fixture_settings(
         async_settle_enabled=admission, async_settle_protection=admission,
         async_settle_pilot_workspaces=pilots, async_settle_fastpath_overlap_workspaces=overlap,
@@ -279,11 +296,19 @@ def all_mode_exclude(pilots: str, overlap: str) -> str:
     return ",".join(sorted({ws for ws in pilots.split(",") if ws} - {ws for ws in overlap.split(",") if ws}))
 
 
-def admission_all_mode_combinations() -> list[tuple[bool, str, str]]:
-    """(admission, pilots, overlap) for the all-mode rows: every combination
-    but admission on with no async pilot set, which the settings refuse."""
-    return [(admission, pilots, overlap) for admission in (False, True) for pilots in ADMISSION_PILOTS
-            for overlap in ADMISSION_OVERLAPS if not (admission and not pilots)]
+def admission_all_mode_combinations() -> list[tuple[bool, str, str, str, str]]:
+    """(admission, pilots, overlap, exclude, reserved) for the all-mode rows:
+    every combination with the exclude list the settings require, the empty
+    async pilot set with admission on among them (section 9.1: every
+    workspace admitted but the reserved list); then the empty pilot set
+    beside a reserved list and an exclude list the settings do not require,
+    which is the deployed shape."""
+    required = [(admission, pilots, overlap, all_mode_exclude(pilots, overlap), reserved)
+                for admission in (False, True) for pilots in ADMISSION_PILOTS for overlap in ADMISSION_OVERLAPS
+                for reserved in (ADMISSION_RESERVED if pilots else ADMISSION_RESERVED_NO_PILOTS)]
+    deployed = [(admission, "", overlap, ADMISSION_EXCLUDE_NO_PILOTS, ADMISSION_RESERVED[1])
+                for admission in (False, True) for overlap in ADMISSION_OVERLAPS]
+    return required + deployed
 
 
 def _spliced(settings: Settings, members: str) -> str:
@@ -318,17 +343,18 @@ def admission_cases() -> list[dict[str, object]]:
                         "accept": True, "admits": admits,
                     })
     # All mode: ws-synthetic-neither stands for a workspace the enabler turns
-    # on (covered, on no list), which async admission must leave out.
-    for admission, pilots, overlap in admission_all_mode_combinations():
-        exclude = all_mode_exclude(pilots, overlap)
-        settings = admission_settings(admission, pilots, overlap, "", exclude)
+    # on (covered, on no list). A named async pilot set leaves it out; an
+    # empty one admits it unless the reserved list names it, and admits a
+    # workspace on the exclude list too.
+    for admission, pilots, overlap, exclude, reserved in admission_all_mode_combinations():
+        settings = admission_settings(admission, pilots, overlap, "", exclude, reserved)
         admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
                   for ws in ADMISSION_PROBES}
         cases.append({
             "name": f"publisher:all:admission={str(admission).lower()}:pilots={pilots or '-'}"
-                    f":overlap={overlap or '-'}:exclude={exclude or '-'}",
+                    f":overlap={overlap or '-'}:exclude={exclude or '-'}:reserved={reserved or '-'}",
             "settings": {"admission": admission, "pilots": pilots, "overlap": overlap, "fastpath": "",
-                         "exclude": exclude},
+                         "exclude": exclude, "reserved": reserved},
             "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
             "accept": True, "admits": admits,
         })
@@ -340,6 +366,51 @@ def admission_cases() -> list[dict[str, object]]:
     cases.append({"name": f"refused:{name}", "settings": None,
                   "body": _spliced(admission_settings(False, "", "", ""), members), "accept": False, "admits": None})
     return cases
+
+
+def ticket_cases() -> list[dict[str, object]]:
+    """Optional ticket members, with the settings' own answer per workspace."""
+    cases: list[dict[str, object]] = []
+    probes = ["ws_test_1", "ws_test_2", "ws_test_3"]
+    for admission in (False, True):
+        for switch in ("", "*", "ws_test_2,ws_test_1", ",".join(f"ws_test_{i:02}" for i in range(32))):
+            for pilots, excluded in (("", ""), ("ws_test_1", ""), ("", "ws_test_1")):
+                cfg = fixture_settings(
+                    async_settle_enabled=admission, async_settle_protection=admission,
+                    fastpath_pilot_workspaces=excluded, async_settle_pilot_workspaces=pilots,
+                    fastpath_edge_async_ticket_workspaces=switch,
+                )
+                cases.append({
+                    "name": f"publisher:{admission}:{switch}:{pilots}:{excluded}",
+                    "body": canonical_edge_policy_bytes(policy(cfg)).decode(), "accept": True,
+                    "tickets": {ws: cfg.fastpath_edge_async_ticket_allows(ws) for ws in probes},
+                })
+    base = json.loads(canonical_edge_policy_bytes(policy(fixture_settings(
+        async_settle_enabled=True, async_settle_protection=True, fastpath_pilot_workspaces="",
+    ))))
+    refused: dict[str, dict[str, object]] = {
+        "false": {"edge_tickets": False}, "null": {"edge_tickets": None},
+        "integer": {"edge_tickets": 1}, "string": {"edge_tickets": "true"},
+        "admission_off": {"edge_tickets": True, "admission_enabled": False},
+        "without_tickets": {"edge_ticket_workspaces": ["ws_test_1"]},
+    }
+    for name, value in {
+        "null": None, "empty": [], "unsorted": ["ws_test_2", "ws_test_1"],
+        "duplicate": ["ws_test_1", "ws_test_1"],
+        "thirty_three": [f"ws_test_{i:02}" for i in range(33)],
+        "bad_id": ["ws test"], "long_id": ["w" * 65], "empty_id": [""],
+        "wrong_type": [1], "string": "ws_test_1",
+    }.items():
+        refused[f"workspaces_{name}"] = {"edge_tickets": True, "edge_ticket_workspaces": value}
+    for name, members in refused.items():
+        body = {**base, "async_settle": {**base["async_settle"], **members}}
+        cases.append({"name": f"refused:{name}", "body": json.dumps(body, sort_keys=True, separators=(",", ":")),
+                      "accept": False, "tickets": None})
+    return cases
+
+
+def render_tickets() -> str:
+    return json.dumps({"generator": GENERATOR, "cases": ticket_cases()}, indent=1, sort_keys=True) + "\n"
 
 
 def render_admission() -> str:
@@ -398,10 +469,11 @@ if __name__ == "__main__":
     OUTPUT_MANIFEST.write_text(render_manifest())
     OUTPUT_STREAMS.write_text(render_streams())
     OUTPUT_ADMISSION.write_text(render_admission())
+    OUTPUT_TICKETS.write_text(render_tickets())
     OUTPUT_ALL_BODY.write_bytes(render_all_body())
     OUTPUT_ALL_MANIFEST.write_text(render_all_manifest())
     OUTPUT_STREAM_CEILING.write_text(render_stream_ceiling())
     print(f"wrote {OUTPUT_BODY.relative_to(ROOT)}, {OUTPUT_MANIFEST.relative_to(ROOT)}, "
           f"{OUTPUT_STREAMS.relative_to(ROOT)}, {OUTPUT_ADMISSION.relative_to(ROOT)}, "
           f"{OUTPUT_ALL_BODY.relative_to(ROOT)}, {OUTPUT_ALL_MANIFEST.relative_to(ROOT)} and "
-          f"{OUTPUT_STREAM_CEILING.relative_to(ROOT)}")
+          f"{OUTPUT_STREAM_CEILING.relative_to(ROOT)}, {OUTPUT_TICKETS.relative_to(ROOT)}")

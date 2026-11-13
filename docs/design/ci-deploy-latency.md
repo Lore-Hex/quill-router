@@ -93,14 +93,83 @@ older, slow build replacing the pending newer release.
 On admission, revalidate CI, checkout identity and image digest. Before taking
 the cloud reservation, an older push can yield only to a newer, still-on-main
 push with green CI and a completed image build, or a newer release that already
-completed every production gate. It never retargets an image to a different
-commit. After taking the reservation, a newly arriving push does not cancel or
-supersede the active rollout. A final ancestry check still prevents deploying
+completed every production gate. An image always stays bound to its build
+commit. A final ancestry check still prevents deploying
 a revision removed from main. Migrations, secret synchronization, attestation,
 regional/public checks and durable lease finalization remain production-gated.
 
 Cloud release reconciliation recognizes reusable-job names (rollout / JOB)
 and still requires all GCP production gates before AWS/Azure promotion.
+
+### Release trains at cloud admission
+
+The shared cloud wait can last hours. Selecting a successor before that wait
+left prepared changes behind while an obsolete release took another full turn
+(2026-11-12, issue #2551). Main-tracking releases now freeze a train **after**
+acquiring the shared cloud reservation, before schema or secret changes.
+
+Each successful build publishes an immutable `prepared-release-ATTEMPT`
+artifact containing its full commit, tag, image digest and build run/attempt.
+The selector chooses the newest prepared descendant with exact-commit green
+CI on main. Unknown/unready successors wait; a failed read of delivery history
+refuses selection. Lookups have a four-minute total deadline and inspect at
+most 100 recent deploy runs, skipping failed/cancelled builds. The selector
+rechecks main ancestry and the selected commit's CI before closing the train.
+
+Workflow and reservation-controller changes form a train boundary. The
+initiating and selected revisions must have identical entry/production
+workflows, selector and mutex/coordinator scripts. A changed controller ships
+in its own workflow; an older controller cannot execute a newer image under
+different rollout rules. Explicit pinned manual releases remain pinned.
+
+All migrations, secret synchronization, primary/secondary/public rollouts,
+worker and completeness checks use the selected **full** commit and immutable
+image together. New commits arriving after selection wait for the next train.
+Nothing cancels an active rollout or shortens canaries, retention or rollback
+protection. A `selected-release-ATTEMPT` receipt records the controller and
+actual selected release. Reconciliation promotes that selected release to
+AWS/Azure only after every production gate completes, never the initiating SHA.
+
+Later queued runs detect a fully delivered train and skip already-shipped
+work. Selection failures before any mutation release the reservation cleanly
+while remaining red. Unexpected mutations or rollout failures still retain
+the reservation for recovery. Failed-job retries may reuse an earlier build
+artifact from the same run and commit; artifact/run/attempt provenance is
+validated and duplicate identities are refused.
+
+This batches control-plane changes; it does not make the shared gateway lease
+FIFO or reduce a gateway rollout's own duration. Existing queued workflows keep
+their original code until this controller is merged. Measure end-to-end queue
+time separately from the train's actual production rollout.
+
+### Automatic price dispatches follow main
+
+The price publisher explicitly dispatches deploy.yml because its GITHUB_TOKEN
+push does not trigger another workflow. Previously this took the pinned-manual
+path, bypassing both supersession and the post-admission ancestry check. On
+2026-11-10 an obsolete price snapshot started another full rollout even though
+a newer green release already had a prepared image.
+
+Price dispatches now set `track_main=true`. Both checks apply as on a push;
+only a prepared, green, still-on-main successor can displace the snapshot.
+The wrapper encodes this boolean and its exact SHA in its run name so successor
+discovery can recognize such dispatches without guessing from the actor.
+Pinned manual dispatches retain the default `track_main=false` behavior and
+are not successors. `track_main=true` cannot be combined with `hotfix=true`.
+
+A snapshot push no longer dispatches a rollout of its own. The snapshot lives
+under `src/`, so it rides the next control-plane rollout. The refresh job's
+last step runs `scripts/deploy/price_snapshot_deploy.py` on every hourly run
+and dispatches deploy.yml, still with `track_main=true`, only once the oldest
+undelivered snapshot has waited four hours while no deploy run carries it or
+exists for main's head. Prices reach production later; code no longer queues
+behind a rollout that ships nothing but prices.
+
+No active rollout is interrupted and no lease is cleared. Cancellation remains
+push-only with its existing preparation/test-start/window guards. Workflows
+already queued from older source retain their old behavior; this change does
+not retroactively rewrite them. CI, image identity, holdback, attestation,
+billing, regional/public/worker checks and finalization remain unchanged.
 
 ### Coverage through sys.monitoring
 

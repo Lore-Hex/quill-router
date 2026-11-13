@@ -180,9 +180,22 @@ class ExchangeTests(unittest.TestCase):
 
     def test_inventory(self) -> None:
         self.assertEqual(len(load_markets()), 13)
-        self.assertEqual(len(domains()), 30)
+        self.assertEqual(len(domains()), 31)
         self.assertIn("thetokenexchange.com", domains())
         self.assertIn("nytokenexchange.com", domains())
+
+    def test_nytex_is_a_new_york_redirect_alias(self) -> None:
+        market = next(m for m in load_markets() if "nytex.com" in m["aliases"])
+        self.assertEqual(market["domain"], "nytokenexchange.com")
+        self.assertNotIn("forward_to", market)
+        hosts = {host: rule["pathMatcher"] for rule in routed_map()["hostRules"] for host in rule["hosts"]}
+        for host in ("nytex.com", "www.nytex.com"):
+            self.assertEqual(hosts[host], "exchange-new-york-aliases")
+        source = (Path(__file__).parents[2] / "infra" / "control_lb_url_map.tf").read_text()
+        self.assertIn('redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"', source)
+        self.assertIn("https_redirect         = true", source)
+        self.assertIn("strip_query            = false", source)
+        self.assertNotIn("path_redirect", source)
 
     def test_every_market_domain_has_a_control_certificate(self) -> None:
         # Rule: every market domain is listed for infra/control_lb_certificates.tf.
@@ -405,7 +418,7 @@ class ExchangeTests(unittest.TestCase):
         other = routed_map(without={"nytokenexchange.com"})
         other["hostRules"].append({"hosts": ["nytokenexchange.com"], "pathMatcher": "someone-else"})
         self.assertEqual(unrouted_hosts(other), ["nytokenexchange.com"])
-        self.assertEqual(len({h for r in routed_map()["hostRules"][1:] for h in r["hosts"]}), 60)
+        self.assertEqual(len({h for r in routed_map()["hostRules"][1:] for h in r["hosts"]}), 62)
 
     def test_publish_refuses_an_unrouted_host(self) -> None:
         cloud = with_certificate_map(production_before_riyadh(PublishCloud))
@@ -434,7 +447,7 @@ class ExchangeTests(unittest.TestCase):
         hosts = [h for d in domains() for h in (d, "www." + d)]
         requests = certificate_requests([], hosts)
         self.assertEqual([h for _, batch in requests for h in batch], hosts)
-        self.assertEqual([len(batch) for _, batch in requests], [16, 16, 16, 12])
+        self.assertEqual([len(batch) for _, batch in requests], [16, 16, 16, 14])
         names = [name for name, _ in requests]
         self.assertEqual(len(set(names)), len(names))
         for name in names:
@@ -626,7 +639,7 @@ class ExchangeTests(unittest.TestCase):
                 if market["slug"] == "new-york":
                     from nyte_v2 import PAGES
                     paths += [entry["route"] for key, entry in PAGES.items()
-                              if key != "home" and entry.get("builder") != "anchor"] + ["/badge"]
+                              if key != "home" and entry.get("builder") != "anchor"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],
@@ -639,7 +652,7 @@ class ExchangeTests(unittest.TestCase):
             # referenced is missing.
             assets = output / "assets"
             referenced = set()
-            for path in [*output.glob("*/index.html"), *output.glob("*.html"), output / "index", *assets.glob("*.css"), *assets.glob("*.js")]:
+            for path in [*output.glob("*/index.html"), *output.glob("*.html"), *output.glob("verified/*.html"), output / "index", *assets.glob("*.css"), *assets.glob("*.js")]:
                 referenced.update(re.findall(r"/assets/([A-Za-z0-9._-]+)", path.read_text()))
             self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "river-hero.webp", "mark.svg"}, referenced)
             self.assertEqual({path.name for path in assets.iterdir()}, referenced)

@@ -158,3 +158,49 @@ def test_nebius_parser_filters_retired_rows_from_stale_feed(
     assert set(_RETIRING).isdisjoint(after.prices)
     assert set(_RETIRING).isdisjoint(nebius._DISCOVERED_ROWS)
     assert set(_SURVIVING).issubset(after.prices)
+
+
+def test_nebius_expected_models_drop_their_november_9_retirements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Refresh run 42864346256 (2026-11-10) held Nebius: "missing expected
+    # model(s): ['deepseek-ai/DeepSeek-V4-Pro', 'zai-org/GLM-5.1']", both
+    # retired on 2026-11-09 (#2202) and therefore skipped by fetch().
+    payload = {"data": [{
+        "id": "openai/gpt-oss-120b", "name": "gpt-oss-120b", "created": 1,
+        "context_length": 131_072, "architecture": {"modality": "text->text"},
+        "pricing": {"prompt": "0.0000001", "completion": "0.0000004"},
+    }]}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return payload
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(nebius.httpx, "Client", FakeClient)
+    cutoff = provider_lifecycle.NEBIUS_NOVEMBER_9_RETIREMENT_AT
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff - timedelta(microseconds=1))
+    with pytest.raises(RuntimeError, match="missing expected model"):
+        nebius.fetch()
+
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
+    assert set(nebius.fetch().prices) == {"openai/gpt-oss-120b"}
+    # A surviving expected model still fails closed when Nebius drops it.
+    payload["data"] = []
+    with pytest.raises(RuntimeError, match=r"missing expected model\(s\): \['openai/gpt-oss-120b'\]"):
+        nebius.fetch()

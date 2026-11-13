@@ -287,8 +287,9 @@ def test_near_ai_is_attested_prepaid_only_and_its_catalog_follows_the_manifest()
 
 
 def test_near_ai_glm_53_flash_route_is_released_after_attestation_repin() -> None:
-    # Held October 15 while the gateway sidecar refused NEAR's drifted
-    # attestation; quill-cloud-proxy #720 re-pinned both reviewed pool members.
+    # Held October 15 and again November 12 while the gateway sidecar refused
+    # NEAR's drifted attestation; quill-cloud-proxy #755 re-pinned the live
+    # gpu03 pool member (compose c900dc73).
     assert ("near-ai", "z-ai/glm-5.3-flash") not in provider_contracts.OPERATOR_HELD_PROVIDER_MODELS
     assert not provider_model_operator_held("near-ai", "z-ai/glm-5.3-flash")
     endpoint = catalog_vehicles.registry_endpoints().get("z-ai/glm-5.3-flash@near-ai/prepaid")
@@ -298,31 +299,34 @@ def test_near_ai_glm_53_flash_route_is_released_after_attestation_repin() -> Non
 
 
 @pytest.mark.parametrize(
-    "gateway_region",
+    ("gateway_region", "available"),
     [
-        "us-central1",
-        "us-east4",
-        "europe-west4",
-        "us-west1",
-        "aws-eu-west-1",
-        "aws-eu-west-3",
-        "eu-west-1",
-        "eu-west-3",
-        "azure-uaenorth",
-        "azure-australiaeast",
-        "uaenorth",
-        "australiaeast",
+        ("us-central1", True),
+        ("us-east4", True),
+        ("europe-west4", True),
+        ("us-west1", True),
+        ("aws-eu-west-1", False),
+        ("aws-eu-west-3", False),
+        ("eu-west-1", False),
+        ("eu-west-3", False),
+        ("azure-uaenorth", False),
+        ("azure-australiaeast", False),
+        ("uaenorth", False),
+        ("australiaeast", False),
     ],
 )
-def test_near_ai_glm_53_flash_routes_from_every_gateway(gateway_region: str) -> None:
-    # Every fleet runs the re-pinned NEAR policy (QCP #720, 366ffd91): GCP,
-    # AWS on 45ff2be8 and Azure on 629438f2. No explicit origin is required.
-    assert ("near-ai", "z-ai/glm-5.3-flash") not in (
-        provider_contracts.EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL
-    )
+def test_near_ai_glm_53_flash_routes_only_from_gcp_gateways(
+    gateway_region: str, available: bool,
+) -> None:
+    # Only the GCP fleet runs the November 12 NEAR re-pin (QCP #755,
+    # 4a17b292). AWS (45ff2be8) and Azure (629438f2) gateways would refuse
+    # NEAR's attestation and return 502, so they stay held.
+    assert provider_contracts.EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL[
+        ("near-ai", "z-ai/glm-5.3-flash")
+    ] == frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
     assert provider_contracts.provider_model_available_from_gateway_region(
         "near-ai", "z-ai/glm-5.3-flash", gateway_region,
-    ) is True
+    ) is available
 
 
 def test_near_ai_routes_are_attested_prepaid_only(

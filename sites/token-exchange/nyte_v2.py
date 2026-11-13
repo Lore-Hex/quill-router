@@ -115,6 +115,25 @@ PAGES = {
         "group": "exchange",
         "menu_description": "",
     },
+    "badge": {
+        "route": "/badge",
+        "label": None,
+        "title": "NYTE Verified Secure badge | New York Token Exchange",
+        "description": "NYTE requires confidential AI routes. Enterprise buyers display the Verified Secure badge to show customers the required privacy standard behind their NYTE-powered AI.",
+        "group": "buy",
+        "menu_description": "",
+    },
+    # Where a supplier's Verified Secure badge links (build.VERIFIED_PROVIDERS).
+    "maple": {
+        "route": "/verified/maple",
+        "label": None,
+        "title": "Maple attestation evidence | NYTE Verified Secure",
+        "description": "Check Maple’s confidential AI for yourself. This page asks Maple’s enclave and NYTE’s gateway what they are running, verifies the hardware signatures in your browser, and compares them with the public records.",
+        "og_title": "Maple, checked. By you, right now.",
+        "og_description": "Live attestation evidence for Maple’s confidential AI, verified in your browser.",
+        "group": "buy",
+        "menu_description": "",
+    },
     "media-kit": {
         "route": "/media-kit",
         "label": None,
@@ -258,9 +277,11 @@ def load_markets() -> list[dict]:
 # from markets.json, which also drives the load balancer's Terraform.
 CITIES = json.loads((HERE / "nyte-cities.json").read_text())
 
-# Pages repainted with the NYTE brand v3 (nyte-v2/brand-v3.css). Empty means
-# production is unchanged. NYTE_BRAND_V3_PREVIEW=1 repaints every page in a local build.
-BRAND_V3_PAGES = set(json.loads((HERE / "nyte-brand-v3.json").read_text())["pages"])
+# Registered pages use the NYTE brand v3 (nyte-v2/brand-v3.css) by default, so a
+# new page gets it without any extra step. nyte-brand-v3.json lists the few pages
+# that keep the old look. NYTE_BRAND_V3_PREVIEW=1 repaints every page in a local build.
+OLD_BRAND_PAGES = set(json.loads((HERE / "nyte-brand-v3.json").read_text())["old_brand_pages"])
+BRAND_V3_PAGES = set(PAGES) - OLD_BRAND_PAGES
 
 
 def uses_brand_v3(page: str) -> bool:
@@ -272,7 +293,8 @@ def legacy_share_image_used(market: dict) -> bool:
     if not uses_nyte(market) or not (HERE / f"social-images/og-v3-{market['slug']}.png").exists():
         return True
     if market["slug"] == "new-york":
-        return not all(uses_brand_v3(page) for page in PAGES)
+        # The media kit and the deck anchor are not shell pages and carry no share image.
+        return not all(uses_brand_v3(page) for page, entry in PAGES.items() if entry.get("builder") not in {"press", "anchor"})
     return not uses_brand_v3("home")
 
 
@@ -339,6 +361,12 @@ def render_nyte(
     page: str = "home", *, content: str | None = None, extra_head: str = "",
     image_url: str | None = None, market: dict | None = None, late_head: str = "",
 ) -> str:
+    if page == "badge" and not uses_brand_v3("badge"):
+        # Rollback: the pre-v3 badge page is a standalone document with its own sheet.
+        return (HERE / "badge.html").read_text()
+    if page == "maple" and not uses_brand_v3("maple"):
+        # Rollback: the pre-v3 evidence page is a standalone document (badge.css, verified.css).
+        return (HERE / "verified-maple.html").read_text()
     market = market or next(m for m in load_markets() if m["slug"] == "new-york")
     market = market | CITIES.get(market["slug"], {})
     city = market["slug"] != "new-york"
@@ -367,6 +395,18 @@ def render_nyte(
     if page == "manage":
         manage_version = hashlib.sha256((SOURCE / "manage.js").read_bytes()).hexdigest()[:12]
         extra_head += f'<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex"><script src="/assets/nyte-v2/manage.js?v={manage_version}" defer></script>'
+    if page == "badge":
+        badge_version = hashlib.sha256((SOURCE / "badge-v3.js").read_bytes()).hexdigest()[:12]
+        extra_head += f'<script src="/assets/nyte-v2/badge-v3.js?v={badge_version}" defer></script>'
+    if page == "maple":
+        # verified.js runs the live checks and is published as written at /assets/verified.js.
+        verified_version = hashlib.sha256((HERE / "verified.js").read_bytes()).hexdigest()[:12]
+        maple_version = hashlib.sha256((SOURCE / "maple-v3.js").read_bytes()).hexdigest()[:12]
+        # Marks the page as scripted before first paint, so the checks show their running state at once.
+        extra_head += ('<script>document.documentElement.classList.add("mv3-js")</script>'
+                       '<meta name="referrer" content="strict-origin-when-cross-origin">'
+                       f'<script src="/assets/verified.js?v={verified_version}" defer></script>'
+                       f'<script src="/assets/nyte-v2/maple-v3.js?v={maple_version}" defer></script>')
     if page == "buy":
         from buy_page import buy_content
 
@@ -398,6 +438,7 @@ def render_nyte(
                    .replace("{{fails_closed}}", illustration_svg("fails-closed.svg"))
                    .replace("{{arrow}}", ARROW_UP_RIGHT)
                    .replace("{{band_sky}}", band_svg("band-sky.svg"))
+                   .replace("{{band_lime}}", band_svg("band-lime.svg"))
                    .replace("{{index_panel_v3}}", index_panel_v3()))
         content = re.sub(r"\{\{illustration:([a-z-]+)\}\}", lambda m: illustration_svg(m[1] + ".svg"), content)
         sheet = V3_SHEETS.get(page, V3_BODIES[page]) + ".css"
@@ -420,7 +461,12 @@ def render_nyte(
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
     for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=buyer_deck_html(), extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
-    if page == "providers":
+    # A page may share a shorter line than its search title and description.
+    for field in ("title", "description"):
+        if f"og_{field}" in entry:
+            tag = f'<meta property="og:{field}" content="{html.escape(entry["og_" + field], quote=True)}">'
+            result = re.sub(rf'<meta property="og:{field}" content="[^"]*">', lambda _, tag=tag: tag, result, count=1)
+    if page in {"providers", "badge"}:
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')
     def tracked(match: re.Match[str]) -> str:
         url = urlsplit(html.unescape(match[1]))
@@ -440,7 +486,8 @@ MARKET_RAIL = '<div class="geo-scroll footer-markets"><svg class="market-pin" vi
 
 # Pages with a body rebuilt for brand v3: page key -> body and sheet name in nyte-v2/.
 V3_BODIES = {"home": "home-v3", "api": "api-v3", "cowork": "cowork-v3",
-             "sup": "sup-v3", "providers": "providers-v3", "accelerator": "accelerator-v3"}
+             "sup": "sup-v3", "providers": "providers-v3", "accelerator": "accelerator-v3",
+             "badge": "badge-v3", "maple": "maple-v3"}
 # Rebuilt pages that share one sheet instead of <body>.css.
 V3_SHEETS = {"sup": "sell-v3", "providers": "sell-v3", "accelerator": "sell-v3"}
 # Kit icon arrow-up-right, drawn in the text colour.
@@ -496,12 +543,13 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css", "buy-v3.css", "sell-v3.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css", "buy-v3.css", "sell-v3.css", "badge-v3.css", "badge-v3.js", "maple-v3.css", "maple-v3.js"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):
             continue
         route = entry["route"].lstrip("/")
         content = render_nyte(page)
+        (output / route).parent.mkdir(parents=True, exist_ok=True)
         for name in (route, route + ".html"):
             (output / name).write_text(content)

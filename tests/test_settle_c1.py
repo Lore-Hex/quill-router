@@ -191,7 +191,22 @@ def test_main_money_differential(scenario: str, capped: bool, intent: bool) -> N
             result = (type(exc).__name__, str(exc))
         if scenario != 'concurrent':
             if scenario == 'deleted_key' and not capped:
-                assert isinstance(result, tuple) and result[0] == 'RuntimeError'
+                if impl is main.typed_finalize_atomic:
+                    assert result == ('RuntimeError', (
+                        f"key usage booking failed reservation_id={options['reservation_id']} "
+                        "key_hash=key shard=0 fallback_shard=0 actual_micro=70 book_to_byok=False"
+                    ))
+                    assert state(db) == state(initial)
+                    # Only absent zero-hold counters differ; all other durable state
+                    # must match a successful frozen settlement with healthy counters.
+                    healthy, _ = prepare('ordinary', False, intent)
+                    db.typed['tr_key_limit'] = copy.deepcopy(healthy.typed['tr_key_limit'])
+                    result = invoke(db, copy.deepcopy(options), impl)
+                    result.pop('attempts', None)
+                    db.typed['tr_key_limit'].clear()
+                else:
+                    assert isinstance(result, dict) and result['outcome'] == 'settled', result
+                    assert db.typed['tr_key_limit'] == {}
             else:
                 expected = (
                     'already_settled' if scenario in {'replay_settled', 'replay_refunded', 'reaped', 'snapshot_booked'}
@@ -437,7 +452,12 @@ def test_http_and_all_state_differential(
     monkeypatch.setattr('trusted_router.services.budget_alerts.maybe_send_budget_alerts', lambda **_k: None)
     monkeypatch.setattr(gateway_timing, 'perf_counter', lambda: 0.0)
     observations = []
-    for impl in (main.typed_finalize_atomic, current.typed_finalize_atomic):
+    absent_zero_hold = scenario == 'deleted_key' and not capped
+    implementations = [(main.typed_finalize_atomic, False)]
+    if absent_zero_hold:
+        implementations.append((main.typed_finalize_atomic, True))
+    implementations.append((current.typed_finalize_atomic, False))
+    for impl, healthy_reference in implementations:
         store, db = make_fake_store(operational_analytics_outbox_enabled=True,
                                    generation_records_enabled=True, request_record_write_mode='typed')
         db.now = NOW
@@ -445,6 +465,9 @@ def test_http_and_all_state_differential(
                      'generation_records', 'operational_analytics_outbox', 'analytics_outbox',
                      'stage_d_policy_watermarks', 'reservation_idemp'):
             setattr(db, name, copy.deepcopy(getattr(initial, name)))
+        if healthy_reference:
+            healthy, _ = prepare('ordinary', False, intent)
+            db.typed['tr_key_limit'] = copy.deepcopy(healthy.typed['tr_key_limit'])
         store.generation_store._analytics_outbox = SpannerAnalyticsOutbox(db, param_types)
         configure_store(store)
 
@@ -484,6 +507,23 @@ def test_http_and_all_state_differential(
             assert not db.reservations[options['reservation_id']]['settled']
         if scenario in {'ordinary', 'equal', 'overrun', 'auto_refill', 'later_shard', 'rollover', 'strict'}:
             assert response.status_code == 200 and body['data']['disposition'] == 'finalized', body
+        if absent_zero_hold:
+            if impl is main.typed_finalize_atomic and not healthy_reference:
+                assert db.reservations == initial.reservations
+                assert db.typed == initial.typed
+                if intent:
+                    assert response.status_code == 200
+                    assert body['data']['disposition'] == 'intent_durable'
+                    assert db.settle_outbox[(aid, 'settle')]['status'] == 'pending'
+                    assert db.settle_outbox[(aid, 'settle')]['actual_cost_micro'] == 70
+                else:
+                    assert response.status_code == 500
+                continue
+            assert response.status_code == 200 and body['data']['disposition'] == 'finalized'
+            if healthy_reference:
+                assert db.typed['tr_key_limit'][('key', 0)]['usage'] == 70
+                db.typed['tr_key_limit'].clear()
+            assert db.typed['tr_key_limit'] == {}
         # Headers and payload (including timing with a frozen observational clock)
         # are exact. No stored fields are normalized away.
         observations.append((response.status_code, response.content, dict(response.headers), state(db),

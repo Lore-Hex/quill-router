@@ -564,10 +564,12 @@ _OPEN_WEIGHT_CONTAINS = (
 )
 
 
-# Served under an open-weights family prefix, but its weights are not
-# published: Hugging Face's thinkingmachines/Inkling-2-Small is not public and
-# Tinker's serverless feed lists no weights URL for it (2026-11-05).
-_UNPUBLISHED_WEIGHTS = frozenset({"thinkingmachines/inkling-2-small"})
+# Models served under an open-weights family prefix whose weights are not
+# published yet: they carry no open-weights badge until they are. Inkling 2
+# Small was listed here until Thinking Machines published its weights on
+# 2026-11-12 (https://huggingface.co/thinkingmachines/Inkling-2-Small,
+# Apache-2.0). Liberty membership is a separate, explicit decision.
+_UNPUBLISHED_WEIGHTS: frozenset[str] = frozenset()
 
 
 def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> bool:
@@ -1103,7 +1105,7 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
         "retention_notice": provider_retention_notice(provider.slug),
-        "retention_requires_model_review": provider.slug in {"openai", "google-vertex"},
+        "retention_requires_model_review": provider.slug in {"openai", "google-vertex", "azure"},
         "trusted_provider": provider_privacy_tier(provider) == PRIVACY_TIER_TRUSTED,
         "provider_policy_url": provider.provider_policy_url,
         "provider_headquarters_country": provider.provider_headquarters_country,

@@ -136,7 +136,9 @@ workspace a copy younger than 15 s enables; any other request is
 `workspace` and takes today's path with no call. It needs the typed
 Spanner store, and every async pilot workspace on the exclude list or
 `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`; the process refuses to
-start otherwise. It moved at the widening's WS2: the set of item 1 is
+start otherwise. An empty async pilot set admits every workspace but
+`TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES`, a leased request taking
+no ticket (the widening's §9.1). It moved at the widening's WS2: the set of item 1 is
 empty since, its three workspaces stay on the switch and on the enabler's
 include list (`TR_FASTPATH_ENABLER_INCLUDE`), and the exclude list names
 the probes' workspaces.

@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.byok_crypto import encrypt_control_secret
+from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.schemas import (
     BroadcastDestinationCreateRequest,
@@ -22,6 +23,7 @@ from trusted_router.services.broadcast import (
 from trusted_router.services.broadcast_adapters import (
     BroadcastAdapter,
     adapter_for,
+    allows_local_destinations,
     supported_destination_types,
 )
 from trusted_router.storage import STORE, BroadcastDestination
@@ -45,7 +47,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         endpoint = _endpoint_for(body.type, body.endpoint)
-        _validate_destination(body.type, endpoint)
+        _validate_destination(body.type, endpoint, settings)
         adapter = _require_adapter(body.type)
         destination = STORE.create_broadcast_destination(
             workspace_id=principal.workspace.id,
@@ -82,7 +84,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
         destination = _require_destination(principal.workspace.id, destination_id)
         endpoint = _endpoint_for(destination.type, body.endpoint) if body.endpoint is not None else None
         if endpoint is not None:
-            _validate_destination(destination.type, endpoint)
+            _validate_destination(destination.type, endpoint, settings)
         patch = body.model_dump(exclude_unset=True, exclude_none=True)
         patch.pop("api_key", None)
         patch.pop("headers", None)
@@ -184,9 +186,11 @@ def _endpoint_for(destination_type: str, endpoint: str | None) -> str:
     return adapter.normalize_endpoint(endpoint)
 
 
-def _validate_destination(destination_type: str, endpoint: str) -> None:
+def _validate_destination(destination_type: str, endpoint: str, settings: Settings) -> None:
     adapter = _require_adapter(destination_type)
-    message = adapter.validate_endpoint(endpoint)
+    message = adapter.validate_endpoint(
+        endpoint, allow_local=allows_local_destinations(settings)
+    )
     if message is not None:
         raise api_error(400, message, ErrorType.BAD_REQUEST)
 

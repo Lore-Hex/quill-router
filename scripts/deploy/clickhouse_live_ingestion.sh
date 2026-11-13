@@ -42,6 +42,19 @@ if [ -n "$external_ip" ]; then
 fi
 require_clickhouse_publisher "$NAME"
 
+# The operational drain restarted below writes its heartbeat to this table;
+# create it first, so a node deploy that runs before the production schema
+# migration does not leave the drain failing that write every pass.
+GCP_PROJECT_ID="$PROJECT" \
+SPANNER_INSTANCE_ID="${SPANNER_INSTANCE_ID:-trusted-router-nam6}" \
+SPANNER_DATABASE_ID="${SPANNER_DATABASE_ID:-trusted-router}" \
+  "${SCRIPT_DIR}/migrate_operational_outbox_heartbeat.sh"
+# The workspace directory refresh reads the role's view; create it first too.
+GCP_PROJECT_ID="$PROJECT" \
+SPANNER_INSTANCE_ID="${SPANNER_INSTANCE_ID:-trusted-router-nam6}" \
+SPANNER_DATABASE_ID="${SPANNER_DATABASE_ID:-trusted-router}" \
+  "${SCRIPT_DIR}/migrate_clickhouse_node_role.sh"
+
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
 trap 'clickhouse_role_lock_release; rm -f "$archive"' EXIT
 build_clickhouse_bundle "$ROOT" "$archive"
@@ -93,6 +106,15 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-rollup-daily.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-daily.timer \
     /etc/systemd/system/tr-clickhouse-rollup-daily.timer
+  # The operational drain and the delivery verifier are installed by
+  # clickhouse_operational_analytics.sh, but their unit files ship in this
+  # bundle too and carry the Spanner database role. Refresh any that are
+  # already installed, so this deploy never leaves a unit older than its code.
+  for unit in tr-clickhouse-operational-ingest.service tr-clickhouse-spanner-delivery.service; do
+    if [ -f \"/etc/systemd/system/\$unit\" ]; then
+      install -m 0644 \"/opt/tr-clickhouse/clickhouse/\$unit\" \"/etc/systemd/system/\$unit\"
+    fi
+  done
   set -a
   . /etc/tr-clickhouse-ingest.env
   set +a

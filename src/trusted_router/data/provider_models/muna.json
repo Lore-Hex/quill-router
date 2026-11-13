@@ -31,8 +31,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": false,
-      "routable_reason": "delisted-upstream",
+      "routable": true,
       "reliability": {
         "first_token_timeout_seconds": 60.0,
         "completion_timeout_seconds": 600.0,
@@ -52,8 +51,7 @@
       },
       "input_token_price_per_m": 65000,
       "output_token_price_per_m": 300000,
-      "cached_input_token_price_per_m": 20000,
-      "missing_since": "2026-11-06"
+      "cached_input_token_price_per_m": 20000
     },
     {
       "display_name": "qwen-3.8-27b",
@@ -163,7 +161,7 @@
     }
   ],
   "source": "https://inference.muna.ai/integrations/trustedrouter/catalog",
-  "generated_at": "2026-11-09T20:34:59Z",
+  "generated_at": "2026-11-12T09:26:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

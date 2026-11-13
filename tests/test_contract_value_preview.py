@@ -49,6 +49,15 @@ from trusted_router.services.contract_value_preview import safe_value_preview
     ("tools[0].type", "private-content", "[redacted:string]"),
     ("tools[0].type", "sk-tr-v1-private-secret", "[redacted:string]"),
     ("tools[0].function.description", "code_interpreter", "[redacted:string]"),
+    ("thinking", {"type": "adaptive"}, {"type": "adaptive"}),
+    ("thinking", {"type": "enabled", "budget_tokens": 8000}, {"budget_tokens": 8000, "type": "enabled"}),
+    ("thinking", {"type": "adaptive", "display": "private-content"}, {"type": "adaptive", "_redacted": True}),
+    ("thinking", {"type": "private-content"}, {"type": "[redacted:string]"}),
+    ("thinking.budget_tokens", "private-content", "[redacted:string]"),
+    ("enable_thinking", False, False),
+    ("chat_template_kwargs", {"enable_thinking": False, "prompt": "private-content"},
+     {"enable_thinking": False, "_redacted": True}),
+    ("chat_template_kwargs.enable_thinking", {"secret": "private-content"}, "[redacted:object]"),
 ])
 def test_sink_revalidates_configuration_only(path: str, value: object, expected: object) -> None:
     preview, truncated = safe_value_preview(path, json.dumps(value))

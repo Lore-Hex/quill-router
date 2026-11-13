@@ -240,10 +240,21 @@ class _SdkDatabase:
     (lambda db: claim_health_publish(db, 2), 'tr_drain_control_claim'),
     (publish_health, 'tr_drain_health_publish'),
 ])
-def test_timed_out_control_read_rolls_back_its_transaction(fake_store, operation, tag):
+def test_timed_out_control_read_rolls_back_its_transaction(fake_store, monkeypatch, operation, tag):
     # A timed-out read must release the transaction's lock on the control row,
     # or every later claim queues behind the orphan until Spanner reaps it.
+    import types
+
     from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router import storage_gcp_io
+    # Freeze the wrapper's clock. The 0.5 s transaction deadline is wall time,
+    # and a loaded CI runner (price refresh run 42864346256) spent it before
+    # begin, so the wrapper raised DeadlineExceeded without sending any RPC.
+    # Every RPC here fails by itself, so no part of the test needs time to pass.
+    frozen = types.SimpleNamespace(**vars(storage_gcp_io.time))
+    frozen.monotonic = lambda: 1000.0
+    monkeypatch.setattr(storage_gcp_io, 'time', frozen)
     db = _SdkDatabase(fake_store[1])
     with pytest.raises(DeadlineExceeded):
         operation(db)

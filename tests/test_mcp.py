@@ -623,8 +623,14 @@ def test_mcp_rejects_invalid_chat_models_before_network(
     assert network_clients == 0
 
 
+# The ordering in these tests is event-synchronized; the timeouts below only
+# bound a hang. Reaching the worker took over 3 s on a loaded CI runner
+# (test-post-cutover, PR #2482), so they are generous.
+HANG_SECONDS = 30.0
+
+
 async def _wait_for_blocked_worker_and_heartbeat(started: threading.Event) -> None:
-    worker_started = await asyncio.wait_for(asyncio.to_thread(started.wait, 2.0), timeout=3.0)
+    worker_started = await asyncio.wait_for(asyncio.to_thread(started.wait, HANG_SECONDS), timeout=HANG_SECONDS + 5)
     assert worker_started, "MCP storage work never reached its worker"
     heartbeats = 0
     for _ in range(5):
@@ -645,7 +651,7 @@ def test_mcp_credit_lookup_runs_off_the_event_loop(
     def blocking_summary(_workspace_id: str) -> dict[str, int]:
         worker_threads.append(threading.get_ident())
         started.set()
-        assert release.wait(timeout=2.0), "MCP credit worker was never released"
+        assert release.wait(timeout=HANG_SECONDS), "MCP credit worker was never released"
         return {
             "total_credits": 10,
             "total_usage": 2,
@@ -672,11 +678,11 @@ def test_mcp_credit_lookup_runs_off_the_event_loop(
                 assert worker_threads[0] != loop_thread
             finally:
                 release.set()
-            response = await asyncio.wait_for(request, timeout=5.0)
+            response = await asyncio.wait_for(request, timeout=HANG_SECONDS)
             assert response.status_code == 200
             assert response.json()["result"]["isError"] is False
 
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+    asyncio.run(asyncio.wait_for(scenario(), timeout=4 * HANG_SECONDS))
 
 
 def test_mcp_generation_lookup_runs_off_the_event_loop(
@@ -706,7 +712,7 @@ def test_mcp_generation_lookup_runs_off_the_event_loop(
         assert generation_id == "gen-worker"
         worker_threads.append(threading.get_ident())
         started.set()
-        assert release.wait(timeout=2.0), "MCP generation worker was never released"
+        assert release.wait(timeout=HANG_SECONDS), "MCP generation worker was never released"
         return FakeGeneration()
 
     monkeypatch.setattr(InMemoryStore, "get_generation", blocking_generation)
@@ -728,11 +734,11 @@ def test_mcp_generation_lookup_runs_off_the_event_loop(
                 assert worker_threads[0] != loop_thread
             finally:
                 release.set()
-            response = await asyncio.wait_for(request, timeout=5.0)
+            response = await asyncio.wait_for(request, timeout=HANG_SECONDS)
             assert response.status_code == 200
             assert response.json()["result"]["isError"] is False
 
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+    asyncio.run(asyncio.wait_for(scenario(), timeout=4 * HANG_SECONDS))
 
 
 def test_mcp_storage_batch_keeps_heartbeats_and_uses_workers(
@@ -759,7 +765,7 @@ def test_mcp_storage_batch_keeps_heartbeats_and_uses_workers(
         worker_threads.append(threading.get_ident())
         if len(worker_threads) == 1:
             started.set()
-            assert release.wait(timeout=2.0), "MCP batch worker was never released"
+            assert release.wait(timeout=HANG_SECONDS), "MCP batch worker was never released"
 
     def batch_summary(_workspace_id: str) -> dict[str, int]:
         maybe_block()
@@ -797,7 +803,7 @@ def test_mcp_storage_batch_keeps_heartbeats_and_uses_workers(
                 assert worker_threads[0] != loop_thread
             finally:
                 release.set()
-            response = await asyncio.wait_for(request, timeout=5.0)
+            response = await asyncio.wait_for(request, timeout=HANG_SECONDS)
             assert response.status_code == 200
             results = response.json()
             assert len(results) == MAX_MCP_STORAGE_BATCH_ITEMS
@@ -805,7 +811,7 @@ def test_mcp_storage_batch_keeps_heartbeats_and_uses_workers(
             assert len(worker_threads) == MAX_MCP_STORAGE_BATCH_ITEMS
             assert all(worker_thread != loop_thread for worker_thread in worker_threads)
 
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+    asyncio.run(asyncio.wait_for(scenario(), timeout=4 * HANG_SECONDS))
 
 
 def test_mcp_authentication_runs_off_the_event_loop(
@@ -821,7 +827,7 @@ def test_mcp_authentication_runs_off_the_event_loop(
     def blocking_auth(self: InMemoryStore, raw: str):
         auth_thread["id"] = threading.get_ident()
         started.set()
-        assert release.wait(timeout=2.0), "MCP auth worker was never released"
+        assert release.wait(timeout=HANG_SECONDS), "MCP auth worker was never released"
         return original_auth(self, raw)
 
     monkeypatch.setattr(InMemoryStore, "api_key_auth_context", blocking_auth)
@@ -843,9 +849,8 @@ def test_mcp_authentication_runs_off_the_event_loop(
                 )
             )
             try:
-                for _ in range(200):
-                    if started.is_set():
-                        break
+                deadline = asyncio.get_running_loop().time() + HANG_SECONDS
+                while not started.is_set() and asyncio.get_running_loop().time() < deadline:
                     await asyncio.sleep(0.005)
                 assert started.is_set(), "MCP authentication never reached its worker"
                 for _ in range(5):
@@ -853,10 +858,10 @@ def test_mcp_authentication_runs_off_the_event_loop(
                 assert auth_thread["id"] != loop_thread
             finally:
                 release.set()
-            response = await asyncio.wait_for(request, timeout=5.0)
+            response = await asyncio.wait_for(request, timeout=HANG_SECONDS)
             assert response.status_code == 200
 
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+    asyncio.run(asyncio.wait_for(scenario(), timeout=4 * HANG_SECONDS))
 
 
 def test_mcp_invalid_bearer_batch_performs_one_auth_read_and_zero_network(

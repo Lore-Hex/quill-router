@@ -33,6 +33,12 @@ UPSTREAM_ID_MAP = {MODEL_ID: NATIVE_ID}
 # Release only after the matching measured gateway image passes every cloud.
 _PENDING_ENCLAVE_MODELS: frozenset[str] = frozenset()
 _DISCOVERED: dict[str, dict[str, Any]] = {}
+# Maple's explicit unit statements; the page moved from the first to the second
+# wording on 2026-11-12 without changing the rates.
+_USD_PER_M_UNIT_PHRASES = (
+    "USD equivalent per 1 million tokens.",
+    "USD per 1 million tokens.",
+)
 
 
 def _price(text: str) -> int:
@@ -46,8 +52,13 @@ def _price(text: str) -> int:
 
 def parse_prices(html: str) -> ModelPrice:
     soup = BeautifulSoup(html, "html.parser")
-    if "USD equivalent per 1 million tokens." not in soup.get_text(" ", strip=True):
+    text = soup.get_text(" ", strip=True)
+    if not any(phrase in text for phrase in _USD_PER_M_UNIT_PHRASES):
         raise RuntimeError("maple: token price currency or unit changed")
+    # A struck-through "Previously $X" is the superseded rate, not a price
+    # in effect; drop it so a cell reads as the single current rate.
+    for struck in soup.find_all("s"):
+        struck.decompose()
     prices: list[ModelPrice] = []
     required = {"model", "input", "cached input", "output"}
     for table in soup.find_all("table"):

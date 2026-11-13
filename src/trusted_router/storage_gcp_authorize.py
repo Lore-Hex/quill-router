@@ -1004,11 +1004,16 @@ def _release_key_or_skip_deleted(
     `release_key` deliberately returns the raw UPDATE count. A 0 count is
     ambiguous only here, after the reservation has been claimed: the key row may
     have been deleted, or the `reserved >= hold` corruption guard may have fired.
-    Zero-hold usage (including skip-path reservations) must book even after a
-    shrink reshard: recover on shard zero or raise with the amount preserved.
-    Held/deleted keys and zero-usage refunds retain their historical behavior.
+    Zero-hold usage first recovers on shard zero. If no shard has counters,
+    settle the workspace ledger unchanged and report unbooked key usage without
+    writing counters. A remaining shard means inconsistent live counters: keep
+    the amount retryable. Held reservations and zero-usage refunds are unchanged.
     """
-    from trusted_router.storage_gcp_counter_dml import key_limit_exists, release_key
+    from trusted_router.storage_gcp_counter_dml import (
+        key_limit_any_shard_exists,
+        key_limit_exists,
+        release_key,
+    )
 
     key_hash = str(res["key_hash"])
     key_hold = int(res["key_reserved_micro"])
@@ -1039,6 +1044,13 @@ def _release_key_or_skip_deleted(
                     "key_hash": key_hash, "hold_micro": 0,
                     "missing_shard": key_shard, "actual_micro": int(actual_micro),
                 }
+        # Only failed bookings need this read; absent counters cannot recover by retry.
+        if not key_limit_any_shard_exists(transaction, param_types, key_hash):
+            return 1, {
+                "key_hash": key_hash, "hold_micro": 0, "shard": key_shard,
+                "actual_micro": int(actual_micro), "book_to_byok": book_to_byok,
+                "usage_unbooked": True,
+            }
         # Deliberately not _SettleError: callers must see the amount and retry
         # (the outbox retains its frozen payload), never report SETTLED.
         raise RuntimeError(
@@ -1054,6 +1066,15 @@ def _release_key_or_skip_deleted(
 def _log_missing_key_releases(result: dict[str, Any]) -> None:
     warnings = result.pop("missing_key_releases", ())
     for warning in warnings:
+        if warning.get("usage_unbooked"):
+            log.warning(
+                "metric=key_usage_unbooked_total value=1 "
+                "key_hash=%s shard=%s actual_micro=%s book_to_byok=%s",
+                warning["key_hash"], warning["shard"], warning["actual_micro"],
+                warning["book_to_byok"],
+                extra={"metric": "key_usage_unbooked_total", "value": 1, **warning},
+            )
+            continue
         if "missing_shard" in warning:
             # Structured counter event for log-based metrics; emit after commit
             # so Spanner transaction retries do not count speculative recovery.

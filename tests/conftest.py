@@ -232,6 +232,7 @@ def test_settings() -> Settings:
         github_client_secret=None,
         github_oauth_redirect_url=None,
         email_signup_enabled=True,
+        wallet_signup_enabled=True,
     )
 
 
@@ -307,6 +308,7 @@ def shadow_deadline_clock(monkeypatch):
 # Files that drive the settle handler and route through the 0.5 s handoff.
 _SETTLE_HANDLER_BUDGET_FILES = frozenset({
     'test_async_settle_handler.py', 'test_async_settle_proof.py', 'test_async_settle_proof_faults.py',
+    'test_async_settle_tier_caps.py',
 })
 
 

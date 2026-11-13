@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from clickhouse._sdnotify import sd_notify
+from clickhouse._spanner_role import database_role, open_database
 
 PROJECT = "quill-cloud-proxy"
 SPANNER_INSTANCE = "trusted-router-nam6"
@@ -27,13 +28,20 @@ OUTBOX_SHARDS = 32
 _WATERMARK_EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 
 # The heartbeat this drain publishes for /status.json (see
-# OutboxHeartbeatPublisher). One generic tr_entities row -- no DDL -- read back
-# by trusted_router.storage_gcp.SpannerBigtableStore.operational_analytics_outbox_freshness.
+# OutboxHeartbeatPublisher), read back by
+# trusted_router.storage_gcp.SpannerStore.operational_analytics_outbox_freshness.
+# It is one row in its own table, tr_operational_outbox_heartbeat
+# (scripts/deploy/migrate_operational_outbox_heartbeat.sh), keyed by
+# HEARTBEAT_ID. During the transition the drain ALSO writes the legacy generic
+# tr_entities row (kind HEARTBEAT_KIND), unless it runs under a database role:
+# a table-scoped role cannot write tr_entities. The control plane reads the
+# newer of the two.
 # These names are MIRRORED from trusted_router.operational_analytics_freshness
 # by literal: this module cannot import trusted_router on the VM, because
 # tr-clickhouse-operational-ingest.service sets no PYTHONPATH and `python -m`
 # puts only /opt/tr-clickhouse on sys.path. tests/test_outbox_freshness_heartbeat.py
 # pins the two copies equal.
+HEARTBEAT_DEDICATED_TABLE = "tr_operational_outbox_heartbeat"
 HEARTBEAT_TABLE = "tr_entities"
 HEARTBEAT_KIND = "operational_outbox_heartbeat"
 HEARTBEAT_ID = "spanner-poller"
@@ -306,6 +314,11 @@ def _utc(value: dt.datetime) -> dt.datetime:
 
 
 class SpannerOperationalOutboxSource:
+    # The fine-grained-access role this source's sessions run as, or None for
+    # the service account's database-wide access (clickhouse/_spanner_role.py).
+    # A class default so a source built without __init__ is the role-less one.
+    _database_role: str | None = None
+
     def __init__(
         self,
         *,
@@ -313,15 +326,17 @@ class SpannerOperationalOutboxSource:
         instance: str,
         database: str,
         shard_count: int = OUTBOX_SHARDS,
+        database_role: str | None = None,
     ) -> None:
         from google.cloud import spanner
         from google.cloud.spanner_v1 import param_types
 
-        self._database = (
-            spanner.Client(project=project, disable_builtin_metrics=True)
-            .instance(instance)
-            .database(database)
+        self._database = open_database(
+            spanner.Client(project=project, disable_builtin_metrics=True).instance(instance),
+            database,
+            database_role,
         )
+        self._database_role = database_role
         self._pt = param_types
         self._shard_count = shard_count
         # In-memory only: rows strictly below this timestamp have been deleted.
@@ -422,17 +437,36 @@ class SpannerOperationalOutboxSource:
             self._after = newest
 
     def publish_heartbeat(self, body: str) -> None:
-        """Upsert the heartbeat row in its own small transaction.
+        """Upsert the heartbeat row(s), each in its own small transaction.
 
         Never inside the drain's fetch/insert/delete: the heartbeat is advisory
         and a failure to write it must not undo, delay, or retry a delivery.
         ``INSERT OR UPDATE`` DML so the first write and every later one are the
         same statement, and ``PENDING_COMMIT_TIMESTAMP()`` so ``updated_at``
-        is the commit itself -- the one tr_entities statement in this
+        is the commit itself -- the one statement on its table in each
         transaction, so the same-table trap does not apply.
+
+        The dedicated table is written first. The legacy tr_entities row is
+        written after it, in a transaction of its own, unless this source runs
+        under a database role. The two writes are independent: either may fail
+        without stopping the other (a dedicated table that does not exist yet
+        must not cost the control plane its legacy heartbeat, and a failed
+        legacy write must not cost it the dedicated one). A legacy failure is
+        logged here and swallowed; a dedicated failure is re-raised after the
+        legacy attempt, so the publisher logs ``heartbeat_failed`` for it.
         """
 
-        def txn(transaction: Any) -> None:
+        def dedicated(transaction: Any) -> None:
+            transaction.execute_update(
+                # HEARTBEAT_DEDICATED_TABLE is a module constant, not caller input.
+                f"INSERT OR UPDATE INTO {HEARTBEAT_DEDICATED_TABLE} "  # noqa: S608
+                "(id, body, updated_at) "
+                "VALUES (@id, @body, PENDING_COMMIT_TIMESTAMP())",
+                params={"id": HEARTBEAT_ID, "body": body},
+                param_types={"id": self._pt.STRING, "body": self._pt.STRING},
+            )
+
+        def legacy(transaction: Any) -> None:
             transaction.execute_update(
                 # HEARTBEAT_TABLE is a module constant, not caller input.
                 f"INSERT OR UPDATE INTO {HEARTBEAT_TABLE} "  # noqa: S608
@@ -446,7 +480,18 @@ class SpannerOperationalOutboxSource:
                 },
             )
 
-        self._database.run_in_transaction(txn)
+        dedicated_error: Exception | None = None
+        try:
+            self._database.run_in_transaction(dedicated)
+        except Exception as exc:
+            dedicated_error = exc
+        if self._database_role is None:
+            try:
+                self._database.run_in_transaction(legacy)
+            except Exception:
+                log.exception("operational_analytics_outbox.legacy_heartbeat_failed")
+        if dedicated_error is not None:
+            raise dedicated_error
 
     def oldest_commit_ts(self) -> dt.datetime | None:
         """The live outbox head, seeking each shard from the committed-delete floor.
@@ -1000,6 +1045,7 @@ def main() -> int:
         instance=args.spanner_instance,
         database=args.spanner_database,
         shard_count=args.shards,
+        database_role=database_role(),
     )
     writer = ClickHouseOperationalWriter(password=password)
     heartbeat = OutboxHeartbeatPublisher(source)

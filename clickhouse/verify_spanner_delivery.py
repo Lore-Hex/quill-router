@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
+from clickhouse._spanner_role import database_role, open_database
 from clickhouse.delivery_history import write_history
 from clickhouse.ingest_operational_outbox import (
     OperationalOutboxRow,
@@ -40,14 +41,21 @@ class GenerationSource(Protocol):
 
 
 class SpannerGenerationSource:
-    def __init__(self, *, project: str, instance: str, database: str) -> None:
+    def __init__(
+        self,
+        *,
+        project: str,
+        instance: str,
+        database: str,
+        database_role: str | None = None,
+    ) -> None:
         from google.cloud import spanner
         from google.cloud.spanner_v1 import param_types
 
-        self._database = (
-            spanner.Client(project=project, disable_builtin_metrics=True)
-            .instance(instance)
-            .database(database)
+        self._database = open_database(
+            spanner.Client(project=project, disable_builtin_metrics=True).instance(instance),
+            database,
+            database_role,
         )
         self._pt = param_types
 
@@ -167,6 +175,7 @@ def main() -> int:
             project=os.environ.get("GCP_PROJECT_ID", PROJECT),
             instance=os.environ.get("SPANNER_INSTANCE_ID", SPANNER_INSTANCE),
             database=os.environ.get("SPANNER_DATABASE_ID", SPANNER_DATABASE),
+            database_role=database_role(),
         ),
         ClickHouse(password=password),
         start=start,

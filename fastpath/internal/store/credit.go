@@ -57,6 +57,19 @@ func (r creditRows) marked() bool {
 	return false
 }
 
+// tier is the workspace's trust tier as a grant reads it: the least of its
+// rows', a latched row's counted as zero, and at most 3.
+func (r creditRows) tier() int64 {
+	tier := int64(3)
+	for i, t := range r.tiers {
+		if r.latched[i] {
+			t = 0
+		}
+		tier = min(tier, t)
+	}
+	return tier
+}
+
 // rowReader is what a read of the store's rows asks of a transaction. A
 // read-write transaction has it, and a read-only one, for a check that reads
 // as a grant does and writes nothing (GrantReadiness).

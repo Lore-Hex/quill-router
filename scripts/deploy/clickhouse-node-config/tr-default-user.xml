@@ -1,0 +1,21 @@
+<!--
+  Removes the built-in `default` user. The ClickHouse package creates it with
+  an empty password and no network limit, and a noninteractive install never
+  asks for one, so anything that could reach port 8123 or 9000 could run SQL
+  as an administrator without credentials.
+
+  Nothing here signs in as `default`: every client names its own user, ON
+  CLUSTER statements run through the Keeper queue, and replicas fetch parts
+  over the interserver port. The `default` settings profile and quota are
+  separate objects and stay.
+
+  The cluster in tr-cluster.xml names no user, so clusterAllReplicas() and
+  cluster() would sign in to the other replicas as `default` and are refused
+  once it is gone. Ask each node itself, as clickhouse_replicated_migrate.sh
+  does.
+-->
+<clickhouse>
+  <users>
+    <default remove="remove"/>
+  </users>
+</clickhouse>

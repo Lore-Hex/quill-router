@@ -292,6 +292,59 @@ so the incident is attributable. Schedule proactive legacy-account splits
 serially in low-traffic windows; GitHub concurrency keeps at most one pending
 run and cancels older pending runs even when `cancel-in-progress` is false.
 
+### One instance loses Spanner
+
+When one control-plane instance returns `503` on every Spanner-backed route
+for a minute or so, its siblings are healthy, and Spanner's request metric
+shows almost none of the failed calls, the fault is between that instance and
+the Google front end. The transaction and lock statistics above will show
+nothing. Read the instance's own log lines from
+`trusted_router.storage_gcp_transport_watch` for the window:
+
+- `spanner channel state=… previous=… previous_ms=…` on every connectivity
+  transition of the main store's channel that gRPC reports.
+- `spanner credential refresh ok|failed … elapsed_ms=… inline=…` for
+  access-token refreshes: every slow or failed one, quick ones at most once
+  every five seconds. `inline=True` means an RPC waited on it.
+
+No channel line during the stall and a reconnect as it ends means the
+connection stopped answering until it was replaced. No channel transition
+logged, with a failed or slow refresh, means the metadata server did not
+answer. Neither means the stall is somewhere these lines do not see.
+
+google-auth and gRPC write to their own loggers, which reach neither Cloud
+Run logs nor the log shipper. Their WARNING records do reach Sentry Logs:
+search the window there by logger name (`google.auth*`, `grpc*`). The
+[November 10 report](incidents/2026-11-10-one-instance-spanner-stall.md) has
+the full table and what the watch does not cover.
+
+The main store also moves its own traffic to a second connection when the
+first stops answering and the second answers
+(`trusted_router.storage_gcp_channel_failover`). It suspects a stall after
+three `DEADLINE_EXCEEDED` in a row, or a call waiting three seconds with no
+answer since it started (checked as calls start and end, and every second
+while any are in flight), then sends the same cheap call on both connections
+under a two second deadline:
+
+- `spanner channel failover client=… reason=deadline_streak|waiting
+  stalled_ms=… waiting=… deadline_streak=… probe_ms=… failovers=…`
+  (WARNING): the second connection answered, the first did not, traffic moved.
+  At most one a minute per instance. `stalled_ms` runs from the start of the
+  first call that got no answer. The old connection is closed 65 seconds
+  later.
+- `spanner channel probe kept client=… reason=… standby=answered|silent
+  active=answered|silent stalled_ms=… probe_ms=…`: a suspected stall that did
+  not move traffic. `standby=silent active=silent` means every connection was
+  failing, so the fault was not this instance's connection.
+- `spanner channel failover dropped client=… error_class=…` (WARNING) at
+  startup: creating the session pool failed on the failover client, so the
+  store retried it on the SDK's own client and runs without failover.
+
+`TR_SPANNER_CHANNEL_FAILOVER=0` in the rollout's `ENV_VARS` turns it off.
+
+Do not restart the instance on a database-dependent check, and do not reset
+the channel across the fleet.
+
 ### Backup workflow
 
 Check the latest workflow execution:

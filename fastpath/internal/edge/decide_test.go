@@ -338,8 +338,13 @@ func (w *fakeWorld) ReadKeyContext(ctx context.Context, lookupHash string) (stor
 	return kc, true, nil
 }
 
-// requiredTier is the service's default (service.Defaults, -required-tier).
-const requiredTier = 1
+// requiredTier is the service's default (service.Defaults, -required-tier),
+// and allowedTier the one tier with an allowance under its defaults
+// (-allowance; -allowance-tier2 and -allowance-tier1 are 0, none).
+const (
+	requiredTier = 1
+	allowedTier  = 3
+)
 
 func (w *fakeWorld) ReadCreditState(ctx context.Context, workspace string) (store.CreditState, error) {
 	w.reads.Add(1)
@@ -372,6 +377,8 @@ func (w *fakeWorld) ReadCreditState(ctx context.Context, workspace string) (stor
 		out.Refused = store.RefusedPaused
 	case out.Tier < requiredTier:
 		out.Refused = store.RefusedTier
+	case out.Tier != allowedTier:
+		out.Refused = store.RefusedTierAllowance
 	}
 	return out, nil
 }
@@ -853,6 +860,8 @@ func TestTheGateReadsTheCachesWord(t *testing.T) {
 		{"row in debt", func(r *gwstate.Read) { r.CreditState.InDebt = true }, PassWorkspaceInDebt},
 		{"row latched", func(r *gwstate.Read) { r.CreditState.Latched = true }, PassWorkspaceTier},
 		{"row below the tier", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedTier }, PassWorkspaceTier},
+		{"row's tier has no allowance", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedTierAllowance },
+			PassWorkspaceTier},
 		{"row refuses otherwise", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedAllowance },
 			PassWorkspaceRefused},
 		{"entity paused", func(r *gwstate.Read) {

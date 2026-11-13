@@ -115,7 +115,10 @@ SECRET_ENVS=(
   "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest"
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
-REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
+REMOVE_SECRET_ENVS=(
+  "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD"
+  "TR_OPS_CHAT_WEBHOOK_SECRET"
+)
 
 # E2 routing snapshot publication, dark (docs/design/routing-snapshot-v1.md,
 # "Publishing"). Literals here, never read from the caller or a previous
@@ -279,9 +282,6 @@ add_secret_env_if_exists \
 # SES email credentials only; not used for AWS hosting or failover.
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
-add_secret_env_if_exists \
-  "TR_OPS_CHAT_WEBHOOK_SECRET" \
-  "trustedrouter-ops-chat-webhook-secret"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
@@ -610,7 +610,6 @@ ENV_VARS=(
   "TR_ROUTABLE_API_BASE_URL=https://api.routable.com"
   "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
   "TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS=15000"
-  "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
   # is send-only and effectively a black hole.
@@ -815,8 +814,9 @@ ENV_VARS=(
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
-  # R3: customer pilot only, after the probe drain measurement, single crash
-  # trial and rollback rehearsal. Apply on R1 protection, retain worker drain.
+  # R3: turned on for the customer pilot, after the probe drain measurement,
+  # single crash trial and rollback rehearsal; every workspace since
+  # 2026-11-10 (below). Apply on R1 protection, retain worker drain.
   # Admission-on edge policy passes async-v1 authorizes to Python.
   "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"
@@ -824,18 +824,26 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED=true"
   # 2026-11-03: accept async handoffs in memory; a crash may lose queued settles (Joseph)
   "TR_ASYNC_SETTLE_HANDOFF_MODE=memory"
-  # 2026-11-02: the probe workspace (R2 cohort, #2187) rejoins the R3 pilot
-  # so its provider-pinned first-party requests produce handoff timing samples.
-  # The pilot cap is per workspace; the probe does not draw on the customer cap.
-  "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3"
-  # Async settle takes no request the fast path takes (G15 section 4.5): a
-  # workspace the fast path's pilot covers (in all mode, every one off
-  # TR_FASTPATH_PILOT_EXCLUDE) is outside async admission unless listed
-  # here. The operator workspace is in both pilots (R3) and keeps its async
-  # settles; all mode refuses to start with an async pilot workspace on
-  # neither this list nor the exclude list, or with the pilot list above
-  # empty (every workspace).
+  # 2026-11-10: every workspace (Joseph; docs/design/fast-admission-widening.md
+  # section 9.1). The async pilot set is empty, which in all mode admits each
+  # workspace but the reserved list below. The pilot cap stays per workspace.
+  # The way back is this one pin: name the R3 pilot set again (the operator
+  # workspace and the probe's, as this line read before 2026-11-10).
+  "TR_ASYNC_SETTLE_PILOT_WORKSPACES="
+  # Async settle takes no request the fast path takes (G15 section 4.5). With
+  # the pilot set empty the rule is per request: an authorization the edge
+  # leased gets no ticket unless its workspace is listed here. The operator
+  # workspace was in both pilots (R3) and keeps its async settles. With a
+  # named pilot set, all mode refuses to start with a pilot workspace on
+  # neither this list nor TR_FASTPATH_PILOT_EXCLUDE.
   "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # The workspaces the edge keeps answering async-v1 authorizes for while the
+  # pilot set is empty (at most 32; all mode only; ignored under a named pilot
+  # set): the enabler's include list (fastpath_lists.sh) less the overlap list
+  # above. They stay outside async admission and are published as the edge
+  # policy's excluded member; every other workspace's async-v1 authorize
+  # passes to Python, the only ticket signer.
+  "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES=84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4

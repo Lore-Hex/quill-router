@@ -297,11 +297,58 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
     ]
 
 
+def test_tinfoil_maps_kimi_k31_pro_replacement(monkeypatch) -> None:  # noqa: ANN001
+    # Refresh run 42864346256 logged "unmapped native id: kimi-k3-1-pro", so the
+    # announced replacement for Tinfoil's retiring kimi-k3 was never published.
+    payload = {
+        "data": [
+            {
+                "id": "kimi-k3-1-pro",
+                "name": "Kimi K3.1 Pro",
+                "type": "chat",
+                "context_window": 262_144,
+                "endpoints": ["/v1/chat/completions", "/v1/responses"],
+                "experimental": True,
+                "reasoning": True,
+                "tool_calling": True,
+                "multimodal": True,
+                "pricing": {
+                    "inputTokenPricePer1M": 4,
+                    "cachedInputTokenPricePer1M": 0.4,
+                    "outputTokenPricePer1M": 20,
+                    "requestPrice": 0,
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(tinfoil, "fetch_json", lambda _url: payload)
+
+    result = tinfoil.fetch()
+    kimi = result.prices["moonshotai/kimi-k3.1-pro"]
+
+    assert not any("kimi-k3-1-pro" in note for note in result.notes)
+    assert tinfoil.UPSTREAM_ID_MAP["moonshotai/kimi-k3.1-pro"] == "kimi-k3-1-pro"
+    assert (kimi.prompt_micro_per_m, kimi.completion_micro_per_m) == (4_000_000, 20_000_000)
+    assert kimi.tiers[0].prompt_cached_micro_per_m == 400_000
+    row = tinfoil._DISCOVERED_MANIFEST_ROWS["moonshotai/kimi-k3.1-pro"]
+    assert row["upstream_id"] == "kimi-k3-1-pro"
+    assert row["endpoints"] == ["chat/completions", "responses"]
+    assert row["input_modalities"] == ["text", "image"]
+    # The retirement entry names this model as kimi-k3's replacement.
+    [retirement] = [
+        entry for entry in provider_lifecycle._RETIREMENTS
+        if entry.provider == "tinfoil" and "moonshotai/kimi-k3" in entry.model_ids
+    ]
+    assert retirement.replacement_model_ids == ("moonshotai/kimi-k3.1-pro",)
+
+
 # The route tests below build Tinfoil's routes from its manifest rows pinned in
 # tests/pinned_manifests.py: how a row is priced holds whatever Tinfoil lists
 # today. That it still lists them is a provider_health check.
 @pytest.mark.provider_health
-@pytest.mark.parametrize("model_id", ["deepseek/deepseek-v4.1-flash", "moonshotai/kimi-k3"])
+# kimi-k3 retired on 2026-11-12; Tinfoil serves its replacement, kimi-k3.1-pro
+# (test_tinfoil_maps_kimi_k31_pro_replacement).
+@pytest.mark.parametrize("model_id", ["deepseek/deepseek-v4.1-flash", "moonshotai/kimi-k3.1-pro"])
 def test_tinfoil_still_serves_its_confidential_route(model_id: str) -> None:
     assert f"{model_id}@tinfoil/prepaid" in MODEL_ENDPOINTS
 

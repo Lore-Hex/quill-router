@@ -13,7 +13,7 @@
 //	fastpathctl -database D decide wildcard on|off|status [-cloud gcp] [-region us-central1]
 //	fastpathctl -database projects/P/instances/I/databases/D decide-off-all
 //	fastpathctl -database projects/P/instances/I/databases/D decide-restore -at TS
-//	fastpathctl -database projects/P/instances/I/databases/D ready WORKSPACE [-required-tier N] [-floor F]
+//	fastpathctl -database projects/P/instances/I/databases/D ready WORKSPACE [-required-tier N] [-floor F] [-allowance-tier2 A2] [-allowance-tier1 A1]
 //	fastpathctl -database projects/P/instances/I/databases/D release WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D release-all
 //	fastpathctl -database projects/P/instances/I/databases/D enabler pause|resume|arm
@@ -83,12 +83,15 @@
 // fleet's money settings (docs/design/fast-admission-widening.md, (b) and
 // section 8.2), read only and by the grant's own check
 // (store.GrantReadiness): enabled, not in debt, not paused, every credit
-// shard at -required-tier or above and not latched, and headroom above
-// -floor. Both default to the node's own defaults, today's values, and are
-// held to the node's bounds. It exits 0 when a grant could reach the
-// workspace, 3 when one would be refused, with the refusal beside, and 2
-// for a setting out of bounds, before the store is opened. Only a grant
-// weighs the allowance against a lease's amount, so ready takes none.
+// shard at -required-tier or above and not latched, the workspace's tier
+// one with an allowance, and headroom above -floor. Each defaults to the
+// node's own default, today's values, and is held to the node's bounds. It
+// exits 0 when a grant could reach the workspace, 3 when one would be
+// refused, with the refusal beside, and 2 for a setting out of bounds,
+// before the store is opened. Only a grant weighs an allowance against a
+// lease's amount, so ready asks only whether the workspace's tier has one:
+// tier 3's always does, and -allowance-tier2 and -allowance-tier1, the
+// node's, say whether tiers 2 and 1 do (0, the default, is none).
 //
 // Holds are what the enabler reads before each of its writes (section 5.6).
 // release removes a workspace's hold without enabling it, exit 0, or 3 when
@@ -250,6 +253,10 @@ func run(ctx context.Context, args []string, out io.Writer,
 		"ready: the trust tier the fleet's leases need (the node's -required-tier)")
 	fs.Var(service.Money{P: &cfg.Store.Floor}, "floor",
 		"ready: the headroom the fleet's grants leave outside leases, in microdollars (the node's -floor)")
+	fs.Var(service.Money{P: &cfg.Store.AllowanceTier2}, "allowance-tier2",
+		"ready: a tier-2 workspace's allowance, in microdollars, 0 for none (the node's -allowance-tier2)")
+	fs.Var(service.Money{P: &cfg.Store.AllowanceTier1}, "allowance-tier1",
+		"ready: a tier-1 workspace's allowance, in microdollars, 0 for none (the node's -allowance-tier1)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -259,7 +266,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 	usage := errors.New("usage: fastpathctl -database D enable|disable|status|audit WORKSPACE, node|leave|closed ADDRESS, " +
 		"decide on|off|status WORKSPACE [-cloud C] [-region R], decide delete WORKSPACE [-cloud C] [-region R] " +
 		"[-follow-wildcard], decide wildcard on|off|status [-cloud C] [-region R], " +
-		"ready WORKSPACE [-required-tier N] [-floor F], release WORKSPACE, enabler pause|resume|arm, " +
+		"ready WORKSPACE [-required-tier N] [-floor F] [-allowance-tier2 A2] [-allowance-tier1 A1], " +
+		"release WORKSPACE, enabler pause|resume|arm, " +
 		"release-stamped TS [-yes], disable-all, release-all, hold-backfill, holds, decide-off-all or decide-restore -at TS")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
@@ -333,7 +341,7 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if fs.NArg() < 2 {
 			return 2, usage
 		}
-		// -required-tier and -floor may follow the workspace.
+		// The money settings may follow the workspace.
 		if err := fs.Parse(fs.Args()[2:]); err != nil {
 			return 2, err
 		}
@@ -476,7 +484,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 1, err
 		}
 		answer = map[string]any{"workspace": workspace, "ready": why == "", "refused": string(why),
-			"required_tier": cfg.Store.RequiredTier, "floor": cfg.Store.Floor}
+			"required_tier": cfg.Store.RequiredTier, "floor": cfg.Store.Floor,
+			"allowance_tier2": cfg.Store.AllowanceTier2, "allowance_tier1": cfg.Store.AllowanceTier1}
 		if why != "" {
 			code = notDone
 		}

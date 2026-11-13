@@ -8,12 +8,17 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import logging
 import re
+import time
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 import httpx
 
 from trusted_router.clickhouse_endpoints import (
+    CONNECT_FAILURES,
+    FAILOVER_STATUS_CODES,
     parse_endpoints,
     request_timeout,
     send_with_failover,
@@ -30,6 +35,61 @@ from trusted_router.types import UsageType
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 T = TypeVar("T")
 PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS = 2.0
+# How long one client stops trying after a read that no endpoint answered.
+# An unreachable cluster costs every read the connect timeout of every
+# endpoint, and a status page makes several reads in a row, so without this
+# an outage turns a page that should say "unavailable" into one that times
+# out. Short, so reads resume within seconds of the cluster coming back.
+UNREACHABLE_HOLD_SECONDS = 10.0
+
+
+class AnalyticsUnreachable(httpx.ConnectError):
+    """No attempt was made: moments ago no endpoint of this client answered.
+
+    A ``ConnectError`` because that is what the read would have raised had it
+    been tried, so callers and ``is_analytics_unavailable`` treat both alike.
+    """
+
+
+def is_analytics_unavailable(exc: BaseException) -> bool:
+    """True when ClickHouse could not answer at all, not when it answered wrongly.
+
+    Covers every transport failure (connect/read timeouts, refused or reset
+    connections, a server disconnect) and the gateway statuses that
+    ``send_with_failover`` treats as "this endpoint is down". A 4xx, a plain
+    500 or a malformed payload is a query, schema or code defect and stays an
+    error. User-facing routes use this to degrade (an honest "unavailable"
+    state or a 503) instead of answering 500 for an analytics outage.
+    """
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in FAILOVER_STATUS_CODES
+    return False
+
+
+def log_analytics_unavailable(
+    logger: logging.Logger, surface: str, exc: BaseException
+) -> None:
+    """One stable WARNING per degraded read.
+
+    The message text is constant so the records group as a single signal in
+    Cloud Logging and Sentry Logs. The outage itself stays visible where it
+    belongs: /status.json reports status as unknown, peer monitors read that
+    as a blind deployment, and the fleet snapshot-freshness check pages on a
+    sustained outage. A per-request error issue would only repeat that.
+    """
+    logger.warning(
+        "operational_analytics.unavailable surface=%s error_class=%s",
+        surface,
+        type(exc).__name__,
+        extra={
+            "surface": surface,
+            "error_class": type(exc).__name__,
+            "error_message": str(exc)[:500],
+            "retryable": True,
+        },
+    )
 
 
 def _identifier(value: str, *, label: str) -> str:
@@ -56,6 +116,7 @@ class OperationalAnalyticsClient:
         password: str,
         database: str = "tr",
         transport: httpx.BaseTransport | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         # One URL, or an ordered comma-separated list: see clickhouse_endpoints.
         self._endpoints = parse_endpoints(base_url)
@@ -65,6 +126,8 @@ class OperationalAnalyticsClient:
         self._password = password
         self._database = _identifier(database, label="database")
         self._transport = transport
+        self._clock = clock
+        self._unreachable_until = 0.0
 
     def _query(
         self,
@@ -74,26 +137,49 @@ class OperationalAnalyticsClient:
         timeout_seconds: float = 20.0,
         retry_read_disconnect: bool = False,
     ) -> list[dict[str, Any]]:
+        if self._clock() < self._unreachable_until:
+            raise AnalyticsUnreachable(
+                "ClickHouse was unreachable moments ago; not trying again yet"
+            )
         query_params: dict[str, str] = {"database": self._database}
         for key, value in (params or {}).items():
             query_params[f"param_{key}"] = str(value)
+        answered = False
+
+        def note_answer(_response: httpx.Response) -> None:
+            nonlocal answered
+            answered = True
+
         with httpx.Client(
             auth=(self._user, self._password),
             timeout=request_timeout(self._endpoints, timeout_seconds),
             transport=self._transport,
+            event_hooks={"response": [note_answer]},
         ) as client:
-            response = send_with_failover(
-                client,
-                self._endpoints,
-                lambda endpoint: client.build_request(
-                    "POST",
-                    endpoint,
-                    params=query_params,
-                    content=sql,
-                    headers={"content-type": "text/plain; charset=utf-8"},
-                ),
-                retry_read_disconnect=retry_read_disconnect,
-            )
+            try:
+                response = send_with_failover(
+                    client,
+                    self._endpoints,
+                    lambda endpoint: client.build_request(
+                        "POST",
+                        endpoint,
+                        params=query_params,
+                        content=sql,
+                        headers={"content-type": "text/plain; charset=utf-8"},
+                    ),
+                    retry_read_disconnect=retry_read_disconnect,
+                )
+            except CONNECT_FAILURES:
+                # The last endpoint refused a connection. If none before it
+                # answered either, this says nothing about the query and
+                # everything about the cluster, and the next read would wait
+                # the same seconds for the same answer. An endpoint that
+                # answered, even with a 503, is reachable, and the next read
+                # may find it well. One that took the query and hung up
+                # without a response has not answered.
+                if not answered:
+                    self._unreachable_until = self._clock() + UNREACHABLE_HOLD_SECONDS
+                raise
             response.raise_for_status()
             payload = response.json()
         rows = payload.get("data") if isinstance(payload, dict) else None

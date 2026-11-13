@@ -4,14 +4,14 @@ import json
 import shutil
 import subprocess
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
-from trusted_router import catalog, catalog_ingest, request_capabilities
+from trusted_router import catalog, catalog_ingest, provider_lifecycle, request_capabilities
 from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, Model, ModelEndpoint
 from trusted_router.request_capabilities import (
     EFFORT_ORDER,
@@ -30,6 +30,14 @@ def _model(monkeypatch, model_id, provider, *, modalities=("text",)):
     )
     monkeypatch.setitem(catalog.MODELS, model_id, model)
     return model
+
+
+def _before_openai_gpt5_shutdown(monkeypatch, model_id):
+    # Only the GPT-5 family carries OpenAI's "minimal" effort contract, and
+    # OpenAI shuts all of it down on 2026-12-11; check it while it is live.
+    if model_id == "openai/gpt-5":
+        instant = provider_lifecycle.OPENAI_GPT5_O3_RETIREMENT_AT - timedelta(days=1)
+        monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: instant)
 
 
 def _route(monkeypatch, model, provider, **kwargs):
@@ -55,6 +63,7 @@ def _route(monkeypatch, model, provider, **kwargs):
     ("mistralai/mistral-large", "mistral", [], True),
 ])
 def test_public_models_exact_capabilities(client, monkeypatch, model_id, provider, efforts, vision):
+    _before_openai_gpt5_shutdown(monkeypatch, model_id)
     model = _model(monkeypatch, model_id, provider)
     _route(monkeypatch, model, provider, input_modalities=("text", "image") if vision else ("text",))
     response = client.get("/v1/models?include=endpoints")
@@ -387,6 +396,7 @@ def test_model_union_needs_require_parameters_to_select_a_capable_route(monkeypa
 
 
 def test_effort_union_preserves_verified_values_and_require_parameters_only_checks_names(monkeypatch):
+    _before_openai_gpt5_shutdown(monkeypatch, "openai/gpt-5")
     model = _model(monkeypatch, "openai/gpt-5", "openai")
     _route(monkeypatch, model, "openai", supported_parameters=("reasoning_effort",))
     _route(monkeypatch, model, "novita", supported_parameters=("reasoning_effort",))

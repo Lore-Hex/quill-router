@@ -96,6 +96,19 @@ DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 # Tencent TokenHub decommissions hy4-preview from 00:00:00 Beijing Time (UTC+8) on
 # 7 Dec 2026, i.e. 2026-12-06 16:00 UTC; the notice recommends migrating to hy4.
 TENCENT_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 12, 6, 16, 0, tzinfo=UTC)
+# Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
+# 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
+DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
+# OpenAI's November 11 reminder shuts down GPT-5, GPT-5 mini, GPT-5 nano, GPT-5
+# pro, o3 and o3-pro on 11 Dec 2026 (date only, so 00:00 UTC conservatively).
+OPENAI_GPT5_O3_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
+# OpenAI's deprecations page section "2026-10-01: GPT-5.3-Codex, GPT-5.1,
+# GPT-5.4-Nano" shuts these down on 1 Apr 2027 (date only, so 00:00 UTC
+# conservatively). No email notice was found.
+OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT = datetime(2027, 4, 1, 0, 0, tzinfo=UTC)
+# Sail Research's November 12 notice retires openai/gpt-oss-120b on
+# 19 Nov 2026 (date only, so 00:00 UTC conservatively); requests then fail.
+SAIL_GPT_OSS_120B_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1350,6 +1363,84 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"hy4-preview"}),
         effective_at=TENCENT_HY4_PREVIEW_RETIREMENT_AT,
         replacement_model_ids=("tencent/hy4",),
+    ),
+    # Databricks' November 10 Foundation Model retirement notice: "The GLM 5.2
+    # model will be retired on February 4th, 2027" (Foundation Model APIs and
+    # Batch Inference; date only, so 00:00 UTC) and "GLM 5.3 is the recommended
+    # replacement model". Retire only Databricks' route; other providers'
+    # glm-5.2 routes stay.
+    _Retirement(
+        provider="databricks",
+        model_ids=frozenset({"z-ai/glm-5.2"}),
+        upstream_ids=frozenset({"databricks-glm-5-2"}),
+        effective_at=DATABRICKS_GLM_52_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    # OpenAI's November 11 reminder (Gmail thread 1a1c82abbb803be6, subject
+    # "Reminder: GPT-5, GPT-5 mini, GPT-5 nano, GPT-5 pro, o3, and o3-pro will
+    # shut down on Dec 11"). The email body listed GPT 5.5/5.4 mini/5.4 nano/
+    # 5.5 pro instead, a typo: the deprecations page section "2026-06-11: GPT-5
+    # and o3 model deprecations" confirms the subject, with "removal from the
+    # API on December 11, 2026" (date only, so 00:00 UTC) and these
+    # replacements. Retire only OpenAI's direct routes; Azure and other
+    # providers' routes stay.
+    # https://developers.openai.com/api/docs/deprecations
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5", "openai/gpt-5-pro", "openai/o3", "openai/o3-pro"}),
+        upstream_ids=frozenset({
+            "gpt-5", "gpt-5-pro", "o3", "o3-pro",
+            "gpt-5-2025-08-07", "gpt-5-pro-2025-10-06", "o3-2025-04-16", "o3-pro-2025-06-10",
+        }),
+        effective_at=OPENAI_GPT5_O3_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-5.6-sol",),
+    ),
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5-mini"}),
+        upstream_ids=frozenset({"gpt-5-mini", "gpt-5-mini-2025-08-07"}),
+        effective_at=OPENAI_GPT5_O3_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-5.6-terra",),
+    ),
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5-nano"}),
+        upstream_ids=frozenset({"gpt-5-nano", "gpt-5-nano-2025-08-07"}),
+        effective_at=OPENAI_GPT5_O3_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-5.6-luna",),
+    ),
+    # OpenAI's deprecations page section "2026-10-01: GPT-5.3-Codex, GPT-5.1,
+    # GPT-5.4-Nano": shutdown "Apr 1, 2027" (date only, so 00:00 UTC) for
+    # gpt-5.3-codex -> gpt-6-sol, gpt-5.4-nano and gpt-5.4-nano-2026-03-17 ->
+    # gpt-6-luna, and gpt-5.1 and gpt-5.1-2025-11-13 -> gpt-6-sol. No email
+    # notice was found; the page is the source. Retire only OpenAI's direct
+    # routes; Azure and other providers' routes stay.
+    # https://developers.openai.com/api/docs/deprecations
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5.3-codex", "openai/gpt-5.1"}),
+        upstream_ids=frozenset({"gpt-5.3-codex", "gpt-5.1", "gpt-5.1-2025-11-13"}),
+        effective_at=OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-6-sol",),
+    ),
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5.4-nano"}),
+        upstream_ids=frozenset({"gpt-5.4-nano", "gpt-5.4-nano-2026-03-17"}),
+        effective_at=OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-6-luna",),
+    ),
+    # Sail Research's November 12 notice (Gmail thread 1a1d15409596a394)
+    # retires openai/gpt-oss-120b on 2026-11-19 (date only; 00:00 UTC
+    # conservatively); requests fail after that date. The notice names no
+    # replacement and Sail's catalogue (docs.sailresearch.com/models) lists no
+    # gpt-oss successor, so none is quoted. Retire only Sail's route; other
+    # providers' gpt-oss-120b routes stay.
+    _Retirement(
+        provider="sail-research",
+        model_ids=frozenset({"openai/gpt-oss-120b"}),
+        upstream_ids=frozenset({"openai/gpt-oss-120b"}),
+        effective_at=SAIL_GPT_OSS_120B_RETIREMENT_AT,
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.

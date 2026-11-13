@@ -71,6 +71,8 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
     assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "100000000"
     assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "40000000"
+    # The required tier, a literal no lower than the nodes' (section 4(b)).
+    assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "1"
     assert env["TR_STORAGE_BACKEND"] == "spanner-clickhouse" and env["TR_SERVICE_SURFACE"] == "control"
     assert "--args=-m,trusted_router.fastpath_enabler" in job
     # The probes' keys that exist, outside the TR_ prefix.
@@ -92,8 +94,39 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "apply" and config.max_rank == 10
+    assert config.mode == "apply" and config.max_rank == 10 and config.required_tier == 1
     assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
+
+
+def _job_required_tier() -> int:
+    found = re.findall(r'^\s*"TR_FASTPATH_ENABLER_REQUIRED_TIER=(\d+)"$', (ROOT / SCRIPT).read_text(), re.M)
+    assert len(found) == 1, found
+    return int(found[0])
+
+
+def _nodes_required_tier() -> int:
+    found = re.findall(r'^\s*fastpath_required_tier\s*=\s*"(\d)"$', (ROOT / "infra" / "fastpath.tf").read_text(),
+                       re.M)
+    assert len(found) == 1, found
+    return int(found[0])
+
+
+def test_the_enablers_tier_is_never_below_the_nodes() -> None:
+    """The enabler's required tier is at least the nodes' (section 4(b)):
+    below it, the enabler would turn on workspaces every grant refuses. So
+    the nodes' is lowered first and the enabler's after, and a change that
+    lowers the enabler's alone fails here."""
+    assert _job_required_tier() >= _nodes_required_tier() == 1
+
+
+def test_the_tier_check_reads_each_literal() -> None:
+    """The control: the patterns find the job's literal and the nodes'
+    local, so the order check above compares the deployed values."""
+    assert re.findall(r'^\s*"TR_FASTPATH_ENABLER_REQUIRED_TIER=(\d+)"$',
+                      '  "TR_FASTPATH_ENABLER_REQUIRED_TIER=2"\n', re.M) == ["2"]
+    assert re.findall(r'^\s*fastpath_required_tier\s*=\s*"(\d)"$', '  fastpath_required_tier = "1"\n',
+                      re.M) == ["1"]
+    assert _job_required_tier() in (1, 2, 3) and _nodes_required_tier() in (0, 1, 2, 3)
 
 
 def test_the_job_reads_the_async_shadow_list_the_control_plane_does() -> None:

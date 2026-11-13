@@ -1268,6 +1268,22 @@ def _run_audit(
             ):
                 info.append("telluvian: approved selector prompt tariff $0.05/M; https://telluvian.ai/docs/pricing; token usage estimated, not provider-reported")
                 continue
+        if slug == "fortanix":
+            from trusted_router.fortanix_launch import MODEL_ID, launch_tariff_matches
+
+            public_models = {model.id for model in MODELS.values()
+                             if model.provider == slug and not model.internal_only}
+            public_routes = [endpoint for endpoint in MODEL_ENDPOINTS.values()
+                             if endpoint.provider == slug
+                             and (endpoint.model_id not in MODELS or not MODELS[endpoint.model_id].internal_only)]
+            if (public_models == {MODEL_ID} and len(public_routes) == 1
+                    and launch_tariff_matches(MODELS[MODEL_ID], public_routes[0])):
+                info.append("fortanix: exact operator-confirmed zero-cost launch tariff (2026-11-10); customer $0.01/M input and output; not a live supplier quote")
+                continue
+            warning = "fortanix: public routes differ from the exact operator-approved launch tariff; price review required"
+            warnings.append(warning)
+            hard_fail_warnings.append(warning)
+            continue
         if slug in VIDEO_PRICE_PROVIDER_SLUGS:
             if not check_model_discovery:
                 info.append(f"{slug}: official fixed-cost video price gate (network skipped) ✓")

@@ -6,8 +6,9 @@ package gwauth
 // list is exactly ["async-v1"], for the answers the edge can give with
 // admission off. Shape A is {"async_eligible": false}; shape B adds the
 // frozen billing snapshot (billing_snapshot.py, build_snapshot) and its
-// hash. Shape C, a signed ticket, is Python's alone: Stage refuses an input
-// whose policy says admission is on, and the caller passes.
+// hash. For a workspace covered by edge tickets, shape B requests a
+// signed ticket from Python. Only a durable insert may render shape C.
+// Admission without edge tickets still refuses the compose.
 //
 // Every branch is §2.3's, in Python's order, so a shape A's reason is the
 // first check Python's own code would fail. Nothing here reads the clock,
@@ -38,7 +39,8 @@ func exactlyAsyncV1(values []string) bool {
 // the header, and the body as the schema holds it.
 type AsyncRequest struct {
 	// V1 is whether the header list is exactly ["async-v1"].
-	V1 bool
+	V1       bool
+	Streamed bool
 	// Undeclared is body.model_extra non-empty: any top-level member the
 	// schema does not declare, one whose value is null included.
 	Undeclared bool
@@ -63,8 +65,9 @@ type AsyncRequest struct {
 // AsyncInput is everything the additions read beyond the candidates: the
 // request's facts and the edge policy's async_settle object.
 type AsyncInput struct {
-	Request AsyncRequest
-	Policy  routingsnapshot.AsyncSettle
+	Request    AsyncRequest
+	Policy     routingsnapshot.AsyncSettle
+	WantTicket bool
 }
 
 // The shapes, as the shadow counts them (§4.4): nothing added, shape A
@@ -98,9 +101,13 @@ const (
 // Async is the additions Stage spliced into the 200: the shape, shape A's
 // reason, and the members in Python's order.
 type Async struct {
-	Shape   string
-	Reason  string
-	Members pyjson.Object
+	Shape        string
+	Reason       string
+	Members      pyjson.Object
+	WantTicket   bool
+	PricedAt     int64
+	EndpointIDs  []string
+	SnapshotHash string
 }
 
 // ordinaryParameters is async_settle.ORDINARY_PARAMETERS: the requested
@@ -214,13 +221,13 @@ func falseOnly(reason string) Async {
 // user model or native batch, priced at at (unix seconds). Every provider's
 // Credits endpoint is a candidate the snapshot takes. An error is an
 // input Go cannot answer as Python would (an unpublished billing_valid,
-// admission on, an instant before every epoch): Stage refuses and the
+// admission on without edge tickets, an instant before every epoch): Stage refuses and the
 // caller passes.
 func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, error) {
 	if in == nil || !in.Request.V1 {
 		return Async{Shape: AsyncNone}, nil
 	}
-	if in.Policy.AdmissionEnabled {
+	if in.Policy.AdmissionEnabled && !in.WantTicket {
 		return Async{}, composeErr("async admission is on: the ticket is Python's")
 	}
 	r := in.Request
@@ -282,11 +289,21 @@ func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, er
 		return Async{}, composeErr("the billing snapshot: %v", err)
 	}
 	sum := sha256.Sum256(canonical)
-	return Async{Shape: AsyncSnapshot, Members: pyjson.Object{
-		{Key: "async_eligible", Value: false},
-		{Key: "billing_snapshot", Value: snapshot},
-		{Key: "billing_snapshot_hash", Value: hex.EncodeToString(sum[:])},
-	}}, nil
+	ids := make([]string, 0, len(candidates))
+	// Read the ids from the built snapshot, in its canonical candidate order.
+	for _, m := range snapshot {
+		if m.Key == "candidates" {
+			for _, c := range m.Value.([]any) {
+				ids = append(ids, c.(pyjson.Object)[0].Value.(string))
+			}
+		}
+	}
+	return Async{Shape: AsyncSnapshot, WantTicket: in.WantTicket, PricedAt: at,
+		EndpointIDs: ids, SnapshotHash: hex.EncodeToString(sum[:]), Members: pyjson.Object{
+			{Key: "async_eligible", Value: false},
+			{Key: "billing_snapshot", Value: snapshot},
+			{Key: "billing_snapshot_hash", Value: hex.EncodeToString(sum[:])},
+		}}, nil
 }
 
 // epochAt is the candidate's epoch at at: the last whose start is at or

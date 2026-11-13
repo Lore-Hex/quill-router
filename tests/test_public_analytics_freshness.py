@@ -113,7 +113,7 @@ def test_status_snapshot_connect_timeout_falls_back_without_error(
 
 
 class _HeartbeatSnapshot:
-    """The one point read the Spanner freshness path makes (tr_entities)."""
+    """The one heartbeat statement the Spanner freshness path makes."""
 
     def __init__(self, answer) -> None:
         self._answer = answer
@@ -129,8 +129,9 @@ class _HeartbeatSnapshot:
         _ = (params, param_types)
         if isinstance(self._answer, Exception):
             raise self._answer
-        # (body, updated_at): a row committed just now, as a live poller's is.
-        return [] if self._answer is None else [[self._answer, dt.datetime.now(dt.UTC)]]
+        # (body, updated_at, dedicated): a dedicated-table row committed just
+        # now, as a live poller's is.
+        return [] if self._answer is None else [[self._answer, dt.datetime.now(dt.UTC), True]]
 
 
 class _HeartbeatDatabase:

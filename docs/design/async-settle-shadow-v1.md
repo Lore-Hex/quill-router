@@ -908,7 +908,8 @@ by the bounded timer below; reject calling the current `eligible()` for
 shadow because it can issue workspace/health RPCs and takes a timed lock
 (`src/trusted_router/services/async_settle.py:64`). Prediction is `yes` only
 with valid tier 2/3, fresh nonnegative pending sum ≤ pilot override or
-25,000,000/100,000,000 micro, health p95 ≤5 seconds and **both** data ages in
+25,000,000/100,000,000 micro (since 2026-11-10 also tier 1, at the threshold
+production uses: `admission_cap`, at most 100,000 micro), health p95 ≤5 seconds and **both** data ages in
 `[0,5)` seconds. Valid known ineligible tier/cap/unhealthy data gives `no`;
 missing, stale, locked, truncated or unavailable evidence gives `unknown`
 (operational admission would fail closed). Record reason and ages; never

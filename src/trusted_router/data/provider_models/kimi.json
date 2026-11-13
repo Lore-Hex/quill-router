@@ -241,6 +241,6 @@
   "_about": "Provider-native Moonshot/Kimi routes. Refreshed hourly only for models present in both the official pricing docs and authenticated /v1/models feed.",
   "source": "https://api.moonshot.ai/v1/models",
   "pricing_source": "https://platform.kimi.ai/docs/llms.txt",
-  "generated_at": "2026-11-10T12:35:19Z",
+  "generated_at": "2026-11-12T09:26:20Z",
   "model_count": 6
 }

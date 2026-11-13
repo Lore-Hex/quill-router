@@ -78,6 +78,14 @@ fi
 # bash parses quotes inside command substitution, so a single apostrophe in a
 # comment there silently breaks the whole script (it did).
 STARTUP_FILE="$(dirname "$0")/clickhouse_startup.sh"
+# The startup script installs these before it installs the server, so a new
+# node never starts with the open built-in user, outbound table functions or
+# the metadata server in reach. They are the files apply_node_config.sh rolls.
+NODE_CONFIG="$(dirname "$0")/clickhouse-node-config"
+LOCKDOWN_FILES="tr-default-user-xml=${NODE_CONFIG}/tr-default-user.xml"
+LOCKDOWN_FILES+=",tr-egress-xml=${NODE_CONFIG}/tr-egress.xml"
+LOCKDOWN_FILES+=",tr-metadata-block-sh=${NODE_CONFIG}/tr-clickhouse-metadata-block.sh"
+LOCKDOWN_FILES+=",tr-metadata-block-conf=${NODE_CONFIG}/tr-metadata-block.conf"
 
 if gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT" >/dev/null 2>&1; then
   log "instance $NAME already exists — skipping create"
@@ -98,7 +106,7 @@ else
     --no-address \
     "${service_account_args[@]}" \
     --scopes https://www.googleapis.com/auth/cloud-platform \
-    --metadata-from-file startup-script="$STARTUP_FILE" \
+    --metadata-from-file "startup-script=${STARTUP_FILE},${LOCKDOWN_FILES}" \
     --metadata clickhouse-password-secret="$SECRET"
 fi
 

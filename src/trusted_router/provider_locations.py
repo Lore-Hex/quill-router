@@ -32,6 +32,18 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "fortanix": InferenceLocations(
+        locations=("Santa Clara, California, United States",),
+        scope="TrustedRouter's managed GLM-5.3-Flash route only.",
+        routing="Santa Clara datacenter, operator-confirmed; failover locations have not been verified.",
+        provider_pinning="No verified per-request geographic selector or attested residency receipt.",
+        trustedrouter_pinning="Select provider.only=[fortanix] with allow_fallbacks=false; this does not pin TrustedRouter gateway geography.",
+        declaration="Santa Clara inference by operator declaration, not hardware-attested residency.",
+        evidence="Direct operator confirmation on November 10, 2026; not inferred from headquarters or API ingress.",
+        reviewed_on="2026-11-10",
+        sources=(("Operator declaration record (not independently attested)",
+                  "https://github.com/Lore-Hex/quill-router/blob/main/docs/providers/fortanix-launch-2026-11-10.md"),),
+    ),
     "negbeta": InferenceLocations(
         locations=("European Union",),
         scope="TrustedRouter's managed key only; Negbeta's broader service also uses non-EU capacity.",

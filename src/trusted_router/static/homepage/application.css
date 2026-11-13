@@ -55,8 +55,8 @@
 .trm .facts span{font-size:13px;line-height:1.5}.trm .docs, .trm .agent{font-size:16px}
 .trm .field .k,.trm .val code,.trm .cp,.trm .tab,.trm .from,.trm .from button,.trm .pf .hint{font-size:14px}
 .trm .mcode{font-size:14px;line-height:1.6}
-.trs .stat .body,.trs .press p{font-size:18px;line-height:1.65}
-.trs .stat .who,.trs .stat .go,.trs .q .by,.trs .press a{font-size:15px;line-height:1.6}
+.trs .stat .body{font-size:18px;line-height:1.65}
+.trs .stat .who,.trs .stat .go,.trs .q .by{font-size:15px;line-height:1.6}
 .trf summary{font-size:20px}
 .trft .col a{font-size:16px;line-height:1.6}.trft .col h3{font-size:15px}
 .trft .base{font-size:14px}.trft .cols > .brand{padding-bottom:0}
@@ -116,10 +116,10 @@
 
 /* Whole-page consistency: shared rhythm, restrained enclosures and action hierarchy. */
 .page{--homepage-rule:#33403a;--homepage-space:80px}
-.trc,.trm,.trv,.trs,.trf,.trft,.request-layout{padding-block:var(--homepage-space)}
+.trc,.trm,.trv,.trs,.trpr,.trf,.trft,.request-layout{padding-block:var(--homepage-space)}
 .trc .chd,.trp .ph3{align-items:center}
 .trc .chd h2,.trv .vh h2{margin:0}
-.trm .box,.trs .sp,.trc .alias{border-radius:2px;border-color:var(--homepage-rule)}.request-guide, .proof-point>a, .trm .docs a, .trs .press a{color:#c0e1ff;text-decoration:underline;text-decoration-color:#526859;text-underline-offset:5px;border-bottom:0}.request-guide:hover, .proof-point>a:hover, .trm .docs a:hover, .trs .press a:hover{text-decoration-color:currentColor}
+.trm .box,.trs .sp,.trc .alias{border-radius:2px;border-color:var(--homepage-rule)}.request-guide, .proof-point>a, .trm .docs a{color:#c0e1ff;text-decoration:underline;text-decoration-color:#526859;text-underline-offset:5px;border-bottom:0}.request-guide:hover, .proof-point>a:hover, .trm .docs a:hover{text-decoration-color:currentColor}
 .page a:focus-visible,.page button:focus-visible,.page summary:focus-visible{outline:2px solid #c0e1ff;outline-offset:4px}
 .trc .fl{gap:32px;padding-bottom:8px}
 .trc td{padding-block:18px}
@@ -135,7 +135,6 @@
 .trp .terms span:not(:last-child)::after{content:none}
 .trp .terms b{font-size:20px}
 .trs .stat,.trs .q{padding:32px}
-.trs .press{padding:24px 32px}
 .trf .ql,.trf details{border-color:var(--homepage-rule)}
 .trf summary{padding-block:24px}
 .trft .cols{padding-inline:0}
@@ -153,7 +152,7 @@
  .trp .terms{grid-template-columns:1fr;gap:0;padding-block:4px}
  .trp .terms>span{border-left:0;border-bottom:1px solid var(--homepage-rule);padding:14px 0}
  .trp .terms>span:last-child{border-bottom:0}
- .trs .stat,.trs .q,.trs .press{padding:24px}
+ .trs .stat,.trs .q{padding:24px}
  .trf summary{padding-block:20px}
 }
 
@@ -176,10 +175,6 @@
 .trs .stat .go{margin-top:8px;color:#10241a;font-size:16px}
 .trs .q{background:transparent;margin:40px 0;padding:0 40px;border-left:1px solid #9ebaa9;gap:18px}
 .trs .q blockquote{font-size:20px;line-height:1.6;color:#254b36;font-style:normal;text-wrap:pretty}
-.trs .press{display:flex;justify-content:flex-end;gap:20px;padding:20px 0 0;border:0;background:none}
-.trs .press .src{font-size:14px;color:#adbbb2;font-weight:400}
-.trs .press .src strong{color:#edf8f5;font-weight:550}
-.trs .press a{font-size:14px}
 .trf h2{font-size:34px;max-width:320px}
 .trf summary{font-size:17px;min-height:56px;padding-block:18px}
 .trf details p{font-size:16px;line-height:1.6;padding-bottom:20px}
@@ -210,7 +205,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .trs .story-results{font-size:18px}
  .trs .q{padding:24px 0;margin:0 24px;border-left:0;border-top:1px solid #9ebaa9}
  .trs .q blockquote{font-size:17px}
- .trs .press{justify-content:space-between;gap:12px;flex-direction:row;align-items:center}
  .trf h2{font-size:30px}
  .trf summary{font-size:16px}
  .trft .col h3{font-size:13px}
@@ -368,11 +362,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
 .trs .customer-details[open]>summary{border-bottom:0}
 
 /* Press mention: a second piece of social proof, styled as a sibling card to the customer story with the same kicker language. */
-.trs .press{display:grid;grid-template-columns:1fr;gap:12px;align-items:center;margin-top:16px;padding:22px 24px;border:1px solid #33403a;background:#0f1411}
-.trs .press .src{font:500 11px/1.5 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#adbbb2;white-space:nowrap}
-.trs .press p{max-width:62ch;margin:0;font-size:17px;line-height:1.6;font-style:italic;color:#c3c9c3}
-.page .trs .press .action-link{color:var(--action-secondary-ink);justify-self:start}
-@media(min-width:701px){.trs .press{grid-template-columns:auto minmax(0,auto) auto;justify-content:start;gap:16px 32px;padding:20px 28px}}
 
 /* Without JavaScript the phone header shows its links inline instead of hiding them behind Menu. */
 

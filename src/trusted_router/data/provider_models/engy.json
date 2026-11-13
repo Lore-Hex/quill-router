@@ -157,8 +157,7 @@
       "title": "qwen3.8-27b",
       "model_type": "chat",
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -298,6 +297,6 @@
       "cached_input_token_price_per_m": 140000
     }
   ],
-  "generated_at": "2026-11-10T12:35:19Z",
+  "generated_at": "2026-11-12T09:26:20Z",
   "model_count": 10
 }

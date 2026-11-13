@@ -21,6 +21,27 @@ def require_new_account_creation(settings: Settings) -> None:
         )
 
 
+WALLET_SIGNUPS_DISABLED_MESSAGE = (
+    "New accounts cannot be created with a wallet. Sign in with Google or GitHub. "
+    "Wallets that already have an account can still sign in."
+)
+
+
+def wallet_account_creation_allowed(settings: Settings) -> bool:
+    return settings.new_signups_enabled and settings.wallet_signup_enabled
+
+
+def require_wallet_account_creation(settings: Settings) -> None:
+    """Reject a code path that is about to create an account for a wallet."""
+    require_new_account_creation(settings)
+    if not settings.wallet_signup_enabled:
+        raise api_error(
+            403,
+            WALLET_SIGNUPS_DISABLED_MESSAGE,
+            ErrorType.FORBIDDEN,
+        )
+
+
 def starter_credit_for_email(email: str, starter_credit_microdollars: int) -> int:
     """Starter credit a new account with this address receives.
 
@@ -32,6 +53,24 @@ def starter_credit_for_email(email: str, starter_credit_microdollars: int) -> in
     if domain.startswith(("hotmail.", "outlook.")):
         return 0
     return starter_credit_microdollars
+
+
+# Google sign-ups on these consumer domains always receive starter credit.
+GOOGLE_UNCAPPED_STARTER_CREDIT_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+
+# Google sign-ups on any other domain (a Google Workspace or a non-Google
+# address registered as a Google account) receive starter credit only for the
+# first this-many accounts on that domain. One Workspace domain mints unlimited
+# verified addresses: the 2026-11-12 wave created 50 on one domain in an hour.
+STARTER_CREDIT_ACCOUNTS_PER_DOMAIN = 3
+
+
+def google_starter_credit_domain_limit(email: str) -> int | None:
+    """Per-domain starter-credit limit for a Google sign-up, None for uncapped."""
+    domain = email.rsplit("@", 1)[-1].strip().lower()
+    if domain in GOOGLE_UNCAPPED_STARTER_CREDIT_DOMAINS:
+        return None
+    return STARTER_CREDIT_ACCOUNTS_PER_DOMAIN
 
 
 # A GitHub account younger than this receives no starter credit.

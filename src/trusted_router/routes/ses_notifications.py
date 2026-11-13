@@ -32,10 +32,6 @@ from starlette.concurrency import run_in_threadpool
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.services.ses_suppression import (
-    SesSuppressionService,
-    SesSuppressionSyncError,
-)
 from trusted_router.sns_verify import SnsVerificationError, verify_sns_message
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -47,8 +43,6 @@ _SNS_CONFIRM_SLOTS = threading.BoundedSemaphore(_SNS_CONFIRM_MAX_CONCURRENT)
 
 
 def register_ses_notification_routes(router: APIRouter, settings: Settings) -> None:
-    account_suppression = SesSuppressionService(settings)
-
     @router.post("/internal/ses/notifications")
     async def ses_notification(request: Request) -> JSONResponse:
         raw = await request.body()
@@ -128,24 +122,17 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
         # SNS message retryable. The message-id claim only controls reporting:
         # suppression writes are idempotent, while duplicate SNS deliveries
         # must not inflate bounce/complaint counts.
-        try:
-            # Suppression sync and the replay check both talk to the Store;
-            # keep them off the event loop (the bounded-verification contract)
-            # while preserving the account-suppression failure mapping.
-            blocked_count = await run_in_threadpool(
-                _apply_feedback,
-                kind,
-                feedback,
-                account_suppression,
-                emit_log=False,
-            )
-        except SesSuppressionSyncError as exc:
-            log.error("ses_notification.account_suppression_sync_failed")
-            raise api_error(
-                503,
-                "SES suppression synchronization failed",
-                ErrorType.INTERNAL_ERROR,
-            ) from exc
+        # The suppression write and the replay check both talk to the Store;
+        # keep them off the event loop (the bounded-verification contract).
+        # SES itself adds bounced and complaining recipients to the account
+        # suppression list (account and configuration-set SuppressedReasons
+        # are BOUNCE and COMPLAINT), so nothing is mirrored there from here.
+        blocked_count = await run_in_threadpool(
+            _apply_feedback,
+            kind,
+            feedback,
+            emit_log=False,
+        )
         replayed = bool(
             message_id
             and not await run_in_threadpool(STORE.record_sns_message_once, message_id)
@@ -173,7 +160,6 @@ def _confirm_subscription(url: str) -> None:
 def _apply_feedback(
     kind: str,
     feedback: dict[str, Any],
-    account_suppression: SesSuppressionService,
     *,
     emit_log: bool = True,
 ) -> int:
@@ -209,7 +195,6 @@ def _apply_feedback(
                         feedback_id=str(feedback_id) if feedback_id else None,
                         **tags,
                     )
-                    account_suppression.suppress(email, "BOUNCE")
                     blocked_count += 1
     elif kind in {"Complaint", "complaint"}:
         raw_complaint = feedback.get("complaint")
@@ -226,7 +211,6 @@ def _apply_feedback(
                     feedback_id=str(feedback_id) if feedback_id else None,
                     **tags,
                 )
-                account_suppression.suppress(email, "COMPLAINT")
                 blocked_count += 1
     if emit_log:
         _log_feedback(kind, feedback, blocked_count)

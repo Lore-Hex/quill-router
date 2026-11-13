@@ -5,8 +5,7 @@ writes each alert as one ERROR entry of the log `fastpath_journal` in
 Cloud Logging, with the alert's kind as the entry's label `fastpath_alert`
 and the lease or authorization it concerns as `subject` (`writeAlert` in
 `fastpath/internal/service`; the node's Ops Agent carries its journal). The
-policies in `infra/fastpath_alerts.tf` notify the on-call email and the ops
-chat:
+policies in `infra/fastpath_alerts.tf` notify the on-call email:
 
 - **TR Fast path: KIND**, one policy for each kind below, on its entries.
   Each notifies at most once per five minutes and, by Cloud Monitoring's
@@ -48,7 +47,7 @@ gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" 
   --format='table(timestamp,labels.fastpath_alert,labels."compute.googleapis.com/resource_name",jsonPayload.subject)'
 ```
 
-Then, on a node (`gcloud compute ssh tr-fastpath-13 --zone=us-central1-a
+Then, on a node (`gcloud compute ssh tr-fastpath-15 --zone=us-central1-a
 --project=quill-cloud-proxy --tunnel-through-iap`, with
 `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`),
 the workspace's state and its audit, as `fastpath-p1.md` runs them:

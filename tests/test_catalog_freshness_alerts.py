@@ -25,6 +25,45 @@ def test_expiring_catalog_alerts_are_provider_grouped_and_metadata_only(monkeypa
     assert "expires" in events[1][0]
 
 
+def test_a_row_deadline_alert_names_only_the_expiring_models(monkeypatch):
+    # One model's promotion ends: the provider's other routes keep serving, so
+    # the alert names those models instead of claiming the provider expires.
+    # Same fingerprint, so it resolves the provider's existing issue.
+    now = datetime(2026, 11, 11, 13, tzinfo=UTC)
+    cutover = datetime(2026, 11, 12, tzinfo=UTC)
+    later = now + timedelta(days=14)
+
+    def route(model, deadline, kind="prepaid"):
+        return SimpleNamespace(
+            provider="decisionmodelsio", model_id=f"decisionmodelsio/{model}",
+            id=f"decisionmodelsio/{model}@decisionmodelsio/{kind}", catalog_valid_until=deadline,
+        )
+
+    endpoints = [
+        route("s1-pro", cutover), route("s1-pro", cutover, "byok"), route("s1-pro-2", cutover),
+        route("s1-fast", later), route("s1-pro-3", later),
+    ]
+    events = []
+    monkeypatch.setattr("trusted_router.synthetic.alerts.ops_alert", lambda message, **kw: events.append((message, kw)))
+    assert route_health.report_catalog_freshness(endpoints=endpoints, now=now) == ["decisionmodelsio"]
+    (message, kw), = events
+    assert kw["fingerprint"] == ["catalog-freshness", "decisionmodelsio"]
+    assert message.startswith(
+        "catalog-freshness: decisionmodelsio models decisionmodelsio/s1-pro, "
+        "decisionmodelsio/s1-pro-2 expire within 48 hours; deadline=2026-11-12T00:00:00+00:00."
+    )
+    assert "Only these models' routes are affected" in message
+    assert "s1-fast" not in message and "s1-pro-3" not in message
+    events.clear()
+    assert route_health.report_catalog_freshness(endpoints=endpoints, now=cutover) == ["decisionmodelsio"]
+    assert " expired; " in events[0][0] and "s1-pro-2" in events[0][0]
+    # Once the provider's own deadline is near too, the alert is provider-wide.
+    events.clear()
+    route_health.report_catalog_freshness(endpoints=endpoints, now=later - timedelta(hours=1))
+    assert events[0][0].startswith("catalog-freshness: decisionmodelsio expired;")
+    assert "Repair discovery" in events[0][0]
+
+
 @pytest.mark.parametrize("kind", ["availability", "degradation"])
 def test_sustained_availability_alert_does_not_include_provider_text(monkeypatch, kind):
     events = []

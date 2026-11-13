@@ -244,9 +244,19 @@ async function startMetaMaskSignin(): Promise<void> {
     return;
   }
 
-  const challenge = await postJSON<ChallengeResponse>("/v1/auth/wallet/challenge", { address });
+  // A 403 carries the reason (for example, new accounts cannot be created
+  // with a wallet). Show it instead of asking the visitor to retry.
+  let refusal = "";
+  const noteRefusal = (message: string): void => {
+    refusal = message;
+  };
+  const challenge = await postJSON<ChallengeResponse>(
+    "/v1/auth/wallet/challenge",
+    { address },
+    noteRefusal,
+  );
   if (!challenge?.data?.message) {
-    setSigninError("Unable to start sign-in. Please try again.");
+    setSigninError(refusal || "Unable to start sign-in. Please try again.");
     return;
   }
 
@@ -261,19 +271,23 @@ async function startMetaMaskSignin(): Promise<void> {
     return;
   }
 
-  const verify = await postJSON<VerifyResponse>("/v1/auth/wallet/verify", {
-    address,
-    signature,
-    nonce: challenge.data.nonce,
-  });
+  const verify = await postJSON<VerifyResponse>(
+    "/v1/auth/wallet/verify",
+    { address, signature, nonce: challenge.data.nonce },
+    noteRefusal,
+  );
   if (!verify?.data?.redirect) {
-    setSigninError("Verification failed. The nonce may have expired.");
+    setSigninError(refusal || "Verification failed. The nonce may have expired.");
     return;
   }
   location.href = requestedSigninTarget() ?? verify.data.redirect;
 }
 
-async function postJSON<T>(path: string, body: unknown): Promise<T | null> {
+async function postJSON<T>(
+  path: string,
+  body: unknown,
+  onForbidden?: (message: string) => void,
+): Promise<T | null> {
   try {
     const res = await fetch(path, {
       method: "POST",
@@ -281,7 +295,13 @@ async function postJSON<T>(path: string, body: unknown): Promise<T | null> {
       body: JSON.stringify(body),
       credentials: "same-origin",
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 403 && onForbidden) {
+        const refused = (await res.json()) as { error?: { message?: string } };
+        if (refused?.error?.message) onForbidden(refused.error.message);
+      }
+      return null;
+    }
     return (await res.json()) as T;
   } catch {
     return null;

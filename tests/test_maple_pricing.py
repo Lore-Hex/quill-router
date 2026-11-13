@@ -39,6 +39,47 @@ def test_bad_units_or_rates_fail_closed(before, after):
         maple.parse_prices(PRICES.replace(before, after))
 
 
+# Shape of maple.ai/pricing after the 2026-11-12 redesign: new unit wording and
+# struck-through superseded rates beside the current ones.
+REDESIGNED_PRICES = """<p class="pr-lead">USD per 1 million tokens. The same in Chat, Maple Work and the API.</p>
+<table><thead><tr><th scope="col">Model</th><th scope="col">Input</th>
+<th scope="col">Cached<span class="pr-wide"> input</span></th><th scope="col">Output</th></tr></thead><tbody>
+<tr> <th scope="row">DeepSeek V4.1 Flash Uncensored</th>
+<td><span class="pr-cell"><span>$0.65</span></span></td><td><span class="pr-cell"><span>$0.13</span></span></td>
+<td><span class="pr-cell"><span>$1.45</span></span></td> </tr>
+<tr> <th scope="row">GLM-5.3 Flash</th>
+<td><span class="pr-cell"><s class="pr-was"><span class="sr-only">Previously </span>$0.80</s><span>$0.34</span></span></td>
+<td><span class="pr-cell"><s class="pr-was"><span class="sr-only">Previously </span>$0.20</s><span>$0.08</span></span></td>
+<td><span class="pr-cell"><s class="pr-was"><span class="sr-only">Previously </span>$2.50</s><span>$1.09</span></span></td> </tr>
+</tbody></table>"""
+
+
+def test_redesigned_page_parses_the_same_exact_rates():
+    price = maple.parse_prices(REDESIGNED_PRICES)
+    assert price.prompt_micro_per_m == 650_000
+    assert price.tiers[0].prompt_cached_micro_per_m == 130_000
+    assert price.completion_micro_per_m == 1_450_000
+
+
+def test_struck_through_previous_rate_is_ignored_and_current_rate_is_read():
+    lowered = REDESIGNED_PRICES.replace(
+        "<span>$0.65</span>",
+        '<s class="pr-was"><span class="sr-only">Previously </span>$0.65</s><span>$0.50</span>',
+        1,
+    )
+    assert maple.parse_prices(lowered).prompt_micro_per_m == 500_000
+
+
+@pytest.mark.parametrize(("before", "after"), [
+    ("USD per 1 million tokens.", "EUR per 1 million tokens."),
+    ("USD per 1 million tokens.", "USD per 1 thousand tokens."),
+    ("<span>$0.13</span>", "<span>$0.13</span><span>$0.12</span>"),
+])
+def test_redesigned_page_bad_units_or_ambiguous_rates_fail_closed(before, after):
+    with pytest.raises(RuntimeError):
+        maple.parse_prices(REDESIGNED_PRICES.replace(before, after, 1))
+
+
 def test_duplicate_model_price_is_ambiguous_even_when_equal():
     with pytest.raises(RuntimeError):
         maple.parse_prices(PRICES + PRICES)

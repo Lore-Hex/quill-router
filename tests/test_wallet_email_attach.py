@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from trusted_router.billing_policy import is_wallet_only_user
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.services.email import EmailMessage
 from trusted_router.storage import STORE, User
 
 PRIVATE_KEY = "0x" + "4" * 64
@@ -27,7 +28,10 @@ PRIVATE_KEY = "0x" + "4" * 64
 
 @pytest.fixture
 def wallet_client() -> Iterator[tuple[TestClient, User]]:
-    app = create_app(Settings(environment="local"), init_observability=False)
+    app = create_app(
+        Settings(environment="local", wallet_signup_enabled=True),
+        init_observability=False,
+    )
     with TestClient(app) as client:
         address = Account.from_key(PRIVATE_KEY).address
         challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
@@ -121,25 +125,76 @@ def test_active_wallet_session_attaches_verified_email_and_unlocks_byok(
     assert already.headers["location"] == "/console/credits"
 
 
-def test_attach_refuses_an_email_another_account_owns(
-    wallet_client: tuple[TestClient, User],
+class _RecordingEmail:
+    def __init__(self) -> None:
+        self.sent: list[EmailMessage] = []
+
+    def send(self, message: EmailMessage) -> bool:
+        self.sent.append(message)
+        return True
+
+
+def test_attach_does_not_reveal_that_an_email_has_an_account(
+    wallet_client: tuple[TestClient, User], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from trusted_router.routes import wallet_oauth
+
     client, user = wallet_client
     other = STORE.ensure_user("taken@example.com", email="taken@example.com", email_verified=True)
+    mail = _RecordingEmail()
+    monkeypatch.setattr(wallet_oauth, "get_email_service", lambda _settings: mail)
 
-    response = client.post(
+    taken = client.post(
         "/auth/wallet/email",
         data={"email": "Taken@Example.com", "csrf_token": _csrf(client)},
     )
+    free = client.post(
+        "/auth/wallet/email",
+        data={"email": "free@example.com", "csrf_token": _csrf(client)},
+    )
 
-    assert response.status_code == 409
-    assert "already has an account" in response.text
-    assert "/auth/wallet/email/verify" not in response.text
+    # The same page and status either way: the form is not an account oracle.
+    assert taken.status_code == free.status_code == 200
+    assert "already has an account" not in taken.text
+    assert taken.text.replace("taken@example.com", "X") == free.text.replace(
+        "free@example.com", "X"
+    )
+    # The owner gets a notice with no link; the free address gets the link.
+    notice, link = mail.sent
+    assert notice.to == "taken@example.com"
+    assert notice.mail_class == "email_in_use_notice"
+    assert "/auth/wallet/email/verify" not in notice.text_body + (notice.html_body or "")
+    assert link.to == "free@example.com"
+    assert "/auth/wallet/email/verify" in link.text_body
+    # Nothing was attached and no token exists for the taken address.
     refreshed = STORE.get_user(user.id)
     assert refreshed is not None and refreshed.email is None
     assert is_wallet_only_user(refreshed)
     owner = STORE.find_user_by_email("taken@example.com")
     assert owner is not None and owner.id == other.id
+
+
+def test_taken_address_counts_against_the_send_cap(
+    wallet_client: tuple[TestClient, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trusted_router.routes import wallet_oauth
+
+    client, _user = wallet_client
+    STORE.ensure_user("taken@example.com", email="taken@example.com", email_verified=True)
+    monkeypatch.setattr(wallet_oauth, "get_email_service", lambda _settings: _RecordingEmail())
+    for _ in range(5):
+        response = client.post(
+            "/auth/wallet/email",
+            data={"email": "taken@example.com", "csrf_token": _csrf(client)},
+        )
+        assert response.status_code == 200
+
+    capped = client.post(
+        "/auth/wallet/email",
+        data={"email": "free@example.com", "csrf_token": _csrf(client)},
+    )
+
+    assert capped.status_code == 429
 
 
 def test_verify_refuses_an_email_claimed_after_the_link_was_sent(
@@ -261,7 +316,10 @@ def test_undelivered_email_never_shows_the_link_outside_local(
 
 
 def test_non_wallet_session_cannot_use_the_attach_flow() -> None:
-    app = create_app(Settings(environment="local"), init_observability=False)
+    app = create_app(
+        Settings(environment="local", wallet_signup_enabled=True),
+        init_observability=False,
+    )
     with TestClient(app) as client:
         user = STORE.ensure_user("alice@example.com", email="alice@example.com", email_verified=True)
         workspace = STORE.list_workspaces_for_user(user.id)[0]

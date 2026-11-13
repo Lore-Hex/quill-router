@@ -4,8 +4,11 @@
 Developers and coding agents should use that guide to preserve the approved
 shared design, regional copy, evidence scope and social-image process.
 
-Static enterprise acquisition sites for 13 markets and 30 owned domains.
+Static enterprise acquisition sites for 13 markets and 31 owned domains.
 The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**.
+`nytex.com` and `www.nytex.com` permanently redirect to New York, preserving
+the request path and query string. DNS remains in `exchange-nytex-com`;
+retain the Google verification TXT and certificate authorization CNAME there.
 `markets.json` is the source of truth for canonical hosts, aliases and local copy.
 Its `scope` field records a city, region or global audience. The header market
 picker and footer share one ordered directory and highlight the current market.
@@ -549,8 +552,9 @@ pages in its sitemap, avoiding duplicate canonicals.
 Keep `.html` aliases for older links. Extensionless objects require `text/html`.
 
 `member_badges.py` generates two script-free SVGs in `assets/badges`: light and
-dark lock-based “Privacy Secured · Confidential AI” seals. There is no provider
-badge or role selector. NYTE requires confidential AI routes (owner-confirmed
+dark lock-based “Privacy Secured · Confidential AI” seals. There is no separate
+provider badge or role selector; a supplier may show the same seal only when it
+links to that supplier's evidence page (next section). NYTE requires confidential AI routes (owner-confirmed
 product requirement); this is not an optional buyer tier. Enterprise buyers display
 the seal to customers on NYTE-powered AI features or clearly scoped trust centers.
 The linked page documents the required attested gateway, confidential routing floor,
@@ -570,6 +574,50 @@ unpublished changes, apply only the buyer badge placement and demo to freshly do
 HTML, preserving existing CSS/JS versions and all other content. Back up each
 target, verify that removing the inserted line restores its original bytes,
 and publish with the observed generation precondition to reject concurrent edits.
+
+### Supplier evidence pages (`/verified/<provider>`)
+
+A supplier that NYTE has verified may display the seal on its own site, linked to
+`https://nytokenexchange.com/verified/<provider>` instead of `/badge`. The first is
+Maple (`verified-maple.html`); `VERIFIED_PROVIDERS` in `build.py` lists them all.
+
+The page does the check in the visitor's browser (`verified.js`, served unminified so
+it can be read): it requests a fresh attestation document from the provider's AWS
+Nitro enclave with a random nonce, verifies the COSE signature and the certificate
+chain to the pinned AWS Nitro root, then compares PCR0 with two public records: the
+provider's own published approval and the build NYTE reproduced
+(`enclave-go/maple-transport/verified-release.json` in quill-cloud-proxy). It reports
+one of: verified; newer release under NYTE review (matches the provider's approval,
+not yet reproduced); not verified; or incomplete. Maple ships often, so the review
+state is expected and must stay truthful.
+
+A second panel checks the path through NYTE. It fetches the gateway's Google
+Confidential Space token from `api.trustedrouter.com/attestation`, verifies the RS256
+signature against Google's published keys, requires a production image with debugging
+off, requires the image digest and the full image name to be in
+`trust/gcp-release.json` (a tag alone is not evidence of a source commit), then reads the Maple
+fingerprint from that release's own commit of `verified-release.json` and compares it
+with the enclave's live PCR0. It says either that the gateway accepts the running
+enclave or that it is holding traffic back. It covers the GCP plane only, and one
+gateway instance per visit. Every request is a GET that carries nothing about the
+visitor; the page itself loads the site's usual analytics script.
+
+`verify-verified.cjs` replays a recorded real document (`verified-fixture.json`,
+never published) with the browser clock set to when it was recorded, so signature
+checks run for real offline. It covers every verdict and rejects a replay, an
+expired chain, an altered measurement, an altered signature, a forged root and a
+leaf certificate re-keyed by an attacker. Gateway tokens are signed in the test with
+a throwaway RSA key served as the mocked Google key set.
+
+The Maple page is a NYTE shell page (`nyte_v2.PAGES["maple"]`, body
+`nyte-v2/maple-v3.html`, sheet `maple-v3.css`, tabs `maple-v3.js`) in brand v3 by
+default. Adding `"maple"` to `old_brand_pages` in `nyte-brand-v3.json` restores `verified-maple.html`,
+and the build then publishes `assets/verified.css` and `assets/badge.css` again.
+
+To publish, upload only `verified/<provider>` (content type `text/html`),
+`verified/<provider>.html`, `assets/verified.js`, the `assets/nyte-v2/` sheets and
+scripts the page names, the updated `badge` and `badge.html`, and
+`new-york/sitemap.xml`.
 
 ### Homepage routing demo
 

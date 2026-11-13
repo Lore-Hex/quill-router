@@ -348,6 +348,14 @@ def test_unexpected_background_error_does_not_abort_later_tasks(
     assert "settle_post_commit_analytics_failed" in caplog.text
 
 
+# Each limit in the saturation test detects a hang; none measures latency.
+# The optional work stays stalled until the test releases it, so a reply or an
+# authorize thread that waited for it would never come, and any finite limit
+# proves the property. A five-second limit here is the likely cause of one CI
+# failure, so the limit sits far above anything a slow runner does.
+HANG_SECONDS = 60.0
+
+
 @pytest.mark.parametrize("refund", [False, True])
 def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any, refund: bool,
@@ -364,9 +372,11 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
             with write_lock:
                 started.append(threading.current_thread().name)
                 first_workers = len(started) <= post_commit.WORKERS
+            # No limit of their own: the test body breaks the barrier on
+            # every failing exit, and its finally always sets release.
             if first_workers:
-                entered.wait(timeout=30)
-            assert release.wait(30)
+                entered.wait()
+            release.wait()
             # The in-memory transaction fake isn't a concurrent database.
             with write_lock:
                 return original(*args, **kwargs)
@@ -390,11 +400,19 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
 
     monkeypatch.setattr(optional_executor, "submit", spy)
 
+    async def unstalled(awaitable: Any, what: str) -> Any:
+        try:
+            return await asyncio.wait_for(awaitable, timeout=HANG_SECONDS)
+        except TimeoutError:
+            raise AssertionError(f"{what} while optional work was stalled") from None
+
+    failed: list[BaseException] = []
+
     async def drive() -> None:
-        limiter = anyio.to_thread.current_default_thread_limiter()
-        assert limiter.borrowed_tokens == 0
         tasks = []
         try:
+            limiter = anyio.to_thread.current_default_thread_limiter()
+            assert limiter.borrowed_tokens == 0
             # Replies, rather than ASGI completion, pace the next request:
             # this reproduces Cloud Run releasing its concurrency slots.
             for authorization in authorizations:
@@ -410,13 +428,13 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
                 if refund:
                     body.update(status="error", error_status=503, error_type="provider_error")
                 tasks.append(asyncio.create_task(_request(app, body, on_reply, refund=refund)))
-                await asyncio.wait_for(replied.wait(), timeout=5)
+                await unstalled(replied.wait(), f"request {len(tasks)} got no reply")
                 await asyncio.sleep(0)
                 assert optional_executor.in_flight <= post_commit.MAX_IN_FLIGHT
             assert len(replies) == count
             # Let unrelated, unchanged response tasks finish before measuring
             # the shared limiter. Optional RPCs remain blocked by release.
-            responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5)
+            responses = await unstalled(asyncio.gather(*tasks), "requests did not finish")
             assert all(r["data"]["disposition"] == "finalized" for r in responses)
             assert limiter.borrowed_tokens == 0
             # Even if optional work consumes all 40 AnyIO tokens, the
@@ -424,11 +442,18 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
             authorize_started = threading.Event()
             probe = asyncio.create_task(anyio.to_thread.run_sync(authorize_started.set))
             tasks.append(probe)
-            await asyncio.wait_for(asyncio.shield(probe), timeout=1)
+            await unstalled(asyncio.shield(probe), "authorize thread did not start")
             assert authorize_started.is_set()
             assert limiter.borrowed_tokens == 0
             assert optional_executor.in_flight == post_commit.MAX_IN_FLIGHT
             assert sum(optional_executor.drops.values()) == 16
+        except BaseException as exc:
+            # Tell the test body now. A failed driver sends no more requests,
+            # so the barrier may never fill, and the cleanup below lasts as
+            # long as the slowest request.
+            failed.append(exc)
+            entered.abort()
+            raise
         finally:
             # Also clean up mutations that deliberately use the shared pool.
             release.set()
@@ -438,11 +463,19 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
     with ThreadPoolExecutor(max_workers=1) as driver:
         future = driver.submit(asyncio.run, drive())
         try:
-            entered.wait(timeout=30)
-            future.result(timeout=30)
+            # Twice the driver's limit, so a hung step there reports first.
+            entered.wait(timeout=2 * HANG_SECONDS)
+            future.result(timeout=2 * HANG_SECONDS)
+        except BaseException as exc:
+            # An interrupt leaves the barrier intact; free the workers.
+            entered.abort()
+            # The driver's own failure is the cause of either; report that.
+            if failed and isinstance(exc, (threading.BrokenBarrierError, TimeoutError)):
+                raise failed[0] from None
+            raise
         finally:
             release.set()
-    assert optional_executor.wait_idle()
+    assert optional_executor.wait_idle(timeout=HANG_SECONDS)
     assert optional_executor.in_flight == 0
     assert len(started) == post_commit.MAX_IN_FLIGHT
     assert all(name.startswith("settle-post-commit") for name in started)

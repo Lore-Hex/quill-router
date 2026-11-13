@@ -57,6 +57,17 @@ env_vars=(
   # rank only past 15. WS2 and WS3 ran at 0 (nobody off the include list);
   # WS5 sets 100. Lowering it is a way back (section 8.3).
   "TR_FASTPATH_ENABLER_MAX_RANK=10"
+  # Section 4(b): the trust tier to join, 1 to 3. Never below the nodes'
+  # required tier in effect (infra/fastpath.tf fastpath_required_tier), or
+  # the enabler turns on workspaces every grant refuses: lowered only after
+  # the nodes' is, and the nodes' raised only after this is
+  # (tests/test_fastpath_enabler_deploy.py holds the two in order). 1 since
+  # the nodes took -required-tier 1 with the lower tiers' allowances
+  # (tr-fastpath-15 and 16, 2026-11-13; fastpath-deploy.md, "Lowering the
+  # required tier"). Every include-list member was on or held when it was
+  # lowered; a dry run at tier 1 and rank 10 (2026-11-13) would enable seven
+  # workspaces by rank and disable none.
+  "TR_FASTPATH_ENABLER_REQUIRED_TIER=1"
   # Section 4(b): unspent credit of at least $100 to join, under $40 to leave.
   "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=100000000"
   "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=40000000"

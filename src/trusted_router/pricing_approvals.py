@@ -16,6 +16,19 @@ _GEMINI_TTS_TRANSITIONS = {
     ),
 }
 
+# Google's Standard Gemini 4 introduction ends November 30, 2026, on both
+# official pricing pages. These exact routes and complete tariffs only.
+_GEMINI_4_EFFECTIVE_ON = date(2026, 12, 1)
+_GEMINI_4_TRANSITIONS = {
+    f"google/gemini-4-{model} [{provider}:{provider}:gemini-4-{model}]{suffix}": pair
+    for model in ("argon", "carbon")
+    for provider in ("google-ai-studio", "google-vertex")
+    for suffix, pair in (
+        ("", ((2_000_000, 10_000_000), (4_000_000, 20_000_000))),
+        (" cached-input", ((100_000, 0), (200_000, 0))),
+    )
+}
+
 # https://decisionmodels.io/pricing, verified 2026-10-12: existing accounts
 # retain the old Pro rate until November 12. Scope approval to the full pair,
 # both regional identities, and the native alias/version actually tested.
@@ -49,4 +62,7 @@ def approved_dated_price_transition(
     ) or (
         today >= _DECISION_PRO_EFFECTIVE_ON
         and (before, after) == _DECISION_PRO_TRANSITIONS.get(route)
+    ) or (
+        today >= _GEMINI_4_EFFECTIVE_ON
+        and (before, after) == _GEMINI_4_TRANSITIONS.get(route)
     )

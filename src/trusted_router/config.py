@@ -257,7 +257,6 @@ def _comma_set(raw: str, *, primary: str | None = None) -> tuple[str, ...]:
 # table is intentionally importable by the mutation-sensitive contract test:
 # adding a credential requires naming every process allowed to receive it.
 SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
-    "ops_chat_webhook_secret": frozenset({"actions"}),
     "postgres_dsn": frozenset({"public", "control", "internal", "observer"}),
     "postgres_iam_auth": frozenset({"public", "control", "internal", "observer"}),
     "clickhouse_url": frozenset({"control", "internal"}),
@@ -507,12 +506,6 @@ class Settings(BaseSettings):
     legal_signatory_title: str = "CEO"
     security_contact_email: str = "security@trustedrouter.com"
     support_email: str = "help@trustedrouter.com"
-    # Optional three-cloud Matrix support fanout. Values are comma-separated
-    # pinned node URLs; every destination receives the same signed payload and
-    # Matrix room state deduplicates it across federation.
-    ops_chat_webhook_urls: str = ""
-    ops_chat_webhook_secret: str | None = None
-    ops_chat_webhook_timeout_seconds: float = 3.0
 
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
@@ -620,6 +613,12 @@ class Settings(BaseSettings):
     # the email channel; ``new_signups_enabled`` is the global creation brake
     # across email, Google/GitHub, wallet, and delegated signup.
     email_signup_enabled: bool = False
+
+    # Creating an account with a wallet signature costs nothing and needs no
+    # mailbox, so it is the cheapest account to make in bulk. Closed by
+    # default. Wallets that already have an account still sign in; this
+    # switch and ``new_signups_enabled`` must both be on to create one.
+    wallet_signup_enabled: bool = False
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
@@ -1035,6 +1034,19 @@ class Settings(BaseSettings):
     # in both pilots; comma-separated, at most 32, empty by default.
     async_settle_fastpath_overlap_workspaces: str = ""
     _async_settle_fastpath_overlap_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # All mode with the pilot set above empty: async admission covers every
+    # workspace, and the rule holds per request instead of per workspace
+    # (docs/design/fast-admission-widening.md section 9.1). A request the
+    # pilot leased takes no ticket (async_settle_admits_request), and the
+    # workspaces listed here stay outside admission altogether, so the edge
+    # may answer their async-v1 authorizes. The edge passes every other
+    # workspace's to Python, the one ticket signer, unless the edge ticket
+    # switch covers the workspace (fastpath_edge_async_ticket_workspaces):
+    # then the edge answers and asks Python for the signature. Comma-separated,
+    # at most 32, all mode only, none of them on the overlap list; empty by
+    # default.
+    async_settle_fastpath_reserved_workspaces: str = ""
+    _async_settle_fastpath_reserved_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Optional comma-separated serving-region allowlist for NEW async-v1
     # acceptance (the 500 ms durable handoff, D2). Empty keeps every region;
     # otherwise TR_SERVING_REGION must be explicit and listed. A region outside
@@ -1080,6 +1092,8 @@ class Settings(BaseSettings):
     # edge may answer an async-v1 authorize itself. Off by default; rollout.sh
     # renders it as a literal false until the I4 step.
     fastpath_edge_decide_async: bool = False
+    fastpath_edge_async_ticket_workspaces: str = ""
+    _fastpath_edge_async_ticket_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1161,12 +1175,18 @@ class Settings(BaseSettings):
     # include list (at most 32, exempt from the rank and from the bypass
     # exclusion) comes from scripts/deploy/fastpath_lists.sh. A workspace
     # joins with unspent credit of at least the enable balance and leaves
-    # under the disable balance (section 4(b)).
+    # under the disable balance (section 4(b)). It joins at the required
+    # tier or above, 3 by default: that must never be below the fast path
+    # nodes' required tier in effect (infra/fastpath.tf
+    # fastpath_required_tier, the node's -required-tier), or the enabler
+    # would turn on workspaces every grant refuses; it is lowered only after
+    # the nodes' is, and the nodes' raised only after it is.
     fastpath_enabler_mode: Literal["off", "dry-run", "apply"] = "off"
     fastpath_enabler_max_rank: int = Field(default=0, ge=0)
     fastpath_enabler_include: str = ""
     fastpath_enabler_enable_balance_micro: int = Field(default=100_000_000, gt=0)
     fastpath_enabler_disable_balance_micro: int = Field(default=40_000_000, gt=0)
+    fastpath_enabler_required_tier: int = Field(default=3, ge=1, le=3)
     _fastpath_enabler_include_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Which keys with day, week or month spend windows the pilot covers
     # (docs/design/fast-admission-e2-key-windows.md section 5): `off` none,
@@ -1730,6 +1750,37 @@ class Settings(BaseSettings):
         return self._async_settle_pilot_workspace_ids
 
     @model_validator(mode="after")
+    def parse_fastpath_edge_async_ticket_workspaces(self) -> Settings:
+        ids = frozenset(
+            part.strip() for part in self.fastpath_edge_async_ticket_workspaces.split(",") if part.strip()
+        )
+        if ids != {"*"} and (len(ids) > 32 or any(
+            re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids
+        )):
+            raise ValueError("invalid fast path edge async ticket workspace set")
+        if self.fastpath_edge_async_ticket_workspaces and not ids:
+            raise ValueError("empty fast path edge async ticket workspace set")
+        self._fastpath_edge_async_ticket_workspace_ids = ids
+        return self
+
+    @property
+    def fastpath_edge_async_ticket_workspace_ids(self) -> frozenset[str]:
+        return self._fastpath_edge_async_ticket_workspace_ids
+
+    @property
+    def fastpath_edge_async_tickets_enabled(self) -> bool:
+        return bool(self.fastpath_edge_async_ticket_workspaces)
+
+    def fastpath_edge_async_ticket_allows(self, workspace_id: str) -> bool:
+        return (
+            self.fastpath_edge_async_tickets_enabled
+            and self.async_settle_admission_enabled
+            and self.async_settle_pilot_allows(workspace_id)
+            and ("*" in self._fastpath_edge_async_ticket_workspace_ids
+                 or workspace_id in self._fastpath_edge_async_ticket_workspace_ids)
+        )
+
+    @model_validator(mode="after")
     def parse_fastpath_overlap_workspaces(self) -> Settings:
         ids = frozenset(
             part.strip() for part in self.async_settle_fastpath_overlap_workspaces.split(",") if part.strip()
@@ -1744,6 +1795,31 @@ class Settings(BaseSettings):
         return self._async_settle_fastpath_overlap_workspace_ids
 
     @model_validator(mode="after")
+    def parse_fastpath_reserved_workspaces(self) -> Settings:
+        """The reserved list (fast-admission-widening.md section 9.1), bounded
+        as the pilot set is. All mode only: under the explicit list the
+        fast-path pilot set already says which workspaces admission leaves
+        out. Never an overlap workspace, which is admitted by definition."""
+        ids = frozenset(
+            part.strip() for part in self.async_settle_fastpath_reserved_workspaces.split(",") if part.strip()
+        )
+        if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
+            raise ValueError("invalid async settle fast path reserved workspace set")
+        if ids and not self.fastpath_pilot_all:
+            raise ValueError("TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES requires TR_FASTPATH_PILOT_ALL")
+        both = ids & self._async_settle_fastpath_overlap_workspace_ids
+        if both:
+            # Counted, not named: the ids are the operator's to look up.
+            raise ValueError(f"{len(both)} TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES also on "
+                             "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES")
+        self._async_settle_fastpath_reserved_workspace_ids = ids
+        return self
+
+    @property
+    def async_settle_fastpath_reserved_workspace_ids(self) -> frozenset[str]:
+        return self._async_settle_fastpath_reserved_workspace_ids
+
+    @model_validator(mode="after")
     def validate_fastpath_pilot_all(self) -> Settings:
         """All mode's preconditions (fast-admission-widening.md sections 9
         and 11, PR 5), each refusing to start the process:
@@ -1751,12 +1827,17 @@ class Settings(BaseSettings):
         - the typed Spanner store: the AWS and Azure planes' Postgres store
           has neither the debt rules nor the covering pass (section 2);
         - an empty explicit list, the policy's one encoding of all mode;
-        - not async admission on with an empty async pilot set: "every
-          workspace" cannot hold for both paths, and the policy's exclusion
-          would be unbounded;
         - every async pilot workspace on the exclude list or the overlap
           list, so the operator says which path each takes and turning all
-          mode on never moves one silently.
+          mode on never moves one silently;
+        - every reserved workspace one the pilot covers (off the exclude
+          list): a workspace the fast path never takes has nothing to
+          reserve.
+
+        An empty async pilot set with admission on is allowed (section 9.1):
+        admission then covers every workspace but the reserved list, which is
+        the policy's bounded exclusion, and a leased request takes no ticket
+        (async_settle_admits_request).
         """
         if not self.fastpath_pilot_all:
             return self
@@ -1764,15 +1845,16 @@ class Settings(BaseSettings):
             raise ValueError("TR_FASTPATH_PILOT_ALL requires TR_STORAGE_BACKEND=spanner-clickhouse")
         if self._fastpath_pilot_workspace_ids:
             raise ValueError("TR_FASTPATH_PILOT_ALL requires an empty TR_FASTPATH_PILOT_WORKSPACES")
-        if self.async_settle_enabled and not self._async_settle_pilot_workspace_ids:
-            raise ValueError("TR_FASTPATH_PILOT_ALL refuses async admission with an empty "
-                             "TR_ASYNC_SETTLE_PILOT_WORKSPACES")
         unplaced = (self._async_settle_pilot_workspace_ids - self._fastpath_pilot_exclude_ids
                     - self._async_settle_fastpath_overlap_workspace_ids)
         if unplaced:
             # Counted, not named: the ids are the operator's to look up.
             raise ValueError(f"TR_FASTPATH_PILOT_ALL: {len(unplaced)} TR_ASYNC_SETTLE_PILOT_WORKSPACES "
                              "on neither TR_FASTPATH_PILOT_EXCLUDE nor TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES")
+        uncovered = self._async_settle_fastpath_reserved_workspace_ids & self._fastpath_pilot_exclude_ids
+        if uncovered:
+            raise ValueError(f"TR_FASTPATH_PILOT_ALL: {len(uncovered)} TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES "
+                             "on TR_FASTPATH_PILOT_EXCLUDE")
         return self
 
     @model_validator(mode="after")
@@ -1800,11 +1882,15 @@ class Settings(BaseSettings):
         admission leaves out whatever its own pilot set says (section 4.13 of
         fast-admission-and-batched-settlement.md), under the explicit list.
         The pilot's set, not its switch, so turning the fast path off never
-        changes async admission. All mode has no such set (it is every
-        workspace but the exclude list's): read async_settle_fastpath_excludes
-        per workspace instead."""
+        changes async admission. All mode with an empty async pilot set
+        (section 9.1 of fast-admission-widening.md) leaves out the reserved
+        list alone. All mode with a pilot set has no such finite set (it is
+        every workspace but the exclude list's): read
+        async_settle_fastpath_excludes per workspace instead."""
         if self.fastpath_pilot_all:
-            raise ValueError("all mode has no finite fast-path excluded set; use async_settle_fastpath_excludes")
+            if self._async_settle_pilot_workspace_ids:
+                raise ValueError("all mode has no finite fast-path excluded set; use async_settle_fastpath_excludes")
+            return self._async_settle_fastpath_reserved_workspace_ids
         return self._fastpath_pilot_workspace_ids - self._async_settle_fastpath_overlap_workspace_ids
 
     def async_settle_fastpath_excludes(self, workspace_id: str) -> bool:
@@ -1812,8 +1898,17 @@ class Settings(BaseSettings):
         path's sake (fast-admission-widening.md section 9): the pilot's
         policy covers it (fastpath_covers) and the overlap list does not name
         it. Coverage, not the switch, so the enabler turning a workspace on
-        or off never moves async admission."""
-        return self.fastpath_covers(workspace_id) and workspace_id not in self._async_settle_fastpath_overlap_workspace_ids
+        or off never moves async admission.
+
+        All mode with an empty async pilot set (section 9.1) is the one
+        exception: every workspace is covered, so the workspaces left out are
+        the reserved list's and nothing else, and the rule moves to the
+        request (async_settle_admits_request). Still never the switch."""
+        if workspace_id in self._async_settle_fastpath_overlap_workspace_ids:
+            return False
+        if self.fastpath_pilot_all and not self._async_settle_pilot_workspace_ids:
+            return workspace_id in self._async_settle_fastpath_reserved_workspace_ids
+        return self.fastpath_covers(workspace_id)
 
     def async_settle_pilot_allows(self, workspace_id: str) -> bool:
         """Whether async admission covers the workspace (with admission on):
@@ -1826,6 +1921,30 @@ class Settings(BaseSettings):
         if self.async_settle_fastpath_excludes(workspace_id):
             return False
         return not self._async_settle_pilot_workspace_ids or workspace_id in self._async_settle_pilot_workspace_ids
+
+    def async_settle_admits_request(self, workspace_id: str, *, leased: bool) -> bool:
+        """Whether async admission covers this request (with admission on):
+        its workspace is covered (async_settle_pilot_allows), and the pilot
+        did not lease it (the authorization's fastpath_envelope), unless the
+        workspace is on the overlap list. "Async settle takes no request the
+        fast path takes", said of the request itself: a leased authorization
+        settles through its lease, synchronously, and gets the admission-off
+        answer. With a named pilot set or the explicit list this adds
+        nothing, since a leased workspace outside the overlap list is already
+        left out; with every workspace admitted (section 9.1 of
+        fast-admission-widening.md) it is what keeps the two paths apart.
+        Python's own authorize answer reads it at the ticket's issue
+        (async_settle.snapshot_projection). The edge ticket route
+        (async_settle.edge_ticket) does not: every id it signs for is one the
+        edge minted for its own leased commit, the edge releases the ticket
+        only once that leased row is durable, and the route's rule is
+        fastpath_edge_async_ticket_allows. The settle's acceptance has only
+        the ticket's claims and checks the workspace, and a ticketed leased
+        authorization (the overlap list's, or one the edge got a ticket for)
+        finishes through its lease in the drain."""
+        if leased and workspace_id not in self._async_settle_fastpath_overlap_workspace_ids:
+            return False
+        return self.async_settle_pilot_allows(workspace_id)
 
     @model_validator(mode="after")
     def parse_accept_regions(self) -> Settings:
@@ -2142,24 +2261,6 @@ class Settings(BaseSettings):
                             "secret — reuse would let a directory or gateway "
                             "credential debit workspaces"
                         )
-        if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
-            raise ValueError("TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10")
-        ops_chat_urls = tuple(
-            dict.fromkeys(
-                value.strip().rstrip("/")
-                for value in self.ops_chat_webhook_urls.split(",")
-                if value.strip()
-            )
-        )
-        if bool(ops_chat_urls) != bool(self.ops_chat_webhook_secret):
-            raise ValueError(
-                "TR_OPS_CHAT_WEBHOOK_URLS and TR_OPS_CHAT_WEBHOOK_SECRET "
-                "must both be set or both unset"
-            )
-        if environment not in {"local", "test"} and any(
-            not url.startswith("https://") for url in ops_chat_urls
-        ):
-            raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs when deployed")
         if not 1 <= self.google_data_manager_batch_size <= 2_000:
             raise ValueError("TR_GOOGLE_DATA_MANAGER_BATCH_SIZE must be between 1 and 2000")
         if self.google_data_manager_lease_seconds < 30:
