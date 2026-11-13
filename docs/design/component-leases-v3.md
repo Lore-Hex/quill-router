@@ -39,7 +39,30 @@ Under v3:
    healthy and unchanged, with no fallback to another cloud. A fallback
    would let a change outside any lease be laundered by the second grant
    on gcp (review of #2568). A new holdback is chosen only when the previous
-   one is itself being leased.
+   one is itself being leased. Before that lease is granted, the previous
+   holdback's release evidence (`/trust/control-plane.json`) is read twice
+   on its own, with no health checks, so a failing service cannot hide a
+   change (`observed_releases`). The grant is refused when the evidence is
+   readable and differs or is invalid. The cloud is leasable only when the
+   evidence is unreadable. The same holds under v2.
+   - **Readable and differs or is invalid (refused):** any 2xx answer that
+     is not a document carrying the protected release. That is a different
+     release; a release that is missing, null, not a string or not a
+     lowercase SHA (`"local"` when `TR_RELEASE` is dropped, `"eu"` or
+     `"azure"` from an old revision); a body that is not a JSON object; a
+     body that does not parse; a body over 1 MiB. One such answer in either
+     read refuses.
+   - **Unreadable (leasable, to repair a dead cloud):** the cloud served no
+     document of its own. That is a transport failure (DNS, connect, TLS,
+     timeout), an HTTP error status (404 and 5xx included) or a redirect,
+     which the coordinator never follows.
+   - A refusal writes nothing and is not a deadlock. The check runs only
+     while another rollout holds a lease and relies on this cloud as its
+     holdback. Once every such lease is released or recovered the journal
+     holds no lease, the holdback is cleared, and the cloud can be leased
+     directly.
+   - A response that breaks off mid-transfer, or is not HTTP at all, raises
+     out of the coordinator: the command fails and writes nothing.
 8. FIFO: an earlier live waiter blocks a request when their components
    conflict on the same cloud (rules 2 to 4). Waiters for the other lane do not.
    Earlier waiters for other new clouds still take free cloud slots first.
@@ -115,33 +138,52 @@ Each gate runs unchanged inside `gate_hold`. After each attempt
   promoted, and the whole gate re-runs with a fresh window.
 
 Every limit is a hard deadline. An attempt in flight when one is reached is
-killed, together with its process group, and the gate fails closed with its
-own status, or 124. The limits are:
+killed, together with its process group, after `GATE_HOLD_KILL_GRACE` (30 s)
+for its own cleanup. The gate then fails closed with its own status, or 124.
+The limits are:
 
 - **An attempt cap per gate** (`TR_CP_HOLD_ATTEMPT_SECONDS`): 12 minutes for
   pre-DNS and PONG on us-central1 (the old step limits), 25 for a
   secondary's PONG, 10 for the canary, and 6 for discovery.
-- **A hold bound per gate** (`TR_CP_HOLD_MAX_SECONDS`, 30 minutes), counted
+- **A hold bound per gate** (`TR_CP_HOLD_MAX_SECONDS`, 20 minutes), counted
   from that gate's first inconclusive verdict. The clock is per gate, so a
   gate that passed leaves nothing behind.
-- **A budget per job** (`TR_CP_HOLD_BUDGET_SECONDS`, 45 minutes) for every
+- **A budget per job** (`TR_CP_HOLD_BUDGET_SECONDS`, 20 minutes) for every
   hold of every gate of every region, including status.json presence waits.
-  It keeps the rollout job's worst case (about 341 minutes) under its own
-  350-minute limit and GitHub's 360. If the budget's records cannot be
-  written, the gate fails closed.
+  It is re-read every second while a gate holds, so overlapping holds (a
+  wave's two regions) stop when their combined spend reaches it. If its
+  records cannot be written, the gate fails closed.
+- Both are sized by GitHub's 360-minute job limit. A control-plane fault that
+  outlasts them fails the gateway closed.
 
-Every step timeout covers its gate's worst case: one capped attempt, the
-hold, and the bounded journal and status reads. The wave and US West each
-have a forward deadline of the old 55 minutes plus the budget, then 45
-minutes that recovery keeps. A wave region still stops at once when a peer
-fails or its deadline passes, even mid-attempt or mid-hold.
+**Forward deadlines.** The wave and US West each keep the old 55-minute
+forward deadline (3300 s). It grows only by the hold seconds that region
+actually spent, read from the budget records. Steps outside a hold keep
+exactly the time they always had. After the forward deadline, recovery keeps
+45 minutes. A wave region still stops at once when a peer fails or its
+deadline passes, even mid-attempt or mid-hold.
+
+**Timeouts.** Every rollout step has an enforced limit. A gate step's limit
+covers one capped attempt, the hold, and the bounded journal and status
+reads: 40, 40, 38 and 32 minutes for pre-DNS, PONG, canary and discovery on
+us-central1. The wave and US West steps are 120 minutes each: the forward
+deadline, the budget it may grow by, and recovery. Summed from enforced
+limits only, the worst case (US West failing after the wave) is 353.5
+minutes, under the job's 355-minute limit and GitHub's 360. quill-cloud-proxy
+`tools/test_gate_hold.py` recomputes it from the workflow.
 
 `verify-region-before-dns.sh` exits 65 (`CP_DEPENDENT_STATUS`) for
 request-path failures, so attestation failures stay immediate. Two cases are
 never re-run, because the gate has DNS and certificate side effects there:
 
 - a first deployment, which swaps the cold CNAME;
-- a run that already swapped it, which turns 65 into 1.
+- any run that swapped one. Before the swap, verify writes the file named
+  by `GATE_HOLD_NO_RERUN_MARK`, which `gate_hold` never re-runs. This is
+  keyed on the DNS state verify detects, so it also covers a failed first
+  deployment whose MIG already exists. Such a run also turns 65 into 1.
+
+Verify traps TERM and INT, so a killed run (hold deadline, peer failure, step
+timeout) still restores the cold CNAME.
 
 **Recovery** still verifies the restored template with the plain gate. If
 that exits 65, the region stays drained and its state is `recovery-failed`,
@@ -230,7 +272,7 @@ lease, which is exclusive with both lanes. That is a separate change to
 ## Not verified
 
 - **How long `control_plane_core` stays down during a bad control-plane ramp.**
-  The 30-minute bound per gate (45 per job) assumes the control plane's own canary and drain watch
+  The 20-minute bound per gate (20 per job) assumes the control plane's own canary and drain watch
   (3 and 15 minutes) roll back a bad revision well inside it. It is a
   measured worst case for neither.
 - **Starvation inside the monitor.** The monitor's ledger probes share a
@@ -240,6 +282,6 @@ lease, which is exclusive with both lanes. That is a separate change to
   2026-11-08 to 11-13 over 7 gateway rollouts (387 executions per monitor):
   no failed execution, and the slowest was 255 s, against 300 s.
 - **The gateway's own rollout cost while held.** A held region stays drained:
-  at most 30 minutes per gate, and 45 minutes in total across the job.
+  at most 20 minutes per gate, and 20 minutes in total across the job.
 - **aws and azure gateways.** They are not concurrent (rule 3); their gates
   have the same coupling and are not yet attributable.

@@ -7,13 +7,17 @@ the matching test to fail.
 from __future__ import annotations
 
 import copy
+import email.message
 import hashlib
 import importlib.util
 import io
 import json
+import ssl
 import sys
 import threading
 import urllib.error
+import urllib.request
+import urllib.response
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +26,7 @@ import pytest
 from scripts.deploy import cloud_rollout as rollout
 
 API_SERVICE_ANSWERS = rollout.api_service_answers  # kept before the autouse stub
+BUILD_OPENER = urllib.request.build_opener  # kept before any test replaces it
 
 QR = "https://github.com/Lore-Hex/quill-router/actions/runs/{}"
 QCP = "https://github.com/Lore-Hex/quill-cloud-proxy/actions/runs/{}"
@@ -68,11 +73,18 @@ def make_system(version):
         if not component_health[(cloud, component)]:
             raise rollout.Refused(f"{cloud}/{component} unhealthy")
 
-    coordinator = rollout.Coordinator(store, probe, lambda: clock[0], component_probe)
+    evidence = {}  # cloud -> release SHAs its evidence reads; default follows health
+
+    def releases(cloud):
+        if cloud in evidence:
+            return list(evidence[cloud])
+        return [] if health[cloud] is None else [health[cloud]]
+
+    coordinator = rollout.Coordinator(store, probe, lambda: clock[0], component_probe, releases)
     if version == rollout.V3:
         assert coordinator.upgrade() is True
     return SimpleNamespace(store=store, health=health, component_health=component_health,
-                           probed=probed, clock=clock, coordinator=coordinator)
+                           probed=probed, clock=clock, coordinator=coordinator, evidence=evidence)
 
 
 @pytest.fixture
@@ -190,6 +202,42 @@ def test_v3_a_leased_cloud_never_becomes_the_holdback(v3):
     with pytest.raises(rollout.Refused, match="no unchanged healthy cloud"):
         hold(v3, "aws", "gateway", run=2)
     assert set(v3.store.record["leases"]) == {"gcp/control-plane"}
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_leasing_a_changed_holdback_is_refused(version):
+    """Follow-up to #2568 review: v2 had the same gap."""
+    system = make_system(version)
+    hold(system, "gcp", "control-plane")
+    assert system.store.record["holdback"]["cloud"] == "aws"
+    system.health["aws"] = "b" * 40  # changed outside any lease
+    before = (copy.deepcopy(system.store.record), system.store.generation)
+    with pytest.raises(rollout.Refused, match="refusing to lease over it"):
+        hold(system, "aws", "gateway", run=2)
+    assert (system.store.record, system.store.generation) == before
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_a_changed_holdback_with_failing_services_is_still_refused(version):
+    """Review of #2573: a down gateway must not hide a readable release change."""
+    system = make_system(version)
+    hold(system, "gcp", "control-plane")
+    system.health["aws"] = None  # probe_cloud fails: the gateway is down
+    system.evidence["aws"] = ["b" * 40]  # but the release evidence reads, and changed
+    before = (copy.deepcopy(system.store.record), system.store.generation)
+    with pytest.raises(rollout.Refused, match="refusing to lease over it"):
+        hold(system, "aws", "gateway", run=2)
+    assert (system.store.record, system.store.generation) == before
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_a_down_holdback_may_still_be_leased_to_repair_it(version):
+    system = make_system(version)
+    hold(system, "gcp", "control-plane")
+    system.health["aws"] = None
+    lease = hold(system, "aws", "gateway", run=2)
+    assert lease["cloud"] == "aws"
+    assert system.store.record["holdback"]["cloud"] == "azure"
 
 
 def test_v3_leasing_the_holdback_moves_protection_to_the_free_cloud(v3):
@@ -381,6 +429,262 @@ def test_probe_component_requires_stable_release_evidence(monkeypatch):
     monkeypatch.setattr(rollout, "api_service_answers", lambda plane: None)
     with pytest.raises(rollout.Refused, match="not verified healthy"):
         rollout.probe_component("gcp", "control-plane")
+
+
+def fake_planes(monkeypatch, *, aws_release="a" * 40, aws_gateway_ok=True, aws_evidence_ok=True):
+    """The real probe_cloud and observed_releases against a fake fetch."""
+    def fetch(url):
+        for cloud, (plane, gateway) in rollout.PLANES.items():
+            if url == f"{plane}/trust/control-plane.json":
+                if cloud == "aws" and not aws_evidence_ok:
+                    raise OSError("unreachable")
+                return {"release": aws_release if cloud == "aws" else "a" * 40, "api_base_url": f"{gateway}/v1"}
+            if url == f"{plane}/health":
+                return {"status": "ok"}
+            if url == f"{gateway}/health":
+                return {"status": "ok" if cloud != "aws" or aws_gateway_ok else "down"}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(rollout, "fetch", fetch)
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_default_coordinator_reads_the_evidence_past_failing_services(monkeypatch, version):
+    """The repro from the #2573 review, through the real default probes."""
+    fake_planes(monkeypatch)
+    store = MemoryStore()
+    coordinator = rollout.Coordinator(store, None, lambda: 10_000, lambda c, k: None)
+    if version == rollout.V3:
+        coordinator.upgrade()
+    cp = coordinator.acquire("gcp", QR.format(1), "control-plane", 3600)
+    assert store.record["holdback"]["cloud"] == "aws"
+    fake_planes(monkeypatch, aws_release="b" * 40, aws_gateway_ok=False)
+    with pytest.raises(rollout.Refused, match="refusing to lease over it"):
+        coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    with pytest.raises(rollout.Refused):
+        coordinator.check("gcp", cp["operation_id"])
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_default_coordinator_leases_a_holdback_whose_evidence_is_unreadable(monkeypatch, version):
+    fake_planes(monkeypatch)
+    store = MemoryStore()
+    coordinator = rollout.Coordinator(store, None, lambda: 10_000, lambda c, k: None)
+    if version == rollout.V3:
+        coordinator.upgrade()
+    coordinator.acquire("gcp", QR.format(1), "control-plane", 3600)
+    fake_planes(monkeypatch, aws_gateway_ok=False, aws_evidence_ok=False)
+    lease = coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    assert lease["cloud"] == "aws"
+    assert store.record["holdback"]["cloud"] == "azure"
+
+
+@pytest.mark.parametrize("answers,expected", [
+    ([{"release": "c" * 40}, {"release": "c" * 40}], ["c" * 40, "c" * 40]),
+    ([{"release": "c" * 40}, {"release": "d" * 40}], ["c" * 40, "d" * 40]),
+    # No document came back: the read adds nothing.
+    ([OSError("down"), {"release": "d" * 40}], ["d" * 40]),
+    ([OSError("down"), rollout.Redirected("redirect")], []),
+    ([ssl.SSLCertVerificationError("bad certificate"), OSError("down")], []),  # also a ValueError
+    # An answer without a valid release is evidence, and never the protected release.
+    ([{"release": "not-a-sha"}, {}], ["", ""]),
+    ([{"release": "c" * 40}, {"release": "local"}], ["c" * 40, ""]),
+    ([{"release": None}, {"release": "C" * 40}], ["", ""]),
+    ([{"release": ["c" * 40]}, {"release": 1234567}], ["", ""]),
+    ([OSError("down"), ValueError("bad json")], [""]),
+    ([rollout.Refused("invalid cloud health response"),
+      rollout.Refused("oversized cloud health response")], ["", ""]),
+])
+def test_observed_releases_reads_the_evidence_twice_without_health(monkeypatch, answers, expected):
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        answer = answers[len(calls) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(rollout, "fetch", fetch)
+    assert rollout.observed_releases("aws") == expected
+    assert calls == ["https://aws.trustedrouter.com/trust/control-plane.json"] * 2
+
+
+class CannedHTTPS(urllib.request.HTTPSHandler):
+    """Canned answers under the real opener: urllib's own error and redirect
+    handling, NoRedirect and fetch all run as they do against a live cloud."""
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+
+    def https_open(self, request):
+        outcome = self.answer(request.full_url.split("?")[0])
+        if isinstance(outcome, Exception):
+            raise outcome
+        status, body, *location = outcome
+        headers = email.message.Message()
+        if location:
+            headers["Location"] = location[0]
+        response = urllib.response.addinfourl(io.BytesIO(body), headers, request.full_url, status)
+        response.msg = "canned"
+        return response
+
+
+def evidence_document(cloud, **fields):
+    document = {"release": "a" * 40, "api_base_url": f"{rollout.PLANES[cloud][1]}/v1", **fields}
+    return json.dumps(document).encode()
+
+
+def canned_planes(monkeypatch, aws_evidence=None):
+    """Every plane healthy at release a; `aws_evidence` is what aws's evidence
+    URL answers (a list answers one request after another)."""
+    served = []
+
+    def answer(url):
+        served.append(url)
+        for cloud, (plane, gateway) in rollout.PLANES.items():
+            if url == f"{plane}/trust/control-plane.json":
+                if cloud == "aws" and aws_evidence is not None:
+                    return aws_evidence.pop(0) if isinstance(aws_evidence, list) else aws_evidence
+                return 200, evidence_document(cloud)
+            if url in (f"{plane}/health", f"{gateway}/health"):
+                return 200, b'{"status": "ok"}'
+        raise AssertionError(url)
+
+    monkeypatch.setattr(rollout.urllib.request, "build_opener",
+                        lambda *handlers: BUILD_OPENER(CannedHTTPS(answer), *handlers))
+    monkeypatch.setattr(rollout.time, "sleep", lambda seconds: None)
+    return served
+
+
+def default_coordinator_protecting_aws(monkeypatch, version):
+    """The default probes over canned HTTPS, with gcp leased and aws the holdback."""
+    canned_planes(monkeypatch)
+    store = MemoryStore()
+    coordinator = rollout.Coordinator(store, None, lambda: 10_000, lambda c, k: None)
+    if version == rollout.V3:
+        coordinator.upgrade()
+    lease = coordinator.acquire("gcp", QR.format(1), "control-plane", 3600)
+    assert store.record["holdback"] == {"cloud": "aws", "release": "a" * 40, "checked_at": 10_000}
+    return store, coordinator, lease
+
+
+AWS_EVIDENCE = "https://aws.trustedrouter.com/trust/control-plane.json"
+# A 2xx answer at the evidence URL that is not the protected release's document.
+ANSWERED_WITHOUT_ITS_RELEASE = {
+    "release local": (200, evidence_document("aws", release="local")),  # TR_RELEASE dropped
+    "release eu": (200, evidence_document("aws", release="eu")),  # an old revision
+    "release azure": (200, evidence_document("aws", release="azure")),
+    "release null": (200, evidence_document("aws", release=None)),
+    "release missing": (200, b'{"api_base_url": "https://api-aws.trustedrouter.com/v1"}'),
+    "release uppercase": (200, evidence_document("aws", release="A" * 40)),
+    "release too short": (200, evidence_document("aws", release="a" * 6)),
+    "release a number": (200, evidence_document("aws", release=1234567)),
+    "release a list": (200, evidence_document("aws", release=["a" * 40])),
+    "empty object": (200, b"{}"),
+    "body a list": (200, b'["' + b"a" * 40 + b'"]'),
+    "body a string": (200, b'"' + b"a" * 40 + b'"'),
+    "body null": (200, b"null"),
+    "body html": (200, b"<!doctype html><title>ok</title>"),
+    "body empty": (200, b""),
+    "body not utf-8": (200, b"\xff\xfe{}"),
+    "body truncated json": (200, evidence_document("aws")[:-1]),
+    # The protected release itself, padded past the size limit.
+    "body oversize": (200, evidence_document("aws") + b" " * rollout.MAX_BYTES),
+    "204 no content": (204, b""),
+}
+# No document was served: the cloud is down, and may be leased to repair it.
+SERVED_NO_DOCUMENT = {
+    "unreachable": urllib.error.URLError("connection refused"),
+    "timeout": TimeoutError("timed out"),
+    "bad certificate": urllib.error.URLError(ssl.SSLCertVerificationError("certificate has expired")),
+    "500": (500, b"internal error"),
+    "503 on every attempt": (503, b""),
+    "404": (404, b'{"detail": "Not Found"}'),
+    "404 with another release": (404, evidence_document("aws", release="b" * 40)),
+    "403": (403, b"forbidden"),
+    "302 redirect": (302, b"", "https://trustedrouter.com/trust/control-plane.json"),
+    "307 redirect": (307, b"", "https://trustedrouter.com/trust/control-plane.json"),
+    "301 to a login page": (301, b"", "https://example.com/login"),
+}
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+@pytest.mark.parametrize("answer", ANSWERED_WITHOUT_ITS_RELEASE.values(), ids=ANSWERED_WITHOUT_ITS_RELEASE)
+def test_default_coordinator_refuses_a_holdback_answering_without_its_release(monkeypatch, version, answer):
+    """Round 4 of the #2573 review: with its plane and gateway healthy, a
+    holdback that answered 200 without a valid release was leased over."""
+    store, coordinator, lease = default_coordinator_protecting_aws(monkeypatch, version)
+    served = canned_planes(monkeypatch, aws_evidence=answer)
+    before = (copy.deepcopy(store.record), store.generation)
+    with pytest.raises(rollout.Refused, match="refusing to lease over it"):
+        coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    assert (store.record, store.generation) == before
+    assert served == [AWS_EVIDENCE] * 2  # decided on the evidence alone, read twice
+    # Not a deadlock: the refusal lasts only while another rollout relies on
+    # aws as its holdback. Once that lease is gone, aws can be leased and repaired.
+    coordinator.release("gcp", lease["operation_id"], True)
+    assert store.record["holdback"] is None
+    repair = coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    assert repair["cloud"] == "aws"
+    assert store.record["holdback"]["cloud"] in {"gcp", "azure"}
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+@pytest.mark.parametrize("answer", SERVED_NO_DOCUMENT.values(), ids=SERVED_NO_DOCUMENT)
+def test_default_coordinator_leases_a_holdback_that_served_no_document(monkeypatch, version, answer):
+    store, coordinator, _ = default_coordinator_protecting_aws(monkeypatch, version)
+    canned_planes(monkeypatch, aws_evidence=answer)
+    lease = coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    assert lease["cloud"] == "aws"
+    assert store.record["holdback"]["cloud"] == "azure"
+
+
+UNCHANGED = (200, evidence_document("aws"))
+LOCAL = (200, evidence_document("aws", release="local"))
+DOWN = (500, b"internal error")
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+@pytest.mark.parametrize("first,second,leasable", [
+    (UNCHANGED, UNCHANGED, True),
+    (UNCHANGED, DOWN, True),
+    (DOWN, UNCHANGED, True),
+    (UNCHANGED, LOCAL, False),
+    (LOCAL, UNCHANGED, False),
+    (DOWN, LOCAL, False),
+    (LOCAL, DOWN, False),
+    (UNCHANGED, (200, b"<html>"), False),
+    ((200, b"[]"), DOWN, False),
+])
+def test_default_coordinator_refuses_on_either_of_the_two_reads(monkeypatch, version, first, second, leasable):
+    store, coordinator, _ = default_coordinator_protecting_aws(monkeypatch, version)
+    # After the two evidence reads, aws is not asked again: it is being leased.
+    served = canned_planes(monkeypatch, aws_evidence=[first, second])
+    if leasable:
+        assert coordinator.acquire("aws", QR.format(3), "control-plane", 3600)["cloud"] == "aws"
+        assert store.record["holdback"]["cloud"] == "azure"
+    else:
+        with pytest.raises(rollout.Refused, match="refusing to lease over it"):
+            coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    assert served[:2] == [AWS_EVIDENCE] * 2
+
+
+@pytest.mark.parametrize("answer,raised", [
+    ((302, b"", "https://trustedrouter.com/health"), rollout.Redirected),
+    ((200, b"[]"), rollout.Refused),
+    ((200, b" " * (rollout.MAX_BYTES + 1)), rollout.Refused),
+    ((200, b"<html>"), ValueError),
+    ((404, b"{}"), urllib.error.HTTPError),
+])
+def test_fetch_tells_a_redirect_from_an_answer_that_is_not_a_document(monkeypatch, answer, raised):
+    canned_planes(monkeypatch, aws_evidence=answer)
+    with pytest.raises(raised) as caught:
+        rollout.fetch(AWS_EVIDENCE)
+    assert isinstance(caught.value, rollout.Redirected) is (raised is rollout.Redirected)
+    with pytest.raises(rollout.Refused, match="aws is not a verified healthy holdback"):
+        rollout.probe_cloud("aws")  # every one of them still fails the whole-cloud probe
 
 
 def test_v2_release_still_probes_the_whole_cloud(v2):

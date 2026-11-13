@@ -110,6 +110,10 @@ class Busy(Refused):
     """A live reservation conflicts with this request."""
 
 
+class Redirected(Refused):
+    """The cloud answered with a redirect, not a document of its own."""
+
+
 class Conflict(RuntimeError):
     """Another writer changed the journal; reread, never overwrite."""
 
@@ -199,7 +203,7 @@ class GCSStore:
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req: Any, fp: Any, code: Any, msg: Any,
                          headers: Any, newurl: Any) -> None:
-        raise Refused("cloud-local health must not redirect to another cloud")
+        raise Redirected("cloud-local health must not redirect to another cloud")
 
 
 def fetch(url: str) -> dict[str, Any]:
@@ -333,6 +337,38 @@ def probe_component(cloud: str, component: str) -> None:
             raise Refused("cloud-local release evidence missing, changing, or wrong cloud")
     except (OSError, ValueError, Refused) as exc:
         raise Refused(f"{cloud}/{component} is not verified healthy") from exc
+
+
+def observed_releases(cloud: str) -> list[str]:
+    """The release evidence of `cloud`, read twice with no health checks.
+
+    One entry per read that got an answer: the release SHA when the document
+    carries a valid one, else "". No lease or holdback records "", so an
+    invalid answer always reads as changed. Used before leasing over a
+    protected cloud: a cloud whose services are failing may still be
+    repaired, but not one that answers with anything other than the release
+    it was protected at.
+
+    A read adds nothing only when the cloud served no document: a transport
+    failure, an HTTP error status (404 and 5xx included) or a redirect. That
+    is a dead cloud, and it stays leasable so it can be repaired. A 2xx
+    answer is never that: a missing or non-SHA release ("local" when
+    TR_RELEASE is dropped, "eu" or "azure" from an old revision, null, an
+    uppercase SHA), a body that is not a JSON object, one that does not
+    parse and one over MAX_BYTES all count as changed. Something is serving
+    there that is not the protected release's evidence.
+    """
+    plane = PLANES[cloud][0]
+    seen: list[str] = []
+    for _ in range(2):
+        try:
+            release = fetch(f"{plane}/trust/control-plane.json").get("release")
+        except (OSError, Redirected):
+            continue
+        except (ValueError, Refused):
+            release = None
+        seen.append(release if isinstance(release, str) and SHA.fullmatch(release) else "")
+    return seen
 
 
 def lease_key(version: int, cloud: str, component: str) -> str:
@@ -550,9 +586,13 @@ def admission_blocker(state: dict[str, Any], cloud: str, ahead: list[dict[str, A
 class Coordinator:
     def __init__(self, store: Store, probe: Callable[[str], str] | None = None,
                  now: Callable[[], float] = time.time,
-                 component_probe: Callable[[str, str], Any] | None = None) -> None:
+                 component_probe: Callable[[str, str], Any] | None = None,
+                 releases: Callable[[str], list[str]] | None = None) -> None:
         self.store, self.probe, self.now = store, probe or probe_cloud, now
         self.component_probe = component_probe or probe_component
+        # How a protected cloud's release is read without its health checks.
+        # With an injected probe (tests), the probe's answer stands in for it.
+        self.releases = releases or (observed_releases if probe is None else self._probe_releases)
         # ticket -> (heartbeat_at last seen, this host's time it was first seen)
         self.observed: dict[str, tuple[int, float]] = {}
 
@@ -600,6 +640,12 @@ class Coordinator:
                 continue
         raise Refused("release journal contention; no unguarded deployment permitted")
 
+    def _probe_releases(self, cloud: str) -> list[str]:
+        try:
+            return [self.probe(cloud)]
+        except Refused:
+            return []
+
     def holdback(self, excluded: set[str], previous: dict[str, Any] | None) -> dict[str, Any]:
         """The protected cloud for a grant.
 
@@ -608,13 +654,23 @@ class Coordinator:
         for it. Otherwise a change outside any lease could be laundered by
         moving protection to another cloud, which a v3 second grant on an
         already-leased cloud would do on every rollout. Only when the previous
-        holdback is itself being leased is a new one chosen.
+        holdback is itself being leased is a new one chosen, and even then
+        the previous holdback is probed first: a release that changed outside
+        any lease is refused, not leased over unseen. That check reads the
+        release evidence alone, so failing services cannot hide a change. It
+        refuses when the evidence is readable and differs or is invalid (see
+        observed_releases). Only a protected cloud whose evidence is
+        unreadable may still be leased, to repair it.
         """
         if previous and previous["cloud"] not in excluded:
             release = self.probe(previous["cloud"])
             if release != previous["release"]:
                 raise Refused("protected cloud changed outside the rollout guard")
             return {"cloud": previous["cloud"], "release": release, "checked_at": int(self.now())}
+        if previous:
+            changed = [r for r in self.releases(previous["cloud"]) if r != previous["release"]]
+            if changed:
+                raise Refused("protected cloud changed outside the rollout guard; refusing to lease over it")
         candidates = [c for c in CLOUDS if c not in excluded]
         if previous and previous["cloud"] in candidates:
             candidates.remove(previous["cloud"])
