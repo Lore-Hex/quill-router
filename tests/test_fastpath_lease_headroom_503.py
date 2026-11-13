@@ -752,10 +752,12 @@ def test_route_on_keeps_the_402_for_a_balance_with_no_lease() -> None:
     assert error.detail["error"]["type"] == "insufficient_credits"
 
 
-def test_the_setting_is_off_by_default_and_a_literal_in_rollout() -> None:
+def test_the_setting_is_off_by_default_and_on_as_a_literal_in_rollout() -> None:
     from pathlib import Path
 
+    # Off in code, so no revision inherits it; production turns it on in
+    # rollout.sh's literal, before the enabler admits near-floor balances.
     assert Settings(environment="test").fastpath_lease_headroom_503 is False
     rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
-    assert rollout.count('"TR_FASTPATH_LEASE_HEADROOM_503=false"') == 1
-    assert "TR_FASTPATH_LEASE_HEADROOM_503=true" not in rollout
+    assert rollout.count('"TR_FASTPATH_LEASE_HEADROOM_503=true"') == 1
+    assert "TR_FASTPATH_LEASE_HEADROOM_503=false" not in rollout

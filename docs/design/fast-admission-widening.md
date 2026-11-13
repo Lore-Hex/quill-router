@@ -1447,8 +1447,9 @@ step.
    insufficient-credit precheck answer 503 when the shortfall sits in
    leases. Money code: a differential test against today's authorize and
    the conformance suite. Order: before WS6.
-   **Built** (dark): `fastpath_lease_headroom_503`, the literal
-   `TR_FASTPATH_LEASE_HEADROOM_503=false` in `rollout.sh`. The route passes
+   **Built** (dark until 2026-11-13, then on): `fastpath_lease_headroom_503`,
+   the literal `TR_FASTPATH_LEASE_HEADROOM_503=true` in `rollout.sh`, turned
+   on before the enabler's $30 join balance brought in near-floor balances. The route passes
    it to `SpannerStore.authorize_gateway_typed`; off, nothing new is read
    and every answer is today's. On, the rule is the design's: a hold the
    credit rows cannot cover (no shard, and not their sum, which a
