@@ -1495,6 +1495,7 @@
       "status": 1,
       "id": "minimax/minimax-m2.7",
       "upstream_id": "minimaxai/minimax-m2.7",
+      "retirement_at": "2026-11-14T08:00:00Z",
       "context_length": 196608,
       "max_output_tokens": 196608,
       "supported_features": [
@@ -1536,6 +1537,7 @@
       "status": 1,
       "id": "minimax/minimax-m3",
       "upstream_id": "minimaxai/minimax-m3",
+      "retirement_at": "2026-11-14T08:00:00Z",
       "context_length": 524300,
       "max_output_tokens": 524288,
       "input_token_price_per_m": 300000,
