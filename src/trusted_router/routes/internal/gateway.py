@@ -1952,6 +1952,7 @@ def _authorize_gateway_sync_impl(
             raise _lease_headroom_error(
                 workspace, reservation=reservation, estimate=estimate, key_id=api_key.hash,
                 request_id=getattr(request.state, "request_id", None),
+                trace_id=_cloud_trace_id(request),
             )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             record_free_credit_exhausted_safely(workspace.id)
@@ -3233,19 +3234,55 @@ LEASE_HEADROOM_MESSAGE = (
 LEASE_HEADROOM_RETRY_AFTER = "1"
 
 
+#: The trace id Cloud Run gives a request: 32 hex digits, the first part of
+#: X-Cloud-Trace-Context ("TRACE_ID/SPAN_ID;o=1") or the second of a W3C
+#: traceparent ("00-TRACE_ID-SPAN_ID-01"). Its request log carries the same
+#: id as "projects/PROJECT/traces/TRACE_ID".
+_CLOUD_TRACE_CONTEXT = re.compile(r"^([0-9a-fA-F]{32})(?:[/;]|$)")
+_TRACEPARENT = re.compile(r"^[0-9a-fA-F]{2}-([0-9a-fA-F]{32})-")
+
+
+def _cloud_trace_id(request: Request) -> str:
+    """The request's Cloud Trace id, lowercase, or "-" when it has none.
+
+    The lease-headroom line carries it so the deploy gate
+    (scripts/deploy/assert_no_billing_5xx.sh) can pair each authorize 503 in
+    Cloud Run's request log with this line by trace: the request log records
+    the status and URL only, never a response header or body.
+    """
+    headers = getattr(request, "headers", None) or {}
+    for header, pattern in (
+        ("x-cloud-trace-context", _CLOUD_TRACE_CONTEXT),
+        ("traceparent", _TRACEPARENT),
+    ):
+        match = pattern.match(str(headers.get(header, "") or "").strip())
+        if match and match.group(1).strip("0"):
+            return match.group(1).lower()
+    return "-"
+
+
 def _lease_headroom_error(
     workspace: Any, *, reservation: int, estimate: int, key_id: str, request_id: str | None,
+    trace_id: str = "-",
 ) -> Exception:
     """503 with Retry-After for a hold the balance covers but the headroom
     outside the fast path's leases does not
     (docs/design/fast-admission-and-batched-settlement.md section 4.4). Its
     type is service_unavailable, so the enclave's billing backoff, which
     remembers only an authorize 402 of type insufficient_credits, never
-    caches it, and its authorize retry treats it as any 503."""
+    caches it, and its authorize retry treats it as any 503.
+
+    The line is the 503's only machine-readable mark: the billing 5xx deploy
+    gate pairs it with the request log by trace_id, and the log-based
+    counter trustedrouter_gateway_lease_headroom_503 counts it for the
+    authorize-503 alert and the rate (scripts/deploy/gateway_reliability.sh).
+    Its prefix, "INFO <logger> billing.lease_headroom_unavailable ", and
+    "trace=<id>" are read by both, so a change to either is a change to them."""
     logger.info(
         "billing.lease_headroom_unavailable workspace_id=%s key_id=%s request_id=%s "
-        "reserved_microdollars=%d estimated_microdollars=%d",
+        "reserved_microdollars=%d estimated_microdollars=%d trace=%s",
         _log_value(workspace.id), _log_value(key_id), _log_value(request_id), reservation, estimate,
+        _log_value(trace_id),
     )
     return api_error(
         503,

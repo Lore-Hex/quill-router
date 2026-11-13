@@ -725,9 +725,11 @@ ENV_VARS=(
   # The 503 for headroom in leases (docs/design/fast-admission-widening.md
   # section 11, PR 7): a hold the balance covers but the headroom outside
   # the fast path's leases does not is answered 503 with Retry-After, not
-  # 402. A literal, so no revision inherits it; false is the way back. It
-  # moves with activation (PR 8), before WS6.
-  "TR_FASTPATH_LEASE_HEADROOM_503=false"
+  # 402. A literal, so no revision inherits it; false is the way back. On
+  # since 2026-11-13, before the enabler admits balances near the floor
+  # (section 8.2: Joseph's $30 join balance), so a hold that meets a lease
+  # holding the rest is retried, never refused.
+  "TR_FASTPATH_LEASE_HEADROOM_503=true"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md
   # section 5): off, alert, enforce. Off until Go reads the policy member and

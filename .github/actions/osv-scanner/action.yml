@@ -1,0 +1,39 @@
+name: osv-scanner
+description: >-
+  Run OSV-Scanner exactly as google/osv-scanner-action's osv-scanner-action and
+  osv-reporter-action (v2.7.0) did: the same image, now pinned by digest, run
+  with the docker CLI on the workspace, with the newline-separated arguments
+  passed as one argument to the image's entrypoint (which splits them).
+inputs:
+  scan-args:
+    description: Arguments, one per line.
+    required: true
+  tool:
+    description: "scanner (osv-scanner-action) or reporter (osv-reporter-action)."
+    default: scanner
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SCAN_ARGS: ${{ inputs.scan-args }}
+        TOOL: ${{ inputs.tool }}
+        # ghcr.io/google/osv-scanner-action:v2.7.0 (multi-arch index).
+        IMAGE: ghcr.io/google/osv-scanner-action@sha256:d54770fe0b09493894e76a02aaed9f51a0513fa57c5186452a755d257b0068a6
+      run: |
+        set -euo pipefail
+        case "$TOOL" in
+          scanner) entrypoint=() ;;
+          reporter) entrypoint=(--entrypoint /root/osv-reporter) ;;
+          *) echo "::error::osv-scanner: tool must be scanner or reporter"; exit 1 ;;
+        esac
+        # The docker action runner mounted the workspace at /github/workspace,
+        # made it the working directory and passed the GitHub context env.
+        docker run --rm "${entrypoint[@]}" \
+          --workdir /github/workspace \
+          -v "${GITHUB_WORKSPACE}:/github/workspace" \
+          -e CI=true -e GITHUB_ACTIONS=true -e GOTOOLCHAIN=auto \
+          -e GITHUB_WORKSPACE=/github/workspace \
+          -e GITHUB_REPOSITORY -e GITHUB_SHA -e GITHUB_REF -e GITHUB_SERVER_URL \
+          -e GITHUB_RUN_ID -e GITHUB_EVENT_NAME -e GITHUB_BASE_REF -e GITHUB_HEAD_REF \
+          "$IMAGE" "$SCAN_ARGS"

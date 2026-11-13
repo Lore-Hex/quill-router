@@ -10,6 +10,7 @@ from scripts.pricing.providers import (
     alibaba,
     anthropic,
     arcee,
+    atlas_cloud,
     chutes,
     cloudflare_workers_ai,
     crusoe,
@@ -110,6 +111,10 @@ _CASES = [
          datetime(2027, 4, 1, tzinfo=UTC), "openai/gpt-6-luna"),
     Case("sail-research", "openai/gpt-oss-120b", "openai/gpt-oss-120b",
          datetime(2026, 11, 19, tzinfo=UTC), None),
+    Case("atlas-cloud", "minimax/minimax-m3", "minimaxai/minimax-m3",
+         datetime(2026, 11, 14, 8, tzinfo=UTC), None),
+    Case("atlas-cloud", "minimax/minimax-m2.7", "minimaxai/minimax-m2.7",
+         datetime(2026, 11, 14, 8, tzinfo=UTC), None),
     Case("deepinfra", "inclusionai/ling-3.1-flash", "inclusionAI/Ling-3.1-flash",
          datetime(2026, 11, 15, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("tinfoil", "moonshotai/kimi-k3", "kimi-k3",
@@ -262,6 +267,7 @@ _MANIFESTS = {
     "databricks": databricks.MANIFEST_PATH,
     "openai": openai.MANIFEST_PATH,
     "sail-research": sail_research.MANIFEST_PATH,
+    "atlas-cloud": atlas_cloud.MANIFEST_PATH,
 }
 
 

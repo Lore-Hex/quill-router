@@ -109,6 +109,9 @@ OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT = datetime(2027, 4, 1, 0, 0, t
 # Sail Research's November 12 notice retires openai/gpt-oss-120b on
 # 19 Nov 2026 (date only, so 00:00 UTC conservatively); requests then fail.
 SAIL_GPT_OSS_120B_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
+# Atlas Cloud's November 13 notice takes MiniMax M3 and M2.7 offline at the
+# end of Friday 2026-11-13 Pacific Time, i.e. midnight PST (08:00 UTC Nov 14).
+ATLAS_MINIMAX_RETIREMENT_AT = datetime(2026, 11, 14, 8, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1441,6 +1444,21 @@ _RETIREMENTS = (
         model_ids=frozenset({"openai/gpt-oss-120b"}),
         upstream_ids=frozenset({"openai/gpt-oss-120b"}),
         effective_at=SAIL_GPT_OSS_120B_RETIREMENT_AT,
+    ),
+    # Atlas Cloud's November 13 notice (colin.mo@atlascloud.ai) takes
+    # minimaxai/minimax-m3 and minimaxai/minimax-m2.7 offline at the end of
+    # Friday 2026-11-13 PT (midnight PST = 2026-11-14 08:00 UTC), citing
+    # "abnormalities" under investigation, so this may be temporary; drop the
+    # entry if Atlas restores them. The notice also names
+    # minimaxai/minimax-m3.1-flash, which Atlas's manifest never listed, so
+    # there is no route to retire. Its suggested alternatives (DeepSeek, GLM,
+    # Kimi) are other model families with no MiniMax successor on Atlas, so
+    # none is quoted. Retire only Atlas's routes; other providers' stay.
+    _Retirement(
+        provider="atlas-cloud",
+        model_ids=frozenset({"minimax/minimax-m3", "minimax/minimax-m2.7"}),
+        upstream_ids=frozenset({"minimaxai/minimax-m3", "minimaxai/minimax-m2.7"}),
+        effective_at=ATLAS_MINIMAX_RETIREMENT_AT,
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
