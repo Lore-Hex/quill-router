@@ -349,11 +349,12 @@ def _finalize_outcome(needs: dict) -> tuple[str, int]:
 def _needs(**overrides: dict) -> dict:
     names = ("admit-cloud", "confirm-regions-ready", "migrate-schema", "sync-runtime-secrets",
              "confirm-current-main", "confirm-still-on-main", "deploy", "rollout-secondaries",
-             "public-surface-companion", "settle-drain-worker", "verify-cloud-complete")
+             "public-surface-companion", "settle-drain-worker", "verify-cloud-complete", "select-release")
     assert set(names) == set(_workflow()["jobs"]["finalize-cloud"]["needs"])
     needs = {name: {"result": "success", "outputs": {}} for name in names}
     needs["confirm-current-main"]["outputs"] = {"proceed": "true"}
     needs["confirm-still-on-main"]["outputs"] = {"on_main": "true"}
+    needs["select-release"]["outputs"] = {"proceed": "true"}
     needs.update(overrides)
     return needs
 
@@ -396,6 +397,36 @@ def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
 
 AFTER_DEPLOY = ("deploy", "rollout-secondaries", "public-surface-companion", "settle-drain-worker",
                 "verify-cloud-complete")
+
+
+def _unstarted_train(selection: str = "success") -> dict:
+    skipped = {"result": "skipped", "outputs": {}}
+    return _needs(**{
+        "select-release": {"result": selection, "outputs": {"proceed": "false"}},
+        **{name: skipped for name in (*AFTER_DEPLOY, "confirm-regions-ready", "confirm-still-on-main",
+                                      "migrate-schema", "sync-runtime-secrets")},
+    })
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+@pytest.mark.parametrize("selection", ["success", "failure", "cancelled"])
+def test_unstarted_or_already_delivered_train_releases_lease(selection):
+    # A failed read/receipt upload stays a red job; there is no production
+    # mutation to recover, so other releases can still get admission.
+    assert _finalize_outcome(_unstarted_train(selection)) == ("success", 0)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+@pytest.mark.parametrize("selection", ["success", "failure", "cancelled"])
+@pytest.mark.parametrize("mutation", [*AFTER_DEPLOY, "migrate-schema", "sync-runtime-secrets"])
+def test_unstarted_train_never_releases_after_an_unexpected_mutation(selection, mutation):
+    needs = _unstarted_train(selection)
+    needs[mutation] = {"result": "success", "outputs": {}}
+    assert _finalize_outcome(needs) == ("failure", 1)
+
+
+def test_skipped_selector_is_not_evidence_of_safe_coalescing():
+    assert _finalize_outcome(_unstarted_train("skipped")) == ("failure", 1)
 
 
 def _regions_refused(**overrides: dict) -> dict:
@@ -508,7 +539,8 @@ def test_ancestry_is_rechecked_after_admission_without_giving_up_the_lease() -> 
     assert {"admit-cloud", "migrate-schema", "sync-runtime-secrets"} <= set(still["needs"])
     run = still["steps"][1]["run"]
     assert "superseded_deploy.py --mode ancestry" in run
-    assert '--base "${GITHUB_SHA}" --head "${latest_sha}"' in run
+    assert '--base "${RELEASE_COMMIT}" --head "${latest_sha}"' in run
+    assert still["env"]["RELEASE_COMMIT"] == "${{ needs.select-release.outputs.commit }}"
     assert 'echo "on_main=false" >> "$GITHUB_OUTPUT"' in run
     assert "confirm-still-on-main" in jobs["deploy"]["needs"]
     assert "needs.confirm-still-on-main.outputs.on_main == 'true'" in jobs["deploy"]["if"]
@@ -640,7 +672,8 @@ def test_follow_main_dispatch_executes_both_workflow_guards(tmp_path, monkeypatc
     log = _fake_gh(tmp_path, monkeypatch, responses=responses)
     result = subprocess.run(  # noqa: S603 - actual workflow shell, only gh is faked
         ["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,  # noqa: S607
-        env={**os.environ, "GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "aaa", "GITHUB_OUTPUT": str(tmp_path / "output")},
+        env={**os.environ, "GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "aaa", "RELEASE_COMMIT": "aaa",
+             "GITHUB_OUTPUT": str(tmp_path / "output")},
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
