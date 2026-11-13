@@ -60,7 +60,8 @@ env_vars=(
   # (tests/test_fastpath_enabler_deploy.py holds the two in order). 1 since
   # the nodes took -required-tier 1 with the lower tiers' allowances
   # (tr-fastpath-15 and 16, 2026-11-13; fastpath-deploy.md, "Lowering the
-  # required tier"). With MAX_RANK 0 it changes nobody until WS4.
+  # required tier"). With MAX_RANK 0 only the include list can join, and
+  # every member was on or held when it was lowered.
   "TR_FASTPATH_ENABLER_REQUIRED_TIER=1"
   # Section 4(b): unspent credit of at least $100 to join, under $40 to leave.
   "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=100000000"

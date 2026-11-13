@@ -188,7 +188,8 @@ locals {
   # each node takes the flag by the runbook's unit rewrite, not a reset.
   fastpath_fleet_audit = true
   # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
-  # section 8.2): a lease needs effective trust tier 3, a workspace's
+  # section 8.2): a lease needs effective trust tier 3 (1 since 2026-11-13,
+  # with the lower tiers' allowances below), a tier-3 workspace's
   # allowance is $1,000 and a lease leaves at least $20 of the balance, in
   # microdollars. The startup script passes each as -required-tier,
   # -allowance and -floor (8af87998a and later take all three). A reset

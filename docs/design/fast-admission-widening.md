@@ -1,8 +1,10 @@
 # Widening the fast path to every eligible workspace
 
 Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
-#2396) and PR 7 built (§11); the rollout is at WS2 (§8.2), with the
-enabler in `apply` and all mode on since 2026-11-09. This is the short note the production
+#2396) and PR 7 built (§11); the rollout has passed WS3 (§8.2), with the
+enabler in `apply` and all mode on since 2026-11-09, and the required tier
+lowered to 1 with the lower tiers' allowances since 2026-11-13 ((b),
+amended). This is the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
@@ -126,10 +128,10 @@ reconciler rather than at workspaces, the enabler raises
 
 | Setting | Value | Node flag |
 |---|---|---|
-| Required tier | 3 | `-required-tier 3` (exists, `cmd/fastpath/main.go:73`; the node's unit passes none today) |
+| Required tier | 1 since 2026-11-13 (3 from WS0 until then) | `-required-tier` (exists, `cmd/fastpath/main.go:73`) |
 | Allowance, tier 3 | 1,000,000,000 microdollars ($1,000) per workspace | `-allowance` (new) |
-| Allowance, tier 2 | none (0): refused by the required tier, and by its allowance were the tier lowered | `-allowance-tier2` (new; metadata `fastpath-allowance-tier2 = "0"`) |
-| Allowance, tier 1 | none (0), as tier 2 | `-allowance-tier1` (new; metadata `fastpath-allowance-tier1 = "0"`) |
+| Allowance, tier 2 | 250,000,000 microdollars ($250) since 2026-11-13 (0 until then) | `-allowance-tier2` (metadata `fastpath-allowance-tier2`) |
+| Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
 | Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
 | Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $100 | enabler setting |
@@ -161,8 +163,16 @@ reconciler rather than at workspaces, the enabler raises
   startup script for its attributes). The startup script passes
   `-allowance-tier2` and `-allowance-tier1` only for a nonzero attribute, so
   `"0"` needs no release that takes them.
-  - **Tiers 1 and 2 stay off.** Both allowances are 0 in Terraform and the
-    required tier stays 3, so nothing below tier 3 is leased: with the
+  - **Amended 2026-11-12: tiers 1 and 2 leased, at $100 and $250.** Joseph
+    lowered the required tier to 1 with a tier-2 allowance of $250 and a
+    tier-1 allowance of $100, by the change described next: #2545 pinned a
+    release that takes the flags with the three values, nodes 15 and 16
+    took them (`fastpath-deploy.md`, "Lowering the required tier"), and the
+    enabler's tier followed. A tier-1 workspace's worst case is so about
+    $25,000 of charges against $100 of holds (the bound below), and tier
+    3's reasoning ("Tier 3" above) is kept as the record of WS0.
+  - **Tiers 1 and 2 stayed off until then.** Both allowances were 0 in
+    Terraform and the required tier stayed 3, so nothing below tier 3 is leased: with the
     required tier at 3 the lower allowances are never read, and with it
     lowered alone they would refuse every lease below tier 3. Leasing tier 2
     or 1 is a separate change, which stays Joseph's call (§9 of the
@@ -200,7 +210,8 @@ reconciler rather than at workspaces, the enabler raises
     so the holds that can overrun under leases are never more than today's
     path would allow the workspace. What leases add is the windows of
     §4.13 (one write, the auditor's lag on a lost write, the state cache's
-    age), not a larger base. Only tier-3 workspaces get there: a 30-day
+    age), not a larger base. Until the 2026-11-13 amendment only tier-3
+    workspaces got there: a 30-day
     payment history, $50 paid, an approved owner and no dispute, or an
     operator's override with an approved owner (the P1 synthetic workspace
     alone by identity bypass, §8.2).
@@ -692,8 +703,8 @@ in `rollout.sh` reaches them. So:
   default), the thresholds of (b), and the async pilot, overlap and shadow
   lists and probe keys it reads from the same secrets and literals the
   control plane does.
-- `TR_FASTPATH_ENABLER_REQUIRED_TIER` (1 to 3, 3 by default and in the
-  job's literal) is the tier a workspace needs to be enabled. It must be at
+- `TR_FASTPATH_ENABLER_REQUIRED_TIER` (1 to 3, 3 by default; 1 in the
+  job's literal since 2026-11-13, after the nodes) is the tier a workspace needs to be enabled. It must be at
   least the nodes' required tier in effect (`fastpath_required_tier` in
   `infra/fastpath.tf`, the node's `-required-tier`): below it, the enabler
   would turn on workspaces every grant refuses, each paying a front door
@@ -891,9 +902,9 @@ Any alert, or any bar missed, is the way back (§8.3), then the cause.
 | WS1 | `fastpathctl hold-backfill` run (PR 4); the enabler in `dry-run` | four consecutive runs whose reports were read: every current pilot workspace eligible, every exclusion of (c) counted where it should be, and `unheld_disabled` (§5.4) zero: no `enabled = false` row anywhere without a hold |
 | WS2 | Entry, in this order: every node's release, and so every `fastpathctl` in use, carries PR 4; `hold-backfill` run again, which holds any stop an older node made since WS1's run (it is idempotent, and the enabler has written no disable yet); a dry-run report taken after it with `unheld_disabled` zero; `fastpathctl enabler arm`, which checks the same itself. Then the enabler in `apply` with `max_rank` 0 (it keeps the include list and enables nobody new); then, once a run's report shows the enabled set within the include list and nothing to disable, `TR_FASTPATH_PILOT_ALL=true` with the explicit list emptied | 2,000 leased settles under all mode; no `workspace` pass from Python for an enabled workspace (its switch copy works) |
 | WS3 | The wildcard row on for `gcp`, `us-central1`, then the include list's own on rows deleted, so they decide under the wildcard | 2,000 authorizes with `decided.via` `wildcard`; no `edge_decide_unavailable_sustained` |
-| WS4 | `max_rank` 10: the ten largest tier-3 workspaces | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
+| WS4 | `max_rank` 10: the ten largest workspaces at or above the enabler's required tier (1 since 2026-11-13) | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
 | WS5 | `max_rank` 100 | 20,000 leased settles from the step's workspaces, and at least 50 granted |
-| WS6 | PR 7 (the 503) deployed; `max_rank` unbounded: every tier-3 workspace | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
+| WS6 | PR 7 (the 503) deployed; `max_rank` unbounded: every workspace at or above the enabler's required tier | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
 
 **The P1 synthetic workspace at tier 3.** An override does not reach tier
 3 by itself: `effective_trust_tier` caps it at 1 unless the owner's
