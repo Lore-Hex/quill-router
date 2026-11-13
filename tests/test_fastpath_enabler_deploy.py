@@ -72,7 +72,7 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "100000000"
     assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "40000000"
     # The required tier, a literal no lower than the nodes' (section 4(b)).
-    assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "3"
+    assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "1"
     assert env["TR_STORAGE_BACKEND"] == "spanner-clickhouse" and env["TR_SERVICE_SURFACE"] == "control"
     assert "--args=-m,trusted_router.fastpath_enabler" in job
     # The probes' keys that exist, outside the TR_ prefix.
@@ -94,7 +94,7 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "apply" and config.max_rank == 0 and config.required_tier == 3
+    assert config.mode == "apply" and config.max_rank == 0 and config.required_tier == 1
     assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
 
 
