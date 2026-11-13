@@ -330,7 +330,7 @@ def test_secondaries_ramp_under_one_coordinator() -> None:
     # the serial fallback, must fit alongside the canaries and completion gates.
     assert "timeout-minutes: 85" in rollout
     first_step = rollout.index("- name: Import production deployment mutex fence")
-    checkout = rollout.index("- uses: actions/checkout@v7")
+    checkout = rollout.index("- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1")
     assert first_step < checkout
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_OPERATION" in rollout
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION" in rollout

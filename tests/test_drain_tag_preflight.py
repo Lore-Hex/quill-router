@@ -308,10 +308,11 @@ def test_the_workflow_asks_under_the_reservation_and_before_any_revision() -> No
     # It signs in the way the rollout's own first job does, and it cannot sit on the reservation.
     def sign_in(name: str) -> list[dict[str, Any]]:
         return [{key: step[key] for key in ("uses", "with") if key in step}
-                for step in jobs[name]["steps"] if "google-github-actions/" in step.get("uses", "")]
+                for step in jobs[name]["steps"]
+                if step.get("uses", "").startswith(("Lore-Hex/quill-router/.github/actions/gcp-auth@", "Lore-Hex/quill-router/.github/actions/setup-gcloud@"))]
 
     assert sign_in("confirm-regions-ready") == sign_in("admit-cloud") != []
-    assert [step.get("uses") for step in job["steps"]].index("google-github-actions/setup-gcloud@v3") < (
+    assert [step.get("uses", "").split("@")[0] for step in job["steps"]].index("Lore-Hex/quill-router/.github/actions/setup-gcloud") < (
         job["steps"].index(runs[0]))
     assert job["timeout-minutes"] <= 10
 
@@ -340,7 +341,7 @@ def test_the_rollout_asserts_the_reservation_before_it_runs_anything_else() -> N
     assert "if" not in steps[at] and "continue-on-error" not in steps[at]
     # Only checkout and sign-in come before it, so nothing reaches production first.
     assert [step.get("uses", "").split("@")[0] for step in steps[:at]] == [
-        "actions/checkout", "google-github-actions/auth", "google-github-actions/setup-gcloud"]
+        "actions/checkout", "Lore-Hex/quill-router/.github/actions/gcp-auth", "Lore-Hex/quill-router/.github/actions/setup-gcloud"]
 
 
 def test_the_regions_asked_are_the_regions_rolled_out() -> None:

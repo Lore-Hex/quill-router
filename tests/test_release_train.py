@@ -344,10 +344,10 @@ def test_all_release_jobs_use_one_frozen_full_commit():
                  "deploy", "public-surface-companion", "settle-drain-worker", "verify-cloud-complete"):
         job = jobs[name]
         assert "select-release" in job["needs"], name
-        checkouts = [s for s in job["steps"] if s.get("uses") == "actions/checkout@v7"]
+        checkouts = [s for s in job["steps"] if s.get("uses") == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"]
         assert len(checkouts) == 1
         assert checkouts[0]["with"]["ref"] == "${{ needs.select-release.outputs.commit }}", name
-    checkout = next(s for s in jobs["rollout-secondaries"]["steps"] if s.get("uses") == "actions/checkout@v7")
+    checkout = next(s for s in jobs["rollout-secondaries"]["steps"] if s.get("uses") == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1")
     assert checkout["with"]["ref"] == "${{ needs.deploy.outputs.commit }}"
     for name in ("confirm-regions-ready", "migrate-schema", "sync-runtime-secrets"):
         assert "needs.select-release.outputs.proceed == 'true'" in jobs[name]["if"]
@@ -360,7 +360,7 @@ def test_prepare_artifact_is_uploaded_after_build_before_admission():
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
     steps = workflow["jobs"]["build-image"]["steps"]
     assert steps[-2]["run"] == "python3 -m scripts.deploy.release_train prepare"
-    assert steps[-1]["uses"] == "actions/upload-artifact@v4"
+    assert steps[-1]["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
     assert steps[-1]["with"]["if-no-files-found"] == "error"
     assert steps[-1]["with"]["name"] == "prepared-release-${{ github.run_attempt }}"
     assert set(workflow["jobs"]["rollout"]["needs"]) == {"gate-on-ci", "build-image"}
