@@ -79,6 +79,14 @@ OAUTH_KEY_EXCHANGE_CORS_HEADERS = {
 # GET /health. Exactly these two: /healthz is not a route, so exempting it
 # would hand an unmetered 404-render path to anyone.
 HEALTH_PROBE_PATHS = frozenset({"/health", "/v1/health"})
+# The control plane's release evidence document, which the release coordinator
+# (scripts/deploy/cloud_rollout.py) and the staleness check read on every
+# cloud. Exactly this path, and only on the surfaces that mount the route
+# (register_public_routes in main.py): the other /trust routes read receipt
+# keys or fetch release records, and where the route is not mounted the path
+# is a 404 page render.
+CONTROL_PLANE_EVIDENCE_PATH = "/trust/control-plane.json"
+CONTROL_PLANE_EVIDENCE_SURFACES = frozenset({"combined", "public", "observer"})
 STATUS_HOST_EXACT_PATHS = frozenset(
     {
         "/",
@@ -559,7 +567,26 @@ async def _rate_limit_request(
     # own health check; the target is marked unhealthy and replaced while it
     # is serving fine. The probe is a constant-time 200 with no storage work,
     # so this is not the amplification surface the ingress limiter exists for.
-    if path in HEALTH_PROBE_PATHS:
+    #
+    # The exemption compares the path the router matches on, not
+    # request.url.path. Starlette builds request.url through urlsplit, which
+    # drops tab, CR and LF, so request.url.path reads "/health" for
+    # "/hea%09lth" while the router sees a tab and answers 404: keyed on
+    # request.url.path, the exemption admitted that 404 page render unmetered.
+    routed_path = request.scope["path"]
+    if routed_path in HEALTH_PROBE_PATHS:
+        return None
+    # Nor does the release evidence read, for the same reason. The release
+    # coordinator takes a refused read as a cloud that is down, or as a
+    # holdback that served no document, so in the shared `untrusted` bucket
+    # any client burst could turn a healthy cloud into a refused or misjudged
+    # deploy. The handler returns three settings fields: no storage, no
+    # outbound call. GET is the route's only method, so no other is exempt.
+    if (
+        request.method == "GET"
+        and routed_path == CONTROL_PLANE_EVIDENCE_PATH
+        and settings.service_surface in CONTROL_PLANE_EVIDENCE_SURFACES
+    ):
         return None
 
     bearer = get_authorization_bearer(request)

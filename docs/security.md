@@ -131,6 +131,23 @@ second credential bucket is applied exactly once for that request. Invalid or
 arbitrary Bearer values therefore neither mint credential buckets nor make
 public routes perform authentication.
 
+Three paths are exempt from the ingress bucket: a request to them is neither
+counted nor refused. `/health` and `/v1/health` are the load balancer's
+liveness probe. `GET /trust/control-plane.json` is the release evidence that
+the deploy coordinator and the staleness check read on every cloud; it is
+exempt only on the surfaces that mount it (`combined`, `public`, `observer`).
+In `untrusted` mode every caller shares one bucket, so without the exemption
+any client burst could make a healthy instance fail its probe, or make a
+healthy cloud read as down to a deploy. Each handler is constant-time with no
+storage and no outbound call. The match is on the exact path the router
+matches: not a prefix, and not `request.url.path`, which drops tab, CR and LF
+and so reads `/hea%09lth` as `/health`. An exempt path that is not a route
+would be an unmetered 404 render. Every other `/trust` route reads receipt
+keys or resolves a release record and stays metered. Only a front door limits
+the exempt paths: on GCP the public edge's per-source ceiling covers them; the
+AWS and Azure control planes have no limiter in front of the application, so
+there they are unmetered.
+
 These counters are defense-in-depth, not a fleet-wide quota: each application
 instance has its own allowance. Fleet-wide coarse source limiting and
 volumetric protection are supplied by the front door (Cloud Armor or the cloud
