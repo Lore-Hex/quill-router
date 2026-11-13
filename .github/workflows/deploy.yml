@@ -276,6 +276,19 @@ jobs:
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
           echo "image=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}@${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Record immutable prepared release
+        env:
+          PREPARED_TAG: ${{ steps.set-vars.outputs.sha }}
+          PREPARED_IMAGE: ${{ steps.build.outputs.image }}
+        run: python3 -m scripts.deploy.release_train prepare
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prepared-release-${{ github.run_attempt }}
+          path: release.json
+          if-no-files-found: error
+          retention-days: 90
+
   rollout:
     needs: [gate-on-ci, build-image]
     uses: ./.github/workflows/deploy-production.yml

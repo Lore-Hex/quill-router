@@ -380,8 +380,8 @@ def test_full_convergence_jobs_need_rollout_secondaries() -> None:
     )[0]
     verify = workflow.split("\n  verify-cloud-complete:\n", 1)[1]
 
-    assert "needs: [rollout-secondaries, admit-cloud]" in companion
-    assert "needs: [rollout-secondaries]" in verify
+    assert "needs: [rollout-secondaries, admit-cloud, select-release]" in companion
+    assert "needs: [rollout-secondaries, select-release]" in verify
     assert "needs.rollout-secondaries.result != 'skipped'" in verify
 
 
@@ -476,7 +476,7 @@ def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_ke
     end = workflow.index("\n  confirm-still-on-main:", sync)
     section = workflow[sync:end]
 
-    assert "needs: [gate-on-ci, admit-cloud]" in section
+    assert "needs: [gate-on-ci, admit-cloud, select-release]" in section
     assert "trustedrouter-aws-access-key-id" in section
     assert "gcloud secrets versions access latest" in section
     assert "secrets.TR_AWS_ACCESS_KEY_ID" not in section
@@ -591,7 +591,7 @@ def test_enclave_inventory_is_separate_from_live_control_plane_regions() -> None
 def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
     worker = jobs["settle-drain-worker"]
-    assert worker["needs"] == ["rollout-secondaries", "admit-cloud"]
+    assert worker["needs"] == ["rollout-secondaries", "admit-cloud", "select-release"]
     assert jobs["rollout-secondaries"]["needs"] == ["deploy"]
     assert worker["env"]["TR_DEPLOY_HOLD_REGIONS"] == "${{ vars.TR_DEPLOY_HOLD_REGIONS }}"
     assert worker["env"]["REGION"] == "us-central1"

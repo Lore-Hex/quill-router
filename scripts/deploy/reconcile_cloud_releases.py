@@ -9,6 +9,7 @@ import subprocess
 import sys
 from typing import Any
 
+from scripts.deploy import release_train
 from scripts.deploy.cloud_rollout import Refused, probe_cloud
 
 REPO = "Lore-Hex/quill-router"
@@ -33,7 +34,14 @@ def completed_release() -> str:
         details = gh("run", "view", str(run["databaseId"]), "--repo", REPO, "--json", "jobs")
         jobs = {job["name"].removeprefix("rollout / "): job["conclusion"] for job in details["jobs"]}
         if all(jobs.get(name) == "success" for name in REQUIRED_JOBS):
-            sha = run["headSha"]
+            if "select-release" in jobs:
+                api = release_train.GitHub()
+                try:
+                    sha = release_train.delivered_commit(api, api.run(run["databaseId"]), details["jobs"])
+                except release_train.Refused as exc:
+                    raise Refused("completed train receipt is unavailable or invalid") from exc
+            else:
+                sha = run["headSha"]
             if not re.fullmatch(r"[a-f0-9]{40}", sha):
                 raise Refused("invalid completed release SHA")
             return sha
