@@ -83,7 +83,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           sparse-checkout: scripts/deploy/superseded_deploy.py
@@ -183,7 +183,7 @@ jobs:
       REPO: trusted-router
       SERVICE: trusted-router
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set image ref from commit SHA
         id: set-vars
@@ -196,13 +196,13 @@ jobs:
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
       - name: Authenticate to GCP via WIF
-        uses: google-github-actions/auth@v3
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Build image via Cloud Build
         id: build
@@ -282,7 +282,7 @@ jobs:
           PREPARED_IMAGE: ${{ steps.build.outputs.image }}
         run: python3 -m scripts.deploy.release_train prepare
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: prepared-release-${{ github.run_attempt }}
           path: release.json

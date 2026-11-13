@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_aws_control_plane_installs_uv_before_running_completeness_gate() -> None:
     workflow = (ROOT / ".github/workflows/deploy-aws-control-plane.yml").read_text()
 
-    setup_uv = workflow.index("uses: astral-sh/setup-uv@v7")
+    setup_uv = workflow.index("uses: Lore-Hex/quill-router/.github/actions/setup-uv@")
     deploy = workflow.index("run: bash ../ops/scripts/deploy/aws_ecs_control_plane.sh")
 
     assert setup_uv < deploy
@@ -44,7 +44,7 @@ def test_aws_baked_release_selection_keeps_main_oidc_and_safety_gates() -> None:
     assert '[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in workflow
     assert 'git merge-base --is-ancestor "$RELEASE_SHA" HEAD' in workflow
     assert 'git checkout --detach "$RELEASE_SHA"' in workflow
-    assert workflow.index("Select a merged release") < workflow.index("aws-actions/configure-aws-credentials")
+    assert workflow.index("Select a merged release") < workflow.index("Lore-Hex/quill-router/.github/actions/aws-credentials@")
     script = (ROOT / "scripts/deploy/aws_ecs_control_plane.sh").read_text()
     assert 'CI must pass for this exact release' in script
     assert 'cloud_bake_gate aws' in script
@@ -111,8 +111,8 @@ def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout()
     assert worker["env"]["TR_DEPLOY_MUTEX_CLOUD"] == "gcp"
     assert worker["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - workflow expression
     steps = worker["steps"]
-    assert steps[0] == {"uses": "actions/checkout@v7", "with": {"ref": "${{ needs.select-release.outputs.commit }}"}}
-    assert any(s.get("uses") == "google-github-actions/auth@v3" for s in steps)
+    assert steps[0] == {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": {"ref": "${{ needs.select-release.outputs.commit }}"}}
+    assert any(s.get("uses", "").startswith("Lore-Hex/quill-router/.github/actions/gcp-auth@") for s in steps)
     assert steps[-1]["run"] == "bash scripts/deploy/settle_drain_worker.sh"
     assert "if" not in steps[-1] and "continue-on-error" not in steps[-1]
     assert "settle-drain-worker" in jobs["finalize-cloud"]["needs"]

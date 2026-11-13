@@ -112,7 +112,7 @@ def test_a_failed_key_vault_lookup_reports_its_error(
 def test_the_workflow_hands_the_script_the_login_identity() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-azure-control-plane.yml").read_text())
     steps = workflow["jobs"]["deploy"]["steps"]
-    login = next(step for step in steps if step.get("uses", "").startswith("azure/login@"))
+    login = next(step for step in steps if step.get("uses", "").startswith("Lore-Hex/quill-router/.github/actions/azure-login@"))
     deploy = next(step for step in steps if step.get("name") == "Deploy")
     assert deploy["env"]["AZURE_CLIENT_ID"] == login["with"]["client-id"]
     assert deploy["env"]["AZURE_TENANT_ID"] == login["with"]["tenant-id"]

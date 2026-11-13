@@ -139,7 +139,7 @@ def test_the_workflow_renews_with_the_role_it_assumed_in_both_modes() -> None:
     login = next(
         step
         for step in job["steps"]
-        if step.get("uses", "").startswith("aws-actions/configure-aws-credentials@")
+        if step.get("uses", "").startswith("Lore-Hex/quill-router/.github/actions/aws-credentials@")
     )
     assert login["with"]["role-to-assume"] == "${{ env.AWS_DEPLOY_ROLE_ARN }}"
     assert workflow["permissions"]["id-token"] == "write"

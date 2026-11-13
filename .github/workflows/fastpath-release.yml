@@ -23,10 +23,10 @@ jobs:
       COMMIT: ${{ github.event.workflow_run.head_sha }}
       BUCKET: tr-fastpath-releases-quill-cloud-proxy
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
@@ -46,11 +46,11 @@ jobs:
           cp testdata/load-mix.json ../release/load-mix.json
           (cd ../release && sha256sum fastpath fastpathctl loadgen fastpathwatch load-mix.json > SHA256SUMS)
       - name: Authenticate to GCP via WIF
-        uses: google-github-actions/auth@v3
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Upload the release
         run: |
           gcloud storage cp release/fastpath release/fastpathctl release/loadgen release/fastpathwatch release/load-mix.json release/SHA256SUMS "gs://$BUCKET/fastpath/$COMMIT/"
