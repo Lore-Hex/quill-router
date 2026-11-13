@@ -50,6 +50,11 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             envelope: dict[str, Any] = json.loads(raw.decode("utf-8"))
         except ValueError as exc:
             raise api_error(400, "invalid JSON", ErrorType.BAD_REQUEST) from exc
+        if not isinstance(envelope, dict):
+            # Valid JSON that is not an object (a bare number, list or string)
+            # is not an SNS envelope. Reject it here: every later step,
+            # including the signature-failure log line, reads it as a mapping.
+            raise api_error(400, "SNS envelope must be a JSON object", ErrorType.BAD_REQUEST)
 
         try:
             # Verification may fetch/cache an AWS signing certificate. It is
@@ -116,6 +121,8 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             feedback: dict[str, Any] = json.loads(feedback_raw)
         except json.JSONDecodeError:
             return JSONResponse({"data": {"ignored": True, "reason": "Message is not JSON"}})
+        if not isinstance(feedback, dict):
+            return JSONResponse({"data": {"ignored": True, "reason": "Message is not a JSON object"}})
 
         kind = str(feedback.get("notificationType") or feedback.get("eventType") or "")
         # Apply the suppression first so a transient storage failure leaves the

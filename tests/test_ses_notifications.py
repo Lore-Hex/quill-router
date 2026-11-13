@@ -790,3 +790,47 @@ def test_sns_verify_rejects_raw_message_delivery_envelope() -> None:
     }
     with pytest.raises(SnsVerificationError, match="unsupported SNS Type"):
         verify_sns_message(raw_feedback, cert_fetcher=lambda url: b"")
+
+
+@pytest.mark.parametrize("body", ["7", "[]", '["Notification"]', '"Notification"', "null", "true"])
+def test_non_object_envelope_is_a_400_not_a_500(verified_client: TestClient, body: str) -> None:
+    # QUILL-ROUTER-GH: a bare int/list body reached `.get` and returned 500.
+    resp = verified_client.post(
+        "/internal/ses/notifications",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"Type": ["Notification"]},
+        {"Type": {"a": 1}},
+        {"SignatureVersion": ["1"]},
+        {"SignatureVersion": {"v": "2"}},
+    ],
+)
+def test_unhashable_envelope_fields_are_a_403_not_a_500(
+    verified_client: TestClient, overrides: dict[str, Any]
+) -> None:
+    # QUILL-ROUTER-GJ: a list `Type` raised TypeError in set membership.
+    resp = verified_client.post("/internal/ses/notifications", json=_envelope(**overrides))
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("message", [7, [], "Notification", None])
+def test_sns_verify_rejects_non_object_message(message: Any) -> None:
+    with pytest.raises(SnsVerificationError):
+        verify_sns_message(message)  # type: ignore[arg-type]
+
+
+def test_verified_notification_with_non_object_feedback_is_ignored(
+    verified_client: TestClient,
+) -> None:
+    envelope = _envelope(MessageId="msg-list-feedback", Message="[1, 2]")
+    with patch("trusted_router.routes.ses_notifications.verify_sns_message", return_value=None):
+        resp = verified_client.post("/internal/ses/notifications", json=envelope)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ignored"] is True
