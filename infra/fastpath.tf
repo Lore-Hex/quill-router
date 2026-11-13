@@ -114,7 +114,7 @@ locals {
   # nodes answer as the release before until that switch moves. It also
   # carries every provider's async rules (#2451) and all-mode admission by
   # request (#2466), both already live on the Python side.
-  fastpath_release        = "d23591a1ff23505fc2700d244d3d52996b6aefd1"
+  fastpath_release        = "949c757f6794c7a17a09d7065cf8245100efccd5"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -203,20 +203,21 @@ locals {
   # largest lease under $4 and the lease spend far under a quarter of the
   # allowance; a lease tops up at most $10. Rollback: remove the three
   # and take each node the same way, which restores the release's defaults.
-  fastpath_required_tier = "3"
+  fastpath_required_tier = "1"
   fastpath_allowance     = "1000000000"
   fastpath_floor         = "20000000"
   # The lower tiers' allowances (docs/design/fast-admission-widening.md
-  # (b)), in microdollars: "0" is none, so a tier-2 or tier-1 workspace takes
-  # no lease whatever the required tier, and the startup script passes no
-  # -allowance-tier2 or -allowance-tier1 for "0", so the pinned release need
-  # not take them yet. Dark: with the required tier at 3 neither is read. A
-  # later change sets them, each at most the tier above's, re-pins to a
-  # release that takes the flags, and only then lowers
-  # fastpath_required_tier, and takes each node by the money settings step
-  # of docs/runbooks/fastpath-deploy.md.
-  fastpath_allowance_tier2 = "0"
-  fastpath_allowance_tier1 = "0"
+  # (b)), in microdollars, each at most the tier above's: $250 for tier 2
+  # (paid, owner identity approved) and $100 for tier 1 (paid, identity not
+  # approved), Joseph's call on 2026-11-12. The exposure bound is the
+  # allowance times 250 per workspace. They land with the pin of the first
+  # release that takes -allowance-tier2 and -allowance-tier1 (#2542), and
+  # the required tier is lowered to 1 in the same change. Only a node
+  # created from the script that reads them takes them (15 and 16 below);
+  # docs/runbooks/fastpath-deploy.md, "Lowering the required tier".
+  # The enabler's tier is lowered after every node runs them.
+  fastpath_allowance_tier2 = "250000000"
+  fastpath_allowance_tier1 = "100000000"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -468,9 +469,17 @@ resource "google_compute_instance" "fastpath_node" {
   # of -required-tier, -allowance or -floor from their attributes. The same
   # release and metadata; 11 and 12 were drained, left the edge backend one
   # apply before their removal, then were removed.
+  #
+  # 15 and 16 take the places of 13 and 14 the same way, for the lower
+  # tiers' allowances (#2542): the script 13 and 14 run, from before it,
+  # passes neither -allowance-tier2 nor -allowance-tier1 from their
+  # attributes. The same release and metadata; 13 and 14 are drained, leave
+  # the edge backend one apply before their removal, then are removed.
   for_each = {
     "tr-fastpath-13" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-14" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id
