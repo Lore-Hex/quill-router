@@ -62,8 +62,8 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     run = _run(tmp_path, monkeypatch)
     assert run.returncode == 0, summarise(run)
     env, bindings, job = _job(run)
-    # WS2: apply writes the allow-list once armed; nobody joins off the list.
-    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "0"
+    # WS4: apply writes the allow-list once armed; the ten largest join.
+    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "10"
     lists = resolved_lists()
     # The include list is its own literal since WS2 emptied the pilot set.
     assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_ENABLER_INCLUDE"] != ""
@@ -94,7 +94,7 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "apply" and config.max_rank == 0 and config.required_tier == 1
+    assert config.mode == "apply" and config.max_rank == 10 and config.required_tier == 1
     assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
 
 

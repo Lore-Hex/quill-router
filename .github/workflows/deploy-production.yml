@@ -1056,9 +1056,10 @@ jobs:
         # rescheduled on every control-plane release, not behind the trust
         # jobs' opt-in, so its settings move with the control plane's. Its
         # script pins the mode (apply since WS2, armed 2026-11-09: each run
-        # writes the allow-list) and max rank 0, so nobody joins off the
-        # include list, until an activation step moves them;
-        # fastpathctl enabler pause stops its writes without a deploy.
+        # writes the allow-list) and max rank 10 (WS4), so the ten largest
+        # eligible workspaces join beside the include list, until an
+        # activation step moves them; fastpathctl enabler pause stops its
+        # writes without a deploy.
         run: bash scripts/deploy/fastpath_enabler_job.sh
 
       - name: Enforce Google Data Manager sharing disabled
