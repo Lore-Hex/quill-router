@@ -10,12 +10,7 @@ resource "aws_iam_role" "tr_router_github_deploy" {
       }
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
-        StringEquals = {
-          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${local.github_owner}/quill-router:ref:refs/heads/main"
-        }
+        StringEquals = local.github_oidc_trust_conditions["quill-router"]
       }
     }]
   })
@@ -76,6 +71,24 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
           "iam:ListAttachedRolePolicies",
         ]
         Resource = "arn:aws:iam::${local.aws_account_id}:role/tr-router-github-deploy"
+      },
+      {
+        # infra/aws_github_oidc_roles.tf manages the GitHub OIDC trust of the
+        # two quill-cloud-proxy roles. Read-only, so every plan can refresh
+        # them; trust-policy changes themselves (iam:UpdateAssumeRolePolicy)
+        # are applied by an operator, never by this role.
+        Sid    = "ReadGitHubOidcRoles"
+        Effect = "Allow"
+        Action = [
+          "iam:GetRole",
+          "iam:GetRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+        ]
+        Resource = [
+          "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-route53-sync",
+          "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-trust-publisher",
+        ]
       },
       {
         # aws_config.tf points the us-east-1 Config recorder at AWS's
