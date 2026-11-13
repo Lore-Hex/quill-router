@@ -291,8 +291,11 @@ def _jobs() -> dict[str, Any]:
 def test_the_workflow_asks_under_the_reservation_and_before_any_revision() -> None:
     jobs = _jobs()
     job = jobs["confirm-regions-ready"]
-    assert job["needs"] == ["admit-cloud"]
-    assert job["if"] == "github.repository == 'Lore-Hex/quill-router'"
+    assert job["needs"] == ["admit-cloud", "select-release"]
+    assert job["if"] == (
+        "${{ github.repository == 'Lore-Hex/quill-router' && needs.select-release.outputs.proceed == 'true' }}"
+    )
+    assert job["steps"][0]["with"]["ref"] == "${{ needs.select-release.outputs.commit }}"
     assert "continue-on-error" not in job
     assert job["env"]["TR_DEPLOY_HOLD_REGIONS"] == jobs["deploy"]["env"]["TR_DEPLOY_HOLD_REGIONS"]
     assert (job["env"]["PROJECT_ID"], job["env"]["SERVICE"]) == (
