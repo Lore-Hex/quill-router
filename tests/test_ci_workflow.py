@@ -343,6 +343,7 @@ def test_proof_oracle_ci_split(request, tmp_path):
     assert 'continue-on-error' not in job
     assert any(step.get('run') == 'uv sync --frozen' for step in job['steps'])
     assert all('google-github-actions/auth' not in step.get('uses', '') for step in job['steps'])
+    assert all('/.github/actions/gcp-auth@' not in step.get('uses', '') for step in job['steps'])
     assert all('continue-on-error' not in step for step in job['steps'])
     pin = next(step for step in job['steps'] if 'TR_LIFECYCLE_CLOCK_OVERRIDE=' in step.get('run', ''))
     existing_pin = next(step for step in jobs['test-post-cutover']['steps']

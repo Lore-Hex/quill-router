@@ -68,19 +68,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # tr-deploy@ holds broad project roles for deploys; this job uses only
       # read verbs (get-iam-policy, logging metrics describe, monitoring list,
       # firewall-rules describe, buckets describe, keys list). The script is
       # test-enforced to contain no mutating command.
       - name: Authenticate to GCP via WIF
-        uses: google-github-actions/auth@v3
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
         with:
           # Alert-policy and notification-channel commands still live in the
           # alpha component. Without it gcloud exits nonzero; the baseline now

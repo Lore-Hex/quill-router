@@ -62,21 +62,26 @@ def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator()
     assert job["services"]["spanner"] == ci["jobs"]["spanner-emulator"]["services"]["spanner"]
     assert "@sha256:" in job["services"]["spanner"]["image"]
     steps = job["steps"]
-    auth = next(step for step in steps if step.get("uses") == "google-github-actions/auth@v3")
-    typed_auth = next(step for step in workflow["jobs"]["typed-billing-invariant-audit"]["steps"] if step.get("uses") == "google-github-actions/auth@v3")
+    auth = next(step for step in steps if _uses(step, "gcp-auth"))
+    typed_auth = next(step for step in workflow["jobs"]["typed-billing-invariant-audit"]["steps"] if _uses(step, "gcp-auth"))
     assert auth["with"] == typed_auth["with"] == {
         "workload_identity_provider": WIF_PROVIDER,
         "service_account": "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com",
     }
-    assert steps[0]["uses"] == "actions/checkout@v7"
-    assert any(step.get("uses") == "google-github-actions/setup-gcloud@v3" for step in steps)
-    assert any(step.get("uses") == "astral-sh/setup-uv@v7" and step.get("with") == {"version": "latest"} for step in steps)
+    assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", steps[0]["uses"])
+    assert any(_uses(step, "setup-gcloud") for step in steps)
+    assert any(_uses(step, "setup-uv") and "with" not in step for step in steps)
     assert any(step.get("run") == "uv sync --frozen" for step in steps)
     assert steps[-1]["run"] == "uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010"
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in steps)
     assert "SPANNER_EMULATOR_HOST" not in str(workflow)
     assert "secrets." not in str(workflow)
+
+
+def _uses(step, action):
+    """Whether a step runs one of the repository's own actions, pinned by full SHA."""
+    return re.fullmatch(rf"{re.escape(OWN_ACTIONS)}/{re.escape(action)}@[0-9a-f]{{40}}", str(step.get("uses", ""))) is not None
 
 
 def _resolve_static(value, context, resolving=()):

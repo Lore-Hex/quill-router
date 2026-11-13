@@ -68,19 +68,19 @@ jobs:
       # unrelated AI Studio key. Production Gemini inference uses global.
       VERTEX_PROJECT_ID: quill-cloud-proxy
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Need full history so the auto-commit can push.
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
 
       - name: Install dependencies
         run: uv sync --frozen
@@ -91,13 +91,13 @@ jobs:
         # tr-deploy@ receives only per-secret IAM grants for the provider
         # credentials this workflow reads. It has no project-wide Secret
         # Manager accessor role.
-        uses: google-github-actions/auth@v3
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
 
       - name: Pull self-heal API key from Secret Manager
         # Pull at workflow runtime instead of baking into a GHA secret.

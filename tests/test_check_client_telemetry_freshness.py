@@ -102,6 +102,7 @@ def test_workflow_reads_the_public_status_page_without_credentials() -> None:
     assert "clickhouse.check_client_telemetry_freshness" in workflow
     assert "https://trustedrouter.com/status.json" in workflow
     assert "google-github-actions/auth" not in workflow  # public read, no identity
+    assert "actions/gcp-auth@" not in workflow
     assert "client-telemetry-freshness" in workflow  # one labelled issue at a time
     assert "schedule:" in workflow
 

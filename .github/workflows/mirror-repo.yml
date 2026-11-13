@@ -38,12 +38,12 @@ jobs:
       # local branch and `git bundle --all` over it produced a bundle that
       # restored 3 refs out of 46 -- every object present, 42 branches
       # unreachable by name. Only the script is needed from this checkout.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Authenticate to GCP via WIF
-        uses: google-github-actions/auth@v3
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
       - name: Mirror
         run: scripts/deploy/mirror_repo_to_gcs.sh --apply
