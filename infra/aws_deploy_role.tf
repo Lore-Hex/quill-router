@@ -10,12 +10,7 @@ resource "aws_iam_role" "tr_router_github_deploy" {
       }
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
-        StringEquals = {
-          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${local.github_owner}/quill-router:ref:refs/heads/main"
-        }
+        StringEquals = local.github_oidc_trust_conditions["quill-router"]
       }
     }]
   })
