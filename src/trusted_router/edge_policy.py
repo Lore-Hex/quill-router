@@ -218,10 +218,10 @@ class EdgeAsyncSettle(Frozen):
 
     @model_validator(mode="after")
     def admission_set(self) -> Self:
-        for switch in ("edge_tickets", "edge_leased"):
-            if switch in self.model_fields_set and getattr(self, switch) is not True:
+        for switch, on in (("edge_tickets", self.edge_tickets), ("edge_leased", self.edge_leased)):
+            if switch in self.model_fields_set and on is not True:
                 raise ValueError(f"{switch} is absent when off, never null or false")
-            if getattr(self, switch) and not self.admission_enabled:
+            if on and not self.admission_enabled:
                 raise ValueError(f"{switch} requires admission_enabled")
         if "edge_ticket_workspaces" in self.model_fields_set and not self.edge_tickets:
             raise ValueError("edge_ticket_workspaces requires edge_tickets")
