@@ -470,14 +470,12 @@ resource "google_compute_instance" "fastpath_node" {
   # release and metadata; 11 and 12 were drained, left the edge backend one
   # apply before their removal, then were removed.
   #
-  # 15 and 16 take the places of 13 and 14 the same way, for the lower
-  # tiers' allowances (#2542): the script 13 and 14 run, from before it,
-  # passes neither -allowance-tier2 nor -allowance-tier1 from their
-  # attributes. The same release and metadata; 13 and 14 are drained, leave
-  # the edge backend one apply before their removal, then are removed.
+  # 15 and 16 took the places of 13 and 14 the same way, for the lower
+  # tiers' allowances (#2542): the script 13 and 14 ran, from before it,
+  # passed neither -allowance-tier2 nor -allowance-tier1 from their
+  # attributes. The same release and metadata; 13 and 14 were drained, left
+  # the edge backend one apply before their removal, then were removed.
   for_each = {
-    "tr-fastpath-13" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-14" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
     "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
