@@ -38,7 +38,7 @@
 }
 
 .model-detail-page .public-wrap a:hover {
-  color: #E5FFF2;
+  color: var(--tr-color-accent-hover);
 }
 
 :where(.model-detail-page .public-wrap) :is(p, li) {
@@ -271,7 +271,7 @@
 }
 
 .model-detail-page .btn.md-cta:hover {
-  background: #E5FFF2;
+  background: var(--tr-color-accent-hover);
   color: var(--md-accent-ink);
 }
 
