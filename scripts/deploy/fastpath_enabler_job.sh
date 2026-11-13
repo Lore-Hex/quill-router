@@ -8,7 +8,7 @@
 #
 # Its literals: TR_FASTPATH_ENABLER_MODE=apply (WS2) writes the allow-list
 # (dry-run reads and reports but writes nothing; off logs one line and
-# exits), and TR_FASTPATH_ENABLER_MAX_RANK=10 (WS4) lets the ten largest
+# exits), and TR_FASTPATH_ENABLER_MAX_RANK=100 (WS5) lets the hundred largest
 # eligible workspaces join; the rank counts the include list's own
 # workspaces, which join at any rank. In apply mode the job
 # writes nothing until an operator runs `fastpathctl enabler arm`, and never
@@ -52,11 +52,11 @@ env_vars=(
   # exit 0), a dry-run report after it read unheld_disabled 0 with nothing
   # to enable or disable, and `fastpathctl enabler arm` (2026-11-09).
   "TR_FASTPATH_ENABLER_MODE=apply"
-  # 10 since WS4 (section 8.2): the ten largest eligible workspaces join
-  # (the include list's own count toward the ten), and one leaves for its
-  # rank only past 15. WS2 and WS3 ran at 0 (nobody off the include list);
-  # WS5 sets 100. Lowering it is a way back (section 8.3).
-  "TR_FASTPATH_ENABLER_MAX_RANK=10"
+  # 100 since WS5 (section 8.2): the hundred largest eligible workspaces
+  # join, and one leaves for its rank only past 110. WS4 ran at 10 (all
+  # nine then eligible joined, mostly dormant); WS2 and WS3 ran at 0.
+  # Lowering it is a way back (section 8.3).
+  "TR_FASTPATH_ENABLER_MAX_RANK=100"
   # Section 4(b): the trust tier to join, 1 to 3. Never below the nodes'
   # required tier in effect (infra/fastpath.tf fastpath_required_tier), or
   # the enabler turns on workspaces every grant refuses: lowered only after
@@ -68,9 +68,20 @@ env_vars=(
   # lowered; a dry run at tier 1 and rank 10 (2026-11-13) would enable seven
   # workspaces by rank and disable none.
   "TR_FASTPATH_ENABLER_REQUIRED_TIER=1"
-  # Section 4(b): unspent credit of at least $100 to join, under $40 to leave.
-  "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=100000000"
-  "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=40000000"
+  # Section 4(b): unspent credit of at least $30 to join, under $5 to leave
+  # (Joseph, 2026-11-13; $100 and $40 until then admitted only nine
+  # workspaces). $30 is the floor ($20) plus the largest top-up ($10), so an
+  # enabled workspace can take a lease. $5 sits below the console's least
+  # auto-refill threshold ($10): auto-refill fires only under its threshold,
+  # so a refilling workspace never crosses the leave line and never flaps.
+  # A workspace between $5 and $20 stays on with no lease headroom; with the
+  # 503 for headroom in leases on (rollout.sh, required below $100 by
+  # tests/test_fastpath_enabler_deploy.py) that costs a front door hop,
+  # never a refusal. The leave threshold must stay below the join threshold
+  # (config.py). A dry run at $30 and rank 100 (2026-11-13) would enable 26
+  # workspaces and disable none.
+  "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=30000000"
+  "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=5000000"
   "TR_FASTPATH_ENABLER_INCLUDE=${TR_FASTPATH_ENABLER_INCLUDE}"
   "TR_FASTPATH_PILOT_EXCLUDE=${TR_FASTPATH_PILOT_EXCLUDE}"
   # The async shadow's workspaces, the same literal as rollout.sh's (a test

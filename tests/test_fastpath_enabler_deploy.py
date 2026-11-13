@@ -62,15 +62,15 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     run = _run(tmp_path, monkeypatch)
     assert run.returncode == 0, summarise(run)
     env, bindings, job = _job(run)
-    # WS4: apply writes the allow-list once armed; the ten largest join.
-    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "10"
+    # WS5: apply writes the allow-list once armed; the hundred largest join.
+    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "100"
     lists = resolved_lists()
     # The include list is its own literal since WS2 emptied the pilot set.
     assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_ENABLER_INCLUDE"] != ""
     assert lists["TR_FASTPATH_PILOT_WORKSPACES"] == "" and "TR_FASTPATH_PILOT_ALL" not in env
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
-    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "100000000"
-    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "40000000"
+    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "30000000"
+    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "5000000"
     # The required tier, a literal no lower than the nodes' (section 4(b)).
     assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "1"
     assert env["TR_STORAGE_BACKEND"] == "spanner-clickhouse" and env["TR_SERVICE_SURFACE"] == "control"
@@ -94,7 +94,7 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "apply" and config.max_rank == 10 and config.required_tier == 1
+    assert config.mode == "apply" and config.max_rank == 100 and config.required_tier == 1
     assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
 
 
@@ -254,3 +254,26 @@ def test_every_kind_has_a_runbook_row() -> None:
     runbook = RUNBOOK.read_text()
     for kind in _events():
         assert re.search(rf"^\| `{kind}` \| ", runbook, re.M), kind
+
+
+def test_a_join_balance_near_the_floor_needs_the_lease_headroom_503() -> None:
+    """Below $100 the enabler admits balances near the $20 floor, where a
+    lease can hold money a synchronous hold needs (widening design (b)).
+    Today that hold would get a 402; with PR 7's 503 on it is retried. So a
+    join balance under $100 requires rollout.sh's literal to be on."""
+    job = (ROOT / SCRIPT).read_text()
+    (enable,) = re.findall(r'^\s*"TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=(\d+)"$', job, re.M)
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    if int(enable) < 100_000_000:
+        assert '"TR_FASTPATH_LEASE_HEADROOM_503=true"' in rollout
+
+
+def test_the_leave_balance_is_below_the_least_auto_refill_threshold() -> None:
+    """Auto-refill fires only when unspent credit drops under its threshold,
+    at least $10 (routes/console/credits.py), so a leave line under that
+    never sees a refilling workspace cross it."""
+    job = (ROOT / SCRIPT).read_text()
+    (leave,) = re.findall(r'^\s*"TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=(\d+)"$', job, re.M)
+    console = (ROOT / "src" / "trusted_router" / "routes" / "console" / "credits.py").read_text()
+    (least_dollars,) = re.findall(r"threshold: int = Form\(\.\.\., ge=(\d+),", console)
+    assert int(leave) < int(least_dollars) * 1_000_000
