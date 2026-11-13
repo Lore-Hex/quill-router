@@ -522,10 +522,12 @@ class CannedHTTPS(urllib.request.HTTPSHandler):
         outcome = self.answer(request.full_url.split("?")[0])
         if isinstance(outcome, Exception):
             raise outcome
-        status, body, *location = outcome
+        # (status, body), then optionally a redirect's Location or a dict of headers.
+        status, body, *extra = outcome
         headers = email.message.Message()
-        if location:
-            headers["Location"] = location[0]
+        for name, value in (extra[0] if extra and isinstance(extra[0], dict)
+                            else {"Location": extra[0]} if extra else {}).items():
+            headers[name] = value
         response = urllib.response.addinfourl(io.BytesIO(body), headers, request.full_url, status)
         response.msg = "canned"
         return response
@@ -536,13 +538,20 @@ def evidence_document(cloud, **fields):
     return json.dumps(document).encode()
 
 
-def canned_planes(monkeypatch, aws_evidence=None):
+def canned_planes(monkeypatch, aws_evidence=None, answers=None):
     """Every plane healthy at release a; `aws_evidence` is what aws's evidence
-    URL answers (a list answers one request after another)."""
+    URL answers (a list answers one request after another), and `answers`
+    replaces what any other URL answers.
+
+    The API service answers its own 401 too, so the real probe_component runs
+    over the same canned HTTPS as probe_cloud and observed_releases.
+    """
     served = []
 
     def answer(url):
         served.append(url)
+        if answers and url in answers:
+            return answers[url]
         for cloud, (plane, gateway) in rollout.PLANES.items():
             if url == f"{plane}/trust/control-plane.json":
                 if cloud == "aws" and aws_evidence is not None:
@@ -550,19 +559,23 @@ def canned_planes(monkeypatch, aws_evidence=None):
                 return 200, evidence_document(cloud)
             if url in (f"{plane}/health", f"{gateway}/health"):
                 return 200, b'{"status": "ok"}'
+            if url == f"{plane}{rollout.API_PROBE_PATH}":
+                return 401, ROUTER_401
         raise AssertionError(url)
 
     monkeypatch.setattr(rollout.urllib.request, "build_opener",
                         lambda *handlers: BUILD_OPENER(CannedHTTPS(answer), *handlers))
     monkeypatch.setattr(rollout.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(rollout, "api_service_answers", API_SERVICE_ANSWERS)  # canned, so never live
     return served
 
 
 def default_coordinator_protecting_aws(monkeypatch, version):
-    """The default probes over canned HTTPS, with gcp leased and aws the holdback."""
+    """Every default probe (probe_cloud, probe_component, observed_releases)
+    over canned HTTPS, with gcp leased and aws the holdback."""
     canned_planes(monkeypatch)
     store = MemoryStore()
-    coordinator = rollout.Coordinator(store, None, lambda: 10_000, lambda c, k: None)
+    coordinator = rollout.Coordinator(store, None, lambda: 10_000)
     if version == rollout.V3:
         coordinator.upgrade()
     lease = coordinator.acquire("gcp", QR.format(1), "control-plane", 3600)
@@ -594,20 +607,47 @@ ANSWERED_WITHOUT_ITS_RELEASE = {
     "body oversize": (200, evidence_document("aws") + b" " * rollout.MAX_BYTES),
     "204 no content": (204, b""),
 }
+# What the control plane's own source limiter answers once its bucket is spent
+# (_rate_limit_request in src/trusted_router/middleware.py). Retry-After is
+# what is left of its 60 s window: usually more than the 5 s fetch will wait
+# for, so fetch gives up at once, and now and then less, so fetch retries.
+RATE_LIMITED = b'{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}'
+LIMITED = (429, RATE_LIMITED, {"Retry-After": "37", "X-RateLimit-Limit": "240", "X-RateLimit-Remaining": "0",
+                               "X-RateLimit-Reset": "2026-11-13T18:01:00Z"})
 # No document was served: the cloud is down, and may be leased to repair it.
-SERVED_NO_DOCUMENT = {
+# Three kinds, and tests/cloud_rollout_v3_mutations.py turns each kind alone
+# into an answer: only that kind's cases below can catch it.
+TRANSPORT_FAILURES = {
     "unreachable": urllib.error.URLError("connection refused"),
     "timeout": TimeoutError("timed out"),
     "bad certificate": urllib.error.URLError(ssl.SSLCertVerificationError("certificate has expired")),
+}
+HTTP_ERROR_STATUSES = {
     "500": (500, b"internal error"),
     "503 on every attempt": (503, b""),
     "404": (404, b'{"detail": "Not Found"}'),
     "404 with another release": (404, evidence_document("aws", release="b" * 40)),
     "403": (403, b"forbidden"),
+    "401": (401, b'{"error": {"code": 401, "message": "Unauthorized", "type": "unauthorized"}}'),
+    "401 with another release": (401, evidence_document("aws", release="b" * 40)),
+    # fetch retries a 429 that names no wait, or a wait of at most 5 s, and
+    # gives up at once on a longer one. Either way no document was served.
+    "429 on every attempt": (429, RATE_LIMITED),
+    "429 asking for 1 s on every attempt": (429, RATE_LIMITED, {"Retry-After": "1"}),
+    "429 asking for 37 s": LIMITED,
+    "429 with another release": (429, evidence_document("aws", release="b" * 40), {"Retry-After": "37"}),
+}
+REDIRECTS = {
     "302 redirect": (302, b"", "https://trustedrouter.com/trust/control-plane.json"),
     "307 redirect": (307, b"", "https://trustedrouter.com/trust/control-plane.json"),
     "301 to a login page": (301, b"", "https://example.com/login"),
 }
+SERVED_NO_DOCUMENT = {**TRANSPORT_FAILURES, **HTTP_ERROR_STATUSES, **REDIRECTS}
+# How many requests one evidence read makes for each answer: fetch tries three
+# times after a transport failure or a retryable status, and once otherwise.
+ATTEMPTS_PER_READ = {name: 1 for name in SERVED_NO_DOCUMENT} | {
+    name: 3 for name in (*TRANSPORT_FAILURES, "503 on every attempt", "429 on every attempt",
+                         "429 asking for 1 s on every attempt")}
 
 
 @pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
@@ -622,9 +662,14 @@ def test_default_coordinator_refuses_a_holdback_answering_without_its_release(mo
         coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
     assert (store.record, store.generation) == before
     assert served == [AWS_EVIDENCE] * 2  # decided on the evidence alone, read twice
-    # Not a deadlock: the refusal lasts only while another rollout relies on
-    # aws as its holdback. Once that lease is gone, aws can be leased and repaired.
+    # Not a deadlock, provided the lease that relies on aws can itself be
+    # released: the refusal lasts only while that lease exists. The release
+    # runs the real release probe (gcp's own services, never aws), and once
+    # the lease is gone aws can be leased and repaired. What happens when
+    # that lease is blocked instead is in the frozen-journal tests below.
+    del served[:]
     coordinator.release("gcp", lease["operation_id"], True)
+    assert served == (GCP_CONTROL_PLANE_PROBE if version == rollout.V3 else GCP_CLOUD_PROBE)
     assert store.record["holdback"] is None
     repair = coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
     assert repair["cloud"] == "aws"
@@ -632,13 +677,142 @@ def test_default_coordinator_refuses_a_holdback_answering_without_its_release(mo
 
 
 @pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
-@pytest.mark.parametrize("answer", SERVED_NO_DOCUMENT.values(), ids=SERVED_NO_DOCUMENT)
-def test_default_coordinator_leases_a_holdback_that_served_no_document(monkeypatch, version, answer):
+@pytest.mark.parametrize("name", SERVED_NO_DOCUMENT)
+def test_default_coordinator_leases_a_holdback_that_served_no_document(monkeypatch, version, name):
     store, coordinator, _ = default_coordinator_protecting_aws(monkeypatch, version)
-    canned_planes(monkeypatch, aws_evidence=answer)
+    served = canned_planes(monkeypatch, aws_evidence=SERVED_NO_DOCUMENT[name])
     lease = coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
     assert lease["cloud"] == "aws"
     assert store.record["holdback"]["cloud"] == "azure"
+    # aws was asked for its evidence twice and for nothing else: it is being
+    # leased, so its health is not what admits it.
+    assert [url for url in served if "aws" in url] == [AWS_EVIDENCE] * (2 * ATTEMPTS_PER_READ[name])
+
+
+# What a release or recovery of the gcp control-plane lease reads: under v3 the
+# component's own services (rule 9), under v2 the whole cloud. Never the holdback.
+GCP_CONTROL_PLANE_PROBE = ["https://trustedrouter.com/v1/internal/synthetic/health",
+                           "https://trustedrouter.com/trust/control-plane.json",
+                           "https://trustedrouter.com/health",
+                           "https://trustedrouter.com/trust/control-plane.json"]
+GCP_CLOUD_PROBE = ["https://trustedrouter.com/trust/control-plane.json",
+                   "https://trustedrouter.com/health",
+                   "https://api.trustedrouter.com/health",
+                   "https://trustedrouter.com/trust/control-plane.json"]
+# aws deployed outside any lease: healthy, with a valid release that is not the protected one.
+REDEPLOYED = (200, evidence_document("aws", release="b" * 40))
+
+
+def frozen_by_a_changed_holdback(monkeypatch, version):
+    """Rule 7's refusal as production reaches it, through the default probes.
+
+    gcp is leased and aws is its holdback when aws changes outside any lease.
+    The gcp rollout's next assert reads aws and fails, and its deploy records
+    the failure (deploy_mutex_finish), which leaves the gcp lease blocked.
+    """
+    store, coordinator, lease = default_coordinator_protecting_aws(monkeypatch, version)
+    canned_planes(monkeypatch, aws_evidence=REDEPLOYED)
+    with pytest.raises(rollout.Refused, match="protected cloud release changed"):
+        coordinator.check("gcp", lease["operation_id"])
+    coordinator.release("gcp", lease["operation_id"], False)
+    assert [held["state"] for held in store.record["leases"].values()] == ["blocked"]
+    assert store.record["holdback"]["cloud"] == "aws"
+    return store, coordinator, lease
+
+
+def admissions(coordinator):
+    """Which clouds a new rollout is admitted on now, tried on a copy of the journal."""
+    admitted, record, generation = set(), copy.deepcopy(coordinator.store.record), coordinator.store.generation
+    for cloud in rollout.CLOUDS:
+        for component in ("control-plane", "gateway"):
+            try:
+                coordinator.acquire(cloud, (QCP if component == "gateway" else QR).format(9), component, 3600)
+                admitted.add(cloud)
+            except rollout.Refused:
+                pass
+            coordinator.store.record, coordinator.store.generation = copy.deepcopy(record), generation
+    return admitted
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_a_changed_holdback_blocks_the_lease_relying_on_it_and_then_nothing_is_admitted(monkeypatch, version):
+    store, coordinator, lease = frozen_by_a_changed_holdback(monkeypatch, version)
+    frozen = (copy.deepcopy(store.record), store.generation)
+    with pytest.raises(rollout.Busy):  # rule 5: gcp is blocked
+        coordinator.acquire("gcp", QCP.format(3), "gateway", 3600)
+    with pytest.raises(rollout.Refused, match="refusing to lease over it"):  # rule 7: aws changed
+        coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    # azure: every grant needs the holdback, aws, healthy and unchanged.
+    with pytest.raises(rollout.Refused, match="protected cloud changed outside the rollout guard"):
+        coordinator.acquire("azure", QR.format(3), "control-plane", 3600)
+    # The blocked lease is not freed by a release, nor recovered while its owner may be running.
+    with pytest.raises(rollout.Refused, match="requires verified recovery"):
+        coordinator.release("gcp", lease["operation_id"], True)
+    with pytest.raises(rollout.Refused, match="owner may still be mutating production"):
+        coordinator.recover("gcp", lease["operation_id"], lambda held: False)
+    assert (store.record, store.generation) == frozen
+    assert admissions(coordinator) == set()
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_exit_one_recovering_the_blocked_lease_lets_the_changed_holdback_be_leased(monkeypatch, version):
+    store, coordinator, lease = frozen_by_a_changed_holdback(monkeypatch, version)
+    served = canned_planes(monkeypatch, aws_evidence=REDEPLOYED)
+    coordinator.recover("gcp", lease["operation_id"], lambda held: True)
+    # Recovery read what the lease changed and nothing of aws.
+    assert served == (GCP_CONTROL_PLANE_PROBE if version == rollout.V3 else GCP_CLOUD_PROBE)
+    assert store.record["leases"] == {} and store.record["holdback"] is None
+    assert admissions(coordinator) == set(rollout.CLOUDS)
+    repair = coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+    assert repair["cloud"] == "aws"
+    assert store.record["holdback"]["cloud"] == "gcp"
+
+
+GCP_UNHEALTHY = {"https://trustedrouter.com/health": (200, b'{"status": "down"}')}
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_exit_one_is_closed_while_the_blocked_cloud_fails_its_own_probe(monkeypatch, version):
+    """The precondition of "not a deadlock": the relying lease must be
+    recoverable. With gcp failing too, the coordinator admits nothing until
+    an operator repairs gcp or restores aws outside it."""
+    store, coordinator, lease = frozen_by_a_changed_holdback(monkeypatch, version)
+    canned_planes(monkeypatch, aws_evidence=REDEPLOYED, answers=GCP_UNHEALTHY)
+    frozen = (copy.deepcopy(store.record), store.generation)
+    with pytest.raises(rollout.Refused, match="not verified healthy|not a verified healthy holdback"):
+        coordinator.recover("gcp", lease["operation_id"], lambda held: True)
+    assert (store.record, store.generation) == frozen
+    assert admissions(coordinator) == set()
+    # The protected release put back on aws by hand reopens aws and azure. gcp stays blocked.
+    canned_planes(monkeypatch, answers=GCP_UNHEALTHY)
+    assert admissions(coordinator) == {"aws", "azure"}
+    with pytest.raises(rollout.Refused, match="not verified healthy|not a verified healthy holdback"):
+        coordinator.recover("gcp", lease["operation_id"], lambda held: True)
+    # Repaired outside the coordinator, gcp recovers and the journal empties.
+    canned_planes(monkeypatch, aws_evidence=REDEPLOYED)
+    coordinator.recover("gcp", lease["operation_id"], lambda held: True)
+    assert store.record["leases"] == {} and store.record["holdback"] is None
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+@pytest.mark.parametrize("aws_evidence,admitted", [
+    # aws serves the protected release again: aws and azure reopen.
+    pytest.param(None, {"aws", "azure"}, id="the protected release again"),
+    # aws serves no document: only aws, to repair it. azure still needs a healthy holdback.
+    pytest.param((500, b"internal error"), {"aws"}, id="no document, 500"),
+    pytest.param(LIMITED, {"aws"}, id="no document, 429"),
+    # Still changed: nothing.
+    pytest.param(REDEPLOYED, set(), id="still changed"),
+])
+def test_exit_two_the_holdbacks_evidence_stops_differing(monkeypatch, version, aws_evidence, admitted):
+    store, coordinator, lease = frozen_by_a_changed_holdback(monkeypatch, version)
+    canned_planes(monkeypatch, aws_evidence=aws_evidence)
+    assert admissions(coordinator) == admitted
+    # gcp stays blocked either way, until it is recovered.
+    assert [held["state"] for held in store.record["leases"].values()] == ["blocked"]
+    if "aws" in admitted:
+        coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
+        assert store.record["holdback"]["cloud"] == "azure"
 
 
 UNCHANGED = (200, evidence_document("aws"))
@@ -657,6 +831,13 @@ DOWN = (500, b"internal error")
     (LOCAL, DOWN, False),
     (UNCHANGED, (200, b"<html>"), False),
     ((200, b"[]"), DOWN, False),
+    # A rate-limited read is no document. It neither refuses on its own nor
+    # hides a change the other read shows.
+    (LIMITED, LIMITED, True),
+    (LIMITED, UNCHANGED, True),
+    (UNCHANGED, LIMITED, True),
+    (LIMITED, LOCAL, False),
+    (LOCAL, LIMITED, False),
 ])
 def test_default_coordinator_refuses_on_either_of_the_two_reads(monkeypatch, version, first, second, leasable):
     store, coordinator, _ = default_coordinator_protecting_aws(monkeypatch, version)

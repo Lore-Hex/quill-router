@@ -54,13 +54,46 @@ Under v3:
      read refuses.
    - **Unreadable (leasable, to repair a dead cloud):** the cloud served no
      document of its own. That is a transport failure (DNS, connect, TLS,
-     timeout), an HTTP error status (404 and 5xx included) or a redirect,
-     which the coordinator never follows.
-   - A refusal writes nothing and is not a deadlock. The check runs only
-     while another rollout holds a lease and relies on this cloud as its
-     holdback. Once every such lease is released or recovered the journal
-     holds no lease, the holdback is cleared, and the cloud can be leased
-     directly.
+     timeout), an HTTP error status (every 4xx and 5xx: a 404, a 401 or 403,
+     a 429 whatever its `Retry-After`) or a redirect, which the coordinator
+     never follows. The body of an error status is never read as evidence.
+   - A refusal writes nothing. It is not a deadlock on one condition: every
+     lease that relies on this cloud as its holdback can itself be released
+     or recovered. The check runs only while such a lease exists. Once each
+     one is released or recovered the journal holds no lease, the holdback
+     is cleared, and the cloud can be leased directly. `release` and
+     `recover` read only what their own lease changed (rule 9; the whole
+     cloud under v2) and never the holdback, so a changed holdback does not
+     hold them.
+   - **When that condition fails: the frozen journal.** Say gcp is leased
+     and aws, its holdback, changes outside any lease. A gcp rollout that
+     is already past its last `assert` still releases normally. Otherwise
+     its next `assert` reads aws and fails, the deploy records a failure
+     (`deploy_mutex_finish`), and the gcp lease ends `blocked`. From then
+     on nothing is admitted on any cloud: gcp by rule 5, aws by this rule,
+     and azure because every grant needs the holdback, aws, healthy and
+     unchanged. Nothing times this out: a blocked lease is never reclaimed
+     by age. There are two exits.
+     1. **Recover the blocked lease.** `infra-apply` with operation
+        `recover` (confirmation `APPLY`) frees it once its owner run is
+        proven stopped and gcp passes its own probe. It asks nothing of
+        aws. The journal is then empty, the holdback is cleared, and aws
+        can be leased to put a reviewed release back on it.
+     2. **The holdback's evidence stops differing.** If aws serves the
+        protected release again in both reads, aws and azure can be leased
+        again. If aws serves no document, aws alone can be, to repair it,
+        and azure becomes the holdback. gcp stays blocked either way until
+        it is recovered.
+   - **When exit 1 is closed too.** If gcp also fails its own probe (the
+     failed rollout left it unhealthy), `recover` is refused, and rule 5
+     admits no gcp rollout to repair it. With aws still differing, the
+     coordinator then admits nothing until an operator, by hand and outside
+     any lease, either repairs gcp and recovers its lease or puts the
+     protected release back on aws. That is two clouds in an unknown state
+     at once, which the coordinator refuses rather than resolves. Rule 5
+     already demands the manual gcp repair for any blocked lease on an
+     unhealthy cloud. What this rule adds is that aws and azure stay closed
+     meanwhile, for as long as aws differs.
    - A response that breaks off mid-transfer, or is not HTTP at all, raises
      out of the coordinator: the command fails and writes nothing.
 8. FIFO: an earlier live waiter blocks a request when their components
