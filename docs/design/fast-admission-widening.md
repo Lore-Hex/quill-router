@@ -253,7 +253,7 @@ reconciler rather than at workspaces, the enabler raises
   a lease holding the rest gets 402 until PR 7's 503 is on
   (`fastpath_lease_headroom_503`), and 503 after it; PR 7 went on before
   WS5's $30 join balance for that reason.
-- **$100 and $40 (amended 2026-11-13: $30 and $20).** Below about $40 a
+- **$100 and $40 (amended 2026-11-13: $30 and $5).** Below about $40 a
   grant leaves at most $20 for leases past the floor, so most leases are
   refused and each request pays a front door hop to be passed. The gap
   between enabling and disabling keeps a workspace near the line from
@@ -1163,9 +1163,9 @@ list fails it until the reserved pin says which path the workspace takes.
 - **No 503 for headroom in leases, until PR 7 is on.** §8 step 4's 503 in
   place of 402 was not in Python's authorize (no lease read there);
   `fast-admission-pilot.md` lists it as not in the pilot. PR 7 adds it to
-  the typed authorize behind `fastpath_lease_headroom_503`, off in
-  `rollout.sh`, so production still answers 402 until activation turns it
-  on. Widening to small balances needs it on (on since WS5, 2026-11-13).
+  the typed authorize behind `fastpath_lease_headroom_503`, off by default
+  and dark in `rollout.sh` until 2026-11-13, when it went on before WS5's
+  $30 join balance; widening to small balances needs it on.
 - **No fast-path fact in the speculation issuer.** §8 step 4's issuer fact
   (§4.13) is not in `storage_gcp_speculation_shadow.py`. Speculation
   dispatches nothing, so widening does not wait on it, but it must land
