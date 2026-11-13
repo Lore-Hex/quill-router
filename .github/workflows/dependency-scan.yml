@@ -10,9 +10,9 @@ name: Dependency scan
 #  * pull_request: diff scan against the base branch; FAILS only when the PR
 #    introduces a vulnerability that main does not already have.
 #
-# Inlined from google/osv-scanner-action's reusable workflows (v2.7.0) as steps,
-# because repository policy (tests/test_spanner_schema_audit_workflow.py) only
-# admits local reusable workflows.
+# Inlined from google/osv-scanner-action's reusable workflows (v2.7.0) as steps.
+# Lore-Hex runs no third-party actions: the repository's osv-scanner action runs
+# the same OSV-Scanner image those actions ran, pinned by digest.
 
 on:
   pull_request:
@@ -47,9 +47,7 @@ jobs:
           persist-credentials: false
       - name: Run scanner
         id: scan
-        uses: google/osv-scanner-action/osv-scanner-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
-        env:
-          GOTOOLCHAIN: auto
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         continue-on-error: true
         with:
           scan-args: |-
@@ -82,9 +80,7 @@ jobs:
         run: git checkout "$GITHUB_BASE_REF"
       - name: Run scanner on existing code
         id: scan-old
-        uses: google/osv-scanner-action/osv-scanner-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
-        env:
-          GOTOOLCHAIN: auto
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         continue-on-error: true
         with:
           scan-args: |-
@@ -97,9 +93,7 @@ jobs:
         run: git checkout -f "$GITHUB_SHA"
       - name: Run scanner on new code
         id: scan-new
-        uses: google/osv-scanner-action/osv-scanner-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
-        env:
-          GOTOOLCHAIN: auto
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         continue-on-error: true
         with:
           scan-args: |-
@@ -117,8 +111,9 @@ jobs:
           [ -s new-results.json ] || { echo "::error::scan of this branch wrote no results"; status=1; }
           exit "$status"
       - name: Report new vulnerabilities
-        uses: google/osv-scanner-action/osv-reporter-action@9a96bc4d2b09685b6142bcfe25a3dc17cb2d7347 # v2.7.0
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
+          tool: reporter
           scan-args: |-
             --output=results.sarif
             --old=old-results.json

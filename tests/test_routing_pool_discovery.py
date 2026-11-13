@@ -13,6 +13,11 @@ that computes the row:
   provider.require_parameters: true and that parameter keeps every model the
   pool routes to without it, so the pool claims no more than its weakest
   model;
+- a capability-required parameter (tools, tool_choice, response_format,
+  structured_outputs) is listed exactly when routing has a pool route for a
+  request sending it. Routing sends one only to routes that declare it,
+  whatever require_parameters says, so the request is served by the pool's
+  capable models instead of answering in prose;
 - an input modality is listed exactly when routing has a pool route for a
   request carrying it, and such a request reaches only routes that take it.
 """
@@ -99,9 +104,23 @@ def test_pool_lists_a_parameter_exactly_when_routing_keeps_every_model_for_it(po
         return
     every_model = _models(pool_routes)
     named = {parameter for _model, endpoint in pool_routes for parameter in endpoint.supported_parameters}
-    for parameter in sorted(named | listed):
+    for parameter in sorted((named | listed) - set(routing.CAPABILITY_REQUIRED_PARAMETERS)):
         kept = _routes(_requiring(pool, parameter))
         assert (_models(kept) == every_model) == (parameter in listed), (pool, parameter)
+
+
+@pytest.mark.parametrize("pool", ROUTING_POOLS)
+def test_pool_lists_a_capability_parameter_exactly_when_routing_has_a_route_for_it(pool):
+    row = catalog.model_to_openrouter_shape(catalog.MODELS[pool])
+    listed = set(row["supported_parameters"])
+    for parameter in sorted(routing.CAPABILITY_REQUIRED_PARAMETERS):
+        # Listed exactly when routing serves it under require_parameters, and
+        # then it is served without the flag too (routing filters these
+        # regardless, so a request sending one never reaches a route lacking it).
+        required = _routes(_requiring(pool, parameter))
+        assert bool(required) == (parameter in listed), (pool, parameter)
+        if parameter in listed:
+            assert _routes({"model": pool, "requested_parameters": [parameter]}), (pool, parameter)
 
 
 @pytest.mark.parametrize("pool", ROUTING_POOLS)
@@ -155,7 +174,7 @@ def _fixture_pool(monkeypatch, *, a_routes, b_routes) -> Settings:
     return settings
 
 
-def test_one_model_without_a_tool_route_takes_tools_off_the_pool(client, monkeypatch):
+def test_one_model_with_a_tool_route_lists_tools_and_serves_every_tool_request(client, monkeypatch):
     settings = _fixture_pool(
         monkeypatch,
         a_routes=[("novita", ("tools", "max_tokens"), ("text",))],
@@ -163,10 +182,32 @@ def test_one_model_without_a_tool_route_takes_tools_off_the_pool(client, monkeyp
     )
     assert _models(_routes({"model": AUTO_MODEL_ID}, settings)) == {FIXTURE_A, FIXTURE_B}
     row = _row(client, AUTO_MODEL_ID)
-    assert row["supported_parameters"] == ["max_tokens"]
+    # No route names tool_choice, and require_parameters would refuse it, so
+    # it stays off although a plain tool_choice request reaches A.
+    assert row["supported_parameters"] == ["tools", "max_tokens"]
     assert row["architecture"]["input_modalities"] == ["text"]
-    # Routing agrees: requiring tools loses model B.
-    assert _models(_routes(_requiring(AUTO_MODEL_ID, "tools"), settings)) == {FIXTURE_A}
+    assert _routes(_requiring(AUTO_MODEL_ID, "tool_choice"), settings) == []
+    # Routing agrees: a tool request reaches only A's tool route, with or
+    # without require_parameters, so listing tools never sends one to B.
+    for body in (
+        {"model": AUTO_MODEL_ID, "requested_parameters": ["tools"]},
+        _requiring(AUTO_MODEL_ID, "tools"),
+    ):
+        assert [(model.id, endpoint.provider) for model, endpoint in _routes(body, settings)] == [
+            (FIXTURE_A, "novita")
+        ]
+    # temperature is not capability-required, so B alone keeps it off.
+    assert _models(_routes(_requiring(AUTO_MODEL_ID, "temperature"), settings)) == {FIXTURE_B}
+
+
+def test_pool_lists_no_tools_when_no_route_declares_them(client, monkeypatch):
+    _fixture_pool(
+        monkeypatch,
+        a_routes=[("novita", ("max_tokens",), ("text",))],
+        b_routes=[("deepinfra", ("max_tokens", "temperature"), ("text",))],
+    )
+    listed = _row(client, AUTO_MODEL_ID)["supported_parameters"]
+    assert "tools" not in listed and "tool_choice" not in listed
 
 
 def test_pool_lists_tools_when_every_model_has_a_tool_route(client, monkeypatch):

@@ -392,6 +392,12 @@
       ],
       "default_effort": "high"
     },
+    "apodex/apodex-1.1-mini:free": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "baidu/ernie-5.5-flash-preview:free": {
       "mandatory": true,
       "default_enabled": true,
@@ -916,6 +922,28 @@
       ],
       "default_effort": "medium"
     },
+    "google/gemini-4-hydrogen": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "google/gemini-4-hydrogen:batch": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
     "google/gemini-nano-banana-2.1": {
       "mandatory": false,
       "default_enabled": true,
@@ -979,6 +1007,18 @@
       "default_effort": "high"
     },
     "inclusionai/ling-3.0-flash": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
+    },
+    "inclusionai/ling-3.0-flash-fin": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
+    },
+    "inclusionai/ling-3.0-flash-sante": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [],
@@ -2288,6 +2328,20 @@
       ],
       "default_effort": "high"
     },
+    "particle-ai/particle-1:free": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "perceptron/perceptron-mk1": {
       "mandatory": false,
       "default_enabled": false,
@@ -2703,6 +2757,18 @@
         "low",
         "minimal",
         "none"
+      ],
+      "default_effort": "high"
+    },
+    "thinkingmachines/inkling-2-small": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal"
       ],
       "default_effort": "high"
     },
@@ -3141,8 +3207,9 @@
     },
     "~google/gemini-flash-latest": {
       "mandatory": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "supported_efforts": [
+        "xhigh",
         "high",
         "medium",
         "low"

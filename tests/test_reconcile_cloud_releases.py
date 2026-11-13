@@ -1,9 +1,11 @@
 import json
 import subprocess
+from dataclasses import asdict
 
 import pytest
 
 from scripts.deploy import reconcile_cloud_releases as r
+from scripts.deploy import release_train as train
 
 
 @pytest.fixture
@@ -37,6 +39,23 @@ def test_dispatches_both_secondary_clouds_with_exact_release(api):
     assert all("release_sha=" + "a" * 40 in c for c in dispatches)
     assert all("promotion_only=true" in c for c in dispatches)
     assert all(c[c.index("--ref") + 1] == "main" for c in dispatches)
+
+
+def test_completed_train_promotes_selected_commit_not_initiating_commit(api, monkeypatch):
+    api["jobs"]["select-release"] = "success"
+    monkeypatch.setattr(train.GitHub, "run", lambda self, run_id: {"head_sha": "a" * 40})
+    monkeypatch.setattr(train.GitHub, "relation", lambda *args: "ahead")
+    selected = train.Release("c" * 40, "c" * 9, train.IMAGE + "c" * 64, 3, 1)
+    monkeypatch.setattr(train.GitHub, "artifact", lambda *args: {"deploy": True, "release": asdict(selected)})
+    assert r.completed_release() == "c" * 40
+
+
+def test_invalid_train_receipt_never_falls_back_to_controller(api, monkeypatch):
+    api["jobs"]["select-release"] = "success"
+    monkeypatch.setattr(train.GitHub, "run", lambda self, run_id: {"head_sha": "a" * 40})
+    monkeypatch.setattr(train.GitHub, "artifact", lambda *args: (_ for _ in ()).throw(train.Refused("missing receipt")))
+    with pytest.raises(r.Refused, match="train receipt"):
+        r.completed_release()
 
 
 @pytest.mark.parametrize("result", ["success", "skipped", "failure"])

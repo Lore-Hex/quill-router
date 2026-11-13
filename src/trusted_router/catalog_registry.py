@@ -61,6 +61,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_1_MODEL_ID,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -658,6 +659,15 @@ MODELS: dict[str, Model] = {
     LIBERTY_4_0_MODEL_ID: Model(
         id=LIBERTY_4_0_MODEL_ID,
         name="TrustedRouter Liberty 4.0",
+        provider="trustedrouter",
+        context_length=1_048_576,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    LIBERTY_4_1_MODEL_ID: Model(
+        id=LIBERTY_4_1_MODEL_ID,
+        name="TrustedRouter Liberty 4.1",
         provider="trustedrouter",
         context_length=1_048_576,
         supports_messages=False,
@@ -1478,6 +1488,10 @@ for _endpoint_id, _supplemental_endpoint in _SUPPLEMENTAL_ENDPOINTS.items():
     if not _supplemental_endpoint.context_length and _previous_endpoint is not None:
         _supplemental_endpoint = replace(
             _supplemental_endpoint, context_length=_previous_endpoint.context_length,
+        )
+    if _supplemental_endpoint.max_completion_tokens is None and _previous_endpoint is not None:
+        _supplemental_endpoint = replace(
+            _supplemental_endpoint, max_completion_tokens=_previous_endpoint.max_completion_tokens,
         )
     MODEL_ENDPOINTS[_endpoint_id] = _supplemental_endpoint
 # A hosted decision model's vendor route came from `_build_endpoints`; its

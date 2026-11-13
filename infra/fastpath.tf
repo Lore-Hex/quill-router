@@ -188,7 +188,8 @@ locals {
   # each node takes the flag by the runbook's unit rewrite, not a reset.
   fastpath_fleet_audit = true
   # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
-  # section 8.2): a lease needs effective trust tier 3, a workspace's
+  # section 8.2): a lease needs effective trust tier 3 (1 since 2026-11-13,
+  # with the lower tiers' allowances below), a tier-3 workspace's
   # allowance is $1,000 and a lease leaves at least $20 of the balance, in
   # microdollars. The startup script passes each as -required-tier,
   # -allowance and -floor (8af87998a and later take all three). A reset
@@ -470,14 +471,12 @@ resource "google_compute_instance" "fastpath_node" {
   # release and metadata; 11 and 12 were drained, left the edge backend one
   # apply before their removal, then were removed.
   #
-  # 15 and 16 take the places of 13 and 14 the same way, for the lower
-  # tiers' allowances (#2542): the script 13 and 14 run, from before it,
-  # passes neither -allowance-tier2 nor -allowance-tier1 from their
-  # attributes. The same release and metadata; 13 and 14 are drained, leave
-  # the edge backend one apply before their removal, then are removed.
+  # 15 and 16 took the places of 13 and 14 the same way, for the lower
+  # tiers' allowances (#2542): the script 13 and 14 ran, from before it,
+  # passed neither -allowance-tier2 nor -allowance-tier1 from their
+  # attributes. The same release and metadata; 13 and 14 were drained, left
+  # the edge backend one apply before their removal, then were removed.
   for_each = {
-    "tr-fastpath-13" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
-    "tr-fastpath-14" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
     "tr-fastpath-15" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-16" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }

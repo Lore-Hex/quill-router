@@ -117,7 +117,8 @@
       "id": "bytedance/deepseek-v3-2-251201",
       "upstream_id": "deepseek-v3-2-251201",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-13"
     },
     {
       "display_name": "deepseek-v3",
@@ -459,7 +460,8 @@
       "id": "bytedance/seed-1-8-251228",
       "upstream_id": "seed-1-8-251228",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-13"
     },
     {
       "display_name": "seed-2-0-code",
@@ -520,7 +522,8 @@
       "id": "bytedance/seed-2-0-lite-260228",
       "upstream_id": "seed-2-0-lite-260228",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-13"
     },
     {
       "display_name": "seed-2-0-lite",
@@ -581,7 +584,8 @@
       "id": "bytedance/seed-2-0-mini-260215",
       "upstream_id": "seed-2-0-mini-260215",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-13"
     },
     {
       "display_name": "seed-2-0-mini",
@@ -703,7 +707,8 @@
       "id": "bytedance/seedance-1-0-lite-i2v-250428",
       "upstream_id": "seedance-1-0-lite-i2v-250428",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-13"
     },
     {
       "display_name": "seedance-1-0-lite-t2v",
@@ -722,7 +727,8 @@
       "id": "bytedance/seedance-1-0-lite-t2v-250428",
       "upstream_id": "seedance-1-0-lite-t2v-250428",
       "routable": false,
-      "routable_reason": "provider-retired"
+      "routable_reason": "provider-retired",
+      "missing_since": "2026-11-13"
     },
     {
       "display_name": "seedance-1-0-pro",
@@ -1344,11 +1350,30 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-10-20"
+    },
+    {
+      "display_name": "dola-seedream-5-5",
+      "title": "dola-seedream-5-5-261028",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/dola-seedream-5-5-261028",
+      "upstream_id": "dola-seedream-5-5-261028",
+      "routable": false,
+      "routable_reason": "unsupported-api"
     }
   ],
   "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
   "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
-  "generated_at": "2026-11-12T09:26:20Z",
+  "generated_at": "2026-11-13T03:55:00Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 60
+  "model_count": 61
 }

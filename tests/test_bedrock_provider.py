@@ -305,3 +305,21 @@ def test_metadata_failure_does_not_invent_large_limits(monkeypatch):
         raise RuntimeError("unavailable")
     monkeypatch.setattr(bedrock, "fetch_html", fail)
     assert bedrock.fetch_model_limits("openai.gpt-oss-20b") == {}
+
+
+def test_rows_without_a_model_card_are_marked_placeholder_and_verified_limits_clear_it(tmp_path):
+    from scripts.pricing.base import ProviderPricingResult
+    from scripts.pricing.manifest import write_discovered_chat_manifest
+
+    prices, rows = bedrock.discover(catalog("openai.gpt-oss-20b"), tariff())
+    row = rows["openai/gpt-oss-20b"]
+    assert (row["context_length"], row["max_output_tokens"], row["limits_source"]) == (4096, 1024, "placeholder")
+
+    # A manifest saved while the model card was missing still says placeholder.
+    manifest = tmp_path / "amazon-bedrock.json"
+    manifest.write_text(json.dumps({"provider": "amazon-bedrock", "models": [copy.deepcopy(row)]}), encoding="utf-8")
+    bedrock.apply_model_limits(rows, {"openai/gpt-oss-20b": {"context_length": 131_072, "max_output_tokens": 32_768}})
+    result = ProviderPricingResult(slug="amazon-bedrock", prices=prices, source="api", fetched_url=bedrock.PRICING_URL)
+    write_discovered_chat_manifest(result, manifest_path=manifest, discovered_rows=rows, source_url=bedrock.URL)
+    saved = next(m for m in json.loads(manifest.read_text(encoding="utf-8"))["models"] if m["id"] == "openai/gpt-oss-20b")
+    assert (saved["context_length"], saved["max_output_tokens"], saved["limits_source"]) == (131_072, 32_768, "model-card")

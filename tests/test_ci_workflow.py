@@ -135,7 +135,7 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
                       == f"durations-{clock}-${{{{ matrix.shard }}}}")
         assert steps.index(upload) > test_index
         assert upload["if"] == "always()"
-        assert upload["uses"] == "actions/upload-artifact@v4"
+        assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         assert upload["with"]["path"] == path
         assert upload["with"]["retention-days"] == 7
 
@@ -343,6 +343,7 @@ def test_proof_oracle_ci_split(request, tmp_path):
     assert 'continue-on-error' not in job
     assert any(step.get('run') == 'uv sync --frozen' for step in job['steps'])
     assert all('google-github-actions/auth' not in step.get('uses', '') for step in job['steps'])
+    assert all('/.github/actions/gcp-auth@' not in step.get('uses', '') for step in job['steps'])
     assert all('continue-on-error' not in step for step in job['steps'])
     pin = next(step for step in job['steps'] if 'TR_LIFECYCLE_CLOCK_OVERRIDE=' in step.get('run', ''))
     existing_pin = next(step for step in jobs['test-post-cutover']['steps']

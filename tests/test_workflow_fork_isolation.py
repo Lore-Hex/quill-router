@@ -11,6 +11,10 @@ CLOUD_AUTH_ACTIONS = (
     "google-github-actions/auth@",
     "aws-actions/configure-aws-credentials@",
     "azure/login@",
+    # Repository-owned replacements (.github/actions), pinned by SHA.
+    "Lore-Hex/quill-router/.github/actions/gcp-auth@",
+    "Lore-Hex/quill-router/.github/actions/aws-credentials@",
+    "Lore-Hex/quill-router/.github/actions/azure-login@",
 )
 
 

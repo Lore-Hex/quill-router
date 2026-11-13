@@ -1101,4 +1101,6 @@ def test_workflow_needs_no_cloud_credentials() -> None:
     assert "configure-aws-credentials" not in workflow
     assert "role-to-assume" not in workflow
     assert "google-github-actions/auth" not in workflow
+    assert "actions/gcp-auth@" not in workflow
+    assert "actions/aws-credentials@" not in workflow
     assert "secrets." not in workflow

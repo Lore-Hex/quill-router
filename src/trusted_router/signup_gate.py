@@ -55,6 +55,24 @@ def starter_credit_for_email(email: str, starter_credit_microdollars: int) -> in
     return starter_credit_microdollars
 
 
+# Google sign-ups on these consumer domains always receive starter credit.
+GOOGLE_UNCAPPED_STARTER_CREDIT_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+
+# Google sign-ups on any other domain (a Google Workspace or a non-Google
+# address registered as a Google account) receive starter credit only for the
+# first this-many accounts on that domain. One Workspace domain mints unlimited
+# verified addresses: the 2026-11-12 wave created 50 on one domain in an hour.
+STARTER_CREDIT_ACCOUNTS_PER_DOMAIN = 3
+
+
+def google_starter_credit_domain_limit(email: str) -> int | None:
+    """Per-domain starter-credit limit for a Google sign-up, None for uncapped."""
+    domain = email.rsplit("@", 1)[-1].strip().lower()
+    if domain in GOOGLE_UNCAPPED_STARTER_CREDIT_DOMAINS:
+        return None
+    return STARTER_CREDIT_ACCOUNTS_PER_DOMAIN
+
+
 # A GitHub account younger than this receives no starter credit.
 GITHUB_STARTER_CREDIT_MIN_ACCOUNT_AGE = timedelta(days=30)
 

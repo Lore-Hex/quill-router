@@ -317,7 +317,8 @@
       "upstream_id": "claude-fable-5-1",
       "input_token_price_per_m": 10000000,
       "output_token_price_per_m": 50000000,
-      "cached_input_token_price_per_m": 250000
+      "cached_input_token_price_per_m": 250000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Claude Opus 5.5",
@@ -343,7 +344,8 @@
       "upstream_id": "claude-opus-5-5",
       "input_token_price_per_m": 4000000,
       "output_token_price_per_m": 20000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Claude Sonnet 5.5",
@@ -369,7 +371,8 @@
       "upstream_id": "claude-sonnet-5-5",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Claude Haiku 5.5",
@@ -395,7 +398,8 @@
       "upstream_id": "claude-haiku-5-5",
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 10000
+      "cached_input_token_price_per_m": 10000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Claude Fable 5.2",
@@ -421,12 +425,13 @@
       "upstream_id": "claude-fable-5-2",
       "input_token_price_per_m": 8000000,
       "output_token_price_per_m": 40000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "limits_source": "placeholder"
     }
   ],
   "provider": "anthropic",
   "source": "https://www.anthropic.com/pricing",
-  "generated_at": "2026-11-12T09:26:20Z",
+  "generated_at": "2026-11-13T03:55:00Z",
   "price_scale": "microdollars_per_million",
   "model_count": 15
 }

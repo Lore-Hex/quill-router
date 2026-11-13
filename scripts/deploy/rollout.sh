@@ -725,9 +725,11 @@ ENV_VARS=(
   # The 503 for headroom in leases (docs/design/fast-admission-widening.md
   # section 11, PR 7): a hold the balance covers but the headroom outside
   # the fast path's leases does not is answered 503 with Retry-After, not
-  # 402. A literal, so no revision inherits it; false is the way back. It
-  # moves with activation (PR 8), before WS6.
-  "TR_FASTPATH_LEASE_HEADROOM_503=false"
+  # 402. A literal, so no revision inherits it; false is the way back. On
+  # since 2026-11-13, before the enabler admits balances near the floor
+  # (section 8.2: Joseph's $30 join balance), so a hold that meets a lease
+  # holding the rest is retried, never refused.
+  "TR_FASTPATH_LEASE_HEADROOM_503=true"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md
   # section 5): off, alert, enforce. Off until Go reads the policy member and
@@ -844,6 +846,16 @@ ENV_VARS=(
   # policy's excluded member; every other workspace's async-v1 authorize
   # passes to Python, the only ticket signer.
   "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES=84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
+  # Edge tickets (docs/design/fast-admission-e2-g15-async.md, the edge
+  # tickets section): for the workspaces named here the edge answers the
+  # async-v1 authorize itself and asks Python's sign-only route for the
+  # ticket while its own commit is in flight. Python publishes the policy's
+  # edge_tickets member only with this set, and a node release before
+  # d23591a1f refuses a policy carrying it, so this is set only once every
+  # node runs that release or a later one (infra/fastpath.tf). First the
+  # operator workspace, which is on the overlap list above. The way back is
+  # this one pin, emptied.
+  "TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4

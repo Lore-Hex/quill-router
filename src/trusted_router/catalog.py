@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 
@@ -60,6 +61,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
     LIBERTY_4_0_MODEL_ORDER,
+    LIBERTY_4_1_MODEL_ID,
+    LIBERTY_4_1_MODEL_ORDER,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -166,6 +169,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     Provider,
     _EmbeddingSpec,
     decide_url,
+    model_vendor_provider_slugs,
     offers_chat,
 )
 from trusted_router.catalog_energy import (
@@ -564,10 +568,12 @@ _OPEN_WEIGHT_CONTAINS = (
 )
 
 
-# Served under an open-weights family prefix, but its weights are not
-# published: Hugging Face's thinkingmachines/Inkling-2-Small is not public and
-# Tinker's serverless feed lists no weights URL for it (2026-11-05).
-_UNPUBLISHED_WEIGHTS = frozenset({"thinkingmachines/inkling-2-small"})
+# Models served under an open-weights family prefix whose weights are not
+# published yet: they carry no open-weights badge until they are. Inkling 2
+# Small was listed here until Thinking Machines published its weights on
+# 2026-11-12 (https://huggingface.co/thinkingmachines/Inkling-2-Small,
+# Apache-2.0). Liberty membership is a separate, explicit decision.
+_UNPUBLISHED_WEIGHTS: frozenset[str] = frozenset()
 
 
 def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> bool:
@@ -675,6 +681,56 @@ def published_context_length(model: Model) -> int:
     from trusted_router.routing import routing_pool_context_length
 
     return routing_pool_context_length(model.id) or model.context_length
+
+
+def published_max_completion_tokens(model: Model, endpoints: Sequence[ModelEndpoint]) -> int | None:
+    """The output-token cap a model's public rows show (OpenRouter's
+    top_provider.max_completion_tokens), from the most authoritative source:
+
+    1. the model vendor's own route cap (its API or a host its company runs),
+       when it serves the model;
+    2. else the source catalog's model cap (OpenRouter's top_provider);
+    3. else the largest cap any route states.
+
+    Hosts disagree widely (GLM-5.3: Z.ai states 131,072, other hosts up to
+    the whole 1M window), so the largest route claim is only the last resort.
+    When every route states a cap, the result never exceeds the largest of
+    them, since no route would produce more. Every cap is bounded by its
+    window: routing turns away prompt + max_tokens beyond it. A route that
+    states no cap is unknown, not unlimited. Orchestration models (routing
+    pools, synth, advisors, private proxies) send a request to several
+    models, so they publish none."""
+    if model.id in META_MODEL_IDS:
+        return None
+    route_caps = {
+        endpoint.id: _bounded(endpoint.max_completion_tokens, endpoint.effective_context_length(model))
+        for endpoint in endpoints
+        if endpoint.max_completion_tokens
+    }
+    # Model.provider can name a fallback host; the vendor's own hosts are
+    # its API and the ones its company runs (Vertex AI for Google).
+    vendor = model_vendor_provider_slugs(model.id)
+    maker_caps = [route_caps[endpoint.id] for endpoint in endpoints if endpoint.provider in vendor and endpoint.id in route_caps]
+    if maker_caps:
+        cap = max(maker_caps)
+    elif model.max_completion_tokens:
+        cap = _bounded(model.max_completion_tokens, model.context_length)
+    elif route_caps:
+        cap = max(route_caps.values())
+    else:
+        return None
+    if endpoints and len(route_caps) == len(endpoints):
+        cap = min(cap, max(route_caps.values()))
+    # Nor more than the widest route window holds, capped or not.
+    windows = [endpoint.effective_context_length(model) for endpoint in endpoints]
+    if windows and all(windows):
+        cap = min(cap, max(windows))
+    return cap
+
+
+def _bounded(cap: int, window: int) -> int:
+    """A cap no larger than its window; an unknown window (0) bounds nothing."""
+    return min(cap, window) if window > 0 else cap
 
 
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
@@ -1053,7 +1109,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         **({"supported_voices": list(SPEECH_MODELS[model.id].voices)} if model.id in SPEECH_MODELS else {}),
         "top_provider": {
             "context_length": context_length,
-            "max_completion_tokens": None,
+            "max_completion_tokens": published_max_completion_tokens(model, endpoints),
             "is_moderated": False,
         },
         "per_request_limits": None,

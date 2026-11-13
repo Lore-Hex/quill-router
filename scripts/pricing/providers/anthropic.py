@@ -125,6 +125,8 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
             "title": native_id,
             "context_length": context_length,
             "max_output_tokens": max_output_tokens,
+            # Explicit, so it replaces a saved placeholder marker on merge.
+            "limits_source": "api",
             "model_type": "chat",
             "features": features,
             "input_modalities": input_modalities,
@@ -214,6 +216,8 @@ def _public_pricing_model_rows(
             "title": slug.replace(".", "-"),
             "context_length": 1_000_000 if major >= 5 else 200_000,
             "max_output_tokens": 128_000 if major >= 5 else 64_000,
+            # Guessed from the version until the Models API lists the model.
+            "limits_source": "placeholder",
             "model_type": "chat",
             "features": ["function-calling"],
             "input_modalities": ["text", "image"],

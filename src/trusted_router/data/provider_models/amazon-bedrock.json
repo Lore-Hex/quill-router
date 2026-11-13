@@ -23,7 +23,8 @@
         "streaming"
       ],
       "routable": false,
-      "routable_reason": "provider-unavailable"
+      "routable_reason": "provider-unavailable",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "claude-haiku-4-5",
@@ -48,7 +49,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "claude-opus-4-7",
@@ -73,7 +75,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "claude-opus-4-8",
@@ -99,7 +102,8 @@
       "routable": false,
       "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-10-19",
-      "missing_since": "2026-10-29"
+      "missing_since": "2026-10-29",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "claude-opus-5",
@@ -124,7 +128,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "claude-opus-5-5",
@@ -150,7 +155,8 @@
       "routable": false,
       "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-10-19",
-      "missing_since": "2026-10-29"
+      "missing_since": "2026-10-29",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Claude Sonnet 5",
@@ -201,7 +207,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 580000,
-      "output_token_price_per_m": 1680000
+      "output_token_price_per_m": 1680000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "v3.2",
@@ -226,7 +233,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 620000,
-      "output_token_price_per_m": 1850000
+      "output_token_price_per_m": 1850000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gemma-3-12b-it",
@@ -276,7 +284,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 230000,
-      "output_token_price_per_m": 380000
+      "output_token_price_per_m": 380000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gemma-3-4b-it",
@@ -327,7 +336,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 130000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gemma-4-31b",
@@ -353,7 +363,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gemma-4-e2b",
@@ -379,7 +390,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 40000,
-      "output_token_price_per_m": 80000
+      "output_token_price_per_m": 80000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "minimax-m2",
@@ -479,7 +491,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 400000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "magistral-small-2509",
@@ -504,7 +517,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ministral-3-14b-instruct",
@@ -529,7 +543,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ministral-3-3b-instruct",
@@ -554,7 +569,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ministral-3-8b-instruct",
@@ -579,7 +595,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 150000
+      "output_token_price_per_m": 150000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "mistral-large-3-675b-instruct",
@@ -604,7 +621,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "voxtral-mini-3b-2507",
@@ -628,7 +646,8 @@
         "streaming"
       ],
       "routable": false,
-      "routable_reason": "unsupported-audio-contract"
+      "routable_reason": "unsupported-audio-contract",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "voxtral-small-24b-2507",
@@ -652,7 +671,8 @@
         "streaming"
       ],
       "routable": false,
-      "routable_reason": "unsupported-audio-contract"
+      "routable_reason": "unsupported-audio-contract",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "kimi-k2-thinking",
@@ -677,7 +697,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 2500000
+      "output_token_price_per_m": 2500000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "kimi-k2.5",
@@ -702,7 +723,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nemotron-nano-3-30b",
@@ -777,7 +799,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nemotron-nano-9b-v2",
@@ -802,7 +825,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 230000
+      "output_token_price_per_m": 230000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.4",
@@ -827,7 +851,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.4-2026-03-05",
@@ -852,7 +877,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.5",
@@ -877,7 +903,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.5-2026-04-23",
@@ -902,7 +929,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.6-luna",
@@ -927,7 +955,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.6-sol",
@@ -952,7 +981,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-5.6-terra",
@@ -977,7 +1007,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-6-astra",
@@ -1002,7 +1033,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-6-luna",
@@ -1027,7 +1059,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-6-sol",
@@ -1052,7 +1085,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-6.1-sol",
@@ -1077,7 +1111,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "gpt-oss-120b",
@@ -1327,7 +1362,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "qwen3-vl-235b-a22b-instruct",
@@ -1352,7 +1388,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 530000,
-      "output_token_price_per_m": 2660000
+      "output_token_price_per_m": 2660000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "palmyra-vision-7b",
@@ -1404,7 +1441,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 2500000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "glm-4.6",
@@ -1429,7 +1467,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "glm-4.7",
@@ -1504,7 +1543,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Claude Haiku 5.5",
@@ -1647,12 +1687,13 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-29"
+      "unresolved_since": "2026-10-29",
+      "limits_source": "placeholder"
     }
   ],
   "source": "https://bedrock-mantle.us-east-1.api.aws/v1/models",
   "pricing_source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/us-east-1/index.json",
-  "generated_at": "2026-11-12T09:26:20Z",
+  "generated_at": "2026-11-13T03:55:00Z",
   "price_scale": "microdollars_per_million",
   "model_count": 65
 }

@@ -75,6 +75,37 @@ def test_sustained_availability_alert_does_not_include_provider_text(monkeypatch
     assert events[0][1]["fingerprint"] == ["route-availability", "near-ai", "m"]
 
 
+@pytest.mark.parametrize(
+    ("error_type", "error_status", "suffix"),
+    [
+        ("insufficient_quota", 402, " (latest: insufficient_quota, HTTP 402)"),
+        ("TimeoutError", None, " (latest: TimeoutError)"),
+        (None, 503, " (latest: HTTP 503)"),
+        # Negative controls: provider-shaped text and impossible statuses
+        # never reach the alert, and nothing usable means no suffix at all.
+        ("PRIVATE provider text sk-123", 502, " (latest: HTTP 502)"),
+        ("x" * 65, None, ""),
+        ("", 0, ""),
+        (None, 9999, ""),
+        (None, None, ""),
+    ],
+)
+@pytest.mark.parametrize("kind", ["availability", "degradation"])
+def test_availability_alert_carries_only_error_class_and_status(
+    monkeypatch, kind, error_type, error_status, suffix,
+):
+    events = []
+    monkeypatch.setattr("trusted_router.synthetic.alerts.ops_alert", lambda message, **kw: events.append((message, kw)))
+    flag = route_health.RouteHealthFlag(
+        "chutes", "m", 24, 6, 0.25, error_type, "PRIVATE", kind, newest_error_status=error_status,
+    )
+    route_health.report_route_health([flag])
+    (message, kw), = events
+    assert message.endswith("hours" + suffix if kind == "degradation" else "minutes" + suffix)
+    assert "PRIVATE" not in message and "sk-" not in message
+    assert kw["fingerprint"] == ["route-availability", "chutes", "m"]
+
+
 def test_availability_alerts_never_quarantine_routes(monkeypatch):
     from trusted_router.config import Settings
     from trusted_router.synthetic.remediator import _detect_route_quarantine

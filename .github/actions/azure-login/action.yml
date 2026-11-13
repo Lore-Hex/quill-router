@@ -1,0 +1,56 @@
+name: azure-login
+description: >-
+  Log the Azure CLI in with the job's GitHub OIDC token, as azure/login@v2 did
+  with client-id, tenant-id and subscription-id: az login --service-principal
+  --federated-token (token audience api://AzureADTokenExchange), then select the
+  subscription. The job needs permissions id-token: write. az caches the
+  federated token, which GitHub issues for a few minutes only; long jobs log in
+  again (scripts/deploy/azure_control_plane.sh azure_refresh_login).
+inputs:
+  client-id:
+    description: Application (client) ID of the federated identity.
+    required: true
+  tenant-id:
+    description: Directory (tenant) ID.
+    required: true
+  subscription-id:
+    description: Subscription to select.
+    required: true
+  audience:
+    description: OIDC token audience (azure/login's default).
+    default: api://AzureADTokenExchange
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.client-id }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+        OIDC_AUDIENCE: ${{ inputs.audience }}
+      run: |
+        set -euo pipefail
+        set +x
+        fail() { echo "::error::azure-login: $*"; exit 1; }
+        [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] \
+          || fail "no GitHub OIDC token is available; the job needs permissions id-token: write"
+        guid='^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
+        [[ "$CLIENT_ID" =~ $guid ]] || fail "client-id is not a GUID"
+        [[ "$TENANT_ID" =~ $guid ]] || fail "tenant-id is not a GUID"
+        [[ "$SUBSCRIPTION_ID" =~ $guid ]] || fail "subscription-id is not a GUID"
+        command -v az >/dev/null || fail "az is not on PATH in this runner image"
+        # The request token reaches curl on stdin (-H @-), so it is not in argv.
+        id_token="$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          | curl -fsS --retry 3 --retry-all-errors -H @- \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$OIDC_AUDIENCE")" \
+          | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["value"])')" \
+          || fail "could not fetch a GitHub OIDC token"
+        [ -n "$id_token" ] || fail "the GitHub OIDC token endpoint returned no token"
+        echo "::add-mask::${id_token}"
+        az cloud set --name AzureCloud --output none
+        az login --service-principal --username "$CLIENT_ID" --tenant "$TENANT_ID" \
+          --federated-token "$id_token" --output none \
+          || fail "az login with the federated token failed"
+        az account set --subscription "$SUBSCRIPTION_ID" \
+          || fail "cannot select subscription ${SUBSCRIPTION_ID}"
+        echo "Logged in to Azure tenant ${TENANT_ID}, subscription ${SUBSCRIPTION_ID}"

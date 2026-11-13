@@ -9,6 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WIF_PROVIDER = "projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github"
 KNOWN_WIF_ALLOWLIST_EXCEPTIONS: dict[str, str] = {}
+OWN_ACTIONS = "Lore-Hex/quill-router/.github/actions"
 # Fixed action identities, not prefixes or a list inferred at scan time. New
 # actions need review here; these do not authenticate to the GCP WIF provider.
 KNOWN_NON_GCP_AUTH_ACTIONS = {
@@ -30,7 +31,18 @@ KNOWN_NON_GCP_AUTH_ACTIONS = {
     "google-github-actions/setup-gcloud": "Installs gcloud; GCP authentication is a separate action.",
     "hashicorp/setup-terraform": "Installs the Terraform CLI.",
     "oven-sh/setup-bun": "Installs the Bun toolchain.",
+    # Repository-owned composite actions (.github/actions), pinned by SHA.
+    f"{OWN_ACTIONS}/setup-uv": "Installs a checksum-pinned uv release.",
+    f"{OWN_ACTIONS}/setup-gcloud": "Logs the runner's gcloud in with the gcp-auth credential file.",
+    f"{OWN_ACTIONS}/aws-credentials": "Obtains AWS credentials, not GCP credentials.",
+    f"{OWN_ACTIONS}/azure-login": "Authenticates to Azure, not GCP.",
+    f"{OWN_ACTIONS}/setup-terraform": "Installs a checksum-pinned Terraform release.",
+    f"{OWN_ACTIONS}/setup-buildx": "Creates a Docker Buildx builder.",
+    f"{OWN_ACTIONS}/setup-bun": "Installs a checksum-pinned Bun release.",
+    f"{OWN_ACTIONS}/osv-scanner": "Runs the digest-pinned OSV-Scanner image on the workspace.",
 }
+# Actions that authenticate to GCP: the provider comes from this input.
+GCP_AUTH_ACTIONS = {"google-github-actions/auth", f"{OWN_ACTIONS}/gcp-auth"}
 
 
 def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator():
@@ -50,21 +62,26 @@ def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator()
     assert job["services"]["spanner"] == ci["jobs"]["spanner-emulator"]["services"]["spanner"]
     assert "@sha256:" in job["services"]["spanner"]["image"]
     steps = job["steps"]
-    auth = next(step for step in steps if step.get("uses") == "google-github-actions/auth@v3")
-    typed_auth = next(step for step in workflow["jobs"]["typed-billing-invariant-audit"]["steps"] if step.get("uses") == "google-github-actions/auth@v3")
+    auth = next(step for step in steps if _uses(step, "gcp-auth"))
+    typed_auth = next(step for step in workflow["jobs"]["typed-billing-invariant-audit"]["steps"] if _uses(step, "gcp-auth"))
     assert auth["with"] == typed_auth["with"] == {
         "workload_identity_provider": WIF_PROVIDER,
         "service_account": "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com",
     }
-    assert steps[0]["uses"] == "actions/checkout@v7"
-    assert any(step.get("uses") == "google-github-actions/setup-gcloud@v3" for step in steps)
-    assert any(step.get("uses") == "astral-sh/setup-uv@v7" and step.get("with") == {"version": "latest"} for step in steps)
+    assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", steps[0]["uses"])
+    assert any(_uses(step, "setup-gcloud") for step in steps)
+    assert any(_uses(step, "setup-uv") and "with" not in step for step in steps)
     assert any(step.get("run") == "uv sync --frozen" for step in steps)
     assert steps[-1]["run"] == "uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010"
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in steps)
     assert "SPANNER_EMULATOR_HOST" not in str(workflow)
     assert "secrets." not in str(workflow)
+
+
+def _uses(step, action):
+    """Whether a step runs one of the repository's own actions, pinned by full SHA."""
+    return re.fullmatch(rf"{re.escape(OWN_ACTIONS)}/{re.escape(action)}@[0-9a-f]{{40}}", str(step.get("uses", ""))) is not None
 
 
 def _resolve_static(value, context, resolving=()):
@@ -201,7 +218,7 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
                 continue
             action_name, separator, ref = uses.partition("@")
             assert separator and ref and "@" not in ref, unresolved
-            if action_name == "google-github-actions/auth":
+            if action_name in GCP_AUTH_ACTIONS:
                 provider = _resolve_static(step.get("with", {}).get("workload_identity_provider"), step_context)
                 assert isinstance(provider, str) and provider.strip(), (
                     f"Cannot statically resolve GCP WIF provider (UNRESOLVED) in {location}"
@@ -773,4 +790,25 @@ def test_wif_reusable_missing_or_recursive_call_fails(wif_repository_copy: Path,
         'jobs': {'call': {'uses': f'./.github/workflows/{callee}'}},
     })
     with pytest.raises(AssertionError, match='Missing local reusable workflow|Recursive reusable workflow call'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('pin', ['0123456789abcdef0123456789abcdef01234567', 'main'])
+def test_wif_allowlist_rejects_unlisted_repository_gcp_auth_action(wif_repository_copy: Path, pin):
+    # The repository's own gcp-auth action authenticates exactly as
+    # google-github-actions/auth did, whatever ref it is pinned to.
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'][0]['uses'] = f'{OWN_ACTIONS}/gcp-auth@{pin}'
+    workflow['jobs']['audit']['steps'][0]['with']['service_account'] = 'tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com'
+    _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
+    with pytest.raises(AssertionError, match=r'missing from .*unlisted-workflow\.yml'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+def test_wif_unknown_repository_action_is_unresolved(wif_repository_copy: Path):
+    step = {'name': 'Unknown action', 'uses': f'{OWN_ACTIONS}/gcp-auth-wrapper@0123456789abcdef0123456789abcdef01234567'}
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [step]
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
+    with pytest.raises(AssertionError, match=r'UNRESOLVED uses .*gcp-auth-wrapper'):
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)

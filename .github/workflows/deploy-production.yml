@@ -209,6 +209,34 @@ jobs:
           fence="$(bash scripts/deploy/deploy_mutex.sh acquire)"
           printf '%s\n' "$fence" >> "$GITHUB_OUTPUT"
 
+  select-release:
+    # Freeze one train only after the shared cloud wait. Never give up the
+    # reservation to a newer waiting run or change an already-started rollout.
+    needs: [admit-cloud, build-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    outputs:
+      commit: ${{ steps.train.outputs.commit }}
+      sha: ${{ steps.train.outputs.sha }}
+      image: ${{ steps.train.outputs.image }}
+      proceed: ${{ steps.train.outputs.proceed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREPARED_TAG: ${{ inputs.sha }}
+      PREPARED_IMAGE: ${{ inputs.image }}
+      TR_TRAIN_HOTFIX: ${{ inputs.hotfix == true }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Freeze newest compatible prepared green release
+        id: train
+        run: python3 -m scripts.deploy.release_train select
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-release-${{ github.run_attempt }}
+          path: release.json
+          if-no-files-found: error
+          retention-days: 90
+
   confirm-regions-ready:
     # Would the staged rollout accept every region as it stands? A rollout whose
     # drain was interrupted leaves the staged-drain tag on a revision that no
@@ -218,8 +246,8 @@ jobs:
     # reservation was retained (2026-11-11). This asks first.
     # It runs under the reservation because only the holder can call a tag
     # leftover, beside migrate-schema so it adds no time, and it reads only.
-    needs: [admit-cloud]
-    if: github.repository == 'Lore-Hex/quill-router'
+    needs: [admit-cloud, select-release]
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.select-release.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -228,6 +256,8 @@ jobs:
       TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select-release.outputs.commit }}
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
@@ -241,11 +271,13 @@ jobs:
     # serving revision changes. The script is idempotent; normally this is only
     # read-only INFORMATION_SCHEMA verification. A newly added column therefore
     # always exists before code that writes it can receive traffic.
-    needs: [gate-on-ci, admit-cloud]
-    if: github.repository == 'Lore-Hex/quill-router'
+    needs: [gate-on-ci, admit-cloud, select-release]
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.select-release.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select-release.outputs.commit }}
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -381,11 +413,13 @@ jobs:
     # schema verification run. SES credentials are rotated directly in GCP
     # Secret Manager; deploys must never copy a stale long-lived key back from
     # GitHub Actions and silently undo an incident-response rotation.
-    needs: [gate-on-ci, admit-cloud]
-    if: github.repository == 'Lore-Hex/quill-router'
+    needs: [gate-on-ci, admit-cloud, select-release]
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.select-release.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select-release.outputs.commit }}
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -416,21 +450,20 @@ jobs:
             "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
 
   confirm-still-on-main:
-    # Supersession is decided before the lease (confirm-current-main). This
-    # narrower check runs after admission, where the old check stood, and asks
-    # only whether this commit is still on main at all: a force-push during a
-    # lease wait of hours would otherwise ship a state main never had. A commit
-    # that is merely no longer the head still deploys; the lease is not given up.
-    needs: [admit-cloud, migrate-schema, sync-runtime-secrets]
+    # The train is frozen after admission. Check that its selected commit is
+    # still on main; new arrivals belong to the next train, never this rollout.
+    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, select-release]
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     outputs:
       on_main: ${{ steps.ancestry.outputs.on_main }}
     env:
       GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: ${{ needs.select-release.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.select-release.outputs.commit }}
           sparse-checkout: scripts/deploy/superseded_deploy.py
           sparse-checkout-cone-mode: false
       - name: Confirm this commit is still on main
@@ -439,29 +472,30 @@ jobs:
           set -euo pipefail
           if [ "${{ github.event_name }}" != "push" ] && [ "${{ inputs.track_main }}" != "true" ]; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
-            echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
+            echo "manual dispatch: deploying requested revision ${RELEASE_COMMIT}"
             exit 0
           fi
           latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          if [ "${latest_sha}" = "${GITHUB_SHA}" ] || python3 scripts/deploy/superseded_deploy.py --mode ancestry \
-              --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}" --head "${latest_sha}"; then
+          if [ "${latest_sha}" = "${RELEASE_COMMIT}" ] || python3 scripts/deploy/superseded_deploy.py --mode ancestry \
+              --repo "${GITHUB_REPOSITORY}" --base "${RELEASE_COMMIT}" --head "${latest_sha}"; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
-            echo "${GITHUB_SHA} is on main (head ${latest_sha})"
+            echo "${RELEASE_COMMIT} is on main (head ${latest_sha})"
           else
             echo "on_main=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::${GITHUB_SHA} is no longer on main (head ${latest_sha}); releasing the lease without deploying."
+            echo "::warning::${RELEASE_COMMIT} is no longer on main (head ${latest_sha}); releasing the lease without deploying."
           fi
 
   deploy:
-    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, admit-cloud, confirm-regions-ready]
+    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, admit-cloud, confirm-regions-ready, select-release]
     if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' && needs.confirm-still-on-main.outputs.on_main == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
       TR_DEPLOY_MUTEX_GENERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_GENERATION }}
       TR_DEPLOY_MUTEX_CREATED_AT: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
-      sha: ${{ needs.build-image.outputs.sha }}
-      image: ${{ needs.build-image.outputs.image }}
+      commit: ${{ needs.select-release.outputs.commit }}
+      sha: ${{ needs.select-release.outputs.sha }}
+      image: ${{ needs.select-release.outputs.image }}
       primary_live_seconds: ${{ steps.primary_live.outputs.primary_live_seconds }}
       previous_europe_west4_revision: ${{ steps.prev.outputs.europe_west4_revision }}
       previous_us_east4_revision: ${{ steps.prev.outputs.us_east4_revision }}
@@ -482,8 +516,8 @@ jobs:
       REGION: us-central1
       REPO: trusted-router
       SERVICE: trusted-router
-      SHA: ${{ needs.build-image.outputs.sha }}
-      IMAGE: ${{ needs.build-image.outputs.image }}
+      SHA: ${{ needs.select-release.outputs.sha }}
+      IMAGE: ${{ needs.select-release.outputs.image }}
       TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
       # Temporary explicit opt-in for the pre-split all-routes service. Remove
       # with the six-service production cutover in #712.
@@ -491,6 +525,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.select-release.outputs.commit }}
           fetch-depth: 2
 
       - name: Authenticate to GCP via WIF
@@ -550,7 +585,7 @@ jobs:
       - name: Warm all four regions in parallel (no traffic)
         id: warm_all
         env:
-          IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
+          IMAGE_TAG: ${{ needs.select-release.outputs.sha }}
           TR_TRUST_STRIPE_ACCOUNT_ID: ${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}
         run: |
           set -euo pipefail
@@ -944,6 +979,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.deploy.outputs.commit }}
           fetch-depth: 2
 
       - name: Authenticate to GCP via WIF
@@ -1020,9 +1056,10 @@ jobs:
         # rescheduled on every control-plane release, not behind the trust
         # jobs' opt-in, so its settings move with the control plane's. Its
         # script pins the mode (apply since WS2, armed 2026-11-09: each run
-        # writes the allow-list) and max rank 0, so nobody joins off the
-        # include list, until an activation step moves them;
-        # fastpathctl enabler pause stops its writes without a deploy.
+        # writes the allow-list) and max rank 10 (WS4), so the ten largest
+        # eligible workspaces join beside the include list, until an
+        # activation step moves them; fastpathctl enabler pause stops its
+        # writes without a deploy.
         run: bash scripts/deploy/fastpath_enabler_job.sh
 
       - name: Enforce Google Data Manager sharing disabled
@@ -1292,7 +1329,7 @@ jobs:
     # owner cutover it deploys the smokeable run.app companion; after cutover
     # it detects the public backend in the live map and preserves routed-mode
     # ingress/header trust on every later automatic deploy.
-    needs: [rollout-secondaries, admit-cloud]
+    needs: [rollout-secondaries, admit-cloud, select-release]
     if: github.repository == 'Lore-Hex/quill-router'
     continue-on-error: false
     runs-on: ubuntu-latest
@@ -1308,6 +1345,8 @@ jobs:
       SERVICE: trusted-router
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select-release.outputs.commit }}
 
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
@@ -1365,7 +1404,7 @@ jobs:
     # Follow every successful router rollout with the same serving image/SA.
     # The parent reservation spans this job and its verification; never acquire
     # or release an independent lease for the worker.
-    needs: [rollout-secondaries, admit-cloud]
+    needs: [rollout-secondaries, admit-cloud, select-release]
     if: github.repository == 'Lore-Hex/quill-router'
     continue-on-error: false
     runs-on: ubuntu-latest
@@ -1382,8 +1421,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # inputs.sha is an image tag abbreviation, not a fetchable Git ref.
-          ref: ${{ github.sha }}
+          # The selected train's full commit, never the initiating run's SHA.
+          ref: ${{ needs.select-release.outputs.commit }}
 
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
@@ -1443,12 +1482,14 @@ jobs:
   # result; that is the workflow's full-convergence gate.
   # ---------------------------------------------------------------------------
   verify-cloud-complete:
-    needs: [rollout-secondaries]
+    needs: [rollout-secondaries, select-release]
     if: ${{ always() && needs.rollout-secondaries.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.select-release.outputs.commit }}
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -1462,7 +1503,7 @@ jobs:
         run: bash scripts/deploy/verify_gcp_complete.sh
 
   finalize-cloud:
-    needs: [admit-cloud, confirm-regions-ready, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete]
+    needs: [admit-cloud, confirm-regions-ready, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete, select-release]
     if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1482,6 +1523,20 @@ jobs:
           set -euo pipefail
           export TR_DEPLOY_OUTCOME=failure
           if jq -e 'all(.[]; .result == "success")' <<< "$RESULTS" >/dev/null; then
+            TR_DEPLOY_OUTCOME=success
+          elif jq -e '."select-release".result == "success" and
+            ."select-release".outputs.proceed == "false" and
+            ([."migrate-schema", ."sync-runtime-secrets", .deploy, ."rollout-secondaries",
+              ."public-surface-companion", ."settle-drain-worker", ."verify-cloud-complete"] |
+              all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
+            # An earlier train already delivered this batch. Nothing mutated.
+            TR_DEPLOY_OUTCOME=success
+          elif jq -e '(."select-release".result == "failure" or ."select-release".result == "cancelled") and
+            ([."confirm-regions-ready", ."migrate-schema", ."sync-runtime-secrets", ."confirm-still-on-main",
+              .deploy, ."rollout-secondaries", ."public-surface-companion", ."settle-drain-worker",
+              ."verify-cloud-complete"] | all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
+            # Selection only reads GitHub. Its failure stays red, but must not
+            # strand the production lease before any mutation has started.
             TR_DEPLOY_OUTCOME=success
           elif jq -e '."confirm-still-on-main".result == "success" and
             ."confirm-still-on-main".outputs.on_main == "false" and

@@ -260,7 +260,7 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
 # Jurisdiction and privacy controls that already exist. Reuse these; a second
 # mechanism for the same rule is a second thing to keep true:
 #   * US_PROVIDER_ONLY_MODEL_IDS (below) is the request-time rule that pins
-#     OpenPatcher, Athena and Liberty 4.0 ids to US-operated providers. routing.py turns a
+#     OpenPatcher, Athena and Liberty 4.x ids to US-operated providers. routing.py turns a
 #     match into provider_jurisdiction=US on the request.
 #   * The provider.jurisdiction request preference in routing.py filters
 #     candidate endpoints against provider_headquarters_country. It accepts only
@@ -451,6 +451,9 @@ class Model:
     hidden_public_metadata: bool = False
     documentation: ModelDocumentation | None = None
     internal_only: bool = False
+    # Output-token cap from the source catalog's model row, used when none of
+    # the model's routes states its own (ModelEndpoint.max_completion_tokens).
+    max_completion_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -479,6 +482,8 @@ class ModelEndpoint:
     output_token_price_per_m_by_resolution: dict[str, int] | None = None
     # Host-specific window; 0 preserves the legacy model-window fallback.
     context_length: int = 0
+    # Host-specific output-token cap; None when the host states none.
+    max_completion_tokens: int | None = None
 
     def effective_context_length(self, model: Model) -> int:
         """A host may narrow, but never widen, the advertised model window."""
@@ -2984,6 +2989,8 @@ LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
 
 LIBERTY_4_0_MODEL_ID = "trustedrouter/liberty-4.0"
 
+LIBERTY_4_1_MODEL_ID = "trustedrouter/liberty-4.1"
+
 US_PROVIDER_ONLY_MODEL_IDS = frozenset(
     {
         OPEN_PATCHER_S1_MODEL_ID,
@@ -2994,6 +3001,7 @@ US_PROVIDER_ONLY_MODEL_IDS = frozenset(
         ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
         LIBERTY_4_0_MODEL_ID,
+        LIBERTY_4_1_MODEL_ID,
     }
 )
 
@@ -3104,6 +3112,7 @@ META_MODEL_IDS = frozenset(
         PARASAIL_LIBERTY_2_0_MODEL_ID,
         LIBERTY_3_0_MODEL_ID,
         LIBERTY_4_0_MODEL_ID,
+        LIBERTY_4_1_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -3399,6 +3408,15 @@ LIBERTY_4_0_MODEL_ORDER = (
     "nvidia/nemotron-3-ultra-550b-a55b",
     "reflection/beam-1.0",
     "meta-models/muse-spark-open",
+)
+
+# Liberty 4.0's panel plus Thinking Machines' Inkling 2 Small (weights public
+# under Apache-2.0 on 2026-11-12). Inkling 2 Small also fuses first, backed up
+# by Muse Spark, Beam, then Nemotron. The gateway pins Inkling 2 Small to
+# Cloudflare Workers AI's US 1M route.
+LIBERTY_4_1_MODEL_ORDER = (
+    *LIBERTY_4_0_MODEL_ORDER,
+    "thinkingmachines/inkling-2-small",
 )
 
 SYNTH_FRONTIER_1_MODEL_ORDER = (
@@ -4069,6 +4087,7 @@ for _synth_model_id in (
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_1_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
 
@@ -4115,7 +4134,7 @@ _MODEL_ORIGIN_US_TRUSTEDROUTER = ModelOrigin(
     note=(
         "First-party record: the Liberty, Athena, OpenPatcher, and orchestration "
         "families are built by TrustedRouter, a US company. The OpenPatcher, "
-        "Athena and Liberty 4.0 ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
+        "Athena and Liberty 4.x ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
         "provider routes at request time."
     ),
 )

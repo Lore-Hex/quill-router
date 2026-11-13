@@ -190,6 +190,7 @@ def test_anthropic_models_api_row_preserves_native_id_and_capabilities(
             "title": "claude-opus-5",
             "context_length": 1_000_000,
             "max_output_tokens": 128_000,
+            "limits_source": "api",
             "model_type": "chat",
             "features": ["function-calling", "structured-outputs", "reasoning"],
             "input_modalities": ["text", "image"],
