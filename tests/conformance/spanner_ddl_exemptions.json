@@ -6,6 +6,12 @@
     }
   },
   "lines": {
+    ".gitleaks.toml": {
+      "'''^tests/conformance/spanner_ddl\\.py$''',": {
+        "count": 1,
+        "reason": "A gitleaks allowlist path naming the DDL conformance test file; secret-scan configuration, it dispatches no DDL."
+      }
+    },
     ".github/workflows/ci.yml": {
       "# order-independent; grouping is what serializes the DDL.": {
         "count": 1,
