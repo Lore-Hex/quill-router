@@ -193,6 +193,8 @@ def discover(catalog: object, tariffs: object) -> tuple[dict[str, ModelPrice], d
         row: dict[str, Any] = {
             "id": model_id, "upstream_id": native, "display_name": native.split(".", 1)[1],
             "context_length": 4096, "max_output_tokens": 1024,
+            # Not a stated AWS limit: catalog publication ignores the cap.
+            "limits_source": "placeholder",
             "input_modalities": ["text"], "output_modalities": ["text"],
             "supported_features": ["streaming"], "endpoints": ["chat/completions"],
         }
@@ -210,6 +212,15 @@ def discover(catalog: object, tariffs: object) -> tuple[dict[str, ModelPrice], d
     return prices, rows
 
 
+def apply_model_limits(rows: dict[str, dict[str, Any]], limits: dict[str, dict[str, int]]) -> None:
+    """Replace a row's placeholder limits with its AWS model card's. The source
+    is written explicitly so it replaces a saved placeholder marker when the
+    manifest writer merges the fresh row onto the existing one."""
+    for model, metadata in limits.items():
+        if metadata:
+            rows[model].update(metadata, limits_source="model-card")
+
+
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_ROWS  # noqa: PLW0603
     _DISCOVERED_ROWS = {}
@@ -220,8 +231,7 @@ def fetch() -> ProviderPricingResult:
     prices, rows = discover(fetch_json(URL, extra_headers={"Authorization": f"Bearer {key}"}), fetch_json(PRICING_URL))
     with ThreadPoolExecutor(max_workers=4) as pool:
         limits = pool.map(lambda model: fetch_model_limits(rows[model]["upstream_id"]), prices)
-        for model, metadata in zip(prices, limits, strict=True):
-            rows[model].update(metadata)
+        apply_model_limits(rows, dict(zip(prices, limits, strict=True)))
     # A reviewed Claude Runtime profile must never be priced, probed or dispatched
     # as the similarly named Mantle model. Exact Runtime rows replace that alias.
     prices.update(runtime.fetch_runtime_prices())

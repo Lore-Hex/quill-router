@@ -1040,6 +1040,7 @@ def _ingested_models_and_endpoints(
             published_completion_price_microdollars_per_million_tokens=cheapest_completion,
             price_tiers=cheapest_tiers,
             published_price_tiers=cheapest_tiers,
+            max_completion_tokens=_as_positive_int(top_provider.get("max_completion_tokens")) or None,
         )
 
         for prompt_price, completion_price, tiers, slug, raw_ep in per_endpoint_prices:
@@ -1059,6 +1060,7 @@ def _ingested_models_and_endpoints(
                     upstream_id=upstream_id,
                     supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
                     context_length=host_window,
+                    max_completion_tokens=_as_positive_int(raw_ep.get("max_completion_tokens")) or None,
                     input_modalities=_modalities(
                         raw_ep.get("input_modalities"),
                         default=("text",),
@@ -1080,6 +1082,7 @@ def _ingested_models_and_endpoints(
                     upstream_id=upstream_id,
                     supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
                     context_length=host_window,
+                    max_completion_tokens=_as_positive_int(raw_ep.get("max_completion_tokens")) or None,
                     input_modalities=_modalities(
                         raw_ep.get("input_modalities"),
                         default=("text",),
@@ -1405,6 +1408,17 @@ def _supplemental_provider_models_and_endpoints(
                 _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
             )
             context_length = _as_positive_int(raw_model.get("context_length"))
+            # Provider manifests name the output cap either way. A row its
+            # adapter marks limits_source = "placeholder" (a guessed default,
+            # or a saved value the adapter could not confirm) states no cap,
+            # and neither does one larger than the row's own window.
+            output_cap = None if raw_model.get("limits_source") == "placeholder" else (
+                _as_positive_int(raw_model.get("max_output_tokens"))
+                or _as_positive_int(raw_model.get("max_completion_tokens"))
+                or None
+            )
+            if output_cap is not None and context_length and output_cap > context_length:
+                output_cap = None
             name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
             supported_parameters = manifest_supported_parameters(
                 raw_model,
@@ -1479,6 +1493,7 @@ def _supplemental_provider_models_and_endpoints(
                     supported_parameters=supported_parameters,
                     input_modalities=model.input_modalities,
                     context_length=context_length,
+                    max_completion_tokens=output_cap,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1509,6 +1524,7 @@ def _supplemental_provider_models_and_endpoints(
                     supported_parameters=supported_parameters,
                     input_modalities=model.input_modalities,
                     context_length=context_length,
+                    max_completion_tokens=output_cap,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,

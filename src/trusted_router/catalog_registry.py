@@ -1479,6 +1479,10 @@ for _endpoint_id, _supplemental_endpoint in _SUPPLEMENTAL_ENDPOINTS.items():
         _supplemental_endpoint = replace(
             _supplemental_endpoint, context_length=_previous_endpoint.context_length,
         )
+    if _supplemental_endpoint.max_completion_tokens is None and _previous_endpoint is not None:
+        _supplemental_endpoint = replace(
+            _supplemental_endpoint, max_completion_tokens=_previous_endpoint.max_completion_tokens,
+        )
     MODEL_ENDPOINTS[_endpoint_id] = _supplemental_endpoint
 # A hosted decision model's vendor route came from `_build_endpoints`; its
 # fallback hosts (same model, different upstream id and price) are explicit.

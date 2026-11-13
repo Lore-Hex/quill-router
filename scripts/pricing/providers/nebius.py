@@ -125,6 +125,8 @@ def _manifest_row(
         ),
         "context_length": _positive_int(row.get("context_length")) or 131072,
         "max_output_tokens": 65536,
+        # Nebius's catalog states no output limit; catalog publication ignores this one.
+        "limits_source": "placeholder",
         "input_token_price_per_m": price.prompt_micro_per_m,
         "output_token_price_per_m": price.completion_micro_per_m,
         "model_type": "chat",

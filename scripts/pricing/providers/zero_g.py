@@ -252,6 +252,9 @@ def parse_private_catalog(
             or representative.get("model_id")
             or native_id
         )
+        stated_output = positive_int(representative.get("max_completion_tokens")) or positive_int(
+            public_model.get("max_completion_tokens")
+        )
         row: dict[str, Any] = {
             "id": model_id,
             "upstream_id": native_id,
@@ -261,11 +264,10 @@ def parse_private_catalog(
             "context_length": positive_int(representative.get("context_length"))
             or positive_int(public_model.get("context_length"))
             or 131072,
-            "max_output_tokens": positive_int(
-                representative.get("max_completion_tokens")
-            )
-            or positive_int(public_model.get("max_completion_tokens"))
-            or 32768,
+            "max_output_tokens": stated_output or 32768,
+            # Explicit either way, so a saved marker is replaced on merge;
+            # without a stated cap catalog publication ignores 32768.
+            "limits_source": "api" if stated_output else "placeholder",
             "input_modalities": _modalities(
                 architecture.get("input_modalities"), default=["text"]
             ),

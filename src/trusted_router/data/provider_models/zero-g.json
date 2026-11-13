@@ -60,7 +60,8 @@
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 180000,
       "missing_since": "2026-09-03",
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "0GM-1.0-35B-A3B",
@@ -117,7 +118,8 @@
       "pricing_policy": "maximum-active-private-route",
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 480000,
-      "cached_input_token_price_per_m": 26667
+      "cached_input_token_price_per_m": 26667,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "0GM-1.0-35B-A3B-SIA",
@@ -222,7 +224,8 @@
       "pricing_policy": "maximum-active-private-route",
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 350000
+      "cached_input_token_price_per_m": 350000,
+      "limits_source": "placeholder"
     }
   ],
   "model_count": 4,
