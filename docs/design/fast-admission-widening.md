@@ -1,7 +1,7 @@
 # Widening the fast path to every eligible workspace
 
 Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
-#2396) and PR 7 built (§11); the rollout is at WS5 (§8.2), with the
+#2396), PR 7 on (§11, with WS5); the rollout is at WS5 (§8.2), with the
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
 since WS3, the required tier lowered to 1 with the lower tiers' allowances
 since 2026-11-13 ((b), amended), `max_rank` 100 and the $30 join balance
@@ -137,7 +137,7 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 0 | none, always: no flag | |
 | Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
 | Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
-| Enabler's balance to disable | unspent credit under $20 since 2026-11-13 ($40 until then) | enabler setting |
+| Enabler's balance to disable | unspent credit under $5 since 2026-11-13 ($40 until then) | enabler setting |
 
 **Why.**
 
@@ -251,17 +251,20 @@ reconciler rather than at workspaces, the enabler raises
   and fails when it passes a quarter of the floor, so a price rise is
   reviewed rather than absorbed. A hold larger than the floor that meets
   a lease holding the rest gets 402 until PR 7's 503 is on
-  (`fastpath_lease_headroom_503`), and 503 after it; WS6 waits for PR 7 for
-  that reason.
+  (`fastpath_lease_headroom_503`), and 503 after it; PR 7 went on before
+  WS5's $30 join balance for that reason.
 - **$100 and $40 (amended 2026-11-13: $30 and $20).** Below about $40 a
   grant leaves at most $20 for leases past the floor, so most leases are
   refused and each request pays a front door hop to be passed. The gap
   between enabling and disabling keeps a workspace near the line from
   flapping each run. At $100 only nine workspaces qualified (WS4), so
   Joseph lowered the join balance: $30 is the floor plus the largest top-up
-  ($10), the least balance from which a grant can succeed, and $20, the
-  floor, is where no lease can, which also sits above the console's
-  default auto-refill threshold ($10). Near-floor balances bring the case
+  ($10), the least balance from which a grant can succeed. The leave line
+  is $5, under the console's least auto-refill threshold ($10): auto-refill
+  fires only under its threshold, so a refilling workspace never crosses
+  it (a leave line inside the refill sawtooth would disable and re-enable
+  it every cycle). Between $5 and $20 a workspace stays on with no lease,
+  a front door hop per request. Near-floor balances bring the case
   above (a hold meeting a lease holding the rest), so the 503 for headroom
   in leases (PR 7) went on first; WS5 rather than WS6 now admits them.
 
@@ -276,12 +279,12 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 
 | Excluded | Where | Notes |
 |---|---|---|
-| Effective tier below 3 | enabler, grant (`RefusedTier`), edge `workspace.tier` | the stored effective tier, override included |
+| Effective tier below the required tier (1 since 2026-11-13) | enabler, grant (`RefusedTier`), edge `workspace.tier` | the stored effective tier, override included |
 | Tier 3 resting on an identity bypass, off the include list | enabler; counted in the report as `bypass` | the admin route sets `identity_bypass` for any workspace at any tier (`routes/internal/admin.py:54-72`), so the enabler does not trust it: a bypassed override reaches leases only for a workspace an operator also put on `fastpath_enabler_include` |
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
-| Unspent credit under $20 (under $30 to join; $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
+| Unspent credit under $5 (under $30 to join; $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
 | Deleted workspaces | enabler (the entity's deletion); edge `workspace.deleted` | |
 | BYOK candidates | request (`funding`; `candidates.byok`) | per request: the same workspace's credit requests stay in |
 | Non-credit funding: partner billing, custom or user-provided models, priced extras | request (`pricing`; `body.priced_extra`, `body.custom_model`) | |
@@ -916,7 +919,7 @@ Any alert, or any bar missed, is the way back (§8.3), then the cause.
 | WS3 | The wildcard row on for `gcp`, `us-central1`, then the include list's own on rows deleted, so they decide under the wildcard | 2,000 authorizes with `decided.via` `wildcard`; no `edge_decide_unavailable_sustained` |
 | WS4 | `max_rank` 10: the ten largest workspaces at or above the enabler's required tier (1 since 2026-11-13) | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
 | WS5 | `max_rank` 100, the $30 join balance, PR 7's 503 on | 20,000 leased settles from the step's workspaces, and at least half of those that sent an eligible request granted (26 joined at entry, so 50 cannot be met) |
-| WS6 | PR 7 (the 503) deployed; `max_rank` unbounded: every workspace at or above the enabler's required tier | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
+| WS6 | (PR 7's 503 already on since WS5) `max_rank` unbounded: every workspace at or above the enabler's required tier | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
 
 **The P1 synthetic workspace at tier 3.** An override does not reach tier
 3 by itself: `effective_trust_tier` caps it at 1 unless the owner's
@@ -947,8 +950,9 @@ gate starts from, and the state the way back (§8.3) leaves.
 Why large first: the largest workspaces carry most of the traffic, so each
 step gathers its evidence fastest; their balances dwarf a lease, so the
 floor and the missing 503 cannot reach them; and their payment history is
-the longest. WS6 waits for the 503 because it brings in balances near the
-floor, where a lease can hold the money a synchronous request needs.
+the longest. The 503 had to be on before balances near the floor joined,
+where a lease can hold the money a synchronous request needs: that came
+at WS5, with the $30 join balance (2026-11-13), not WS6.
 
 ### 8.3 The way back
 
@@ -1161,7 +1165,7 @@ list fails it until the reserved pin says which path the workspace takes.
   `fast-admission-pilot.md` lists it as not in the pilot. PR 7 adds it to
   the typed authorize behind `fastpath_lease_headroom_503`, off in
   `rollout.sh`, so production still answers 402 until activation turns it
-  on. Widening to small balances needs it on (WS6).
+  on. Widening to small balances needs it on (on since WS5, 2026-11-13).
 - **No fast-path fact in the speculation issuer.** §8 step 4's issuer fact
   (§4.13) is not in `storage_gcp_speculation_shadow.py`. Speculation
   dispatches nothing, so widening does not wait on it, but it must land
@@ -1457,7 +1461,7 @@ step.
 7. **The 503 for headroom in leases** (§4.4, §8 step 4): the reserve and the
    insufficient-credit precheck answer 503 when the shortfall sits in
    leases. Money code: a differential test against today's authorize and
-   the conformance suite. Order: before WS6.
+   the conformance suite. Order: before the $30 join balance (WS5).
    **Built** (dark): `fastpath_lease_headroom_503`, the literal
    `TR_FASTPATH_LEASE_HEADROOM_503=false` in `rollout.sh`. The route passes
    it to `SpannerStore.authorize_gateway_typed`; off, nothing new is read
