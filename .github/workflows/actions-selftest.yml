@@ -110,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import pathlib, subprocess, sys, yaml
+          import pathlib, re, subprocess, sys, yaml
           failed = False
           for path in sorted(pathlib.Path(".github/actions").glob("*/action.yml")):
               action = yaml.safe_load(path.read_text())
@@ -120,7 +120,7 @@ jobs:
                       continue
                   assert step.get("shell") == "bash", f"{path} step {index}: shell must be bash"
                   # Expressions are passed through env; substitute a placeholder.
-                  script = step["run"].replace("${{", "__").replace("}}", "__")
+                  script = re.sub(r"\$\{\{.*?\}\}", "__", step["run"])
                   result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
                   if result.returncode:
                       failed = True
