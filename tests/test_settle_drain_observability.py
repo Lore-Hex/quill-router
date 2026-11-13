@@ -149,6 +149,92 @@ def test_worker_events_pass_through_unchanged(caplog):
         cleanup()
 
 
+_FIXED_VOCABULARY_MODULES = ('storage_gcp_channel_failover', 'storage_gcp_transport_watch')
+
+
+def _logging_calls(module):
+    """(method, format literal node, call) for every ``logger.<method>(...)`` in the module."""
+    import ast
+    from pathlib import Path
+
+    source = Path(output.__file__).resolve().parents[1] / f'{module}.py'
+    calls = []
+    for node in ast.walk(ast.parse(source.read_text())):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'logger'):
+            method = node.func.attr
+            calls.append((method, node.args[1] if method == 'log' else node.args[0], node))
+    return calls
+
+
+@pytest.mark.parametrize('module', _FIXED_VOCABULARY_MODULES)
+def test_fixed_vocabulary_modules_log_only_literal_formats(module):
+    # The worker keeps these modules' formats verbatim, so each one must be a
+    # literal (no f-string or concatenation) with nothing attached to it.
+    import ast
+    import importlib
+
+    assert f'trusted_router.{module}' in output._FIXED_VOCABULARY_LOGGERS
+    assert importlib.import_module(f'trusted_router.{module}').logger.name == f'trusted_router.{module}'
+    calls = _logging_calls(module)
+    assert len(calls) >= 6
+    for method, message, call in calls:
+        assert method in ('debug', 'info', 'warning', 'error', 'log'), method
+        assert isinstance(message, ast.Constant) and type(message.value) is str, ast.unparse(call)
+        assert not call.keywords, ast.unparse(call)
+        assert not any(isinstance(arg, ast.Starred) for arg in call.args), ast.unparse(call)
+
+
+@pytest.mark.parametrize('module', _FIXED_VOCABULARY_MODULES)
+def test_fixed_vocabulary_lines_keep_their_text_on_the_worker(module, caplog):
+    import re
+
+    name = f'trusted_router.{module}'
+    cleanup = output.install_logging()
+    try:
+        with caplog.at_level(logging.DEBUG, logger=name):
+            for _method, message, _call in _logging_calls(module):
+                args = tuple(1234 if spec == 'd' else 'deadline_streak'
+                             for spec in re.findall(r'%([sd])', message.value))
+                logging.getLogger(name).warning(message.value, *args)
+                assert caplog.records[-1].getMessage() == message.value % args
+    finally:
+        cleanup()
+
+
+@pytest.mark.parametrize('args', [
+    ('private workspace',), ('ya29.private-token/x',), ('a' * 65,), ('',), (None,),
+    (b'private',), (type('Word', (str,), {})('primary'),), (type('Count', (int,), {})(7),),
+])
+def test_fixed_vocabulary_logger_with_other_arguments_is_scrubbed(args, caplog):
+    name = 'trusted_router.storage_gcp_channel_failover'
+    cleanup = output.install_logging()
+    try:
+        with caplog.at_level(logging.INFO, logger=name):
+            logging.getLogger(name).info('spanner channel probe kept client=%s', *args)
+            logging.getLogger(name).info('spanner channel probe kept client=%s', {'client': 'primary'})
+            logging.getLogger(name).info('spanner channel probe kept client=%s stalled_ms=%d', 'primary')
+            logging.getLogger(name).info(type('Format', (str,), {})('spanner channel probe kept'))
+    finally:
+        cleanup()
+    assert [record.getMessage() for record in caplog.records] == [
+        f'logger={name} level=INFO exception_class=none'] * 4
+    assert 'private' not in caplog.text
+
+
+def test_other_storage_loggers_stay_scrubbed(caplog):
+    # Only the two fixed-vocabulary modules are kept; a fixed-looking line
+    # from any other module still says nothing but its logger and level.
+    cleanup = output.install_logging()
+    try:
+        with caplog.at_level(logging.INFO):
+            logging.getLogger('trusted_router.storage_gcp_authorize').info('gateway reap reservation_id=%s', 'r1')
+    finally:
+        cleanup()
+    assert caplog.records[0].getMessage() == (
+        'logger=trusted_router.storage_gcp_authorize level=INFO exception_class=none')
+
+
 def test_worker_ops_alert_reaches_configured_sentry_sink(monkeypatch):
     import sentry_sdk
     from sentry_sdk.transport import Transport
