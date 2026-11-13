@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -9,10 +10,15 @@ import pytest
 import sentry_sdk
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_keys
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.schemas import GatewayContractRejection
-from trusted_router.sentry_config import before_send, reset_sentry_floodgate_for_tests
+from trusted_router.sentry_config import (
+    _scrub_string,
+    before_send,
+    reset_sentry_floodgate_for_tests,
+)
 from trusted_router.services.gateway_contract_warnings import (
     PARAMETER_CATEGORIES,
     report_gateway_contract_rejection,
@@ -40,6 +46,27 @@ def warnings(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
     monkeypatch.setattr(sentry_sdk, "capture_event", capture)
     yield events
     reset_sentry_floodgate_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def deterministic_key_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mint fixed key ids so `credential_id` tag assertions cannot flake.
+
+    Real key ids are `key_` + `secrets.token_urlsafe(18)`. A random draw can
+    contain a GitHub token prefix such as `ghu_` (CI saw `key_...QNcghu_`),
+    and the Sentry scrubber deliberately filters those prefixes anywhere in a
+    string, so the tag would become `[Filtered]`. That substring matching is
+    the intended secret-scrubbing behavior; these tests are about rejection
+    context, so they pin ids the scrubber is proven to leave intact.
+    """
+    counter = itertools.count()
+
+    def fixed_key_id(prefix: str = "key") -> str:
+        key_id = f"{prefix}_contractwarning{next(counter):09d}"
+        assert _scrub_string(key_id) == key_id, key_id
+        return key_id
+
+    monkeypatch.setattr(storage_keys, "new_key_id", fixed_key_id)
 
 
 def _request(key: dict[str, Any], *, parameter: str = "store", status: int = 400) -> dict[str, Any]:
