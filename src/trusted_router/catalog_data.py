@@ -3406,8 +3406,9 @@ LIBERTY_4_0_MODEL_ORDER = (
 )
 
 # Liberty 4.0's panel plus Thinking Machines' Inkling 2 Small (weights public
-# under Apache-2.0 on 2026-11-12), with Liberty 4.0's fusers. The gateway pins
-# Inkling 2 Small to Cloudflare Workers AI's US 1M route.
+# under Apache-2.0 on 2026-11-12). Inkling 2 Small also fuses first, backed up
+# by Muse Spark, Beam, then Nemotron. The gateway pins Inkling 2 Small to
+# Cloudflare Workers AI's US 1M route.
 LIBERTY_4_1_MODEL_ORDER = (
     *LIBERTY_4_0_MODEL_ORDER,
     "thinkingmachines/inkling-2-small",
