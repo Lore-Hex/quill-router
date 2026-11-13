@@ -48,10 +48,13 @@ TICKET = re.compile(r"[a-f0-9]{32}")
 # that can hurt a live waiter compares one host's clock with another's:
 #   * Skipping a waiter for ordering needs the heartbeat to look older than
 #     WAITER_STALE_SECONDS AND to have stayed unchanged for
-#     STALE_CONFIRM_SECONDS on the observer's own clock (longer than one
-#     heartbeat interval plus a poll), so a live waiter is never skipped.
+#     STALE_CONFIRM_SECONDS on the observer's own clock. A polling waiter's
+#     longest gap between heartbeats is one interval, one bounded prune pass
+#     and one poll (120 + 60 + 20 s, plus writes), so 240 s keeps a live
+#     waiter from being skipped with room to spare.
 #   * Deleting one needs its owner run completed, or its heartbeat unchanged
-#     for OBSERVED_DEAD_SECONDS on the observer's own clock, or its declared
+#     for OBSERVED_DEAD_SECONDS on the observer's own clock (a waiter's prune
+#     pass is bounded so its own gap stays far below that), or its declared
 #     deadline exceeded by WAITER_ABANDONED_SECONDS (a day; no clock is off
 #     by that much).
 #   * A single attempt with no observation history (no wait) treats a waiter
@@ -60,13 +63,17 @@ TICKET = re.compile(r"[a-f0-9]{32}")
 MAX_QUEUE = 32
 HEARTBEAT_SECONDS = 120
 WAITER_STALE_SECONDS = 600
-STALE_CONFIRM_SECONDS = 150
+STALE_CONFIRM_SECONDS = 240
 OBSERVED_DEAD_SECONDS = 900
 WAITER_EXPIRY_GRACE = 1800
 WAITER_ABANDONED_SECONDS = 86_400
 # The client stops polling at its wait deadline; the entry outlives that by
 # this margin so a final attempt is never refused as already expired.
 WAITER_DEADLINE_MARGIN = 120
+# One prune pass by a waiting client: no owner check starts after this many
+# seconds, and at most this many checks run (each is a few GitHub API reads).
+PRUNE_BUDGET_SECONDS = 60
+PRUNE_MAX_CHECKS = 4
 # A repository name can be re-created after a rename; its immutable id cannot.
 GITHUB_REPOSITORY_IDS = {
     "Lore-Hex/quill-router": 1227431177,
@@ -566,17 +573,28 @@ class Coordinator:
 
         self.transaction(change)
 
-    def prune(self, stopped: Callable[[dict[str, Any]], bool]) -> int:
+    def prune(self, stopped: Callable[[dict[str, Any]], bool],
+              monotonic: Callable[[], float] = time.monotonic) -> int:
         """Remove stale waiters whose owner is proven stopped.
 
         The owner check runs outside the transaction. Each removal is fenced by
         the exact (ticket, heartbeat_at) observed when it was checked and by
         the journal generation, so a waiter that heartbeats meanwhile stays.
+
+        A pass is bounded: at most PRUNE_MAX_CHECKS owner checks, and none is
+        started after PRUNE_BUDGET_SECONDS, because the waiter doing it does
+        not heartbeat meanwhile. Remaining stale entries wait for a later pass.
         """
         raw, _ = self.store.read()
         now = self.now()
         stale = [e for e in queue_of(state_record(raw)) if now - e["heartbeat_at"] >= WAITER_STALE_SECONDS]
-        dead = {(e["ticket"], e["heartbeat_at"]) for e in stale if stopped(e)}
+        started = monotonic()
+        dead: set[tuple[str, int]] = set()
+        for entry in stale[:PRUNE_MAX_CHECKS]:
+            if monotonic() - started >= PRUNE_BUDGET_SECONDS:
+                break
+            if stopped(entry):
+                dead.add((entry["ticket"], entry["heartbeat_at"]))
         if not dead:
             return 0
 
@@ -834,7 +852,7 @@ def acquire_in_order(coordinator: Coordinator, cloud: str, owner: str, component
             if monotonic() >= next_prune:
                 next_prune = monotonic() + PRUNE_INTERVAL_SECONDS
                 try:
-                    removed = coordinator.prune(stopped)
+                    removed = coordinator.prune(stopped, monotonic=monotonic)
                     if removed:
                         print(f"cloud_rollout.pruned: {removed} stopped waiter(s)", file=sys.stderr)
                 except (Refused, Conflict) as exc:

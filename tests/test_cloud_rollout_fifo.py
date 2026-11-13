@@ -693,3 +693,66 @@ def test_status_shortens_tickets_and_keeps_lease_fences(system, monkeypatch, cap
     assert ticket[:6] + "..." in output
     assert lease["operation_id"] in output
     assert system.store.record["queue"][0]["ticket"] == ticket
+
+
+# Observation margins ---------------------------------------------------------
+
+def test_a_waiter_at_its_longest_heartbeat_gap_is_never_skipped(system):
+    # A polling waiter heartbeats when due (120 s), then may spend one bounded
+    # prune pass (60 s) and a poll (20 s) before its next write: 200 s, plus
+    # write latency. A fast-clocked observer that polls every 10 s (so the
+    # cross-clock hint already calls the waiter stale) must never skip it.
+    holder = hold(system, "gcp")
+    live = enqueue(system, "gcp", QR.format(1), wait=3600)
+    skew = rollout.WAITER_STALE_SECONDS + 60
+    fast = rollout.Coordinator(system.store, system.coordinator.probe, lambda: system.clock[0] + skew)
+    observer = fast.enqueue("gcp", QCP.format(2), "gateway", 3600)
+    gap = rollout.HEARTBEAT_SECONDS + rollout.PRUNE_BUDGET_SECONDS + 20 + 10
+    for cycle in range(3):
+        for _ in range(gap // 10 - 1):
+            system.clock[0] += 10
+            with pytest.raises(rollout.Busy):
+                fast.try_admit(observer, 3600)
+        system.clock[0] += 9
+        if cycle < 2:
+            system.clock[0] += 1
+            with pytest.raises(rollout.Busy):
+                admit(system, live)  # the live waiter's next heartbeat
+    # Worst moment: the lease frees one second before that waiter's next write.
+    system.coordinator.release("gcp", holder["operation_id"], True)
+    with pytest.raises(rollout.Busy, match="earlier waiter"):
+        fast.try_admit(observer, 3600)
+    assert admit(system, live)["operation_id"] == live
+
+
+def test_a_prune_pass_is_bounded_in_time_and_in_checks(system):
+    hold(system, "gcp")
+    stale = [enqueue(system, "gcp", QR.format(i)) for i in range(6)]
+    system.clock[0] += rollout.WAITER_STALE_SECONDS
+    elapsed = [0.0]
+    checked = []
+
+    def slow_stopped(entry):
+        checked.append(entry["ticket"])
+        elapsed[0] += 25
+        return True
+
+    removed = system.coordinator.prune(slow_stopped, monotonic=lambda: elapsed[0])
+    # Checks start at 0, 25 and 50 s; none starts at 75 s (budget 60 s).
+    assert removed == len(checked) == 3
+    assert queued(system) == stale[3:]
+    checked.clear()
+    removed = system.coordinator.prune(lambda entry: checked.append(entry["ticket"]) or True,
+                                       monotonic=lambda: 0.0)
+    assert removed == len(checked) == 3
+
+
+def test_a_prune_pass_never_checks_more_than_its_cap(system):
+    hold(system, "gcp")
+    for i in range(rollout.PRUNE_MAX_CHECKS + 3):
+        enqueue(system, "gcp", QR.format(i))
+    system.clock[0] += rollout.WAITER_STALE_SECONDS
+    checked = []
+    removed = system.coordinator.prune(lambda entry: checked.append(entry["ticket"]) or True,
+                                       monotonic=lambda: 0.0)
+    assert removed == len(checked) == rollout.PRUNE_MAX_CHECKS
