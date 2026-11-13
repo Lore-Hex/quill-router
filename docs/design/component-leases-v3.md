@@ -59,11 +59,23 @@ Under v3:
      coordinator never follows (300 and 304 lease like a redirect). The body
      of such an answer is never read as evidence. A 429 leases with the
      `Retry-After` our application sends (plain decimal seconds), with any
-     other decimal value, with a date and with none.
-     - One known edge fails closed instead. A 429, 502, 503 or 504 whose
-       `Retry-After` passes `str.isdigit()` but not `int()` (the bytes 0xB2,
-       0xB3 and 0xB9, which read as superscript digits) counts as an answer
-       without a release, so the grant is refused.
+     other value and with none.
+     - `fetch` converts a `Retry-After` on a 429, 502, 503 or 504 to a
+       number only when it is one to nine ASCII digits
+       (`RETRY_AFTER_DIGITS`), and retries only when that number is at most
+       5. Any other value fails closed: `fetch` gives up at once and raises
+       the HTTP error, so the read served no document. That covers a date,
+       a longer decimal (leading zeros count toward the nine), and
+       characters `str.isdigit()` passes but `int()` does not (the bytes
+       0xB2, 0xB3 and 0xB9, which decode to superscript digits).
+     - Before the review of #2577 this was a known edge. A decimal over
+       Python's 4300 digit conversion limit, or those superscript digits,
+       reached `int()`, and its ValueError counted as an answer without a
+       release, so the grant was refused. The length and ASCII checks run
+       before `int()` now, and `test_fetch_converts_only_a_short_ascii_retry_after`
+       and the 4301 digit and superscript cases of
+       `test_default_coordinator_leases_a_holdback_that_served_no_document`
+       pin both.
    - A refusal writes nothing. It is not a deadlock on one condition: every
      lease that relies on this cloud as its holdback can itself be released
      or recovered. The check runs only while such a lease exists. Once each
@@ -139,6 +151,42 @@ Under v3:
      `trusted-router-control-backend`. No token is sent; the coordinator
      carries no secrets. All three planes answer it identically (checked
      2026-11-13).
+     - **Or the application's own limiter's 429.** The source limiter
+       (`_rate_limit_request` in `src/trusted_router/middleware.py`) runs
+       before internal auth. With no credential the probe lands in namespace
+       `internal_ip`, under the constant `untrusted` subject on aws and
+       azure: one bucket per replica or task, shared by every
+       unauthenticated `/internal/` and `/v1/internal/` request, routes that
+       do not exist included (240 a minute per replica on azure, 6000 a
+       minute per task on aws). Once anyone spends it, the application
+       answers 429 instead of the 401. Until the review of #2577 the probe
+       retried that after 1 s and 2 s and refused, so `release` and
+       `recover` of a control-plane lease left it held, and on aws and azure
+       a held lease also blocks that cloud's gateway. About 4 requests a
+       second per azure replica was enough. That failed closed, so it was a
+       liveness problem that outside traffic could cause, not a safety one.
+     - The probe passes that 429 at once, matched byte for byte
+       (`LIMITER_429`): status 429 and exactly the body
+       `{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}`.
+       It sends `Content-Type: application/json`, `Retry-After` (what is
+       left of the 60 s window) and the `X-RateLimit-*` headers, which the
+       probe does not need. Any other 429 is retried and refused as before:
+       a proxy's or a load balancer's, HTML, an empty body, or the
+       limiter's object reformatted, wrapped, or with a field changed,
+       added or missing. So is that body at any other status.
+       `test_the_api_probe_passes_both_answers_the_application_itself_sends`
+       takes the 401 and the 429 from the real application, so the pinned
+       bytes cannot drift from what the limiter sends.
+     - The trade-off: while the bucket is spent, the probe shows that the
+       application answers, not that it refuses an unauthenticated call. On
+       aws and azure that refusal adds nothing beyond the release evidence
+       and `/health` checks, because the plane host is the same process.
+       On gcp the API service is a separate service from the one serving
+       `/health` and the evidence. There, during the window, the probe still
+       shows `trusted-router-control-backend` is up and is the application,
+       but not that its internal auth refuses the call. The probe is a
+       liveness check before a lease is freed, not a security gate. The
+       release's own tests cover internal auth.
    - **public-surface:** `/health` and the release evidence.
 10. Every grant increments `epochs[key]`. `lanes --cloud C` prints, for each
     component, whether it holds a lease, its state and its epoch, plus the

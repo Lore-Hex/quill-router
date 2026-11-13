@@ -7,6 +7,7 @@ the matching test to fail.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import email.message
 import hashlib
 import importlib.util
@@ -385,14 +386,26 @@ class FakeOpener:
 
     def open(self, request, timeout):
         self.urls.append(request.full_url)
-        code, body = self.outcomes.pop(0)
+        code, body, *extra = self.outcomes.pop(0)  # (status, body), then optionally headers
         if code == 200:
             return io.BytesIO(body)
-        raise urllib.error.HTTPError(request.full_url, code, "x", {}, io.BytesIO(body))
+        headers = email.message.Message()
+        for name, value in (extra[0] if extra else {}).items():
+            headers[name] = value
+        raise urllib.error.HTTPError(request.full_url, code, "x", headers, io.BytesIO(body))
 
 
 ROUTER_401 = json.dumps({"error": {"code": 401, "message": "Invalid internal service token",
                                    "type": "unauthorized", "source": "router"}}).encode()
+# What the control plane's own source limiter answers once its bucket is spent
+# (_rate_limit_request in src/trusted_router/middleware.py), byte for byte.
+# test_the_api_probe_passes_both_answers_the_application_itself_sends checks
+# that the application still sends exactly this.
+RATE_LIMITED = b'{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}'
+# Its headers as an azure replica sends them (240 a window), halfway through
+# the 60 s window. That test gets the same with its own limit of 2.
+LIMITER_HEADERS = {"Content-Type": "application/json", "Retry-After": "30", "X-RateLimit-Limit": "240",
+                   "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2026-08-19T12:01:00Z"}
 
 
 def real_api_probe(monkeypatch, outcomes):
@@ -421,6 +434,106 @@ def test_api_service_answers_only_with_its_own_401(monkeypatch, outcomes, ok):
             probe("https://trustedrouter.com")
     assert all(u.startswith("https://trustedrouter.com/v1/internal/synthetic/health?rollout_check=")
                for u in opener.urls)
+
+
+def limiter_error(**fields):
+    """The limiter's error object with `fields` changed (None drops one), compact like the app's."""
+    error = {"code": 429, "message": "Rate limit exceeded", "type": "rate_limited", "source": "router"}
+    error = {k: v for k, v in {**error, **fields}.items() if v is not None}
+    return json.dumps({"error": error}, separators=(",", ":")).encode()
+
+
+NOT_THE_LIMITER = {
+    # What a proxy or load balancer in front of the application answers.
+    "plain text 429": b"Rate exceeded.",
+    "html 429": b"<html><head><title>429 Too Many Requests</title></head><body>nginx</body></html>",
+    "empty 429": b"",
+    "json 429 naming no error object": b'{"error":"rate_limited"}',
+    # The limiter's object with one field off.
+    "no source": limiter_error(source=None),
+    "another source": limiter_error(source="edge"),
+    "provider source": limiter_error(source="provider"),
+    "another type": limiter_error(type="provider_rate_limited"),
+    "another code": limiter_error(code=503),
+    "a float code": limiter_error(code=429.0),
+    "no message": limiter_error(message=None),
+    # Another 429 of the application's own, which this route answers only past auth.
+    "another route's 429": limiter_error(message="Synthetic operation is already in progress"),
+    "an extra field": limiter_error(retry_after=30),
+    # The same object in other bytes: nothing between the coordinator and the
+    # application rewrites a body, so a rewritten one did not come from it.
+    "reformatted": json.dumps(json.loads(RATE_LIMITED)).encode(),
+    "trailing newline": RATE_LIMITED + b"\n",
+    "wrapped": b'{"data":' + RATE_LIMITED + b"}",
+}
+
+
+@pytest.mark.parametrize("outcomes,ok", [
+    # The limiter's own 429 passes at once, with or without its headers: no
+    # retry spends more of a bucket that refills only when its window ends.
+    pytest.param([(429, RATE_LIMITED)], True, id="the limiter"),
+    pytest.param([(429, RATE_LIMITED, LIMITER_HEADERS)], True, id="the limiter, with its headers"),
+    pytest.param([(503, b""), (429, RATE_LIMITED)], True, id="a 503, then the limiter"),
+    pytest.param([(429, b"Rate exceeded."), (429, RATE_LIMITED)], True, id="a proxy 429, then the limiter"),
+    # Any other 429 is retried like a 503, and refused on the third.
+    *(pytest.param([(429, body)] * 3, False, id=name) for name, body in NOT_THE_LIMITER.items()),
+    # The limiter's body at any other status is not the limiter.
+    pytest.param([(401, RATE_LIMITED)], False, id="the limiter's body at 401"),
+    pytest.param([(503, RATE_LIMITED)] * 3, False, id="the limiter's body at 503"),
+    pytest.param([(403, RATE_LIMITED)], False, id="the limiter's body at 403"),
+    pytest.param([(200, RATE_LIMITED)], False, id="the limiter's body at 200"),
+])
+def test_api_service_answers_with_its_own_limiters_429_and_no_other(monkeypatch, outcomes, ok):
+    """The #2577 review: with the shared unauthenticated bucket spent, the
+    probe got the limiter's 429 three times and refused, so `release` and
+    `recover` of a control-plane lease failed on traffic from anyone."""
+    opener = real_api_probe(monkeypatch, outcomes)
+    if ok:
+        API_SERVICE_ANSWERS("https://aws.trustedrouter.com")
+        assert opener.outcomes == []  # and asked nothing after the answer it passed
+    else:
+        with pytest.raises(rollout.Refused, match="control-plane API answered"):
+            API_SERVICE_ANSWERS("https://aws.trustedrouter.com")
+        assert opener.outcomes == []
+    assert all(u.startswith("https://aws.trustedrouter.com/v1/internal/synthetic/health?rollout_check=")
+               for u in opener.urls)
+
+
+def test_the_api_probe_passes_both_answers_the_application_itself_sends(monkeypatch):
+    """Pins the application's side. The 401 and the 429 below are what the
+    real application answers the probe's own request, not fixtures: first its
+    internal auth, then, once any unauthenticated internal request (here one
+    to a route that does not exist) has spent the shared bucket, its source
+    limiter, which runs before internal auth. Each passes the real probe."""
+    from fastapi.testclient import TestClient
+
+    from trusted_router import storage_rate_limits
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+
+    # Mid-window, so the bucket cannot roll over between the requests.
+    monkeypatch.setattr(storage_rate_limits, "utcnow", lambda: dt.datetime(2026, 8, 19, 12, 0, 30, tzinfo=dt.UTC))
+    settings = Settings(environment="test", rate_limit_enabled=True, rate_limit_ip_per_window=2,
+                        rate_limit_client_ip_mode="untrusted", observer_internal_token="o" * 40)
+    client = TestClient(create_app(settings, init_observability=False))
+    probe = {"Accept": "application/json", "Cache-Control": "no-cache",
+             "User-Agent": "TrustedRouter-Release-Coordinator/2"}
+    query = {"rollout_check": "0" * 32}
+
+    refused = client.get(rollout.API_PROBE_PATH, params=query, headers=probe)
+    assert client.get("/v1/internal/no-such-route", params=query, headers=probe).status_code == 404
+    limited = client.get(rollout.API_PROBE_PATH, params=query, headers=probe)
+
+    assert refused.status_code == 401
+    assert json.loads(refused.content) == json.loads(ROUTER_401)
+    assert limited.status_code == 429
+    assert limited.content == RATE_LIMITED == rollout.LIMITER_429
+    assert {name: limited.headers[name] for name in LIMITER_HEADERS} == {
+        **LIMITER_HEADERS, "X-RateLimit-Limit": "2"}
+    for answer in (refused, limited):
+        opener = real_api_probe(monkeypatch, [(answer.status_code, answer.content, dict(answer.headers))])
+        API_SERVICE_ANSWERS("https://azure.trustedrouter.com")
+        assert opener.outcomes == []
 
 
 def test_probe_component_requires_stable_release_evidence(monkeypatch):
@@ -607,11 +720,9 @@ ANSWERED_WITHOUT_ITS_RELEASE = {
     "body oversize": (200, evidence_document("aws") + b" " * rollout.MAX_BYTES),
     "204 no content": (204, b""),
 }
-# What the control plane's own source limiter answers once its bucket is spent
-# (_rate_limit_request in src/trusted_router/middleware.py). Retry-After is
+# The control plane's own source limiter (RATE_LIMITED above). Retry-After is
 # what is left of its 60 s window: usually more than the 5 s fetch will wait
 # for, so fetch gives up at once, and now and then less, so fetch retries.
-RATE_LIMITED = b'{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}'
 LIMITED = (429, RATE_LIMITED, {"Retry-After": "37", "X-RateLimit-Limit": "240", "X-RateLimit-Remaining": "0",
                                "X-RateLimit-Reset": "2026-11-13T18:01:00Z"})
 # No document was served: the cloud is down, and may be leased to repair it.
@@ -636,6 +747,13 @@ HTTP_ERROR_STATUSES = {
     "429 asking for 1 s on every attempt": (429, RATE_LIMITED, {"Retry-After": "1"}),
     "429 asking for 37 s": LIMITED,
     "429 with another release": (429, evidence_document("aws", release="b" * 40), {"Retry-After": "37"}),
+    # A Retry-After int() cannot convert gives up at once like any long one.
+    # Before the #2577 review's fix it raised ValueError, which read as an
+    # answer without a release and refused the grant.
+    "429 asking for 4301 digits of seconds": (429, RATE_LIMITED, {"Retry-After": "9" * 4301}),
+    "429 asking for 1 s in 4301 digits": (429, RATE_LIMITED, {"Retry-After": "0" * 4300 + "1"}),
+    "429 asking for 2 s in a superscript digit": (429, RATE_LIMITED, {"Retry-After": "\u00b2"}),
+    "503 asking for 3 s in a superscript digit": (503, b"", {"Retry-After": "\u00b3"}),
 }
 REDIRECTS = {
     "302 redirect": (302, b"", "https://trustedrouter.com/trust/control-plane.json"),
@@ -850,6 +968,30 @@ def test_default_coordinator_refuses_on_either_of_the_two_reads(monkeypatch, ver
         with pytest.raises(rollout.Refused, match="refusing to lease over it"):
             coordinator.acquire("aws", QR.format(3), "control-plane", 3600)
     assert served[:2] == [AWS_EVIDENCE] * 2
+
+
+@pytest.mark.parametrize("retry_after,attempts", [
+    pytest.param("5", 3, id="5"),
+    pytest.param("0" * (rollout.RETRY_AFTER_DIGITS - 1) + "5", 3, id="5 in the most digits converted"),
+    pytest.param("0" * rollout.RETRY_AFTER_DIGITS + "5", 1, id="5 in one digit more"),
+    pytest.param("6", 1, id="6"),
+    # Past Python's 4300 digit limit, where int() raises ValueError.
+    pytest.param("9" * 4301, 1, id="4301 nines"),
+    pytest.param("0" * 4300 + "1", 1, id="1 in 4301 digits"),
+    # 0xB2, 0xB3 and 0xB9 decode to superscript digits: str.isdigit() passes
+    # them and int() raises ValueError.
+    pytest.param("\u00b2", 1, id="superscript 2"),
+    pytest.param("\u00b3", 1, id="superscript 3"),
+    pytest.param("1\u00b9", 1, id="1 and superscript 1"),
+])
+def test_fetch_converts_only_a_short_ascii_retry_after(monkeypatch, retry_after, attempts):
+    """However the header reads, a retryable status leaves fetch as its own
+    HTTPError (no document was served), never as a ValueError (an answer)."""
+    served = canned_planes(monkeypatch, aws_evidence=(429, RATE_LIMITED, {"Retry-After": retry_after}))
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        rollout.fetch(AWS_EVIDENCE)
+    assert caught.value.code == 429
+    assert served == [AWS_EVIDENCE] * attempts
 
 
 @pytest.mark.parametrize("answer,raised", [

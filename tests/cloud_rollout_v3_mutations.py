@@ -199,6 +199,64 @@ MUTATIONS = [
      '                raise Refused("control-plane API answered an unauthenticated internal call")',
      "                return",
      T + "test_api_service_answers_only_with_its_own_401"),
+    # The API probe's other pass: the application's own limiter, which runs
+    # before internal auth and answers 429 while the shared unauthenticated
+    # bucket is spent (review of #2577). Byte for byte that answer, and nothing
+    # like it: each mutant below lets one kind of other 429 through, and only
+    # that kind's cases catch it.
+    ("API probe refuses the limiter's 429", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:\n                return",
+     "            if False:\n                return",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    ("API probe accepts any 429", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:",
+     "            if exc.code == 429:",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    ("API probe accepts the limiter's body at any status", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:",
+     "            if raw == LIMITER_429:",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    ("API probe accepts a 429 with no or another source", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:",
+     "            if exc.code == 429 and raw.startswith(LIMITER_429.split(b',\"source\"')[0]):",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    ("API probe accepts any 429 naming rate_limited", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:",
+     "            if exc.code == 429 and b'\"rate_limited\"' in raw:",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    ("API probe accepts the limiter's object in other bytes", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:",
+     "            if exc.code == 429 and b\"\".join(raw.split()) == LIMITER_429:",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    ("API probe retries the limiter's 429 before passing it", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429:\n                return\n"
+     "            if exc.code in {429, 502, 503, 504} and attempt < 2:\n"
+     "                time.sleep(2 ** attempt)\n                continue\n",
+     "            if exc.code in {429, 502, 503, 504} and attempt < 2:\n"
+     "                time.sleep(2 ** attempt)\n                continue\n"
+     "            if exc.code == 429 and raw == LIMITER_429:\n                return\n",
+     T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    # The pinned bytes and the application's limiter must not drift apart:
+    # either side changed alone turns the application-side pin red.
+    ("API probe pins bytes the application does not send", COORDINATOR,
+     """LIMITER_429 = b'{"error":{"code":429,"message":"Rate limit exceeded",""",
+     """LIMITER_429 = b'{"error":{"code":429,"message":"Too many requests",""",
+     T + "test_the_api_probe_passes_both_answers_the_application_itself_sends"),
+    ("the application's limiter sends other bytes", "src/trusted_router/middleware.py",
+     '    response = error_response(429, "Rate limit exceeded", ErrorType.RATE_LIMITED)',
+     '    response = error_response(429, "Too many requests", ErrorType.RATE_LIMITED)',
+     T + "test_the_api_probe_passes_both_answers_the_application_itself_sends"),
+    # fetch's Retry-After: str.isdigit() alone let int() raise ValueError on
+    # superscript digits and on more than 4300 digits, which an evidence read
+    # took for an answer without a release, refusing the grant.
+    ("Retry-After length unbounded", COORDINATOR,
+     "                            or len(retry_after) > RETRY_AFTER_DIGITS or int(retry_after) > 5):",
+     "                            or int(retry_after) > 5):",
+     T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
+    ("Retry-After superscript digits reach int()", COORDINATOR,
+     "                    if (not retry_after.isascii() or not retry_after.isdigit()",
+     "                    if (not retry_after.isdigit()",
+     T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
     ("v2 release probes one component", COORDINATOR,
      '        if state["schema_version"] == V3:\n            self.component_probe(lease["cloud"], lease["component"])',
      '        if True:\n            self.component_probe(lease["cloud"], lease["component"])',
