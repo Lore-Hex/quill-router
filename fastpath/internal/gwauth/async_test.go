@@ -236,10 +236,28 @@ func asyncInputOf(t *testing.T, g asyncGoldens, c asyncCase) (ComposeInput, Requ
 			in.ReservationID = c.target.reservation
 		}
 	}
+	// The edge's async input (edge.asyncComposeInput): admission on as the
+	// policy covers the workspace, and for a workspace without edge tickets
+	// as Python answers its authorization once leased (AdmitsLeased: with
+	// the policy's edge_leased, off the overlap list, as with admission
+	// off).
 	policy := c.asyncSettle
-	policy.AdmissionEnabled = policy.Admits(in.WorkspaceID)
-	in.Async = &AsyncInput{Request: r.Async, Policy: policy, WantTicket: c.asyncSettle.Tickets(in.WorkspaceID)}
+	tickets := c.asyncSettle.Tickets(in.WorkspaceID)
+	if tickets {
+		policy.AdmissionEnabled = policy.Admits(in.WorkspaceID)
+	} else {
+		policy.AdmissionEnabled = policy.AdmitsLeased(in.WorkspaceID)
+	}
+	in.Async = &AsyncInput{Request: r.Async, Policy: policy, WantTicket: tickets}
 	return in, r
+}
+
+// leasedAnswer is whether the edge composes the case as Python's answer to
+// a leased authorization in a workspace Python's admission covers (the
+// policy's edge_leased, the workspace off its overlap_workspaces).
+func leasedAnswer(c asyncCase, workspace string) bool {
+	a := c.asyncSettle
+	return a.Admits(workspace) && !a.Tickets(workspace) && !a.AdmitsLeased(workspace)
 }
 
 // asyncShapes maps P6's shape names to Go's.
@@ -320,14 +338,28 @@ func membersBytes(t *testing.T, members pyjson.Object) string {
 // accounted for.
 func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 	g := loadAsyncGoldens(t)
-	equal, membersOnly, admission, leftOut, excluded := 0, 0, 0, 0, 0
+	equal, membersOnly, admission, leftOut, excluded, leased, unleased := 0, 0, 0, 0, 0, 0, 0
 	shapes, reasons := map[string]int{}, map[string]int{}
 	for _, c := range g.cases {
 		if c.target == nil {
 			t.Fatalf("%s: no Python answer to hold the compose to", c.Name)
 		}
 		in, _ := asyncInputOf(t, g, c)
-		if c.asyncSettle.AdmissionEnabled && !in.Async.Policy.AdmissionEnabled {
+		if leasedAnswer(c, in.WorkspaceID) {
+			// Admission covers the workspace, and Python answers a leased
+			// authorization of it as with admission off: composed and
+			// byte-compared below with Python's leased answer. A request
+			// Python's pilot did not lease (a key cap) Python tickets
+			// (shape C); the edge passes it before the compose.
+			leased++
+			if c.target.shape == "C" {
+				if c.Expect.Outcome == "answer" || c.target.response != "" {
+					t.Errorf("%s: a leased answer Python ticketed", c.Name)
+				}
+				unleased++
+				continue
+			}
+		} else if c.asyncSettle.AdmissionEnabled && !in.Async.Policy.AdmissionEnabled {
 			// Admission on for a pilot set leaving the workspace out, or
 			// excluding it as a fast-path workspace (G15 section 4.5):
 			// composed and byte-compared below as with admission off.
@@ -422,23 +454,29 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 		}
 		equal++
 	}
-	t.Logf("%d byte-equal; %d members only; %d admission on; shapes %v; reasons %v", equal, membersOnly, admission,
-		shapes, reasons)
-	if equal+membersOnly+admission != len(g.cases) {
-		t.Fatalf("%d of %d cases accounted for", equal+membersOnly+admission, len(g.cases))
+	t.Logf("%d byte-equal; %d members only; %d admission on; %d unleased; shapes %v; reasons %v", equal, membersOnly,
+		admission, unleased, shapes, reasons)
+	if equal+membersOnly+admission+unleased != len(g.cases) {
+		t.Fatalf("%d of %d cases accounted for", equal+membersOnly+admission+unleased, len(g.cases))
 	}
 	// Positive control: the file is the one this test was written against,
 	// every shape and every reason P6 can show reached.
 	if equal < 40 || shapes[AsyncNone] < 10 || shapes[AsyncSnapshot] < 13 || shapes[AsyncFalseOnly] < 15 {
 		t.Fatalf("%d byte-equal, shapes %v", equal, shapes)
 	}
-	// The admission cases: the four covered (the member absent, or naming
-	// the workspace; one a stream) refused, the three the member leaves out
-	// (one a stream) byte-equal, and the four admission_excluded_workspaces
-	// names (the member absent or naming it; one a stream, one shape A)
-	// byte-equal.
-	if admission != 4 || leftOut != 3 || excluded != 4 {
-		t.Fatalf("%d admission on, %d left out by admission_workspaces, %d excluded", admission, leftOut, excluded)
+	// The admission cases: the six covered (the member absent, or naming
+	// the workspace; one a stream; in all mode, one without edge_leased and
+	// one on the overlap list) refused, the three the member leaves out
+	// (one a stream) byte-equal, and the five admission_excluded_workspaces
+	// names (the member absent or naming it; one a stream, one shape A; one
+	// all mode's reserved list) byte-equal. The leased answers: eight covered
+	// workspaces' requests composed as Python's leased answer, seven
+	// byte-equal (five answered, two of them shape A and one a stream; a
+	// stream without fastpath_edge_streams; the async switch off) and one
+	// Python did not lease (a key cap), which it tickets.
+	if admission != 6 || leftOut != 3 || excluded != 5 || leased != 8 || unleased != 1 {
+		t.Fatalf("%d admission on, %d left out by admission_workspaces, %d excluded, %d leased answers (%d unleased)",
+			admission, leftOut, excluded, leased, unleased)
 	}
 	for _, r := range p6Reasons {
 		if reasons[r] == 0 {

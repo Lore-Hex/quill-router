@@ -25,9 +25,13 @@ async-settle runtime (a ticket key from a fixed seed, epoch 1, the primary
 region as the journal region) and admission off, every async-settle setting
 pinned. Each records Python's 200 with its async members (§2.2's shape A, B,
 or none) and which shape that is. Edge-ticket cases pin the signing clock
-and record shape C from Python's leased answer. The original admission-on cases record only
-that it passes and that Python's answer carried a ticket (shape C), never the
-ticket, whose iat, exp and signature are not reproducible. No Go code reads
+and record shape C from Python's leased answer. Leased-answer cases
+(":leased", G15 "Leased answers") run in all mode with admission on and no
+async pilot set, Python's switch copy enabling the cohort workspace, so
+Python's leased answer is the admission-off one the edge composes. The
+original admission-on cases record only that it passes and that Python's
+answer carried a ticket (shape C), never the ticket, whose iat, exp and
+signature are not reproducible. No Go code reads
 it before G15b.
 
 fastpath/testdata/authorize_fingerprint_v1.json, one request a line (its
@@ -134,6 +138,7 @@ from trusted_router.services.async_settle import (  # noqa: E402
 )
 from trusted_router.services.edge_policy_publisher import (  # noqa: E402
     admission_workspaces,
+    edge_leased,
     edge_streams_on,
     ticket_authority,
     typed_records,
@@ -351,6 +356,15 @@ NO_ASYNC_AUTHORITY: dict[str, bool] = {
 # Admission on for every workspace, the cohort's (a fast-path pilot
 # workspace) included through the overlap list (G15 section 4.5).
 OVERLAP_ADMISSION: dict[str, Any] = {"admission_enabled": True, "fastpath_overlap_workspaces": [COHORT_WS]}
+# All mode (docs/design/fast-admission-widening.md sections 1 and 9.1): the
+# pilot covers every workspace, the explicit list empty, its switch copy
+# enabling the cohort's workspace (_run_case). With admission on and no
+# async pilot set, admission covers the cohort workspace too, and Python
+# answers a request its pilot leased as with admission off
+# (async_settle_admits_request); with the edge's leased-answer switch on,
+# the policy says so (async_settle.edge_leased).
+ALL_MODE: dict[str, Any] = {"fastpath_pilot_all": True, "fastpath_pilot_exclude": [], "fastpath_pilot_workspaces": []}
+LEASED_ADMISSION: dict[str, Any] = {"admission_enabled": True, "edge_leased": True}
 ASYNC_POLICY: dict[str, Any] = {
     **DEFAULT_POLICY,
     "async_settle": {"admission_enabled": False, "edge_decide": True, "ticket_authority": True,
@@ -410,10 +424,15 @@ def ticket_key_file() -> str:
 
 def async_settle_of(policy: dict[str, Any]) -> dict[str, Any]:
     """The case's async-settle facts: the four booleans, and optionally
-    admission_workspaces, the async-settle pilot set (absent: empty), and
+    admission_workspaces, the async-settle pilot set (absent: empty),
     fastpath_overlap_workspaces, the fast-path workspaces admission still
     covers (absent: none; the cohort workspace is a fast-path one, G15
-    section 4.5). The policy publishes what they decide, not the overlap."""
+    section 4.5), fastpath_reserved_workspaces, all mode's reserved list
+    (widening section 9.1; absent: none), and edge_leased, the leased-answer
+    switch fastpath_edge_async_leased (absent: off). The policy publishes
+    what they decide, as the publisher does (admission_workspaces and
+    edge_leased): the overlap list only as the overlap workspaces admission
+    covers, and only with the switch."""
     return policy.get("async_settle", NO_ASYNC_AUTHORITY)
 
 
@@ -429,6 +448,8 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         async_settle_protection=facts["admission_enabled"],
         async_settle_pilot_workspaces=",".join(facts.get("admission_workspaces", ())),
         async_settle_fastpath_overlap_workspaces=",".join(facts.get("fastpath_overlap_workspaces", ())),
+        async_settle_fastpath_reserved_workspaces=",".join(facts.get("fastpath_reserved_workspaces", ())),
+        fastpath_edge_async_leased=facts.get("edge_leased", False),
         async_settle_pilot_cap_micro=0,
         async_settle_ticket_ttl_seconds=300,
         async_settle_ticket_kid=TICKET_KID,
@@ -456,6 +477,13 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         fastpath_pilot_enabled=policy["fastpath_pilot_enabled"],
         fastpath_pilot_workspaces=",".join(policy["fastpath_pilot_workspaces"]),
         fastpath_pilot_regions=",".join(policy["fastpath_pilot_regions"]),
+        # All mode (docs/design/fast-admission-widening.md sections 1 and
+        # 9.1), off unless the case's policy names it; it requires the typed
+        # Spanner store, which the cases' fake is, and its switch copy enables
+        # the case's workspace (_run_case).
+        fastpath_pilot_all=policy.get("fastpath_pilot_all", False),
+        fastpath_pilot_exclude=",".join(policy.get("fastpath_pilot_exclude", ())),
+        **({"storage_backend": "spanner-clickhouse"} if policy.get("fastpath_pilot_all") else {}),
         settle_outbox_enabled=policy["settle_outbox_enabled"],
         stage_d_eligibility_enabled=stage_d["eligibility_enabled"],
         stage_d_heartbeat_enabled=stage_d["heartbeat_enabled"],
@@ -496,6 +524,9 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         **admission_workspaces(settings),
         **{name: policy["async_settle"][name] for name in ("edge_tickets", "edge_ticket_workspaces")
            if name in policy["async_settle"]},
+        # The leased-answer members as the publisher writes them: only with
+        # the switch and admission on.
+        **edge_leased(settings),
     }} if "async_settle" in policy else {}
     return {
         **async_settle,
@@ -512,6 +543,9 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "fastpath_pilot_enabled": settings.fastpath_pilot_enabled,
         "fastpath_pilot_workspaces": sorted(settings.fastpath_pilot_workspace_ids),
         "fastpath_pilot_regions": sorted(settings.fastpath_pilot_region_ids),
+        # Optional, together: only in all mode, as the publisher writes them.
+        **({"fastpath_pilot_all": True, "fastpath_pilot_exclude": sorted(settings.fastpath_pilot_exclude_ids)}
+           if settings.fastpath_pilot_all else {}),
         "gateway_authorize_max_in_flight_per_key": settings.gateway_authorize_max_in_flight_per_key,
         "monitor_lookup_hash": lookup_hash(key["hash"]) if policy["monitor_key"] else None,
         "async_settle_shadow_policy": settings.async_settle_shadow_policy,
@@ -900,6 +934,14 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         if not case["_workspace_row"]:
             database.rows.pop(("workspace", world["workspace"]["id"]))
         gateway._BROADCAST_EMPTY_CACHE.clear()
+        if policy.get("fastpath_pilot_all"):
+            # All mode's copy of the switch, fresh and enabling the case's
+            # workspace (fastpath_frontdoor.EnabledWorkspaceCopy): Python's
+            # pilot leases only a workspace it enables. Its clock stands
+            # still, so the copy never ages.
+            switch = fd.EnabledWorkspaceCopy(lambda: frozenset({world["workspace"]["id"]}), clock=lambda: 0.0)
+            switch.refresh()
+            stack.enter_context(patched(gateway, "_fastpath_switch", switch))
         client = _client(settings_for(policy, world["key"]))
         if "async_settle" in policy:
             # The two runtime facts the policy body says, as the publisher
@@ -1917,6 +1959,7 @@ def async_cases() -> list[dict[str, Any]]:
     add("answer:async.C:edge_tickets:stream", body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
         policy={"fastpath_edge_streams": True, "fastpath_pilot_streams": True, "reap_snapshot_booking_enabled": True,
                 "async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}})
+    leased_cases(add)
     async_streams_cases(add)
     # Any header list but exactly ["async-v1"] adds nothing (§2.1). With no
     # header the edge answers; any present header but exactly async-v1 it
@@ -1939,6 +1982,42 @@ def async_cases() -> list[dict[str, Any]]:
     # The header's name is case-insensitive; only its value is exact.
     add("answer:async.B:header_name_case", headers=(("X-TR-Settlement-Mode", "async-v1"),))
     return out
+
+
+def leased_cases(add: Any) -> None:
+    """Leased answers (docs/design/fast-admission-e2-g15-async.md, "Leased
+    answers"; fast-admission-widening.md section 9.1). In all mode with
+    admission on and no async pilot set, admission covers the cohort
+    workspace, yet Python's answer to a request its pilot leased is the
+    admission-off one: shape B or A, no ticket, even with an invocation_nonce
+    to sign with. Without the policy's edge_leased the edge passes it
+    (policy.async_admission) and Python answers that; with it, the edge
+    composes and answers it, Python's leased bytes. The overlap list's
+    workspace is still ticketed, so the edge passes it; the reserved list's
+    is outside admission, answered as before. A later gate passes with its
+    own reason, as for a workspace outside admission: a key cap (Python does
+    not lease it, so it tickets it), the async switch off (Python leases it)."""
+    nonce = {"invocation_nonce": "nonce-e2-async-admission"}
+    streams = {"fastpath_pilot_streams": True, "fastpath_edge_streams": True, "reap_snapshot_booking_enabled": True}
+    leased = {**ALL_MODE, "async_settle": LEASED_ADMISSION}
+    add("pass:policy.async_admission:async.B:all_mode:leased_member_absent", "policy.async_admission", body=nonce,
+        policy={**ALL_MODE, "async_settle": {"admission_enabled": True}})
+    add("answer:async.B:leased", body=nonce, policy=leased)
+    add(f"answer:async.B:leased:tiered:{SONNET}", body={**nonce, "model": SONNET}, policy=leased)
+    add("answer:async.A:route_type:embeddings:leased", body={**nonce, "route_type": "embeddings"}, policy=leased)
+    add("answer:async.A:requested_parameter:tools:leased",
+        body={"requested_parameters": ["tools"]}, policy=leased)
+    add("answer:async.B:leased:stream", body={**nonce, "stream": True}, policy={**leased, **streams})
+    add("answer:async.B:leased:reserved", body=nonce,
+        policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "fastpath_reserved_workspaces": [COHORT_WS]}})
+    add("pass:policy.async_admission:async.C:leased:overlap", "policy.async_admission", body=nonce,
+        policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "fastpath_overlap_workspaces": [COHORT_WS]}})
+    add("pass:key.key_cap:async.C:leased", "key.key_cap", body=nonce, policy=leased,
+        world={"key": {"limit_microdollars": 10_000_000}})
+    add("pass:async.off:async.B:leased", "async.off", body=nonce,
+        policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "edge_decide": False}})
+    add("pass:body.stream:async.B:leased:member_absent", "body.stream", body={**nonce, "stream": True},
+        policy={**leased, **streams, "fastpath_edge_streams": False})
 
 
 def async_streams_cases(add: Any) -> None:

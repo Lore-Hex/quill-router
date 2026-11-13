@@ -14,7 +14,10 @@ repository's).
 
 The original design and rollout below describe behavior with edge tickets
 off. [Edge tickets](#edge-tickets) extends it: Python can sign for an
-authorization the edge commits and answers itself.
+authorization the edge commits and answers itself. [Leased answers](#leased-answers)
+extends it again: with admission covering every workspace, the edge answers
+the async-v1 authorizes it leases itself with Python's answer to a leased
+authorization, which carries no ticket.
 
 ## 1. Recommendation
 
@@ -432,11 +435,13 @@ the ticket (`async_settle_shadow.go:187-230`,
   with admission on means every workspace, as an empty set does in Python.
 - The edge gates admission once the key's workspace is known, right after
   the key is found and before the key's own facts
-  (`fastpath/internal/edge/decide.go`, `asyncAdmissionPass`;
+  (`fastpath/internal/edge/decide.go`, `asyncAdmission`;
   `routingsnapshot.AsyncSettle.Admits`): a covered workspace passes
   `policy.async_admission`, any other is composed as with admission off,
   and the shadow compares it (with `edge_decide` false, `async.off`).
-  `async.unpublished` stays keyless.
+  `async.unpublished` stays keyless. With the policy's `edge_leased`, a
+  covered workspace off the overlap list goes on instead
+  ([Leased answers](#leased-answers)).
 
 Order: the Go reader first and deployed (an older node refuses a policy
 with the unknown member and passes every request), then the Python change.
@@ -658,9 +663,10 @@ from before the rule meant.
 All mode (`fast-admission-widening.md` §9) has no bounded fast-path set,
 so with no async pilot set the rule is held per request instead: a leased
 authorization takes no ticket, the excluded member carries a bounded
-reserved list, and, with edge tickets off, the edge passes every other
-workspace's async-v1 authorizes (§9.1 there). The Edge tickets section
-below describes the sign-only extension.
+reserved list, and, with edge tickets off and no `edge_leased`, the edge
+passes every other workspace's async-v1 authorizes (§9.1 there). The Edge
+tickets section below describes the sign-only extension; the Leased answers
+section after it lets the edge answer what it leases itself.
 
 **The overlap list** exists for the async-settle lane's own test
 workspace, which is in both pilots (R3): `rollout.sh` sets it to that one
@@ -974,3 +980,160 @@ Activation order: release Go on the nodes first; release Python with the
 switch off; enable one test workspace; measure issue/refusal outcomes,
 eligibility, latency, and commit behavior; then widen deliberately. This
 change set does not activate or deploy the feature.
+
+## Leased answers
+
+Since 2026-11-10 async admission covers every workspace but the reserved
+list (`fast-admission-widening.md` §9.1), and Python holds §4.13's rule per
+request: `Settings.async_settle_admits_request(ws, leased=True)` is false
+unless the workspace is on the overlap list, so `snapshot_projection`
+answers an authorization its pilot leased as with admission off (shape B,
+or A on an earlier check: no ticket, no status URL) and its settle goes
+through the lease. The edge's admission gate read only the workspace
+(`Admits`), so with edge tickets off it passed every async-v1 authorize of
+an admitted workspace as `policy.async_admission`, leasable or not, ahead
+of the key's facts. Every enclave authorize is async-v1, so in the day
+before this change that gate passed 37% of all edge authorizes, and the
+edge answered no real traffic.
+
+**The switch.** `TR_FASTPATH_EDGE_ASYNC_LEASED`
+(`Settings.fastpath_edge_async_leased`, default false; `rollout.sh` pins a
+literal `false`). With it and admission on, the publisher
+(`edge_policy_publisher.edge_leased`) adds two optional members to
+`async_settle`:
+
+- `edge_leased: true`: absent when off, never `false` or `null`, present
+  only with `admission_enabled`.
+- `overlap_workspaces`: the workspaces on
+  `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES` that admission covers
+  (`async_settle_pilot_allows`), sorted and unique, 1 to 32, present only
+  with `edge_leased` and at least one, within `admission_workspaces` when
+  that is present and never in `admission_excluded_workspaces`, so each
+  answer has one encoding. Python still tickets their leased
+  authorizations.
+
+Both readers refuse every other spelling (`EdgeAsyncSettle`,
+`AsyncSettle.validate`). With the switch off the body is byte-identical to
+one from before the members, so a node released before them accepts it.
+Go reads them as `AsyncSettle.AdmitsLeased(ws)`: `Admits(ws)` and, with
+`edge_leased`, the workspace in `overlap_workspaces`; without `edge_leased`
+it is `Admits(ws)`, so a policy without the member keeps today's behaviour.
+`fastpath/testdata/edge_policy_admission_v1.json` holds every admission
+combination with the switch off and on, and on, Python's own
+`async_settle_admits_request(ws, leased=True)` per probe
+(`admits_leased`), which `AdmitsLeased` must equal
+(`TestTheAsyncAdmissionVectors`), and fifteen refused spellings, each
+refused by both readers for its member.
+
+**At the edge.** The admission gate (`asyncAdmission`, `decide.go`):
+
+1. A workspace edge tickets cover takes the ticket path, whatever
+   `edge_leased` says.
+2. A covered workspace whose leased authorizations Python tickets
+   (`AdmitsLeased`: no `edge_leased`, or on `overlap_workspaces`) passes
+   `policy.async_admission`, as before.
+3. Any other covered workspace goes on. The request is composed as with
+   admission off (`asyncComposeInput` sets the input's admission to
+   `AdmitsLeased`, so Stage still refuses the case 2 would pass), and the
+   decision is marked `Decision.LeasedAnswer`.
+
+A leased answer then meets every gate a workspace outside admission meets:
+the key's and workspace's facts, the credit rows, the policy, the
+evaluator, the compose, and the decision gates (a stream without
+`fastpath_edge_streams`, the key-windows mode, the decide row, the switch
+copy, `edge_decide`). The decide path answers it only once the front door
+admits it with an envelope and the leased insert is `Inserted` or
+`Landed`, exactly as for a sync authorize; every other outcome passes to
+Python, which answers with its own pilot (shape B when its pilot leases,
+shape C when not).
+
+**Pass reasons.** Each gate keeps its own reason, as it does for a sync
+authorize or a reserved workspace's async-v1 authorize, so every reason
+still means the first gate that kept the edge from answering, for every
+request, as it did before 2026-11-10. `policy.async_admission` then counts
+only what Python's admission takes before the edge looks: every covered
+workspace while the switch is off, and with it on the overlap list's
+workspaces (in production also an edge-ticket workspace, which takes the
+ticket path). Turning the switch on moves `policy.async_admission`'s share
+to answered requests and to the reasons of the gates that stopped the
+rest. Keeping `policy.async_admission` for every pass after the gate would
+have left those counts as they were, but would hide which gate keeps the
+admitted workspaces' requests, nearly all traffic, off the edge.
+
+**The shadow.** A leased answer behind a decision gate (the decide row,
+the switch copy, `edge_decide`, a key-windows mode, `body.stream`) is
+composed for the shadow like any other decision, and one the decide path
+passes after the decision (an owner's answer, the budget, a window read,
+the insert) is compared too. Python answers the passed request with its
+own pilot. Leased, its answer is shape B and is compared byte for byte.
+Not leased (its switch copy does not enable the workspace, or the owner
+refused it too), its answer is shape C: the shadow counts it
+`async_python_admitted` as before, and classes it
+`python_answered_go_passed.<the decide path's pass>` rather than `differ`
+(`leasedUnleased`, `shadow_full.go`), since Python's unleased answer is not
+the answer Go composed for a leased one. A decision that is not a leased
+answer still differs on a Python ticket.
+
+**The money path.** Unchanged, and the same as for an authorize the edge
+answers today:
+
+- The edge's answer carries `async_eligible: false` and no ticket or status
+  URL, and is sent only under the edge's own lease.
+- The enclave binds async settlement only for `async_eligible` true with a
+  ticket (`bindAsyncAuthorization` returns at its first line, §3.5), so it
+  settles synchronously.
+- Python's settle reads the row's `fastpath_envelope` and takes
+  `_settle_leased_authorization` (`gateway.py`): the settle-outbox intent
+  made durable, the terminal to the front door, the records in one commit,
+  nothing booked on the credit row (the lease did the booking). A terminal
+  the front door has not decided waits in the settle outbox with its
+  frozen charge and is finished by `settle_outbox_apply._apply_leased`.
+  That is the settle of every edge-answered sync authorize and of every
+  reserved workspace's edge-answered async-v1 authorize.
+- No ticket exists for it, so the async settle handler's accept path never
+  sees it. A lost insert answer (`store.Unknown`) is the same 503 as
+  today; the enclave's retry reaches Python's replay, whose answer is
+  shape A, and settles through the lease.
+
+**The reserved list.** Unchanged in meaning: a reserved workspace is
+outside admission (`admission_excluded_workspaces`) whatever the switch
+says, and the edge composes its admission-off answer as before; its
+leased requests are not leased answers (`LeasedAnswer` false). With the
+switch on the list is no longer what keeps a workspace's leasable async-v1
+authorizes on the edge: the edge answers what it leases in any covered
+workspace. What the list still changes is the unleased requests: Python
+answers a reserved workspace's with shape B (no async settle) and any
+other covered workspace's with shape C. `overlap_workspaces` never names a
+reserved workspace (the settings refuse one on both lists).
+
+**Rollout skew.** §3.6's rule holds. An edge holding a policy without the
+member passes, and Python answers as it does now. An edge holding one with
+it answers shape B for a request it leased, where Python, leasing the same
+request, also answers shape B. An overlap list that changes during a
+Python rollout can have the edge answer shape B for a workspace that has
+just joined the list: a missed async settle, never money.
+
+**Order.**
+
+1. Release the Go reader to every node. A node from before the members
+   refuses a policy carrying them and, once its last policy expires,
+   passes every request (`cache.policy`), so nothing publishes them yet.
+2. Release Python with the switch off (`rollout.sh`: `false`). The policy
+   bytes are unchanged.
+3. Set `TR_FASTPATH_EDGE_ASYNC_LEASED=true` in `rollout.sh`. The edge takes
+   it from the first policy it verifies from a new instance. The way back
+   is the same pin set to `false`; `fastpathctl decide off` stops the edge
+   answering one workspace's requests, sync and async-v1 alike.
+
+**Parity.** `fastpath/testdata/authorize_async_cases_v1.json` gains eleven
+`:leased` cases, run in all mode with admission on, no async pilot set and
+Python's switch copy enabling the cohort workspace, so Python's pilot
+leases each request it can: five answers (shape B, a tiered B, two shape A,
+a stream) that the edge answers with Python's leased bytes; the reserved
+workspace's answer; the overlap workspace passing `policy.async_admission`
+(Python's shape C); a key cap passing `key.key_cap` (Python did not lease
+it: shape C); `edge_decide` false passing `async.off` and a stream without
+`fastpath_edge_streams` passing `body.stream`, each with Python's leased
+shape B for the shadow; and the policy without `edge_leased`, passing
+`policy.async_admission` while Python answers the leased shape B, the case
+this change exists for.

@@ -1094,6 +1094,16 @@ class Settings(BaseSettings):
     fastpath_edge_decide_async: bool = False
     fastpath_edge_async_ticket_workspaces: str = ""
     _fastpath_edge_async_ticket_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Published in the edge policy as async_settle.edge_leased, with the
+    # overlap workspaces admission covers as async_settle.overlap_workspaces
+    # (docs/design/fast-admission-e2-g15-async.md, "Leased answers"): the
+    # edge answers an async-v1 authorize of a workspace async admission
+    # covers when it leases the request itself, with this process's answer to
+    # a leased authorization (async_settle_admits_request with leased=True:
+    # the admission-off answer off the overlap list). Off by default, and
+    # only with admission on, so the policy bytes are unchanged until it is
+    # set; the nodes must read the members first.
+    fastpath_edge_async_leased: bool = False
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.

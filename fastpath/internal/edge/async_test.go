@@ -191,8 +191,8 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 	}
 	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason (%d streams composed "+
 		"for the shadow)", answered, shapes, passes, shadowStreams)
-	if answered != 52 || shapes["C"] != 3 || shapes["A"] != 19 || shapes["B"] != 29 || shapes["none"] != 1 || passes != 26 ||
-		shadowStreams != 1 {
+	if answered != 58 || shapes["C"] != 3 || shapes["A"] != 21 || shapes["B"] != 33 || shapes["none"] != 1 || passes != 31 ||
+		shadowStreams != 2 {
 		t.Fatalf("answered %d (%v), passes %d, shadow streams %d: not the goldens' counts", answered, shapes, passes,
 			shadowStreams)
 	}
@@ -273,7 +273,7 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		}
 	}
 	t.Logf("%d async-v1 requests passed with edge_decide false, %d answered with it true", dark, answered)
-	if dark != 52 || answered != dark {
+	if dark != 59 || answered != dark {
 		t.Fatalf("dark %d, answered %d: not the goldens' counts", dark, answered)
 	}
 }
@@ -389,6 +389,13 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 				return setMember(d, "async_eligible", false)
 			}))
 		}
+		if a := policyOf(t, f, golden).AsyncSettle; a != nil && a.EdgeLeased != nil {
+			// A leased answer's request, under the policy without the
+			// leased-answer members (TestTheLeasedAnswerGate reads them).
+			golden = withAsyncSettle(t, f, golden, func(a *routingsnapshot.AsyncSettle) {
+				a.EdgeLeased, a.OverlapWorkspaces = nil, nil
+			})
+		}
 		ws := golden.Facts.Key.WorkspaceID
 		if ws == "" {
 			t.Fatalf("%s: no workspace", golden.Name)
@@ -432,9 +439,9 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		}
 	}
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
-	// 49 answered async-v1 goldens and the one without the header, which
+	// 55 answered async-v1 goldens and the one without the header, which
 	// every variant decides.
-	if covered != 4*49 || composed != 3*49+7 {
+	if covered != 4*55 || composed != 3*55+7 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
 	}
 }

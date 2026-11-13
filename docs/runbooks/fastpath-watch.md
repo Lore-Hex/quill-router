@@ -213,7 +213,17 @@ lines, summed, are its counts. It prints JSON:
   `TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` and every other
   workspace's async-v1 authorize passes (the widening's section 9.1);
   these are the deployed pins since 2026-11-10, so `policy.async_admission`
-  now counts every such workspace's async-v1 authorizes.
+  now counts every such workspace's async-v1 authorizes. With
+  `TR_FASTPATH_EDGE_ASYNC_LEASED` true the policy carries
+  `async_settle.edge_leased` (G15, "Leased answers"): a covered workspace
+  off `async_settle.overlap_workspaces` then goes on, composed as Python's
+  answer to a leased authorization, and every later gate passes it with
+  its own reason, so `policy.async_admission` shrinks to the overlap
+  list's workspaces and its share moves to answered requests and to those
+  reasons. Python answers such a request the edge passes with a ticket
+  when its own pilot does not lease it; the shadow counts that
+  `async_python_admitted` and classes it
+  `python_answered_go_passed.<the decide path's pass>`, not `differ`.
   A workspace the members leave out is composed and
   compared as with admission off, since Python answers it without a
   ticket. Because the admission gate

@@ -213,6 +213,33 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
     }
 
 
+def edge_leased(settings: Settings) -> dict[str, Any]:
+    """async_settle's leased-answer members
+    (docs/design/fast-admission-e2-g15-async.md, "Leased answers"), both only
+    while ``fastpath_edge_async_leased`` and admission are on, so the default
+    body is byte-identical to one from before them:
+
+    - ``edge_leased``: true. The edge answers an async-v1 authorize of a
+      workspace admission covers when it leases the request itself, with
+      this process's answer to a leased authorization: the admission-off
+      answer unless the workspace is on the overlap list
+      (``Settings.async_settle_admits_request`` with ``leased=True``).
+    - ``overlap_workspaces``: the overlap list's workspaces admission covers
+      (``async_settle_pilot_allows``), sorted, when there are any. Their
+      leased authorizations are still ticketed, so the edge passes them.
+      Only covered ones, so the member is within ``admission_workspaces``
+      and outside ``admission_excluded_workspaces``, one encoding per answer.
+
+    Go's ``AsyncSettle.AdmitsLeased`` reads both and agrees with
+    ``async_settle_admits_request(ws, leased=True)`` per workspace
+    (fastpath/testdata/edge_policy_admission_v1.json)."""
+    if not (settings.fastpath_edge_async_leased and settings.async_settle_admission_enabled):
+        return {}
+    overlap = sorted(ws for ws in settings.async_settle_fastpath_overlap_workspace_ids
+                     if settings.async_settle_pilot_allows(ws))
+    return {"edge_leased": True, **({"overlap_workspaces": overlap} if overlap else {})}
+
+
 def settings_facts(
     settings: Settings, *, accepted: frozenset[str], durable: bool, internal: frozenset[str],
     ticket_authority: bool, typed_records: bool,
@@ -255,6 +282,7 @@ def settings_facts(
                 {"edge_ticket_workspaces": sorted(settings.fastpath_edge_async_ticket_workspace_ids)}
                 if "*" not in settings.fastpath_edge_async_ticket_workspace_ids else {}
             )} if settings.fastpath_edge_async_tickets_enabled and settings.async_settle_admission_enabled else {}),
+            **edge_leased(settings),
         },
         # Optional, published only when not off (docs/design/
         # fast-admission-e2-key-windows.md section 5): the default body stays

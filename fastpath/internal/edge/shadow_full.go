@@ -608,7 +608,32 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 			r = fullResult{class: ClassUnread + ".compare_failed"}
 		}
 	}()
-	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
+	return leasedUnleased(d, inFlightAgreed(compareWindowed(d, a, w), a, decidePass), decidePass)
+}
+
+// leasedUnleased is r, unless Go's decision is a leased answer
+// (Decision.LeasedAnswer) and Python answered the request with a ticket
+// (shape C, async_python_admitted): Python's pilot did not lease it, so
+// Python's answer is to an unleased authorization, while Go's members are
+// the answer to a leased one, which the edge gives only under its own
+// lease. Not a differ: Go passed it (the decide path's pass: a decision
+// gate such as workspace.not_enabled, or one after the decision, an
+// owner's answer, the budget, a window or the insert; with no decide path,
+// not_decided) and Python answered, so the class is
+// python_answered_go_passed.<that pass>, the decide gate and the async
+// counts kept, as compareWindowed classes a decision its window read
+// passed. A leased answer Python also answered leased (shape B) is
+// compared as any other.
+func leasedUnleased(d Decided, r fullResult, decidePass string) fullResult {
+	dec := d.ForShadow()
+	if dec == nil || !dec.LeasedAnswer || !r.async.pythonAdmitted || r.class != ClassDifferAny {
+		return r
+	}
+	if decidePass == "" {
+		decidePass = inFlightNotDecided
+	}
+	return fullResult{class: ClassPythonAnsweredGoPassed + "." + decidePass, decided: true, gate: r.gate,
+		async: r.async, windows: r.windows, stream: r.stream}
 }
 
 // inFlightAgreed is r, unless Python refused the request at its per-key

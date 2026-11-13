@@ -23,7 +23,13 @@ the members' other spellings, refused by both readers, with all-mode rows
 combinations with the explicit fast-path set empty and every async pilot
 workspace outside the overlap list on the exclude list, as the settings
 require, each with and without a reserved list (section 9.1: with the async
-pilot set empty, every workspace is admitted but the reserved list's), and
+pilot set empty, every workspace is admitted but the reserved list's),
+every combination again with the edge's leased-answer switch on
+(fastpath_edge_async_leased: edge_leased and overlap_workspaces, with
+Python's async_settle_admits_request(ws, leased=True) per probe, which Go's
+AsyncSettle.AdmitsLeased must give; docs/design/fast-admission-e2-g15-async.md,
+"Leased answers"), and those members' other spellings, each refused by both
+readers for that member, and
 the all-mode golden files (sections 6.3 and 11, PR 3) to
 fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the publisher's
 body from the golden settings in all mode (fastpath_pilot_all and
@@ -276,18 +282,88 @@ ADMISSION_OFF_REFUSED = ("excluded_admission_off", '"admission_excluded_workspac
 
 
 def admission_settings(admission: bool, pilots: str, overlap: str, fastpath: str,
-                       exclude: str | None = None, reserved: str = "") -> Settings:
+                       exclude: str | None = None, reserved: str = "", leased: bool = False) -> Settings:
     """The admission settings; with ``exclude`` set, all mode (the explicit
     fast-path set then empty, and the typed Spanner store it requires), and
-    ``reserved`` its reserved list."""
+    ``reserved`` its reserved list; ``leased`` the edge's leased-answer
+    switch (fastpath_edge_async_leased)."""
     pilot_all = {} if exclude is None else dict(
         fastpath_pilot_all=True, fastpath_pilot_exclude=exclude, storage_backend="spanner-clickhouse",
         async_settle_fastpath_reserved_workspaces=reserved)
     return fixture_settings(
         async_settle_enabled=admission, async_settle_protection=admission,
         async_settle_pilot_workspaces=pilots, async_settle_fastpath_overlap_workspaces=overlap,
-        fastpath_pilot_workspaces=fastpath, **pilot_all,
+        fastpath_pilot_workspaces=fastpath, fastpath_edge_async_leased=leased, **pilot_all,
     )
+
+
+def admission_case(name: str, settings_record: dict[str, object], settings: Settings) -> dict[str, object]:
+    """One publisher case: the body, Python's admission answer per probe
+    (async_settle_admission_enabled and async_settle_pilot_allows), and,
+    with the leased-answer switch on, Python's answer per probe for a
+    request the pilot leased (async_settle_admits_request with leased=True,
+    which snapshot_projection reads): whether its answer carries a ticket.
+    With the switch off the policy does not say, and admits_leased is null."""
+    on = settings.async_settle_admission_enabled
+    leased = settings.fastpath_edge_async_leased
+    return {
+        "name": name + (":leased" if leased else ""),
+        "settings": {**settings_record, "leased": leased},
+        "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
+        "accept": True,
+        "admits": {ws: on and settings.async_settle_pilot_allows(ws) for ws in ADMISSION_PROBES},
+        "admits_leased": ({ws: on and settings.async_settle_admits_request(ws, leased=True)
+                           for ws in ADMISSION_PROBES} if leased else None),
+    }
+
+
+# The leased-answer members' spellings the publisher never writes
+# (docs/design/fast-admission-e2-g15-async.md, "Leased answers"), each
+# refused by both readers for that member: changes to the async_settle
+# object of the body with admission and the switch on and one overlap
+# workspace (ws-synthetic-pilot-1, the fast-path set empty), re-encoded
+# canonically so neither reader refuses the body for its encoding.
+LEASED_REFUSED: dict[str, dict[str, object]] = {
+    "leased_false": {"edge_leased": False},
+    "leased_null": {"edge_leased": None},
+    "leased_integer": {"edge_leased": 1},
+    "leased_string": {"edge_leased": "true"},
+    "leased_admission_off": {"admission_enabled": False, "overlap_workspaces": None},
+    "overlap_without_leased": {"edge_leased": None},
+    "overlap_null": {"overlap_workspaces": None},
+    "overlap_empty": {"overlap_workspaces": []},
+    "overlap_unsorted": {"overlap_workspaces": ["ws-synthetic-pilot-2", "ws-synthetic-pilot-1"]},
+    "overlap_duplicate": {"overlap_workspaces": ["ws-synthetic-pilot-1", "ws-synthetic-pilot-1"]},
+    "overlap_thirty_three": {"overlap_workspaces": [f"ws-synthetic-{i:02}" for i in range(33)]},
+    "overlap_bad_id": {"overlap_workspaces": ["ws synthetic"]},
+    "overlap_string": {"overlap_workspaces": "ws-synthetic-pilot-1"},
+    "overlap_outside_admission_workspaces": {"admission_workspaces": ["ws-synthetic-async-a"]},
+    "overlap_excluded": {"admission_excluded_workspaces": ["ws-synthetic-pilot-1"]},
+}
+# The member each refusal is about: both readers' errors name it.
+LEASED_REFUSED_MEMBER = {name: "edge_leased" if name.startswith("leased_") else "overlap_workspaces"
+                         for name in LEASED_REFUSED}
+
+
+def leased_refused_cases() -> list[dict[str, object]]:
+    base = json.loads(canonical_edge_policy_bytes(policy(admission_settings(
+        True, "", "ws-synthetic-pilot-1", "", leased=True))))
+    if base["async_settle"].get("overlap_workspaces") != ["ws-synthetic-pilot-1"]:
+        raise AssertionError("the leased refusals' base body does not carry its overlap workspace")
+    cases: list[dict[str, object]] = []
+    for name, changes in LEASED_REFUSED.items():
+        async_settle = dict(base["async_settle"])
+        for member, value in changes.items():
+            # None removes a member the change leaves out; a null spelling is
+            # written as the value None under a member that stays.
+            if value is None and not name.endswith("_null"):
+                async_settle.pop(member, None)
+            else:
+                async_settle[member] = value
+        body = json.dumps({**base, "async_settle": async_settle}, sort_keys=True, separators=(",", ":"))
+        cases.append({"name": f"refused:{name}", "settings": None, "body": body, "accept": False,
+                      "admits": None, "admits_leased": None, "refused_member": LEASED_REFUSED_MEMBER[name]})
+    return cases
 
 
 def all_mode_exclude(pilots: str, overlap: str) -> str:
@@ -327,45 +403,42 @@ def admission_cases() -> list[dict[str, object]]:
     which snapshot_projection and the settlement handler read); then the
     members spelled every way the publisher never writes, refused."""
     cases: list[dict[str, object]] = []
+    # Each combination twice: with the edge's leased-answer switch off (the
+    # body as before the switch existed) and on (edge_leased and
+    # overlap_workspaces, with admission on).
     for admission in (False, True):
         for pilots in ADMISSION_PILOTS:
             for overlap in ADMISSION_OVERLAPS:
                 for fastpath in ("", ADMISSION_FASTPATH):
-                    settings = admission_settings(admission, pilots, overlap, fastpath)
-                    admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
-                              for ws in ADMISSION_PROBES}
-                    cases.append({
-                        "name": f"publisher:admission={str(admission).lower()}:pilots={pilots or '-'}"
-                                f":overlap={overlap or '-'}:fastpath={'set' if fastpath else '-'}",
-                        "settings": {"admission": admission, "pilots": pilots, "overlap": overlap,
-                                     "fastpath": fastpath},
-                        "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
-                        "accept": True, "admits": admits,
-                    })
+                    for leased in (False, True):
+                        cases.append(admission_case(
+                            f"publisher:admission={str(admission).lower()}:pilots={pilots or '-'}"
+                            f":overlap={overlap or '-'}:fastpath={'set' if fastpath else '-'}",
+                            {"admission": admission, "pilots": pilots, "overlap": overlap, "fastpath": fastpath},
+                            admission_settings(admission, pilots, overlap, fastpath, leased=leased)))
     # All mode: ws-synthetic-neither stands for a workspace the enabler turns
     # on (covered, on no list). A named async pilot set leaves it out; an
     # empty one admits it unless the reserved list names it, and admits a
-    # workspace on the exclude list too.
+    # workspace on the exclude list too. With the leased-answer switch on, a
+    # leased request of an admitted workspace is ticketed only on the
+    # overlap list (widening section 9.1).
     for admission, pilots, overlap, exclude, reserved in admission_all_mode_combinations():
-        settings = admission_settings(admission, pilots, overlap, "", exclude, reserved)
-        admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
-                  for ws in ADMISSION_PROBES}
-        cases.append({
-            "name": f"publisher:all:admission={str(admission).lower()}:pilots={pilots or '-'}"
-                    f":overlap={overlap or '-'}:exclude={exclude or '-'}:reserved={reserved or '-'}",
-            "settings": {"admission": admission, "pilots": pilots, "overlap": overlap, "fastpath": "",
-                         "exclude": exclude, "reserved": reserved},
-            "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
-            "accept": True, "admits": admits,
-        })
+        for leased in (False, True):
+            cases.append(admission_case(
+                f"publisher:all:admission={str(admission).lower()}:pilots={pilots or '-'}"
+                f":overlap={overlap or '-'}:exclude={exclude or '-'}:reserved={reserved or '-'}",
+                {"admission": admission, "pilots": pilots, "overlap": overlap, "fastpath": "",
+                 "exclude": exclude, "reserved": reserved},
+                admission_settings(admission, pilots, overlap, "", exclude, reserved, leased=leased)))
     on = admission_settings(True, "", "", "")
     for name, members in ADMISSION_REFUSED:
         cases.append({"name": f"refused:{name}", "settings": None, "body": _spliced(on, members),
-                      "accept": False, "admits": None})
+                      "accept": False, "admits": None, "admits_leased": None, "refused_member": None})
     name, members = ADMISSION_OFF_REFUSED
     cases.append({"name": f"refused:{name}", "settings": None,
-                  "body": _spliced(admission_settings(False, "", "", ""), members), "accept": False, "admits": None})
-    return cases
+                  "body": _spliced(admission_settings(False, "", "", ""), members), "accept": False, "admits": None,
+                  "admits_leased": None, "refused_member": None})
+    return cases + leased_refused_cases()
 
 
 def ticket_cases() -> list[dict[str, object]]:

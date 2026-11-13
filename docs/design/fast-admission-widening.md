@@ -1096,16 +1096,34 @@ to start. It now means:
   `TestTheAsyncAdmissionVectors` holds Go's answer to Python's on each.
 
 **What it costs at the edge with edge tickets off.** Only Python signs
-a ticket, so the edge passes every async-v1 authorize of an
-admitted workspace to Python (`policy.async_admission`), leasable or not,
-and answers async-v1 itself only for the reserved list. A workspace whose
+a ticket, so without the policy's `edge_leased` the edge passes every
+async-v1 authorize of an admitted workspace to Python
+(`policy.async_admission`), leasable or not, and answers async-v1 itself
+only for the reserved list. Without that member, a workspace whose
 async-v1 authorizes the edge should keep answering goes on the reserved
 list and keeps §9's behaviour; it then gets no async settle. A sync
-authorize is untouched: the edge decides it as before. Letting the edge
-answer the leasable async-v1 authorizes of an admitted workspace needs the
-edge to tell them apart before it passes, a Go change this section does
-not make. The sign-only extension in [Edge tickets](fast-admission-e2-g15-async.md#edge-tickets)
+authorize is untouched: the edge decides it as before. The sign-only
+extension in [Edge tickets](fast-admission-e2-g15-async.md#edge-tickets)
 lets the edge answer admitted workspaces while Python keeps the signing key.
+
+**Leased answers at the edge.** Python's answer to a leased request needs
+no ticket (the per-request rule above), so the edge can give it for what it
+leases itself. `TR_FASTPATH_EDGE_ASYNC_LEASED` (default false) publishes
+`async_settle.edge_leased` and `overlap_workspaces`, the overlap workspaces
+admission covers. With them the edge tells the leasable async-v1
+authorizes of an admitted workspace apart by leasing them: the admission
+gate lets a covered workspace off the overlap list go on, composed as
+Python's leased answer (shape B or A), through every later gate (the key's
+and workspace's facts, credit, the decide row, the switch copy), each of
+which passes it with its own reason; the edge answers it only under its own
+lease, and its settle goes through that lease. The overlap list's
+workspaces and edge-ticket workspaces keep their behaviour. The reserved
+list keeps its meaning (outside admission, so Python answers its unleased
+requests without a ticket too) but is no longer needed to keep a
+workspace's leasable async-v1 authorizes on the edge. The design, the
+counts, the shadow, the money path and the rollout order (nodes, then
+Python with the switch off, then the switch) are
+[Leased answers](fast-admission-e2-g15-async.md#leased-answers).
 
 **Named pilot set in all mode.** §9 exactly, and the reserved list is
 ignored: the pilot set already says who is admitted. That is the way back,
