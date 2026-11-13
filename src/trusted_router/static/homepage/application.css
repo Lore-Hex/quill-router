@@ -234,7 +234,7 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 .trs .q blockquote{font-size:17px;line-height:1.6;text-wrap:pretty}
 .trs .stat .go{order:5}
 .closing-cta{position:relative;isolation:isolate;overflow:hidden;min-height:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;text-align:center;padding:72px 24px;border-block:1px solid var(--tr-color-line-rule);background:var(--tr-color-surface-photo-fallback)}
-.closing-cta::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,#050706c4,#0507068c 50%,#050706ad)}
+.closing-cta::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,color-mix(in srgb, var(--tr-color-surface-bg) 76.86%, transparent),color-mix(in srgb, var(--tr-color-surface-bg) 54.9%, transparent) 50%,color-mix(in srgb, var(--tr-color-surface-bg) 67.84%, transparent))}
 .closing-cta .closing-landscape{transform:none;object-position:center 68%}
 .closing-cta h2{max-width:740px;margin:0;color:var(--tr-color-text-primary);font-family:var(--heading-font);font-size:clamp(36px,4vw,56px);line-height:1.1;letter-spacing:-.04em;font-weight:600}
 .closing-cta h2 em{font-style:normal;color:var(--tr-color-accent-base)}
@@ -259,7 +259,7 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 /* Phones: the logo ticker follows the hero actions instead of being pinned to the viewport bottom.
    Tablets keep the desktop placement at the hero's bottom; the hero's short-window rules cover low heights at every width. */
 @media(max-width:600px){
- #top .hero .labs{margin:clamp(56px,14svh,140px) -20px 0;padding:24px 0;align-self:center;width:calc(100% + 40px);max-width:none;background:linear-gradient(180deg,#05070600,#05070699 30%,#05070699 70%,#05070600)}
+ #top .hero .labs{margin:clamp(56px,14svh,140px) -20px 0;padding:24px 0;align-self:center;width:calc(100% + 40px);max-width:none;background:linear-gradient(180deg,color-mix(in srgb, var(--tr-color-surface-bg) 0%, transparent),color-mix(in srgb, var(--tr-color-surface-bg) 60%, transparent) 30%,color-mix(in srgb, var(--tr-color-surface-bg) 60%, transparent) 70%,color-mix(in srgb, var(--tr-color-surface-bg) 0%, transparent))}
 }
 
 /* Live status dot: saturated, glowing, and pulsing while the probe is fresh. */
@@ -330,8 +330,8 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
  }
  .landscape-image{filter:brightness(1.3)}
  .closing-cta .closing-landscape{filter:brightness(1.4)}
- .closing-cta::before{background:linear-gradient(180deg,#05070670 0%,#05070659 48%,#05070626 100%)}
- #top h1,#top .sub,.closing-cta h2{text-shadow:0 2px 12px #050706b3}
+ .closing-cta::before{background:linear-gradient(180deg,color-mix(in srgb, var(--tr-color-surface-bg) 43.92%, transparent) 0%,color-mix(in srgb, var(--tr-color-surface-bg) 34.9%, transparent) 48%,color-mix(in srgb, var(--tr-color-surface-bg) 14.9%, transparent) 100%)}
+ #top h1,#top .sub,.closing-cta h2{text-shadow:0 2px 12px color-mix(in srgb, var(--tr-color-surface-bg) 70.2%, transparent)}
 }
 @media(max-width:360px){.trm .acts .button{font-size:14px;padding-inline:6px}}
 

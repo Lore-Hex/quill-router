@@ -116,7 +116,7 @@ footer{border-top:1px solid #2a3b32;background:var(--tr-color-surface-bg-alt)}.t
  .migration-disclosure>.disclosure-body,.migration-disclosure .r{height:100%}
 }
 @media(max-width:600px){
- .trh .hero .labs{margin-top:auto;margin-bottom:clamp(48px,calc(var(--hero-vh, 1svh) * 12),112px);padding-block:12px;background:#050706bf}
+ .trh .hero .labs{margin-top:auto;margin-bottom:clamp(48px,calc(var(--hero-vh, 1svh) * 12),112px);padding-block:12px;background:color-mix(in srgb, var(--tr-color-surface-bg) 74.9%, transparent)}
  .migration-disclosure>summary{padding-inline:20px}
  .trv .card{display:flex;flex-direction:column}
  .trv .card .cap{order:-1}
