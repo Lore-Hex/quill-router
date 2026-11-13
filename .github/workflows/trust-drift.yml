@@ -60,12 +60,10 @@ jobs:
       github.repository == 'Lore-Hex/quill-router'
       && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: "latest"
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       # --strict is the whole reason this runs here rather than only on a

@@ -12,7 +12,7 @@ def test_lightning_ci_uses_the_production_python_version() -> None:
     )
     job = workflow["jobs"]["test"]
     setup_uv = next(
-        step for step in job["steps"] if step.get("uses", "").startswith("astral-sh/setup-uv@")
+        step for step in job["steps"] if step.get("uses", "").startswith("Lore-Hex/quill-router/.github/actions/setup-uv@")
     )
     python_version = setup_uv.get("with", {}).get("python-version")
     assert python_version == "3.12"

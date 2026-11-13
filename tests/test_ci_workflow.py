@@ -135,7 +135,7 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
                       == f"durations-{clock}-${{{{ matrix.shard }}}}")
         assert steps.index(upload) > test_index
         assert upload["if"] == "always()"
-        assert upload["uses"] == "actions/upload-artifact@v4"
+        assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         assert upload["with"]["path"] == path
         assert upload["with"]["retention-days"] == 7
 
