@@ -104,7 +104,9 @@ from trusted_router.storage_errors import (
     is_duplicate_key_error,
 )
 from trusted_router.storage_gcp_codec import (
+    SIGNUP_CREDIT_DOMAIN_KIND,
     byok_id,
+    email_domain,
     member_id,
     normalize_email,
     workspace_key_id,
@@ -1501,6 +1503,7 @@ class PostgresStore(OperationalAnalyticsReads):
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
         social_rewards_issuer: str | None = None,
+        credit_domain_limit: int | None = None,
     ) -> User:
         if social_rewards_issuer is not None and (
             not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
@@ -1526,6 +1529,27 @@ class PostgresStore(OperationalAnalyticsReads):
                 if user is not None:
                     return user
 
+            trial_credit = trial_credit_microdollars
+            rewards_issuer = social_rewards_issuer
+            if credit_domain_limit is not None and trial_credit:
+                domain = email_domain(normalized_email)
+                # FOR UPDATE cannot lock an absent row under READ COMMITTED, so
+                # create the counter first; concurrent first sign-ups on a domain
+                # then queue on the same row lock instead of each reading "none".
+                self._insert_entity_once_tx(
+                    conn, SIGNUP_CREDIT_DOMAIN_KIND, domain, {"count": 0}
+                )
+                counter = self._read_entity_tx(
+                    conn, SIGNUP_CREDIT_DOMAIN_KIND, domain, dict, for_update=True
+                )
+                granted = int(counter["count"]) if counter else 0
+                if granted >= credit_domain_limit:
+                    trial_credit = 0
+                    rewards_issuer = None
+                else:
+                    self._write_entity_tx(
+                        conn, SIGNUP_CREDIT_DOMAIN_KIND, domain, {"count": granted + 1}
+                    )
             user = User(id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified)
             self._write_entity_tx(conn, "user", user.id, user)
             self._write_entity_tx(
@@ -1538,12 +1562,12 @@ class PostgresStore(OperationalAnalyticsReads):
                 conn,
                 user.id,
                 "Personal Workspace",
-                trial_credit_microdollars,
+                trial_credit,
             )
-            if social_rewards_issuer is not None:
+            if rewards_issuer is not None:
                 self._write_entity_tx(
                     conn, "social_reward_enrollment", user.id,
-                    SocialRewardEnrollment(user.id, workspace.id, social_rewards_issuer),
+                    SocialRewardEnrollment(user.id, workspace.id, rewards_issuer),
                 )
             return user
 
@@ -1613,6 +1637,7 @@ class PostgresStore(OperationalAnalyticsReads):
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
         social_rewards_issuer: str | None = None,
+        credit_domain_limit: int | None = None,
     ) -> SignupResult | None:
         self._not_implemented("signup")
 

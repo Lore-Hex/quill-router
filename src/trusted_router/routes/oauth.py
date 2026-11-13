@@ -49,6 +49,7 @@ from trusted_router.oauth_provider import (
 )
 from trusted_router.signup_gate import (
     github_account_old_enough,
+    google_starter_credit_domain_limit,
     require_new_account_creation,
     starter_credit_for_email,
 )
@@ -233,6 +234,11 @@ def _persist_login(
                 trial_credit_microdollars=(SIGNUP_MICRODOLLARS if enroll_rewards else starter_credit),
                 email_verified=True,
                 social_rewards_issuer=settings.social_rewards_issuer_id if enroll_rewards else None,
+                credit_domain_limit=(
+                    google_starter_credit_domain_limit(info.email)
+                    if provider.slug == "google"
+                    else None
+                ),
             )
             if result is not None:
                 user_id = result.user.id
