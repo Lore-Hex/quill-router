@@ -154,10 +154,10 @@
   },
   "cloudflare-workers-ai": {
     "card_version": 2,
-    "model_count": 27,
+    "model_count": 28,
     "name": "Cloudflare Workers AI",
     "privacy": "Policy documented",
-    "route_count": 27,
+    "route_count": 28,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
   },
@@ -343,10 +343,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 16,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 30,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -505,10 +505,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 12,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -595,10 +595,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 22,
+    "model_count": 23,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 42,
+    "route_count": 44,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -730,10 +730,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },

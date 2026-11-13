@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup, Tag
 # video, live-audio) models are intentionally skipped by returning None from
 # the fallback regex below.
 _NAME_TO_OR_ID = {
+    "Gemini 4 Hydrogen": "google/gemini-4-hydrogen",
     "Gemini 4 Carbon": "google/gemini-4-carbon",
     "Gemini 4 Argon": "google/gemini-4-argon",
     "Gemini 3.8 Flash": "google/gemini-3.8-flash",
@@ -39,7 +40,7 @@ _NAME_TO_OR_ID = {
 _STANDARD_MODEL_HEADING_RE = re.compile(
     r"^Gemini\s+(?:(?P<family>Omni|Argon|Nova)\s+)?"
     r"(?P<version>\d+(?:\.\d+)?)\s+"
-    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon|Carbon)$",
+    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon|Carbon|Hydrogen)$",
     re.IGNORECASE,
 )
 
