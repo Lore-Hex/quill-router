@@ -8,6 +8,16 @@ Expired/failed reservations are NEVER reclaimed just because time elapsed.
 Waiters queue in the same journal and are admitted first come, first served
 across both repositories (docs/design/deploy-fifo-admission.md). A queue
 ticket confers no right to mutate production; only a lease does.
+
+Two journal formats exist (docs/design/component-leases-v3.md):
+  * v2: one lease per cloud, whatever its component. Every pinned client
+    understands it. A journal stays v2 until an operator runs `upgrade`.
+  * v3: leases keyed `cloud/component`. On a cloud in CONCURRENT_CLOUDS the
+    control plane and the gateway may hold leases at once; `public-surface`
+    stays exclusive with both, and on every other cloud all components stay
+    exclusive. v2-only clients read a v3 journal as "legacy or unknown" and
+    refuse before any write, so `upgrade` is allowed only on an empty journal
+    and only after every client that can run has been re-pinned.
 """
 
 from __future__ import annotations
@@ -31,7 +41,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+# VERSION is the format a fresh or downgraded journal uses; v2-only clients
+# understand only it. V3 is written only by an explicit `upgrade`.
 VERSION = 2
+V3 = 3
 URI = "gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production.json"
 CLOUDS = ("gcp", "aws", "azure")
 PLANES = {
@@ -42,6 +55,14 @@ PLANES = {
 SHA = re.compile(r"[a-f0-9]{7,40}")
 MAX_BYTES = 1_048_576
 COMPONENTS = ("control-plane", "gateway", "public-surface")
+# v3 only. Clouds where the control plane and the gateway may hold leases at
+# the same time. Only gcp's gateway gates tell a moving control plane from a
+# gateway fault (quill-cloud-proxy tools/gate_hold.py); aws and azure stay
+# one component at a time until theirs do too.
+CONCURRENT_CLOUDS = frozenset({"gcp"})
+# Exclusive with every other component on its cloud: it changes the service
+# behind trustedrouter.com that both components' gates read.
+EXCLUSIVE_COMPONENTS = frozenset({"public-surface"})
 TICKET = re.compile(r"[a-f0-9]{32}")
 # Admission queue. A waiting client polls every 20 s and rewrites its heartbeat
 # at most every HEARTBEAT_SECONDS. Hosts' clocks can disagree, so no decision
@@ -243,28 +264,114 @@ def probe_cloud(cloud: str) -> str:
         raise Refused(f"{cloud} is not a verified healthy holdback") from exc
 
 
+def probe_component(cloud: str, component: str) -> None:
+    """Check only the service a v3 lease's owner changed, before releasing it.
+
+    A finished control-plane lease must not stay held because the gateway is
+    unhealthy, nor the reverse (E5 in docs/design/per-component-leases.md);
+    each component's own deploy gates already measured it. The holdback is
+    still checked with probe_cloud, both services.
+    """
+    plane, gateway = PLANES[cloud]
+    try:
+        if component == "gateway":
+            if fetch(f"{gateway}/health").get("status") != "ok":
+                raise Refused("gateway unhealthy")
+            return
+        # control-plane and public-surface both serve trustedrouter.com.
+        before = fetch(f"{plane}/trust/control-plane.json")
+        if fetch(f"{plane}/health").get("status") != "ok":
+            raise Refused("control plane unhealthy")
+        after = fetch(f"{plane}/trust/control-plane.json")
+        release = before.get("release")
+        api_base = before.get("api_base_url")
+        if (before != after or not isinstance(release, str)
+                or not SHA.fullmatch(release)
+                or not isinstance(api_base, str) or api_base.rstrip("/") != f"{gateway}/v1"):
+            raise Refused("cloud-local release evidence missing, changing, or wrong cloud")
+    except (OSError, ValueError, Refused) as exc:
+        raise Refused(f"{cloud}/{component} is not verified healthy") from exc
+
+
+def lease_key(version: int, cloud: str, component: str) -> str:
+    """The journal key of a lease: the cloud in v2, `cloud/component` in v3."""
+    return cloud if version == VERSION else f"{cloud}/{component}"
+
+
+def conflicts(version: int, cloud: str, component: str, other: str) -> bool:
+    """Whether two components may not hold leases on `cloud` at the same time."""
+    if version == VERSION or cloud not in CONCURRENT_CLOUDS or component == other:
+        return True
+    return component in EXCLUSIVE_COMPONENTS or other in EXCLUSIVE_COMPONENTS
+
+
+def leases_on(state: dict[str, Any], cloud: str) -> list[dict[str, Any]]:
+    return [lease for lease in state["leases"].values() if lease["cloud"] == cloud]
+
+
+def leased_clouds(state: dict[str, Any]) -> set[str]:
+    """Clouds with a lease of any component. The two-cloud cap counts these."""
+    return {lease["cloud"] for lease in state["leases"].values()}
+
+
+def _valid_lease(lease: Any, cloud: str) -> bool:
+    return (isinstance(lease, dict) and lease.get("cloud") == cloud
+            and lease.get("state") in {"active", "blocked"}
+            and isinstance(lease.get("operation_id"), str)
+            and re.fullmatch(r"[a-f0-9]{32}", lease["operation_id"]) is not None
+            and isinstance(lease.get("owner"), str)
+            and type(lease.get("created_at")) is int
+            and type(lease.get("expires_at")) is int
+            and lease["expires_at"] > lease["created_at"])
+
+
+def _v3_leases(raw: dict[str, Any]) -> dict[str, Any]:
+    leases = raw.get("leases")
+    if not isinstance(leases, dict):
+        raise Refused("invalid release journal leases")
+    for key, lease in leases.items():
+        cloud, _, component = key.partition("/") if isinstance(key, str) else ("", "", "")
+        if (cloud not in CLOUDS or component not in COMPONENTS
+                or not _valid_lease(lease, cloud) or lease.get("component") != component):
+            raise Refused("invalid release lease")
+    if len({lease["cloud"] for lease in leases.values()}) > 2:
+        raise Refused("invalid release journal leases")
+    if len({lease["operation_id"] for lease in leases.values()}) != len(leases):
+        raise Refused("invalid release journal leases: repeated fence")
+    # A journal no client could have written is not trusted to be safe.
+    held = sorted(leases.values(), key=lambda lease: lease["component"])
+    for index, lease in enumerate(held):
+        for other in held[index + 1:]:
+            if lease["cloud"] == other["cloud"] and conflicts(
+                    V3, lease["cloud"], lease["component"], other["component"]):
+                raise Refused("invalid release journal leases: conflicting components")
+    epochs = raw.get("epochs", {})
+    if (not isinstance(epochs, dict)
+            or not all(isinstance(k, str) and type(v) is int and v >= 0 for k, v in epochs.items())):
+        raise Refused("invalid release journal epochs")
+    return leases
+
+
 def state_record(raw: dict[str, Any] | None) -> dict[str, Any]:
     if raw is None:
         return {"schema_version": VERSION, "leases": {}, "holdback": None}
-    if raw.get("schema_version") != VERSION:
+    version = raw.get("schema_version")
+    if type(version) is not int or version not in (VERSION, V3):
         raise Busy("legacy or unknown deployment lock exists; wait for its owner, do not delete it")
-    leases = raw.get("leases")
-    if not isinstance(leases, dict) or len(leases) > 2 or not set(leases) <= set(CLOUDS):
-        raise Refused("invalid release journal leases")
-    for cloud, lease in leases.items():
-        if (not isinstance(lease, dict) or lease.get("cloud") != cloud
-                or lease.get("state") not in {"active", "blocked"}
-                or not isinstance(lease.get("operation_id"), str)
-                or not re.fullmatch(r"[a-f0-9]{32}", lease["operation_id"])
-                or not isinstance(lease.get("owner"), str)
-                or type(lease.get("created_at")) is not int
-                or type(lease.get("expires_at")) is not int
-                or lease["expires_at"] <= lease["created_at"]):
-            raise Refused("invalid release lease")
+    if version == V3:
+        leases = _v3_leases(raw)
+    else:
+        leases = raw.get("leases")
+        if not isinstance(leases, dict) or len(leases) > 2 or not set(leases) <= set(CLOUDS):
+            raise Refused("invalid release journal leases")
+        for cloud, lease in leases.items():
+            if not _valid_lease(lease, cloud):
+                raise Refused("invalid release lease")
+    clouds = {lease["cloud"] for lease in leases.values()}
     holdback = raw.get("holdback")
     if leases:
         if (not isinstance(holdback, dict) or holdback.get("cloud") not in CLOUDS
-                or holdback["cloud"] in leases
+                or holdback["cloud"] in clouds
                 or not isinstance(holdback.get("release"), str)
                 or not SHA.fullmatch(holdback["release"])):
             raise Refused("invalid protected cloud")
@@ -352,27 +459,46 @@ def redacted(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     return shown
 
 
-def admission_blocker(state: dict[str, Any], cloud: str, ahead: list[dict[str, Any]]) -> str | None:
-    """Why a request for `cloud` behind the live waiters `ahead` must wait, or None."""
-    leases = state["leases"]
-    if cloud in leases:
-        return f"{cloud} already reserved by {leases[cloud]['owner']}"
-    if len(leases) >= 2:
+def admission_blocker(state: dict[str, Any], cloud: str, ahead: list[dict[str, Any]],
+                      component: str = "control-plane") -> str | None:
+    """Why a request for `cloud`/`component` behind the live waiters `ahead` must wait, or None.
+
+    In v2 every component conflicts with every other on its cloud, so this is
+    exactly the one-lease-per-cloud rule.
+    """
+    version = state["schema_version"]
+    for lease in leases_on(state, cloud):
+        # A v2 lease written before components were recorded has none.
+        if conflicts(version, cloud, component, lease.get("component", "")):
+            held = cloud if version == VERSION else f"{cloud}/{lease['component']}"
+            return f"{held} already reserved by {lease['owner']}"
+        if lease["state"] != "active":
+            # A failed deploy left this cloud in an unknown state. Nothing else
+            # starts on it until that lease is recovered with proof.
+            return f"{cloud}/{lease['component']} is blocked; recover it before any other {cloud} rollout"
+    clouds = leased_clouds(state)
+    new_cloud = cloud not in clouds
+    if new_cloud and len(clouds) >= 2:
         return "two clouds already reserved; the third is protected"
-    earlier = [e for e in ahead if e["cloud"] == cloud]
+    earlier = [e for e in ahead
+               if e["cloud"] == cloud and conflicts(version, cloud, component, e["component"])]
     if earlier:
         return f"{len(earlier)} earlier waiter(s) for {cloud}, first {earlier[0]['owner']}"
+    if not new_cloud:
+        return None
     # Earlier waiters for other free clouds take the remaining slots first.
-    others = {e["cloud"] for e in ahead if e["cloud"] not in leases}
-    if len(others) >= 2 - len(leases):
+    others = {e["cloud"] for e in ahead if e["cloud"] not in clouds and e["cloud"] != cloud}
+    if len(others) >= 2 - len(clouds):
         return "earlier waiters for " + ", ".join(sorted(others)) + " take the free slot(s) first"
     return None
 
 
 class Coordinator:
     def __init__(self, store: Store, probe: Callable[[str], str] | None = None,
-                 now: Callable[[], float] = time.time) -> None:
+                 now: Callable[[], float] = time.time,
+                 component_probe: Callable[[str, str], Any] | None = None) -> None:
         self.store, self.probe, self.now = store, probe or probe_cloud, now
+        self.component_probe = component_probe or probe_component
         # ticket -> (heartbeat_at last seen, this host's time it was first seen)
         self.observed: dict[str, tuple[int, float]] = {}
 
@@ -451,7 +577,8 @@ class Coordinator:
               ttl: int, operation: str) -> dict[str, Any]:
         """Write a lease into `state` (inside a transaction) once admission is decided."""
         leases = state["leases"]
-        protected = self.holdback(set(leases) | {cloud}, state["holdback"])
+        version = state["schema_version"]
+        protected = self.holdback(leased_clouds(state) | {cloud}, state["holdback"])
         now = int(self.now())
         lease = {"cloud": cloud, "owner": owner, "component": component,
                  "operation_id": operation, "state": "active", "created_at": now,
@@ -460,8 +587,14 @@ class Coordinator:
                  # deploy owner. Unknown manual owners are unrecoverable
                  # automatically, rather than falsely considered stopped.
                  "pid": int(os.environ.get("TR_DEPLOY_OWNER_PID", "0"))}
-        leases[cloud] = lease
+        key = lease_key(version, cloud, component)
+        leases[key] = lease
         state["holdback"] = protected
+        if version == V3:
+            # Every grant moves its lane's epoch, so a reader that sees the same
+            # epoch and no lease at two moments knows no lease existed between.
+            epochs = state.setdefault("epochs", {})
+            epochs[key] = epochs.get(key, 0) + 1
         return lease
 
     def acquire(self, cloud: str, owner: str, component: str, ttl: int,
@@ -476,7 +609,7 @@ class Coordinator:
         def change(state: dict[str, Any]) -> dict[str, Any]:
             now = self.now()
             ahead = [e for e in queue_of(state) if self.live(e, now, history=False)]
-            reason = admission_blocker(state, cloud, ahead)
+            reason = admission_blocker(state, cloud, ahead, component)
             if reason:
                 raise Busy(reason)
             if any(e["ticket"] == operation for e in queue_of(state)):
@@ -545,7 +678,7 @@ class Coordinator:
                 raise Refused("waiter deadline passed; not admitted")
             self.observe(queue, now)
             ahead = [e for e in queue[:index] if self.live(e, now)]
-            reason = admission_blocker(state, entry["cloud"], ahead)
+            reason = admission_blocker(state, entry["cloud"], ahead, entry["component"])
             if reason is None:
                 lease = self.grant(state, entry["cloud"], entry["owner"], entry["component"], ttl, ticket)
                 del queue[index]
@@ -609,16 +742,23 @@ class Coordinator:
         return self.transaction(change)
 
     @staticmethod
-    def guarded(state: dict[str, Any]) -> tuple[Any, Any]:
-        """What a lease check depends on. The waiter queue is not part of it."""
-        return state["leases"], state["holdback"]
+    def guarded(state: dict[str, Any], key: str | None = None) -> tuple[Any, ...]:
+        """What a lease check depends on. The waiter queue is not part of it.
+
+        In v2 that is every lease and the holdback. In v3 it is this lease and
+        the holdback: another component's lease on the same cloud coming or
+        going does not change this owner's right to mutate its own component.
+        """
+        if state["schema_version"] == V3 and key is not None:
+            return V3, state["leases"].get(key), state["holdback"]
+        return state["schema_version"], state["leases"], state["holdback"]
 
     def check(self, cloud: str, operation: str) -> dict[str, Any]:
         for _ in range(8):
             try:
                 raw, generation = self.store.read()
                 state = state_record(raw)
-                lease = self.owned(state, cloud, operation)
+                key, lease = self.owned_key(state, cloud, operation)
                 if lease["state"] != "active" or lease["expires_at"] <= self.now():
                     raise Refused("lease blocked or expired; recovery required, slot remains reserved")
                 protected = state["holdback"]
@@ -627,46 +767,122 @@ class Coordinator:
                 current_raw, current = self.store.read()
                 # Waiter heartbeats move the generation without touching any
                 # lease or the holdback; only those must be unchanged.
-                if current == generation or self.guarded(state_record(current_raw)) == self.guarded(state):
+                if (current == generation
+                        or self.guarded(state_record(current_raw), key) == self.guarded(state, key)):
                     return lease
             except Conflict:
                 continue
         raise Refused("release journal changed during guard verification")
 
     @staticmethod
-    def owned(state: dict[str, Any], cloud: str, operation: str) -> dict[str, Any]:
-        lease = state["leases"].get(cloud)
-        if not operation or not lease or lease["operation_id"] != operation:
-            raise Refused("reservation not owned by this operation")
-        return lease
+    def owned_key(state: dict[str, Any], cloud: str, operation: str) -> tuple[str, dict[str, Any]]:
+        """This operation's lease on `cloud` and its journal key. Fences are unique."""
+        for key, lease in state["leases"].items():
+            if operation and lease["cloud"] == cloud and lease["operation_id"] == operation:
+                return key, lease
+        raise Refused("reservation not owned by this operation")
+
+    @classmethod
+    def owned(cls, state: dict[str, Any], cloud: str, operation: str) -> dict[str, Any]:
+        return cls.owned_key(state, cloud, operation)[1]
+
+    def probe_release(self, state: dict[str, Any], lease: dict[str, Any]) -> None:
+        """The health a lease must show before it is freed: in v2 the whole
+        cloud, as before; in v3 only the component this lease changed (E5)."""
+        if state["schema_version"] == V3:
+            self.component_probe(lease["cloud"], lease["component"])
+        else:
+            self.probe(lease["cloud"])
+
+    @staticmethod
+    def free(state: dict[str, Any], key: str) -> None:
+        del state["leases"][key]
+        if not state["leases"]:
+            state["holdback"] = None
 
     def release(self, cloud: str, operation: str, success: bool) -> None:
         def change(state: dict[str, Any]) -> None:
-            lease = self.owned(state, cloud, operation)
+            key, lease = self.owned_key(state, cloud, operation)
             if not success:
                 lease["state"] = "blocked"
                 return
             if lease["state"] != "active":
                 raise Refused("failed reservation requires verified recovery")
-            self.probe(cloud)
-            del state["leases"][cloud]
-            if not state["leases"]:
-                state["holdback"] = None
+            self.probe_release(state, lease)
+            self.free(state, key)
 
         self.transaction(change)
 
     def recover(self, cloud: str, operation: str,
                 stopped: Callable[[dict[str, Any]], bool]) -> None:
         def change(state: dict[str, Any]) -> None:
-            lease = self.owned(state, cloud, operation)
+            key, lease = self.owned_key(state, cloud, operation)
             if not stopped(lease):
                 raise Refused("owner may still be mutating production; recovery refused")
-            self.probe(cloud)
-            del state["leases"][cloud]
-            if not state["leases"]:
-                state["holdback"] = None
+            self.probe_release(state, lease)
+            self.free(state, key)
 
         self.transaction(change)
+
+    def upgrade(self) -> bool:
+        """Turn an empty v2 journal into v3. True if this call wrote it.
+
+        Only an empty journal: a v2-only client holding a lease or waiting in
+        line would otherwise find its journal unreadable halfway through. Run it
+        only after every client that can still run reads v3
+        (docs/design/component-leases-v3.md, "Cut-over").
+        """
+        def change(state: dict[str, Any]) -> bool:
+            if state["schema_version"] == V3:
+                raise _Unchanged(False)
+            if state["leases"] or queue_of(state):
+                raise Busy("upgrade needs an empty journal: no lease and no waiter")
+            state.clear()
+            state.update({"schema_version": V3, "leases": {}, "holdback": None, "epochs": {}})
+            return True
+
+        return bool(self.transaction(change))
+
+    def downgrade(self) -> bool:
+        """Turn an empty v3 journal back into v2, for a re-pin rollback."""
+        def change(state: dict[str, Any]) -> bool:
+            if state["schema_version"] == VERSION:
+                raise _Unchanged(False)
+            if state["leases"] or queue_of(state):
+                raise Busy("downgrade needs an empty journal: no lease and no waiter")
+            state.clear()
+            state.update({"schema_version": VERSION, "leases": {}, "holdback": None})
+            return True
+
+        return bool(self.transaction(change))
+
+    def lanes(self, cloud: str) -> dict[str, Any]:
+        """Read-only: which components hold a lease on `cloud`, and each lane's epoch.
+
+        A gateway gate reads this before and after a measurement window. The
+        control plane did not move during the window only if its lane (and the
+        public surface's) held no lease at either read and its epoch did not
+        change. v2 has no epochs; there one lease covers the whole cloud.
+        """
+        if cloud not in CLOUDS:
+            raise Refused("invalid cloud")
+        raw, _ = self.store.read()
+        state = state_record(raw)
+        version = state["schema_version"]
+        epochs = state.get("epochs", {}) if version == V3 else {}
+        lanes: dict[str, dict[str, Any]] = {
+            component: {"held": False, "state": None,
+                        "epoch": epochs.get(f"{cloud}/{component}", 0) if version == V3 else None}
+            for component in COMPONENTS
+        }
+        for lease in leases_on(state, cloud):
+            named = lease.get("component")
+            # A v2 lease without a known component may be any of them.
+            held = [named] if isinstance(named, str) and named in COMPONENTS else list(COMPONENTS)
+            for component in held:
+                lanes[component]["held"] = True
+                lanes[component]["state"] = lease["state"]
+        return {"schema_version": version, "cloud": cloud, "lanes": lanes}
 
 
 # A control-plane deploy waits behind a gateway rollout, which holds the gcp
@@ -879,7 +1095,8 @@ def emit(lease: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("acquire", "assert", "release", "status", "recover", "version"))
+    parser.add_argument("command", choices=("acquire", "assert", "release", "status", "recover", "version",
+                                            "lanes", "upgrade", "downgrade"))
     parser.add_argument("--cloud", choices=CLOUDS, default=os.environ.get("TR_DEPLOY_MUTEX_CLOUD", "gcp"))
     parser.add_argument("--operation", default=os.environ.get("TR_DEPLOY_MUTEX_OPERATION", ""))
     parser.add_argument("--outcome", choices=("success", "failure"),
@@ -890,7 +1107,7 @@ def main() -> int:
         return 0
     try:
         store = GCSStore()
-        if args.command != "status":
+        if args.command not in ("status", "lanes"):
             store.verify_retention()
         coordinator = Coordinator(store)
         if args.command == "acquire":
@@ -913,6 +1130,11 @@ def main() -> int:
                 coordinator.release(args.cloud, args.operation, args.outcome == "success")
         elif args.command == "recover":
             coordinator.recover(args.cloud, args.operation, owner_stopped)
+        elif args.command == "lanes":
+            print(json.dumps(coordinator.lanes(args.cloud), sort_keys=True))
+        elif args.command in ("upgrade", "downgrade"):
+            wrote = getattr(coordinator, args.command)()
+            print(f"cloud_rollout.{args.command}: " + ("written" if wrote else "already in that format"))
         else:
             raw, generation = coordinator.store.read()
             print(json.dumps({"generation": generation, "state": redacted(raw)}, indent=2, sort_keys=True))
