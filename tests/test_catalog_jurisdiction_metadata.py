@@ -277,10 +277,11 @@ def test_eu_focused_route_has_no_provider_with_an_unverified_jurisdiction_left_u
         )
 
 
-def test_liberty_4_is_pinned_to_us_providers() -> None:
-    # Liberty 4.0 is advertised as served only by US-headquartered providers;
+@pytest.mark.parametrize("model_id", ["trustedrouter/liberty-4.0", "trustedrouter/liberty-4.1"])
+def test_liberty_4_is_pinned_to_us_providers(model_id: str) -> None:
+    # Liberty 4.x is advertised as served only by US-headquartered providers;
     # the pin is this request-time rule, mirrored by the gateway preset.
-    shape = model_to_openrouter_shape(MODELS["trustedrouter/liberty-4.0"])
+    shape = model_to_openrouter_shape(MODELS[model_id])
     assert cast_dict(shape["trustedrouter"])["required_provider_jurisdiction"] == PROVIDER_JURISDICTION_US
 
 
