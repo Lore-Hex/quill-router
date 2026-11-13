@@ -192,11 +192,11 @@ jobs:
       TR_DEPLOY_MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Acquire production deployment mutex
         id: acquire_mutex
         env:
@@ -258,11 +258,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.select-release.outputs.commit }}
-      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: No region still carries an earlier rollout's drain tag
         run: bash scripts/deploy/confirm_regions_ready.sh us-central1 europe-west4 us-east4 southamerica-east1
 
@@ -279,12 +279,12 @@ jobs:
         with:
           ref: ${{ needs.select-release.outputs.commit }}
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Install migration runtime
         run: uv sync --frozen --no-dev
       - name: Apply idempotent Spanner schema prerequisites
@@ -419,11 +419,11 @@ jobs:
         with:
           ref: ${{ needs.select-release.outputs.commit }}
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Validate required SES credentials
         run: |
           set -euo pipefail
@@ -527,13 +527,13 @@ jobs:
           fetch-depth: 2
 
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Verify production cloud reservation
         run: bash scripts/deploy/deploy_mutex.sh assert
@@ -981,13 +981,13 @@ jobs:
           fetch-depth: 2
 
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Compute watchdog args (hotfix vs normal)
         id: wd_args
@@ -1347,13 +1347,13 @@ jobs:
           ref: ${{ needs.select-release.outputs.commit }}
 
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Resolve fail-closed public deployment stage
         id: public_stage
@@ -1423,13 +1423,13 @@ jobs:
           ref: ${{ needs.select-release.outputs.commit }}
 
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Deploy and verify dedicated settle-drain worker
         run: bash scripts/deploy/settle_drain_worker.sh
@@ -1488,7 +1488,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.select-release.outputs.commit }}
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Install runtime
         run: uv sync --frozen
 
@@ -1505,11 +1505,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Finalize cloud reservation
         env:
           TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}

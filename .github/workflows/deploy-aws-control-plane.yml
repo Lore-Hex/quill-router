@@ -82,28 +82,28 @@ jobs:
       # The account's GitHub OIDC provider is pre-existing; this role is the
       # quill-router deploy grant (the TR_AWS_* repo secrets are dead - the
       # first dispatch failed on them with "security token invalid").
-      - uses: Lore-Hex/quill-router/.github/actions/aws-credentials@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/aws-credentials@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: eu-west-3
 
       # One atomic journal allows two clouds, never all three.
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       # The deploy ends by running the repository's Python completeness gate.
       # A bare GitHub runner has Python but not the project's dependencies, so
       # without uv the service can deploy successfully and then report a false
       # failure while importing the verifier.
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
-      - uses: Lore-Hex/quill-router/.github/actions/setup-buildx@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-buildx@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Roll the two existing ECS regions from this commit
         if: ${{ inputs.mode == 'deploy' }}

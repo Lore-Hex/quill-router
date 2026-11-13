@@ -53,12 +53,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Authenticate to GCP
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Run guarded workspace operator

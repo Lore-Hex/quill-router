@@ -196,13 +196,13 @@ jobs:
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       - name: Build image via Cloud Build
         id: build

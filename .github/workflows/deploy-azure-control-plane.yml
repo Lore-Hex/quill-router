@@ -94,7 +94,7 @@ jobs:
           [ "$ci" = success ] || { echo "::error::CI must pass for this exact release ($release): ${ci:-no run}"; exit 1; }
 
       - name: Log in to Azure via OIDC
-        uses: Lore-Hex/quill-router/.github/actions/azure-login@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/azure-login@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
           tenant-id: 2abe2fae-5c28-491d-af5a-6255b33e534e
@@ -102,20 +102,20 @@ jobs:
 
       # The shared journal enforces two-cloud admission across repositories.
       - name: Authenticate to GCP via WIF
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       # The deploy ends with the repository's completeness check
       # (scripts/deploy/verify_cloud_complete.sh), which imports the project.
       # A runner has neither .venv nor uv, so without this it falls back to a
       # bare python3 that cannot import the project's dependencies, after the
       # app has already been updated.
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
 
       # The script calls `az containerapp`, an extension a fresh runner does
       # not have, and it applies the schema with psql.
