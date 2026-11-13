@@ -1,0 +1,98 @@
+name: aws-credentials
+description: >-
+  Assume an AWS IAM role with the job's GitHub OIDC token, as
+  aws-actions/configure-aws-credentials@v6 did with role-to-assume and
+  aws-region: aws sts assume-role-with-web-identity (audience
+  sts.amazonaws.com, session name GitHubActions, one hour), the three
+  credentials masked, then exported with AWS_REGION and AWS_DEFAULT_REGION and
+  checked with sts get-caller-identity. The job needs permissions
+  id-token: write. The ID token reaches the AWS CLI on stdin, never in argv or
+  a file.
+inputs:
+  role-to-assume:
+    description: ARN of the role to assume.
+    required: true
+  aws-region:
+    description: Region for the regional STS endpoint and AWS_REGION / AWS_DEFAULT_REGION.
+    required: true
+  role-session-name:
+    description: Session name (configure-aws-credentials' default).
+    default: GitHubActions
+  role-duration-seconds:
+    description: Session lifetime (configure-aws-credentials' default).
+    default: "3600"
+  audience:
+    description: OIDC token audience (configure-aws-credentials' default).
+    default: sts.amazonaws.com
+outputs:
+  aws-account-id:
+    description: Account of the assumed role.
+    value: ${{ steps.assume.outputs.aws-account-id }}
+runs:
+  using: composite
+  steps:
+    - id: assume
+      shell: bash
+      env:
+        ROLE_ARN: ${{ inputs.role-to-assume }}
+        REGION: ${{ inputs.aws-region }}
+        SESSION_NAME: ${{ inputs.role-session-name }}
+        DURATION: ${{ inputs.role-duration-seconds }}
+        OIDC_AUDIENCE: ${{ inputs.audience }}
+      run: |
+        set -euo pipefail
+        set +x
+        fail() { echo "::error::aws-credentials: $*"; exit 1; }
+        [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] \
+          || fail "no GitHub OIDC token is available; the job needs permissions id-token: write"
+        [[ "$ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/.+$ ]] || fail "role-to-assume is not an IAM role ARN"
+        [[ "$REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]] || fail "aws-region '${REGION}' is not a region name"
+        [[ "$DURATION" =~ ^[0-9]+$ ]] || fail "role-duration-seconds must be a number of seconds"
+        # The request token reaches curl on stdin (-H @-), so it is not in argv.
+        response="$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          | curl -fsS --retry 3 --retry-all-errors -H @- \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$OIDC_AUDIENCE")")" \
+          || fail "could not fetch a GitHub OIDC token"
+        id_token="$(printf '%s' "$response" | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["value"])')" \
+          || fail "the GitHub OIDC token endpoint returned no token"
+        [ -n "$id_token" ] || fail "the GitHub OIDC token endpoint returned an empty token"
+        echo "Assuming role with OIDC"
+        # Unsigned: the call needs no credentials, and stale ones from an
+        # earlier step must not be used. stderr is captured, not shown raw: on a
+        # response it cannot parse the CLI can print the response body.
+        status=0
+        error_file="$(mktemp)"
+        credentials="$(printf '%s' "$id_token" \
+          | env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE \
+            aws sts assume-role-with-web-identity \
+              --region "$REGION" \
+              --role-arn "$ROLE_ARN" \
+              --role-session-name "$SESSION_NAME" \
+              --duration-seconds "$DURATION" \
+              --web-identity-token file:///dev/stdin \
+              --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text \
+              --no-sign-request 2>"$error_file")" || status=$?
+        if [ "$status" -ne 0 ]; then
+          # AWS error messages (AccessDenied, InvalidIdentityToken) carry no credentials.
+          reason="$(grep -oE '\((AccessDenied|InvalidIdentityToken|IDPRejectedClaim|ExpiredToken|ValidationError|IDPCommunicationError)\).*' "$error_file" | head -n 1 || true)"
+          rm -f "$error_file"
+          fail "AssumeRoleWithWebIdentity failed (aws exit ${status}) ${reason}"
+        fi
+        rm -f "$error_file"
+        read -r key secret session <<<"$credentials"
+        [ -n "$key" ] && [ -n "$secret" ] && [ -n "$session" ] && [ "$session" != None ] \
+          || fail "AWS returned an incomplete session"
+        printf '::add-mask::%s\n' "$key" "$secret" "$session"
+        export AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$secret" AWS_SESSION_TOKEN="$session"
+        identity="$(aws sts get-caller-identity --region "$REGION" --query '[Account,Arn]' --output text)" \
+          || fail "the new session failed sts get-caller-identity"
+        read -r account arn <<<"$identity"
+        {
+          echo "AWS_ACCESS_KEY_ID=$key"
+          echo "AWS_SECRET_ACCESS_KEY=$secret"
+          echo "AWS_SESSION_TOKEN=$session"
+          echo "AWS_REGION=$REGION"
+          echo "AWS_DEFAULT_REGION=$REGION"
+        } >> "$GITHUB_ENV"
+        echo "aws-account-id=$account" >> "$GITHUB_OUTPUT"
+        echo "Authenticated as ${arn##*/assumed-role/}"

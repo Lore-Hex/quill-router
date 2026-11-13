@@ -1,0 +1,15 @@
+name: setup-buildx
+description: >-
+  Create and select a docker-container Buildx builder with the runner's docker
+  CLI, as docker/setup-buildx-action did by default (the builder runs the
+  moby/buildkit image that buildx itself selects).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        docker buildx version
+        name="builder-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
+        docker buildx create --name "$name" --driver docker-container --use
+        docker buildx inspect --bootstrap "$name"

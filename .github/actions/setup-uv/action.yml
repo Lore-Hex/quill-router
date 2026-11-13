@@ -1,0 +1,56 @@
+name: setup-uv
+description: >-
+  Install a pinned uv release, verified against a SHA-256 checksum recorded
+  here. Replaces astral-sh/setup-uv: no third-party action code runs, and the
+  uv binary is the official release tarball. There is no cache; uv sync
+  downloads wheels from PyPI.
+inputs:
+  version:
+    description: uv release to install. It must have a checksum below.
+    default: "0.13.7"
+  python-version:
+    description: Exported as UV_PYTHON when set, as astral-sh/setup-uv did.
+    default: ""
+outputs:
+  uv-version:
+    description: The installed uv version.
+    value: ${{ steps.install.outputs.uv-version }}
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        UV_VERSION: ${{ inputs.version }}
+        UV_PYTHON_INPUT: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64) target=x86_64-unknown-linux-gnu ;;
+          aarch64) target=aarch64-unknown-linux-gnu ;;
+          *) echo "::error::setup-uv: unsupported architecture $(uname -m)"; exit 1 ;;
+        esac
+        # Checksums from the release's uv-<target>.tar.gz.sha256 assets.
+        case "$UV_VERSION/$target" in
+          0.13.7/x86_64-unknown-linux-gnu) sha256=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83 ;;
+          0.13.7/aarch64-unknown-linux-gnu) sha256=71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc ;;
+          0.13.4/x86_64-unknown-linux-gnu) sha256=2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f ;;
+          0.13.4/aarch64-unknown-linux-gnu) sha256=1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab ;;
+          *) echo "::error::setup-uv: no pinned checksum for uv ${UV_VERSION} on ${target}; add one to this action"; exit 1 ;;
+        esac
+        dest="${RUNNER_TEMP}/setup-uv/${UV_VERSION}"
+        archive="${RUNNER_TEMP}/uv-${UV_VERSION}-${target}.tar.gz"
+        curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$archive" \
+          "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz"
+        echo "${sha256}  ${archive}" | sha256sum --check --strict -
+        mkdir -p "$dest"
+        tar -xzf "$archive" -C "$dest" --strip-components=1
+        rm -f "$archive"
+        installed="$("$dest/uv" --version | awk '{print $2}')"
+        [ "$installed" = "$UV_VERSION" ] || { echo "::error::setup-uv: installed uv reports ${installed}, expected ${UV_VERSION}"; exit 1; }
+        echo "$dest" >> "$GITHUB_PATH"
+        if [ -n "$UV_PYTHON_INPUT" ]; then
+          echo "UV_PYTHON=${UV_PYTHON_INPUT}" >> "$GITHUB_ENV"
+        fi
+        echo "uv-version=${installed}" >> "$GITHUB_OUTPUT"
+        echo "Installed uv ${installed} (${target}) at ${dest}"

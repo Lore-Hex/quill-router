@@ -1,0 +1,34 @@
+name: setup-gcloud
+description: >-
+  Prepare the Google Cloud CLI, as google-github-actions/setup-gcloud@v3 did
+  after gcp-auth: log gcloud in with the credential file gcp-auth wrote. It uses
+  the CLI that ships in the GitHub-hosted runner image (installed from Google's
+  apt repository, including the alpha and beta command groups) instead of
+  downloading the latest SDK tarball on every job.
+inputs:
+  install_components:
+    description: Space- or comma-separated gcloud components the job needs (alpha, beta). They are checked, not installed.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        COMPONENTS: ${{ inputs.install_components }}
+      run: |
+        set -euo pipefail
+        command -v gcloud >/dev/null || { echo "::error::setup-gcloud: gcloud is not on PATH in this runner image"; exit 1; }
+        gcloud --version | head -n 1
+        for component in ${COMPONENTS//,/ }; do
+          case "$component" in
+            alpha|beta)
+              gcloud "$component" --help >/dev/null 2>&1 \
+                || { echo "::error::setup-gcloud: the runner's gcloud has no '${component}' command group"; exit 1; } ;;
+            *)
+              echo "::error::setup-gcloud: component '${component}' is not available from the runner image's gcloud"; exit 1 ;;
+          esac
+        done
+        if [ -n "${GOOGLE_GHA_CREDS_PATH:-}" ]; then
+          gcloud --quiet auth login --cred-file "$GOOGLE_GHA_CREDS_PATH"
+          echo "Successfully authenticated"
+        fi

@@ -1,0 +1,137 @@
+name: Repository actions self-test
+
+# Lore-Hex runs no third-party GitHub Actions. Workflows name only GitHub-owned
+# actions (actions/*, github/*) pinned by full commit SHA, and the composite
+# actions in .github/actions, pinned as
+#   Lore-Hex/quill-router/.github/actions/<name>@<full sha of a main commit>
+# Pinned by SHA rather than ./.github/actions/<name> because several jobs check
+# out another commit (a release commit, a workflow_run head) or into a
+# sub-directory: a local path would resolve against whatever is checked out,
+# and a rollback to a commit older than .github/actions would lose its
+# authentication steps.
+#
+# A change to an action therefore reaches no workflow until its pins move.
+# This workflow runs the changed actions from the pull request's own tree
+# (./.github/actions) so the change is exercised before it merges. The cloud
+# identity actions (gcp-auth, aws-credentials, azure-login) only work on main
+# under their trust policies; they are checked for syntax here and exercised by
+# the first main run after their pins move.
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/actions-selftest.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/actions-selftest.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actions-selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-uv
+      - name: uv is on PATH
+        run: uv --version
+      - uses: ./.github/actions/setup-uv
+        with:
+          version: "0.13.4"
+          python-version: "3.12"
+      - name: The later install wins and UV_PYTHON is exported
+        run: |
+          set -euo pipefail
+          uv --version | grep -E '^uv 0\.13\.4( |$)' || { uv --version; exit 1; }
+          test "$UV_PYTHON" = 3.12
+      - uses: ./.github/actions/setup-terraform
+      - name: terraform is on PATH
+        run: terraform version
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.3.14"
+      - name: bun is on PATH
+        run: bun --version
+      - uses: ./.github/actions/setup-gcloud
+        with:
+          install_components: alpha beta
+      - uses: ./.github/actions/setup-buildx
+      - name: A buildx builder is selected
+        run: |
+          docker buildx inspect | grep -E '^Driver: +docker-container'
+      - uses: ./.github/actions/osv-scanner
+        with:
+          scan-args: |-
+            --version
+
+  unknown-pins-fail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: uv
+        uses: ./.github/actions/setup-uv
+        continue-on-error: true
+        with:
+          version: "0.0.1"
+      - id: terraform
+        uses: ./.github/actions/setup-terraform
+        continue-on-error: true
+        with:
+          terraform_version: "0.0.1"
+      - name: A version without a pinned checksum is refused
+        env:
+          UV: ${{ steps.uv.outcome }}
+          TERRAFORM: ${{ steps.terraform.outcome }}
+        run: test "$UV" = failure && test "$TERRAFORM" = failure
+
+  identity-actions-parse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Every action's embedded scripts parse
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys, yaml
+          failed = False
+          for path in sorted(pathlib.Path(".github/actions").glob("*/action.yml")):
+              action = yaml.safe_load(path.read_text())
+              assert action["runs"]["using"] == "composite", path
+              for index, step in enumerate(action["runs"]["steps"]):
+                  if "run" not in step:
+                      continue
+                  assert step.get("shell") == "bash", f"{path} step {index}: shell must be bash"
+                  # Expressions are passed through env; substitute a placeholder.
+                  script = re.sub(r"\$\{\{.*?\}\}", "__", step["run"])
+                  result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
+                  if result.returncode:
+                      failed = True
+                      print(f"::error file={path}::step {index}: {result.stderr.strip()}")
+                  if "python3 - <<'PY'" in script:
+                      body = script.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+                      compiled = subprocess.run([sys.executable, "-c", "import sys; compile(sys.stdin.read(), 'action', 'exec')"],
+                                                input=body, text=True, capture_output=True)
+                      if compiled.returncode:
+                          failed = True
+                          print(f"::error file={path}::step {index}: {compiled.stderr.strip()}")
+              print(f"ok {path}")
+          sys.exit(1 if failed else 0)
+          PY
