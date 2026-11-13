@@ -6,7 +6,10 @@
 # - Cloud Run request logs: the billing 5xx check (scripts/deploy/
 #   assert_no_billing_5xx.sh), the billing 5xx alert and the slow-billing
 #   log metric (trustedrouter_gateway_billing_slow) read only status >= 500
-#   or latency >= 10s entries, which are never excluded. Cloud Run's own
+#   or latency >= 10s entries, which are never excluded; so does the
+#   authorize 503 counter (trustedrouter_gateway_authorize_503). The app's
+#   billing.lease_headroom_unavailable line the gate and its counter read
+#   is a stderr line, which no exclusion here touches. Cloud Run's own
 #   request_count and latency metrics are not log-based.
 # - Enclave launcher lines: tools/dx/enclave-logs.sh (quill-cloud-proxy) is
 #   the only reader. request_end carries method, route, status, outcome,

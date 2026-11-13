@@ -1498,6 +1498,18 @@ step.
    `tests/conformance/test_fastpath_lease_headroom_native.py` (the
    statement on the emulator: live states, closed leases, neighbouring
    workspaces, the debt mark).
+   Monitoring: Cloud Run's request log records only status and URL, so
+   the 503's one mark is the app's `billing.lease_headroom_unavailable`
+   line, which carries the request's Cloud Trace id. The billing 5xx
+   deploy gate (`scripts/deploy/assert_no_billing_5xx.sh`) pairs each
+   authorize 503 with a line by trace and fails on any left over; every
+   other 5xx fails it at once. "TR Gateway: billing path 5xx" sets
+   authorize 503s aside for "TR Gateway: authorize 503 not lease
+   headroom", which pages when the log counters
+   `trustedrouter_gateway_authorize_503` and
+   `trustedrouter_gateway_lease_headroom_503` differ for three minutes;
+   the second is the 503's rate. Tests:
+   `tests/test_billing_5xx_lease_headroom.py`.
 8. **Activation, WS0 to WS6.** One `rollout.sh`, `fastpath_lists.sh`, job
    setting or node-attribute change per step of §8.2, each opened with the
    previous step's gate read into its description.

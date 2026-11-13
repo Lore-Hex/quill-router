@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from tests.fakes.spanner import make_fake_store
 from tests.test_gateway_authorize_spanner_operations import (
@@ -681,8 +682,13 @@ def _route_body(key: Any) -> Any:
     return body
 
 
-def _authorize_route(key: Any, *, on: bool) -> HTTPException:
+def _authorize_route(key: Any, *, on: bool, trace_context: str | None = None) -> HTTPException:
     request = _request()
+    if trace_context is not None:
+        request = Request({
+            "type": "http", "method": "POST", "path": "/",
+            "headers": [(b"x-cloud-trace-context", trace_context.encode())],
+        })
     request.state.request_id = "request-lease-503"
     settings = Settings(environment="test", fastpath_lease_headroom_503=on)
     with pytest.raises(HTTPException) as raised:
@@ -724,6 +730,22 @@ def test_route_answers_503_with_retry_after_for_a_lease_held_balance(
     assert (balance["total_usage"], balance["reserved"]) == (0, 50_000)
     assert not database.reservations
     assert not database.typed.get("tr_gateway_authorization", {})
+
+
+@pytest.mark.usefixtures("fixed_operation_catalog")
+def test_route_line_carries_the_requests_trace(caplog: pytest.LogCaptureFixture) -> None:
+    """The billing 5xx deploy gate pairs each authorize 503 in Cloud Run's
+    request log with this line by trace (scripts/deploy/assert_no_billing_5xx.sh);
+    the request log has no other mark of a lease-headroom 503."""
+    trace = "97947552453ac21dc57168fd64afffe7"
+    _store, _database, key = _route_store(lease_held=50_000)
+
+    with caplog.at_level(logging.INFO, logger=gateway.logger.name):
+        error = _authorize_route(key, on=True, trace_context=f"{trace}/123;o=1")
+
+    assert error.status_code == 503
+    (line,) = [r.getMessage() for r in caplog.records if "billing.lease_headroom_unavailable" in r.getMessage()]
+    assert line.endswith(f" trace={trace}")
 
 
 @pytest.mark.usefixtures("fixed_operation_catalog")
