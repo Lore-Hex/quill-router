@@ -280,25 +280,29 @@ INKLING_2_SMALL_ROW = {
 def test_inkling_2_small_would_publish_without_an_open_weights_badge(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
-    # Once the access hold lifts, the route publishes as text+image and still
-    # carries no open-weights badge: its weights are unpublished.
+    # Once the access hold lifts, Tinker's route publishes as text+image at its
+    # 256K window, and the model still carries no open-weights badge: it stays
+    # in _UNPUBLISHED_WEIGHTS (and out of Liberty) until Joseph lifts that.
+    # Other providers may serve the same model at a longer window (Nebius and
+    # Cloudflare list it at 1M), so the model's window is at least Tinker's.
     from trusted_router.catalog import endpoints_for_model, model_open_weights
 
     serve_manifest_rows(monkeypatch, tmp_path, "thinkingmachines", [INKLING_2_SMALL_ROW])
     model = MODELS["thinkingmachines/inkling-2-small"]
-    assert model.context_length == 262_144
+    assert model.context_length >= 262_144
     assert model.input_modalities == ("text", "image")
     assert not model_open_weights(model)
     assert model_open_weights(MODELS["thinkingmachines/inkling-small"])
     assert {
-        (endpoint.provider, endpoint.upstream_id)
+        (endpoint.upstream_id, endpoint.effective_context_length(model))
         for endpoint in endpoints_for_model(model.id)
-    } == {("thinkingmachines", "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")}
+        if endpoint.provider == "thinkingmachines"
+    } == {("thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4", 262_144)}
 
 
-def test_inkling_2_small_is_held_out_of_routing_and_probes() -> None:
+def test_tinker_inkling_2_small_route_is_held_out_of_routing_and_probes() -> None:
     # QUILL-ROUTER-FD: Tinker rejects TR's key for this model, so customer
-    # requests failed. The route is held; its siblings keep serving.
+    # requests failed. Tinker's route is held; its siblings keep serving.
     from trusted_router.catalog import endpoints_for_model
     from trusted_router.synthetic.probes import rotation_candidates
 
@@ -309,7 +313,9 @@ def test_inkling_2_small_is_held_out_of_routing_and_probes() -> None:
     for model_id, reason in thinkingmachines.OPERATOR_HOLDS.items():
         assert rows[model_id]["routable"] is False
         assert rows[model_id]["routable_reason"] == reason == "provider-access-unavailable"
-        assert endpoints_for_model(model_id) == []
+        # The hold is on TR's Tinker access, not on the model: other
+        # providers' routes for it are admitted on their own merits.
+        assert not any(e.provider == "thinkingmachines" for e in endpoints_for_model(model_id))
     assert thinkingmachines.OPERATOR_HOLDS.keys() == {"thinkingmachines/inkling-2-small"}
 
     probed = rotation_candidates().get("thinkingmachines", [])
@@ -318,6 +324,65 @@ def test_inkling_2_small_is_held_out_of_routing_and_probes() -> None:
         assert "routable" not in rows[sibling]
         assert sibling in probed
         assert any(e.provider == "thinkingmachines" for e in endpoints_for_model(sibling))
+
+
+NEBIUS_INKLING_2_SMALL_ROW = {
+    "id": "thinkingmachines/inkling-2-small",
+    "upstream_id": "thinkingmachines/Inkling-2-Small",
+    "display_name": "Inkling-2-Small",
+    "context_length": 1048576,
+    "max_output_tokens": 65536,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1000000,
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+}
+CLOUDFLARE_INKLING_2_SMALL_ROW = {
+    "id": "thinkingmachines/inkling-2-small",
+    "upstream_id": "@cf/thinkingmachines/inkling-2-small",
+    "display_name": "@cf/thinkingmachines/inkling-2-small",
+    "context_length": 1048576,
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1000000,
+    "cached_input_token_price_per_m": 100000,
+}
+
+
+def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_liberty_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # Thinking Machines published Inkling 2 Small's weights on Hugging Face on
+    # 2026-11-12 (Apache-2.0, ungated), and Nebius and Cloudflare Workers AI
+    # began serving it at 1M context. Their routes publish like any provider
+    # route: the Tinker access hold belongs to TR's Tinker key, not to the
+    # model. Liberty membership and the open-weights badge stay as Joseph set
+    # them on 2026-11-06 until he decides otherwise.
+    from trusted_router.catalog import endpoints_for_model, meta_candidate_models, model_open_weights
+
+    serve_manifest_rows(monkeypatch, tmp_path, "nebius", [NEBIUS_INKLING_2_SMALL_ROW])
+    serve_manifest_rows(monkeypatch, tmp_path, "cloudflare-workers-ai", [CLOUDFLARE_INKLING_2_SMALL_ROW])
+    model = MODELS["thinkingmachines/inkling-2-small"]
+    routes = {
+        (endpoint.provider, endpoint.upstream_id, endpoint.effective_context_length(model))
+        for endpoint in endpoints_for_model(model.id)
+    }
+
+    assert ("nebius", "thinkingmachines/Inkling-2-Small", 1_048_576) in routes
+    assert ("cloudflare-workers-ai", "@cf/thinkingmachines/inkling-2-small", 1_048_576) in routes
+    assert not any(provider == "thinkingmachines" for provider, _, _ in routes)
+    assert not model_open_weights(model)
+    liberty = [model_id for model_id in MODELS if "liberty" in model_id.lower()]
+    assert liberty
+    for liberty_id in liberty:
+        assert model.id not in {candidate.id for candidate in meta_candidate_models(liberty_id)}
 
 
 def _held_manifest(tmp_path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
