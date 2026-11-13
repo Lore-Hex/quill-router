@@ -63,14 +63,14 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     assert run.returncode == 0, summarise(run)
     env, bindings, job = _job(run)
     # WS4: apply writes the allow-list once armed; the ten largest join.
-    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "10"
+    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "100"
     lists = resolved_lists()
     # The include list is its own literal since WS2 emptied the pilot set.
     assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_ENABLER_INCLUDE"] != ""
     assert lists["TR_FASTPATH_PILOT_WORKSPACES"] == "" and "TR_FASTPATH_PILOT_ALL" not in env
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
-    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "100000000"
-    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "40000000"
+    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "20000000"
+    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "15000000"
     # The required tier, a literal no lower than the nodes' (section 4(b)).
     assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "1"
     assert env["TR_STORAGE_BACKEND"] == "spanner-clickhouse" and env["TR_SERVICE_SURFACE"] == "control"
@@ -94,7 +94,7 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "apply" and config.max_rank == 10 and config.required_tier == 1
+    assert config.mode == "apply" and config.max_rank == 100 and config.required_tier == 1
     assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
 
 

@@ -1,10 +1,11 @@
 # Widening the fast path to every eligible workspace
 
 Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
-#2396) and PR 7 built (§11); the rollout is at WS4 (§8.2), with the
+#2396) and PR 7 built (§11); the rollout is at WS5 (§8.2), with the
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
 since WS3, the required tier lowered to 1 with the lower tiers' allowances
-since 2026-11-13 ((b), amended) and `max_rank` 10 since 2026-11-13. This is
+since 2026-11-13 ((b), amended), `max_rank` 100 and the $20 join balance
+since 2026-11-13. This is
 the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
@@ -135,8 +136,8 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
 | Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
-| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $100 | enabler setting |
-| Enabler's balance to disable | unspent credit under $40 | enabler setting |
+| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $20 since 2026-11-13 ($100 until then) | enabler setting |
+| Enabler's balance to disable | unspent credit under $15 since 2026-11-13 ($40 until then) | enabler setting |
 
 **Why.**
 
