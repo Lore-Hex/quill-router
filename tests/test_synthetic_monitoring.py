@@ -4588,6 +4588,40 @@ def test_evaluate_route_health_ignores_transient_failures() -> None:
     assert len(flags) == 1 and flags[0].failure_rate == 1.0
 
 
+def test_availability_alert_names_the_newest_failure_class_and_status(monkeypatch) -> None:
+    # Sentry QUILL-ROUTER-GC: chutes/deepseek/deepseek-v4-flash-0731 paged hourly
+    # with no cause. The flag now keeps the newest status, and the alert names
+    # it with the error class, still without any provider text.
+    route = ("chutes", "deepseek/deepseek-v4-flash-0731")
+    samples = [
+        _route_health_sample(
+            f"chutes-{i}", provider=route[0], model=route[1], status="error",
+            age_hours=i, error_type="upstream_error", error_status=502 if i == 0 else 500,
+            error_message="PRIVATE provider payload must not reach Sentry",
+        )
+        for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[route]
+    )
+    assert len(flags) == 1 and flags[0].kind == "availability"
+    assert flags[0].newest_error_status == 502
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "trusted_router.synthetic.alerts.ops_alert",
+        lambda message, **kw: events.append((message, kw)),
+    )
+    report_route_health(flags)
+    (message, kwargs), = events
+    assert message == (
+        "route-availability: chutes/deepseek/deepseek-v4-flash-0731 failed 6 consecutive "
+        "probes over at least 30 minutes (latest: upstream_error, HTTP 502)"
+    )
+    assert "PRIVATE" not in repr(events)
+    # Same fingerprint as before, so the existing issue keeps grouping.
+    assert kwargs["fingerprint"] == ["route-availability", *route]
+
+
 def test_builtin_timeout_still_pages_availability_without_quarantine() -> None:
     samples = [
         _route_health_sample(

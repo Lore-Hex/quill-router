@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -23,6 +24,10 @@ _CONFIGURATION_ERROR_TYPES = frozenset({
 # the internal benchmark ingest), re-applied here so an alert never carries
 # more than a stored sample could.
 _ALERT_ERROR_MESSAGE_MAX_CHARS = 300
+# error_type can echo a provider's own error code; admit only short
+# identifier-shaped values into availability alerts.
+_ALERT_ERROR_TYPE_MAX_CHARS = 64
+_ALERT_ERROR_TYPE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*")
 
 # A route-health alert means "this route is structurally broken — quarantine
 # it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
@@ -65,6 +70,9 @@ class RouteHealthFlag:
     newest_error_type: str | None
     newest_error_message: str | None
     kind: str = "structural"
+    # HTTP status of the newest failure, when the probe recorded one. Sustained
+    # availability alerts carry this and the error class, never provider text.
+    newest_error_status: int | None = None
 
 
 def evaluate_route_health(
@@ -395,11 +403,32 @@ def _availability_flag(
         ):
             return None
         kind = "degradation"
+    newest = errors[0][1]
     return RouteHealthFlag(
         provider=provider, model=model, samples=len(measured), failures=len(errors),
-        failure_rate=len(errors) / len(measured), newest_error_type=errors[0][1].error_type,
+        failure_rate=len(errors) / len(measured), newest_error_type=newest.error_type,
         newest_error_message=None, kind=kind,
+        newest_error_status=getattr(newest, "error_status", None),
     )
+
+
+def _availability_cause(flag: RouteHealthFlag) -> str:
+    # Sentry QUILL-ROUTER-GC paged for hours with no cause: the availability
+    # alert dropped the error class the flag already held, so a 402, a 5xx and
+    # a failed attestation all read the same. Carry only our own vocabulary:
+    # an identifier-shaped error class and an HTTP status, never provider text.
+    parts = []
+    error_type = flag.newest_error_type
+    if (
+        isinstance(error_type, str)
+        and 0 < len(error_type) <= _ALERT_ERROR_TYPE_MAX_CHARS
+        and _ALERT_ERROR_TYPE_RE.fullmatch(error_type)
+    ):
+        parts.append(error_type)
+    status = flag.newest_error_status
+    if type(status) is int and 100 <= status <= 599:
+        parts.append(f"HTTP {status}")
+    return f" (latest: {', '.join(parts)})" if parts else ""
 
 
 def report_route_health(flags: list[RouteHealthFlag]) -> None:
@@ -435,7 +464,8 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
                 f"over at least 30 minutes within the last {_DEGRADATION_WINDOW_HOURS} hours"
             )
             ops_alert(
-                f"route-{flag.kind}: {flag.provider}/{flag.model} {detail}",
+                f"route-{flag.kind}: {flag.provider}/{flag.model} {detail}"
+                + _availability_cause(flag),
                 fingerprint=["route-availability", flag.provider, flag.model],
                 tags={"route_provider": flag.provider, "route_model": flag.model},
             )
