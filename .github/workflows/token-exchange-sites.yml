@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.node-version'
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - run: uv sync --frozen --no-dev
       - run: npm install --prefix /tmp/exchange-browser playwright@1.63.0
       - run: /tmp/exchange-browser/node_modules/.bin/playwright install --with-deps chromium

@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
       - name: Run scanner
         id: scan
-        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         continue-on-error: true
         with:
           scan-args: |-
@@ -80,7 +80,7 @@ jobs:
         run: git checkout "$GITHUB_BASE_REF"
       - name: Run scanner on existing code
         id: scan-old
-        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         continue-on-error: true
         with:
           scan-args: |-
@@ -93,7 +93,7 @@ jobs:
         run: git checkout -f "$GITHUB_SHA"
       - name: Run scanner on new code
         id: scan-new
-        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         continue-on-error: true
         with:
           scan-args: |-
@@ -111,7 +111,7 @@ jobs:
           [ -s new-results.json ] || { echo "::error::scan of this branch wrote no results"; status=1; }
           exit "$status"
       - name: Report new vulnerabilities
-        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@PINSHA # main 2026-11-13
+        uses: Lore-Hex/quill-router/.github/actions/osv-scanner@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
           tool: reporter
           scan-args: |-

@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Smoke against https://trustedrouter.com

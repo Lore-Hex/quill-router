@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Ruff
@@ -158,7 +158,7 @@ jobs:
           - 9020:9020
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Wait for the Spanner emulator (fail if unavailable)
@@ -237,7 +237,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync production dependencies only
         run: uv sync --frozen --no-dev
       - name: Import the production application
@@ -339,7 +339,7 @@ jobs:
           - 5434:5432
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Check out enclave source for the mandatory Sentry guard
@@ -440,7 +440,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Collect every shard's coverage
@@ -523,7 +523,7 @@ jobs:
       TEST_SHARDS: "8"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Check out enclave source for the mandatory Sentry guard
@@ -599,7 +599,7 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - name: Pin the lifecycle clock past the latest scheduled cutover
@@ -636,7 +636,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -682,7 +682,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@PINSHA # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Sync
         run: uv sync --frozen
       # `-m` rather than a path: the script imports scripts.verify_trust_
