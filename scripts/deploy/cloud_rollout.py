@@ -335,6 +335,26 @@ def probe_component(cloud: str, component: str) -> None:
         raise Refused(f"{cloud}/{component} is not verified healthy") from exc
 
 
+def observed_releases(cloud: str) -> list[str]:
+    """The release evidence of `cloud`, read twice with no health checks.
+
+    Returns every valid release SHA seen (none when the evidence is
+    unreadable or invalid). Used before leasing over a protected cloud: a
+    cloud whose services are failing may still be repaired, but not one whose
+    readable release changed outside any lease.
+    """
+    plane = PLANES[cloud][0]
+    seen: list[str] = []
+    for _ in range(2):
+        try:
+            release = fetch(f"{plane}/trust/control-plane.json").get("release")
+        except (OSError, ValueError, Refused):
+            continue
+        if isinstance(release, str) and SHA.fullmatch(release):
+            seen.append(release)
+    return seen
+
+
 def lease_key(version: int, cloud: str, component: str) -> str:
     """The journal key of a lease: the cloud in v2, `cloud/component` in v3."""
     return cloud if version == VERSION else f"{cloud}/{component}"
@@ -550,9 +570,13 @@ def admission_blocker(state: dict[str, Any], cloud: str, ahead: list[dict[str, A
 class Coordinator:
     def __init__(self, store: Store, probe: Callable[[str], str] | None = None,
                  now: Callable[[], float] = time.time,
-                 component_probe: Callable[[str, str], Any] | None = None) -> None:
+                 component_probe: Callable[[str, str], Any] | None = None,
+                 releases: Callable[[str], list[str]] | None = None) -> None:
         self.store, self.probe, self.now = store, probe or probe_cloud, now
         self.component_probe = component_probe or probe_component
+        # How a protected cloud's release is read without its health checks.
+        # With an injected probe (tests), the probe's answer stands in for it.
+        self.releases = releases or (observed_releases if probe is None else self._probe_releases)
         # ticket -> (heartbeat_at last seen, this host's time it was first seen)
         self.observed: dict[str, tuple[int, float]] = {}
 
@@ -600,6 +624,12 @@ class Coordinator:
                 continue
         raise Refused("release journal contention; no unguarded deployment permitted")
 
+    def _probe_releases(self, cloud: str) -> list[str]:
+        try:
+            return [self.probe(cloud)]
+        except Refused:
+            return []
+
     def holdback(self, excluded: set[str], previous: dict[str, Any] | None) -> dict[str, Any]:
         """The protected cloud for a grant.
 
@@ -610,9 +640,10 @@ class Coordinator:
         already-leased cloud would do on every rollout. Only when the previous
         holdback is itself being leased is a new one chosen, and even then
         the previous holdback is probed first: a release that changed outside
-        any lease is refused, not leased over unseen. A protected cloud that is
-        down (its release unreadable) may still be leased, to repair it, as
-        before.
+        any lease is refused, not leased over unseen. That check reads the
+        release evidence alone, so failing services cannot hide a change. A
+        protected cloud whose release evidence is unreadable or invalid may
+        still be leased, to repair it, as before.
         """
         if previous and previous["cloud"] not in excluded:
             release = self.probe(previous["cloud"])
@@ -620,11 +651,8 @@ class Coordinator:
                 raise Refused("protected cloud changed outside the rollout guard")
             return {"cloud": previous["cloud"], "release": release, "checked_at": int(self.now())}
         if previous:
-            try:
-                seen: str | None = self.probe(previous["cloud"])
-            except Refused:
-                seen = None
-            if seen is not None and seen != previous["release"]:
+            changed = [r for r in self.releases(previous["cloud"]) if r != previous["release"]]
+            if changed:
                 raise Refused("protected cloud changed outside the rollout guard; refusing to lease over it")
         candidates = [c for c in CLOUDS if c not in excluded]
         if previous and previous["cloud"] in candidates:

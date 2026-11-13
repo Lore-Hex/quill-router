@@ -1983,7 +1983,9 @@ class DeployScriptHarness:
         coordinator = self.mirror / "scripts/deploy/cloud_rollout.py"
         coordinator.write_text(coordinator.read_text().replace(
             'if __name__ == "__main__":',
-            'probe_cloud = lambda cloud: "a" * 40\nif __name__ == "__main__":',
+            # Every read of the clouds is faked: their health and their release evidence.
+            'probe_cloud = lambda cloud: "a" * 40\n'
+            'observed_releases = lambda cloud: ["a" * 40]\nif __name__ == "__main__":',
         ))
 
     def _build_bin(self) -> None:

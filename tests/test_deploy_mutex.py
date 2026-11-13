@@ -58,7 +58,9 @@ def mutex(tmp_path):
     source = deploy / "cloud_rollout.py"
     source.write_text(source.read_text().replace(
         'if __name__ == "__main__":',
-        'probe_cloud = lambda cloud: "a" * 40\nif __name__ == "__main__":',
+        # Every read of the clouds is faked: their health and their release evidence.
+        'probe_cloud = lambda cloud: "a" * 40\n'
+        'observed_releases = lambda cloud: ["a" * 40]\nif __name__ == "__main__":',
     ))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
