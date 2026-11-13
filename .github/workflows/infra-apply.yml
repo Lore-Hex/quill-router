@@ -21,7 +21,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [terraform, status, configure-retention, recover]
+        options: [terraform, status, configure-retention, recover, lanes, upgrade-journal, downgrade-journal]
         default: terraform
         required: true
       cloud:
@@ -137,5 +137,13 @@ jobs:
             recover)
               [ "$CONFIRMATION" = APPLY ] || exit 1
               python3 scripts/deploy/cloud_rollout.py recover --cloud "$CLOUD" --operation "$OPERATION_ID" ;;
+            lanes)
+              python3 scripts/deploy/cloud_rollout.py lanes --cloud "$CLOUD" ;;
+            upgrade-journal|downgrade-journal)
+              # Schema v3 cut-over (docs/design/component-leases-v3.md). Refused
+              # unless the journal is empty; run only after every client that
+              # can still run reads v3.
+              [ "$CONFIRMATION" = APPLY ] || exit 1
+              python3 scripts/deploy/cloud_rollout.py "${OPERATION%-journal}" ;;
             *) exit 1 ;;
           esac
