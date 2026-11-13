@@ -16,12 +16,18 @@
 {%- endmacro %}
 
 {% block hero %}
-<section class="md-hero" aria-labelledby="md-title">
+{% set offer = page.launch_offer %}
+<section class="md-hero" aria-labelledby="md-title"{% if offer %} data-launch-offer{% endif %}>
+  {% if offer %}<span class="md-offer-tag">Launch offer</span>{% endif %}
   <div class="md-title-row">
     {% if model.publisher_slug %}<a class="md-publisher-logo" href="/providers/{{ model.publisher_slug }}" title="{{ model.provider }}"><img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }}" width="60" height="60"></a>{% endif %}
     <h1 id="md-title">{{ name }}</h1>
   </div>
+  {% if offer and offer.lowest_claim %}
+  <p class="md-lead md-offer-lead" data-launch-offer-lead>The lowest-price way to run {{ offer.model_name }}: <em>basically free, at {{ offer.unit_price }} per million tokens.</em></p>
+  {% else %}
   <p class="md-lead">{{ page.sentence }}</p>
+  {% endif %}
   {% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' %}
   <p class="md-note"><strong>Abliterated DeepSeek.</strong> A separate checkpoint by dealignai, not stock DeepSeek or a system-prompt wrapper. <a href="/abliterated-deepseek">Explore uncensored DeepSeek cyberdefense prompts and the Confidential API</a>.</p>
   {% endif %}
@@ -33,8 +39,8 @@
   {% endif %}
   <div class="md-stats">
     {% if page.lowest_input %}
-    <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ page.lowest_input }}</strong></div>
-    <div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ page.lowest_output }}</strong></div>
+    <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ offer.input if offer else page.lowest_input }}</strong></div>
+    <div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ offer.output if offer else page.lowest_output }}</strong></div>
     {% elif page.price_label %}
     <div class="md-stat md-stat-wide"><span class="md-label">Price</span><strong class="md-stat-value md-mint">{{ page.price_label }}</strong></div>
     {% elif model.fixed_price %}
@@ -54,6 +60,9 @@
     </div>
     {% endif %}
   </div>
+  {% if offer %}
+  <p class="md-offer-compare" data-launch-offer-compare>{% if offer.others_input %}Other {{ offer.model_name }} routes start at {{ offer.others_input }} in &middot; {{ offer.others_output }} out. {% endif %}Intro price; it may change.</p>
+  {% endif %}
   <div class="md-actions">
     {{ signup_button(catalog_cta=true) }}
     {% if page.funded %}<p class="md-no-card">{{ no_card_line }}</p>{% endif %}

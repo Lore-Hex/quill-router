@@ -565,6 +565,10 @@ tbody tr:hover {
   letter-spacing: -0.052em;
 }
 
+.public-hero-metric-offer strong {
+  color: var(--text-accent);
+}
+
 .public-hero-metrics span {
   margin: 0;
   color: var(--text-muted);

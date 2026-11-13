@@ -1,5 +1,8 @@
 """Exact operator-confirmed Fortanix introductory tariff, not a scraped quote."""
 
+from dataclasses import dataclass
+from decimal import Decimal
+
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.pricing import _customer_price, _flat_tier
 
@@ -66,4 +69,108 @@ def launch_tariff_matches(model: Model, endpoint: ModelEndpoint) -> bool:
             and item.price_tiers == item.published_price_tiers == TIERS
             for item in (model, endpoint)
         )
+    )
+
+
+# The base model page for the same weights; its FAQ points at the offer.
+COMPARISON_MODEL_ID = "z-ai/glm-5.3-flash"
+# Every public model whose ID ends like this serves the same weights, so the
+# lowest-price claim and the "other routes" comparison cover all of them.
+GLM_FLASH_ID_SUFFIX = "/glm-5.3-flash"
+
+
+def cents_label(microdollars_per_million: int) -> str:
+    """A whole-cent per-1M price under a dollar as "1¢"; anything else in dollars."""
+    cents, remainder = divmod(microdollars_per_million, 10_000)
+    if remainder == 0 and 0 < cents < 100:
+        return f"{cents}\u00a2"
+    value = Decimal(microdollars_per_million) / Decimal(1_000_000)
+    return f"${value.normalize():f}"
+
+
+@dataclass(frozen=True)
+class LaunchOfferFacts:
+    """Live facts every offer surface may state: page hero, search text, llms files.
+
+    Built only while the offer gate is on, from the live route and catalog, so a
+    repriced or removed offer stops every claim at once.
+    """
+
+    model_id: str
+    model_name: str
+    provider_name: str
+    input_microdollars: int
+    output_microdollars: int
+    # Lowest prices among the other public GLM 5.3 Flash routes, None when none exist.
+    others_input_microdollars: int | None
+    others_output_microdollars: int | None
+
+    @property
+    def path(self) -> str:
+        return f"/models/{self.model_id}"
+
+    @property
+    def unit_price(self) -> str | None:
+        """One per-1M price when input and output bill the same, else None."""
+        if self.input_microdollars != self.output_microdollars:
+            return None
+        return cents_label(self.input_microdollars)
+
+    @property
+    def lowest(self) -> bool:
+        """Strictly cheaper than every other GLM 5.3 Flash route, both directions."""
+        return (
+            self.others_input_microdollars is not None
+            and self.others_output_microdollars is not None
+            and self.input_microdollars < self.others_input_microdollars
+            and self.output_microdollars < self.others_output_microdollars
+        )
+
+    @property
+    def price_label(self) -> str:
+        if self.unit_price is not None:
+            return f"{self.unit_price} per million tokens"
+        return (
+            f"{cents_label(self.input_microdollars)} input and "
+            f"{cents_label(self.output_microdollars)} output per million tokens"
+        )
+
+    @property
+    def price_phrase(self) -> str:
+        suffix = " in and out" if self.unit_price is not None else ""
+        return f"{self.price_label}{suffix}"
+
+
+def launch_offer_facts() -> LaunchOfferFacts | None:
+    """Return live offer facts, or None whenever the banner gate is off."""
+    if not fortanix_launch_offer():
+        return None
+    from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model
+
+    model = MODELS[MODEL_ID]
+    route = endpoints_for_model(MODEL_ID)[0]
+    provider = PROVIDERS.get(model.provider)
+    provider_name = provider.name if provider is not None else model.provider
+    others = [
+        endpoint
+        for other in MODELS.values()
+        if other.id != MODEL_ID
+        and not other.internal_only
+        and other.id.casefold().endswith(GLM_FLASH_ID_SUFFIX)
+        for endpoint in endpoints_for_model(other.id)
+        if endpoint.usage_type == "Credits"
+    ]
+    return LaunchOfferFacts(
+        model_id=MODEL_ID,
+        model_name=model.name.removesuffix(f" ({provider_name})"),
+        provider_name=provider_name,
+        input_microdollars=route.prompt_price_microdollars_per_million_tokens,
+        output_microdollars=route.completion_price_microdollars_per_million_tokens,
+        others_input_microdollars=min(
+            (item.prompt_price_microdollars_per_million_tokens for item in others), default=None
+        ),
+        others_output_microdollars=min(
+            (item.completion_price_microdollars_per_million_tokens for item in others),
+            default=None,
+        ),
     )

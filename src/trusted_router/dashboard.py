@@ -100,7 +100,14 @@ from trusted_router.content.legal import (
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
-from trusted_router.fortanix_launch import fortanix_launch_offer
+from trusted_router.fortanix_launch import COMPARISON_MODEL_ID as LAUNCH_OFFER_BASE_MODEL_ID
+from trusted_router.fortanix_launch import MODEL_ID as LAUNCH_OFFER_MODEL_ID
+from trusted_router.fortanix_launch import (
+    LaunchOfferFacts,
+    cents_label,
+    fortanix_launch_offer,
+    launch_offer_facts,
+)
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -2393,6 +2400,21 @@ def _short_dollars(microdollars: int, *, digits: int) -> str:
     return f"${Decimal(text):f}"
 
 
+def _launch_offer_lede(offer: LaunchOfferFacts) -> dict[str, object]:
+    """Fortanix launch-offer hero copy, built only while the offer is live."""
+    others_input, others_output = offer.others_input_microdollars, offer.others_output_microdollars
+    return {
+        "model_name": offer.model_name,
+        "input": cents_label(offer.input_microdollars),
+        "output": cents_label(offer.output_microdollars),
+        # The sentence names one price, so it needs input and output to match.
+        "lowest_claim": offer.lowest and offer.unit_price is not None,
+        "unit_price": offer.unit_price,
+        "others_input": None if others_input is None else _short_dollars(others_input, digits=2),
+        "others_output": None if others_output is None else _short_dollars(others_output, digits=2),
+    }
+
+
 def _model_kind_phrase(model: Model, view: Mapping[str, object]) -> str:
     if view["is_meta"]:
         return "orchestration preset"
@@ -2414,6 +2436,7 @@ def _model_page(
     model: Model,
     view: Mapping[str, object],
     route_evidence: Mapping[str, object],
+    offer: LaunchOfferFacts | None = None,
 ) -> dict[str, object]:
     """Presentation data for the public model page: short name, hero stats,
     provider rows with positive privacy badges and cost bars, the agent
@@ -2533,6 +2556,7 @@ def _model_page(
             else None
         ),
         "token_priced": token_priced,
+        "launch_offer": _launch_offer_lede(offer) if offer is not None and token_priced else None,
         "funded": funded,
         "rows": rows,
         "sort_speed": any(row["sort_throughput"] is not None for row in rows),
@@ -2625,6 +2649,7 @@ def _env() -> Environment:
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
     env.globals["fortanix_launch_offer"] = fortanix_launch_offer
+    env.globals["launch_offer_facts"] = launch_offer_facts
     env.globals["decide_url"] = decide_url
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
@@ -4513,6 +4538,13 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
     )
 
 
+# Social card for the offer page, rendered by scripts/generate_og_card.py with
+# --headline "GLM 5.3 Flash," --accent "basically free"
+# --subhead "1¢ per million tokens on Fortanix". Re-render it if the price changes.
+LAUNCH_OFFER_CARD = "glm-5.3-flash-fortanix.png"
+LAUNCH_OFFER_CARD_PRICE = "1\u00a2"
+
+
 def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     """Render the per-model detail page for `/models/{author}/{slug}`.
     Returns None when the model id isn't in the catalog (route handler
@@ -4528,8 +4560,31 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     hero_label, hero_pitch = _model_hero(model, model_view)
     route_evidence = _model_route_evidence(model, test_mode=test_mode)
     faq_items = _model_faq_items(
-        model, route_evidence=route_evidence, credits_endpoints=credits_endpoints
+        model,
+        route_evidence=route_evidence,
+        credits_endpoints=credits_endpoints,
+        site_domain=settings.trusted_domain,
     )
+    title = f"{seo_name} API, Pricing and Providers | TrustedRouter"
+    description = (
+        f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
+        "limits, privacy policy, regional availability, measured uptime, and API support."
+    )
+    offer = launch_offer_facts() if model.id == LAUNCH_OFFER_MODEL_ID else None
+    # Passed only when set: the base template's `default` filter keeps None.
+    social_card: dict[str, str] = {}
+    if offer is not None:
+        title, description = _launch_offer_title_description(offer)
+        # The card's words are baked into the PNG, so it shows only while the
+        # live price still matches them; otherwise the page keeps the default card.
+        if offer.unit_price == LAUNCH_OFFER_CARD_PRICE:
+            social_card = {
+                "og_image": _og_image_url(settings, LAUNCH_OFFER_CARD),
+                "og_image_alt": (
+                    f"{offer.model_name}, basically free: {offer.unit_price} per million "
+                    f"tokens on {offer.provider_name}"
+                ),
+            }
     related_comparisons = _related_model_comparison_rows(model.id, limit=6)
     compare_chips = []
     for related in related_comparisons:
@@ -4544,16 +4599,14 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         .render(
             api_base_url=settings.api_base_url,
             site_url=site_url,
-            title=f"{seo_name} API, Pricing and Providers | TrustedRouter",
+            title=title,
+            **social_card,
             heading=model.name,
             hero_label=hero_label,
             hero_pitch=hero_pitch,
-            description=(
-                f"Compare every TrustedRouter route for {seo_name}, including token pricing, context "
-                "limits, privacy policy, regional availability, measured uptime, and API support."
-            ),
+            description=description,
             model=model_view,
-            page=_model_page(settings, model, model_view, route_evidence),
+            page=_model_page(settings, model, model_view, route_evidence, offer),
             route_evidence=route_evidence,
             related_comparisons=related_comparisons,
             compare_chips=compare_chips,
@@ -4572,6 +4625,41 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
         )
+    )
+
+
+def _launch_offer_title_description(offer: LaunchOfferFacts) -> tuple[str, str]:
+    """Search title and snippet for the introductory-offer model page.
+
+    Only called while the offer gate is on; every number comes from the live
+    route, and the lowest-price claim only appears when it is computed true.
+    """
+    name, provider_name = offer.model_name, offer.provider_name
+    lowest = f", the lowest {name} price on TrustedRouter" if offer.lowest else ""
+    return (
+        f"{name} for {offer.price_label} ({provider_name}) | TrustedRouter",
+        f"{name} on {provider_name}: {offer.price_phrase}{lowest}. "
+        "Zero data retention. Intro price, may change.",
+    )
+
+
+def _launch_offer_faq_sentences(
+    model: Model, site_domain: str | None
+) -> tuple[str, str] | None:
+    """Provider and cost FAQ sentences pointing the base model at the offer."""
+    if model.id != LAUNCH_OFFER_BASE_MODEL_ID:
+        return None
+    offer = launch_offer_facts()
+    if offer is None:
+        return None
+    name, provider_name = offer.model_name, offer.provider_name
+    url = f"https://{site_domain}{offer.path}" if site_domain else offer.path
+    lowest = f", the lowest {name} price on TrustedRouter," if offer.lowest else ""
+    return (
+        f"{provider_name} also serves {name} under the separate model ID {offer.model_id} "
+        f"at an introductory {offer.price_label}: {url}",
+        f"The separate {provider_name} route, {offer.model_id}, costs {offer.price_phrase}"
+        f"{lowest} as an introductory price that may change: {url}",
     )
 
 
@@ -5044,6 +5132,7 @@ def llms_txt(settings: Settings) -> str:
         "## Catalog",
         f"- Public model pages: {model_count}",
         f"- Provider pages: {provider_count}",
+        *_llms_launch_offer_lines(domain),
         "- Text and embedding prepaid pricing is provider cost + 5.5%, with a $0.01 per million token floor. Video generation is the direct provider quote + 20%. There is no subscription.",
         (
             "- Model pages include providers, pricing, performance, uptime, AI IQ links, "
@@ -5085,6 +5174,17 @@ def llms_txt(settings: Settings) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _llms_launch_offer_lines(domain: str) -> list[str]:
+    offer = launch_offer_facts()
+    if offer is None:
+        return []
+    return [
+        f"- Introductory offer: {offer.model_id} ({offer.model_name} on {offer.provider_name}, zero data "
+        f"retention) costs {offer.price_phrase}; pricing may change. "
+        f"[Model page](https://{domain}{offer.path})"
+    ]
 
 
 def docs_llms_txt(settings: Settings) -> str:
@@ -5323,11 +5423,17 @@ def docs_llms_full_txt(settings: Settings) -> str:
             "It contains every public model and alias; internal-only routes are excluded."
         ),
     ]
+    offer = launch_offer_facts()
     for model in models:
+        offer_note = (
+            "; offer=introductory price, may change"
+            if offer is not None and model["id"] == offer.model_id
+            else ""
+        )
         lines.append(
             f"- {model['id']}: {model['name']}; providers={model['provider_count']}; "
             f"prompt={model['prompt_price']}; completion={model['completion_price']}; "
-            f"url=https://{domain}{model['detail_href']}"
+            f"url=https://{domain}{model['detail_href']}{offer_note}"
         )
     lines.extend(["", "## Providers"])
     for provider in providers:
@@ -6394,6 +6500,7 @@ def _model_faq_items(
     *,
     route_evidence: Mapping[str, object],
     credits_endpoints: Sequence[ModelEndpoint] | None = None,
+    site_domain: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
     name = _hero_model_name(model)
     if credits_endpoints is None:
@@ -6438,6 +6545,11 @@ def _model_faq_items(
             f"TrustedRouter currently publishes no Credits provider route for {name}, "
             "so no public Credits price is available."
         )
+    provider_note = ""
+    offer_sentences = _launch_offer_faq_sentences(model, site_domain)
+    if offer_sentences is not None:
+        provider_note = f" {offer_sentences[0]}"
+        price_answer = f"{price_answer} {offer_sentences[1]}"
     return (
         (
             f"What model ID should I use for {name}?",
@@ -6453,7 +6565,8 @@ def _model_faq_items(
         (
             f"Which providers serve {name}?",
             f"TrustedRouter currently lists {provider_answer} for {name}. Provider "
-            "availability and routing eligibility can change as catalog and health data update.",
+            "availability and routing eligibility can change as catalog and health data update."
+            f"{provider_note}",
         ),
         (
             f"How much does {name} cost through TrustedRouter?",

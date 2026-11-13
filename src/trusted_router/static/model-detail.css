@@ -144,6 +144,41 @@
   line-height: 1.5;
 }
 
+/* Fortanix launch offer (only while the offer is live). */
+.md-offer-tag {
+  align-self: flex-start;
+  padding: 5px 8px;
+  border: 1px solid var(--tr-color-privacy-verified-border);
+  border-radius: 2px;
+  background: var(--tr-color-privacy-verified-bg);
+  color: var(--tr-color-privacy-verified-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.model-detail-page .md-offer-lead {
+  max-width: 760px;
+  font-size: 28px;
+  font-weight: 450;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.md-offer-lead em {
+  color: var(--md-accent);
+  font-style: italic;
+  font-weight: 500;
+}
+
+.model-detail-page .md-offer-compare {
+  margin: 0;
+  color: var(--md-text);
+  font-size: 17px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
 .model-detail-page .md-note {
   max-width: 44em;
   margin: 0;
@@ -846,6 +881,16 @@
 
   .model-detail-page .md-lead {
     font-size: 18px;
+  }
+
+  .model-detail-page .md-offer-lead {
+    font-size: 22px;
+    line-height: 1.32;
+    letter-spacing: -0.01em;
+  }
+
+  .model-detail-page .md-offer-compare {
+    font-size: 16px;
   }
 
   .md-stats {
