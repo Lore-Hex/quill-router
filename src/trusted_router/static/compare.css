@@ -5,8 +5,8 @@
 .compare-hero,
 .compare-section,
 .compare-band {
-  --compare-win: #9ee6b8;
-  --compare-win-bg: #1c3e2e;
+  --compare-win: var(--tr-legacy-9ee6b8, #9ee6b8);
+  --compare-win-bg: var(--tr-legacy-1c3e2e, #1c3e2e);
 
   width: 100%;
   max-width: 880px;
@@ -39,7 +39,7 @@
   height: 48px;
   box-sizing: border-box;
   border: 3px solid var(--tr-color-surface-bg);
-  border-radius: 12px;
+  border-radius: var(--tr-square, 12px);
   background: var(--tr-color-text-primary);
 }
 .compare-logos img + img { margin-left: -12px; }
@@ -154,18 +154,18 @@
   .compare-table tbody tr { padding: 14px 0; border-bottom: 1px solid var(--tr-color-line-rule-soft); }
   .compare-table tbody th { grid-column: 1 / -1; padding: 0 0 6px; border: 0; }
   .compare-table tbody td { padding: 6px 0; border: 0; }
-  .compare-table tbody td.is-win { margin-inline: -8px; padding: 6px 8px; border-radius: 6px; }
+  .compare-table tbody td.is-win { margin-inline: -8px; padding: 6px 8px; border-radius: var(--tr-square, 6px); }
 }
 
 /* Table header cells: logo, name, best-for line, copyable id */
 .compare-table .compare-table-item { vertical-align: top; }
 .compare-table .compare-item { display: inline-flex; align-items: center; gap: 10px; color: var(--tr-color-text-primary); text-decoration: none; }
-.compare-item img { width: 30px; height: 30px; border-radius: 8px; background: var(--tr-color-text-primary); flex: none; }
+.compare-item img { width: 30px; height: 30px; border-radius: var(--tr-square, 8px); background: var(--tr-color-text-primary); flex: none; }
 .compare-item:hover span { text-decoration: underline; text-underline-offset: 4px; }
 .compare-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 6px; }
 .compare-best { color: var(--tr-color-text-primary); font-size: 15px; font-weight: 450; }
 .compare-id { display: inline-flex; align-items: center; gap: 2px; }
-.compare-id code { color: #f2c879; font-size: 14px; overflow-wrap: anywhere; }
+.compare-id code { color: var(--tr-legacy-f2c879, #f2c879); font-size: 14px; overflow-wrap: anywhere; }
 .compare-copy {
   display: inline-flex;
   align-items: center;
@@ -175,7 +175,7 @@
   min-height: 36px;
   padding: 0 6px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   background: transparent;
   color: var(--tr-color-accent-base);
   font: inherit;
@@ -188,7 +188,7 @@
   display: block;
   width: 16px;
   height: 16px;
-  background: #9ee6b8;
+  background: var(--tr-legacy-9ee6b8, #9ee6b8);
   mask: url("/static/copy-icon.svg") center / contain no-repeat;
 }
 /* In a code box head the copy button matches the quickstart box's. */
@@ -221,14 +221,14 @@
   --md-line: var(--tr-color-line-rule-soft);
   --md-accent: var(--tr-color-accent-base);
   --md-link: var(--tr-color-link-base);
-  --md-bar-top: #9ee6b8;
-  --md-amber: #f2c879;
+  --md-bar-top: var(--tr-legacy-9ee6b8, #9ee6b8);
+  --md-amber: var(--tr-legacy-f2c879, #f2c879);
   --md-code-bg: var(--tr-color-surface-panel);
   --md-code-foot: var(--tr-color-surface-panel-inset);
 
   overflow: hidden;
   border: 1px solid var(--md-line);
-  border-radius: 12px;
+  border-radius: var(--tr-square, 12px);
   background: var(--md-code-bg);
 }
 .md-code-head { display: flex; align-items: center; gap: 16px; padding: 0 20px; border-bottom: 1px solid var(--md-line); }
@@ -255,7 +255,7 @@
   margin-left: auto;
   padding: 0;
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   background: transparent;
   color: var(--md-accent);
   cursor: pointer;
@@ -340,7 +340,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   .md-code.md-collapsible:not(.md-expanded) .md-code-body {
     max-height: 132px;
     overflow: hidden;
-    mask-image: linear-gradient(#000 55%, transparent);
+    mask-image: linear-gradient(var(--tr-legacy-000000, #000) 55%, transparent);
   }
 }
 
@@ -375,7 +375,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   overflow-x: auto;
   list-style: none;
   scrollbar-width: none;
-  mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
+  mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 112px), transparent calc(100% - 40px));
 }
 .compare-chip-track::-webkit-scrollbar { display: none; }
 /* Link chip: a rounded pill in the body font. The brand kit's square mono
@@ -428,7 +428,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   align-items: flex-start;
   gap: 16px;
   padding: 44px 48px;
-  border-radius: 16px;
+  border-radius: var(--tr-square, 16px);
   background: var(--compare-win-bg);
 }
 .compare-band h2 { margin: 0; color: var(--tr-color-text-primary); font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; }
@@ -440,7 +440,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   .compare-hero { gap: 16px; padding: 36px 0 36px; }
   .compare-title { flex-direction: column; align-items: flex-start; gap: 16px; }
   .compare-table .compare-row-price .compare-val { font-size: 30px; }
-  .compare-logos img { width: 40px; height: 40px; border-radius: 10px; }
+  .compare-logos img { width: 40px; height: 40px; border-radius: var(--tr-square, 10px); }
   .compare-logos img + img { margin-left: -10px; }
   .compare-hero h1 { font-stretch: 112%; }
   .compare-cta { align-items: stretch; }

@@ -28,8 +28,8 @@ body.console:has(.credits-page) {
 }
 
 .credits-page {
-  --credits-disc-bg: #1c2a22;
-  --credits-disc-blue-bg: #1f2a33;
+  --credits-disc-bg: var(--tr-legacy-1c2a22, #1c2a22);
+  --credits-disc-blue-bg: var(--tr-legacy-1f2a33, #1f2a33);
 
   max-width: 840px;
   display: flex;
@@ -170,7 +170,7 @@ body.console:has(.credits-page) {
   padding: 24px;
   background: var(--tr-color-surface-selected);
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 5px;
+  border-radius: var(--tr-square, 5px);
 }
 
 .credits-form {
@@ -242,7 +242,7 @@ body.console:has(.credits-page) {
   font-weight: 600;
   letter-spacing: -.3px;
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   color: var(--tr-color-text-primary);
   background: transparent;
   font-variant-numeric: tabular-nums;
@@ -291,7 +291,7 @@ body.console:has(.credits-page) {
   background: var(--tr-color-surface-bg-alt);
   color: var(--tr-color-text-primary);
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   appearance: textfield;
 }
 
@@ -331,7 +331,7 @@ body.console:has(.credits-page) {
   min-height: 48px;
   padding: 0 16px;
   border: 1px solid var(--tr-color-line-rule);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   background: var(--tr-color-surface-panel);
   font-size: 15px;
   font-weight: 500;
@@ -389,7 +389,7 @@ body.console:has(.credits-page) {
   background: var(--tr-color-surface-bg-alt);
   color: var(--tr-color-text-primary);
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   cursor: pointer;
 }
 
@@ -482,7 +482,7 @@ body.console:has(.credits-page) {
   padding: 10px 22px;
   font-size: 15px;
   font-weight: 500;
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   background: var(--tr-color-accent-base);
   color: var(--tr-color-accent-ink);
   border: 1px solid var(--tr-color-accent-base);
@@ -528,7 +528,7 @@ body.console:has(.credits-page) {
   padding: 14px 16px;
   background: var(--tr-color-surface-panel);
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   line-height: 1.55;
   z-index: 2;
 }
@@ -721,7 +721,7 @@ body.console:has(.credits-page) {
   background: transparent;
   color: var(--tr-color-text-primary);
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   cursor: pointer;
 }
 
@@ -937,7 +937,7 @@ body.console:has(.credits-page) {
     gap: 0;
     padding-right: 4px;
     border: 1px solid var(--tr-color-line-rule);
-    border-radius: 6px;
+    border-radius: var(--tr-square, 6px);
     background: var(--tr-color-surface-panel);
   }
 

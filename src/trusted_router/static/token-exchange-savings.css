@@ -17,7 +17,7 @@
 .tx-inputs label span { color: var(--text-muted); font-size: 12px; }
 .tx-inputs output { font-variant-numeric: tabular-nums; color: var(--text-accent); }
 .tx-inputs input { width: 100%; height: 44px; margin: 12px 0 6px; font: 500 21px var(--font-ui); }
-.tx-inputs input[type="number"] { color: var(--text-display); background: var(--surface-raised); padding: 8px 12px; border: 1px solid var(--tx-line); border-radius: 4px; }
+.tx-inputs input[type="number"] { color: var(--text-display); background: var(--surface-raised); padding: 8px 12px; border: 1px solid var(--tx-line); border-radius: var(--tr-square, 4px); }
 .tx-inputs input[type="range"] { accent-color: var(--tx-green); cursor: pointer; padding: 0; }
 .tx-inputs p, .tx-caption, .tx-switch-row p { font-size: 12px; color: var(--text-muted); }
 .tx-validation { min-height: 22px; padding-top: 5px; font-size: 13px; }
@@ -26,7 +26,7 @@
 .tx-switch-row p { margin-top: 5px; }
 .tx-toggle { position: relative; display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; flex: 0 0 86px; }
 .tx-toggle input { position: absolute; inset: 0; width: 100%; height: 44px; margin: 0; opacity: 0; z-index: 1; cursor: pointer; }
-.tx-toggle-track { display: block; width: 48px; height: 28px; background: var(--border-strong); border-radius: 18px; padding: 4px; }
+.tx-toggle-track { display: block; width: 48px; height: 28px; background: var(--border-strong); border-radius: var(--tr-square, 18px); padding: 4px; }
 .tx-toggle-track::after { content: ""; display: block; width: 20px; height: 20px; border-radius: 50%; background: var(--text-display); transition: transform 160ms ease; }
 .tx-toggle input:checked + .tx-toggle-track { background: var(--tx-green); }
 .tx-toggle input:checked + .tx-toggle-track::after { transform: translateX(20px); }
@@ -43,7 +43,7 @@
 .tx-exchange { background: var(--tx-green); }
 .tx-route-share { display: block; margin: 7px 0 0 16px; font: 12px var(--font-mono); color: var(--text-accent); }
 .tx-destinations p { margin-left: 16px; }
-.tx-gateway { min-height: 148px; border: 1px solid var(--tx-line); border-radius: 4px; text-align: center; padding: 18px 12px; background: var(--surface-raised); }
+.tx-gateway { min-height: 148px; border: 1px solid var(--tx-line); border-radius: var(--tr-square, 4px); text-align: center; padding: 18px 12px; background: var(--surface-raised); }
 .tx-gateway img { display: block; margin: 0 auto 8px; }
 .tx-gateway a { display: block; font-size: 11px; margin-top: 10px; }
 .tx-motion-controls { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 16px; }
@@ -56,7 +56,7 @@
 .tx-bill { padding: 30px 34px 30px 0; }
 .tx-bar-heading { display: flex; justify-content: space-between; gap: 16px; margin: 24px 0 10px; font-size: 13px; }
 .tx-bar-heading strong, .tx-costs dd, .tx-savings strong { font-variant-numeric: tabular-nums; }
-.tx-bar { height: 20px; border-radius: 2px; overflow: hidden; background: var(--surface-raised); display: flex; gap: 0; }
+.tx-bar { height: 20px; border-radius: var(--tr-square, 2px); overflow: hidden; background: var(--surface-raised); display: flex; gap: 0; }
 .tx-bar > span { height: 100%; transition: width 180ms ease; }
 .tx-full { width: 100%; }
 .tx-costs { margin: 24px 0 18px; }
@@ -86,7 +86,7 @@
 .tx-bottom { border-top: 1px solid var(--tx-line); padding: 32px 0 20px; display: grid; grid-template-columns: 1fr 280px; gap: 60px; }
 .tx-bottom p { font-size: 14px; margin-top: 10px; max-width: 540px; }
 .tx-actions { display: grid; gap: 10px; align-content: start; }
-.tx-button { border: 1px solid var(--text-accent); background: var(--text-accent); color: var(--text-inverse); padding: 12px 18px; min-height: 44px; border-radius: 4px; font: 550 14px var(--font-ui); text-align: center; cursor: pointer; text-decoration: none; }
+.tx-button { border: 1px solid var(--text-accent); background: var(--text-accent); color: var(--text-inverse); padding: 12px 18px; min-height: 44px; border-radius: var(--tr-square, 4px); font: 550 14px var(--font-ui); text-align: center; cursor: pointer; text-decoration: none; }
 .tx-button:hover { color: var(--text-inverse); background: var(--tr-color-accent-hover); }
 .tx-secondary { background: transparent; color: var(--text-display); border-color: var(--tx-line); }
 .tx-secondary:hover { background: var(--surface-raised); color: var(--text-display); }

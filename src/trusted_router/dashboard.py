@@ -2664,6 +2664,9 @@ def _env() -> Environment:
 
     env.globals["live_model_count"] = live_model_count
     env.globals["publisher_icons"] = publisher_icons
+    from trusted_router.brand_theme import brand_theme
+
+    env.globals["brand_theme"] = brand_theme
     return env
 
 

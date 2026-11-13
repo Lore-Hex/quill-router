@@ -31,7 +31,8 @@ def _auth_styles_version() -> str:
     # change with their bytes.
     static_dir = Path(__file__).parent / "static"
     content = b"".join(
-        (static_dir / name).read_bytes() for name in ("tokens.css", "brand.css", "auth.css", "charter.css")
+        (static_dir / name).read_bytes()
+        for name in ("tokens.css", "brand.css", "auth.css", "charter.css", "nyte-theme.css")
     )
     return hashlib.sha256(content).hexdigest()[:16]
 
@@ -125,6 +126,9 @@ def _env() -> Environment:
     env.globals["live_model_count"] = live_model_count
     env.globals["publisher_icons"] = publisher_icons
     env.globals["auth_styles_version"] = _auth_styles_version
+    from trusted_router.brand_theme import brand_theme
+
+    env.globals["brand_theme"] = brand_theme
     return env
 
 

@@ -190,7 +190,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   .inquiry-grid .inquiry-wide { grid-column: 1 / -1; }
   .inquiry-grid input, .inquiry-grid textarea {
     font: inherit; font-weight: 400; color: var(--ink, inherit);
-    background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--tr-square, 6px);
     padding: 10px 12px; width: 100%; box-sizing: border-box; resize: vertical;
   }
   .inquiry-grid input:focus, .inquiry-grid textarea:focus { outline: 2px solid var(--accent, #6aa1ff); outline-offset: 1px; }

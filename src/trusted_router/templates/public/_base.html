@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="js-off">
+<html lang="en" class="js-off"{% if brand_theme() == "nyte" %} data-brand="nyte"{% endif %}>
 <head>
   {% set meta_title = title if preserve_title|default(false) else title|seo_title %}
   {% set meta_description = description|seo_meta_description %}
@@ -38,7 +38,7 @@
   <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
-</head>
+{% if brand_theme() == "nyte" %}<link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head>
 <body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
   {% block promotion %}{% endblock %}

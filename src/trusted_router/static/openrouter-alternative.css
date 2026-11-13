@@ -239,10 +239,10 @@
 
 /* Editorial hierarchy: bright prose, quieter but legible supporting information. */
 .openrouter-article {
-  --text-body: #dce5e0;
-  --text-muted: #c5d1ca;
-  --muted: #c5d1ca;
-  --text-display: #f2faf6;
+  --text-body: var(--tr-legacy-dce5e0, #dce5e0);
+  --text-muted: var(--tr-legacy-c5d1ca, #c5d1ca);
+  --muted: var(--tr-legacy-c5d1ca, #c5d1ca);
+  --text-display: var(--tr-legacy-f2faf6, #f2faf6);
 }
 .openrouter-article main h2 { font-size: 32px; line-height: 1.25; font-weight: 700; }
 .openrouter-article main h3 { font-size: 22px; line-height: 1.4; font-weight: 600; }
@@ -316,19 +316,19 @@
 .openrouter-article .v2-stack :is(th,td),
 .openrouter-article .seo-evidence-table :is(th,td) { background: transparent; }
 .openrouter-article .v2-stack thead th,
-.openrouter-article .seo-evidence-table thead th { background: #183226; }
-.openrouter-article .v2-row-tr :is(th,td) { background: #1c3e2e; }
-.openrouter-article main h2 { color: #d9f2e3; }
-.openrouter-article .seo-evidence-stats strong { color: #b7e4ca; }
+.openrouter-article .seo-evidence-table thead th { background: var(--tr-legacy-183226, #183226); }
+.openrouter-article .v2-row-tr :is(th,td) { background: var(--tr-legacy-1c3e2e, #1c3e2e); }
+.openrouter-article main h2 { color: var(--tr-legacy-d9f2e3, #d9f2e3); }
+.openrouter-article .seo-evidence-stats strong { color: var(--tr-legacy-b7e4ca, #b7e4ca); }
 .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(5,minmax(0,1fr)); }
 
 @media (max-width: 720px) {
   .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .openrouter-article .v2-stack th:first-child { background: #183226; }
-  .openrouter-article .v2-row-tr th:first-child { background: #1c3e2e; }
+  .openrouter-article .v2-stack th:first-child { background: var(--tr-legacy-183226, #183226); }
+  .openrouter-article .v2-row-tr th:first-child { background: var(--tr-legacy-1c3e2e, #1c3e2e); }
 }
 .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child {
-  color: #b7e4ca; font-size: 23px; line-height: 1.5; margin-bottom: 28px;
+  color: var(--tr-legacy-b7e4ca, #b7e4ca); font-size: 23px; line-height: 1.5; margin-bottom: 28px;
 }
 .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child strong { font-weight: 650; color: inherit; }
 
@@ -343,14 +343,14 @@
 
   overflow-x: auto;
   scrollbar-width: thin;
-  scrollbar-color: #7caa90 #10231b;
-  mask-image: linear-gradient(to right, transparent, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent);
+  scrollbar-color: var(--tr-legacy-7caa90, #7caa90) var(--tr-legacy-10231b, #10231b);
+  mask-image: linear-gradient(to right, transparent, var(--tr-legacy-000000, #000) var(--fade-left), var(--tr-legacy-000000, #000) calc(100% - var(--fade-right)), transparent);
 }
 .openrouter-article .horizontal-overflow.can-scroll-left { --fade-left: 16px; }
 .openrouter-article .horizontal-overflow.can-scroll-right { --fade-right: 56px; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar { height: 8px; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-track { background: var(--tr-color-surface-hover); }
-.openrouter-article .horizontal-overflow::-webkit-scrollbar-thumb { background: #7caa90; border-radius: 4px; }
+.openrouter-article .horizontal-overflow::-webkit-scrollbar-thumb { background: var(--tr-legacy-7caa90, #7caa90); border-radius: var(--tr-square, 4px); }
 /* Draw the keyboard focus ring outside the masked scroller, above sticky cells. */
 .openrouter-article .horizontal-overflow-frame { position: relative; min-width: 0; }
 .openrouter-article .horizontal-overflow:focus-visible { outline: none; }
@@ -358,7 +358,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  border: 2px solid #b7e4ca;
+  border: 2px solid var(--tr-legacy-b7e4ca, #b7e4ca);
   border-radius: inherit;
   pointer-events: none;
   z-index: 2;

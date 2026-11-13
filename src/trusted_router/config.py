@@ -607,6 +607,12 @@ class Settings(BaseSettings):
     # operator script can flip it without rebuilding an image.
     new_signups_enabled: bool = True
 
+    # Site-wide visual theme for every server-rendered page. "nyte" adds
+    # data-brand="nyte" to <html> and loads static/nyte-theme.css after the
+    # other sheets, which re-points the shared --tr-* tokens at the NY Token
+    # Exchange palette. Look only: markup, copy and behaviour are unchanged.
+    brand_theme: Literal["trustedrouter", "nyte"] = "trustedrouter"
+
     # Plain-email `POST /v1/signup` (no OAuth) is a credit-farming vector: an
     # open endpoint that mints a management key + trial credit for ANY email,
     # including disposable addresses. Closed by default. This switch controls

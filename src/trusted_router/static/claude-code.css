@@ -17,7 +17,7 @@
 .cc-hero::before {
   position: absolute;
   inset: 0;
-  background: rgb(5 8 6 / 28%);
+  background: var(--tr-legacy-050806-47, rgb(5 8 6 / 28%));
   content: "";
 }
 
@@ -39,7 +39,7 @@
 .cc-hero h1 {
   max-width: 560px;
   margin: 18px 0 16px;
-  color: #f3f0e7;
+  color: var(--tr-legacy-f3f0e7, #f3f0e7);
   font-family: var(--font-display);
   font-size: 56px;
   font-weight: 300;
@@ -49,7 +49,7 @@
 .cc-hero-lead {
   max-width: 540px;
   margin: 0;
-  color: #c9d0c5;
+  color: var(--tr-legacy-c9d0c5, #c9d0c5);
   font-size: 17px;
   line-height: 1.7;
 }
@@ -61,7 +61,7 @@
 .cc-hero-note {
   max-width: 560px;
   margin: 14px 0 0;
-  color: #9da99b;
+  color: var(--tr-legacy-9da99b, #9da99b);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -69,14 +69,14 @@
 .cc-hero-flow {
   max-width: 540px;
   margin-top: 24px;
-  border-top: 1px solid rgb(237 232 219 / 22%);
-  border-bottom: 1px solid rgb(237 232 219 / 22%);
+  border-top: 1px solid var(--tr-legacy-ede8db-38, rgb(237 232 219 / 22%));
+  border-bottom: 1px solid var(--tr-legacy-ede8db-38, rgb(237 232 219 / 22%));
 }
 
 .cc-hero-flow-label {
   display: block;
   padding: 10px 0 8px;
-  color: #90a795;
+  color: var(--tr-legacy-90a795, #90a795);
   font-family: var(--font-mono);
   font-size: 10px;
   text-transform: uppercase;
@@ -95,17 +95,17 @@
   min-height: 35px;
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
-  border-top: 1px solid rgb(237 232 219 / 10%);
+  border-top: 1px solid var(--tr-legacy-ede8db-1a, rgb(237 232 219 / 10%));
 }
 
 .cc-hero-flow li > span {
-  color: #779080;
+  color: var(--tr-legacy-779080, #779080);
   font-family: var(--font-mono);
   font-size: 10px;
 }
 
 .cc-hero-flow strong {
-  color: #e5e8df;
+  color: var(--tr-legacy-e5e8df, #e5e8df);
   font-size: 13px;
   font-weight: 500;
 }
@@ -165,7 +165,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--r-panel);
   background: var(--tr-color-surface-bg-deep);
-  box-shadow: 0 22px 60px rgb(0 0 0 / 24%);
+  box-shadow: 0 22px 60px var(--tr-legacy-000000-3d, rgb(0 0 0 / 24%));
 }
 
 .cc-prompt-head {
@@ -175,15 +175,15 @@
   justify-content: space-between;
   gap: 16px;
   padding: 0 16px;
-  border-bottom: 1px solid #252d27;
-  color: #788479;
+  border-bottom: 1px solid var(--tr-legacy-252d27, #252d27);
+  color: var(--tr-legacy-788479, #788479);
   font-family: var(--font-mono);
   font-size: 10px;
 }
 
 .cc-prompt-body {
   padding: 24px;
-  color: #cbd3c8;
+  color: var(--tr-legacy-cbd3c8, #cbd3c8);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.65;
@@ -191,7 +191,7 @@
 
 .cc-prompt-body > p:first-child {
   margin: 0 0 22px;
-  color: #eef0e9;
+  color: var(--tr-legacy-eef0e9, #eef0e9);
 }
 
 .cc-prompt-body dl {
@@ -208,21 +208,21 @@
 }
 
 .cc-prompt-body dt {
-  color: #788479;
+  color: var(--tr-legacy-788479, #788479);
 }
 
 .cc-prompt-body dd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  color: #b8d8c5;
+  color: var(--tr-legacy-b8d8c5, #b8d8c5);
 }
 
 .cc-key-inserted {
   display: inline-block;
   padding: 2px 7px;
   border: 1px solid var(--tr-color-line-tag);
-  border-radius: 2px;
+  border-radius: var(--tr-square, 2px);
   color: var(--tr-color-accent-base);
 }
 
@@ -242,24 +242,24 @@
   gap: 9px;
   align-items: center;
   padding-top: 16px;
-  border-top: 1px solid #2a332c;
+  border-top: 1px solid var(--tr-legacy-2a332c, #2a332c);
 }
 
 .cc-prompt-result strong {
-  color: #bfe0cd;
+  color: var(--tr-legacy-bfe0cd, #bfe0cd);
   font-size: 11px;
 }
 
 .cc-prompt-result span:last-child {
-  color: #788479;
+  color: var(--tr-legacy-788479, #788479);
 }
 
 .cc-live-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #8fc3a5;
-  box-shadow: 0 0 12px rgb(143 195 165 / 54%);
+  background: var(--tr-legacy-8fc3a5, #8fc3a5);
+  box-shadow: 0 0 12px var(--tr-legacy-8fc3a5-8a, rgb(143 195 165 / 54%));
 }
 
 .cc-route-list {
@@ -360,7 +360,7 @@
   }
 
   .cc-hero::before {
-    background: rgb(5 8 6 / 74%);
+    background: var(--tr-legacy-050806-bd, rgb(5 8 6 / 74%));
   }
 
   .cc-hero-inner {
@@ -424,7 +424,7 @@
   }
 
   .cc-hero::before {
-    background: rgb(5 8 6 / 84%);
+    background: var(--tr-legacy-050806-d6, rgb(5 8 6 / 84%));
   }
 
   .cc-hero h1 {

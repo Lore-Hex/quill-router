@@ -14,15 +14,15 @@
  .exchange-banner{justify-content:space-between;gap:12px;padding:5px 16px;font-size:14px;line-height:1.25}
  .exchange-banner-copy>span{display:none}
 }
-.signin-modal{max-width:380px;box-shadow:0 24px 60px #0009}
+.signin-modal{max-width:380px;box-shadow:0 24px 60px var(--tr-legacy-000000-99, #0009)}
 .signin-modal h2{margin:0 0 6px;font-size:24px}.signin-sub,.signin-foot{color:var(--muted);font-size:13px}
 .signin-close{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--cream);font-size:22px;min-width:44px;min-height:44px}
-.signin-providers{display:flex;flex-direction:column;gap:10px}.signin-btn{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--tr-color-line-control);border-radius:6px;background:var(--tr-color-surface-hover);color:var(--cream);font-size:14px;min-height:44px}.signin-btn span{width:24px;text-align:center}.signin-foot{margin-top:18px}.signup-error{padding:12px;border:1px solid var(--tr-color-error);color:var(--tr-color-error)}
+.signin-providers{display:flex;flex-direction:column;gap:10px}.signin-btn{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--tr-color-line-control);border-radius:var(--tr-square, 6px);background:var(--tr-color-surface-hover);color:var(--cream);font-size:14px;min-height:44px}.signin-btn span{width:24px;text-align:center}.signin-foot{margin-top:18px}.signup-error{padding:12px;border:1px solid var(--tr-color-error);color:var(--tr-color-error)}
 /* Preserve the provider badge treatments used by the main sign-in dialog. */
-.signin-btn span[aria-hidden]{display:inline-grid;place-items:center;flex-shrink:0;width:24px;height:24px;border-radius:6px;background:#101820;color:#fff;font-weight:700;font-size:13px}
-.signin-google span[aria-hidden]{background:#fff;color:#d2452a;border:1px solid var(--line)}
-.signin-github span[aria-hidden]{background:#24292f}
-.signin-metamask span[aria-hidden]{background:linear-gradient(135deg,#e2761b,#cd6116)}
+.signin-btn span[aria-hidden]{display:inline-grid;place-items:center;flex-shrink:0;width:24px;height:24px;border-radius:var(--tr-square, 6px);background:var(--tr-legacy-101820, #101820);color:var(--tr-legacy-ffffff, #fff);font-weight:700;font-size:13px}
+.signin-google span[aria-hidden]{background:var(--tr-legacy-ffffff, #fff);color:var(--tr-legacy-d2452a, #d2452a);border:1px solid var(--line)}
+.signin-github span[aria-hidden]{background:var(--tr-legacy-24292f, #24292f)}
+.signin-metamask span[aria-hidden]{background:linear-gradient(135deg,var(--tr-legacy-e2761b, #e2761b),var(--tr-legacy-cd6116, #cd6116))}
 
 /* Copy-led marketing sections and a consistent, readable supporting scale. */
 .proof-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px}
@@ -34,7 +34,7 @@
 .proof-point p{font-size:18px;line-height:1.65;color:var(--tr-color-text-secondary);margin:0 0 20px;max-width:54ch}
 .proof-point a{color:var(--tr-color-link-base);font-size:16px;line-height:1.6;text-underline-offset:5px}
 .proof-point a:hover{text-decoration:underline}
-.proof-checklist{display:grid;gap:16px;margin:8px 0 32px;padding:0;list-style:none;color:#d6dcd6;font-size:17px;line-height:1.5}
+.proof-checklist{display:grid;gap:16px;margin:8px 0 32px;padding:0;list-style:none;color:var(--tr-legacy-d6dcd6, #d6dcd6);font-size:17px;line-height:1.5}
 .proof-checklist li{display:flex;gap:12px}
 .proof-checklist li::before{content:"✓";color:var(--tr-color-accent-base)}
 .proof-checklist li::marker{color:var(--tr-color-accent-base)}
@@ -115,11 +115,11 @@
 }
 
 /* Whole-page consistency: shared rhythm, restrained enclosures and action hierarchy. */
-.page{--homepage-rule:#33403a;--homepage-space:80px}
+.page{--homepage-rule:var(--tr-legacy-33403a, #33403a);--homepage-space:80px}
 .trc,.trm,.trv,.trs,.trpr,.trf,.trft,.request-layout{padding-block:var(--homepage-space)}
 .trc .chd,.trp .ph3{align-items:center}
 .trc .chd h2,.trv .vh h2{margin:0}
-.trm .box,.trs .sp,.trc .alias{border-radius:2px;border-color:var(--homepage-rule)}.request-guide, .proof-point>a, .trm .docs a{color:var(--tr-color-link-base);text-decoration:underline;text-decoration-color:var(--tr-color-line-control);text-underline-offset:5px;border-bottom:0}.request-guide:hover, .proof-point>a:hover, .trm .docs a:hover{text-decoration-color:currentColor}
+.trm .box,.trs .sp,.trc .alias{border-radius:var(--tr-square, 2px);border-color:var(--homepage-rule)}.request-guide, .proof-point>a, .trm .docs a{color:var(--tr-color-link-base);text-decoration:underline;text-decoration-color:var(--tr-color-line-control);text-underline-offset:5px;border-bottom:0}.request-guide:hover, .proof-point>a:hover, .trm .docs a:hover{text-decoration-color:currentColor}
 .page a:focus-visible,.page button:focus-visible,.page summary:focus-visible{outline:2px solid var(--tr-color-link-base);outline-offset:4px}
 .trc .fl{gap:32px;padding-bottom:8px}
 .trc td{padding-block:18px}
@@ -294,10 +294,10 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 .request-guide.button{align-self:flex-start;text-decoration:none}
 .proof-point>a.button{align-self:flex-start;text-decoration:none;margin-top:12px}
 .trs .stat .button{align-self:flex-start;margin-top:8px}
-.trs .customer-details>.disclosure-body>.body{margin:0;padding:0 48px 24px;max-width:850px;color:#234636;font-size:16px;line-height:1.6}
+.trs .customer-details>.disclosure-body>.body{margin:0;padding:0 48px 24px;max-width:850px;color:var(--tr-legacy-234636, #234636);font-size:16px;line-height:1.6}
 .trs .q blockquote{font-style:italic}
 .trs .customer-details>summary{color:var(--tr-color-accent-ink);padding:0 24px 20px;min-height:48px;font-size:15px}
-.trs .customer-details>summary .disclosure-indicator{color:#234636}
+.trs .customer-details>summary .disclosure-indicator{color:var(--tr-legacy-234636, #234636)}
 @media(max-width:600px){
  #top .cta{width:100%;max-width:380px;gap:10px;flex-wrap:nowrap}
  #top .cta .button{min-width:0;flex:1;padding:12px 8px;font-size:15px}
@@ -325,8 +325,8 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
    the note under the buttons sits, so it reads over the water. */
 @media(max-width:600px){
  .trh .hero{
-  --hero-scrim:linear-gradient(180deg,#050706a8 0%,#050706b3 45%,#050706b3 66%,#05070680 76%,#050706a8 88%,#050706 100%);
-  --hero-compact-scrim:linear-gradient(180deg,#050706a8 0%,#050706b3 45%,#050706b3 72%,#05070680 82%,#050706c0 92%,#050706 100%);
+  --hero-scrim:linear-gradient(180deg,var(--tr-legacy-050706-a8, #050706a8) 0%,var(--tr-legacy-050706-b3, #050706b3) 45%,var(--tr-legacy-050706-b3, #050706b3) 66%,var(--tr-legacy-050706-80, #05070680) 76%,var(--tr-legacy-050706-a8, #050706a8) 88%,var(--tr-legacy-050706, #050706) 100%);
+  --hero-compact-scrim:linear-gradient(180deg,var(--tr-legacy-050706-a8, #050706a8) 0%,var(--tr-legacy-050706-b3, #050706b3) 45%,var(--tr-legacy-050706-b3, #050706b3) 72%,var(--tr-legacy-050706-80, #05070680) 82%,var(--tr-legacy-050706-c0, #050706c0) 92%,var(--tr-legacy-050706, #050706) 100%);
  }
  .landscape-image{filter:brightness(1.3)}
  .closing-cta .closing-landscape{filter:brightness(1.4)}
@@ -336,7 +336,7 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 @media(max-width:360px){.trm .acts .button{font-size:14px;padding-inline:6px}}
 
 /* Tools sit by the heading; actions close each module at the copy's left edge. */
-.trc .fl .catalog-browse{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:10px;width:auto;max-width:100%;min-height:48px;padding:0 14px;border:1px solid var(--tr-color-line-control);border-radius:6px;background:var(--tr-color-surface-control);color:var(--tr-color-text-tertiary);font:400 15px/1.4 var(--sans);letter-spacing:0;text-transform:none;text-align:left;cursor:pointer}
+.trc .fl .catalog-browse{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:10px;width:auto;max-width:100%;min-height:48px;padding:0 14px;border:1px solid var(--tr-color-line-control);border-radius:var(--tr-square, 6px);background:var(--tr-color-surface-control);color:var(--tr-color-text-tertiary);font:400 15px/1.4 var(--sans);letter-spacing:0;text-transform:none;text-align:left;cursor:pointer}
 .trc .fl .catalog-browse:hover{background:var(--tr-color-surface-hover);border-color:var(--tr-color-line-strong);color:var(--tr-color-text-primary)}
 .trc .fl .catalog-browse:focus-visible{outline:3px solid var(--tr-color-link-base);outline-offset:3px;border-color:var(--tr-color-line-strong);color:var(--tr-color-text-primary)}
 .trp .pricing-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px;margin-top:4px}
@@ -344,9 +344,9 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 @media(max-width:700px){.trs .story-actions{padding:0 24px 28px}}
 
 /* Ticker items are real controls: a tap searches that model. */
-.trh .lab{all:unset;display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;color:#d0ded7;white-space:nowrap}
+.trh .lab{all:unset;display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;color:var(--tr-legacy-d0ded7, #d0ded7);white-space:nowrap}
 .trh .lab:hover{color:var(--tr-color-text-primary)}
-.trh .lab:focus-visible{outline:2px solid var(--tr-color-link-base);outline-offset:4px;border-radius:4px}
+.trh .lab:focus-visible{outline:2px solid var(--tr-color-link-base);outline-offset:4px;border-radius:var(--tr-square, 4px)}
 /* The marquee pauses for pointer hover and keyboard focus only; a tap or click (and the focus that returns after the dialog) never freezes it. */
 .trh .labs:focus-within .labtrack{animation-play-state:running}
 @media(hover:none){.trh .labs:hover .labtrack{animation-play-state:running}}
@@ -358,7 +358,7 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 @media(max-width:700px){.trc .fl .catalog-actions{order:-1;flex-basis:100%;width:100%;margin:0 0 8px}.trc .fl .catalog-browse{width:100%}}
 
 /* Customer story: the collapsed perspective row reads as a quiet label, not another line of the headline. */
-.trs .customer-details>summary{font-style:italic;font-size:15px;color:#234636;margin:0 24px;padding:14px 0 16px;border-top:1px solid var(--tr-color-panel-mint-divider)}
+.trs .customer-details>summary{font-style:italic;font-size:15px;color:var(--tr-legacy-234636, #234636);margin:0 24px;padding:14px 0 16px;border-top:1px solid var(--tr-color-panel-mint-divider)}
 .trs .customer-details[open]>summary{border-bottom:0}
 
 /* Press mention: a second piece of social proof, styled as a sibling card to the customer story with the same kicker language. */

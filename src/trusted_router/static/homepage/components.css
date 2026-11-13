@@ -1,13 +1,13 @@
 /* Shared action primitives. Import after page styles when adopting elsewhere. */
-:root{--action-primary-bg:#cce8d7;--action-primary-ink:#10241a;--action-secondary-ink:#c0e1ff;--action-radius:6px;--action-height:48px}
+:root{--action-primary-bg:var(--tr-legacy-cce8d7, #cce8d7);--action-primary-ink:var(--tr-legacy-10241a, #10241a);--action-secondary-ink:var(--tr-legacy-c0e1ff, #c0e1ff);--action-radius:6px;--action-height:48px}
 .button.button-primary,.button.button-secondary{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:var(--action-height);padding:12px 22px;border:1px solid transparent;border-radius:var(--action-radius);font:550 16px/1.4 var(--sans,system-ui,sans-serif);text-decoration:none;cursor:pointer;white-space:nowrap}
 .button.button-primary{background:var(--action-primary-bg);color:var(--action-primary-ink)}
 .button.button-primary:hover{background:var(--tr-color-accent-hover);color:var(--action-primary-ink)}
 .button.button-secondary{background:transparent;color:var(--action-secondary-ink);border-color:var(--tr-color-line-control)}
 .button.button-secondary:hover{background:var(--tr-color-surface-hover);border-color:var(--tr-color-line-strong)}
 .button.button-primary:focus-visible,.button.button-secondary:focus-visible,.icon-button:focus-visible{outline:3px solid var(--tr-color-link-base);outline-offset:4px}
-.icon-button.icon-button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--tr-color-line-control);border-radius:4px;background:transparent;color:var(--tr-color-link-base);cursor:pointer}
-.icon-button:hover{background:#203c2c;border-color:var(--tr-color-accent-base)}
+.icon-button.icon-button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--tr-color-line-control);border-radius:var(--tr-square, 4px);background:transparent;color:var(--tr-color-link-base);cursor:pointer}
+.icon-button:hover{background:var(--tr-legacy-203c2c, #203c2c);border-color:var(--tr-color-accent-base)}
 .icon-button svg{display:block;flex:none}
 
 /* Text actions keep a common rhythm; navigation and inline prose are separate. */
@@ -17,27 +17,27 @@
 .page .action-link:hover{text-decoration-color:currentColor}
 .page .action-link:hover::after{transform:translateX(3px)}
 @media(prefers-reduced-motion:reduce){.page .action-link::after{transition:none}.page .action-link:hover::after{transform:none}}
-.page .action-link:focus-visible{outline:3px solid var(--tr-color-link-base);outline-offset:4px;border-radius:2px}
+.page .action-link:focus-visible{outline:3px solid var(--tr-color-link-base);outline-offset:4px;border-radius:var(--tr-square, 2px)}
 .page .trs .action-link{color:var(--tr-color-accent-ink)}
 .page .trs .action-link:focus-visible{outline-color:var(--tr-color-accent-ink)}
 .page .closing-cta .action-link{color:var(--tr-color-text-primary)}
 
 /* Secondary actions have a visible enclosure without the primary fill. */
-.button.button-secondary{border-color:var(--tr-color-line-strong);background:#0b1814b3;color:var(--tr-color-link-button)}
-.trs .button.button-secondary{color:var(--tr-color-accent-ink);border-color:var(--tr-color-panel-mint-button-border);background:#ffffff26}
-.trs .button.button-secondary:hover{background:#ffffff59}
+.button.button-secondary{border-color:var(--tr-color-line-strong);background:var(--tr-legacy-0b1814-b3, #0b1814b3);color:var(--tr-color-link-button)}
+.trs .button.button-secondary{color:var(--tr-color-accent-ink);border-color:var(--tr-color-panel-mint-button-border);background:var(--tr-legacy-ffffff-26, #ffffff26)}
+.trs .button.button-secondary:hover{background:var(--tr-legacy-ffffff-59, #ffffff59)}
 .trs .button.button-secondary:focus-visible{outline-color:var(--tr-color-accent-ink)}
 
 /* In the press: one lead story, then linked rows for earlier coverage. */
 .trpr{display:flex;flex-direction:column;gap:40px;background:var(--tr-color-surface-bg);color:var(--tr-color-text-primary);font-family:var(--sans)}
 .trpr h2{margin:0}
 .trpr .press-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:24px}
-.trpr .press-lead{grid-column:span 7;display:flex;flex-direction:column;gap:32px;padding:48px;border-radius:6px;background:var(--tr-color-accent-base);color:#0b1410}
+.trpr .press-lead{grid-column:span 7;display:flex;flex-direction:column;gap:32px;padding:48px;border-radius:var(--tr-square, 6px);background:var(--tr-color-accent-base);color:var(--tr-legacy-0b1410, #0b1410)}
 .trpr .press-vb{display:block;align-self:flex-start;width:auto;height:44px;margin:0}
 .trpr .press-lead blockquote{flex:1;margin:0;font:400 28px/1.4 var(--heading-font,Archivo),Arial,sans-serif;letter-spacing:0}
-.page .trpr .press-read{align-self:flex-start;display:inline-flex;align-items:center;gap:10px;min-height:48px;padding:0 22px;border:1.5px solid #0b1410;border-radius:6px;color:#0b1410;font-size:17px;font-weight:600;text-decoration:none}
+.page .trpr .press-read{align-self:flex-start;display:inline-flex;align-items:center;gap:10px;min-height:48px;padding:0 22px;border:1.5px solid var(--tr-legacy-0b1410, #0b1410);border-radius:var(--tr-square, 6px);color:var(--tr-legacy-0b1410, #0b1410);font-size:17px;font-weight:600;text-decoration:none}
 .page .trpr .press-read:hover{background:var(--tr-color-surface-control);color:var(--tr-color-accent-base)}
-.trpr .press-list{grid-column:span 5;display:flex;flex-direction:column;border:1px solid var(--tr-color-line-rule);border-radius:6px;background:var(--tr-color-surface-panel)}
+.trpr .press-list{grid-column:span 5;display:flex;flex-direction:column;border:1px solid var(--tr-color-line-rule);border-radius:var(--tr-square, 6px);background:var(--tr-color-surface-panel)}
 .page .trpr .press-list a{flex:1;display:flex;flex-direction:column;gap:12px;padding:26px 30px;color:var(--tr-color-text-primary);text-decoration:none}
 .trpr .press-list a+a{border-top:1px solid var(--tr-color-line-rule)}
 .trpr .press-list a:hover{background:var(--tr-color-surface-panel-raised)}
