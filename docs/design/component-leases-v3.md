@@ -33,9 +33,13 @@ Under v3:
    state.
 6. The two-cloud cap counts distinct clouds. A second component on a cloud
    that already holds a lease takes no new slot.
-7. The holdback is a cloud with no lease of any component. It is still probed
-   whole (`probe_cloud`: both services), and a second grant re-checks that it
-   is unchanged.
+7. The holdback is a cloud with no lease of any component, probed whole
+   (`probe_cloud`: both services). While the previous holdback is still
+   outside the rollout it stays the holdback, and every grant requires it
+   healthy and unchanged, with no fallback to another cloud. A fallback
+   would let a change outside any lease be laundered by the second grant
+   on gcp (review of #2568). A new holdback is chosen only when the previous
+   one is itself being leased.
 8. FIFO: an earlier live waiter blocks a request when their components
    conflict on the same cloud (rules 2 to 4). Waiters for the other lane do not.
    Earlier waiters for other new clouds still take free cloud slots first.
@@ -43,15 +47,31 @@ Under v3:
    (`probe_component`). This answers E5: a gateway regression can no longer
    hold a finished control-plane lease, nor the reverse. Under v2 they still
    probe the whole cloud.
+   - **gateway:** `api*.trustedrouter.com/health`.
+   - **control-plane:** the API service the deploy changed. On gcp,
+     `/health` and `/trust/control-plane.json` are served by the public
+     service, so the probe also requires the API service's own structured
+     401 from `/v1/internal/synthetic/health`, which the URL map routes to
+     `trusted-router-control-backend`. No token is sent; the coordinator
+     carries no secrets. All three planes answer it identically (checked
+     2026-11-13).
+   - **public-surface:** `/health` and the release evidence.
 10. Every grant increments `epochs[key]`. `lanes --cloud C` prints, for each
-    component, whether it holds a lease, its state and its epoch. Equal epochs
-    and no lease at two reads mean no lease of that component existed between
-    them. This is what the gateway's gates read.
+    component, whether it holds a lease, its state and its epoch, plus the
+    journal's `journal_id`. Equal epochs, the same journal id and no lease at
+    two reads mean no lease of that component existed between them. This is
+    what the gateway's gates read.
+    - Epochs never go back: `downgrade` keeps them as `carried_epochs`
+      (v2 clients preserve fields they do not know), and `upgrade` restores
+      them.
+    - Every `upgrade` writes a fresh `journal_id`, so even a downgrade and
+      upgrade between two reads cannot repeat a snapshot (ABA).
 11. A check (`assert`) depends on its own lease and the holdback. Another
     component's lease coming or going does not invalidate it.
-12. A v3 journal that no client could write (conflicting leases, three
-    clouds, a repeated fence, a key that does not match its lease, bad
-    epochs) is refused.
+12. A v3 journal that no client could write is refused: conflicting leases,
+    three clouds, a repeated fence, a key that does not match its lease, an
+    epoch key that is not `cloud/component`, a held lease whose epoch is 0
+    or missing, or a missing journal id.
 
 Unchanged: fencing by operation id, no reclaim by time, generation CAS writes,
 blocked leases need proof of a stopped owner, the queue and its observation
@@ -74,29 +94,63 @@ Each gate runs unchanged inside `gate_hold`. After each attempt
 `gate_hold.py decide` returns `pass`, `gateway:<why>` or
 `inconclusive:<why>`:
 
-- **Pass.** Only when the gate passed. One addition: a canary that passed while
-  the control plane moved must also show a fresh `tls_health` and
-  `attestation_nonce` row for the region from every monitor. Otherwise a
-  stalled ingest path would show the canary only old rows.
+- **Pass.** Only when the gate passed. One addition: the canary reads an
+  unreachable status page as `unknown` and passes. So when the control plane
+  moved, or its lanes were unreadable, a canary pass also needs the latest
+  fresh `tls_health` and `attestation_nonce` row for the region from every
+  monitor. Each must be up. A failing one makes it the gateway's failure; a
+  missing or not-up one makes it inconclusive.
 - **The gateway's failure, at once, as before**, when either:
   - the failure cannot come from the control plane: a failed canary; a
     pre-DNS failure outside the request path (attestation, image, instance
     count, DNS); or the latest fresh enclave-only probe for the region is down;
   - or the control plane was provably still and healthy for the gate's whole
     window: no control-plane or public-surface lease at either end, equal lane
-    epochs, status.json readable, no fresh control-plane probe
-    (`gateway_authorize`, `gateway_settle`, `gateway_authorize_settle`,
-    `control_plane_health`) down, and every monitor ingested a row.
+    epochs and the same journal id, status.json readable, no fresh
+    control-plane probe (`gateway_authorize`, `gateway_settle`,
+    `gateway_authorize_settle`, `control_plane_health`) down, and every
+    monitor ingested a row.
 - **Inconclusive otherwise.** The region stays as the gate left it: drained
   from canonical DNS, or with its new instances not yet published. Nothing is
-  promoted, and the whole gate re-runs with a fresh window. Once the region
-  has been held for `TR_CP_HOLD_MAX_SECONDS` (default 1800) in total, across
-  all its gates, the gate fails closed with its own status, and the
-  ordinary recovery runs.
+  promoted, and the whole gate re-runs with a fresh window.
+
+Every limit is a hard deadline. An attempt in flight when one is reached is
+killed, together with its process group, and the gate fails closed with its
+own status, or 124. The limits are:
+
+- **An attempt cap per gate** (`TR_CP_HOLD_ATTEMPT_SECONDS`): 12 minutes for
+  pre-DNS and PONG on us-central1 (the old step limits), 25 for a
+  secondary's PONG, 10 for the canary, and 6 for discovery.
+- **A hold bound per gate** (`TR_CP_HOLD_MAX_SECONDS`, 30 minutes), counted
+  from that gate's first inconclusive verdict. The clock is per gate, so a
+  gate that passed leaves nothing behind.
+- **A budget per job** (`TR_CP_HOLD_BUDGET_SECONDS`, 45 minutes) for every
+  hold of every gate of every region, including status.json presence waits.
+  It keeps the rollout job's worst case (about 341 minutes) under its own
+  350-minute limit and GitHub's 360. If the budget's records cannot be
+  written, the gate fails closed.
+
+Every step timeout covers its gate's worst case: one capped attempt, the
+hold, and the bounded journal and status reads. The wave and US West each
+have a forward deadline of the old 55 minutes plus the budget, then 45
+minutes that recovery keeps. A wave region still stops at once when a peer
+fails or its deadline passes, even mid-attempt or mid-hold.
 
 `verify-region-before-dns.sh` exits 65 (`CP_DEPENDENT_STATUS`) for
-request-path failures, so attestation failures stay immediate. If the
-classifier itself cannot run, the gate's own verdict stands, as before.
+request-path failures, so attestation failures stay immediate. Two cases are
+never re-run, because the gate has DNS and certificate side effects there:
+
+- a first deployment, which swaps the cold CNAME;
+- a run that already swapped it, which turns 65 into 1.
+
+**Recovery** still verifies the restored template with the plain gate. If
+that exits 65, the region stays drained and its state is `recovery-failed`,
+so the finalizer never re-adds it. The operator message says the request path
+failed, which the control plane may cause, and that re-running recovery once
+trustedrouter.com is healthy verifies and re-adds the region.
+
+If the classifier itself cannot run, a failed gate keeps its own status, and a
+canary pass fails closed.
 
 Every gate stays exactly as strict for the component it measures. Under v2,
 `lanes` shows only the gateway's own lease, so every verdict is the same as
@@ -162,10 +216,21 @@ must come back, downgrade first.
 A v2 client that starts after step 4 fails at admission, before it mutates
 anything. It needs a run on a commit with the new pin.
 
+## Known gap: Terraform changes the URL map without a lease
+
+`infra-apply` with operation `terraform` applies `infra/` (including
+`control_lb_url_map.tf`) with no lease of any component, as it does today
+under v2. A URL-map change while a gateway gate runs could change the
+authorize or settle route that gate's requests take, with no lane showing it.
+This is unchanged by v3, and it predates it: v2 did not lease Terraform
+either. Closing it means the Terraform job taking the `gcp/public-surface`
+lease, which is exclusive with both lanes. That is a separate change to
+`infra-apply.yml`.
+
 ## Not verified
 
 - **How long `control_plane_core` stays down during a bad control-plane ramp.**
-  The 30-minute bound assumes the control plane's own canary and drain watch
+  The 30-minute bound per gate (45 per job) assumes the control plane's own canary and drain watch
   (3 and 15 minutes) roll back a bad revision well inside it. It is a
   measured worst case for neither.
 - **Starvation inside the monitor.** The monitor's ledger probes share a
@@ -174,8 +239,7 @@ anything. It needs a run on a commit with the new pin.
   the 300-second job timeout and silence the control-plane rows. Measured
   2026-11-08 to 11-13 over 7 gateway rollouts (387 executions per monitor):
   no failed execution, and the slowest was 255 s, against 300 s.
-- **The gateway's own rollout cost while held.** A held region stays
-  drained, at most 30 minutes longer per region. Step timeouts are raised
-  by the same amount.
+- **The gateway's own rollout cost while held.** A held region stays drained:
+  at most 30 minutes per gate, and 45 minutes in total across the job.
 - **aws and azure gateways.** They are not concurrent (rule 3); their gates
   have the same coupling and are not yet attributable.

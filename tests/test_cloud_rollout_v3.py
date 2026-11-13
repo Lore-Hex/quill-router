@@ -9,15 +9,19 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import sys
 import threading
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.deploy import cloud_rollout as rollout
+
+API_SERVICE_ANSWERS = rollout.api_service_answers  # kept before the autouse stub
 
 QR = "https://github.com/Lore-Hex/quill-router/actions/runs/{}"
 QCP = "https://github.com/Lore-Hex/quill-cloud-proxy/actions/runs/{}"
@@ -182,10 +186,40 @@ def test_v3_holdback_is_a_cloud_with_no_lease_and_is_probed_whole(v3):
 def test_v3_a_leased_cloud_never_becomes_the_holdback(v3):
     hold(v3, "gcp", "control-plane")
     assert v3.store.record["holdback"]["cloud"] == "aws"
-    v3.health["aws"] = None  # the only cloud with no lease that could stand in
+    v3.health["azure"] = None  # leasing aws leaves only azure to protect
     with pytest.raises(rollout.Refused, match="no unchanged healthy cloud"):
-        hold(v3, "azure", "gateway", run=2)
+        hold(v3, "aws", "gateway", run=2)
     assert set(v3.store.record["leases"]) == {"gcp/control-plane"}
+
+
+def test_v3_leasing_the_holdback_moves_protection_to_the_free_cloud(v3):
+    hold(v3, "gcp", "control-plane")
+    hold(v3, "aws", "gateway", run=2)
+    assert v3.store.record["holdback"]["cloud"] == "azure"
+
+
+@pytest.mark.parametrize("change", ["changed", "unhealthy"])
+def test_v3_a_sibling_grant_never_launders_a_changed_holdback(v3, change):
+    """Review of #2568: a second gcp grant must not move protection elsewhere."""
+    cp = hold(v3, "gcp", "control-plane")
+    assert v3.store.record["holdback"]["cloud"] == "aws"
+    v3.health["aws"] = "b" * 40 if change == "changed" else None  # outside any lease
+    assert v3.health["azure"] is not None  # a healthy cloud that could stand in
+    with pytest.raises(rollout.Refused):
+        v3.coordinator.check("gcp", cp["operation_id"])
+    before = (copy.deepcopy(v3.store.record), v3.store.generation)
+    with pytest.raises(rollout.Refused):
+        hold(v3, "gcp", "gateway", run=2)
+    assert (v3.store.record, v3.store.generation) == before
+    with pytest.raises(rollout.Refused):
+        v3.coordinator.check("gcp", cp["operation_id"])
+
+
+def test_v2_grant_with_a_changed_holdback_still_refuses(v2):
+    hold(v2, "gcp", "control-plane")
+    v2.health["aws"] = "b" * 40
+    with pytest.raises(rollout.Refused):
+        hold(v2, "azure", "gateway", run=2)
 
 
 def test_v3_second_component_rechecks_the_unchanged_holdback(v3):
@@ -195,7 +229,7 @@ def test_v3_second_component_rechecks_the_unchanged_holdback(v3):
     for cloud in set(rollout.CLOUDS) - {"gcp", holdback}:
         v3.health[cloud] = None  # and no other cloud can stand in
     before = v3.store.generation
-    with pytest.raises(rollout.Refused, match="no unchanged healthy cloud"):
+    with pytest.raises(rollout.Refused, match="protected cloud changed"):
         hold(v3, "gcp", "gateway", run=2)
     assert v3.store.generation == before
 
@@ -239,9 +273,18 @@ def test_v3_recover_probes_only_the_recovered_component(v3):
 PLANE_JSON = {"release": "c" * 40, "api_base_url": "https://api.trustedrouter.com/v1"}
 
 
+@pytest.fixture(autouse=True)
+def no_live_api(monkeypatch):
+    """Tests never reach a real plane; a test that needs the API probe sets it."""
+    def refuse(plane):
+        raise AssertionError(f"unexpected live API probe of {plane}")
+    monkeypatch.setattr(rollout, "api_service_answers", refuse)
+
+
 @pytest.mark.parametrize("component,expected", [
     ("gateway", ["https://api.trustedrouter.com/health"]),
-    ("control-plane", ["https://trustedrouter.com/trust/control-plane.json",
+    ("control-plane", ["api https://trustedrouter.com",
+                       "https://trustedrouter.com/trust/control-plane.json",
                        "https://trustedrouter.com/health",
                        "https://trustedrouter.com/trust/control-plane.json"]),
     ("public-surface", ["https://trustedrouter.com/trust/control-plane.json",
@@ -256,6 +299,7 @@ def test_probe_component_reads_only_that_components_service(monkeypatch, compone
         return PLANE_JSON if url.endswith("control-plane.json") else {"status": "ok"}
 
     monkeypatch.setattr(rollout, "fetch", fetch)
+    monkeypatch.setattr(rollout, "api_service_answers", lambda plane: fetched.append(f"api {plane}"))
     rollout.probe_component("gcp", component)
     assert fetched == expected
 
@@ -271,14 +315,71 @@ def test_probe_component_refuses_its_own_unhealthy_service(monkeypatch, componen
         return PLANE_JSON if url.endswith("control-plane.json") else {"status": "ok"}
 
     monkeypatch.setattr(rollout, "fetch", fetch)
+    monkeypatch.setattr(rollout, "api_service_answers", lambda plane: None)
     with pytest.raises(rollout.Refused, match=f"gcp/{component} is not verified healthy"):
         rollout.probe_component("gcp", component)
+
+
+def test_probe_component_refuses_when_the_api_service_does_not_answer(monkeypatch):
+    def down(plane):
+        raise rollout.Refused("control-plane API did not answer")
+
+    monkeypatch.setattr(rollout, "api_service_answers", down)
+    monkeypatch.setattr(rollout, "fetch", lambda url: PLANE_JSON if url.endswith(".json") else {"status": "ok"})
+    with pytest.raises(rollout.Refused, match="gcp/control-plane is not verified healthy"):
+        rollout.probe_component("gcp", "control-plane")
+    rollout.probe_component("gcp", "public-surface")  # the public service needs no API answer
+
+
+class FakeOpener:
+    def __init__(self, outcomes):
+        self.outcomes, self.urls = list(outcomes), []
+
+    def open(self, request, timeout):
+        self.urls.append(request.full_url)
+        code, body = self.outcomes.pop(0)
+        if code == 200:
+            return io.BytesIO(body)
+        raise urllib.error.HTTPError(request.full_url, code, "x", {}, io.BytesIO(body))
+
+
+ROUTER_401 = json.dumps({"error": {"code": 401, "message": "Invalid internal service token",
+                                   "type": "unauthorized", "source": "router"}}).encode()
+
+
+def real_api_probe(monkeypatch, outcomes):
+    opener = FakeOpener(outcomes)
+    monkeypatch.setattr(rollout.urllib.request, "build_opener", lambda *a: opener)
+    monkeypatch.setattr(rollout.time, "sleep", lambda s: None)
+    return opener
+
+
+@pytest.mark.parametrize("outcomes,ok", [
+    ([(401, ROUTER_401)], True),
+    ([(503, b""), (401, ROUTER_401)], True),
+    ([(401, b'{"error": {"code": 401, "source": "edge"}}')], False),
+    ([(401, b"<html>")], False),
+    ([(404, b"{}")], False),
+    ([(200, b"{}")], False),
+    ([(503, b""), (503, b""), (503, b"")], False),
+])
+def test_api_service_answers_only_with_its_own_401(monkeypatch, outcomes, ok):
+    opener = real_api_probe(monkeypatch, outcomes)
+    probe = API_SERVICE_ANSWERS
+    if ok:
+        probe("https://trustedrouter.com")
+    else:
+        with pytest.raises(rollout.Refused):
+            probe("https://trustedrouter.com")
+    assert all(u.startswith("https://trustedrouter.com/v1/internal/synthetic/health?rollout_check=")
+               for u in opener.urls)
 
 
 def test_probe_component_requires_stable_release_evidence(monkeypatch):
     answers = iter([PLANE_JSON, {"status": "ok"}, {**PLANE_JSON, "release": "d" * 40}])
     monkeypatch.setattr(rollout, "fetch", lambda url: next(answers))
-    with pytest.raises(rollout.Refused):
+    monkeypatch.setattr(rollout, "api_service_answers", lambda plane: None)
+    with pytest.raises(rollout.Refused, match="not verified healthy"):
         rollout.probe_component("gcp", "control-plane")
 
 
@@ -503,13 +604,49 @@ def test_upgrade_needs_an_empty_journal(v2, busy):
 
 def test_upgrade_and_downgrade_are_idempotent_and_exact(v2):
     assert v2.coordinator.upgrade() is True
+    journal_id = v2.store.record.pop("journal_id")
+    assert rollout.TICKET.fullmatch(journal_id)
     assert v2.store.record == {"schema_version": 3, "leases": {}, "holdback": None, "epochs": {}}
+    v2.store.record["journal_id"] = journal_id
     writes = v2.store.writes
     assert v2.coordinator.upgrade() is False
     assert v2.store.writes == writes
     assert v2.coordinator.downgrade() is True
     assert v2.store.record == {"schema_version": 2, "leases": {}, "holdback": None}
     assert v2.coordinator.downgrade() is False
+
+
+def test_epochs_survive_a_downgrade_and_every_upgrade_gets_a_new_journal_id(v3):
+    """No ABA for a gate window: lanes never repeats an earlier snapshot."""
+    lease = hold(v3, "gcp", "control-plane")
+    v3.coordinator.release("gcp", lease["operation_id"], True)
+    first = v3.coordinator.lanes("gcp")
+    assert first["lanes"]["control-plane"]["epoch"] == 1
+    assert v3.coordinator.downgrade() is True
+    assert v3.store.record["carried_epochs"] == {"gcp/control-plane": 1}
+    hold(v3, "gcp", "gateway")  # a v2 lease; v2 keeps the carried field
+    v3.coordinator.release("gcp", v3.store.record["leases"]["gcp"]["operation_id"], True)
+    assert v3.coordinator.upgrade() is True
+    second = v3.coordinator.lanes("gcp")
+    assert second["lanes"]["control-plane"]["epoch"] == 1
+    assert second["journal_id"] != first["journal_id"]
+    hold(v3, "gcp", "control-plane", run=2)
+    assert v3.coordinator.lanes("gcp")["lanes"]["control-plane"]["epoch"] == 2
+
+
+def test_lanes_retries_a_conflicting_read(v3):
+    reads = [0]
+    inner = v3.store.read
+
+    def flaky():
+        reads[0] += 1
+        if reads[0] < 3:
+            raise rollout.Conflict()
+        return inner()
+
+    v3.store.read = flaky
+    assert v3.coordinator.lanes("gcp")["schema_version"] == 3
+    assert reads[0] == 3
 
 
 @pytest.mark.parametrize("busy", ["lease", "waiter"])
@@ -585,8 +722,10 @@ def v3_lease(cloud, component, fence):
             "state": "active", "created_at": 1, "expires_at": 2, "host": "h", "pid": 0}
 
 
-def v3_record(*leases, holdback="azure", epochs=None):
-    record = {"schema_version": 3, "holdback": None, "epochs": epochs or {},
+def v3_record(*leases, holdback="azure", epochs=None, journal_id="e" * 32):
+    record = {"schema_version": 3, "holdback": None,
+              "epochs": {f"{c}/{k}": 1 for c, k, _ in leases} if epochs is None else epochs,
+              "journal_id": journal_id,
               "leases": {f"{c}/{k}": v3_lease(c, k, f) for c, k, f in leases}}
     if leases:
         record["holdback"] = {"cloud": holdback, "release": "a" * 40, "checked_at": 1}
@@ -602,6 +741,12 @@ def v3_record(*leases, holdback="azure", epochs=None):
     (v3_record(("gcp", "gateway", "a" * 32), holdback="gcp"), "protected cloud"),
     (v3_record(("gcp", "gateway", "a" * 32), epochs={"gcp/gateway": -1}), "epochs"),
     (v3_record(epochs={"gcp/gateway": "1"}), "epochs"),
+    (v3_record(("gcp", "gateway", "a" * 32), epochs={}), "epochs"),
+    (v3_record(("gcp", "gateway", "a" * 32), epochs={"gcp/gateway": 0}), "epochs"),
+    (v3_record(epochs={"gcp/router": 1}), "epochs"),
+    (v3_record(epochs={"gcp": 1}), "epochs"),
+    (v3_record(journal_id=None), "journal id"),
+    (v3_record(journal_id="x"), "journal id"),
 ])
 def test_v3_journal_validation_refuses_states_no_client_writes(record, match):
     with pytest.raises(rollout.Refused, match=match):

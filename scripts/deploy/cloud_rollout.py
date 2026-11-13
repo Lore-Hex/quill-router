@@ -264,6 +264,46 @@ def probe_cloud(cloud: str) -> str:
         raise Refused(f"{cloud} is not a verified healthy holdback") from exc
 
 
+# A route the URL map sends to the API service (trusted-router-control-backend
+# on gcp; `/v1/*` minus the public carve-outs), answered by the application
+# itself without storage. /health and /trust/control-plane.json are served by
+# the public service, which a control-plane deploy does not change.
+API_PROBE_PATH = "/v1/internal/synthetic/health"
+
+
+def api_service_answers(plane: str) -> None:
+    """The control plane's API service answers its own unauthenticated 401.
+
+    No token is sent: the coordinator carries no secrets. The application, and
+    only the application, answers with this exact structured error, so a load
+    balancer error, a redirect or another service fails the check.
+    """
+    request = urllib.request.Request(  # noqa: S310 - fixed HTTPS origins in PLANES
+        f"{plane}{API_PROBE_PATH}?rollout_check={uuid.uuid4().hex}",
+        headers={"Accept": "application/json", "Cache-Control": "no-cache",
+                 "User-Agent": "TrustedRouter-Release-Coordinator/2"},
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.build_opener(NoRedirect()).open(request, timeout=15):
+                raise Refused("control-plane API answered an unauthenticated internal call")
+        except urllib.error.HTTPError as exc:
+            if exc.code in {429, 502, 503, 504} and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            raw = exc.read(MAX_BYTES + 1)
+            try:
+                body = json.loads(raw) if len(raw) <= MAX_BYTES else None
+            except ValueError:
+                body = None
+            error = body.get("error") if isinstance(body, dict) else None
+            if (exc.code == 401 and isinstance(error, dict) and error.get("code") == 401
+                    and error.get("type") == "unauthorized" and error.get("source") == "router"):
+                return
+            raise Refused(f"control-plane API answered HTTP {exc.code} without its own error") from exc
+    raise Refused("control-plane API did not answer")
+
+
 def probe_component(cloud: str, component: str) -> None:
     """Check only the service a v3 lease's owner changed, before releasing it.
 
@@ -278,7 +318,9 @@ def probe_component(cloud: str, component: str) -> None:
             if fetch(f"{gateway}/health").get("status") != "ok":
                 raise Refused("gateway unhealthy")
             return
-        # control-plane and public-surface both serve trustedrouter.com.
+        if component == "control-plane":
+            api_service_answers(plane)
+        # The public service: the release evidence and the cloud's /health.
         before = fetch(f"{plane}/trust/control-plane.json")
         if fetch(f"{plane}/health").get("status") != "ok":
             raise Refused("control plane unhealthy")
@@ -330,7 +372,7 @@ def _v3_leases(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(leases, dict):
         raise Refused("invalid release journal leases")
     for key, lease in leases.items():
-        cloud, _, component = key.partition("/") if isinstance(key, str) else ("", "", "")
+        cloud, _, component = key.partition("/") if _valid_key(key) else ("", "", "")
         if (cloud not in CLOUDS or component not in COMPONENTS
                 or not _valid_lease(lease, cloud) or lease.get("component") != component):
             raise Refused("invalid release lease")
@@ -345,11 +387,22 @@ def _v3_leases(raw: dict[str, Any]) -> dict[str, Any]:
             if lease["cloud"] == other["cloud"] and conflicts(
                     V3, lease["cloud"], lease["component"], other["component"]):
                 raise Refused("invalid release journal leases: conflicting components")
-    epochs = raw.get("epochs", {})
+    epochs = raw.get("epochs")
     if (not isinstance(epochs, dict)
-            or not all(isinstance(k, str) and type(v) is int and v >= 0 for k, v in epochs.items())):
+            or not all(_valid_key(k) and type(v) is int and v >= 0 for k, v in epochs.items())
+            or any(epochs.get(key, 0) < 1 for key in leases)):
+        # Every lease was granted, and every grant moved its lane's epoch.
         raise Refused("invalid release journal epochs")
+    if not isinstance(raw.get("journal_id"), str) or not TICKET.fullmatch(raw["journal_id"]):
+        raise Refused("invalid release journal id")
     return leases
+
+
+def _valid_key(key: object) -> bool:
+    if not isinstance(key, str):
+        return False
+    cloud, _, component = key.partition("/")
+    return cloud in CLOUDS and component in COMPONENTS
 
 
 def state_record(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -358,6 +411,7 @@ def state_record(raw: dict[str, Any] | None) -> dict[str, Any]:
     version = raw.get("schema_version")
     if type(version) is not int or version not in (VERSION, V3):
         raise Busy("legacy or unknown deployment lock exists; wait for its owner, do not delete it")
+    leases: Any
     if version == V3:
         leases = _v3_leases(raw)
     else:
@@ -547,6 +601,20 @@ class Coordinator:
         raise Refused("release journal contention; no unguarded deployment permitted")
 
     def holdback(self, excluded: set[str], previous: dict[str, Any] | None) -> dict[str, Any]:
+        """The protected cloud for a grant.
+
+        While the previous holdback is still outside the rollout, it stays the
+        holdback and must be healthy and unchanged; no other cloud may stand in
+        for it. Otherwise a change outside any lease could be laundered by
+        moving protection to another cloud, which a v3 second grant on an
+        already-leased cloud would do on every rollout. Only when the previous
+        holdback is itself being leased is a new one chosen.
+        """
+        if previous and previous["cloud"] not in excluded:
+            release = self.probe(previous["cloud"])
+            if release != previous["release"]:
+                raise Refused("protected cloud changed outside the rollout guard")
+            return {"cloud": previous["cloud"], "release": release, "checked_at": int(self.now())}
         candidates = [c for c in CLOUDS if c not in excluded]
         if previous and previous["cloud"] in candidates:
             candidates.remove(previous["cloud"])
@@ -837,8 +905,15 @@ class Coordinator:
                 raise _Unchanged(False)
             if state["leases"] or queue_of(state):
                 raise Busy("upgrade needs an empty journal: no lease and no waiter")
+            # Epochs only ever grow, across a downgrade and back too, and every
+            # upgrade gets a fresh journal id that `lanes` reports: a reader
+            # comparing two snapshots never mistakes a new journal for the old.
+            carried = state.get("carried_epochs")
+            epochs = ({k: v for k, v in carried.items() if _valid_key(k) and type(v) is int and v >= 0}
+                      if isinstance(carried, dict) else {})
             state.clear()
-            state.update({"schema_version": V3, "leases": {}, "holdback": None, "epochs": {}})
+            state.update({"schema_version": V3, "leases": {}, "holdback": None,
+                          "epochs": epochs, "journal_id": uuid.uuid4().hex})
             return True
 
         return bool(self.transaction(change))
@@ -850,8 +925,13 @@ class Coordinator:
                 raise _Unchanged(False)
             if state["leases"] or queue_of(state):
                 raise Busy("downgrade needs an empty journal: no lease and no waiter")
+            # v2 clients keep fields they do not know, so the epochs survive
+            # for the next upgrade.
+            epochs = state["epochs"]
             state.clear()
             state.update({"schema_version": VERSION, "leases": {}, "holdback": None})
+            if epochs:
+                state["carried_epochs"] = epochs
             return True
 
         return bool(self.transaction(change))
@@ -861,12 +941,20 @@ class Coordinator:
 
         A gateway gate reads this before and after a measurement window. The
         control plane did not move during the window only if its lane (and the
-        public surface's) held no lease at either read and its epoch did not
-        change. v2 has no epochs; there one lease covers the whole cloud.
+        public surface's) held no lease at either read, its epoch did not change,
+        and the journal id is the same. v2 has no epochs; there one lease covers
+        the whole cloud.
         """
         if cloud not in CLOUDS:
             raise Refused("invalid cloud")
-        raw, _ = self.store.read()
+        for _ in range(8):
+            try:
+                raw, _ = self.store.read()
+                break
+            except Conflict:
+                continue
+        else:
+            raise Refused("release journal changed during every read")
         state = state_record(raw)
         version = state["schema_version"]
         epochs = state.get("epochs", {}) if version == V3 else {}
@@ -882,7 +970,8 @@ class Coordinator:
             for component in held:
                 lanes[component]["held"] = True
                 lanes[component]["state"] = lease["state"]
-        return {"schema_version": version, "cloud": cloud, "lanes": lanes}
+        return {"schema_version": version, "cloud": cloud, "lanes": lanes,
+                "journal_id": state.get("journal_id") if version == V3 else None}
 
 
 # A control-plane deploy waits behind a gateway rollout, which holds the gcp
