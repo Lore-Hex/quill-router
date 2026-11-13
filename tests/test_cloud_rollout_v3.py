@@ -192,6 +192,29 @@ def test_v3_a_leased_cloud_never_becomes_the_holdback(v3):
     assert set(v3.store.record["leases"]) == {"gcp/control-plane"}
 
 
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_leasing_a_changed_holdback_is_refused(version):
+    """Follow-up to #2568 review: v2 had the same gap."""
+    system = make_system(version)
+    hold(system, "gcp", "control-plane")
+    assert system.store.record["holdback"]["cloud"] == "aws"
+    system.health["aws"] = "b" * 40  # changed outside any lease
+    before = (copy.deepcopy(system.store.record), system.store.generation)
+    with pytest.raises(rollout.Refused, match="refusing to lease over it"):
+        hold(system, "aws", "gateway", run=2)
+    assert (system.store.record, system.store.generation) == before
+
+
+@pytest.mark.parametrize("version", [rollout.VERSION, rollout.V3])
+def test_a_down_holdback_may_still_be_leased_to_repair_it(version):
+    system = make_system(version)
+    hold(system, "gcp", "control-plane")
+    system.health["aws"] = None
+    lease = hold(system, "aws", "gateway", run=2)
+    assert lease["cloud"] == "aws"
+    assert system.store.record["holdback"]["cloud"] == "azure"
+
+
 def test_v3_leasing_the_holdback_moves_protection_to_the_free_cloud(v3):
     hold(v3, "gcp", "control-plane")
     hold(v3, "aws", "gateway", run=2)

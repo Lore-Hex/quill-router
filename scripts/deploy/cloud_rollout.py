@@ -608,13 +608,24 @@ class Coordinator:
         for it. Otherwise a change outside any lease could be laundered by
         moving protection to another cloud, which a v3 second grant on an
         already-leased cloud would do on every rollout. Only when the previous
-        holdback is itself being leased is a new one chosen.
+        holdback is itself being leased is a new one chosen, and even then
+        the previous holdback is probed first: a release that changed outside
+        any lease is refused, not leased over unseen. A protected cloud that is
+        down (its release unreadable) may still be leased, to repair it, as
+        before.
         """
         if previous and previous["cloud"] not in excluded:
             release = self.probe(previous["cloud"])
             if release != previous["release"]:
                 raise Refused("protected cloud changed outside the rollout guard")
             return {"cloud": previous["cloud"], "release": release, "checked_at": int(self.now())}
+        if previous:
+            try:
+                seen: str | None = self.probe(previous["cloud"])
+            except Refused:
+                seen = None
+            if seen is not None and seen != previous["release"]:
+                raise Refused("protected cloud changed outside the rollout guard; refusing to lease over it")
         candidates = [c for c in CLOUDS if c not in excluded]
         if previous and previous["cloud"] in candidates:
             candidates.remove(previous["cloud"])
