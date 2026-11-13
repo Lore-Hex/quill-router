@@ -68,15 +68,18 @@ env_vars=(
   # lowered; a dry run at tier 1 and rank 10 (2026-11-13) would enable seven
   # workspaces by rank and disable none.
   "TR_FASTPATH_ENABLER_REQUIRED_TIER=1"
-  # Section 4(b): unspent credit of at least $20 to join, under $15 to leave
+  # Section 4(b): unspent credit of at least $30 to join, under $20 to leave
   # (Joseph, 2026-11-13; $100 and $40 until then admitted only nine
-  # workspaces). The leave threshold must stay below the join threshold
-  # (config.py). The lease floor is also $20, so a workspace between $15
-  # and $20 stays on with no lease headroom: its requests take a front-door
-  # hop, never money. A dry run at $20/$15 and rank 100 (2026-11-13) would
-  # enable 58 workspaces by rank and disable none.
-  "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=20000000"
-  "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=15000000"
+  # workspaces). $30 is the floor ($20) plus the largest top-up ($10), so an
+  # enabled workspace can take a lease; leaving at $20, the floor, keeps a
+  # workspace with no headroom off, and sits above the console's default
+  # auto-refill threshold ($10) so a refilling workspace does not flap. The
+  # leave threshold must stay below the join threshold (config.py). Only
+  # with the 503 for headroom in leases on (rollout.sh), so a near-floor
+  # hold that meets a lease is retried, not refused. A dry run at $30/$20
+  # and rank 100 (2026-11-13) would enable 26 workspaces and disable none.
+  "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=30000000"
+  "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=20000000"
   "TR_FASTPATH_ENABLER_INCLUDE=${TR_FASTPATH_ENABLER_INCLUDE}"
   "TR_FASTPATH_PILOT_EXCLUDE=${TR_FASTPATH_PILOT_EXCLUDE}"
   # The async shadow's workspaces, the same literal as rollout.sh's (a test

@@ -62,15 +62,15 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     run = _run(tmp_path, monkeypatch)
     assert run.returncode == 0, summarise(run)
     env, bindings, job = _job(run)
-    # WS4: apply writes the allow-list once armed; the ten largest join.
+    # WS5: apply writes the allow-list once armed; the hundred largest join.
     assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "100"
     lists = resolved_lists()
     # The include list is its own literal since WS2 emptied the pilot set.
     assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_ENABLER_INCLUDE"] != ""
     assert lists["TR_FASTPATH_PILOT_WORKSPACES"] == "" and "TR_FASTPATH_PILOT_ALL" not in env
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
-    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "20000000"
-    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "15000000"
+    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "30000000"
+    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "20000000"
     # The required tier, a literal no lower than the nodes' (section 4(b)).
     assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "1"
     assert env["TR_STORAGE_BACKEND"] == "spanner-clickhouse" and env["TR_SERVICE_SURFACE"] == "control"

@@ -4,7 +4,7 @@ Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
 #2396) and PR 7 built (§11); the rollout is at WS5 (§8.2), with the
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
 since WS3, the required tier lowered to 1 with the lower tiers' allowances
-since 2026-11-13 ((b), amended), `max_rank` 100 and the $20 join balance
+since 2026-11-13 ((b), amended), `max_rank` 100 and the $30 join balance
 since 2026-11-13. This is
 the short note the production
 rollout asks for before §8 step 9 of
@@ -136,8 +136,8 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
 | Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
-| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $20 since 2026-11-13 ($100 until then) | enabler setting |
-| Enabler's balance to disable | unspent credit under $15 since 2026-11-13 ($40 until then) | enabler setting |
+| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
+| Enabler's balance to disable | unspent credit under $20 since 2026-11-13 ($40 until then) | enabler setting |
 
 **Why.**
 
@@ -253,10 +253,17 @@ reconciler rather than at workspaces, the enabler raises
   a lease holding the rest gets 402 until PR 7's 503 is on
   (`fastpath_lease_headroom_503`), and 503 after it; WS6 waits for PR 7 for
   that reason.
-- **$100 and $40.** Below about $40 a grant leaves at most $20 for leases
-  past the floor, so most leases are refused and each request pays a front
-  door hop to be passed. The gap between enabling and disabling keeps a
-  workspace near the line from flapping each run.
+- **$100 and $40 (amended 2026-11-13: $30 and $20).** Below about $40 a
+  grant leaves at most $20 for leases past the floor, so most leases are
+  refused and each request pays a front door hop to be passed. The gap
+  between enabling and disabling keeps a workspace near the line from
+  flapping each run. At $100 only nine workspaces qualified (WS4), so
+  Joseph lowered the join balance: $30 is the floor plus the largest top-up
+  ($10), the least balance from which a grant can succeed, and $20, the
+  floor, is where no lease can, which also sits above the console's
+  default auto-refill threshold ($10). Near-floor balances bring the case
+  above (a hold meeting a lease holding the rest), so the 503 for headroom
+  in leases (PR 7) went on first; WS5 rather than WS6 now admits them.
 
 ### (c) The exclusion set
 
@@ -274,7 +281,7 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
-| Unspent credit under $40 (under $100 to join) | enabler; grant (`RefusedFloor`) | (b) |
+| Unspent credit under $20 (under $30 to join; $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
 | Deleted workspaces | enabler (the entity's deletion); edge `workspace.deleted` | |
 | BYOK candidates | request (`funding`; `candidates.byok`) | per request: the same workspace's credit requests stay in |
 | Non-credit funding: partner billing, custom or user-provided models, priced extras | request (`pricing`; `body.priced_extra`, `body.custom_model`) | |
@@ -451,7 +458,7 @@ needs no analytics read; the largest spenders carry most of the traffic
   it is disabled as latched; a mass latch never reaches the guard below
   and never raises `fastpath_enabler_mass_disable`. The guard and the pace
   count only workspaces whose every cause is capped. For any other cause
-  that came from a change of facts (tier below 3, balance under $40, a
+  that came from a change of facts (tier below the required tier, balance under the leave threshold, a
   federated home, a deletion, a probe, a bypass), the cap is a guard: when
   a run would disable more than 10% of the enabled set or 20 workspaces,
   whichever is larger, for those causes, it disables none of them that run
@@ -887,7 +894,10 @@ counts from before it do not count.
    `owner.failed` together under 1% of the front door's calls, from Python
    and the edge each.
 5. Grants: zero `RefusedAllowance`; `RefusedFloor` and `RefusedTier`
-   counted and each explained by a fact the enabler had not yet seen.
+   counted and each explained by a fact the enabler had not yet seen. (The
+   owner does not count refused grants yet, so this is read from the
+   enabler's reports and the edge's `owner.busy`; with the $30 join a
+   workspace spending below its last top-up can still meet the floor.)
 6. W3's ceilings: Spanner CPU, every subscription's backlog, pending work
    overdue, none crossed.
 7. The enabler: no `fastpath_enabler_mass_disable` or
@@ -905,7 +915,7 @@ Any alert, or any bar missed, is the way back (§8.3), then the cause.
 | WS2 | Entry, in this order: every node's release, and so every `fastpathctl` in use, carries PR 4; `hold-backfill` run again, which holds any stop an older node made since WS1's run (it is idempotent, and the enabler has written no disable yet); a dry-run report taken after it with `unheld_disabled` zero; `fastpathctl enabler arm`, which checks the same itself. Then the enabler in `apply` with `max_rank` 0 (it keeps the include list and enables nobody new); then, once a run's report shows the enabled set within the include list and nothing to disable, `TR_FASTPATH_PILOT_ALL=true` with the explicit list emptied | 2,000 leased settles under all mode; no `workspace` pass from Python for an enabled workspace (its switch copy works) |
 | WS3 | The wildcard row on for `gcp`, `us-central1`, then the include list's own on rows deleted, so they decide under the wildcard | 2,000 authorizes with `decided.via` `wildcard`; no `edge_decide_unavailable_sustained` |
 | WS4 | `max_rank` 10: the ten largest workspaces at or above the enabler's required tier (1 since 2026-11-13) | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
-| WS5 | `max_rank` 100 | 20,000 leased settles from the step's workspaces, and at least 50 granted |
+| WS5 | `max_rank` 100, the $30 join balance, PR 7's 503 on | 20,000 leased settles from the step's workspaces, and at least half of those that sent an eligible request granted (26 joined at entry, so 50 cannot be met) |
 | WS6 | PR 7 (the 503) deployed; `max_rank` unbounded: every workspace at or above the enabler's required tier | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |
 
 **The P1 synthetic workspace at tier 3.** An override does not reach tier
