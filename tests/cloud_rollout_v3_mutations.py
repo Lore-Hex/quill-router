@@ -94,17 +94,36 @@ MUTATIONS = [
      "        except (ValueError, Refused):\n            release = None",
      "        except Refused:\n            continue\n        except ValueError:\n            release = None",
      T + "test_default_coordinator_refuses_a_holdback_answering_without_its_release"),
-    ("a holdback that served no document cannot be repaired", COORDINATOR,
-     "        except (OSError, Redirected):\n            continue",
-     "        except (OSError, Redirected):\n            release = None",
-     T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
+    # "No document was served" has three kinds: a redirect, an HTTP error
+    # status and a transport failure. Each mutant below turns exactly one kind
+    # into an answer, so only that kind's cases in the test can catch it (a
+    # mutant over two or three kinds at once is caught by any one of them and
+    # shows nothing about the others).
     ("a redirect counts as an answer", COORDINATOR,
      '        raise Redirected("cloud-local health must not redirect to another cloud")',
      '        raise Refused("cloud-local health must not redirect to another cloud")',
      T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
     ("an HTTP error status counts as an answer", COORDINATOR,
      "        except (OSError, Redirected):\n            continue",
-     "        except Redirected:\n            continue\n        except OSError:\n            release = None",
+     "        except urllib.error.HTTPError:\n            release = None\n"
+     "        except (OSError, Redirected):\n            continue",
+     T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
+    ("a transport failure counts as an answer", COORDINATOR,
+     "        except (OSError, Redirected):\n            continue",
+     "        except (urllib.error.HTTPError, Redirected):\n            continue\n"
+     "        except OSError:\n            release = None",
+     T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
+    # Two statuses a healthy plane can answer with: its own source limiter's
+    # 429 and an edge's 401. Only the cases with that status catch these.
+    ("a rate-limited evidence read counts as an answer", COORDINATOR,
+     "        except (OSError, Redirected):\n            continue",
+     "        except (OSError, Redirected) as exc:\n            if getattr(exc, \"code\", None) != 429:\n"
+     "                continue\n            release = None",
+     T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
+    ("an unauthorized evidence read counts as an answer", COORDINATOR,
+     "        except (OSError, Redirected):\n            continue",
+     "        except (OSError, Redirected) as exc:\n            if getattr(exc, \"code\", None) != 401:\n"
+     "                continue\n            release = None",
      T + "test_default_coordinator_leases_a_holdback_that_served_no_document"),
     ("only the first evidence read can refuse", COORDINATOR,
      "            changed = [r for r in self.releases(previous[\"cloud\"]) if r != previous[\"release\"]]",
@@ -118,6 +137,28 @@ MUTATIONS = [
      "            changed = [r for r in self.releases(previous[\"cloud\"]) if r != previous[\"release\"]]",
      "            changed = [r for r in self._probe_releases(previous[\"cloud\"]) if r != previous[\"release\"]]",
      T + "test_a_changed_holdback_with_failing_services_is_still_refused"),
+    # Rule 7's precondition: the lease relying on a changed holdback must be
+    # recoverable. The first two free the blocked lease without recovery, the
+    # third drops the proof recovery needs, and the last makes recovery wait
+    # for the changed holdback, which would close the only exit that needs
+    # nothing from the holdback.
+    ("a failed rollout frees its lease", COORDINATOR,
+     '            if not success:\n                lease["state"] = "blocked"\n                return',
+     "            if not success:\n                self.free(state, key)\n                return",
+     T + "test_a_changed_holdback_blocks_the_lease_relying_on_it_and_then_nothing_is_admitted"),
+    ("a blocked lease is freed by a release", COORDINATOR,
+     '            if lease["state"] != "active":\n                raise Refused("failed reservation requires',
+     '            if False:\n                raise Refused("failed reservation requires',
+     T + "test_a_changed_holdback_blocks_the_lease_relying_on_it_and_then_nothing_is_admitted"),
+    ("recovery skips the lease's own probe", COORDINATOR,
+     "recovery refused\")\n            self.probe_release(state, lease)",
+     "recovery refused\")",
+     T + "test_exit_one_is_closed_while_the_blocked_cloud_fails_its_own_probe"),
+    ("recovery waits for the holdback", COORDINATOR,
+     "recovery refused\")\n            self.probe_release(state, lease)",
+     "recovery refused\")\n            self.probe_release(state, lease)\n"
+     "            self.holdback(leased_clouds(state), state[\"holdback\"])",
+     T + "test_exit_one_recovering_the_blocked_lease_lets_the_changed_holdback_be_leased"),
     ("held lease with epoch 0 accepted", COORDINATOR,
      "            or any(epochs.get(key, 0) < 1 for key in leases)):",
      "            or False):",
