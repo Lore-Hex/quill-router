@@ -121,6 +121,10 @@ from trusted_router.storage_gcp_channel_failover import (
     install_spanner_channel_failover,
 )
 from trusted_router.storage_gcp_codec import (
+    SIGNUP_CREDIT_DOMAIN_KIND,
+    email_domain,
+)
+from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
 )
 from trusted_router.storage_gcp_codec import (
@@ -825,6 +829,7 @@ class SpannerStore(OperationalAnalyticsReads):
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
         social_rewards_issuer: str | None = None,
+        credit_domain_limit: int | None = None,
     ) -> User:
         if social_rewards_issuer is not None and (
             not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
@@ -839,6 +844,23 @@ class SpannerStore(OperationalAnalyticsReads):
                 if user is not None:
                     return user
 
+            trial_credit = trial_credit_microdollars
+            rewards_issuer = social_rewards_issuer
+            if credit_domain_limit is not None and trial_credit:
+                # Read and written in this transaction, so concurrent signups on
+                # one domain serialize on the counter row.
+                domain = email_domain(normalized_email)
+                counter = self._read_entity_tx(
+                    transaction, SIGNUP_CREDIT_DOMAIN_KIND, domain, dict
+                )
+                granted = int(counter["count"]) if counter else 0
+                if granted >= credit_domain_limit:
+                    trial_credit = 0
+                    rewards_issuer = None
+                else:
+                    self._write_entity_tx(
+                        transaction, SIGNUP_CREDIT_DOMAIN_KIND, domain, {"count": granted + 1}
+                    )
             new_user = User(
                 id=str(uuid.uuid4()),
                 email=normalized_email,
@@ -851,7 +873,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 owner_user_id=new_user.id,
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
-            initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
+            initial_total = 0 if trial_credit is None else trial_credit
             credit = CreditAccount(
                 workspace_id=workspace.id,
                 shard_count=DEFAULT_NEW_BILLING_SHARDS,
@@ -872,10 +894,10 @@ class SpannerStore(OperationalAnalyticsReads):
                 shard_count=credit.shard_count,
             )
             self._insert_owner_inventory_tx(transaction, new_user.id, workspace.id)
-            if social_rewards_issuer is not None:
+            if rewards_issuer is not None:
                 self._write_entity_tx(
                     transaction, "social_reward_enrollment", new_user.id,
-                    SocialRewardEnrollment(new_user.id, workspace.id, social_rewards_issuer),
+                    SocialRewardEnrollment(new_user.id, workspace.id, rewards_issuer),
                 )
             return new_user
 
@@ -926,6 +948,7 @@ class SpannerStore(OperationalAnalyticsReads):
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
         social_rewards_issuer: str | None = None,
+        credit_domain_limit: int | None = None,
     ) -> SignupResult | None:
         if self.find_user_by_email(email) is not None:
             return None
@@ -935,6 +958,7 @@ class SpannerStore(OperationalAnalyticsReads):
             trial_credit_microdollars=trial_credit_microdollars,
             email_verified=email_verified,
             social_rewards_issuer=social_rewards_issuer,
+            credit_domain_limit=credit_domain_limit,
         )
         workspace = self.list_workspaces_for_user(user.id)[0]
         if workspace_name:

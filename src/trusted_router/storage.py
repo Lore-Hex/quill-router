@@ -51,6 +51,7 @@ from trusted_router.storage_byok import InMemoryByok
 from trusted_router.storage_custom_models import InMemoryCustomModels
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
 from trusted_router.storage_errors import StoreConflict
+from trusted_router.storage_gcp_codec import email_domain
 from trusted_router.storage_generations import InMemoryGenerations
 from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
@@ -210,6 +211,8 @@ class InMemoryStore:
         self.retirement_notices: dict[str, dict[str, str]] = {}
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.user_transfer_daily: dict[tuple[str, str], int] = {}
+        #: Starter-credit grants per email domain (see signup_gate).
+        self.signup_credit_domains: dict[str, int] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
         self.routable_payout_profiles: dict[str, RoutablePayoutProfile] = {}
         self.routable_payout_profile_users_by_company: dict[str, str] = {}
@@ -298,6 +301,7 @@ class InMemoryStore:
             self.earnings_money.clear()
             self.credit_movements.clear()
             self.user_transfer_daily.clear()
+            self.signup_credit_domains.clear()
             self.routable_payout_profiles.clear()
             self.routable_payout_profile_users_by_company.clear()
             self.earnings_cashouts.clear()
@@ -472,6 +476,7 @@ class InMemoryStore:
         trial_credit_microdollars: int | None = None,
         email_verified: bool = False,
         social_rewards_issuer: str | None = None,
+        credit_domain_limit: int | None = None,
     ) -> User:
         if social_rewards_issuer is not None and (
             not social_rewards_issuer.strip() or trial_credit_microdollars != 150_000
@@ -483,6 +488,14 @@ class InMemoryStore:
             if existing_id is not None:
                 return self.users[existing_id]
 
+            if credit_domain_limit is not None and trial_credit_microdollars:
+                domain = email_domain(normalized_email)
+                granted = self.signup_credit_domains.get(domain, 0)
+                if granted >= credit_domain_limit:
+                    trial_credit_microdollars = 0
+                    social_rewards_issuer = None
+                else:
+                    self.signup_credit_domains[domain] = granted + 1
             new_id = str(uuid.uuid4())
             self.users[new_id] = User(
                 id=new_id, email=normalized_email, email_verified=email_verified
@@ -543,6 +556,7 @@ class InMemoryStore:
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
         email_verified: bool = False,
         social_rewards_issuer: str | None = None,
+        credit_domain_limit: int | None = None,
     ) -> SignupResult | None:
         """Atomically create a new account end-to-end. Returns None if the
         email is already registered."""
@@ -555,6 +569,7 @@ class InMemoryStore:
                 trial_credit_microdollars=trial_credit_microdollars,
                 email_verified=email_verified,
                 social_rewards_issuer=social_rewards_issuer,
+                credit_domain_limit=credit_domain_limit,
             )
             workspace = self.list_workspaces_for_user(user.id)[0]
             if workspace_name:
