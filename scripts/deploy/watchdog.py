@@ -8,18 +8,28 @@ comma-separated) so the workflow's rollback step can target only the
 failing regions.
 
 Per-region status, `--slo-class router_core` (the control-plane canary):
-only probes that pass through the control plane count. They are the
-authorize, settle and fallback probes, which the synthetic monitor sends to
-the control plane through the global load balancer, so each one is served
-by the control plane in the monitor's own region: a check whose
-`target_region` is empty is attributed to its `monitor_region`, and one that
-names a `target_region` to that region. The enclave-only probes
-(`tls_health`, `attestation_nonce`) never call the control plane, so for this
-verdict they are inconclusive, never failing: a gateway drain must not roll
-back a control-plane release, and must not blind its baseline. Nor is the
-published `router_core` SLO aggregate used, because it blends those enclave
-probes in. A region with no control-plane probe reads `unknown`; the deploy's
-billing-path 5xx gate (assert_no_billing_5xx.sh) still checks it.
+only probes that pass through the control plane count: authorize, settle
+and fallback. The synthetic monitor sends them to https://trustedrouter.com,
+and each is attributed to the control-plane region whose Cloud Run serves the
+path it hit (its `target_url`), following the load balancer's routes:
+  * `/v1/internal/gateway/authorize` goes to the multi-region control
+    backend, which serves a monitor from its own region: `monitor_region`.
+  * `/v1/internal/gateway/settle`, `/heartbeat` and `/refund` go to the
+    terminal backend while `terminal_c1_route_enabled` is true in
+    infra/control_terminal_backend.tf, whose only NEG is in us-central1: so
+    every monitor's settle is us-central1's evidence. Read from that file at
+    run time; if it cannot be read, settle evidence is inconclusive.
+A sample that depends on both stages counts only if they are served by the
+same region. A check that names a `target_region` is attributed to it.
+The enclave-only probes (`tls_health`, `attestation_nonce`) never call the
+control plane, so for this verdict they are inconclusive, never failing: a
+gateway drain must not roll back a control-plane release, and must not blind
+its baseline. Nor is the published `router_core` SLO aggregate used, because
+it blends those enclave probes in. A region with no attributable probe reads
+`unknown`, which does not block (as before) but is announced with a warning
+annotation. The synthetic monitors sample every three minutes and this
+script does not require a sample to be newer than a traffic shift, so a
+short watch can read a sample from before the shift.
 
 `--slo-class control_plane` keeps the original reading: the SLO class's
 `current_by_region`, falling back per missing region to `current.checks[]`.
@@ -49,8 +59,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
@@ -92,6 +104,35 @@ GATEWAY_ONLY_PROBES = frozenset({"tls_health", "attestation_nonce"})
 # router_core probes that pass through the control plane being canaried.
 CONTROL_PLANE_ROUTER_CORE_PROBES = SLO_PROBES["router_core"] - GATEWAY_ONLY_PROBES
 CONTROL_PLANE_TARGET = "control-plane"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TERMINAL_BACKEND_TF = REPO_ROOT / "infra" / "control_terminal_backend.tf"
+# The terminal paths the load balancer sends to that backend (with or without
+# the /v1 prefix); tests pin this list to infra/control_lb_url_map.tf.
+TERMINAL_PATHS = ("/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund")
+AUTHORIZE_PATH = "/internal/gateway/authorize"
+# Stages a sample depends on when its target_url does not say.
+DEFAULT_STAGES = {
+    "gateway_authorize": frozenset({"authorize"}),
+    "gateway_settle": frozenset({"settle"}),
+    "gateway_authorize_settle": frozenset({"authorize", "settle"}),
+    "provider_fallback": frozenset({"authorize", "settle"}),
+}
+UNREADABLE = "unreadable"
+_warned_unknown: set[str] = set()
+
+
+def terminal_route_region(path: Path = TERMINAL_BACKEND_TF) -> str | None:
+    """us-central1 (the terminal NEG's region) when the terminal route is on,
+    None when it is off, UNREADABLE when the Terraform cannot be read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return UNREADABLE
+    enabled = re.findall(r"^\s*terminal_c1_route_enabled\s*=\s*(true|false)\s*$", text, re.MULTILINE)
+    regions = set(re.findall(r"/regions/([a-z0-9-]+)/networkEndpointGroups/", text))
+    if len(enabled) != 1 or len(regions) != 1:
+        return UNREADABLE
+    return regions.pop() if enabled[0] == "true" else None
 
 
 def normalize_watchdog_status(status: object) -> str:
@@ -136,7 +177,7 @@ def fetch_per_region(
         return {region: "unknown" for region in regions}
 
     if slo_class == "router_core":
-        return control_plane_per_region(checks, regions)
+        return control_plane_per_region(checks, regions, terminal_route_region())
 
     out: dict[str, str] = {}
     if isinstance(slo_region_status, dict):
@@ -172,19 +213,37 @@ def fetch_per_region(
     return {region: out.get(region, worst.get(region, "unknown")) for region in regions}
 
 
-def control_plane_region(check: dict) -> str | None:
+def sample_stages(check: dict) -> frozenset[str]:
+    """Which control-plane stages a sample's status depends on."""
+    path = urllib.parse.urlsplit(str(check.get("target_url") or "")).path.removeprefix("/v1")
+    if path in TERMINAL_PATHS:
+        # A settle sample is written only after its authorize succeeded, so
+        # its status is the terminal call's.
+        return frozenset({"settle"})
+    if path == AUTHORIZE_PATH:
+        return frozenset({"authorize"})
+    return DEFAULT_STAGES.get(str(check.get("probe_type")), frozenset())
+
+
+def control_plane_region(check: dict, terminal: str | None = None) -> str | None:
     """The control-plane region that served a check, or None if unattributable."""
     target_region = check.get("target_region")
     if target_region:
         return str(target_region)
-    # Sent to the control plane through the global load balancer, which
-    # serves each monitor from its own region's control plane.
-    if check.get("target") == CONTROL_PLANE_TARGET and check.get("monitor_region"):
-        return str(check["monitor_region"])
-    return None
+    monitor = check.get("monitor_region")
+    if check.get("target") != CONTROL_PLANE_TARGET or not monitor:
+        return None
+    served = set()
+    for stage in sample_stages(check):
+        if stage == "settle" and terminal == UNREADABLE:
+            return None
+        served.add(terminal if stage == "settle" and terminal else str(monitor))
+    # A sample that crossed two regions cannot be blamed on either.
+    return served.pop() if len(served) == 1 else None
 
 
-def control_plane_per_region(checks: Iterable[object], regions: Iterable[str]) -> dict[str, str]:
+def control_plane_per_region(checks: Iterable[object], regions: Iterable[str],
+                             terminal: str | None = None) -> dict[str, str]:
     """Worst control-plane probe status per region; enclave-only probes never count."""
     regions = tuple(regions)
     worst: dict[str, str] = {}
@@ -200,19 +259,24 @@ def control_plane_per_region(checks: Iterable[object], regions: Iterable[str]) -
             continue
         if probe_type not in CONTROL_PLANE_ROUTER_CORE_PROBES:
             continue
-        region = control_plane_region(check)
+        region = control_plane_region(check, terminal)
         status = normalize_watchdog_status(check.get("effective_status") or check.get("status"))
         if region not in regions or status == "unknown":
             continue
         if SEVERITY[status] > SEVERITY.get(worst.get(region, ""), -1):
             worst[region] = status
+    if terminal == UNREADABLE and "terminal" not in _warned_unknown:
+        _warned_unknown.add("terminal")
+        print(f"::warning::watchdog: cannot read the terminal route from {TERMINAL_BACKEND_TF}; "
+              "settle evidence is inconclusive", flush=True)
     for region in regions:
         if region in inconclusive:
             print(f"  watchdog: {region}: {', '.join(sorted(inconclusive[region]))} are enclave-only; "
                   "not counted for a control-plane verdict", flush=True)
-        if region not in worst:
-            print(f"  watchdog: {region}: no control-plane probe attributable to this region "
-                  "(inconclusive)", flush=True)
+        if region not in worst and region not in _warned_unknown:
+            _warned_unknown.add(region)
+            print(f"::warning::watchdog: {region}: no control-plane probe is attributable to this region; "
+                  "its canary verdict is unknown and does not block", flush=True)
     return {region: worst.get(region, "unknown") for region in regions}
 
 
