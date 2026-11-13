@@ -1533,6 +1533,12 @@ class PostgresStore(OperationalAnalyticsReads):
             rewards_issuer = social_rewards_issuer
             if credit_domain_limit is not None and trial_credit:
                 domain = email_domain(normalized_email)
+                # FOR UPDATE cannot lock an absent row under READ COMMITTED, so
+                # create the counter first; concurrent first sign-ups on a domain
+                # then queue on the same row lock instead of each reading "none".
+                self._insert_entity_once_tx(
+                    conn, SIGNUP_CREDIT_DOMAIN_KIND, domain, {"count": 0}
+                )
                 counter = self._read_entity_tx(
                     conn, SIGNUP_CREDIT_DOMAIN_KIND, domain, dict, for_update=True
                 )

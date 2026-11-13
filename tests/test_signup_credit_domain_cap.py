@@ -7,7 +7,9 @@ in an hour, each collecting the starter credit.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -161,3 +163,36 @@ def test_google_signups_on_one_workspace_domain_stop_getting_credit(google_clien
     assert farm[allowance:] == [0, 0]
     gmail = [_google_signup(google_client, f"person{i}@gmail.com") for i in range(allowance + 2)]
     assert gmail == [CREDIT] * (allowance + 2)
+
+
+def test_concurrent_first_signups_on_a_domain_grant_at_most_the_limit_spanner() -> None:
+    """Every transaction reads the absent counter before any commits; the fake
+    store's commit validation must abort and retry the losers."""
+    racers = 6
+    store, db = make_fake_store(ready_barrier=threading.Barrier(racers))
+    with ThreadPoolExecutor(racers) as pool:
+        credits = list(pool.map(
+            lambda i: _credit_for(store, f"r{i}@race.example", limit=3), range(racers)
+        ))
+    assert sorted(credits) == [0, 0, 0, CREDIT, CREDIT, CREDIT]
+    assert db.aborts > 0
+
+
+def test_postgres_creates_the_counter_row_before_locking_it() -> None:
+    """FOR UPDATE cannot lock an absent row under READ COMMITTED; the counter
+    must exist before the locking read or concurrent first sign-ups all see none."""
+    conn = sqlite_postgres_conn()
+    store = postgres_store_on(conn)
+    seen: list[str] = []
+    real_execute = conn.execute
+
+    def recording_execute(sql: str, params: Any = ()) -> Any:
+        if "signup_credit_domain" in str(params):
+            seen.append(sql)
+        return real_execute(sql, params)
+
+    with patch.object(conn, "execute", recording_execute):
+        assert _credit_for(store, "first@new.example", limit=3) == CREDIT
+    insert_once = next(i for i, sql in enumerate(seen) if "DO NOTHING" in sql)
+    locking_read = next(i for i, sql in enumerate(seen) if "FOR UPDATE" in sql)
+    assert insert_once < locking_read
