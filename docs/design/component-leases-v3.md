@@ -39,7 +39,30 @@ Under v3:
    healthy and unchanged, with no fallback to another cloud. A fallback
    would let a change outside any lease be laundered by the second grant
    on gcp (review of #2568). A new holdback is chosen only when the previous
-   one is itself being leased.
+   one is itself being leased. Before that lease is granted, the previous
+   holdback's release evidence (`/trust/control-plane.json`) is read twice
+   on its own, with no health checks, so a failing service cannot hide a
+   change (`observed_releases`). The grant is refused when the evidence is
+   readable and differs or is invalid. The cloud is leasable only when the
+   evidence is unreadable. The same holds under v2.
+   - **Readable and differs or is invalid (refused):** any 2xx answer that
+     is not a document carrying the protected release. That is a different
+     release; a release that is missing, null, not a string or not a
+     lowercase SHA (`"local"` when `TR_RELEASE` is dropped, `"eu"` or
+     `"azure"` from an old revision); a body that is not a JSON object; a
+     body that does not parse; a body over 1 MiB. One such answer in either
+     read refuses.
+   - **Unreadable (leasable, to repair a dead cloud):** the cloud served no
+     document of its own. That is a transport failure (DNS, connect, TLS,
+     timeout), an HTTP error status (404 and 5xx included) or a redirect,
+     which the coordinator never follows.
+   - A refusal writes nothing and is not a deadlock. The check runs only
+     while another rollout holds a lease and relies on this cloud as its
+     holdback. Once every such lease is released or recovered the journal
+     holds no lease, the holdback is cleared, and the cloud can be leased
+     directly.
+   - A response that breaks off mid-transfer, or is not HTTP at all, raises
+     out of the coordinator: the command fails and writes nothing.
 8. FIFO: an earlier live waiter blocks a request when their components
    conflict on the same cloud (rules 2 to 4). Waiters for the other lane do not.
    Earlier waiters for other new clouds still take free cloud slots first.
