@@ -6,13 +6,19 @@ import threading
 import pytest
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
+from tests.route_inventory import effective_routes
 from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.middleware import _rate_limit_request
+from trusted_router.middleware import (
+    CONTROL_PLANE_EVIDENCE_PATH,
+    CONTROL_PLANE_EVIDENCE_SURFACES,
+    _rate_limit_request,
+)
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
 from trusted_router.storage import STORE, InMemoryStore
@@ -719,6 +725,229 @@ def test_an_exhausted_bucket_refuses_a_probe_look_alike_before_any_404_render(
     assert limited.status_code == 429
     assert limited.json()["error"]["type"] == "rate_limited"
     assert client.get("/health").status_code == 200
+
+
+# The release coordinator's read of a cloud's control-plane evidence
+# (scripts/deploy/cloud_rollout.py `fetch`): a GET with a unique query.
+_COORDINATOR_HEADERS = {
+    "Accept": "application/json",
+    "Cache-Control": "no-cache",
+    "User-Agent": "TrustedRouter-Release-Coordinator/2",
+}
+# Every surface that is a web app. `settle-drain` is a separate worker app
+# with no ingress limiter and none of these routes.
+_WEB_SURFACES = ("combined", "public", "actions", "control", "internal", "observer")
+# Every other route that serves trust evidence. Each reads receipt keys or
+# resolves a release record, which may fetch it, so each stays metered.
+_OTHER_TRUST_ROUTES = (
+    "/trust",
+    "/trust/",
+    "/trust/receipt-keys.json",
+    "/.well-known/inference-receipt-keys",
+    "/trust/gcp-release.json",
+    "/trust/aws-release.json",
+    "/trust/azure-release.json",
+    "/trust/pcr0-aws.txt",
+    "/trust/hostdata-azure.txt",
+    "/trust/image-digest-gcp.txt",
+    "/trust/image-reference-gcp.txt",
+)
+# Paths that are not the evidence route. The last four have request.url.path
+# equal to it (urlsplit drops tab, CR and LF); the router reads them as sent.
+_NOT_THE_EVIDENCE_PATH = (
+    "/trust/control-plane.json/",
+    "/trust/control-plane.json/x",
+    "/trust/control-plane",
+    "/trust/control-plane.jsonx",
+    "/trust/Control-Plane.json",
+    "/v1/trust/control-plane.json",
+    "//trust/control-plane.json",
+    "/trust/control-\tplane.json",
+    "/\ttrust/control-plane.json",
+    "/trust/control-plane.json\r",
+    "/trust/control-plane.json\n",
+)
+
+
+def _surface_settings(surface: str, **updates: object) -> Settings:
+    # The test environment keys the source bucket on the ASGI peer, which is
+    # one address in these tests: one bucket, as in deployed `untrusted` mode.
+    return Settings(environment="test", service_surface=surface, **updates)  # type: ignore[arg-type]
+
+
+async def _admission(
+    settings: Settings, limiter: InMemoryRateLimits, method: str, path: str
+) -> JSONResponse | None:
+    request = Request({
+        "type": "http",
+        "method": method,
+        "path": path,
+        "query_string": b"rollout_check=0f6c1d7e2b9a4c53",
+        "headers": [
+            (b"host", b"aws.trustedrouter.com"),
+            *((name.lower().encode(), value.encode()) for name, value in _COORDINATOR_HEADERS.items()),
+        ],
+        "client": ("198.51.100.7", 12345),
+    })
+    return await _rate_limit_request(
+        request,
+        settings,
+        ingress_rate_limits=limiter,
+        federation_settlement_tokens=(),
+    )
+
+
+def _mounts(app: object, method: str, path: str) -> bool:
+    return any(
+        served == path and isinstance(route, APIRoute) and method in route.methods
+        for served, route in effective_routes(app)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", sorted(CONTROL_PLANE_EVIDENCE_SURFACES))
+async def test_the_release_evidence_read_is_neither_counted_nor_refused(surface: str) -> None:
+    settings = _surface_settings(surface, rate_limit_ip_per_window=2)
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+
+    # Not counted: reads beyond the allowance leave all of it for other paths.
+    for _ in range(5):
+        assert await _admission(settings, limiter, "GET", CONTROL_PLANE_EVIDENCE_PATH) is None
+    assert await _admission(settings, limiter, "GET", "/trust") is None
+    assert await _admission(settings, limiter, "GET", "/trust") is None
+    refused = await _admission(settings, limiter, "GET", "/trust")
+    assert refused is not None and refused.status_code == 429
+
+    # Not refused: the bucket is exhausted and the read is still admitted.
+    assert await _admission(settings, limiter, "GET", CONTROL_PLANE_EVIDENCE_PATH) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("surface", "method", "path"),
+    [
+        # Where the route is not mounted the path is a 404 render.
+        *(
+            (surface, "GET", CONTROL_PLANE_EVIDENCE_PATH)
+            for surface in _WEB_SURFACES
+            if surface not in CONTROL_PLANE_EVIDENCE_SURFACES
+        ),
+        # GET is the route's only method.
+        *(
+            ("observer", method, CONTROL_PLANE_EVIDENCE_PATH)
+            for method in ("HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+        ),
+        *(("observer", "GET", path) for path in _OTHER_TRUST_ROUTES),
+        *(("observer", "GET", path) for path in _NOT_THE_EVIDENCE_PATH),
+    ],
+)
+async def test_nothing_but_the_mounted_evidence_get_is_exempt(
+    surface: str, method: str, path: str
+) -> None:
+    settings = _surface_settings(surface, rate_limit_ip_per_window=1)
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+
+    # Counted, then refused: neither half of the exemption applies.
+    assert await _admission(settings, limiter, method, path) is None
+    refused = await _admission(settings, limiter, method, path)
+
+    assert refused is not None and refused.status_code == 429
+
+
+def test_the_not_exempt_cases_cover_three_unmounted_surfaces() -> None:
+    # The parametrization above derives its unmounted surfaces from the
+    # constant; an exemption widened to every surface would empty that list.
+    assert set(_WEB_SURFACES) - CONTROL_PLANE_EVIDENCE_SURFACES == {
+        "actions",
+        "control",
+        "internal",
+    }
+    assert CONTROL_PLANE_EVIDENCE_SURFACES <= set(_WEB_SURFACES)
+
+
+@pytest.mark.parametrize("surface", _WEB_SURFACES)
+def test_the_evidence_read_is_exempt_exactly_where_the_route_is_mounted(surface: str) -> None:
+    app = create_app(
+        _surface_settings(surface, rate_limit_ip_per_window=1, release="release-under-test"),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    mounted = _mounts(app, "GET", CONTROL_PLANE_EVIDENCE_PATH)
+    # The route table decides, so a surface that gains or loses the route
+    # fails here until the exemption follows it.
+    assert mounted == (surface in CONTROL_PLANE_EVIDENCE_SURFACES)
+    client = TestClient(app)
+    assert client.get("/ready").status_code != 429
+    assert client.get("/ready").status_code == 429
+
+    for accept in ("application/json", "text/html", "*/*"):
+        response = client.get(
+            CONTROL_PLANE_EVIDENCE_PATH,
+            params={"rollout_check": "0f6c1d7e2b9a4c53"},
+            headers={**_COORDINATOR_HEADERS, "Accept": accept},
+        )
+        if mounted:
+            assert response.status_code == 200
+            assert response.json()["release"] == "release-under-test"
+        else:
+            # Refused before the 404 page for this path is rendered.
+            assert response.status_code == 429
+            assert response.json()["error"]["type"] == "rate_limited"
+
+
+def test_a_healthy_holdback_serves_its_release_evidence_on_an_exhausted_shared_bucket() -> None:
+    # The AWS and Azure control planes: the observer surface, deployed, behind
+    # no edge that overwrites the client address, so `untrusted` mode and one
+    # bucket for every caller.
+    settings = Settings(
+        environment="canary",
+        service_surface="observer",
+        observer_internal_token="observer-only-" + "o" * 32,
+        release="4f0c2d9e1b7a4c5386d0e2f1a9b8c7d6e5f40312",
+        trusted_domain="aws.trustedrouter.com",
+        api_base_url="https://api-aws.trustedrouter.com/v1",
+        rate_limit_enabled=True,
+        rate_limit_client_ip_mode="untrusted",
+        rate_limit_ip_per_window=2,
+    )
+    app = create_app(settings, configure_store_arg=False, init_observability=False)
+    client = TestClient(app)
+
+    # Third-party traffic from two addresses spends the whole allowance.
+    for index in range(2):
+        spent = client.get("/ready", headers={"X-Forwarded-For": f"198.51.100.{index}"})
+        assert spent.status_code != 429
+    limited = client.get("/ready", headers={"X-Forwarded-For": "198.51.100.9"})
+    assert limited.status_code == 429
+    assert limited.json()["error"]["type"] == "rate_limited"
+
+    # The coordinator reads the evidence three times per fetch, twice per check.
+    for attempt in range(6):
+        evidence = client.get(
+            CONTROL_PLANE_EVIDENCE_PATH,
+            params={"rollout_check": f"{attempt:032x}"},
+            headers=_COORDINATOR_HEADERS,
+        )
+        assert evidence.status_code == 200
+        assert evidence.json() == {
+            "plane": "aws.trustedrouter.com",
+            "release": "4f0c2d9e1b7a4c5386d0e2f1a9b8c7d6e5f40312",
+            "api_base_url": "https://api-aws.trustedrouter.com/v1",
+        }
+
+    # Everything else is still refused, before its handler runs.
+    for path in _OTHER_TRUST_ROUTES:
+        refused = client.get(path, headers=_COORDINATOR_HEADERS)
+        assert refused.status_code == 429, path
+        assert refused.json()["error"]["type"] == "rate_limited"
+    for method in ("HEAD", "POST", "OPTIONS"):
+        refused = client.request(method, CONTROL_PLANE_EVIDENCE_PATH)
+        assert refused.status_code == 429, method
+    for path in ("/trust/control-%09plane.json", "/trust/control-plane.json%0A", "/trust/control-plane.json/"):
+        refused = client.get(path, headers={"Accept": "text/html"})
+        assert refused.status_code == 429, path
+        assert refused.json()["error"]["type"] == "rate_limited"
+    assert client.get("/ready").status_code == 429
 
 
 @pytest.mark.parametrize("environment", ["production", "canary", "staging"])
