@@ -31,10 +31,25 @@ class _FakeResponse(io.BytesIO):
         self.close()
 
 
+PROBE_PATHS = {"gateway_authorize": "authorize", "gateway_settle": "settle",
+               "provider_fallback": "settle", "gateway_authorize_settle": "authorize-settle"}
+
+
 def _cp(status: str, monitor: str = "us-central1", probe: str = "gateway_authorize", **extra: Any) -> dict:
-    """A control-plane check exactly as status.json publishes it (no target_region)."""
+    """A fresh control-plane check exactly as status.json publishes it (no target_region)."""
     return {"probe_type": probe, "target": "control-plane", "target_region": None,
-            "monitor_region": monitor, "status": status, "effective_status": status, **extra}
+            "target_url": f"https://trustedrouter.com/v1/internal/gateway/{PROBE_PATHS.get(probe, 'other')}",
+            "monitor_region": monitor, "status": status, "effective_status": status, "age_seconds": 40, **extra}
+
+
+def _routes(watchdog: Any, terminal: Any = "us-central1") -> Any:
+    return watchdog.Routes(terminal, watchdog.terraform_lb_hosts())
+
+
+@pytest.fixture(autouse=True)
+def _routes_from_terraform(monkeypatch) -> None:
+    # Unit tests never call gcloud; live URL map reading has its own tests.
+    monkeypatch.setenv("TR_WATCHDOG_LIVE_ROUTES", "0")
 
 
 def _gw(status: str, region: str = "us-central1", probe: str = "tls_health", target: str | None = None) -> dict:
@@ -90,6 +105,7 @@ def test_control_plane_checks_are_attributed_to_their_monitor_region_and_normali
     watchdog = _load_watchdog()
     _serve(monkeypatch, watchdog, {"data": {"current": {"checks": [
         _cp("routing_degraded", "us-central1", "provider_fallback"),
+        _cp("up", "us-central1"),
         _cp("up", "europe-west4"),
     ]}}})
     assert watchdog.fetch_per_region(
@@ -129,7 +145,8 @@ def test_trust_degraded_is_preserved_not_folded_into_degraded(monkeypatch) -> No
     """
     watchdog = _load_watchdog()
     _serve(monkeypatch, watchdog, {"data": {"current": {"checks": [
-        {"target_region": "eu-west-3", "probe_type": "gateway_settle", "effective_status": "trust_degraded"},
+        {"target_region": "eu-west-3", "probe_type": "gateway_settle", "status": "trust_degraded",
+         "effective_status": "trust_degraded"},
         _cp("up", "us-central1"),
     ]}}})
     assert watchdog.fetch_per_region(
@@ -212,7 +229,10 @@ def test_control_plane_failures_keep_blocking(monkeypatch, probe: str, attributi
     watchdog = _load_watchdog()
     check = ({"target_region": "us-central1", "probe_type": probe, "status": "down"}
              if attribution == "target_region" else _cp("down", "us-central1", probe))
-    payload: dict[str, Any] = {"data": {"current": {"checks": [check]}}}
+    checks = [check]
+    if attribution == "monitor_region" and probe != "gateway_authorize":
+        checks.append(_cp("up", "us-central1"))  # the same monitor's authorize is fresh and up
+    payload: dict[str, Any] = {"data": {"current": {"checks": checks}}}
     if canonical_slo_present:
         payload["data"]["slo_classes"] = {"router_core": {"current_by_region": {"global": {"status": "up"}}}}
     _serve(monkeypatch, watchdog, payload)
@@ -285,9 +305,9 @@ def test_live_settle_rows_are_served_by_us_central1_terminals(monkeypatch) -> No
     assert {c["monitor_region"] for c in settle} == {"us-central1", "europe-west4"}
     assert all(c["target_url"].endswith("/v1/internal/gateway/settle") for c in settle)
     for check in settle:
-        assert watchdog.control_plane_region(check, watchdog.terminal_route_region()) == "us-central1"
+        assert watchdog.control_plane_region(check, _routes(watchdog, watchdog.terminal_route_region())) == "us-central1"
     authorize = [c for c in payload["data"]["current"]["checks"] if c["probe_type"] == "gateway_authorize"]
-    assert {watchdog.control_plane_region(c, "us-central1") for c in authorize} == {"us-central1", "europe-west4"}
+    assert {watchdog.control_plane_region(c, _routes(watchdog)) for c in authorize} == {"us-central1", "europe-west4"}
 
 
 @pytest.mark.parametrize("flips", [
@@ -346,16 +366,16 @@ def test_terminal_route_flag_controls_settle_attribution(tmp_path: Path, enabled
     terminal = watchdog.terminal_route_region(tf)
     assert terminal == expected
     settle = _cp("down", "europe-west4", "gateway_settle")
-    assert watchdog.control_plane_region(settle, terminal) == (expected or "europe-west4")
+    assert watchdog.control_plane_region(settle, _routes(watchdog, terminal)) == (expected or "europe-west4")
 
 
 def test_unreadable_terminal_route_makes_settle_inconclusive(tmp_path: Path, capsys) -> None:
     watchdog = _load_watchdog()
     assert watchdog.terminal_route_region(tmp_path / "missing.tf") == watchdog.UNREADABLE
     checks = [_cp("down", "us-central1", "gateway_settle"), _cp("up", "us-central1")]
-    assert watchdog.control_plane_region(checks[0], watchdog.UNREADABLE) is None
-    assert watchdog.control_plane_region(checks[1], watchdog.UNREADABLE) == "us-central1"
-    assert watchdog.control_plane_per_region(checks, ["us-central1"], watchdog.UNREADABLE) == {"us-central1": "up"}
+    assert watchdog.control_plane_region(checks[0], _routes(watchdog, watchdog.UNREADABLE)) is None
+    assert watchdog.control_plane_region(checks[1], _routes(watchdog, watchdog.UNREADABLE)) == "us-central1"
+    assert watchdog.control_plane_per_region(checks, ["us-central1"], _routes(watchdog, watchdog.UNREADABLE)) == {"us-central1": "up"}
     assert "settle evidence is inconclusive" in capsys.readouterr().out
 
 
@@ -367,20 +387,20 @@ def test_unreadable_terminal_route_makes_settle_inconclusive(tmp_path: Path, cap
 def test_fallback_is_attributed_by_the_stage_it_reports(url, expected) -> None:
     watchdog = _load_watchdog()
     check = _cp("routing_degraded", "europe-west4", "provider_fallback", target_url=url)
-    assert watchdog.control_plane_region(check, "us-central1") == expected
+    assert watchdog.control_plane_region(check, _routes(watchdog)) == expected
 
 
 def test_a_sample_crossing_two_regions_is_unattributable_unless_they_coincide() -> None:
     watchdog = _load_watchdog()
-    assert watchdog.control_plane_region(_cp("down", "europe-west4", "gateway_authorize_settle"), "us-central1") is None
-    assert watchdog.control_plane_region(_cp("down", "us-central1", "gateway_authorize_settle"), "us-central1") == "us-central1"
+    assert watchdog.control_plane_region(_cp("down", "europe-west4", "gateway_authorize_settle"), _routes(watchdog)) is None
+    assert watchdog.control_plane_region(_cp("down", "us-central1", "gateway_authorize_settle"), _routes(watchdog)) == "us-central1"
 
 
 def test_explicit_target_region_beats_monitor_region() -> None:
     watchdog = _load_watchdog()
     check = _cp("down", "us-central1", "gateway_authorize")
     check["target_region"] = "us-east4"
-    assert watchdog.control_plane_per_region([check], ["us-central1", "us-east4"], "us-central1") == {
+    assert watchdog.control_plane_per_region([check], ["us-central1", "us-east4"], _routes(watchdog)) == {
         "us-central1": "unknown", "us-east4": "down"}
 
 
@@ -390,7 +410,7 @@ def test_an_unknown_check_never_hides_an_up_one(order: str) -> None:
     checks = [_cp("no_signal", "us-central1"), _cp("up", "us-central1")]
     if order == "up_first":
         checks.reverse()
-    assert watchdog.control_plane_per_region(checks, ["us-central1"], "us-central1") == {"us-central1": "up"}
+    assert watchdog.control_plane_per_region(checks, ["us-central1"], _routes(watchdog)) == {"us-central1": "up"}
 
 
 @pytest.mark.parametrize("target", ["canonical", "us-central1", None, "rotation"])
@@ -398,7 +418,7 @@ def test_only_control_plane_targets_are_attributed_by_monitor(target) -> None:
     watchdog = _load_watchdog()
     check = _cp("down", "us-central1", "gateway_authorize")
     check["target"] = target
-    assert watchdog.control_plane_per_region([check], ["us-central1"], "us-central1") == {"us-central1": "unknown"}
+    assert watchdog.control_plane_per_region([check], ["us-central1"], _routes(watchdog)) == {"us-central1": "unknown"}
 
 
 def test_unknown_regions_get_one_warning_annotation_each(capsys) -> None:
@@ -406,7 +426,7 @@ def test_unknown_regions_get_one_warning_annotation_each(capsys) -> None:
     checks = [_cp("up", "us-central1")]
     for _ in range(3):
         assert watchdog.control_plane_per_region(checks, ["us-central1", "us-east4", "southamerica-east1"],
-                                                 "us-central1")["us-east4"] == "unknown"
+                                                 _routes(watchdog))["us-east4"] == "unknown"
     out = capsys.readouterr().out
     for region in ("us-east4", "southamerica-east1"):
         assert out.count(f"::warning::watchdog: {region}: no control-plane probe") == 1
@@ -1242,3 +1262,167 @@ def test_watchdog_gate_releases_only_after_the_traffic_shift(
     )
     first_gate = next(index for index, call in enumerate(calls) if "gate-released" in call)
     assert first_gate > first_shift, "the watchdog gate was released before the first traffic shift"
+
+
+# Staleness, the authorize gate, hosts and the live URL map (review round 2) -----
+
+def _fixture(name: str) -> dict:
+    return json.loads((ROOT / "tests" / "fixtures" / "watchdog" / f"{name}.json").read_text())
+
+
+def _canary(monkeypatch, tmp_path: Path, watchdog: Any, *payloads: dict) -> tuple[int, str]:
+    _serve(monkeypatch, watchdog, *payloads)
+    monkeypatch.setattr(watchdog.time, "sleep", lambda _s: None)
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(sys, "argv", ["watchdog.py", "--regions", "us-central1", "--duration-min", "3",
+                                      "--rollback-after", "2", "--slo-class", "router_core", "--baseline-grace-sec", "0"])
+    return watchdog.main(), output.read_text()
+
+
+@pytest.mark.parametrize("after", ["ew4_monitor_dead", "ew4_outage_stale"])
+def test_a_europe_monitor_or_authorize_outage_never_rolls_back_us_central1(monkeypatch, tmp_path: Path, after: str) -> None:
+    # Review cases (a) and (b): Europe's last settle rows age to effective
+    # "down" with a settle target_url. They are stale, and Europe's authorize
+    # is not fresh and up, so they are nobody's evidence.
+    watchdog = _load_watchdog()
+    code, output = _canary(monkeypatch, tmp_path, watchdog, _fixture("status-2026-11-13"), _fixture(after))
+    assert code == 0, output
+    assert "rollback_regions=\n" in output
+
+
+def test_a_baseline_during_a_europe_outage_does_not_blind_us_central1(monkeypatch, tmp_path: Path) -> None:
+    # Review case (c): the baseline is taken during that outage; us-central1
+    # then really breaks and must still be rolled back.
+    watchdog = _load_watchdog()
+    code, output = _canary(monkeypatch, tmp_path, watchdog,
+                           _fixture("ew4_outage_stale"), _fixture("ew4_outage_plus_uc1_broken"))
+    assert code == 1
+    assert "rollback_regions=us-central1\n" in output
+
+
+@pytest.mark.parametrize("row", [
+    {"status": "up", "effective_status": "down", "age_seconds": 960},     # aged out by the status page
+    {"status": "down", "effective_status": "down", "age_seconds": 960},   # recorded down, but long ago
+    {"status": "down", "effective_status": "degraded", "age_seconds": 500},
+])
+@pytest.mark.parametrize("probe", ["gateway_authorize", "gateway_settle"])
+def test_a_stale_row_is_never_evidence(probe: str, row: dict) -> None:
+    watchdog = _load_watchdog()
+    checks = [_cp("up", "us-central1"), {**_cp("down", "us-central1", probe), **row}]
+    if probe == "gateway_settle":
+        checks.append(_cp("up", "us-central1", "gateway_settle"))
+    assert watchdog.control_plane_per_region(checks, ["us-central1"], _routes(watchdog)) == {"us-central1": "up"}
+
+
+def test_a_fresh_row_within_the_ttl_counts() -> None:
+    watchdog = _load_watchdog()
+    row = _cp("down", "us-central1", age_seconds=watchdog.CURRENT_SAMPLE_TTL_SECONDS)
+    assert watchdog.control_plane_per_region([row], ["us-central1"], _routes(watchdog)) == {"us-central1": "down"}
+
+
+def test_the_ttl_matches_the_status_page() -> None:
+    from trusted_router.synthetic import status
+
+    assert _load_watchdog().CURRENT_SAMPLE_TTL_SECONDS == status.CURRENT_SAMPLE_TTL_SECONDS
+
+
+@pytest.mark.parametrize("authorize,credited", [
+    (_cp("up", "europe-west4"), True),
+    (_cp("down", "europe-west4"), False),
+    (_cp("up", "europe-west4", effective_status="down", age_seconds=960), False),
+    (None, False),
+])
+def test_settle_counts_only_while_the_same_monitors_authorize_is_fresh_and_up(authorize, credited: bool) -> None:
+    watchdog = _load_watchdog()
+    checks = [_cp("down", "europe-west4", "gateway_settle"), _cp("up", "us-central1")]
+    if authorize:
+        checks.append(authorize)
+    verdict = watchdog.control_plane_per_region(checks, ["us-central1"], _routes(watchdog))
+    assert verdict == {"us-central1": "down" if credited else "up"}
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil.example.com/v1/internal/gateway/settle",
+    "https://trusted-router-123.us-central1.run.app/v1/internal/gateway/settle",
+    None,
+])
+@pytest.mark.parametrize("probe", ["gateway_settle", "gateway_authorize"])
+def test_only_hosts_the_load_balancer_serves_are_attributed(url, probe: str) -> None:
+    watchdog = _load_watchdog()
+    check = _cp("down", "europe-west4", probe, target_url=url)
+    authorize_up = {"europe-west4"}
+    assert watchdog.control_plane_region(check, _routes(watchdog), authorize_up) is None
+    assert "trustedrouter.com" in watchdog.terraform_lb_hosts()
+
+
+URL_MAP = {
+    "hostRules": [{"hosts": ["trustedrouter.com", "www.trustedrouter.com"], "pathMatcher": "trusted-router-service-surfaces"},
+                  {"hosts": ["exchange.example"], "pathMatcher": "exchange-global"}],
+    "pathMatchers": [{"name": "trusted-router-service-surfaces", "pathRules": [
+        {"paths": ["/v1/internal/*"], "service": "https://compute/projects/p/global/backendServices/trusted-router-control-backend"},
+        {"paths": ["/internal/gateway/settle", "/v1/internal/gateway/settle"],
+         "service": "https://compute/projects/p/global/backendServices/trusted-router-control-terminal-c1-backend"},
+    ]}],
+}
+
+
+def _gcloud(url_map: dict, backends: dict[str, list[str]], fail: bool = False) -> Any:
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if fail:
+            return subprocess.CompletedProcess(args, 1, "", "ERROR: permission denied")
+        if args[2] == "url-maps":
+            return subprocess.CompletedProcess(args, 0, json.dumps(url_map), "")
+        groups = backends[args[4]]
+        return subprocess.CompletedProcess(args, 0, json.dumps({"backends": [{"group": g} for g in groups]}), "")
+
+    run.calls = calls
+    return run
+
+
+NEG = "https://compute/projects/p/regions/{}/networkEndpointGroups/trusted-router-control-neg"
+
+
+def test_live_url_map_gives_the_terminal_region_and_hosts() -> None:
+    watchdog = _load_watchdog()
+    run = _gcloud(URL_MAP, {"trusted-router-control-terminal-c1-backend": [NEG.format("us-central1")]})
+    assert watchdog.live_routes(run) == watchdog.Routes("us-central1", frozenset({"trustedrouter.com", "www.trustedrouter.com"}))
+    assert all("--global" in call for call in run.calls)
+
+
+def test_live_url_map_without_a_terminal_rule_or_with_a_multi_region_backend_means_monitor_region() -> None:
+    watchdog = _load_watchdog()
+    no_rule = json.loads(json.dumps(URL_MAP))
+    no_rule["pathMatchers"][0]["pathRules"].pop()
+    assert watchdog.live_routes(_gcloud(no_rule, {})).terminal is None
+    multi = _gcloud(URL_MAP, {"trusted-router-control-terminal-c1-backend": [NEG.format("us-central1"), NEG.format("europe-west4")]})
+    assert watchdog.live_routes(multi).terminal is None
+
+
+def test_live_and_terraform_agreeing_uses_live(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("TR_WATCHDOG_LIVE_ROUTES")
+    watchdog = _load_watchdog()
+    routes = watchdog.load_routes(_gcloud(URL_MAP, {"trusted-router-control-terminal-c1-backend": [NEG.format("us-central1")]}))
+    assert routes.terminal == "us-central1"
+    assert "::warning::" not in capsys.readouterr().out
+
+
+def test_live_and_terraform_disagreeing_makes_settle_inconclusive(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("TR_WATCHDOG_LIVE_ROUTES")
+    watchdog = _load_watchdog()
+    routes = watchdog.load_routes(_gcloud(URL_MAP, {"trusted-router-control-terminal-c1-backend": [NEG.format("europe-west4")]}))
+    assert routes.terminal == watchdog.UNREADABLE
+    assert "settle evidence is inconclusive until they agree" in capsys.readouterr().out
+    settle = _cp("down", "europe-west4", "gateway_settle")
+    assert watchdog.control_plane_region(settle, routes, {"europe-west4"}) is None
+
+
+def test_unreadable_live_url_map_falls_back_to_terraform_with_a_warning(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("TR_WATCHDOG_LIVE_ROUTES")
+    watchdog = _load_watchdog()
+    routes = watchdog.load_routes(_gcloud(URL_MAP, {}, fail=True))
+    assert routes == watchdog.Routes(watchdog.terminal_route_region(), watchdog.terraform_lb_hosts())
+    assert "live URL map unreadable" in capsys.readouterr().out
