@@ -460,6 +460,15 @@ def routing_pool_discovery(
       naming that model directly.
       With provider.require_parameters: true, a request sending a published
       parameter keeps every model in the pool.
+    - A capability-required parameter (tools, tool_choice, response_format,
+      structured_outputs) is published when any pool route can serve it both
+      with and without require_parameters, by the tests routing applies to the
+      pool's models (_takes_capability_parameters and the require_parameters
+      filter).
+      Routing never sends one to a route the catalog says lacks it, whatever
+      require_parameters says (CAPABILITY_REQUIRED_PARAMETERS), so a tools
+      request reaches only the pool's tool-calling routes, as an image
+      request reaches only routes that take images.
     - An input modality is published when any of the pool's routes accepts it.
       Routing always keeps only routes whose own input_modalities cover the
       request's (endpoint_supports_input_modalities), so an image request
@@ -468,20 +477,46 @@ def routing_pool_discovery(
     routes_by_model: dict[str, list[ModelEndpoint]] = {}
     named: set[str] = set()
     modalities: dict[str, None] = {}
-    for model, endpoint in routing_pool_routes(model_id, settings or _app_settings()):
+    pool_routes = routing_pool_routes(model_id, settings or _app_settings())
+    # As _requested_model_ids sets it: the models routing chose, not the one named.
+    pool_models = frozenset(model.id for model, _endpoint in pool_routes) - {model_id}
+    declared_by_model: dict[str, frozenset[str]] = {}
+
+    def serves_capability(parameter: str) -> bool:
+        prefs = RoutePreferences(
+            requested_parameters=frozenset({parameter}),
+            capability_parameters=frozenset({parameter}),
+            pool_model_ids=pool_models,
+        )
+        # Both tests, so a listed parameter is served with or without
+        # provider.require_parameters (which also requires the route to name
+        # it: a `tools` declaration does not cover tool_choice there).
+        return any(
+            _endpoint_supports_requested_parameters(endpoint, frozenset({parameter}))
+            and _takes_capability_parameters(model, endpoint, prefs, declared_by_model)
+            for model, endpoint in pool_routes
+        )
+
+    for model, endpoint in pool_routes:
         routes_by_model.setdefault(model.id, []).append(endpoint)
         named.update(endpoint.supported_parameters)
         # Missing route metadata means text only, as in the routing filter.
         modalities.update(dict.fromkeys(endpoint.input_modalities or ("text",)))
     published = [
         parameter
-        for parameter in named
-        if all(
-            any(
-                _endpoint_supports_requested_parameters(route, frozenset({parameter}))
-                for route in routes
+        # A capability can be served on the model's own declaration though no
+        # route names it, so each is tested whether or not a route does.
+        for parameter in (*named, *(name for name in CAPABILITY_REQUIRED_PARAMETERS if name not in named))
+        if (
+            serves_capability(parameter)
+            if parameter in CAPABILITY_REQUIRED_PARAMETERS
+            else all(
+                any(
+                    _endpoint_supports_requested_parameters(route, frozenset({parameter}))
+                    for route in routes
+                )
+                for routes in routes_by_model.values()
             )
-            for routes in routes_by_model.values()
         )
     ]
     return union_supported_parameters(published), tuple(modalities)

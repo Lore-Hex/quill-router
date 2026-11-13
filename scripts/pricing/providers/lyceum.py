@@ -95,6 +95,8 @@ def parse_cards(html: str) -> dict[str, tuple[ModelPrice, dict[str, Any]]]:
                 "model_type": "embedding" if embedding else "chat",
                 "context_length": limit,
                 "max_output_tokens": 0 if embedding else min(65_536, limit),
+                # Lyceum's model cards state no output limit; catalog publication ignores this one.
+                "limits_source": "placeholder",
                 "input_modalities": ["text", "image"] if "multimodal" in categories else ["text"],
                 "output_modalities": ["embeddings"] if embedding else ["text"],
                 "endpoints": ["embeddings"] if embedding else ["chat/completions"],
@@ -231,6 +233,8 @@ def _api_row(source: dict[str, Any], native: str) -> tuple[ModelPrice, dict[str,
     return ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached), dict(
         display_name=source.get("display_name") or native,
         model_type=kind, context_length=limit, max_output_tokens=max_output,
+        # Explicit, so it replaces a saved placeholder marker on merge.
+        limits_source="api",
         input_modalities=["text", "image"] if "image" in inputs and not embedding else ["text"],
         output_modalities=["embeddings"] if embedding else ["text"],
         endpoints=["embeddings"] if embedding else ["chat/completions"],

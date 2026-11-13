@@ -451,6 +451,9 @@ class Model:
     hidden_public_metadata: bool = False
     documentation: ModelDocumentation | None = None
     internal_only: bool = False
+    # Output-token cap from the source catalog's model row, used when none of
+    # the model's routes states its own (ModelEndpoint.max_completion_tokens).
+    max_completion_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -479,6 +482,8 @@ class ModelEndpoint:
     output_token_price_per_m_by_resolution: dict[str, int] | None = None
     # Host-specific window; 0 preserves the legacy model-window fallback.
     context_length: int = 0
+    # Host-specific output-token cap; None when the host states none.
+    max_completion_tokens: int | None = None
 
     def effective_context_length(self, model: Model) -> int:
         """A host may narrow, but never widen, the advertised model window."""

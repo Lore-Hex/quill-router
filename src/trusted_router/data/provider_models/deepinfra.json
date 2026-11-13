@@ -35,7 +35,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-fable-5",
@@ -64,7 +65,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-haiku-4-5",
@@ -92,7 +94,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-opus-4-7",
@@ -121,7 +124,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-opus-4-8",
@@ -150,7 +154,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-opus-5",
@@ -179,7 +184,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-sonnet-4-6",
@@ -208,7 +214,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-sonnet-5",
@@ -237,7 +244,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ByteDance/Seed-1.8",
@@ -266,7 +274,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ByteDance/Seed-2.0-code",
@@ -293,7 +302,8 @@
       "supported_features": [
         "tools",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ByteDance/Seed-2.0-mini",
@@ -322,7 +332,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ByteDance/Seed-2.0-pro",
@@ -351,7 +362,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-R1-0528",
@@ -379,7 +391,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V3",
@@ -405,7 +418,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V3-0324",
@@ -430,7 +444,8 @@
       "cached_input_token_price_per_m": 135000,
       "missing_since": "2026-09-23",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V3.1",
@@ -458,7 +473,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V3.1-Terminus",
@@ -482,7 +498,8 @@
       "output_token_price_per_m": 950000,
       "missing_since": "2026-08-15",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V3.2",
@@ -509,7 +526,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4-Flash",
@@ -537,7 +555,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
@@ -565,7 +584,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4-Pro",
@@ -593,7 +613,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemini-2.5-flash",
@@ -621,7 +642,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemini-2.5-pro",
@@ -649,7 +671,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemini-3.1-flash-lite",
@@ -677,7 +700,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemini-3.1-pro",
@@ -705,7 +729,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemini-3.5-flash",
@@ -733,7 +758,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-3-12b-it",
@@ -760,7 +786,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-3-27b-it",
@@ -787,7 +814,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-3-4b-it",
@@ -814,7 +842,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-4-26B-A4B-it",
@@ -842,7 +871,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-4-31B-it",
@@ -870,7 +900,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-4-31B-it-turbo",
@@ -899,7 +930,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-4-31B-it-Ultra",
@@ -926,7 +958,8 @@
         "tools",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemma-4-E4B-it",
@@ -950,7 +983,8 @@
       "output_token_price_per_m": 100000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Gryphe/MythoMax-L2-13b",
@@ -980,7 +1014,8 @@
       ],
       "missing_since": "2026-11-01",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "inclusionAI/Ling-3.0-flash",
@@ -1008,7 +1043,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
@@ -1039,7 +1075,8 @@
       ],
       "missing_since": "2026-11-01",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -1065,7 +1102,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
@@ -1089,7 +1127,8 @@
       "output_token_price_per_m": 800000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
@@ -1116,7 +1155,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-llama/Llama-Guard-4-12B",
@@ -1139,7 +1179,8 @@
       "max_output_tokens": 163840,
       "input_token_price_per_m": 180000,
       "output_token_price_per_m": 180000,
-      "supported_features": []
+      "supported_features": [],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
@@ -1164,7 +1205,8 @@
       "supported_features": [
         "tools",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "meta-models/Muse-Glimmer-30B",
@@ -1193,7 +1235,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "microsoft/phi-4",
@@ -1218,7 +1261,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "MiniMaxAI/MiniMax-M2.7",
@@ -1245,7 +1289,8 @@
       "cached_input_token_price_per_m": 50000,
       "missing_since": "2026-09-06",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "MiniMaxAI/MiniMax-M2.7-Turbo",
@@ -1270,7 +1315,8 @@
       "cached_input_token_price_per_m": 70000,
       "missing_since": "2026-09-30",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "MiniMaxAI/MiniMax-M3",
@@ -1299,7 +1345,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "mistralai/Mistral-Nemo-Instruct-2407",
@@ -1325,7 +1372,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "mistralai/Mistral-Small-24B-Instruct-2501",
@@ -1350,7 +1398,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
@@ -1377,7 +1426,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "moonshotai/Kimi-K2.5",
@@ -1404,7 +1454,8 @@
       "retirement_at": "2026-09-07T00:00:00Z",
       "replacement_model_id": "moonshotai/kimi-k3",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "moonshotai/Kimi-K2.6",
@@ -1433,7 +1484,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "moonshotai/Kimi-K2.7-Code",
@@ -1458,7 +1510,8 @@
       "cached_input_token_price_per_m": 136000,
       "missing_since": "2026-09-22",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "moonshotai/Kimi-K3",
@@ -1487,7 +1540,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "NousResearch/Hermes-3-Llama-3.1-405B",
@@ -1517,7 +1571,8 @@
       ],
       "missing_since": "2026-11-01",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "NousResearch/Hermes-3-Llama-3.1-70B",
@@ -1545,7 +1600,8 @@
       ],
       "missing_since": "2026-11-01",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nvidia/Nemotron-3-Nano-30B-A3B",
@@ -1570,7 +1626,8 @@
       "cached_input_token_price_per_m": 25000,
       "missing_since": "2026-10-04",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
@@ -1597,7 +1654,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
@@ -1625,7 +1683,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nvidia/NVIDIA-Nemotron-3.5-Lightning",
@@ -1653,7 +1712,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nvidia/Nemotron-Content-Safety-3.5",
@@ -1676,7 +1736,8 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 200000,
-      "supported_features": []
+      "supported_features": [],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "openai/gpt-oss-120b",
@@ -1703,7 +1764,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "openai/gpt-oss-120b-Turbo",
@@ -1735,7 +1797,8 @@
       ],
       "missing_since": "2026-11-01",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "openai/gpt-oss-120b-Ultra",
@@ -1761,7 +1824,8 @@
         "tools",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "openai/gpt-oss-20b",
@@ -1788,7 +1852,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen2.5-72B-Instruct",
@@ -1814,7 +1879,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-14B",
@@ -1841,7 +1907,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Instruct-2507",
@@ -1867,7 +1934,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
@@ -1893,7 +1961,8 @@
       "replacement_model_id": "qwen/qwen3.6-35b-a3b",
       "missing_since": "2026-08-19",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-30B-A3B",
@@ -1920,7 +1989,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-32B",
@@ -1947,7 +2017,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
@@ -1974,7 +2045,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-Max",
@@ -2001,7 +2073,8 @@
       "cached_input_token_price_per_m": 240000,
       "missing_since": "2026-10-10",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-Max-Thinking",
@@ -2028,7 +2101,8 @@
       "cached_input_token_price_per_m": 240000,
       "missing_since": "2026-10-10",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-Next-80B-A3B-Instruct",
@@ -2054,7 +2128,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-VL-235B-A22B-Instruct",
@@ -2082,7 +2157,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
@@ -2109,7 +2185,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.5-122B-A10B",
@@ -2133,7 +2210,8 @@
       "output_token_price_per_m": 2400000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.5-27B",
@@ -2161,7 +2239,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.5-35B-A3B",
@@ -2190,7 +2269,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.5-397B-A17B",
@@ -2219,7 +2299,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.5-9B",
@@ -2247,7 +2328,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.6-27B",
@@ -2275,7 +2357,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.6-35B-A3B",
@@ -2304,7 +2387,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.7-Max",
@@ -2331,7 +2415,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.8-2.4T-A95B",
@@ -2356,7 +2441,8 @@
       "cached_input_token_price_per_m": 200000,
       "missing_since": "2026-10-06",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.8-Max",
@@ -2383,7 +2469,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Sao10K/L3-8B-Lunaris-v1-Turbo",
@@ -2408,7 +2495,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Sao10K/L3.1-70B-Euryale-v2.2",
@@ -2433,7 +2521,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "stepfun-ai/Step-3.7-Flash",
@@ -2458,7 +2547,8 @@
       "cached_input_token_price_per_m": 40000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "tencent/Hy3",
@@ -2483,7 +2573,8 @@
       "cached_input_token_price_per_m": 33000,
       "missing_since": "2026-10-04",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "thinkingmachines/Inkling",
@@ -2516,7 +2607,8 @@
       ],
       "missing_since": "2026-10-15",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "thinkingmachines/Inkling-Small",
@@ -2545,7 +2637,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.5",
@@ -2571,7 +2664,8 @@
       "output_token_price_per_m": 2000000,
       "missing_since": "2026-08-24",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.5-Pro",
@@ -2595,7 +2689,8 @@
       "output_token_price_per_m": 3000000,
       "missing_since": "2026-08-24",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "zai-org/GLM-4.6",
@@ -2623,7 +2718,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "zai-org/GLM-4.7",
@@ -2651,7 +2747,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "zai-org/GLM-4.7-Flash",
@@ -2678,7 +2775,8 @@
       "cached_input_token_price_per_m": 10000,
       "missing_since": "2026-09-06",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "zai-org/GLM-5",
@@ -2705,7 +2803,8 @@
       "cached_input_token_price_per_m": 120000,
       "missing_since": "2026-09-06",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "zai-org/GLM-5.1",
@@ -2730,7 +2829,8 @@
       "cached_input_token_price_per_m": 205000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4-Pro-0813",
@@ -2758,7 +2858,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "google/gemini-3.7-flash",
@@ -2786,7 +2887,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.8-27B",
@@ -2815,7 +2917,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.5",
@@ -2842,7 +2945,8 @@
       "cached_input_token_price_per_m": 2800,
       "missing_since": "2026-09-22",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.5-Pro",
@@ -2867,7 +2971,8 @@
       "cached_input_token_price_per_m": 200000,
       "missing_since": "2026-09-22",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ibm-granite/granite-4.2-30b",
@@ -2899,7 +3004,8 @@
       ],
       "missing_since": "2026-10-12",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ibm-granite/granite-4.2-3b",
@@ -2931,7 +3037,8 @@
       ],
       "missing_since": "2026-10-12",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "ibm-granite/granite-4.2-8b",
@@ -2958,7 +3065,8 @@
         "tools",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "zai-org/GLM-5.3-Flash",
@@ -3044,7 +3152,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "inclusionAI/Ling-3.0-flash-Fin",
@@ -3071,7 +3180,8 @@
       "cached_input_token_price_per_m": 12000,
       "missing_since": "2026-10-10",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "inclusionAI/Ling-3.0-flash-VL",
@@ -3100,7 +3210,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -3129,7 +3240,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "Qwen/Qwen3.8-Flash",
@@ -3156,7 +3268,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.6-Flash",
@@ -3185,7 +3298,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.6-Pro",
@@ -3214,7 +3328,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-opus-5-5",
@@ -3243,7 +3358,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "tencent/Hy4-preview",
@@ -3271,7 +3387,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "anthropic/claude-sonnet-5-5",
@@ -3299,7 +3416,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "placeholder"
     },
     {
       "display_name": "inclusionAI/Ling-3.1-flash",
@@ -3332,7 +3450,8 @@
       "cached_input_token_price_per_m": 60000,
       "missing_since": "2026-11-08",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "stepfun-ai/Step-5-Preview",
@@ -3365,7 +3484,8 @@
       "cached_input_token_price_per_m": 50000,
       "missing_since": "2026-11-01",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "delisted-upstream",
+      "limits_source": "placeholder"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",

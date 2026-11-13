@@ -214,6 +214,10 @@ def fetch() -> ProviderPricingResult:
             max_output = legacy_max
         if max_output is not None:
             discovered_row["max_output_tokens"] = max_output
+        # Explicit either way: the manifest writer merges onto the saved row,
+        # whose older max_output_tokens may restate the window. Without a
+        # verified cap here, a saved one is not a stated cap.
+        discovered_row["limits_source"] = "api" if max_output is not None else "placeholder"
         discovered[or_id] = discovered_row
 
     _DISCOVERED_MANIFEST_ROWS = discovered
