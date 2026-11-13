@@ -82,8 +82,11 @@ plus `tools/cloud-rollout-source.json`), so one protocol serves both.
   waiters `{ticket, cloud, component, owner, enqueued_at, heartbeat_at,
   expires_at, host, pid}`. List order is arrival order, decided by the CAS
   write that appended the entry, not by clocks. An empty queue is omitted, so
-  the record stays exactly the existing v2 shape. Malformed entries, duplicate
-  tickets, a ticket equal to a lease fence, or more than 32 waiters fail closed.
+  the record stays exactly the existing v2 shape. A queue entry confers no
+  rights, so a damaged queue never blocks a lease check, release or recovery:
+  malformed entries, repeated tickets, a ticket equal to a lease fence, and
+  entries beyond 32 are ignored with a warning and dropped by the next fenced
+  write. Leases are still validated strictly.
 - **Admission rule.** A waiter may take a lease only if: its cloud is not
   leased; fewer than two clouds are leased; no earlier live waiter wants the
   same cloud; and the distinct free clouds wanted by earlier live waiters do not
@@ -97,21 +100,34 @@ plus `tools/cloud-rollout-source.json`), so one protocol serves both.
   and leased. A ticket confers no right to mutate production. The direct
   `acquire` API (used with no wait, by manual tools and tests) also refuses to
   jump a live waiter.
+- **Writes that land and then report a conflict.** gcloud retries a
+  precondition internally, so a write can land and still return 412; the
+  transaction then rereads. Both queue writes are idempotent for that reason:
+  the client chooses its ticket before the first write, `enqueue` finds an
+  already-queued ticket and stops, and `try_admit` finds a lease fenced by its
+  own ticket and returns it, so a granted lease is never stranded.
 - **Lease checks.** `assert` used to require an unchanged journal generation
   across its health probe. Waiter heartbeats would move the generation and
   fail in-flight rollouts, so it now accepts a changed generation only when the
   leases and holdback are identical. Any lease or holdback change still refuses.
-- **Dead waiters.** A waiter rewrites `heartbeat_at` at most every 2 minutes
-  (polling reads are free). One silent for 10 minutes is skipped for ordering
-  but not deleted, and regains its place when it heartbeats again. Deletion
-  needs proof and happens only inside a fenced write:
-  1. its owner run is completed (the existing `owner_stopped` check, including
-     the repository-identity and expiry rules for deleted runs), with the
-     removal fenced on the exact `(ticket, heartbeat_at)` that was checked, so
-     a waiter that heartbeats meanwhile stays; or
-  2. its own declared deadline (wait plus 2 minutes) plus 5 minutes of grace has
-     passed. The owning client stops polling at that deadline and its admission
-     is refused there under the same CAS, so the entry is provably abandoned.
+- **Dead waiters, without trusting another host's clock.** A waiter rewrites
+  `heartbeat_at` at most every 2 minutes (polling reads are free). Runner
+  clocks can disagree, so nothing that can hurt a live waiter compares two
+  hosts' clocks:
+  - A polling client skips a waiter for ordering only if its heartbeat looks
+    older than 10 minutes **and** this client has seen that same heartbeat for
+    150 seconds on its own clock (longer than a heartbeat plus a poll). A live
+    waiter always heartbeats within that window, so it is never skipped; a
+    skipped one regains its place when it heartbeats again.
+  - A single attempt with no observation history (no wait) treats a waiter as
+    live until its deadline plus 30 minutes. Skew there can only make that
+    caller wait.
+  - Deletion happens only inside a fenced write and needs one of: the owner
+    run completed (the existing `owner_stopped` check, fenced on the exact
+    `(ticket, heartbeat_at)` that was checked); the same heartbeat seen for 15
+    minutes on the deleting client's own clock; or the waiter's own deadline
+    passed by a day, which no clock error explains.
+  - The waiter itself refuses admission past its own deadline, on its own clock.
   A waiter that gives up removes only its own ticket; if that write fails, the
   ticket goes stale and is pruned later. No path deletes a lease, and an
   ambiguous write is never followed by a delete of a lease.
@@ -119,9 +135,13 @@ plus `tools/cloud-rollout-source.json`), so one protocol serves both.
   prunes stopped waiters at most every 5 minutes, and dequeues on timeout,
   error or SIGTERM. `TR_DEPLOY_WAIT_SECONDS=0` keeps the single-attempt path.
   Pruning by owner status needs a `gh` credential with `actions:read`; the
-  quill-router admit step has none today, so there a dead waiter is only
-  skipped and then expires at its deadline (the gateway's admit step has one).
-  The ticket becomes the lease fence, so it is never printed to logs.
+  quill-router admit step has none today, so there a dead waiter is skipped
+  and later deleted by observation (the gateway's admit step has one).
+- **What is visible.** Both repositories are public, and `status` runs in a
+  workflow. Lease fences are not secrets: anyone who can read the journal sees
+  them, using one needs write access to it, and an operator needs the full
+  fence for recovery, so `status` keeps them. Tickets are never needed by an
+  operator, so `status` shortens them and the client never logs its own.
 
 **Compatibility.** Older clients do not read `queue` but copy it back
 unchanged, because they rewrite the record they read. Until quill-cloud-proxy

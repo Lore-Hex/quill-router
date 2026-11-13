@@ -43,14 +43,27 @@ SHA = re.compile(r"[a-f0-9]{7,40}")
 MAX_BYTES = 1_048_576
 COMPONENTS = ("control-plane", "gateway", "public-surface")
 TICKET = re.compile(r"[a-f0-9]{32}")
-# Admission queue. A waiter rewrites its heartbeat at most every
-# HEARTBEAT_SECONDS; one silent for WAITER_STALE_SECONDS loses its turn (it is
-# skipped, not deleted) until it heartbeats again. Deletion needs proof: its
-# owner run completed, or its own declared deadline plus WAITER_EXPIRY_GRACE.
+# Admission queue. A waiting client polls every 20 s and rewrites its heartbeat
+# at most every HEARTBEAT_SECONDS. Hosts' clocks can disagree, so no decision
+# that can hurt a live waiter compares one host's clock with another's:
+#   * Skipping a waiter for ordering needs the heartbeat to look older than
+#     WAITER_STALE_SECONDS AND to have stayed unchanged for
+#     STALE_CONFIRM_SECONDS on the observer's own clock (longer than one
+#     heartbeat interval plus a poll), so a live waiter is never skipped.
+#   * Deleting one needs its owner run completed, or its heartbeat unchanged
+#     for OBSERVED_DEAD_SECONDS on the observer's own clock, or its declared
+#     deadline exceeded by WAITER_ABANDONED_SECONDS (a day; no clock is off
+#     by that much).
+#   * A single attempt with no observation history (no wait) treats a waiter
+#     as live until its deadline plus WAITER_EXPIRY_GRACE: skew there can only
+#     make that caller wait, never drop anyone.
 MAX_QUEUE = 32
 HEARTBEAT_SECONDS = 120
 WAITER_STALE_SECONDS = 600
-WAITER_EXPIRY_GRACE = 300
+STALE_CONFIRM_SECONDS = 150
+OBSERVED_DEAD_SECONDS = 900
+WAITER_EXPIRY_GRACE = 1800
+WAITER_ABANDONED_SECONDS = 86_400
 # The client stops polling at its wait deadline; the entry outlives that by
 # this margin so a final attempt is never refused as already expired.
 WAITER_DEADLINE_MARGIN = 120
@@ -250,34 +263,54 @@ def state_record(raw: dict[str, Any] | None) -> dict[str, Any]:
             raise Refused("invalid protected cloud")
     elif holdback is not None:
         raise Refused("holdback without a release")
-    validate_queue(raw, leases)
-    return copy.deepcopy(raw)
+    state = copy.deepcopy(raw)
+    set_queue(state, sanitized_queue(raw, leases))
+    return state
 
 
 def _int(value: Any) -> bool:
     return type(value) is int
 
 
-def validate_queue(raw: dict[str, Any], leases: dict[str, Any]) -> None:
-    """The optional FIFO queue; absent means empty, so v2 readers stay compatible."""
-    if "queue" not in raw:
-        return
-    queue = raw["queue"]
-    if not isinstance(queue, list) or len(queue) > MAX_QUEUE:
-        raise Refused("invalid release journal queue")
-    seen = {lease["operation_id"] for lease in leases.values()}
+def valid_waiter(entry: Any) -> bool:
+    return (isinstance(entry, dict)
+            and isinstance(entry.get("ticket"), str) and TICKET.fullmatch(entry["ticket"]) is not None
+            and entry.get("cloud") in CLOUDS
+            and entry.get("component") in COMPONENTS
+            and isinstance(entry.get("owner"), str) and valid_owner(entry["owner"])
+            and all(_int(entry.get(k)) for k in ("enqueued_at", "heartbeat_at", "expires_at", "pid"))
+            and entry["enqueued_at"] <= entry["heartbeat_at"] < entry["expires_at"]
+            and isinstance(entry.get("host"), str))
+
+
+def sanitized_queue(raw: dict[str, Any], leases: dict[str, Any]) -> list[dict[str, Any]]:
+    """The optional FIFO queue, with anything unusable dropped.
+
+    A queue entry confers no right to mutate production, so a damaged queue
+    must never block a lease check, release or recovery. Malformed entries,
+    repeated tickets (a write that landed and was then retried), tickets equal
+    to a lease fence (an admission that landed) and entries beyond MAX_QUEUE
+    are ignored with a warning; the next fenced write drops them for good.
+    Leases are still validated strictly by state_record.
+    """
+    queue = raw.get("queue", [])
+    if not isinstance(queue, list):
+        print("cloud_rollout.queue_ignored: queue is not a list", file=sys.stderr)
+        return []
+    fences = {lease["operation_id"] for lease in leases.values()}
+    seen: set[str] = set()
+    kept: list[dict[str, Any]] = []
+    dropped = 0
     for entry in queue:
-        if (not isinstance(entry, dict)
-                or not isinstance(entry.get("ticket"), str) or not TICKET.fullmatch(entry["ticket"])
-                or entry["ticket"] in seen
-                or entry.get("cloud") not in CLOUDS
-                or entry.get("component") not in COMPONENTS
-                or not isinstance(entry.get("owner"), str) or not valid_owner(entry["owner"])
-                or not all(_int(entry.get(k)) for k in ("enqueued_at", "heartbeat_at", "expires_at", "pid"))
-                or not entry["enqueued_at"] <= entry["heartbeat_at"] < entry["expires_at"]
-                or not isinstance(entry.get("host"), str)):
-            raise Refused("invalid release journal waiter")
+        if (not valid_waiter(entry) or entry["ticket"] in seen or entry["ticket"] in fences
+                or len(kept) >= MAX_QUEUE):
+            dropped += 1
+            continue
         seen.add(entry["ticket"])
+        kept.append(entry)
+    if dropped:
+        print(f"cloud_rollout.queue_ignored: {dropped} unusable or repeated waiter entr(ies)", file=sys.stderr)
+    return kept
 
 
 def valid_owner(owner: str) -> bool:
@@ -296,18 +329,20 @@ def set_queue(state: dict[str, Any], queue: list[dict[str, Any]]) -> None:
         state.pop("queue", None)
 
 
-def waiter_live(entry: dict[str, Any], now: float) -> bool:
-    return now - entry["heartbeat_at"] < WAITER_STALE_SECONDS and now < entry["expires_at"]
+def redacted(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The journal for `status` output, with waiter tickets shortened.
 
-
-def expire_waiters(state: dict[str, Any], now: float) -> None:
-    """Drop waiters past their own declared deadline plus grace.
-
-    The owning client never polls past that deadline and its admission is
-    refused there under the same CAS, so the entry is provably abandoned.
-    Runs only inside a generation-fenced transaction.
+    Lease fences stay whole: an operator needs them for recovery, and they are
+    not secrets (anyone who can read the journal sees them, and using one needs
+    write access to it). Tickets are never needed by an operator.
     """
-    set_queue(state, [e for e in queue_of(state) if now < e["expires_at"] + WAITER_EXPIRY_GRACE])
+    if not isinstance(raw, dict) or not isinstance(raw.get("queue"), list):
+        return raw
+    shown = copy.deepcopy(raw)
+    for entry in shown["queue"]:
+        if isinstance(entry, dict) and isinstance(entry.get("ticket"), str):
+            entry["ticket"] = entry["ticket"][:6] + "..."
+    return shown
 
 
 def admission_blocker(state: dict[str, Any], cloud: str, ahead: list[dict[str, Any]]) -> str | None:
@@ -331,6 +366,37 @@ class Coordinator:
     def __init__(self, store: Store, probe: Callable[[str], str] | None = None,
                  now: Callable[[], float] = time.time) -> None:
         self.store, self.probe, self.now = store, probe or probe_cloud, now
+        # ticket -> (heartbeat_at last seen, this host's time it was first seen)
+        self.observed: dict[str, tuple[int, float]] = {}
+
+    def observe(self, queue: list[dict[str, Any]], now: float) -> None:
+        for entry in queue:
+            seen = self.observed.get(entry["ticket"])
+            if seen is None or seen[0] != entry["heartbeat_at"]:
+                self.observed[entry["ticket"]] = (entry["heartbeat_at"], now)
+
+    def unchanged_for(self, entry: dict[str, Any], now: float) -> float:
+        """How long this host has seen this exact heartbeat, on its own clock."""
+        seen = self.observed.get(entry["ticket"])
+        if seen is None or seen[0] != entry["heartbeat_at"]:
+            return 0.0
+        return now - seen[1]
+
+    def live(self, entry: dict[str, Any], now: float, *, history: bool = True) -> bool:
+        """Whether a waiter still holds its place in line."""
+        if now - entry["heartbeat_at"] < WAITER_STALE_SECONDS and now < entry["expires_at"]:
+            return True
+        if not history:
+            return now < entry["expires_at"] + WAITER_EXPIRY_GRACE
+        return self.unchanged_for(entry, now) < STALE_CONFIRM_SECONDS
+
+    def expire(self, state: dict[str, Any], now: float) -> None:
+        """Drop provably dead waiters. Only ever called inside a fenced write."""
+        set_queue(state, [
+            e for e in queue_of(state)
+            if self.unchanged_for(e, now) < OBSERVED_DEAD_SECONDS
+            and now < e["expires_at"] + WAITER_ABANDONED_SECONDS
+        ])
 
     def transaction(self, change: Callable[[dict[str, Any]], Any]) -> Any:
         for _ in range(8):
@@ -402,7 +468,7 @@ class Coordinator:
 
         def change(state: dict[str, Any]) -> dict[str, Any]:
             now = self.now()
-            ahead = [e for e in queue_of(state) if waiter_live(e, now)]
+            ahead = [e for e in queue_of(state) if self.live(e, now, history=False)]
             reason = admission_blocker(state, cloud, ahead)
             if reason:
                 raise Busy(reason)
@@ -412,16 +478,28 @@ class Coordinator:
 
         return self.transaction(change)
 
-    def enqueue(self, cloud: str, owner: str, component: str, wait: int) -> str:
-        """Join the back of the shared admission queue; return the ticket."""
+    def enqueue(self, cloud: str, owner: str, component: str, wait: int,
+                ticket: str | None = None) -> str:
+        """Join the back of the shared admission queue; return the ticket.
+
+        Idempotent per ticket: a write that landed but reported a conflict is
+        retried by rereading, finds the ticket queued, and does not add it again.
+        """
         self.validate_request(cloud, owner, component)
         if not 0 <= wait <= MAX_ADMISSION_WAIT_SECONDS:
             raise Refused(f"admission wait must be 0..{MAX_ADMISSION_WAIT_SECONDS} seconds")
-        ticket = uuid.uuid4().hex
+        ticket = ticket or uuid.uuid4().hex
+        if not TICKET.fullmatch(ticket):
+            raise Refused("invalid waiter ticket")
 
         def change(state: dict[str, Any]) -> str:
+            if any(e["ticket"] == ticket for e in queue_of(state)):
+                raise _Unchanged(ticket)
+            if any(lease["operation_id"] == ticket for lease in state["leases"].values()):
+                raise Refused("waiter ticket is already a lease fence")
             now = int(self.now())
-            expire_waiters(state, now)
+            self.observe(queue_of(state), now)
+            self.expire(state, now)
             queue = queue_of(state)
             if len(queue) >= MAX_QUEUE:
                 raise Refused("release admission queue is full")
@@ -445,6 +523,11 @@ class Coordinator:
         self.validate_ttl(ttl)
 
         def change(state: dict[str, Any]) -> dict[str, Any] | Waiting:
+            # An admission write that landed but reported a conflict left the
+            # lease, fenced by this ticket, in place: that lease is ours.
+            for lease in state["leases"].values():
+                if lease["operation_id"] == ticket:
+                    raise _Unchanged(lease)
             queue = queue_of(state)
             index = next((i for i, e in enumerate(queue) if e["ticket"] == ticket), None)
             if index is None:
@@ -453,17 +536,18 @@ class Coordinator:
             now = self.now()
             if now >= entry["expires_at"]:
                 raise Refused("waiter deadline passed; not admitted")
-            ahead = [e for e in queue[:index] if waiter_live(e, now)]
+            self.observe(queue, now)
+            ahead = [e for e in queue[:index] if self.live(e, now)]
             reason = admission_blocker(state, entry["cloud"], ahead)
             if reason is None:
                 lease = self.grant(state, entry["cloud"], entry["owner"], entry["component"], ttl, ticket)
                 del queue[index]
-                expire_waiters(state, now)
+                self.expire(state, now)
                 return lease
             if now - entry["heartbeat_at"] < HEARTBEAT_SECONDS:
                 raise _Unchanged(Waiting(reason))
             entry["heartbeat_at"] = int(now)
-            expire_waiters(state, now)
+            self.expire(state, now)
             return Waiting(reason)
 
         result = self.transaction(change)
@@ -730,12 +814,14 @@ def acquire_in_order(coordinator: Coordinator, cloud: str, owner: str, component
         return coordinator.acquire(cloud, owner, component, ttl)
     coordinator.validate_ttl(ttl)
     deadline = monotonic() + wait
-    ticket = coordinator.enqueue(cloud, owner, component, wait)
-    # The ticket becomes the lease fence; never print it to (public) logs.
-    print(f"cloud_rollout.queued: waiting for {cloud}", file=sys.stderr)
+    # Chosen before the first write, so even an ambiguous enqueue is undone by
+    # the finally block below instead of leaving an orphan in line.
+    ticket = uuid.uuid4().hex
     admitted = False
     next_prune = monotonic() + PRUNE_INTERVAL_SECONDS
     try:
+        coordinator.enqueue(cloud, owner, component, wait, ticket=ticket)
+        print(f"cloud_rollout.queued: waiting for {cloud}", file=sys.stderr)
         while True:
             try:
                 lease = coordinator.try_admit(ticket, ttl)
@@ -811,7 +897,7 @@ def main() -> int:
             coordinator.recover(args.cloud, args.operation, owner_stopped)
         else:
             raw, generation = coordinator.store.read()
-            print(json.dumps({"generation": generation, "state": raw}, indent=2, sort_keys=True))
+            print(json.dumps({"generation": generation, "state": redacted(raw)}, indent=2, sort_keys=True))
     except (Refused, Conflict, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"cloud_rollout.refused: {exc}", file=sys.stderr)
         return 1

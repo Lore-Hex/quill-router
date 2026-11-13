@@ -6,11 +6,15 @@ generation-CAS journal. See docs/design/deploy-fifo-admission.md.
 from __future__ import annotations
 
 import copy
+import hashlib
+import importlib.util
 import itertools
 import json
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -324,7 +328,7 @@ def test_stale_waiter_regains_its_place_when_it_heartbeats(system):
     assert admit(system, first)["operation_id"] == first
 
 
-def test_waiter_past_its_deadline_is_refused_then_expired_by_any_writer(system):
+def test_waiter_past_its_own_deadline_is_refused(system):
     hold(system, "gcp")
     ticket = enqueue(system, "gcp", QR.format(1), wait=600)
     entry = system.store.record["queue"][0]
@@ -333,7 +337,61 @@ def test_waiter_past_its_deadline_is_refused_then_expired_by_any_writer(system):
     with pytest.raises(rollout.Refused, match="deadline passed"):
         admit(system, ticket)
     assert queued(system) == [ticket]
-    system.clock[0] = entry["expires_at"] + rollout.WAITER_EXPIRY_GRACE - 1
+
+
+def test_observer_deletes_a_waiter_only_after_seeing_it_silent_on_its_own_clock(system):
+    hold(system, "gcp")
+    dead = enqueue(system, "gcp", QR.format(1))
+    observer = enqueue(system, "gcp", QCP.format(2), "gateway")
+    with pytest.raises(rollout.Busy):
+        admit(system, observer)  # first sighting of the silent waiter
+    for _ in range(rollout.OBSERVED_DEAD_SECONDS // rollout.HEARTBEAT_SECONDS):
+        system.clock[0] += rollout.HEARTBEAT_SECONDS
+        with pytest.raises(rollout.Busy):
+            admit(system, observer)
+    assert dead in queued(system)
+    system.clock[0] += rollout.HEARTBEAT_SECONDS
+    with pytest.raises(rollout.Busy):
+        admit(system, observer)
+    assert queued(system) == [observer]
+
+
+def test_a_fast_clock_never_drops_a_live_waiter(system):
+    # Review probe 4: a host about 8 minutes fast expired a live waiter.
+    hold(system, "gcp")
+    live = enqueue(system, "gcp", QR.format(1), wait=60)
+    skew = 60 + rollout.WAITER_DEADLINE_MARGIN + 300 + 1
+    fast = rollout.Coordinator(system.store, system.coordinator.probe, lambda: system.clock[0] + skew)
+    fast.enqueue("aws", "manual:other", "control-plane", 3600)
+    assert live in queued(system)
+    with pytest.raises(rollout.Busy, match="already reserved"):
+        admit(system, live)
+
+
+def test_a_fast_clock_never_skips_a_live_waiter(system):
+    holder = hold(system, "gcp")
+    live = enqueue(system, "gcp", QR.format(1), wait=3600)
+    skew = rollout.WAITER_STALE_SECONDS + 300
+    fast = rollout.Coordinator(system.store, system.coordinator.probe, lambda: system.clock[0] + skew)
+    # A fast poller behind it for the same cloud observes for ten minutes
+    # while the live waiter keeps heartbeating on its own clock.
+    poller = fast.enqueue("gcp", QCP.format(3), "gateway", 3600)
+    for _ in range(20):
+        system.clock[0] += 30
+        with pytest.raises(rollout.Busy):
+            admit(system, live)
+        with pytest.raises(rollout.Busy):
+            fast.try_admit(poller, 3600)
+    system.coordinator.release("gcp", holder["operation_id"], True)
+    with pytest.raises(rollout.Busy, match="earlier waiter"):
+        fast.try_admit(poller, 3600)
+    assert admit(system, live)["operation_id"] == live
+
+
+def test_a_day_past_its_deadline_any_writer_may_drop_a_waiter(system):
+    ticket = enqueue(system, "gcp", QR.format(1), wait=60)
+    expires = system.store.record["queue"][0]["expires_at"]
+    system.clock[0] = expires + rollout.WAITER_ABANDONED_SECONDS - 1
     other = enqueue(system, "aws", QR.format(2))
     assert queued(system) == [ticket, other]
     system.clock[0] += 1
@@ -425,20 +483,34 @@ def valid_entry(**changes):
     [valid_entry(component="other")], [valid_entry(owner="")], [valid_entry(owner="a\nb")],
     [valid_entry(enqueued_at=2)], [valid_entry(heartbeat_at=0)], [valid_entry(expires_at=1)],
     [valid_entry(pid="0")], [valid_entry(host=None)], [valid_entry(heartbeat_at=1.5)],
-    [valid_entry(), valid_entry()], [valid_entry(ticket=f"{i:032x}") for i in range(rollout.MAX_QUEUE + 1)],
 ])
-def test_malformed_queue_fails_closed(queue):
-    with pytest.raises(rollout.Refused):
-        rollout.state_record({"schema_version": 2, "leases": {}, "holdback": None, "queue": queue})
+def test_malformed_waiters_are_ignored_and_never_block_lease_operations(system, queue, capsys):
+    lease = hold(system, "gcp")
+    system.store.record["queue"] = queue
+    assert "queue" not in rollout.state_record(system.store.record)
+    assert system.coordinator.check("gcp", lease["operation_id"]) == lease
+    assert "queue_ignored" in capsys.readouterr().err
+    system.coordinator.release("gcp", lease["operation_id"], False)
+    system.coordinator.recover("gcp", lease["operation_id"], lambda _: True)
+    assert system.store.record == {"schema_version": 2, "leases": {}, "holdback": None}
 
 
-def test_ticket_may_not_duplicate_a_lease_fence():
+def test_repeated_and_overflowing_waiters_are_deduplicated_not_fatal():
+    state = rollout.state_record({"schema_version": 2, "leases": {}, "holdback": None, "queue": [
+        valid_entry(), valid_entry(), *[valid_entry(ticket=f"{i:032x}") for i in range(rollout.MAX_QUEUE + 3)]]})
+    tickets = [e["ticket"] for e in state["queue"]]
+    assert len(tickets) == rollout.MAX_QUEUE == len(set(tickets))
+    assert tickets[0] == "b" * 32
+
+
+def test_waiter_equal_to_a_lease_fence_is_dropped_and_the_lease_kept():
     lease = {"cloud": "gcp", "owner": "o", "component": "gateway", "operation_id": "b" * 32,
              "state": "active", "created_at": 1, "expires_at": 2}
-    with pytest.raises(rollout.Refused):
-        rollout.state_record({"schema_version": 2, "leases": {"gcp": lease},
-                              "holdback": {"cloud": "aws", "release": "a" * 40},
-                              "queue": [valid_entry()]})
+    state = rollout.state_record({"schema_version": 2, "leases": {"gcp": lease},
+                                  "holdback": {"cloud": "aws", "release": "a" * 40},
+                                  "queue": [valid_entry()]})
+    assert "queue" not in state
+    assert state["leases"]["gcp"] == lease
 
 
 def test_full_queue_refuses_new_waiters(system):
@@ -508,11 +580,9 @@ def test_client_that_times_out_removes_only_its_own_ticket(system):
 
 
 def test_client_prunes_stopped_waiters_ahead_of_it(system):
-    holder = hold(system, "gcp")
+    hold(system, "gcp")
     dead = enqueue(system, "gcp", QR.format(1))
     system.clock[0] += rollout.WAITER_STALE_SECONDS
-    system.coordinator.release("gcp", holder["operation_id"], True)
-    hold(system, "gcp")  # the stale waiter is skipped, not deleted
 
     def stopped(entry):
         return entry["ticket"] == dead
@@ -533,3 +603,93 @@ def test_no_wait_is_a_single_attempt_that_still_respects_the_queue(system):
                                  sleep=fake.sleep, monotonic=fake.monotonic)
     assert fake.t == 0
     assert queued(system) == [waiter]
+
+
+# Writes that land but report a conflict (gcloud's own precondition retry) ---
+
+class LandsThenConflicts:
+    """Wraps a store so chosen writes land and then raise Conflict."""
+
+    def __init__(self, store, times=1):
+        self.store, self.times = store, times
+
+    def read(self):
+        return self.store.read()
+
+    def write(self, record, generation):
+        self.store.write(record, generation)
+        if self.times:
+            self.times -= 1
+            raise rollout.Conflict("journal compare-and-swap lost")
+
+
+def test_enqueue_that_lands_then_conflicts_is_queued_exactly_once(system):
+    flaky = rollout.Coordinator(LandsThenConflicts(system.store), system.coordinator.probe, lambda: system.clock[0])
+    ticket = flaky.enqueue("gcp", QR.format(1), "control-plane", 3600, ticket="c" * 32)
+    assert queued(system) == [ticket]
+    # The journal stays usable for everyone.
+    other = hold(system, "aws")
+    system.coordinator.check("aws", other["operation_id"])
+    system.coordinator.dequeue(ticket)
+    assert "queue" not in system.store.record
+
+
+def test_admission_that_lands_then_conflicts_returns_the_granted_lease(system):
+    ticket = enqueue(system, "gcp", QR.format(1))
+    flaky = rollout.Coordinator(LandsThenConflicts(system.store), system.coordinator.probe, lambda: system.clock[0])
+    lease = flaky.try_admit(ticket, 3600)
+    assert lease["operation_id"] == ticket
+    assert system.store.record["leases"]["gcp"] == lease
+    assert "queue" not in system.store.record
+
+
+def test_ambiguous_enqueue_in_the_client_loop_is_undone(system, monkeypatch):
+    hold(system, "gcp")
+    write = system.store.write
+    calls = []
+
+    def lands_then_errors(record, generation):
+        write(record, generation)
+        calls.append(1)
+        if len(calls) == 1:
+            raise rollout.Refused("journal write failed or ambiguous; never delete on ambiguity")
+
+    monkeypatch.setattr(system.store, "write", lands_then_errors)
+    fake = FakeTime(system)
+    with pytest.raises(rollout.Refused, match="ambiguous"):
+        rollout.acquire_in_order(system.coordinator, "gcp", QR.format(2), "control-plane", 3600, 600,
+                                 stopped=lambda _: False, sleep=fake.sleep, monotonic=fake.monotonic)
+    assert "queue" not in system.store.record
+
+
+def test_old_coordinator_against_a_queued_journal_keeps_the_queue(system, tmp_path):
+    # The exact coordinator quill-cloud-proxy runs today (its pinned digest).
+    fixture = Path(__file__).parent / "fixtures" / "cloud_rollout_200f758.py.txt"
+    source = fixture.read_bytes()
+    assert hashlib.sha256(source).hexdigest() == "63579c677b28ad05e81461f43f2535231007e102a3980d77b636783860e2c7b9"
+    path = tmp_path / "old_cloud_rollout.py"
+    path.write_bytes(source)
+    spec = importlib.util.spec_from_file_location("old_cloud_rollout", path)
+    old = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(old)
+    ticket = enqueue(system, "gcp", QR.format(1))
+    legacy = old.Coordinator(system.store, system.coordinator.probe, lambda: system.clock[0])
+    lease = legacy.acquire("gcp", QCP.format(9), "gateway", 3600)  # unfair, not unsafe
+    assert queued(system) == [ticket]
+    legacy.check("gcp", lease["operation_id"])
+    legacy.release("gcp", lease["operation_id"], True)
+    assert queued(system) == [ticket]
+    assert admit(system, ticket)["operation_id"] == ticket
+
+
+def test_status_shortens_tickets_and_keeps_lease_fences(system, monkeypatch, capsys):
+    lease = hold(system, "gcp")
+    ticket = enqueue(system, "gcp", QR.format(1))
+    monkeypatch.setattr(rollout, "GCSStore", lambda: system.store)
+    monkeypatch.setattr(sys, "argv", ["cloud_rollout.py", "status"])
+    assert rollout.main() == 0
+    output = capsys.readouterr().out
+    assert ticket not in output
+    assert ticket[:6] + "..." in output
+    assert lease["operation_id"] in output
+    assert system.store.record["queue"][0]["ticket"] == ticket
