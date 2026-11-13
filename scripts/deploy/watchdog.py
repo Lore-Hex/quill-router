@@ -7,13 +7,22 @@ of regions-to-rollback to `$GITHUB_OUTPUT` (key `rollback_regions`,
 comma-separated) so the workflow's rollback step can target only the
 failing regions.
 
-Per-region status: prefer the requested SLO class from
-`data.slo_classes.{class}.current_by_region`, falling back per missing region
-to `data.current.checks[]`. Published SLOs intentionally cover the canonical
-endpoint, while pinned regional probes live in the checks array. The default
-SLO class is router_core so deploy rollback is
-gated by attested reachability, auth/authorize, fallback, and settlement
-rather than provider-only outages.
+Per-region status, `--slo-class router_core` (the control-plane canary):
+only probes that pass through the control plane count. They are the
+authorize, settle and fallback probes, which the synthetic monitor sends to
+the control plane through the global load balancer, so each one is served
+by the control plane in the monitor's own region: a check whose
+`target_region` is empty is attributed to its `monitor_region`, and one that
+names a `target_region` to that region. The enclave-only probes
+(`tls_health`, `attestation_nonce`) never call the control plane, so for this
+verdict they are inconclusive, never failing: a gateway drain must not roll
+back a control-plane release, and must not blind its baseline. Nor is the
+published `router_core` SLO aggregate used, because it blends those enclave
+probes in. A region with no control-plane probe reads `unknown`; the deploy's
+billing-path 5xx gate (assert_no_billing_5xx.sh) still checks it.
+
+`--slo-class control_plane` keeps the original reading: the SLO class's
+`current_by_region`, falling back per missing region to `current.checks[]`.
 
 Logic:
   - Poll once per minute for `--duration-min` minutes (default 10).
@@ -77,6 +86,12 @@ SLO_PROBES = {
     ),
     "control_plane": frozenset({"control_plane_health"}),
 }
+# router_core probes that never reach the control plane: the enclave answers
+# /health and /attestation itself. Inconclusive for a control-plane verdict.
+GATEWAY_ONLY_PROBES = frozenset({"tls_health", "attestation_nonce"})
+# router_core probes that pass through the control plane being canaried.
+CONTROL_PLANE_ROUTER_CORE_PROBES = SLO_PROBES["router_core"] - GATEWAY_ONLY_PROBES
+CONTROL_PLANE_TARGET = "control-plane"
 
 
 def normalize_watchdog_status(status: object) -> str:
@@ -120,6 +135,9 @@ def fetch_per_region(
         # the down counter; deploys aren't the suspect for an LB blip).
         return {region: "unknown" for region in regions}
 
+    if slo_class == "router_core":
+        return control_plane_per_region(checks, regions)
+
     out: dict[str, str] = {}
     if isinstance(slo_region_status, dict):
         for region in regions:
@@ -152,6 +170,50 @@ def fetch_per_region(
         if sev > SEVERITY.get(worst.get(target, ""), -1):
             worst[target] = status
     return {region: out.get(region, worst.get(region, "unknown")) for region in regions}
+
+
+def control_plane_region(check: dict) -> str | None:
+    """The control-plane region that served a check, or None if unattributable."""
+    target_region = check.get("target_region")
+    if target_region:
+        return str(target_region)
+    # Sent to the control plane through the global load balancer, which
+    # serves each monitor from its own region's control plane.
+    if check.get("target") == CONTROL_PLANE_TARGET and check.get("monitor_region"):
+        return str(check["monitor_region"])
+    return None
+
+
+def control_plane_per_region(checks: Iterable[object], regions: Iterable[str]) -> dict[str, str]:
+    """Worst control-plane probe status per region; enclave-only probes never count."""
+    regions = tuple(regions)
+    worst: dict[str, str] = {}
+    inconclusive: dict[str, set[str]] = {}
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        probe_type = check.get("probe_type")
+        if probe_type in GATEWAY_ONLY_PROBES:
+            region = check.get("target_region")
+            if region in regions:
+                inconclusive.setdefault(str(region), set()).add(str(probe_type))
+            continue
+        if probe_type not in CONTROL_PLANE_ROUTER_CORE_PROBES:
+            continue
+        region = control_plane_region(check)
+        status = normalize_watchdog_status(check.get("effective_status") or check.get("status"))
+        if region not in regions or status == "unknown":
+            continue
+        if SEVERITY[status] > SEVERITY.get(worst.get(region, ""), -1):
+            worst[region] = status
+    for region in regions:
+        if region in inconclusive:
+            print(f"  watchdog: {region}: {', '.join(sorted(inconclusive[region]))} are enclave-only; "
+                  "not counted for a control-plane verdict", flush=True)
+        if region not in worst:
+            print(f"  watchdog: {region}: no control-plane probe attributable to this region "
+                  "(inconclusive)", flush=True)
+    return {region: worst.get(region, "unknown") for region in regions}
 
 
 def write_output(key: str, value: str) -> None:

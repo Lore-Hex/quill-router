@@ -31,138 +31,109 @@ class _FakeResponse(io.BytesIO):
         self.close()
 
 
-def test_watchdog_prefers_router_core_slo_region_status(monkeypatch) -> None:
-    watchdog = _load_watchdog()
-    payload = {
-        "data": {
-            "slo_classes": {
-                "router_core": {
-                    "current_by_region": {
-                        "us-central1": {"status": "up"},
-                        "europe-west4": {"status": "down"},
-                    }
-                }
-            },
-            # Fallback shape says the opposite; the SLO shape should win.
-            "current": {
-                "checks": [
-                    {"target_region": "us-central1", "effective_status": "down"},
-                    {"target_region": "europe-west4", "effective_status": "up"},
-                ]
-            },
-        }
-    }
+def _cp(status: str, monitor: str = "us-central1", probe: str = "gateway_authorize", **extra: Any) -> dict:
+    """A control-plane check exactly as status.json publishes it (no target_region)."""
+    return {"probe_type": probe, "target": "control-plane", "target_region": None,
+            "monitor_region": monitor, "status": status, "effective_status": status, **extra}
 
-    def fake_urlopen(_url: str, timeout: int) -> _FakeResponse:
-        assert timeout == 10
+
+def _gw(status: str, region: str = "us-central1", probe: str = "tls_health", target: str | None = None) -> dict:
+    """An enclave-only check (canonical or regional target)."""
+    return {"probe_type": probe, "target": target or region, "target_region": region,
+            "monitor_region": "us-central1", "status": status, "effective_status": status}
+
+
+def _serve(monkeypatch, watchdog: Any, *payloads: dict) -> list[str]:
+    queue = list(payloads)
+    urls: list[str] = []
+
+    def fake_urlopen(url: str, timeout: int) -> _FakeResponse:
+        urls.append(url)
+        payload = queue.pop(0) if len(queue) > 1 else queue[0]
         return _FakeResponse(json.dumps(payload).encode())
 
     monkeypatch.setattr(watchdog.urllib.request, "urlopen", fake_urlopen)
+    return urls
 
+
+def test_control_plane_slo_class_still_prefers_its_published_region_status(monkeypatch) -> None:
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, {"data": {
+        "slo_classes": {"control_plane": {"current_by_region": {
+            "us-central1": {"status": "up"}, "europe-west4": {"status": "down"}}}},
+        # Fallback shape says the opposite; the SLO shape should win.
+        "current": {"checks": [
+            {"target_region": "us-central1", "probe_type": "control_plane_health", "effective_status": "down"},
+            {"target_region": "europe-west4", "probe_type": "control_plane_health", "effective_status": "up"},
+        ]},
+    }})
     assert watchdog.fetch_per_region(
-        "https://trustedrouter.com/status.json",
-        ["us-central1", "europe-west4"],
+        "https://trustedrouter.com/status.json", ["us-central1", "europe-west4"], slo_class="control_plane",
     ) == {"us-central1": "up", "europe-west4": "down"}
 
 
-def test_watchdog_falls_back_to_current_checks_and_normalizes_degraded(monkeypatch) -> None:
+def test_router_core_ignores_the_blended_slo_aggregate(monkeypatch) -> None:
+    # The published router_core aggregate mixes enclave-only probes in, so it
+    # cannot speak for the control plane; only control-plane checks do.
     watchdog = _load_watchdog()
-    payload = {
-        "data": {
-            "current": {
-                "checks": [
-                    {
-                        "target_region": "us-central1",
-                        "probe_type": "tls_health",
-                        "effective_status": "routing_degraded",
-                    },
-                    {
-                        "target_region": "europe-west4",
-                        "probe_type": "tls_health",
-                        "effective_status": "up",
-                    },
-                ]
-            }
-        }
-    }
-
-    def fake_urlopen(_url: str, timeout: int) -> _FakeResponse:
-        return _FakeResponse(json.dumps(payload).encode())
-
-    monkeypatch.setattr(watchdog.urllib.request, "urlopen", fake_urlopen)
-
+    _serve(monkeypatch, watchdog, {"data": {
+        "slo_classes": {"router_core": {"current_by_region": {
+            "us-central1": {"status": "down"}, "europe-west4": {"status": "up"}}}},
+        "current": {"checks": [_cp("up", "us-central1"), _cp("down", "europe-west4")]},
+    }})
     assert watchdog.fetch_per_region(
-        "https://trustedrouter.com/status.json",
-        ["us-central1", "europe-west4"],
+        "https://trustedrouter.com/status.json", ["us-central1", "europe-west4"],
+    ) == {"us-central1": "up", "europe-west4": "down"}
+
+
+def test_control_plane_checks_are_attributed_to_their_monitor_region_and_normalized(monkeypatch) -> None:
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, {"data": {"current": {"checks": [
+        _cp("routing_degraded", "us-central1", "provider_fallback"),
+        _cp("up", "europe-west4"),
+    ]}}})
+    assert watchdog.fetch_per_region(
+        "https://trustedrouter.com/status.json", ["us-central1", "europe-west4"],
     ) == {"us-central1": "degraded", "europe-west4": "up"}
 
 
 @pytest.mark.parametrize("regional_status", ["up", "down", "trust_degraded", "degraded", "unknown"])
-def test_watchdog_reads_pinned_regions_missing_from_canonical_slo(monkeypatch, regional_status) -> None:
+def test_an_explicit_target_region_attributes_a_control_plane_check(monkeypatch, regional_status) -> None:
     watchdog = _load_watchdog()
-    payload = {
-        "data": {
-            "slo_classes": {"router_core": {"current_by_region": {
-                "global": {"status": "up"},
-                "us-central1": {"status": "up"},
-                "europe-west4": {"status": "unknown"},
-            }}},
-            "current": {"checks": [
-                {"target_region": "us-east4", "probe_type": "tls_health", "status": regional_status},
-                {"target_region": "europe-west4", "probe_type": "tls_health", "status": "up"},
-            ]},
-        },
-    }
-    monkeypatch.setattr(
-        watchdog.urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse(json.dumps(payload).encode()),
-    )
+    _serve(monkeypatch, watchdog, {"data": {
+        "slo_classes": {"router_core": {"current_by_region": {
+            "global": {"status": "up"}, "us-central1": {"status": "up"}, "europe-west4": {"status": "unknown"}}}},
+        "current": {"checks": [
+            {"target_region": "us-east4", "probe_type": "gateway_settle", "status": regional_status},
+            _cp("up", "us-central1"),
+            _cp("up", "europe-west4", "gateway_settle"),
+        ]},
+    }})
     assert watchdog.fetch_per_region(
         "https://status.example", iter(["us-central1", "us-east4", "europe-west4", "southamerica-east1"]),
     ) == {
         "us-central1": "up",
         "us-east4": regional_status,
-        # An explicitly published SLO status remains authoritative.
-        "europe-west4": "unknown",
+        "europe-west4": "up",
+        # No control-plane probe reaches it: inconclusive, never green.
         "southamerica-east1": "unknown",
     }
 
 
 def test_trust_degraded_is_preserved_not_folded_into_degraded(monkeypatch) -> None:
-    """An attested gateway that cannot prove what it runs is BROKEN.
+    """A probe that cannot prove what it talked to is BROKEN, not churn.
 
     trust_degraded used to normalize to "degraded", and rollback fires
-    only on "down" — so an attestation regression could ship and never
-    trigger a rollback. That is the one failure this product cannot
-    afford to treat as churn.
+    only on "down", so such a regression could ship and never trigger a
+    rollback.
     """
     watchdog = _load_watchdog()
-    payload = {
-        "data": {
-            "current": {
-                "checks": [
-                    {
-                        "target_region": "eu-west-3",
-                        "probe_type": "attestation_nonce",
-                        "effective_status": "trust_degraded",
-                    },
-                    {
-                        "target_region": "us-central1",
-                        "probe_type": "tls_health",
-                        "effective_status": "up",
-                    },
-                ]
-            }
-        }
-    }
-
-    def fake_urlopen(_url: str, timeout: int) -> _FakeResponse:
-        return _FakeResponse(json.dumps(payload).encode())
-
-    monkeypatch.setattr(watchdog.urllib.request, "urlopen", fake_urlopen)
-
+    _serve(monkeypatch, watchdog, {"data": {"current": {"checks": [
+        {"target_region": "eu-west-3", "probe_type": "gateway_settle", "effective_status": "trust_degraded"},
+        _cp("up", "us-central1"),
+    ]}}})
     assert watchdog.fetch_per_region(
-        "https://aws.trustedrouter.com/status.json",
-        ["eu-west-3", "us-central1"],
+        "https://aws.trustedrouter.com/status.json", ["eu-west-3", "us-central1"],
     ) == {"eu-west-3": "trust_degraded", "us-central1": "up"}
 
 
@@ -179,7 +150,7 @@ def test_rollback_statuses_cover_down_and_trust_degraded() -> None:
 @pytest.mark.parametrize(
     "slo_class,core_probe",
     [
-        ("router_core", "tls_health"),
+        ("router_core", "gateway_authorize"),
         ("control_plane", "control_plane_health"),
     ],
 )
@@ -232,37 +203,128 @@ def test_legacy_watchdog_does_not_blend_other_probes_into_release_health(
 
 @pytest.mark.parametrize(
     "probe",
-    [
-        "tls_health",
-        "attestation_nonce",
-        "gateway_authorize",
-        "gateway_settle",
-        "gateway_authorize_settle",
-        "provider_fallback",
-    ],
+    ["gateway_authorize", "gateway_settle", "gateway_authorize_settle", "provider_fallback"],
 )
+@pytest.mark.parametrize("attribution", ["target_region", "monitor_region"])
 @pytest.mark.parametrize("canonical_slo_present", [False, True])
-def test_legacy_watchdog_keeps_router_failures_blocking(monkeypatch, probe: str, canonical_slo_present: bool) -> None:
+def test_control_plane_failures_keep_blocking(monkeypatch, probe: str, attribution: str,
+                                             canonical_slo_present: bool) -> None:
     watchdog = _load_watchdog()
-    payload = {
-        "data": {
-            "current": {
-                "checks": [
-                    {"target_region": "us-central1", "probe_type": probe, "status": "down"},
-                ]
-            }
-        }
-    }
+    check = ({"target_region": "us-central1", "probe_type": probe, "status": "down"}
+             if attribution == "target_region" else _cp("down", "us-central1", probe))
+    payload: dict[str, Any] = {"data": {"current": {"checks": [check]}}}
     if canonical_slo_present:
         payload["data"]["slo_classes"] = {"router_core": {"current_by_region": {"global": {"status": "up"}}}}
-    monkeypatch.setattr(
-        watchdog.urllib.request,
-        "urlopen",
-        lambda *_a, **_k: _FakeResponse(json.dumps(payload).encode()),
-    )
-    assert watchdog.fetch_per_region("https://status.example", ["us-central1"]) == {
-        "us-central1": "down"
-    }
+    _serve(monkeypatch, watchdog, payload)
+    assert watchdog.fetch_per_region("https://status.example", ["us-central1"]) == {"us-central1": "down"}
+
+
+@pytest.mark.parametrize("probe", ["tls_health", "attestation_nonce"])
+@pytest.mark.parametrize("status", ["down", "trust_degraded"])
+@pytest.mark.parametrize("target", ["canonical", "us-central1"])
+def test_enclave_only_probes_are_inconclusive_for_the_control_plane(
+        monkeypatch, capsys, probe: str, status: str, target: str) -> None:
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, {"data": {"current": {"checks": [_gw(status, "us-central1", probe, target)]}}})
+    assert watchdog.fetch_per_region("https://status.example", ["us-central1"]) == {"us-central1": "unknown"}
+    assert "enclave-only" in capsys.readouterr().out
+
+
+def test_another_regions_control_plane_is_not_blamed_on_this_one(monkeypatch) -> None:
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, {"data": {"current": {"checks": [
+        _cp("down", "europe-west4"), _cp("up", "us-central1"),
+        # No monitor region: the serving control plane is unknown.
+        {"probe_type": "gateway_settle", "target": "control-plane", "target_region": None, "status": "down"},
+    ]}}})
+    assert watchdog.fetch_per_region("https://status.example", ["us-central1"]) == {"us-central1": "up"}
+
+
+# The live status.json shape on 2026-11-13 (one row per probe/target/monitor).
+LIVE_CHECKS = [
+    *[_gw("up", region, probe, target)
+      for probe in ("tls_health", "attestation_nonce")
+      for region, target in (("us-central1", "canonical"), ("us-central1", "us-central1"),
+                             ("europe-west4", "europe-west4"), ("us-east4", "us-east4"), ("us-west1", "us-west1"))],
+    *[_cp("up", monitor, probe)
+      for probe in ("gateway_authorize", "gateway_settle", "provider_fallback")
+      for monitor in ("us-central1", "europe-west4")],
+    *[{"probe_type": pong, "target": region, "target_region": region, "monitor_region": "us-central1", "status": "up"}
+      for pong in ("openai_sdk_pong", "responses_pong")
+      for region in ("us-central1", "europe-west4", "us-east4", "us-west1")],
+]
+
+
+def test_live_shape_gives_control_plane_evidence_where_a_monitor_runs(monkeypatch) -> None:
+    watchdog = _load_watchdog()
+    _serve(monkeypatch, watchdog, {"data": {
+        "slo_classes": {"router_core": {"current_by_region": {"global": {"status": "up"}, "us-central1": {"status": "up"}}}},
+        "current": {"checks": LIVE_CHECKS}}})
+    assert watchdog.fetch_per_region(
+        "https://status.example", ["us-central1", "europe-west4", "us-east4", "southamerica-east1"],
+    ) == {"us-central1": "up", "europe-west4": "up", "us-east4": "unknown", "southamerica-east1": "unknown"}
+
+
+def _with(checks: list[dict], **changes: str) -> dict:
+    """LIVE_CHECKS with some (probe, attribution region) rows set to a status."""
+    rows = []
+    for check in checks:
+        row = dict(check)
+        region = row["target_region"] or row["monitor_region"]
+        status = changes.get(f"{row['probe_type']}@{region}")
+        if status:
+            row["status"] = row["effective_status"] = status
+        rows.append(row)
+    return {"data": {"current": {"checks": rows}}}
+
+
+def _run_canary(monkeypatch, tmp_path: Path, watchdog: Any, *payloads: dict,
+                extra: tuple[str, ...] = ()) -> tuple[int, str]:
+    _serve(monkeypatch, watchdog, *payloads)
+    monkeypatch.setattr(watchdog.time, "sleep", lambda _s: None)
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    # The primary control-plane canary, as deploy-production.yml runs it.
+    monkeypatch.setattr(sys, "argv", ["watchdog.py", "--regions", "us-central1", "--duration-min", "3",
+                                      "--rollback-after", "2", "--slo-class", "router_core",
+                                      "--baseline-grace-sec", "0", *extra])
+    code = watchdog.main()
+    return code, output.read_text()
+
+
+def test_simulated_control_plane_regression_now_rolls_the_canary_back(monkeypatch, tmp_path: Path) -> None:
+    # Every enclave probe stays green while the canaried control plane fails
+    # authorize and settle. The old verdict read only the enclave probes and
+    # passed this release.
+    watchdog = _load_watchdog()
+    healthy = _with(LIVE_CHECKS)
+    broken = _with(LIVE_CHECKS, **{"gateway_authorize@us-central1": "down", "gateway_settle@us-central1": "down"})
+    code, output = _run_canary(monkeypatch, tmp_path, watchdog, healthy, broken)
+    assert code == 1
+    assert "rollback_regions=us-central1" in output
+
+
+def test_simulated_gateway_drain_no_longer_rolls_the_control_plane_back(monkeypatch, tmp_path: Path) -> None:
+    # A gateway rollout drains and replaces us-central1's enclaves during the
+    # control-plane canary; the control plane itself stays healthy.
+    watchdog = _load_watchdog()
+    healthy = _with(LIVE_CHECKS)
+    drained = _with(LIVE_CHECKS, **{"tls_health@us-central1": "down", "attestation_nonce@us-central1": "down"})
+    code, output = _run_canary(monkeypatch, tmp_path, watchdog, healthy, drained)
+    assert code == 0
+    assert "rollback_regions=\n" in output
+
+
+def test_gateway_drain_during_the_baseline_does_not_blind_the_canary(monkeypatch, tmp_path: Path) -> None:
+    # The baseline used to be captured from the blended verdict: a region that
+    # read down because its enclaves were draining was excluded from rollback.
+    watchdog = _load_watchdog()
+    drained = _with(LIVE_CHECKS, **{"tls_health@us-central1": "down", "attestation_nonce@us-central1": "down"})
+    broken = _with(LIVE_CHECKS, **{"tls_health@us-central1": "down", "attestation_nonce@us-central1": "down",
+                                   "gateway_authorize@us-central1": "down"})
+    code, output = _run_canary(monkeypatch, tmp_path, watchdog, drained, broken)
+    assert code == 1
+    assert "rollback_regions=us-central1" in output
 
 
 def test_normalize_maps_routing_degraded_but_not_trust_degraded() -> None:
