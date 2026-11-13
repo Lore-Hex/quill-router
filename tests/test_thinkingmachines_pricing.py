@@ -365,7 +365,11 @@ def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_liber
     # route: the Tinker access hold belongs to TR's Tinker key, not to the
     # model. Liberty membership and the open-weights badge stay as Joseph set
     # them on 2026-11-06 until he decides otherwise.
-    from trusted_router.catalog import endpoints_for_model, meta_candidate_models, model_open_weights
+    from trusted_router.catalog import (
+        endpoints_for_model,
+        meta_candidate_models,
+        model_open_weights,
+    )
 
     serve_manifest_rows(monkeypatch, tmp_path, "nebius", [NEBIUS_INKLING_2_SMALL_ROW])
     serve_manifest_rows(monkeypatch, tmp_path, "cloudflare-workers-ai", [CLOUDFLARE_INKLING_2_SMALL_ROW])
