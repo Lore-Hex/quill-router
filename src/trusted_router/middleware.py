@@ -559,7 +559,14 @@ async def _rate_limit_request(
     # own health check; the target is marked unhealthy and replaced while it
     # is serving fine. The probe is a constant-time 200 with no storage work,
     # so this is not the amplification surface the ingress limiter exists for.
-    if path in HEALTH_PROBE_PATHS:
+    #
+    # The exemption compares the path the router matches on, not
+    # request.url.path. Starlette builds request.url through urlsplit, which
+    # drops tab, CR and LF, so request.url.path reads "/health" for
+    # "/hea%09lth" while the router sees a tab and answers 404: keyed on
+    # request.url.path, the exemption admitted that 404 page render unmetered.
+    routed_path = request.scope["path"]
+    if routed_path in HEALTH_PROBE_PATHS:
         return None
 
     bearer = get_authorization_bearer(request)

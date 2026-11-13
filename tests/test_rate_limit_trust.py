@@ -5,6 +5,7 @@ import threading
 
 import pytest
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
@@ -642,6 +643,82 @@ def test_health_probes_bypass_an_exhausted_untrusted_source_bucket() -> None:
     # not a route: an exempt /healthz would be an unmetered 404-render path.
     assert client.get("/healthz").status_code == 429
     assert client.post("/v1/chat/completions", json={}).status_code == 429
+
+
+# Paths that request.url.path reads as a liveness route and the router does
+# not. Starlette builds request.url through urlsplit, which drops tab, CR and
+# LF, so each of these has request.url.path "/health" or "/v1/health". The
+# router matches the path as sent: a tab or CR is no route (a 404, and on a
+# page path a rendered 404 page), and only a trailing LF still reaches the
+# handler, because the route pattern's `$` matches before it.
+_NOT_THE_PROBE_PATH = [
+    "/hea\tlth",
+    "/\thealth",
+    "/health\t",
+    "/health\r",
+    "/hea\nlth",
+    "/health\n",
+    "/v1/hea\tlth",
+    "/v1/health\n",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _NOT_THE_PROBE_PATH)
+async def test_health_exemption_compares_the_path_the_router_matches(path: str) -> None:
+    settings = _production_settings(
+        rate_limit_client_ip_mode="untrusted", rate_limit_ip_per_window=1
+    )
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+
+    async def admit(sent: str) -> object:
+        request = Request({
+            "type": "http",
+            "method": "GET",
+            "path": sent,
+            "headers": [(b"host", b"aws.trustedrouter.com"), (b"accept", b"text/html")],
+            "client": ("198.51.100.7", 12345),
+        })
+        # The premise: request.url.path alone cannot tell these apart.
+        assert request.url.path in {"/health", "/v1/health"}
+        return await _rate_limit_request(
+            request,
+            settings,
+            ingress_rate_limits=limiter,
+            federation_settlement_tokens=(),
+        )
+
+    # Counted, then refused: neither half of the exemption applies.
+    assert await admit(path) is None
+    refused = await admit(path)
+    assert isinstance(refused, JSONResponse) and refused.status_code == 429
+    # The probe itself is still admitted on the exhausted bucket.
+    assert await admit("/health") is None
+    assert await admit("/v1/health") is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/hea%09lth", "/%09health", "/health%09", "/health%0D", "/health%0A", "/v1/hea%09lth"],
+)
+@pytest.mark.parametrize("accept", ["text/html", "application/json", "*/*"])
+def test_an_exhausted_bucket_refuses_a_probe_look_alike_before_any_404_render(
+    path: str, accept: str
+) -> None:
+    app = create_app(
+        _production_settings(rate_limit_client_ip_mode="untrusted", rate_limit_ip_per_window=1),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    client = TestClient(app)
+    assert client.get("/ready").status_code != 429
+    assert client.get("/ready").status_code == 429
+
+    limited = client.get(path, headers={"Accept": accept})
+
+    assert limited.status_code == 429
+    assert limited.json()["error"]["type"] == "rate_limited"
+    assert client.get("/health").status_code == 200
 
 
 @pytest.mark.parametrize("environment", ["production", "canary", "staging"])
