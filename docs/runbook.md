@@ -390,6 +390,14 @@ cloud, without changing it:
 bash scripts/deploy/deploy_mutex.sh status
 ```
 
+Workflows that wait for a lease (`TR_DEPLOY_WAIT_SECONDS` above 0) queue in the
+same journal and are admitted first come, first served across quill-router and
+quill-cloud-proxy ([design](design/deploy-fifo-admission.md)). `status` shows
+the `queue` list. A waiter silent for ten minutes is skipped, not deleted;
+waiters are removed only when their owner run has completed or their own
+deadline has passed, so a stuck waiter never needs manual cleanup. A queue
+ticket is not a reservation and never needs recovery.
+
 For a retained reservation, follow the [coordinator recovery procedure](design/two-cloud-rollouts.md#recovery).
 Verify the exact owner has stopped, outstanding cloud operations have completed,
 and cloud health has been checked before explicit recovery. Do not delete the
