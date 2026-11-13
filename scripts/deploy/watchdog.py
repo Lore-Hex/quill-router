@@ -7,13 +7,44 @@ of regions-to-rollback to `$GITHUB_OUTPUT` (key `rollback_regions`,
 comma-separated) so the workflow's rollback step can target only the
 failing regions.
 
-Per-region status: prefer the requested SLO class from
-`data.slo_classes.{class}.current_by_region`, falling back per missing region
-to `data.current.checks[]`. Published SLOs intentionally cover the canonical
-endpoint, while pinned regional probes live in the checks array. The default
-SLO class is router_core so deploy rollback is
-gated by attested reachability, auth/authorize, fallback, and settlement
-rather than provider-only outages.
+Per-region status, `--slo-class router_core` (the control-plane canary):
+only probes that pass through the control plane count: authorize, settle
+and fallback. The synthetic monitor sends them to https://trustedrouter.com,
+and each is attributed to the control-plane region whose Cloud Run serves the
+path it hit (its `target_url`, whose host must be one the load balancer
+serves), following the load balancer's routes:
+  * `/v1/internal/gateway/authorize` goes to the multi-region control
+    backend, which serves a monitor from its own region: `monitor_region`.
+  * `/v1/internal/gateway/settle`, `/heartbeat` and `/refund` go to the
+    terminal backend, whose only NEG is in us-central1: so every monitor's
+    settle is us-central1's evidence. The route and hosts are read from the
+    live URL map (`gcloud compute url-maps describe`), falling back with a
+    warning to infra/; if the two disagree, settle is inconclusive.
+Freshness decides what a row is evidence of. A fresh row (effective status
+equals what it recorded, no older than CURRENT_SAMPLE_TTL_SECONDS) is
+attributed by route as above. A row the status page reports `down` because
+its probe went silent past its limit is evidence against the monitor's own
+region only: each monitor ingests its samples through its own region's
+control plane (TR_SYNTHETIC_INGEST_URL on the load balancer), so a broken
+control plane there silences it; it is never credited to the region serving
+settle. A late row in between (degraded) is not evidence and, as before,
+never blocks. A settle row counts only while the same monitor's authorize row
+is fresh and up: when a monitor's authorize fails it writes no settle, and
+its last settle row must not be blamed on the region serving settle. A sample that depends on two stages served by different
+regions counts for neither. A check that names a `target_region` is
+attributed to it.
+The enclave-only probes (`tls_health`, `attestation_nonce`) never call the
+control plane, so for this verdict they are inconclusive, never failing: a
+gateway drain must not roll back a control-plane release, and must not blind
+its baseline. Nor is the published `router_core` SLO aggregate used, because
+it blends those enclave probes in. A region with no attributable probe reads
+`unknown`, which does not block (as before) but is announced with a warning
+annotation. The synthetic monitors sample every three minutes and this
+script does not require a sample to be newer than a traffic shift, so a
+short watch can read a sample from before the shift.
+
+`--slo-class control_plane` keeps the original reading: the SLO class's
+`current_by_region`, falling back per missing region to `current.checks[]`.
 
 Logic:
   - Poll once per minute for `--duration-min` minutes (default 10).
@@ -40,11 +71,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any, NamedTuple
 
 # This script also runs directly from a checkout during deploys.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
@@ -77,6 +112,114 @@ SLO_PROBES = {
     ),
     "control_plane": frozenset({"control_plane_health"}),
 }
+# router_core probes that never reach the control plane: the enclave answers
+# /health and /attestation itself. Inconclusive for a control-plane verdict.
+GATEWAY_ONLY_PROBES = frozenset({"tls_health", "attestation_nonce"})
+# router_core probes that pass through the control plane being canaried.
+CONTROL_PLANE_ROUTER_CORE_PROBES = SLO_PROBES["router_core"] - GATEWAY_ONLY_PROBES
+CONTROL_PLANE_TARGET = "control-plane"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TERMINAL_BACKEND_TF = REPO_ROOT / "infra" / "control_terminal_backend.tf"
+# The terminal paths the load balancer sends to that backend (with or without
+# the /v1 prefix); tests pin this list to infra/control_lb_url_map.tf.
+TERMINAL_PATHS = ("/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund")
+AUTHORIZE_PATH = "/internal/gateway/authorize"
+# Stages a sample depends on when its target_url does not say.
+DEFAULT_STAGES = {
+    "gateway_authorize": frozenset({"authorize"}),
+    "gateway_settle": frozenset({"settle"}),
+    "gateway_authorize_settle": frozenset({"authorize", "settle"}),
+    "provider_fallback": frozenset({"authorize", "settle"}),
+}
+UNREADABLE = "unreadable"
+URL_MAP_NAME = "trusted-router-control-map"
+SURFACE_MATCHER = "trusted-router-service-surfaces"
+CONTROL_LB_URL_MAP_TF = REPO_ROOT / "infra" / "control_lb_url_map.tf"
+# status.py: two monitor cadences (180 s) plus a minute.
+CURRENT_SAMPLE_TTL_SECONDS = 2 * 180 + 60
+_warned_unknown: set[str] = set()
+_routes_cache: list[Routes] = []
+
+
+class Routes(NamedTuple):
+    """Where the load balancer sends the control-plane probe paths."""
+
+    terminal: str | None  # region serving settle; None = served by the monitor's region
+    hosts: frozenset[str]  # hosts whose requests follow these routes
+
+
+def terraform_lb_hosts(path: Path = CONTROL_LB_URL_MAP_TF) -> frozenset[str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return frozenset()
+    match = re.search(r"hosts\s*=\s*\[([^\]]*)\]\s*path_matcher\s*=\s*\"" + SURFACE_MATCHER + "\"", text)
+    return frozenset(re.findall(r'"([a-z0-9.-]+)"', match[1])) if match else frozenset()
+
+
+def live_routes(run: Any = subprocess.run, project: str | None = None) -> Routes:
+    """Read the terminal route and its hosts from the live URL map."""
+    project = project or os.environ.get("PROJECT_ID") or "quill-cloud-proxy"
+
+    def describe(*args: str) -> dict:
+        result = run(["gcloud", "compute", *args, "--global", f"--project={project}", "--format=json"],
+                     capture_output=True, text=True, timeout=60, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"gcloud compute {args[0]} describe failed: {result.stderr.strip()[:200]}")
+        return json.loads(result.stdout)
+
+    url_map = describe("url-maps", "describe", URL_MAP_NAME)
+    matcher = next(m for m in url_map["pathMatchers"] if m["name"] == SURFACE_MATCHER)
+    hosts = frozenset(h for rule in url_map.get("hostRules", []) if rule.get("pathMatcher") == SURFACE_MATCHER
+                      for h in rule.get("hosts", []))
+    rule = next((r for r in matcher.get("pathRules", [])
+                 if f"/v1{TERMINAL_PATHS[0]}" in r.get("paths", [])), None)
+    if rule is None or not rule.get("service"):
+        return Routes(None, hosts)
+    backend = describe("backend-services", "describe", rule["service"].rsplit("/", 1)[1])
+    regions = {re.search(r"/regions/([a-z0-9-]+)/", b.get("group", "")).group(1)
+               for b in backend.get("backends", []) if re.search(r"/regions/([a-z0-9-]+)/", b.get("group", ""))}
+    # A multi-region backend serves each monitor from its own region.
+    return Routes(regions.pop() if len(regions) == 1 else None, hosts)
+
+
+def load_routes(run: Any = subprocess.run) -> Routes:
+    """Live URL map, cross-checked against infra/; cached for the process."""
+    if _routes_cache:
+        return _routes_cache[0]
+    tf_terminal, tf_hosts = terminal_route_region(), terraform_lb_hosts()
+    if os.environ.get("TR_WATCHDOG_LIVE_ROUTES") == "0":
+        routes = Routes(tf_terminal, tf_hosts)
+    else:
+        try:
+            live = live_routes(run)
+        except Exception as exc:  # noqa: BLE001 - any failure falls back to the reviewed Terraform
+            print(f"::warning::watchdog: live URL map unreadable ({type(exc).__name__}: {exc}); "
+                  "using the routes in infra/", flush=True)
+            routes = Routes(tf_terminal, tf_hosts)
+        else:
+            terminal = live.terminal
+            if tf_terminal != UNREADABLE and tf_terminal != live.terminal:
+                print(f"::warning::watchdog: the live URL map serves settle from {live.terminal} but infra/ says "
+                      f"{tf_terminal}; settle evidence is inconclusive until they agree", flush=True)
+                terminal = UNREADABLE
+            routes = Routes(terminal, live.hosts)
+    _routes_cache.append(routes)
+    return routes
+
+
+def terminal_route_region(path: Path = TERMINAL_BACKEND_TF) -> str | None:
+    """us-central1 (the terminal NEG's region) when the terminal route is on,
+    None when it is off, UNREADABLE when the Terraform cannot be read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return UNREADABLE
+    enabled = re.findall(r"^\s*terminal_c1_route_enabled\s*=\s*(true|false)\s*$", text, re.MULTILINE)
+    regions = set(re.findall(r"/regions/([a-z0-9-]+)/networkEndpointGroups/", text))
+    if len(enabled) != 1 or len(regions) != 1:
+        return UNREADABLE
+    return regions.pop() if enabled[0] == "true" else None
 
 
 def normalize_watchdog_status(status: object) -> str:
@@ -120,6 +263,9 @@ def fetch_per_region(
         # the down counter; deploys aren't the suspect for an LB blip).
         return {region: "unknown" for region in regions}
 
+    if slo_class == "router_core":
+        return control_plane_per_region(checks, regions, load_routes())
+
     out: dict[str, str] = {}
     if isinstance(slo_region_status, dict):
         for region in regions:
@@ -152,6 +298,111 @@ def fetch_per_region(
         if sev > SEVERITY.get(worst.get(target, ""), -1):
             worst[target] = status
     return {region: out.get(region, worst.get(region, "unknown")) for region in regions}
+
+
+def sample_stages(check: dict) -> frozenset[str]:
+    """Which control-plane stages a sample's status depends on."""
+    path = urllib.parse.urlsplit(str(check.get("target_url") or "")).path.removeprefix("/v1")
+    if path in TERMINAL_PATHS:
+        # A settle sample is written only after its authorize succeeded, so
+        # its status is the terminal call's.
+        return frozenset({"settle"})
+    if path == AUTHORIZE_PATH:
+        return frozenset({"authorize"})
+    return DEFAULT_STAGES.get(str(check.get("probe_type")), frozenset())
+
+
+def fresh(check: dict) -> bool:
+    """A sample the monitor wrote recently, not one the status page has aged."""
+    recorded = normalize_watchdog_status(check.get("status"))
+    effective = normalize_watchdog_status(check.get("effective_status") or check.get("status"))
+    age = check.get("age_seconds")
+    young = age is None or (isinstance(age, (int, float)) and age <= CURRENT_SAMPLE_TTL_SECONDS)
+    return recorded == effective and young
+
+
+def control_plane_region(check: dict, routes: Routes, authorize_up: set[str] | None = None) -> str | None:
+    """The control-plane region that served a check, or None if unattributable.
+
+    `authorize_up` holds the monitors whose authorize row is fresh and up; a
+    settle-stage sample from any other monitor is not attributed.
+    """
+    target_region = check.get("target_region")
+    if target_region:
+        return str(target_region)
+    monitor = check.get("monitor_region")
+    if check.get("target") != CONTROL_PLANE_TARGET or not monitor:
+        return None
+    if urllib.parse.urlsplit(str(check.get("target_url") or "")).hostname not in routes.hosts:
+        return None
+    stages = sample_stages(check)
+    if "settle" in stages and authorize_up is not None and monitor not in authorize_up:
+        return None
+    served = set()
+    for stage in stages:
+        if stage == "settle" and routes.terminal == UNREADABLE:
+            return None
+        served.add(routes.terminal if stage == "settle" and routes.terminal else str(monitor))
+    # A sample that crossed two regions cannot be blamed on either.
+    return served.pop() if len(served) == 1 else None
+
+
+def control_plane_per_region(checks: Iterable[object], regions: Iterable[str], routes: Routes) -> dict[str, str]:
+    """Worst fresh control-plane probe status per region; enclave-only probes never count."""
+    regions = tuple(regions)
+    rows = [check for check in checks if isinstance(check, dict)]
+    authorize_up = {
+        str(check["monitor_region"]) for check in rows
+        if check.get("probe_type") == "gateway_authorize" and check.get("target") == CONTROL_PLANE_TARGET
+        and check.get("monitor_region") and fresh(check)
+        and normalize_watchdog_status(check.get("status")) == "up"
+    }
+    worst: dict[str, str] = {}
+    inconclusive: dict[str, set[str]] = {}
+    stale = 0
+    for check in rows:
+        probe_type = check.get("probe_type")
+        if probe_type in GATEWAY_ONLY_PROBES:
+            region = check.get("target_region")
+            if region in regions:
+                inconclusive.setdefault(str(region), set()).add(str(probe_type))
+            continue
+        if probe_type not in CONTROL_PLANE_ROUTER_CORE_PROBES:
+            continue
+        status = normalize_watchdog_status(check.get("effective_status") or check.get("status"))
+        if not fresh(check):
+            if status != "down":
+                # Late (older than the TTL, under the silent limit): not
+                # evidence, and non-blocking as it always was.
+                stale += 1
+                continue
+            # Silent past the status page's limit while other probes report.
+            # Each monitor ingests its samples through its own region's
+            # control plane, so a broken control plane there silences it:
+            # that is evidence against the monitor's own region only, never
+            # the region serving its settle route.
+            region = check.get("target_region") or (
+                check.get("monitor_region") if check.get("target") == CONTROL_PLANE_TARGET else None)
+        else:
+            region = control_plane_region(check, routes, authorize_up)
+        if region not in regions or status == "unknown":
+            continue
+        if SEVERITY[status] > SEVERITY.get(worst.get(region, ""), -1):
+            worst[region] = status
+    if stale:
+        print(f"  watchdog: {stale} stale control-plane row(s) not counted (dead or late monitor)", flush=True)
+    if routes.terminal == UNREADABLE and "terminal" not in _warned_unknown:
+        _warned_unknown.add("terminal")
+        print("::warning::watchdog: the terminal route is unknown; settle evidence is inconclusive", flush=True)
+    for region in regions:
+        if region in inconclusive:
+            print(f"  watchdog: {region}: {', '.join(sorted(inconclusive[region]))} are enclave-only; "
+                  "not counted for a control-plane verdict", flush=True)
+        if region not in worst and region not in _warned_unknown:
+            _warned_unknown.add(region)
+            print(f"::warning::watchdog: {region}: no control-plane probe is attributable to this region; "
+                  "its canary verdict is unknown and does not block", flush=True)
+    return {region: worst.get(region, "unknown") for region in regions}
 
 
 def write_output(key: str, value: str) -> None:
