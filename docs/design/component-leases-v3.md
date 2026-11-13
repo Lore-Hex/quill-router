@@ -168,9 +168,9 @@ Under v3:
      - The probe passes that 429 at once, matched byte for byte
        (`LIMITER_429`): status 429 and exactly the body
        `{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}`.
-       It sends `Content-Type: application/json`, `Retry-After` (what is
-       left of the 60 s window) and the `X-RateLimit-*` headers, which the
-       probe does not need. Any other 429 is retried and refused as before:
+       The limiter also sends `Content-Type: application/json`,
+       `Retry-After` (what is left of the 60 s window) and the
+       `X-RateLimit-*` headers; the probe does not check them. Any other 429 is retried and refused as before:
        a proxy's or a load balancer's, HTML, an empty body, or the
        limiter's object reformatted, wrapped, or with a field changed,
        added or missing. So is that body at any other status.
