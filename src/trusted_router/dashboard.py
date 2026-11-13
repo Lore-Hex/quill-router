@@ -2400,13 +2400,8 @@ def _short_dollars(microdollars: int, *, digits: int) -> str:
     return f"${Decimal(text):f}"
 
 
-def _launch_offer_lede(model: Model) -> dict[str, object] | None:
-    """Fortanix launch-offer hero copy, live only while the offer banner is."""
-    if model.id != LAUNCH_OFFER_MODEL_ID:
-        return None
-    offer = launch_offer_facts()
-    if offer is None:
-        return None
+def _launch_offer_lede(offer: LaunchOfferFacts) -> dict[str, object]:
+    """Fortanix launch-offer hero copy, built only while the offer is live."""
     others_input, others_output = offer.others_input_microdollars, offer.others_output_microdollars
     return {
         "model_name": offer.model_name,
@@ -2441,6 +2436,7 @@ def _model_page(
     model: Model,
     view: Mapping[str, object],
     route_evidence: Mapping[str, object],
+    offer: LaunchOfferFacts | None = None,
 ) -> dict[str, object]:
     """Presentation data for the public model page: short name, hero stats,
     provider rows with positive privacy badges and cost bars, the agent
@@ -2560,7 +2556,7 @@ def _model_page(
             else None
         ),
         "token_priced": token_priced,
-        "launch_offer": _launch_offer_lede(model) if token_priced else None,
+        "launch_offer": _launch_offer_lede(offer) if offer is not None and token_priced else None,
         "funded": funded,
         "rows": rows,
         "sort_speed": any(row["sort_throughput"] is not None for row in rows),
@@ -4542,6 +4538,13 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
     )
 
 
+# Social card for the offer page, rendered by scripts/generate_og_card.py with
+# --headline "GLM 5.3 Flash," --accent "basically free"
+# --subhead "1¢ per million tokens on Fortanix". Re-render it if the price changes.
+LAUNCH_OFFER_CARD = "glm-5.3-flash-fortanix.png"
+LAUNCH_OFFER_CARD_PRICE = "1\u00a2"
+
+
 def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     """Render the per-model detail page for `/models/{author}/{slug}`.
     Returns None when the model id isn't in the catalog (route handler
@@ -4603,7 +4606,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             hero_pitch=hero_pitch,
             description=description,
             model=model_view,
-            page=_model_page(settings, model, model_view, route_evidence),
+            page=_model_page(settings, model, model_view, route_evidence, offer),
             route_evidence=route_evidence,
             related_comparisons=related_comparisons,
             compare_chips=compare_chips,
@@ -4623,13 +4626,6 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             static_version=_static_version(settings),
         )
     )
-
-
-# Social card for the offer page, rendered by scripts/generate_og_card.py with
-# --headline "GLM 5.3 Flash," --accent "basically free"
-# --subhead "1¢ per million tokens on Fortanix". Re-render it if the price changes.
-LAUNCH_OFFER_CARD = "glm-5.3-flash-fortanix.png"
-LAUNCH_OFFER_CARD_PRICE = "1\u00a2"
 
 
 def _launch_offer_title_description(offer: LaunchOfferFacts) -> tuple[str, str]:
