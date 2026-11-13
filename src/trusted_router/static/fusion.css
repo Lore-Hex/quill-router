@@ -326,7 +326,7 @@
 
 .fusion-option-pill {
   border: 1px solid #244937;
-  background: #10251a;
+  background: var(--tr-color-surface-hover);
   color: #b8f1cb;
   border-radius: 999px;
   padding: 5px 8px;

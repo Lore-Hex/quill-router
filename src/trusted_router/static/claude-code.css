@@ -8,7 +8,7 @@
   align-items: stretch;
   overflow: hidden;
   border-bottom: 1px solid var(--border-default);
-  background-color: #090d0a;
+  background-color: var(--tr-color-surface-bg-deep);
   background-image: url("/static/claude-code-hero.png");
   background-position: center;
   background-size: cover;
@@ -164,7 +164,7 @@
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-panel);
-  background: #080b09;
+  background: var(--tr-color-surface-bg-deep);
   box-shadow: 0 22px 60px rgb(0 0 0 / 24%);
 }
 
@@ -196,7 +196,7 @@
 
 .cc-prompt-body dl {
   margin: 0;
-  border-top: 1px solid #202721;
+  border-top: 1px solid var(--tr-color-line-rule-soft);
 }
 
 .cc-prompt-body dl > div {
@@ -204,7 +204,7 @@
   grid-template-columns: 112px minmax(0, 1fr);
   gap: 16px;
   padding: 10px 0;
-  border-bottom: 1px solid #202721;
+  border-bottom: 1px solid var(--tr-color-line-rule-soft);
 }
 
 .cc-prompt-body dt {
@@ -221,14 +221,14 @@
 .cc-key-inserted {
   display: inline-block;
   padding: 2px 7px;
-  border: 1px solid #455849;
+  border: 1px solid var(--tr-color-line-tag);
   border-radius: 2px;
-  color: #c6e2d3;
+  color: var(--tr-color-accent-base);
 }
 
 .cc-prompt-command {
   margin: 20px 0;
-  color: #aeb8ac;
+  color: var(--tr-color-text-tertiary);
 }
 
 .cc-prompt-command span {

@@ -1,7 +1,7 @@
 /* Application integration only. Approved homepage styles remain separate. */
 :root{--exchange-banner-height:61px}
 .trh .hero{min-height:calc(var(--hero-vh,1svh) * 100 - var(--preview-bar-height) - var(--site-header-height) - var(--exchange-banner-height))}
-.exchange-banner{box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:24px;min-height:var(--exchange-banner-height);padding:12px 24px;background:var(--tr-color-accent-base);color:var(--tr-color-accent-ink);font:400 16px/1.4 var(--sans);letter-spacing:0;border-bottom:1px solid #a8c9b5;transition:background-color .15s ease}
+.exchange-banner{box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:24px;min-height:var(--exchange-banner-height);padding:12px 24px;background:var(--tr-color-accent-base);color:var(--tr-color-accent-ink);font:400 16px/1.4 var(--sans);letter-spacing:0;border-bottom:1px solid var(--tr-color-line-emphasis);transition:background-color .15s ease}
 .exchange-banner-copy{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;min-width:0}
 .exchange-banner-copy strong{font-weight:650}
 .exchange-banner-action{display:inline-flex;align-items:center;gap:8px;flex-shrink:0;min-height:36px;font-weight:600;font-size:15px;line-height:1;white-space:nowrap}
@@ -233,7 +233,7 @@ footer{background:var(--tr-color-surface-bg-deep);border-top:1px solid var(--tr-
 .trs .q{margin:0 48px;padding:24px 0 32px;border-left:0;border-top:1px solid var(--tr-color-panel-mint-divider);max-width:754px}
 .trs .q blockquote{font-size:17px;line-height:1.6;text-wrap:pretty}
 .trs .stat .go{order:5}
-.closing-cta{position:relative;isolation:isolate;overflow:hidden;min-height:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;text-align:center;padding:72px 24px;border-block:1px solid var(--tr-color-line-rule);background:#07110e}
+.closing-cta{position:relative;isolation:isolate;overflow:hidden;min-height:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;text-align:center;padding:72px 24px;border-block:1px solid var(--tr-color-line-rule);background:var(--tr-color-surface-photo-fallback)}
 .closing-cta::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,#050706c4,#0507068c 50%,#050706ad)}
 .closing-cta .closing-landscape{transform:none;object-position:center 68%}
 .closing-cta h2{max-width:740px;margin:0;color:var(--tr-color-text-primary);font-family:var(--heading-font);font-size:clamp(36px,4vw,56px);line-height:1.1;letter-spacing:-.04em;font-weight:600}

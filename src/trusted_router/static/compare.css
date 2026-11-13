@@ -432,7 +432,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   background: var(--compare-win-bg);
 }
 .compare-band h2 { margin: 0; color: var(--tr-color-text-primary); font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; }
-.compare-band .compare-cta-note { color: #dcebe2; }
+.compare-band .compare-cta-note { color: var(--tr-color-text-on-photo); }
 .public-wrap .compare-band .compare-band-lead { max-width: 36em; margin: 0; color: var(--tr-color-text-primary); font-size: 17px; line-height: 1.55; }
 
 

@@ -573,7 +573,7 @@
 }
 
 .md-provider-cheapest .md-bar {
-  background: #13281E;
+  background: var(--tr-color-surface-hover);
 }
 
 .md-total {
@@ -847,7 +847,7 @@
 }
 
 .model-detail-page .md-closing .md-no-card {
-  color: #DCEBE2;
+  color: var(--tr-color-text-on-photo);
 }
 
 /* Phones */

@@ -312,7 +312,7 @@
 /* Sage surfaces make comparison groups visible at every viewport width. */
 .openrouter-article .model-table-wrap,
 .openrouter-article .seo-evidence-table-wrap,
-.openrouter-article .v2-table-note { background: #10231b; }
+.openrouter-article .v2-table-note { background: var(--tr-color-surface-hover); }
 .openrouter-article .v2-stack :is(th,td),
 .openrouter-article .seo-evidence-table :is(th,td) { background: transparent; }
 .openrouter-article .v2-stack thead th,
@@ -349,7 +349,7 @@
 .openrouter-article .horizontal-overflow.can-scroll-left { --fade-left: 16px; }
 .openrouter-article .horizontal-overflow.can-scroll-right { --fade-right: 56px; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar { height: 8px; }
-.openrouter-article .horizontal-overflow::-webkit-scrollbar-track { background: #10231b; }
+.openrouter-article .horizontal-overflow::-webkit-scrollbar-track { background: var(--tr-color-surface-hover); }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-thumb { background: #7caa90; border-radius: 4px; }
 /* Draw the keyboard focus ring outside the masked scroller, above sticky cells. */
 .openrouter-article .horizontal-overflow-frame { position: relative; min-width: 0; }

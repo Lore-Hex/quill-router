@@ -217,7 +217,7 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .cta-note.cta-note-readable { font-size:15px; color:var(--muted); }
 .flow-steps { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
 .flow-steps div { background:var(--code-bg); color:var(--code-ink); border:1px solid var(--code-line); border-radius:8px; padding:16px; }
-.flow-steps span { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:50%; color:#082017; background:#7be0b1; font-weight:850; font-size:13px; margin-bottom:14px; }
+.flow-steps span { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:50%; color:var(--tr-color-accent-ink); background:#7be0b1; font-weight:850; font-size:13px; margin-bottom:14px; }
 .flow-steps strong { display:block; color:#fff; margin-bottom:8px; }
 .flow-steps p { color:#b8c6d2; margin:0; }
 .compare-matrix { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:0 12px 40px var(--shadow); }
@@ -771,7 +771,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .hero-proof-row { display:flex; flex-wrap:wrap; justify-content:center; gap:14px 26px; margin-top:56px; padding-top:28px; border-top:1px solid var(--line2); }
 .hero-proof-row span { color:var(--muted); font-size:13px; font-family:ui-monospace,SFMono-Regular,monospace; }
 
-.region-dot circle { fill:var(--blue); stroke:#dcecff; stroke-width:2.5; filter:drop-shadow(0 0 8px rgb(68,147,248,.68)); }
+.region-dot circle { fill:var(--blue); stroke:var(--tr-color-link-button); stroke-width:2.5; filter:drop-shadow(0 0 8px rgb(68,147,248,.68)); }
 .region-dot.edge circle { fill:var(--green); stroke:#d8ffe9; opacity:.78; }
 .region-dot.primary circle { fill:#fff; stroke:var(--blue); stroke-width:4; }
 .region-dot text { fill:#dfe9f6; font-size:15px; font-weight:700; paint-order:stroke; stroke:#07111f; stroke-width:4px; stroke-linejoin:round; }
@@ -904,7 +904,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
   width:100%;
   border:1px solid var(--line);
   border-radius:14px;
-  background:#050806;
+  background:var(--tr-color-surface-bg);
   cursor:pointer;
   overflow:hidden;
   display:flex;
