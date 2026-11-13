@@ -8,7 +8,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import parse
 from scripts.pricing.providers import thinkingmachines
 from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
-from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
 SERVERLESS = [
     {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
@@ -357,15 +357,15 @@ CLOUDFLARE_INKLING_2_SMALL_ROW = {
 }
 
 
-def test_third_party_inkling_2_small_routes_serve_open_weight_while_tinker_is_held_outside_liberty(
+def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_join_liberty_4_1(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     # Thinking Machines published Inkling 2 Small's weights on Hugging Face on
     # 2026-11-12 (Apache-2.0, ungated), and Nebius and Cloudflare Workers AI
     # began serving it at 1M context. Their routes publish like any provider
     # route: the Tinker access hold belongs to TR's Tinker key, not to the
-    # model. The routes carry the open-weights badge, but Liberty membership is
-    # an explicit list: publishing weights does not add the model to it.
+    # model. The same day Joseph gave it the open-weights badge and put it on
+    # a new Liberty 4.1 panel; every other Liberty id keeps its members.
     from trusted_router.catalog import (
         endpoints_for_model,
         meta_candidate_models,
@@ -385,9 +385,23 @@ def test_third_party_inkling_2_small_routes_serve_open_weight_while_tinker_is_he
     assert not any(provider == "thinkingmachines" for provider, _, _ in routes)
     assert model_open_weights(model)
     liberty = [model_id for model_id in MODELS if "liberty" in model_id.lower()]
-    assert liberty
+    assert "trustedrouter/liberty-4.1" in liberty
     for liberty_id in liberty:
-        assert model.id not in {candidate.id for candidate in meta_candidate_models(liberty_id)}
+        members = {candidate.id for candidate in meta_candidate_models(liberty_id)}
+        assert (model.id in members) == (liberty_id == "trustedrouter/liberty-4.1")
+    liberty_4_1 = MODELS["trustedrouter/liberty-4.1"]
+    assert [candidate.id for candidate in meta_candidate_models(liberty_4_1.id)] == [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "reflection/beam-1.0",
+        "meta-models/muse-spark-open",
+        "thinkingmachines/inkling-2-small",
+    ]
+    # Liberty 4.1 is open weights with Inkling 2 Small on its panel, and it has
+    # a US-headquartered 1M route for it, which is what the gateway pins.
+    assert model_open_weights(liberty_4_1)
+    assert ("cloudflare-workers-ai", "@cf/thinkingmachines/inkling-2-small", 1_048_576) in routes
+    assert PROVIDERS["cloudflare-workers-ai"].provider_headquarters_country == "US"
+    assert not any(provider == "deepinfra" for provider, _, _ in routes)
 
 
 def _held_manifest(tmp_path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202

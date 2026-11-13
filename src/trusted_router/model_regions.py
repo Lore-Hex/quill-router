@@ -49,6 +49,7 @@ from trusted_router.catalog_data import (
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_1_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PRIVACY_TIER_LABELS,
     PROVIDER_JURISDICTION_CN,
@@ -151,6 +152,7 @@ OPERATORS_PER_MODEL = 6
 # component model under them resolves to a US lab in MODEL_ORIGINS — which the
 # page states as a computed count, not as a slogan.
 LIBERTY_MODEL_IDS: tuple[str, ...] = (
+    LIBERTY_4_1_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,

@@ -52,6 +52,7 @@ from trusted_router.catalog import (
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_1_MODEL_ID,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
     MODEL_ENDPOINTS,
@@ -1553,6 +1554,16 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
                 "nvidia/nemotron-3-ultra-550b-a55b",
                 "reflection/beam-1.0",
                 "meta-models/muse-spark-open",
+            ],
+        ),
+        LIBERTY_4_1_MODEL_ID: (
+            "fusion_panel",
+            1_048_576,
+            [
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "reflection/beam-1.0",
+                "meta-models/muse-spark-open",
+                "thinkingmachines/inkling-2-small",
             ],
         ),
     }

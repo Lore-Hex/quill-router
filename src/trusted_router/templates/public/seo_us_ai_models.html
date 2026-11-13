@@ -25,7 +25,7 @@ client = OpenAI(
 )
 
 reply = client.chat.completions.create(
-    model="trustedrouter/liberty-4.0",
+    model="trustedrouter/liberty-4.1",
     messages=[{"role": "user",
                "content": "Draft the incident summary."}],
     extra_body={"provider": {"jurisdiction": "us"}},
