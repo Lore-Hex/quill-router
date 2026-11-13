@@ -54,7 +54,7 @@ jobs:
       - name: The later install wins and UV_PYTHON is exported
         run: |
           set -euo pipefail
-          uv --version | grep -Fx 'uv 0.13.4' || { uv --version; exit 1; }
+          uv --version | grep -E '^uv 0\.13\.4( |$)' || { uv --version; exit 1; }
           test "$UV_PYTHON" = 3.12
       - uses: ./.github/actions/setup-terraform
       - name: terraform is on PATH
