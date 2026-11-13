@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
+from PIL import Image
 
 from trusted_router.catalog import (
     MODEL_ENDPOINTS,
@@ -16,6 +17,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
+    STATIC_DIR,
     _credits_endpoints,
     _short_dollars,
     docs_llms_full_txt,
@@ -422,6 +424,9 @@ def _model_page_seo(model_id):
         "description": soup.find("meta", attrs={"name": "description"})["content"],
         "og_title": soup.find("meta", property="og:title")["content"],
         "og_description": soup.find("meta", property="og:description")["content"],
+        "og_image": soup.find("meta", property="og:image")["content"],
+        "twitter_image": soup.find("meta", attrs={"name": "twitter:image"})["content"],
+        "og_image_alt": soup.find("meta", property="og:image:alt")["content"],
         "faq_json": dict(faq_json),
         "faq_visible": dict(faq_visible),
     }
@@ -469,6 +474,18 @@ def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
         assert "free" not in text.casefold()
 
 
+def test_offer_page_uses_its_own_social_card_while_gate_is_on():
+    card = "https://trustedrouter.com/static/og/glm-5.3-flash-fortanix.png"
+    page = _model_page_seo(MODEL_ID)
+    assert page["og_image"] == page["twitter_image"] == card
+    assert page["og_image_alt"] == (
+        "GLM 5.3 Flash, basically free: 1¢ per million tokens on Fortanix"
+    )
+    assert _model_page_seo("z-ai/glm-5.3-flash")["og_image"] == "https://trustedrouter.com/og.png"
+    with Image.open(STATIC_DIR / "og" / "glm-5.3-flash-fortanix.png") as image:
+        assert image.size == (1200, 630)
+
+
 def test_offer_seo_drops_lowest_claim_when_another_glm_flash_route_is_cheaper(monkeypatch):
     route = _credits_endpoints(endpoints_for_model("z-ai/glm-5.3-flash"))[0]
     monkeypatch.setitem(
@@ -503,6 +520,7 @@ def test_offer_seo_reverts_when_gate_turns_off(monkeypatch):
     assert base["faq_json"] == base["faq_visible"]
     assert not any("fortanix" in answer.casefold() for answer in base["faq_json"].values())
     llms, full = _llms_texts()
+    assert page["og_image"] == "https://trustedrouter.com/og.png"
     assert "Introductory offer" not in llms and MODEL_ID not in llms
     assert "offer=introductory" not in full
 

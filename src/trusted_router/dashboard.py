@@ -4568,8 +4568,20 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         "limits, privacy policy, regional availability, measured uptime, and API support."
     )
     offer = launch_offer_facts() if model.id == LAUNCH_OFFER_MODEL_ID else None
+    # Passed only when set: the base template's `default` filter keeps None.
+    social_card: dict[str, str] = {}
     if offer is not None:
         title, description = _launch_offer_title_description(offer)
+        # The card's words are baked into the PNG, so it shows only while the
+        # live price still matches them; otherwise the page keeps the default card.
+        if offer.unit_price == LAUNCH_OFFER_CARD_PRICE:
+            social_card = {
+                "og_image": _og_image_url(settings, LAUNCH_OFFER_CARD),
+                "og_image_alt": (
+                    f"{offer.model_name}, basically free: {offer.unit_price} per million "
+                    f"tokens on {offer.provider_name}"
+                ),
+            }
     related_comparisons = _related_model_comparison_rows(model.id, limit=6)
     compare_chips = []
     for related in related_comparisons:
@@ -4585,6 +4597,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             api_base_url=settings.api_base_url,
             site_url=site_url,
             title=title,
+            **social_card,
             heading=model.name,
             hero_label=hero_label,
             hero_pitch=hero_pitch,
@@ -4610,6 +4623,13 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
             static_version=_static_version(settings),
         )
     )
+
+
+# Social card for the offer page, rendered by scripts/generate_og_card.py with
+# --headline "GLM 5.3 Flash," --accent "basically free"
+# --subhead "1¢ per million tokens on Fortanix". Re-render it if the price changes.
+LAUNCH_OFFER_CARD = "glm-5.3-flash-fortanix.png"
+LAUNCH_OFFER_CARD_PRICE = "1\u00a2"
 
 
 def _launch_offer_title_description(offer: LaunchOfferFacts) -> tuple[str, str]:
