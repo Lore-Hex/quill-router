@@ -564,12 +564,12 @@ _OPEN_WEIGHT_CONTAINS = (
 )
 
 
-# Served under an open-weights family prefix but kept off the open-weights
-# badge (and out of Liberty, which Joseph decided 2026-11-06). When added,
-# Hugging Face's thinkingmachines/Inkling-2-Small was not public (2026-11-05);
-# it went public under Apache-2.0 on 2026-11-12. Lifting this entry is
-# Joseph's call, not a refresh's.
-_UNPUBLISHED_WEIGHTS = frozenset({"thinkingmachines/inkling-2-small"})
+# Models served under an open-weights family prefix whose weights are not
+# published yet: they carry no open-weights badge until they are. Inkling 2
+# Small was listed here until Thinking Machines published its weights on
+# 2026-11-12 (https://huggingface.co/thinkingmachines/Inkling-2-Small,
+# Apache-2.0). Liberty membership is a separate, explicit decision.
+_UNPUBLISHED_WEIGHTS: frozenset[str] = frozenset()
 
 
 def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> bool:

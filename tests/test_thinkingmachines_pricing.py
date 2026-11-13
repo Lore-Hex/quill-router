@@ -277,21 +277,22 @@ INKLING_2_SMALL_ROW = {
 }
 
 
-def test_inkling_2_small_would_publish_without_an_open_weights_badge(
+def test_inkling_2_small_would_publish_with_an_open_weights_badge(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     # Once the access hold lifts, Tinker's route publishes as text+image at its
-    # 256K window, and the model still carries no open-weights badge: it stays
-    # in _UNPUBLISHED_WEIGHTS (and out of Liberty) until Joseph lifts that.
-    # Other providers may serve the same model at a longer window (Nebius and
-    # Cloudflare list it at 1M), so the model's window is at least Tinker's.
+    # 256K window. Its weights are public on Hugging Face (Apache-2.0, since
+    # 2026-11-12), so the model carries the open-weights badge like its
+    # siblings. Other providers may serve the same model at a longer window
+    # (Nebius and Cloudflare list it at 1M), so the model's window is at least
+    # Tinker's.
     from trusted_router.catalog import endpoints_for_model, model_open_weights
 
     serve_manifest_rows(monkeypatch, tmp_path, "thinkingmachines", [INKLING_2_SMALL_ROW])
     model = MODELS["thinkingmachines/inkling-2-small"]
     assert model.context_length >= 262_144
     assert model.input_modalities == ("text", "image")
-    assert not model_open_weights(model)
+    assert model_open_weights(model)
     assert model_open_weights(MODELS["thinkingmachines/inkling-small"])
     assert {
         (endpoint.upstream_id, endpoint.effective_context_length(model))
@@ -356,15 +357,15 @@ CLOUDFLARE_INKLING_2_SMALL_ROW = {
 }
 
 
-def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_liberty_is_unchanged(
+def test_third_party_inkling_2_small_routes_serve_open_weight_while_tinker_is_held_outside_liberty(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     # Thinking Machines published Inkling 2 Small's weights on Hugging Face on
     # 2026-11-12 (Apache-2.0, ungated), and Nebius and Cloudflare Workers AI
     # began serving it at 1M context. Their routes publish like any provider
     # route: the Tinker access hold belongs to TR's Tinker key, not to the
-    # model. Liberty membership and the open-weights badge stay as Joseph set
-    # them on 2026-11-06 until he decides otherwise.
+    # model. The routes carry the open-weights badge, but Liberty membership is
+    # an explicit list: publishing weights does not add the model to it.
     from trusted_router.catalog import (
         endpoints_for_model,
         meta_candidate_models,
@@ -382,7 +383,7 @@ def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_liber
     assert ("nebius", "thinkingmachines/Inkling-2-Small", 1_048_576) in routes
     assert ("cloudflare-workers-ai", "@cf/thinkingmachines/inkling-2-small", 1_048_576) in routes
     assert not any(provider == "thinkingmachines" for provider, _, _ in routes)
-    assert not model_open_weights(model)
+    assert model_open_weights(model)
     liberty = [model_id for model_id in MODELS if "liberty" in model_id.lower()]
     assert liberty
     for liberty_id in liberty:
