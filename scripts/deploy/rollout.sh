@@ -844,6 +844,16 @@ ENV_VARS=(
   # policy's excluded member; every other workspace's async-v1 authorize
   # passes to Python, the only ticket signer.
   "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES=84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
+  # Edge tickets (docs/design/fast-admission-e2-g15-async.md, the edge
+  # tickets section): for the workspaces named here the edge answers the
+  # async-v1 authorize itself and asks Python's sign-only route for the
+  # ticket while its own commit is in flight. Python publishes the policy's
+  # edge_tickets member only with this set, and a node release before
+  # d23591a1f refuses a policy carrying it, so this is set only once every
+  # node runs that release or a later one (infra/fastpath.tf). First the
+  # operator workspace, which is on the overlap list above. The way back is
+  # this one pin, emptied.
+  "TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4
