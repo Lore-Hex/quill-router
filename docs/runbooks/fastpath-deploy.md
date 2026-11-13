@@ -588,13 +588,65 @@ values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
    `sudo google_metadata_script_runner startup`, and read the running
    arguments from the process
    (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`):
-   they must end in `-required-tier 3 -allowance 1000000000 -floor 20000000`
+   they must end in `-required-tier 3 -allowance 1000000000 -floor 20000000` (followed by
+   `-fleet-audit` on a node with `fastpath-fleet-audit` set)
    before the next node is touched. Until every node is taken, a grant
    may still be made at today's values, so WS0's gate (section 8.2 of the
    design) counts from the last node's restart.
 
 The way back is the attributes removed and each node taken the same way,
 which returns it to today's values.
+
+## Lowering the required tier: the lower tiers' allowances
+
+`docs/design/fast-admission-widening.md` (b). Since 2026-11-12 the node also
+takes `-allowance-tier2` and `-allowance-tier1`, from the metadata attributes
+`fastpath-allowance-tier2` and `fastpath-allowance-tier1`; "0" or absent passes
+no flag, and that tier takes no lease. The values are $250 for tier 2 and $100
+for tier 1, each at most the tier above's, with the required tier lowered to 1.
+Tier 0 never takes a lease. In this order, each step done before the next:
+
+1. **The pin and the values together.** One change in `infra/fastpath.tf` pins
+   a release whose command takes both flags and sets
+   `fastpath_required_tier = "1"`, `fastpath_allowance_tier2 = "250000000"` and
+   `fastpath_allowance_tier1 = "100000000"`; `tests/test_fastpath_money_settings.py`
+   holds the pin to a release that takes them.
+2. **New nodes, not resets.** A node keeps the startup script it was created
+   with, and only the script from #2542 on reads the two attributes, so a
+   reset of an older node brings it up with `-required-tier 1` and neither
+   lower allowance (every lower-tier workspace refused). The values reach the
+   fleet as every script change does ("Turning the edge on"): the same change
+   adds `tr-fastpath-15` and `tr-fastpath-16` beside 13 and 14. Before the
+   merge, the pinned release must be in the bucket
+   (`gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/<sha>/` holds
+   `fastpath`, `fastpathctl` and `SHA256SUMS`), or the new nodes' startup
+   script stops at the download. On each new node, read the running arguments
+   back (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`);
+   they must end in
+   `-required-tier 1 -allowance 1000000000 -floor 20000000 -allowance-tier2 250000000 -allowance-tier1 100000000 -fleet-audit`.
+   Then run the infrastructure apply once more so the edge instance groups
+   list them, and wait for `HEALTHY` in
+   `gcloud compute backend-services get-health tr-fastpath-edge-backend --global`.
+   Move the pilot watches to a new node ("Turning the edge on", steps 1 to 4),
+   then take 13 and 14 out one at a time: mark leaving, wait for their leases,
+   for `UNHEALTHY` and the authorize route's 24 s, stop the unit; list them in
+   `fastpath_edge_retiring` for one apply, then remove them.
+3. **Readiness, with the lower tiers' allowances.** `fastpathctl ready`
+   defaults both lower allowances to 0, so without them every tier-1 or tier-2
+   workspace reads as refused (`RefusedTierAllowance`):
+
+   ```bash
+   /opt/fastpath/fastpathctl -database $DB ready $WS -required-tier 1 -floor 20000000 -allowance-tier2 250000000 -allowance-tier1 100000000
+   ```
+
+4. **Only then the enabler.** A separate change lowers
+   `TR_FASTPATH_ENABLER_REQUIRED_TIER` in `scripts/deploy/fastpath_enabler_job.sh`
+   to 1; `tests/test_fastpath_enabler_deploy.py` refuses an enabler tier below
+   the nodes'. Lowered first, the enabler would turn on workspaces every grant
+   still refuses, which costs each of their requests a front-door hop.
+
+The way back is the required tier at 3 again (the lower allowances are then
+not read), taken by each node the same way, and the enabler's tier first.
 
 ## Streams on the lease: the release order
 

@@ -21,6 +21,7 @@ from nyte_v2 import (
     build_nyte,
     legacy_share_image_used,
     render_nyte,
+    uses_brand_v3,
     uses_nyte,
 )
 from press import build_press
@@ -162,7 +163,8 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     return Template((HERE / "template.html").read_text()).substitute(values)
 
 
-# Suppliers with a published evidence page at /verified/<name>.
+# Suppliers with a published evidence page at /verified/<name>. Each is a NYTE shell page
+# (nyte_v2.PAGES); its pre-v3 verified-<name>.html stays for rollback.
 VERIFIED_PROVIDERS = ("maple",)
 
 
@@ -176,17 +178,20 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js"):
         shutil.copyfile(HERE / name, assets / name)
-    # Shared public pages. The provider deck itself remains private.
-    for page in ("badge",):
-        for name in (page, f"{page}.html"):
-            shutil.copyfile(HERE / f"{page}.html", output / name)
-    for name in ("badge.css", "badge.js", "verified.css", "verified.js"):
+    # /badge and the provider evidence pages are NYTE shell pages (nyte_v2.PAGES).
+    # verified.js runs the evidence checks in both designs. The other files serve only
+    # pre-v3 pages: badge.css both of them, verified.css the evidence page, badge.js /badge.
+    badge_v3 = uses_brand_v3("badge")
+    evidence_v3 = all(uses_brand_v3(provider) for provider in VERIFIED_PROVIDERS)
+    shared = ["verified.js"]
+    if not badge_v3:
+        shared += ["badge.js"]
+    if not evidence_v3:
+        shared += ["verified.css"]
+    if not (badge_v3 and evidence_v3):
+        shared += ["badge.css"]
+    for name in shared:
         shutil.copyfile(HERE / name, assets / name)
-    # Provider evidence pages: where a supplier's Privacy Secured seal links.
-    (output / "verified").mkdir(exist_ok=True)
-    for provider in VERIFIED_PROVIDERS:
-        for name in (provider, f"{provider}.html"):
-            shutil.copyfile(HERE / f"verified-{provider}.html", output / "verified" / name)
     build_badges(assets / "badges")
     build_press(output)
     build_token_index(output)
@@ -222,8 +227,6 @@ def build(output: Path) -> None:
             provider_page = "".join(
                 f'<url><loc>https://nytokenexchange.com{entry["route"]}</loc></url>'
                 for key, entry in PAGES.items() if key != "home" and entry.get("builder") != "anchor"
-            ) + '<url><loc>https://nytokenexchange.com/badge</loc></url>' + "".join(
-                f'<url><loc>https://nytokenexchange.com/verified/{provider}</loc></url>' for provider in VERIFIED_PROVIDERS
             )
         (folder / "sitemap.xml").write_text(
             f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{market["domain"]}/</loc></url>{provider_page}</urlset>'

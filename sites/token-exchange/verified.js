@@ -295,7 +295,7 @@
     return {
       mark,
       reset(text) {
-        show('running', 'Checking…', text, '');
+        show('running', element.dataset.checking || 'Checking…', text, ''); // the page may name the running state
         element.querySelectorAll('[data-step]').forEach(row => mark(row.dataset.step, 'waiting', 'Waiting'));
       },
       conclude(state, detail) {

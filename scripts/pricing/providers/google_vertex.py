@@ -21,7 +21,7 @@ from scripts.pricing.manifest import (
     models_requiring_canary,
     write_discovered_chat_manifest,
 )
-from scripts.pricing.vertex_prices import parse
+from scripts.pricing.vertex_prices import cache_write_held, parse
 
 SLUG = "google-vertex"
 URL = "https://cloud.google.com/vertex-ai/generative-ai/pricing"
@@ -161,6 +161,49 @@ def _probe(headers: dict[str, str], project: str, native_id: str) -> tuple[bool,
         return False, None
 
 
+def _was_priced_and_serving(row: dict[str, Any], now: datetime) -> bool:
+    retirement = row.get("retirement_at")
+    if isinstance(retirement, str) and datetime.fromisoformat(
+        retirement.replace("Z", "+00:00")
+    ) <= now:
+        # Google drops a retired SKU's price; that is the retirement, not a regression.
+        return False
+    return row.get("routable") is not False and (
+        "input_token_price_per_m" in row or "price_tiers" in row
+    )
+
+
+def _refuse_price_regressions(
+    existing: dict[str, dict[str, Any]],
+    rows: dict[str, dict[str, Any]],
+    unpriced: list[str],
+    tariff_held: frozenset[str],
+) -> None:
+    """Fail this provider, not its routes, when a serving model loses its price.
+
+    Google reshapes the pricing page without notice (2026-11-12: a renamed
+    cache column made the parser skip the whole Gemini 4 table). Dropping the
+    routes would publish an outage and break snapshot CI for every provider.
+    Raising keeps the committed Vertex manifest, lets the rest of the refresh
+    publish, and reports ``pricing.provider_failed`` until the parser is fixed.
+    Deliberate holds (an unbillable cache-write tariff, a route already held
+    for another reason this run) still apply.
+    """
+    now = datetime.now(UTC)
+    lost = sorted(
+        mid
+        for mid in unpriced
+        if mid not in tariff_held
+        and _was_priced_and_serving(existing.get(mid, {}), now)
+        and rows.get(mid, {}).get("routable") is not False
+    )
+    if lost:
+        raise RuntimeError(
+            "google-vertex: serving models lost their official price "
+            f"(pricing page changed?): {lost}; keeping the committed manifest"
+        )
+
+
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
     _DISCOVERED_MANIFEST_ROWS = {}
@@ -169,6 +212,7 @@ def fetch() -> ProviderPricingResult:
     claude_rows = _live_claude_rows(headers)
     html = fetch_html(URL)
     prices = parse(html)
+    tariff_held = cache_write_held(html)
     claude_tariffs = vertex_claude.parse(fetch_html(PARTNER_PRICING_URL)) if claude_rows else {}
     prices.update({mid: tariff.price for mid, tariff in claude_tariffs.items()})
     chat_ids = {f"google/{mid}" for mid in native_ids if _CHAT_ID.fullmatch(mid)} | claude_rows.keys()
@@ -209,6 +253,7 @@ def fetch() -> ProviderPricingResult:
             row.update(routable=False, routable_reason=old.get("routable_reason"))
         rows[model_id] = row
     unpriced = sorted(chat_ids - prices.keys())
+    _refuse_price_regressions(existing, rows, unpriced, tariff_held)
     candidates = {
         mid for mid, row in rows.items() if mid in prices and row.get("routable") is not False
     }

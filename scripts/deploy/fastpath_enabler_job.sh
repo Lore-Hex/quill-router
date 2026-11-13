@@ -53,6 +53,12 @@ env_vars=(
   "TR_FASTPATH_ENABLER_MODE=apply"
   # 0: nobody joins off the include list. WS4 sets 10 and WS5 100.
   "TR_FASTPATH_ENABLER_MAX_RANK=0"
+  # Section 4(b): the trust tier to join, 1 to 3. Never below the nodes'
+  # required tier in effect (infra/fastpath.tf fastpath_required_tier), or
+  # the enabler turns on workspaces every grant refuses: lowered only after
+  # the nodes' is, and the nodes' raised only after this is
+  # (tests/test_fastpath_enabler_deploy.py holds the two in order).
+  "TR_FASTPATH_ENABLER_REQUIRED_TIER=3"
   # Section 4(b): unspent credit of at least $100 to join, under $40 to leave.
   "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=100000000"
   "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=40000000"

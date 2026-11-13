@@ -609,3 +609,57 @@ def test_the_settings_bound_the_include_list_and_order_the_balances() -> None:
         settings(fastpath_enabler_mode="on")
     with pytest.raises(ValidationError):
         settings(fastpath_enabler_max_rank=-1)
+
+
+def test_the_required_tier_is_a_setting_three_by_default() -> None:
+    """TR_FASTPATH_ENABLER_REQUIRED_TIER is 1 to 3, 3 unless set, so the
+    enabler is unchanged until a later change lowers it after the nodes'."""
+    def settings(**kwargs: Any) -> Settings:
+        return Settings(_env_file=None, environment="test", **kwargs)  # type: ignore[call-arg]
+
+    assert fe.DEFAULT_REQUIRED_TIER == 3 and fe.EnablerConfig().required_tier == 3
+    assert fe.EnablerConfig.from_settings(settings()).required_tier == 3
+    for tier in (1, 2, 3):
+        assert fe.EnablerConfig.from_settings(settings(fastpath_enabler_required_tier=tier)).required_tier == tier
+    for tier in (0, 4, -1):
+        with pytest.raises(ValidationError):
+            settings(fastpath_enabler_required_tier=tier)
+
+
+def test_the_environment_sets_the_required_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TR_FASTPATH_ENABLER_REQUIRED_TIER", "2")
+    s = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    assert fe.EnablerConfig.from_settings(s).required_tier == 2
+
+
+@pytest.mark.parametrize(("required", "eligible"), [(3, {3}), (2, {2, 3}), (1, {1, 2, 3})])
+def test_eligibility_follows_the_required_tier(required: int, eligible: set[int]) -> None:
+    """A workspace at each tier is eligible at the configured required tier
+    or above and excluded for the tier below it, in the snapshot's plan and
+    in the enable's own recheck; a latched one is tier 0 at any setting."""
+    db = _armed()
+    for tier in (0, 1, 2, 3):
+        _seed(db, f"ws-synthetic-t{tier}", tier=tier, reconciled=T0)
+    _seed(db, "ws-synthetic-latched", tier=3, latched_at=T0, reconciled=T0)
+    config = dataclasses.replace(BASE, required_tier=required)
+    report = _run(db, config).report
+    on = {w for w, (enabled, _) in db.switch.items() if enabled}
+    assert on == {f"ws-synthetic-t{tier}" for tier in eligible}
+    assert report["excluded"] == {"tier": 4 - len(eligible), "latched": 1}
+    # The enable's own transaction rechecks at the same tier.
+    fresh = _armed()
+    _seed(fresh, "ws-synthetic-low", tier=min(eligible) - 1, reconciled=T0)
+    outcome = fe.write_enable(fresh, param_types, "ws-synthetic-low", included=False, config=config, now=NOW,
+                              operations=fe.enabler_operations(), commit_timestamp=COMMIT_TIMESTAMP)
+    assert outcome.result == "ineligible:tier"
+
+
+def test_an_override_at_the_required_tier_counts_as_fresh() -> None:
+    """The watermark freeze reads the same setting: an override at the
+    required tier or above has nothing to reconcile, one below it does."""
+    rows = [fe.CreditRow(shard=0, tier=2, latched=False, paused=False, in_debt=False, credits=0, usage=0,
+                         reconciled_through=None)]
+    lowered = dataclasses.replace(BASE, required_tier=2)
+    assert not fe.watermark_stale(rows, fe.Override(tier=2, bypass=False), now=NOW, config=lowered)
+    assert fe.watermark_stale(rows, fe.Override(tier=2, bypass=False), now=NOW, config=BASE)
+    assert fe.watermark_stale(rows, fe.Override(tier=1, bypass=False), now=NOW, config=lowered)

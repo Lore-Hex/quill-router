@@ -148,13 +148,7 @@ func (s *Store) ReadCreditState(ctx context.Context, workspace string) (CreditSt
 		return CreditState{}, err
 	}
 	out := CreditState{Shards: len(rows.headroom), InDebt: rows.marked(), Paused: anyTrue(rows.paused),
-		Latched: anyTrue(rows.latched), Tier: 3}
-	for i, t := range rows.tiers {
-		if rows.latched[i] {
-			t = 0
-		}
-		out.Tier = min(out.Tier, t)
-	}
-	_, out.Refused = s.rowsRefuse(rows)
+		Latched: anyTrue(rows.latched)}
+	_, out.Tier, out.Refused = s.rowsRefuse(rows)
 	return out, nil
 }

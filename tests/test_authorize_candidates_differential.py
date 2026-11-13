@@ -345,6 +345,9 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
                     ("baseten", "decision-models/baseten-elephant-9b-latest"),
                     ("baseten", "decision-models/baseten-mammoth-27b-latest"),
                     ("baseten", "decision-models/baseten-joey-2b-latest"),
+                    # NEAR AI's attestation re-pin (QCP #755) is live only on
+                    # the GCP fleet.
+                    ("near-ai", "z-ai/glm-5.3-flash"),
                 }:
                     return body.region in {"us-central1", "us-east4", "us-west1", "europe-west4"}
                 return old_available(provider, model, region)

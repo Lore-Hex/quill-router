@@ -10,7 +10,7 @@
 .evidence-hero{align-items:start;padding-block:72px}
 .evidence-hero h1{font-size:clamp(46px,5.4vw,74px)}
 .evidence-hero .lead{max-width:520px}
-.seal{display:block;width:240px;height:auto;border-radius:6px;box-shadow:0 14px 30px #0005}
+.seal{display:block;width:auto;height:96px}
 code.inline{font:.92em ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink)}
 
 .check{min-width:0;padding:24px;border-radius:8px;background:var(--panel);box-shadow:0 0 0 1px #ffffff16}

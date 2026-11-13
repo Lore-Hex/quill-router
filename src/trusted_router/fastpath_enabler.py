@@ -50,8 +50,12 @@ from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 logger = logging.getLogger("trusted_router.fastpath_enabler")
 
 MODES = ("off", "dry-run", "apply")
-# The tier a lease needs (section 4(b)); the grant refuses below it.
-REQUIRED_TIER = 3
+# The tier a workspace needs to be enabled by default
+# (TR_FASTPATH_ENABLER_REQUIRED_TIER, section 4(b)): the nodes' required tier
+# (infra/fastpath.tf fastpath_required_tier), below which the grant refuses.
+# The enabler's must never be below the nodes' in effect, or it would enable
+# workspaces every grant refuses; it may be above it, enabling fewer.
+DEFAULT_REQUIRED_TIER = 3
 # Enables a run writes at most, so a group lands over a few runs (section 5.3).
 MAX_ENABLES = 500
 # The fact-change guard and the rank pace: more than this many of a run's
@@ -279,6 +283,7 @@ class EnablerConfig:
     enable_balance: int = 100_000_000
     disable_balance: int = 40_000_000
     trust_max_age_seconds: int = 3_600
+    required_tier: int = DEFAULT_REQUIRED_TIER
 
     @classmethod
     def from_settings(cls, settings: Any) -> EnablerConfig:
@@ -292,6 +297,7 @@ class EnablerConfig:
             enable_balance=int(settings.fastpath_enabler_enable_balance_micro),
             disable_balance=int(settings.fastpath_enabler_disable_balance_micro),
             trust_max_age_seconds=int(settings.trust_reconcile_max_age_seconds),
+            required_tier=int(settings.fastpath_enabler_required_tier),
         )
 
 
@@ -316,8 +322,9 @@ def credit_causes(rows: Sequence[CreditRow], override: Override | None, *, enabl
     order: the grant's own refusals read as Go's rowsRefuse reads them
     (debt mark, pause, the least tier with a latched row at zero), the
     rows' completeness (shards 0..n-1, as Go's readCreditRows requires),
-    the balance (the enable balance to join, the disable balance to stay),
-    and a tier 3 resting on an identity bypass, unless included."""
+    the tier below the config's required tier, the balance (the enable
+    balance to join, the disable balance to stay), and a tier resting on an
+    identity bypass, unless included."""
     causes = []
     if any(row.latched for row in rows):
         causes.append("latched")
@@ -327,7 +334,7 @@ def credit_causes(rows: Sequence[CreditRow], override: Override | None, *, enabl
         causes.append("in_debt")
     if not rows or [row.shard for row in rows] != list(range(len(rows))):
         causes.append("credit_rows")
-    elif min(0 if row.latched else row.tier for row in rows) < REQUIRED_TIER:
+    elif min(0 if row.latched else row.tier for row in rows) < config.required_tier:
         causes.append("tier")
     balance = unspent(rows)
     if (balance < config.disable_balance) if enabled else (balance < config.enable_balance):
@@ -341,9 +348,10 @@ def watermark_stale(rows: Sequence[CreditRow], override: Override | None, *, now
                     config: EnablerConfig) -> bool:
     """Whether a new enable of the workspace is frozen (section 4(a)): its
     oldest trust_reconciled_through across its rows absent or older than
-    the reconciler's maximum age. A workspace at tier 3 by an operator's
-    override has nothing to reconcile and counts as fresh."""
-    if override is not None and override.tier >= REQUIRED_TIER:
+    the reconciler's maximum age. A workspace at the required tier or above
+    by an operator's override has nothing to reconcile and counts as
+    fresh."""
+    if override is not None and override.tier >= config.required_tier:
         return False
     marks = [row.reconciled_through for row in rows]
     if not marks or any(mark is None for mark in marks):

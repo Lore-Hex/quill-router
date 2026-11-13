@@ -128,7 +128,9 @@ reconciler rather than at workspaces, the enabler raises
 |---|---|---|
 | Required tier | 3 | `-required-tier 3` (exists, `cmd/fastpath/main.go:73`; the node's unit passes none today) |
 | Allowance, tier 3 | 1,000,000,000 microdollars ($1,000) per workspace | `-allowance` (new) |
-| Allowance, tiers 0 to 2 | none: refused by the required tier | |
+| Allowance, tier 2 | none (0): refused by the required tier, and by its allowance were the tier lowered | `-allowance-tier2` (new; metadata `fastpath-allowance-tier2 = "0"`) |
+| Allowance, tier 1 | none (0), as tier 2 | `-allowance-tier1` (new; metadata `fastpath-allowance-tier1 = "0"`) |
+| Allowance, tier 0 | none, always: no flag | |
 | Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
 | Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $100 | enabler setting |
 | Enabler's balance to disable | unspent credit under $40 | enabler setting |
@@ -139,11 +141,44 @@ reconciler rather than at workspaces, the enabler raises
   stolen card that cleared also has. The design requires the grant to
   enforce the tier before any workspace but the operator's is leased. The
   nodes run tier 1 today (§10), so this lands first (PR 1).
-- **One allowance, not a table.** The effective tier is at most 3
-  (`trust_tiers.py:277`), so with the required tier at 3 only one tier ever
-  holds a lease and `store.Config`'s single `Allowance` is the whole table.
-  A per-tier table is built when the required tier is lowered, which stays
-  Joseph's call (§9 of the design).
+- **A table per tier, dark below tier 3.** The effective tier is at most 3
+  (`trust_tiers.py:277`). `store.Config` holds one allowance per leased
+  tier: `Allowance` (tier 3, `-allowance`), `AllowanceTier2`
+  (`-allowance-tier2`) and `AllowanceTier1` (`-allowance-tier1`), in
+  microdollars, the lower two 0 unless set; tier 0 has none. A grant takes
+  the workspace's tier as the required-tier check reads it (the least of its
+  credit rows' `trust_tier`, a latched row's counted as 0) and weighs the
+  lease against that tier's allowance, so a tier-2 workspace's exposure is
+  capped by tier 2's, not tier 3's. A tier at or above the required tier
+  whose allowance is 0 is refused
+  (`RefusedTierAllowance`, "the workspace's tier has no allowance for
+  leases"), by the grant, by `GrantReadiness` (`fastpathctl ready`, which
+  takes `-allowance-tier2` and `-allowance-tier1` for it, as `loadgen`
+  does) and in the gateway's credit state, which the edge passes at
+  `workspace.tier`. Each nonzero allowance is at least `TopUps.Max` and at
+  most `MaxMoney`, as tier 3's is, and they never rise as the tier falls:
+  tier 1's ≤ tier 2's ≤ tier 3's (`service.CheckMoney`, `store.New`, and the
+  startup script for its attributes). The startup script passes
+  `-allowance-tier2` and `-allowance-tier1` only for a nonzero attribute, so
+  `"0"` needs no release that takes them.
+  - **Tiers 1 and 2 stay off.** Both allowances are 0 in Terraform and the
+    required tier stays 3, so nothing below tier 3 is leased: with the
+    required tier at 3 the lower allowances are never read, and with it
+    lowered alone they would refuse every lease below tier 3. Leasing tier 2
+    or 1 is a separate change, which stays Joseph's call (§9 of the
+    design): it sets that tier's allowance, re-pins to a release that takes
+    the flags, then lowers `fastpath_required_tier`, each node taken by the
+    runbook's money settings step, and only then lowers the enabler's
+    `TR_FASTPATH_ENABLER_REQUIRED_TIER` (§5.7).
+  - **The bound per tier.** The exposure argument below holds per tier: a
+    workspace's worst case is its tier's allowance times 250, so a tier-2
+    allowance of A permits about 250 × A of charges against A of holds per
+    workspace, each overrun reserved by its shortfall write and stopped by
+    the debt mark (§4.7). The lower tiers have less history behind them
+    (tier 1 is one succeeded payment, which a stolen card that cleared also
+    has), which is why a lower tier's allowance is never above a higher
+    one's, and why each is sized by that bound rather than by honest
+    traffic.
 - **$1,000, as exposure.** §9 sizes an allowance by the exposure it
   permits, not by honest traffic: the allowance times the largest ratio of
   bill to hold a tier-3 workspace can route to. That ratio has no fixed
@@ -657,6 +692,15 @@ in `rollout.sh` reaches them. So:
   default), the thresholds of (b), and the async pilot, overlap and shadow
   lists and probe keys it reads from the same secrets and literals the
   control plane does.
+- `TR_FASTPATH_ENABLER_REQUIRED_TIER` (1 to 3, 3 by default and in the
+  job's literal) is the tier a workspace needs to be enabled. It must be at
+  least the nodes' required tier in effect (`fastpath_required_tier` in
+  `infra/fastpath.tf`, the node's `-required-tier`): below it, the enabler
+  would turn on workspaces every grant refuses, each paying a front door
+  hop to be passed. So it is lowered only after every node runs the lower
+  tier, and the nodes' is raised only after it; above the nodes' it only
+  enables fewer. A test holds the job's literal at or above the Terraform
+  local.
 - During a deploy the job and the control plane can briefly disagree on
   the exclude list. A row written for a workspace the control plane
   excludes is inert, since neither door covers it, and the next run

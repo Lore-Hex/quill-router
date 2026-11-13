@@ -24,6 +24,7 @@ from trusted_router.dashboard import (
 )
 from trusted_router.fortanix_launch import (
     COMPARISON_MODEL_ID,
+    CONTEXT_LENGTH,
     MODEL_ID,
     NATIVE_ID,
     RETAIL_MICRO_PER_M,
@@ -39,7 +40,7 @@ from trusted_router.provider_locations import (
 )
 from trusted_router.provider_og import provider_og_facts
 from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
-from trusted_router.routing import chat_route_endpoint_candidates
+from trusted_router.routing import candidates_fitting_context, chat_route_endpoint_candidates
 from trusted_router.storage import STORE
 
 
@@ -100,6 +101,45 @@ def test_token_limit_capability_matches_parameter_aware_routing():
     model, endpoint = routes[0]
     assert model.id == MODEL_ID
     assert model.supported_parameters == endpoint.supported_parameters == ("max_tokens",)
+
+
+def test_public_context_uses_verified_provider_limit_without_changing_private_model():
+    model = MODELS[MODEL_ID]
+    assert CONTEXT_LENGTH == model.context_length == 1_048_576
+    assert endpoints_for_model(MODEL_ID)[0].effective_context_length(model) == 1_048_576
+    private = MODELS["trustedrouter/fortanix-test"]
+    assert private.internal_only and private.context_length == 131_072
+
+
+@pytest.mark.parametrize("prompt_tokens", [131_073, 1_047_000, 1_048_320])
+def test_public_context_admits_large_prompts_including_output_budget(prompt_tokens):
+    routes = chat_route_endpoint_candidates(
+        {"model": MODEL_ID, "provider": {"only": ["fortanix"], "allow_fallbacks": False}},
+        Settings(environment="test"),
+    )
+    assert candidates_fitting_context(
+        routes, prompt_tokens=prompt_tokens, completion_tokens=256,
+    ) == routes
+
+
+def test_public_context_still_rejects_one_token_over_total_window():
+    routes = [(MODELS[MODEL_ID], endpoints_for_model(MODEL_ID)[0])]
+    with pytest.raises(HTTPException) as raised:
+        candidates_fitting_context(routes, prompt_tokens=1_048_321, completion_tokens=256)
+    assert raised.value.status_code == 400
+    assert raised.value.detail["error"]["type"] == "context_length_exceeded"
+    assert "1048576" in raised.value.detail["error"]["message"]
+
+
+def test_public_context_is_consistent_in_catalog_endpoints_and_model_page(client):
+    models = client.get("/v1/models").json()["data"]
+    model = next(row for row in models if row["id"] == MODEL_ID)
+    assert model["context_length"] == model["top_provider"]["context_length"] == 1_048_576
+    routes = client.get(f"/v1/models/{MODEL_ID}/endpoints").json()["data"]
+    assert len(routes) == 1 and routes[0]["context_length"] == 1_048_576
+    response = client.get(f"/models/{MODEL_ID}")
+    assert response.status_code == 200
+    assert "1,048,576" in BeautifulSoup(response.text, "html.parser").get_text()
 
 
 @pytest.mark.parametrize("provider", [{"usage": "byok"}, {"min_privacy": "confidential"}])

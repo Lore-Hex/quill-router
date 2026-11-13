@@ -1,11 +1,14 @@
-"""A supplier's seal must link to evidence a visitor can check without trusting NYTE."""
+"""A supplier's Verified Secure badge must link to evidence a visitor can check without trusting NYTE."""
 
 import json
+import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import nyte_v2
 from build import VERIFIED_PROVIDERS, build
 
 HERE = Path(__file__).parent
@@ -29,7 +32,6 @@ class VerifiedPageTests(unittest.TestCase):
             url = f"https://nytokenexchange.com/verified/{provider}"
             self.assertIn(f'rel="canonical" href="{url}"', page)
             self.assertIn(f"<loc>{url}</loc>", sitemap)
-        self.assertTrue((self.root / "assets" / "verified.css").exists())
 
     def test_check_reads_only_first_party_public_records(self):
         # The enclave itself, the provider's own approval, and NYTE's reproduction.
@@ -81,28 +83,88 @@ class VerifiedPageTests(unittest.TestCase):
             "The gateway check proves less",
             "can be up to an hour old",
             "are NYTE’s statements",
-            "The seal is a link, not a result",
+            "The badge is a link, not a result",
             "NYTE sends it nothing rather than fall back",
         ):
             self.assertIn(copy, self.page)
         self.assertIn('href="/assets/verified.js"', self.page)
 
     def test_page_opens_with_a_sentence_for_the_visitors_own_agent(self):
-        prompt = re.search(r'<p class="agent-prompt" id="agent-prompt">(.*?)</p>', self.page).group(1)
+        shown = re.search(r'<pre class="agent-prompt" id="agent-prompt">(.*?)</pre>', self.page).group(1)
+        # The address may break only after "/" or before "#"; the copied text has no markup.
+        self.assertIn("https://<wbr>nytokenexchange.com/<wbr>verified/<wbr>maple<wbr>#manual", shown)
+        self.assertEqual(re.sub(r"<[^>]+>", "", shown).count("<"), 0)
+        prompt = shown.replace("<wbr>", "")
         # One sentence, pointing at the manual steps and away from the page's own verdict.
         self.assertEqual(prompt.count(". "), 0)
         self.assertTrue(prompt.endswith("."))
         self.assertIn("https://nytokenexchange.com/verified/maple#manual", prompt)
         self.assertIn("trust nothing the page itself claims", prompt)
         self.assertIn('id="manual"', self.page)
-        self.assertLess(self.page.index('class="shell agent"'), self.page.index("<h1>"))
-        # Readable and selectable without JavaScript; only the button needs it.
-        self.assertIn('data-copy="agent-prompt" hidden', self.page)
+        # The hero's one action leads to the prompt, the first of the ways to check.
+        hero = self.page.split('<section class="hero-maple mv3-hero">')[1].split("</section>")[0]
+        self.assertEqual(re.findall(r'<a class="(btn[^"]*)" href="([^"]+)">([^<]+)</a>', hero),
+                         [("btn btn-secondary", "#manual", "Have your AI agent check")])
+        manual = self.page.split('id="manual"')[1]
+        self.assertLess(manual.index('id="agent-prompt"'), manual.index('id="manual-commands"'))
+        # Both panels use the shared code block: a labelled header strip with an icon-only copy.
+        self.assertIn('<span class="v3-label">Prompt</span><button class="v3-code-copy" type="button" aria-label="Copy prompt">', self.page)
+        self.assertIn('<span class="v3-label">Shell</span><span class="v3-code-tools"><button class="code-next" type="button" aria-label="Scroll code right" hidden>', self.page)
+        self.assertIn('<button class="v3-code-copy" type="button" aria-label="Copy commands">', self.page)
+        self.assertNotIn("data-copy=", self.page)
+        # Readable and selectable without JavaScript; only the copy buttons and tab row need it.
+        self.assertIn('<div class="mv3-tabs" role="tablist" aria-label="Ways to check" hidden>', self.page)
+        for panel in ("agent", "commands", "sources"):
+            self.assertRegex(self.page, rf'<div class="mv3-panel[^"]*" id="way-{panel}" role="tabpanel" aria-labelledby="tab-{panel}">')
+
+    def test_page_shows_the_running_state_and_keeps_room_for_results(self):
+        # Scripted visitors see the running state from the first paint; others the manual-check text.
+        self.assertIn('document.documentElement.classList.add("mv3-js")', self.page.split("</head>")[0])
+        self.assertIn('data-checking="Checking now"', self.page)
+        self.assertIn('data-checking="Checking the gateway"', self.page)
+        self.assertIn("element.dataset.checking", self.script)
+        # Each record value has a placeholder its final length, so rows keep their height.
+        for key, length in (("source_commit", 40), ("pcr0", 96), ("eif_sha256", 64)):
+            placeholder = re.search(rf'data-record="{key}">.*?<span aria-hidden="true">(·+)</span>', self.page).group(1)
+            self.assertEqual(len(placeholder), length, key)
 
     def test_recorded_attestation_is_a_public_document_only(self):
         fixture = json.loads((HERE / "verified-fixture.json").read_text())
         self.assertEqual(set(fixture), {"comment", "nonce", "now", "pcr0", "attestation_document"})
         self.assertFalse((self.root / "verified-fixture.json").exists(), "test data is not published")
+
+    def test_names_the_verified_secure_badge(self):
+        self.assertNotIn("Privacy Secured", self.page)
+        self.assertIn('<p class="v3-label">Evidence for Maple</p>', self.page)
+        self.assertIn("<title>Maple attestation evidence | NYTE Verified Secure</title>", self.page)
+        self.assertIn('<a class="mv3-badge" href="/badge"><img src="/assets/badges/nyte-verified-secure-black.svg" width="221" height="96" alt="NYTE Verified Secure"></a>', self.page)
+
+    def test_page_renders_in_the_nyte_shell_with_a_one_line_rollback(self):
+        self.assertIn('data-nyte-page="maple"', self.page)
+        self.assertIn('<meta property="og:title" content="Maple, checked. By you, right now.">', self.page)
+        self.assertIn("/assets/nyte-v2/maple-v3.css?v=", self.page)
+        self.assertIn("/assets/nyte-v2/maple-v3.js?v=", self.page)
+        self.assertIn('<script src="/assets/verified.js?v=', self.page)
+        self.assertIn("/assets/analytics.js?v=", self.page)
+        self.assertNotIn("{{", self.page)
+        self.assertEqual(self.page.count('class="v3-band"'), 1)
+        # Outside links carry the shared kit arrow, never the ↗ character.
+        self.assertNotIn("↗", self.page)
+        self.assertEqual(self.page.count(nyte_v2.ARROW_UP_RIGHT), 8)
+        # With /badge and this page in v3, only verified.js is published from the pre-v3 assets.
+        self.assertTrue((self.root / "assets" / "verified.js").exists())
+        for name in ("badge.css", "verified.css", "badge.js"):
+            self.assertFalse((self.root / "assets" / name).exists(), name)
+        self.assertNotIn("maple", json.loads((HERE / "nyte-brand-v3.json").read_text())["old_brand_pages"])
+        # Adding "maple" to old_brand_pages in nyte-brand-v3.json restores the pre-v3 page, with its sheets.
+        rollback = nyte_v2.BRAND_V3_PAGES - {"maple"}
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", rollback), \
+                tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(nyte_v2.render_nyte("maple"), (HERE / "verified-maple.html").read_text())
+            build(Path(directory))
+            self.assertEqual((Path(directory) / "verified" / "maple").read_text(), (HERE / "verified-maple.html").read_text())
+            for name in ("badge.css", "verified.css", "verified.js", "og-new-york.png"):
+                self.assertTrue((Path(directory) / "assets" / name).exists(), name)
 
     def test_seal_page_scopes_supplier_use_to_evidence_pages(self):
         badge = (self.root / "badge").read_text()

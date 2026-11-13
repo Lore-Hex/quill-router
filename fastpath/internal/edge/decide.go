@@ -917,7 +917,8 @@ func workspacePass(w gwstate.WorkspaceFacts) string {
 
 // creditPass is what the workspace's credit rows say (store.CreditState):
 // a pause cause on any row (the entity's are WorkspaceFacts'), debt, a
-// latch or a tier below the grant's, or any refusal the grant would make.
+// latch, a tier below the grant's or one with no allowance, or any refusal
+// the grant would make.
 func creditPass(r gwstate.Read) string {
 	c := r.CreditState
 	switch {
@@ -927,7 +928,7 @@ func creditPass(r gwstate.Read) string {
 		return PassWorkspacePaused
 	case c.InDebt || c.Refused == store.RefusedInDebt:
 		return PassWorkspaceInDebt
-	case c.Latched || c.Refused == store.RefusedTier:
+	case c.Latched || c.Refused == store.RefusedTier || c.Refused == store.RefusedTierAllowance:
 		return PassWorkspaceTier
 	case c.Refused != "":
 		return PassWorkspaceRefused

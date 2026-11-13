@@ -39,6 +39,11 @@ replicas and a three-voter embedded Keeper quorum:
 | `tr-clickhouse-2` | `us-central1-b` | 500 GB SSD |
 | `tr-clickhouse-3` | `us-central1-c` | 500 GB SSD |
 
+`tr-clickhouse-3` also runs the independent price refresh observer
+(`price-refresh-observer.timer`, see `docs/price-refresh-alerting.md`). Before
+replacing or rebuilding that node, reinstall the observer elsewhere with
+`OBSERVER_HOST=... OBSERVER_ZONE=... scripts/ops/install_price_refresh_observer.sh`.
+
 All nodes have no external IP, VM deletion protection, non-auto-deleting boot
 disks, the Google Ops Agent, and the daily snapshot policy. The canonical raw
 table uses `ReplicatedReplacingMergeTree`; exact readers use `FINAL` because

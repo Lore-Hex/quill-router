@@ -324,6 +324,22 @@ def test_the_workflow_asks_under_the_reservation_and_before_any_revision() -> No
     assert "confirm-regions-ready" in jobs["finalize-cloud"]["needs"]
 
 
+def test_the_rollout_asserts_the_reservation_before_it_runs_anything_else() -> None:
+    # The refusal tells the operator that re-running only the failed jobs does
+    # not take the reservation again. That holds because the first command
+    # `deploy` runs is the reservation assert, which refuses a lease this run
+    # no longer owns, before any step that changes a serving revision.
+    deploy = _jobs()["deploy"]
+    assert "continue-on-error" not in deploy
+    steps = deploy["steps"]
+    at = next(i for i, step in enumerate(steps) if "run" in step)
+    assert steps[at]["run"] == "bash scripts/deploy/deploy_mutex.sh assert"
+    assert "if" not in steps[at] and "continue-on-error" not in steps[at]
+    # Only checkout and sign-in come before it, so nothing reaches production first.
+    assert [step.get("uses", "").split("@")[0] for step in steps[:at]] == [
+        "actions/checkout", "google-github-actions/auth", "google-github-actions/setup-gcloud"]
+
+
 def test_the_regions_asked_are_the_regions_rolled_out() -> None:
     deploy = json.dumps(_jobs()["deploy"])
     assert f"regions=({' '.join(REGIONS)})" in deploy
