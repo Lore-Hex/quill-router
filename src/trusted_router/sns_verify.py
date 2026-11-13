@@ -77,13 +77,21 @@ def verify_sns_message(
 
     `cert_fetcher` is injectable so tests can stub the network without
     monkey-patching httpx."""
+    if not isinstance(message, dict):
+        raise SnsVerificationError("SNS message is not a JSON object")
     msg_type = message.get("Type")
     sig_version = message.get("SignatureVersion")
     signing_cert_url = message.get("SigningCertURL") or message.get("SigningCertUrl")
     signature_b64 = message.get("Signature")
-    if msg_type not in {"Notification", "SubscriptionConfirmation", "UnsubscribeConfirmation"}:
+    # Check the type before set membership: a list or dict value is unhashable
+    # and would raise TypeError instead of a verification failure.
+    if not isinstance(msg_type, str) or msg_type not in {
+        "Notification",
+        "SubscriptionConfirmation",
+        "UnsubscribeConfirmation",
+    }:
         raise SnsVerificationError(f"unsupported SNS Type: {msg_type!r}")
-    if sig_version not in {"1", "2"}:
+    if not isinstance(sig_version, str) or sig_version not in {"1", "2"}:
         raise SnsVerificationError(f"unsupported SignatureVersion: {sig_version!r}")
     if not isinstance(signing_cert_url, str) or not isinstance(signature_b64, str):
         raise SnsVerificationError("missing SigningCertURL or Signature")
