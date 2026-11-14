@@ -906,9 +906,10 @@ ENV_VARS=(
   # admission covers when it leases the request itself, with the answer
   # Python gives a leased authorization (no ticket off the overlap list). A
   # node release from before the members refuses a policy carrying them, so
-  # this turns true only once every node runs a release that reads them. Off
-  # until then; false is the way back. A literal, so no revision inherits it.
-  "TR_FASTPATH_EDGE_ASYNC_LEASED=false"
+  # this turns true only once every node runs a release that reads them
+  # (1732a7a89 on tr-fastpath-15 and -16, #2595). False is the way back. A
+  # literal, so no revision inherits it.
+  "TR_FASTPATH_EDGE_ASYNC_LEASED=true"
   # trusted_router.serve exits a process whose event loop has gone this many
   # seconds without a tick, after dumping every thread's stack. Safe only
   # because the deploy below keeps CPU allocated between requests
