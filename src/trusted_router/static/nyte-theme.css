@@ -1356,7 +1356,7 @@ body:where([data-brand="nyte"] *),
   color: var(--nyte-cream);
 }
 
-/* Model names in type, not logos (brand book ICN-03) */
+/* Model names in the type of the data voice, beside their logos */
 :root[data-brand="nyte"] #top .hero .labs {
   background: transparent;
 }
@@ -1366,9 +1366,6 @@ body:where([data-brand="nyte"] *),
   font-family: var(--tr-font-family-mono);
 }
 
-:root[data-brand="nyte"] #top .hero .lab img {
-  display: none;
-}
 
 :root[data-brand="nyte"] #top .hero .button.button-primary {
   border-color: var(--nyte-orange);
@@ -1431,4 +1428,30 @@ body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"]:has(#top .hero) .trnav .signin.button.button-primary:hover {
   background: var(--nyte-cream);
   color: var(--nyte-ink);
+}
+
+/* Press: the outlet logos read Ink on the white list (they are drawn white
+   for the old dark site); the featured story is a lead-colour field. */
+:root[data-brand="nyte"] .trpr .press-src img {
+  filter: brightness(0);
+}
+
+:root[data-brand="nyte"] .trpr .press-lead {
+  background: var(--nyte-lead);
+}
+
+:root[data-brand="nyte"] .trpr .press-lead,
+:root[data-brand="nyte"] .trpr .press-lead * {
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .page .trpr .press-read {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .page .trpr .press-read:hover {
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
 }
