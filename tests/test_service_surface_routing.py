@@ -339,6 +339,13 @@ def test_oauth_app_registry_paths_route_to_control(path: str) -> None:
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_request_billing_lookup_routes_to_control(prefix: str) -> None:
+    path = f"{prefix}/requests/rlog_00112233445566778899aabbccddeeff/billing"
+    assert URL_MAP.route_surface(path) == "control"
+    assert _emitted_backend(_emitted_map(), path) == LEGACY_BACKEND
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
 @pytest.mark.parametrize("path", ["/oauth/authorize", "/oauth/token"])
 def test_conformant_oauth_protocol_paths_route_to_control(prefix: str, path: str) -> None:
     """Consent and token exchange belong beside their legacy twins.
