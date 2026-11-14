@@ -879,10 +879,10 @@ def test_the_publisher_writes_the_leased_members_only_with_admission_and_the_swi
         "edge_leased": True, "overlap_workspaces": ["ws-synthetic-a"]}
 
 
-def test_rollout_renders_the_leased_answer_switch_as_a_literal_false() -> None:
+def test_rollout_renders_the_leased_answer_switch_as_a_literal_true() -> None:
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
     assert re.findall(r'"TR_FASTPATH_EDGE_ASYNC_LEASED=[^"]*"', rollout) == [
-        '"TR_FASTPATH_EDGE_ASYNC_LEASED=false"']
+        '"TR_FASTPATH_EDGE_ASYNC_LEASED=true"']
 
 
 def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
