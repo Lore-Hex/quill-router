@@ -4,15 +4,17 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar
 
 from google.api_core import exceptions as api_errors
-from google.cloud.spanner_v1 import param_types
+from google.cloud.spanner_v1 import TransactionOptions, param_types
 
 from trusted_router.services.async_settle import Admission, parse_health_record, valid_health_record
 from trusted_router.storage_gcp_io import (
-    _rollback_on_api_error,
+    _rollback_discarded_transaction,
     remaining_rpc_budget,
+    spanner_rpc_budget,
     spanner_rpc_deadline,
 )
 
@@ -241,19 +243,67 @@ def read_health(database: Any) -> dict[str, Any] | None:
     return parse_health_record(rows[0][0])
 
 
-def _begin_before_lock(transaction: Any) -> None:
-    """Begin explicitly so a read that times out can still be rolled back.
+def _begin_explicitly(transaction: Any) -> None:
+    """Begin explicitly so an attempt that fails anywhere can still be rolled back.
 
     With the SDK's inline begin, the transaction ID arrives with the first
     read's response; a read that times out first leaves the client no ID, and
-    Transaction.rollback() then sends nothing. The server-side transaction and
-    its lock on the control row stay until Spanner reaps them, and every later
-    claim queues behind the orphan (2026-11-09 02:07Z alert). Beginning first
-    costs one round trip and takes no locks. The store's database wrapper
-    (configure_spanner_rpc_deadlines) holds the begin to the transaction's
-    timeout_secs with the read and commit; the rollback keeps its own floor.
+    Transaction.rollback() then sends nothing (2026-11-09 02:07Z alert, when
+    the read still took a lock). Beginning first costs one round trip and takes
+    no locks. The store's database wrapper (configure_spanner_rpc_deadlines)
+    holds the begin to the transaction's timeout_secs with the read and commit;
+    the rollback keeps its own floor.
     """
     transaction.begin()
+
+
+# Control-row reads take no lock. Spanner checks at commit that the row is
+# unchanged since the read and aborts the commit otherwise, so each guard and
+# its write still form one serializable step (google.spanner.v1 ReadLockMode).
+CONTROL_READ_LOCK_MODE = TransactionOptions.ReadWrite.ReadLockMode.OPTIMISTIC
+_T = TypeVar("_T")
+
+
+def _run_control(database: Any, txn: Callable[[Any], _T], transaction_tag: str) -> _T:
+    """One read-modify-write of a control row that leaves no lock behind.
+
+    The drain is the row's only writer, yet the row was hot (2026-11-13 22:08Z
+    alert): under the default pessimistic mode the read held a ReaderShared
+    lock until the commit returned. When a commit timed out on the client,
+    Session.run_in_transaction re-raised it without a rollback, so the server
+    kept the transaction and its lock. Each later attempt is younger, so under
+    wound-wait it waited behind that orphan past its 500 ms deadline and left
+    its own, until Spanner reaped them. Now no read holds a lock between round
+    trips, and whatever ends an attempt (a read, the commit or the abort budget),
+    its transaction is rolled back. A rollback after a commit that did land
+    fails harmlessly.
+    """
+    opened: list[Any] = []
+
+    def attempt(transaction: Any) -> _T:
+        opened[:] = [transaction]  # the SDK's abort retries begin a new one
+        _begin_explicitly(transaction)
+        return txn(transaction)
+
+    try:
+        return database.run_in_transaction(attempt, timeout_secs=READ_DEADLINE_SECONDS,
+                                           transaction_tag=transaction_tag,
+                                           read_lock_mode=CONTROL_READ_LOCK_MODE)
+    except BaseException:
+        # Out here the runner's deadline no longer applies. Without one, the
+        # rollback would get the store's 20 s transaction budget; with this
+        # one it gets the rollback floor (storage_gcp_io._ROLLBACK_FLOOR_SECONDS).
+        spanner_rpc_budget(READ_DEADLINE_SECONDS)(_dispose_attempt)(opened)
+        raise
+
+
+def _dispose_attempt(opened: list[Any]) -> None:
+    # Earlier attempts in one runner call ended in Aborted, which the server
+    # already released. The SDK rolls back a callback's plain exception itself.
+    last = opened[-1] if opened else None
+    if (last is not None and getattr(last, "committed", None) is None
+            and not getattr(last, "rolled_back", False)):
+        _rollback_discarded_transaction(last)
 
 
 def _write_control(transaction: Any, identity: str, value: dict[str, Any]) -> None:
@@ -284,17 +334,16 @@ def _claim_cadence(database: Any, identity: str, interval_seconds: float) -> boo
     now = time.time()
 
     def txn(transaction: Any) -> bool:
-        _begin_before_lock(transaction)
         rows = _query(transaction, control_statement(identity))
         if rows and now - float(json.loads(rows[0][0])["observed_at"]) < interval_seconds:
             return False
         _write_control(transaction, identity, {"observed_at": now})
         return True
 
-    # The SDK skips rollback on API errors; with the explicit begin, this
-    # wrapper's rollback releases the claim row's lock after a timed-out read.
-    return bool(database.run_in_transaction(_rollback_on_api_error(txn),
-        timeout_secs=READ_DEADLINE_SECONDS, transaction_tag="tr_drain_control_claim"))
+    # Two drains (old and new revisions in a deploy) can both read a free
+    # claim; the commit check aborts the later writer, whose retry reads the
+    # winner's claim, so only one of them publishes in the interval.
+    return bool(_run_control(database, txn, "tr_drain_control_claim"))
 
 
 def publish_health(database: Any) -> dict[str, Any]:
@@ -351,14 +400,14 @@ def publish_health(database: Any) -> dict[str, Any]:
         raise ValueError("invalid health publication")
 
     def txn(transaction: Any) -> None:
-        _begin_before_lock(transaction)
         previous = _query(transaction, control_statement(HEALTH_ID))
         prior = parse_health_record(previous[0][0]) if len(previous) == 1 else None
         if prior is not None and prior["observed_at"] > observed:
             return  # A slower old pass cannot overwrite a newer observation.
+        # A newer record committed after this read aborts this commit; the
+        # retry then reads it and returns above.
         _write_control(transaction, HEALTH_ID, value)
 
-    database.run_in_transaction(_rollback_on_api_error(txn), timeout_secs=READ_DEADLINE_SECONDS,
-                                transaction_tag="tr_drain_health_publish")
+    _run_control(database, txn, "tr_drain_health_publish")
     logging.getLogger(__name__).debug("async_drain.health %s", json.dumps(value))
     return value

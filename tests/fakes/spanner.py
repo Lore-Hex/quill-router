@@ -304,6 +304,7 @@ class FakeSpannerDatabase:
         self.aborts = 0
         self.commits = 0
         self.last_timeout_secs: float | None = None
+        self.last_read_lock_mode: Any = None
         self.transaction_tags: list[str | None] = []
         # Preserve the exact consistency options passed by production code so
         # tests can distinguish a deliberate stale display read from a strong
@@ -337,12 +338,16 @@ class FakeSpannerDatabase:
         *,
         timeout_secs: float | None = None,
         transaction_tag: str | None = None,
+        read_lock_mode: Any = None,
     ) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
         # kwarg (passed by run_in_transaction_with_retry to bound the inner retry
         # to the caller's remaining wall-clock budget). The fake commits
         # synchronously, so it records the value for assertions but does not sleep.
+        # read_lock_mode is recorded only: the fake already validates reads at
+        # commit (versions) and holds no locks, which is the OPTIMISTIC model.
         self.last_timeout_secs = timeout_secs
+        self.last_read_lock_mode = read_lock_mode
         self.transaction_tags.append(transaction_tag)
         for attempt in range(50):
             txn = _FakeTransaction(self)

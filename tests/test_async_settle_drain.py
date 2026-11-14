@@ -176,15 +176,17 @@ def test_control_claim_transaction_deadline(fake_store, claim):
 
 
 class _SdkDatabase:
-    """Runs callbacks on a real google-cloud-spanner Transaction over a mocked
-    API, the way Session.run_in_transaction does: a GoogleAPICallError from
-    the callback is re-raised WITHOUT rollback. The test fake rolls back on
-    every error and needs no transaction ID, which hid both halves of this:
-    the SDK skips rollback, and Transaction.rollback() sends nothing until
-    the first response carries an ID. Every statement times out; snapshots
-    delegate to the fake store so publish_health reaches its transaction."""
+    """Runs callbacks through the real google-cloud-spanner
+    Session.run_in_transaction over a mocked API. A GoogleAPICallError from the
+    callback or from Commit is re-raised WITHOUT rollback. The test fake rolls
+    back on every error and needs no transaction ID, which hid all of this: the
+    SDK skips rollback, Transaction.rollback() sends nothing until the first
+    response carries an ID, and a commit that times out is simply dropped. By
+    default every statement times out; ``api`` replaces the mocked API.
+    Snapshots delegate to the fake store so publish_health reaches its
+    transaction."""
 
-    def __init__(self, db):
+    def __init__(self, db, api=None):
         from unittest import mock
 
         from google.api_core.exceptions import DeadlineExceeded
@@ -194,9 +196,12 @@ class _SdkDatabase:
 
         self._db = db
         self.tags = []
-        self.api = mock.MagicMock()
-        self.api.execute_streaming_sql.side_effect = DeadlineExceeded('read deadline')
-        self.api.begin_transaction.return_value = TransactionPB(id=b'txn-1')
+        self.lock_modes = []
+        if api is None:
+            api = mock.MagicMock()
+            api.execute_streaming_sql.side_effect = DeadlineExceeded('read deadline')
+            api.begin_transaction.return_value = TransactionPB(id=b'txn-1')
+        self.api = api
         database = mock.MagicMock()
         database.name = 'projects/p/instances/i/databases/d'
         database.spanner_api = self.api
@@ -217,22 +222,164 @@ class _SdkDatabase:
         # the same wrapper so the test sees each RPC's real timeout.
         from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
         self.rpc = {name: getattr(self.api, name)
-                    for name in ('begin_transaction', 'execute_streaming_sql', 'rollback')}
+                    for name in ('begin_transaction', 'execute_streaming_sql', 'commit', 'rollback')}
         self.spanner_api = self.api
         configure_spanner_rpc_deadlines(self)
 
     def snapshot(self, **kwargs):
         return self._db.snapshot(**kwargs)
 
-    def run_in_transaction(self, func, *, timeout_secs=None, transaction_tag=None):
-        from google.api_core.exceptions import GoogleAPICallError
-        from google.cloud.spanner_v1.transaction import Transaction
+    def run_in_transaction(self, func, **kwargs):
+        self.tags.append(kwargs.get('transaction_tag'))
+        self.lock_modes.append(kwargs.get('read_lock_mode'))
+        return self._session.run_in_transaction(func, **kwargs)
 
-        self.tags.append(transaction_tag)
-        try:
-            return func(Transaction(self._session))
-        except GoogleAPICallError:
-            raise
+
+def _freeze_rpc_clocks(monkeypatch):
+    """Freeze the store wrapper's monotonic clock and the SDK's retry clock.
+
+    The 0.5 s transaction deadline is wall time, and a loaded CI runner (price
+    refresh run 42864346256) spent it before begin, so the wrapper raised
+    DeadlineExceeded without sending any RPC. The RPCs here succeed or fail by
+    themselves, so no part of these tests needs time to pass.
+    """
+    import types
+
+    from google.cloud.spanner_v1 import _helpers as sdk_helpers
+    from google.cloud.spanner_v1 import session as sdk_session
+
+    from trusted_router import storage_gcp_io
+    frozen = types.SimpleNamespace(**vars(storage_gcp_io.time))
+    frozen.monotonic = lambda: 1000.0
+    monkeypatch.setattr(storage_gcp_io, 'time', frozen)
+    for module in (sdk_session, sdk_helpers):
+        wall = types.SimpleNamespace(**vars(module.time))
+        wall.time = lambda: 2_000_000_000.0
+        monkeypatch.setattr(module, 'time', wall)
+
+
+def _control_rows(*bodies):
+    """One streamed result of ``SELECT body``, the shape the SDK decodes."""
+    from google.cloud.spanner_v1 import (
+        PartialResultSet,
+        ResultSetMetadata,
+        StructType,
+        Type,
+        TypeCode,
+    )
+
+    result = PartialResultSet(metadata=ResultSetMetadata(row_type=StructType(
+        fields=[StructType.Field(name='body', type_=Type(code=TypeCode.STRING))])))
+    result.values.extend(bodies)  # the constructor refuses a list of Values
+    return iter([result])
+
+
+def _aborted():
+    """Aborted as Spanner sends it: RetryInfo asks for a 1 ms backoff."""
+    from google.api_core.exceptions import Aborted
+    from google.protobuf import duration_pb2
+    from google.rpc import error_details_pb2
+
+    info = error_details_pb2.RetryInfo(retry_delay=duration_pb2.Duration(nanos=1_000_000))
+    cause = SimpleNamespace(trailing_metadata=lambda: [('google.rpc.retryinfo-bin', info.SerializeToString())])
+    return Aborted('validation failed', errors=[cause])
+
+
+class _ControlRowSpanner:
+    """Spanner's locking on the control rows, reduced to what the 2026-11-13
+    pileup needs. A pessimistic read holds ReaderShared on its row until its
+    transaction ends; an optimistic read holds nothing and is checked at commit.
+    A commit whose row another live transaction holds a read lock on waits, as
+    the younger transaction under wound-wait, until the client's deadline; the
+    SDK then drops it, still live and holding its own lock, until a rollback or
+    Spanner's idle reaper ends it (``reap``). ``slow_commits`` makes the next
+    commits time out the same way without a blocker: the transient Spanner
+    stall that starts it. ``on_read`` runs once, after a read and before its
+    rows reach the client."""
+
+    def __init__(self):
+        self.live = {}
+        self.rows = {}
+        self.ids = 0
+        self.begun_modes = []
+        self.slow_commits = 0
+        self.lose_rollbacks = False
+        self.rollbacks = []
+        self.rollback_timeouts = []
+        self.commits = []
+        self.aborted = []
+        self.on_read = None
+
+    def api(self):
+        # One per client database: the store wrapper rebinds methods on its api.
+        return SimpleNamespace(begin_transaction=self.begin_transaction,
+                               execute_streaming_sql=self.execute_streaming_sql,
+                               commit=self.commit, rollback=self.rollback)
+
+    def begin_transaction(self, request, **_):
+        from google.cloud.spanner_v1 import Transaction as TransactionPB
+        from google.cloud.spanner_v1 import TransactionOptions
+
+        self.ids += 1
+        txn = b'txn-%d' % self.ids
+        self.begun_modes.append(request.options.read_write.read_lock_mode)
+        optimistic = (request.options.read_write.read_lock_mode
+                      == TransactionOptions.ReadWrite.ReadLockMode.OPTIMISTIC)
+        self.live[txn] = dict(optimistic=optimistic, locks=set(), reads={})
+        return TransactionPB(id=txn)
+
+    def execute_streaming_sql(self, request, **_):
+        txn = self.live[request.transaction.id]
+        key = (request.params['kind'], request.params['id'])
+        if not txn['optimistic']:
+            txn['locks'].add(key)
+        body, version = self.rows.get(key, (None, 0))
+        txn['reads'][key] = version
+        if self.on_read is not None:
+            hook, self.on_read = self.on_read, None
+            hook()
+        return _control_rows(*([] if body is None else [body]))
+
+    def commit(self, request, **_):
+        from google.api_core.exceptions import DeadlineExceeded
+        from google.cloud.spanner_v1 import CommitResponse
+
+        txn = self.live[request.transaction_id]
+        writes = {(m.insert_or_update.values[0][0], m.insert_or_update.values[0][1]):
+                  m.insert_or_update.values[0][2] for m in request.mutations}
+        if self.slow_commits:
+            self.slow_commits -= 1
+            raise DeadlineExceeded('commit deadline')
+        if any(writes.keys() & other['locks'] for name, other in self.live.items()
+               if name != request.transaction_id):
+            raise DeadlineExceeded('commit deadline')
+        del self.live[request.transaction_id]
+        if txn['optimistic'] and any(self.rows.get(key, (None, 0))[1] != version
+                                     for key, version in txn['reads'].items()):
+            self.aborted.append(request.transaction_id)
+            raise _aborted()
+        for key, body in writes.items():
+            self.rows[key] = (body, self.rows.get(key, (None, 0))[1] + 1)
+        self.commits.append(request.transaction_id)
+        return CommitResponse(commit_timestamp=dt.datetime.now(dt.UTC))
+
+    def rollback(self, transaction_id, **kwargs):
+        from google.api_core.exceptions import DeadlineExceeded
+
+        self.rollbacks.append(transaction_id)
+        self.rollback_timeouts.append(kwargs.get('timeout'))
+        if self.lose_rollbacks:
+            raise DeadlineExceeded('rollback deadline')
+        self.live.pop(transaction_id, None)
+
+    def lock_holders(self):
+        return sorted(name for name, txn in self.live.items() if txn['locks'])
+
+    def reap(self):
+        self.live.clear()
+
+    def body(self, identity):
+        return json.loads(self.rows[(HEALTH_KIND, identity)][0])
 
 
 @pytest.mark.parametrize('operation, tag', [
@@ -241,20 +388,11 @@ class _SdkDatabase:
     (publish_health, 'tr_drain_health_publish'),
 ])
 def test_timed_out_control_read_rolls_back_its_transaction(fake_store, monkeypatch, operation, tag):
-    # A timed-out read must release the transaction's lock on the control row,
-    # or every later claim queues behind the orphan until Spanner reaps it.
-    import types
-
+    # A timed-out read must end the transaction on the server, or it lives on
+    # until Spanner reaps it (2026-11-09, when that read still held a lock).
     from google.api_core.exceptions import DeadlineExceeded
 
-    from trusted_router import storage_gcp_io
-    # Freeze the wrapper's clock. The 0.5 s transaction deadline is wall time,
-    # and a loaded CI runner (price refresh run 42864346256) spent it before
-    # begin, so the wrapper raised DeadlineExceeded without sending any RPC.
-    # Every RPC here fails by itself, so no part of the test needs time to pass.
-    frozen = types.SimpleNamespace(**vars(storage_gcp_io.time))
-    frozen.monotonic = lambda: 1000.0
-    monkeypatch.setattr(storage_gcp_io, 'time', frozen)
+    _freeze_rpc_clocks(monkeypatch)
     db = _SdkDatabase(fake_store[1])
     with pytest.raises(DeadlineExceeded):
         operation(db)
@@ -268,6 +406,137 @@ def test_timed_out_control_read_rolls_back_its_transaction(fake_store, monkeypat
     assert 0 < begin.kwargs['timeout'] <= .5
     assert call.kwargs['timeout'] > 1
     assert db.tags == [tag]
+
+
+_CONTROL_OPERATIONS = [
+    pytest.param(claim_housekeeping, 'housekeeping-v1', id='housekeeping'),
+    pytest.param(lambda db: claim_health_publish(db, 2), HEALTH_PUBLISH_ID, id='health-claim'),
+    pytest.param(publish_health, HEALTH_ID, id='health-publish'),
+]
+
+
+@pytest.mark.parametrize('operation, identity', _CONTROL_OPERATIONS)
+def test_control_transactions_read_without_locks(fake_store, monkeypatch, operation, identity):
+    from google.cloud.spanner_v1 import TransactionOptions
+
+    from trusted_router.storage_gcp_async_admission import CONTROL_READ_LOCK_MODE
+
+    assert CONTROL_READ_LOCK_MODE == TransactionOptions.ReadWrite.ReadLockMode.OPTIMISTIC
+    _freeze_rpc_clocks(monkeypatch)
+    spanner = _ControlRowSpanner()
+    db = _SdkDatabase(fake_store[1], api=spanner.api())
+    operation(db)
+    assert db.lock_modes == [CONTROL_READ_LOCK_MODE]
+    # The option reaches BeginTransaction, where Spanner reads it.
+    assert spanner.begun_modes == [CONTROL_READ_LOCK_MODE]
+    assert spanner.commits == [b'txn-1'] and spanner.live == {} and spanner.rollbacks == []
+    assert spanner.body(identity)['observed_at'] > 0
+    operation(fake_store[1])
+    assert fake_store[1].last_read_lock_mode == CONTROL_READ_LOCK_MODE
+
+
+@pytest.mark.parametrize('operation, identity', _CONTROL_OPERATIONS)
+def test_timed_out_control_commit_rolls_back_its_transaction(fake_store, monkeypatch, operation, identity):
+    # Session.run_in_transaction re-raises a commit's DeadlineExceeded without
+    # a rollback; the server would keep the transaction until it reaps it.
+    from google.api_core.exceptions import DeadlineExceeded
+
+    _freeze_rpc_clocks(monkeypatch)
+    spanner = _ControlRowSpanner()
+    spanner.slow_commits = 1
+    db = _SdkDatabase(fake_store[1], api=spanner.api())
+    with pytest.raises(DeadlineExceeded):
+        operation(db)
+    assert spanner.rollbacks == [b'txn-1'] and spanner.live == {}
+    # Bounded by the store's rollback floor, not its 20 s transaction budget.
+    [timeout] = spanner.rollback_timeouts
+    assert 1 < timeout <= 2
+    assert (HEALTH_KIND, identity) not in spanner.rows
+
+
+@pytest.mark.parametrize('optimistic, dispose, lose_rollbacks, piles_up', [
+    pytest.param(True, True, False, False, id='fixed'),
+    pytest.param(True, True, True, False, id='fixed-rollbacks-lost'),
+    pytest.param(True, False, True, False, id='optimistic-alone'),
+    pytest.param(False, True, False, False, id='rollback-alone'),
+    pytest.param(False, True, True, True, id='rollback-alone-lost'),
+    pytest.param(False, False, False, True, id='before-the-fix'),
+])
+def test_one_slow_commit_does_not_pile_up(fake_store, monkeypatch, optimistic, dispose, lose_rollbacks,
+                                          piles_up):
+    """The 2026-11-13 22:08Z pileup: one drain publishing about once a second.
+
+    One commit times out on the client (a transient Spanner stall). Before the
+    fix, its transaction stayed live holding ReaderShared on the health row, so
+    each later publish waited behind it, timed out, and left its own lock,
+    until Spanner's idle reaper ended them. The model reproduces that with both
+    protections removed. Optimistic reads alone end it (an orphan holds no
+    lock), and so does the rollback while it reaches the server.
+    """
+    from google.api_core.exceptions import DeadlineExceeded
+    from google.cloud.spanner_v1 import TransactionOptions
+
+    from trusted_router import storage_gcp_async_admission as admission
+
+    _freeze_rpc_clocks(monkeypatch)
+    if not optimistic:
+        monkeypatch.setattr(admission, 'CONTROL_READ_LOCK_MODE',
+                            TransactionOptions.ReadWrite.ReadLockMode.PESSIMISTIC)
+    if not dispose:
+        monkeypatch.setattr(admission, '_dispose_attempt', lambda opened: None)
+    spanner = _ControlRowSpanner()
+    spanner.lose_rollbacks = lose_rollbacks
+    db = _SdkDatabase(fake_store[1], api=spanner.api())
+    publish_health(db)
+    spanner.slow_commits = 1
+    with pytest.raises(DeadlineExceeded):
+        publish_health(db)
+    outcomes = []
+    for _tick in range(5):
+        try:
+            outcomes.append(publish_health(db)['observed_at'])
+        except DeadlineExceeded:
+            outcomes.append('timeout')
+    if piles_up:
+        assert outcomes == ['timeout'] * 5
+        assert len(spanner.lock_holders()) == 6  # the stalled commit and every tick after it
+        spanner.reap()
+        assert publish_health(db)['observed_at'] == spanner.body(HEALTH_ID)['observed_at']
+    else:
+        assert 'timeout' not in outcomes and outcomes == sorted(outcomes)
+        assert spanner.body(HEALTH_ID)['observed_at'] == outcomes[-1]
+        assert spanner.lock_holders() == []
+
+
+def test_concurrent_publish_cannot_overwrite_a_newer_record(fake_store, monkeypatch):
+    # Two drains: the newer observation commits between the older one's read
+    # and its commit. Without a read lock, Spanner's commit check aborts the
+    # older writer, and its retry reads the newer record and leaves it.
+    _freeze_rpc_clocks(monkeypatch)
+    spanner = _ControlRowSpanner()
+    older, newer = (_SdkDatabase(fake_store[1], api=spanner.api()) for _ in range(2))
+    published = {}
+    spanner.on_read = lambda: published.setdefault('newer', publish_health(newer))
+    published['older'] = publish_health(older)
+    assert published['older']['observed_at'] < published['newer']['observed_at']
+    assert spanner.body(HEALTH_ID) == published['newer']
+    # txn-1 (older) read no record and aborted at commit; txn-2 (newer)
+    # committed; txn-3 is the older drain's retry, which wrote nothing.
+    assert spanner.aborted == [b'txn-1']
+    assert spanner.commits == [b'txn-2', b'txn-3'] and spanner.live == {}
+
+
+def test_concurrent_drains_claim_one_publication_per_interval(fake_store, monkeypatch):
+    _freeze_rpc_clocks(monkeypatch)
+    spanner = _ControlRowSpanner()
+    first, second = (_SdkDatabase(fake_store[1], api=spanner.api()) for _ in range(2))
+    claims = []
+    spanner.on_read = lambda: claims.append(('second', claim_health_publish(second, 2)))
+    claims.append(('first', claim_health_publish(first, 2)))
+    # Both read a free claim; the first drain's commit is the later one, so it
+    # aborts, and its retry reads the second drain's claim.
+    assert claims == [('second', True), ('first', False)]
+    assert spanner.aborted == [b'txn-1'] and spanner.live == {}
 
 
 def test_housekeeping_only_on_legacy_watchdog(fake_store, monkeypatch):
