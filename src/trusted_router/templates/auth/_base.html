@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"{% if brand_theme() == "nyte" %} data-brand="nyte"{% endif %}>
+<html lang="en"{% if brand_theme is defined and brand_theme() == "nyte" %} data-brand="nyte"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/static/charter.css?v={{ auth_styles_version() }}">
 <link rel="stylesheet" href="/static/content-layout.css?v={{ auth_styles_version() }}">
 <script defer src="/static/content-layout.js?v={{ auth_styles_version() }}"></script>
-{% if brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ auth_styles_version() }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ auth_styles_version() }}">{% endif %}</head>
+{% if brand_theme is defined and brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ auth_styles_version() }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ auth_styles_version() }}">{% endif %}</head>
 <body class="auth auth-shell">
   <main class="auth-card">
     {% include "_brand.html" %}

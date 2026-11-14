@@ -100,3 +100,13 @@ def test_nyte_theme_uses_one_share_card_everywhere(client: TestClient, nyte_them
     head = html.split("</head>")[0]
     assert 'og:image:type" content="image/png"' in head
     assert "river" not in head
+
+
+@pytest.mark.parametrize("shell", ["console/_layout.html", "auth/_base.html"])
+def test_shells_tolerate_an_environment_without_the_theme_switch(shell: str) -> None:
+    # Browser specs render console pages with a bare Jinja environment.
+    from jinja2 import Environment, FileSystemLoader
+
+    source = (STATIC.parent / "templates" / shell).read_text()
+    assert 'brand_theme() == "nyte"' not in source.replace('brand_theme is defined and brand_theme() == "nyte"', "")
+    Environment(loader=FileSystemLoader(str(STATIC.parent / "templates")), autoescape=True).get_template(shell)
