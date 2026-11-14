@@ -27,7 +27,6 @@ _NAME_TO_OR_ID = {
     "Gemini 3.1 Flash-Lite Preview": "google/gemini-3.1-flash-lite-preview",
     "Gemini 3.1 Pro Preview": "google/gemini-3.1-pro-preview",
     "Gemini 3 Flash Preview": "google/gemini-3-flash-preview",
-    "Gemini Omni 1.2 Flash": "google/gemini-omni-1.2-flash",
     "Gemini 2.5 Pro": "google/gemini-2.5-pro",
     "Gemini 2.5 Flash": "google/gemini-2.5-flash",
     "Gemini 2.5 Flash-Lite": "google/gemini-2.5-flash-lite",
@@ -38,7 +37,7 @@ _NAME_TO_OR_ID = {
 }
 
 _STANDARD_MODEL_HEADING_RE = re.compile(
-    r"^Gemini\s+(?:(?P<family>Omni|Argon|Nova)\s+)?"
+    r"^Gemini\s+(?:(?P<family>Argon|Nova)\s+)?"
     r"(?P<version>\d+(?:\.\d+)?)\s+"
     r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon|Carbon|Hydrogen)$",
     re.IGNORECASE,
@@ -46,7 +45,13 @@ _STANDARD_MODEL_HEADING_RE = re.compile(
 
 # Headings we never want to try to parse as a text pricing table, because
 # their row shape differs (per-second video, per-request song, per-image, etc.)
+# Gemini Omni is Google's video generation and editing family: its rows price
+# text tokens beside video output, and the API serves it only through the
+# Interactions API, never generateContent or chat/completions ("This model only
+# supports Interactions API.", Sentry QUILL-ROUTER-GG). Pricing it here made
+# google/gemini-omni-1.1-flash a routable chat route that failed every request.
 _SKIP_HEADING_SUBSTRINGS = (
+    "omni",
     "tts",
     "image",
     "nano banana",
