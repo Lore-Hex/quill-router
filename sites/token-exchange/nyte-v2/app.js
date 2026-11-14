@@ -17,6 +17,11 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape' && !e.target.closest
  if(phone)menu.focus();else expanded?.focus();closeMenu();
 }});
 document.addEventListener('click',e=>{if(!e.target.closest('header'))closeMenu();});
+// Any link in the menu closes it at once: same-page links (Start building on /confidential, the
+// buyer deck) would otherwise leave it covering the page, and a slow next page would show the old menu.
+nav.addEventListener('click',e=>{if(e.target.closest('a'))closeMenu();});
+// Back/forward can restore a page from memory with its menu still open.
+addEventListener('pageshow',e=>{if(e.persisted)closeMenu();});
 const active=document.body.dataset.nytePage==='home' ? '/' : location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/';
 nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group')?.querySelector('button').classList.add('on');}});
 // Footer columns mark the current page too; sell pages are listed only there.
