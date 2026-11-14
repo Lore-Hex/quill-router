@@ -582,6 +582,40 @@ def test_lines_carry_fixed_words_and_numbers_only(rig: _Rig, caplog: Any) -> Non
     assert all(isinstance(arg, str | int) for record in ours for arg in record.args or ())
 
 
+@pytest.mark.parametrize(
+    ("standby_reply", "expected"),
+    [
+        (
+            _answers_probe,
+            "spanner channel failover client=primary reason=deadline_streak stalled_ms=1000 "
+            "waiting=0 deadline_streak=3 probe_ms=0 failovers=1",
+        ),
+        (
+            _silent,
+            "spanner channel probe kept client=primary reason=deadline_streak standby=silent "
+            "active=silent stalled_ms=1000 probe_ms=0",
+        ),
+    ],
+    ids=["failover", "probe-kept"],
+)
+def test_lines_stay_readable_on_the_settle_drain_worker(
+    rig: _Rig, caplog: Any, standby_reply: Callable[[str, Any], _Call], expected: str
+) -> None:
+    # The worker scrubs every other module's record down to its logger and
+    # level (2026-11-13: seven drain lines read "level=INFO exception_class=none").
+    from trusted_router.services.settle_drain_observability import install_logging
+
+    rig.channels[0].reply = _silent
+    rig.channels[1].reply = standby_reply
+    cleanup = install_logging()
+    try:
+        with caplog.at_level(logging.INFO, logger=LOGGER):
+            _fail(rig.channel.unary_unary(EXECUTE_SQL), 3, rig)
+    finally:
+        cleanup()
+    assert _messages(caplog) == [expected]
+
+
 def test_close_closes_every_channel(rig: _Rig) -> None:
     rig.channels[0].reply = _silent
     rig.channels[1].reply = _answers_probe
