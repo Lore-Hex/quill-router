@@ -222,8 +222,9 @@ lines, summed, are its counts. It prints JSON:
   list's workspaces and its share moves to answered requests and to those
   reasons. Python answers such a request the edge passes with a ticket
   when its own pilot does not lease it; the shadow counts that
-  `async_python_admitted` and classes it
-  `python_answered_go_passed.<the decide path's pass>`, not `differ`.
+  `async_python_admitted` and compares Go's decision with Python's answer
+  less its ticket, its status URL and `async_eligible`'s value, so the
+  rest of the 200 is still `agree_full` or a `differ` naming the field.
   A workspace the members leave out is composed and
   compared as with admission off, since Python answers it without a
   ticket. Because the admission gate

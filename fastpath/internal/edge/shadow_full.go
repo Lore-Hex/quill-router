@@ -608,32 +608,79 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 			r = fullResult{class: ClassUnread + ".compare_failed"}
 		}
 	}()
-	return leasedUnleased(d, inFlightAgreed(compareWindowed(d, a, w), a, decidePass), decidePass)
-}
-
-// leasedUnleased is r, unless Go's decision is a leased answer
-// (Decision.LeasedAnswer) and Python answered the request with a ticket
-// (shape C, async_python_admitted): Python's pilot did not lease it, so
-// Python's answer is to an unleased authorization, while Go's members are
-// the answer to a leased one, which the edge gives only under its own
-// lease. Not a differ: Go passed it (the decide path's pass: a decision
-// gate such as workspace.not_enabled, or one after the decision, an
-// owner's answer, the budget, a window or the insert; with no decide path,
-// not_decided) and Python answered, so the class is
-// python_answered_go_passed.<that pass>, the decide gate and the async
-// counts kept, as compareWindowed classes a decision its window read
-// passed. A leased answer Python also answered leased (shape B) is
-// compared as any other.
-func leasedUnleased(d Decided, r fullResult, decidePass string) fullResult {
-	dec := d.ForShadow()
-	if dec == nil || !dec.LeasedAnswer || !r.async.pythonAdmitted || r.class != ClassDifferAny {
+	if leased, ok := leasedUnleased(d, a); ok {
+		r = inFlightAgreed(compareWindowed(d, leased, w), leased, decidePass)
+		// Python's own answer carried a ticket: counted as such, and its
+		// async members are not the ones compared (G15 section 4.4).
+		r.async.pythonAdmitted, r.async.compared, r.async.fields = true, "", nil
 		return r
 	}
-	if decidePass == "" {
-		decidePass = inFlightNotDecided
+	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
+}
+
+// leasedUnleased is Python's answer as Python would have given it leased,
+// and true, when Go's decision is a leased answer (Decision.LeasedAnswer)
+// and Python answered the request with a ticket (shape C): Python's pilot
+// did not lease it, so its answer is to an unleased authorization, while
+// Go's members are the answer to a leased one, which the edge gives only
+// under its own lease. The two answers differ only there: Python's leased
+// answer is its unleased one with the ticket and the status URL taken out
+// and async_eligible false (async_settle.snapshot_projection builds both
+// from the same snapshot), so the rest of the 200, the reservation, the
+// estimate, the candidates and the snapshot among them, is still compared
+// byte for byte. Any other answer is a, false; so is a ticketed answer
+// whose bytes are not their own pydantic encoding (leasedBytes), which is
+// then compared as it came and differs on its shape.
+func leasedUnleased(d Decided, a pyAnswer) (pyAnswer, bool) {
+	dec := d.ForShadow()
+	if dec == nil || !dec.LeasedAnswer || a.status != http.StatusOK || a.why != "" ||
+		pythonAsyncMembers(a.body).shape() != asyncShapeTicket {
+		return a, false
 	}
-	return fullResult{class: ClassPythonAnsweredGoPassed + "." + decidePass, decided: true, gate: r.gate,
-		async: r.async, windows: r.windows, stream: r.stream}
+	body, ok := leasedBytes(a.body)
+	if !ok {
+		return a, false
+	}
+	a.body = body
+	return a, true
+}
+
+// leasedBytes is a ticketed 200 with settlement_ticket and
+// settlement_status_url removed and async_eligible false, re-encoded as the
+// 200 is (pyjson.DumpsPydantic); false when the body does not decode to an
+// object whose data is one, or is not already its own encoding, so that the
+// removal is the only change.
+func leasedBytes(raw []byte) ([]byte, bool) {
+	tree, err := pyjson.Decode(raw)
+	if err != nil {
+		return nil, false
+	}
+	top, ok := tree.(pyjson.Object)
+	if !ok || len(top) != 1 || top[0].Key != "data" {
+		return nil, false
+	}
+	data, ok := top[0].Value.(pyjson.Object)
+	if !ok {
+		return nil, false
+	}
+	if same, err := pyjson.DumpsPydantic(top); err != nil || !bytes.Equal(same, raw) {
+		return nil, false
+	}
+	kept := make(pyjson.Object, 0, len(data))
+	for _, m := range data {
+		switch m.Key {
+		case "settlement_ticket", "settlement_status_url":
+			continue
+		case "async_eligible":
+			m.Value = false
+		}
+		kept = append(kept, m)
+	}
+	out, err := pyjson.DumpsPydantic(pyjson.Object{{Key: "data", Value: kept}})
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // inFlightAgreed is r, unless Python refused the request at its per-key

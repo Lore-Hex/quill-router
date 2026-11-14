@@ -1067,12 +1067,19 @@ passes after the decision (an owner's answer, the budget, a window read,
 the insert) is compared too. Python answers the passed request with its
 own pilot. Leased, its answer is shape B and is compared byte for byte.
 Not leased (its switch copy does not enable the workspace, or the owner
-refused it too), its answer is shape C: the shadow counts it
-`async_python_admitted` as before, and classes it
-`python_answered_go_passed.<the decide path's pass>` rather than `differ`
-(`leasedUnleased`, `shadow_full.go`), since Python's unleased answer is not
-the answer Go composed for a leased one. A decision that is not a leased
-answer still differs on a Python ticket.
+refused it too), its answer is shape C, which differs from Go's only in
+its ticket: Python builds both answers from the same snapshot
+(`snapshot_projection`), and its leased answer is its unleased one less
+`settlement_ticket` and `settlement_status_url`, with `async_eligible`
+false. So the shadow compares Go's decision with exactly that
+(`leasedUnleased`, `shadow_full.go`): the rest of the 200, the estimate,
+the reservation, the candidates and the snapshot among them, byte for
+byte, `agree_full` or a `differ` naming the field. It counts the request
+`async_python_admitted` as before and does not count its async members in
+`async_compared`. The removal is checked to be the only change: a body
+that is not its own pydantic encoding is compared as it came (and differs
+on its shape). A decision that is not a leased answer still differs on a
+Python ticket.
 
 **The money path.** Unchanged, and the same as for an authorize the edge
 answers today:
@@ -1125,7 +1132,7 @@ just joined the list: a missed async settle, never money.
    is the same pin set to `false`; `fastpathctl decide off` stops the edge
    answering one workspace's requests, sync and async-v1 alike.
 
-**Parity.** `fastpath/testdata/authorize_async_cases_v1.json` gains eleven
+**Parity.** `fastpath/testdata/authorize_async_cases_v1.json` gains twelve
 `:leased` cases, run in all mode with admission on, no async pilot set and
 Python's switch copy enabling the cohort workspace, so Python's pilot
 leases each request it can: five answers (shape B, a tiered B, two shape A,
@@ -1136,4 +1143,9 @@ it: shape C); `edge_decide` false passing `async.off` and a stream without
 `fastpath_edge_streams` passing `body.stream`, each with Python's leased
 shape B for the shadow; and the policy without `edge_leased`, passing
 `policy.async_admission` while Python answers the leased shape B, the case
-this change exists for.
+this change exists for. The twelfth, `answer:async.C:edge_tickets:leased`,
+has the publisher write `edge_tickets`, `edge_leased` and
+`overlap_workspaces` together: edge
+tickets take the request, and the edge splices Python's signed shape C.
+The gate tests (`leased_test.go`) cover each fact and policy gate a leased
+answer meets, the credit rows and the key-windows mode among them.
