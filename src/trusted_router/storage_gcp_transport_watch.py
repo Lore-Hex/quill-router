@@ -160,18 +160,18 @@ class _TimedRefresh:
         try:
             self._refresh(request)
         except Exception as exc:
-            self._report(started, type(exc).__name__)
+            self._report(started, exc)
             raise
         self._report(started, None)
 
-    def _report(self, started: float, error_class: str | None) -> None:
+    def _report(self, started: float, error: BaseException | None) -> None:
         # The refresh's own outcome is the only thing the caller may see.
         try:
             now = time.monotonic()
-            if error_class is None:
+            if error is None:
                 self._report_ok(started, now)
             else:
-                self._report_failure(error_class, started, now)
+                self._report_failure(error, started, now)
         except Exception:  # noqa: BLE001 - telemetry never fails a refresh.
             return
 
@@ -194,7 +194,7 @@ class _TimedRefresh:
             self._name,
         )
 
-    def _report_failure(self, error_class: str, started: float, now: float) -> None:
+    def _report_failure(self, error: BaseException, started: float, now: float) -> None:
         # With the metadata server down every inline refresh fails, one per
         # RPC. Say so every few seconds and count the rest.
         suppressed = self._failures.admit(now)
@@ -203,7 +203,8 @@ class _TimedRefresh:
         logger.warning(
             "spanner credential refresh failed error_class=%s elapsed_ms=%d "
             "inline=%s suppressed=%d client=%s",
-            error_class,
+            # The class name only: the exception itself can carry a token.
+            type(error).__name__,
             max(0, round((now - started) * 1000)),
             _inline(),
             suppressed,
