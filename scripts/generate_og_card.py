@@ -13,6 +13,13 @@ in, so the default card and the homepage card are one design by construction.
     uv run python scripts/generate_og_card.py --out card.png \\
         --headline "Private AI routing" --accent "you can verify" \\
         --subhead "Hundreds of models through one API."              # a one-off card, same style
+    uv run python scripts/generate_og_card.py --theme nyte           # writes static/og/nyte/og.png
+
+``--theme nyte`` renders the same words in the NY Token Exchange look
+(``docs/homepage/social-card-nyte.html``): an Ink card closed by the Lime Band.
+Pages serve it in place of the default card only when TR_BRAND_THEME=nyte
+(see ``brand_theme.brand_og_image``). Its type falls back to Helvetica Neue
+until the ABC Pelikan licence covers images, so render it on a Mac.
 
 Rendering uses the repo's Playwright Chromium (``npm ci`` installs it; Node 18+)
 and Pillow. The PNG is reduced to a median-cut palette so it stays under 300 KB.
@@ -37,8 +44,24 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOMEPAGE_CARD = REPO_ROOT / "docs" / "homepage" / "social-card.html"
+NYTE_CARD = REPO_ROOT / "docs" / "homepage" / "social-card-nyte.html"
 STATIC_DIR = REPO_ROOT / "src" / "trusted_router" / "static"
 DEFAULT_OUT = STATIC_DIR / "og.png"
+NYTE_OUT = STATIC_DIR / "og" / "nyte" / "og.png"
+
+
+@dataclass(frozen=True)
+class Theme:
+    source: Path
+    out: Path
+    font: str | None  # web font that must load; None for a system font stack
+    tight: bool  # tighten letter spacing while shrinking a long headline
+
+
+THEMES = {
+    "trustedrouter": Theme(HOMEPAGE_CARD, DEFAULT_OUT, "Archivo", True),
+    "nyte": Theme(NYTE_CARD, NYTE_OUT, None, False),
+}
 PLAYWRIGHT_DIR = REPO_ROOT / "node_modules" / "@playwright" / "test"
 
 WIDTH, HEIGHT = 1200, 630
@@ -101,11 +124,13 @@ const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
       deviceScaleFactor: 1,
     });
     await page.goto(pathToFileURL(job.html).href);
-    await page.evaluate(async ({ maxWidth, minSize }) => {
+    await page.evaluate(async ({ maxWidth, minSize, font, tight }) => {
       await document.fonts.ready;
-      const archivo = [...document.fonts].find((f) => f.family.replace(/["']/g, "") === "Archivo");
-      if (!archivo || archivo.status !== "loaded") {
-        throw new Error("Archivo did not load: " + (archivo ? archivo.status : "no @font-face"));
+      if (font) {
+        const face = [...document.fonts].find((f) => f.family.replace(/["']/g, "") === font);
+        if (!face || face.status !== "loaded") {
+          throw new Error(font + " did not load: " + (face ? face.status : "no @font-face"));
+        }
       }
       for (const img of document.images) {
         await img.decode();
@@ -121,7 +146,7 @@ const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
       while (h1.getBoundingClientRect().width > maxWidth && size > minSize) {
         size -= 2;
         h1.style.fontSize = size + "px";
-        h1.style.letterSpacing = "-0.045em";
+        if (tight) h1.style.letterSpacing = "-0.045em";
       }
     }, job);
     await page.screenshot({ path: job.png, type: "png" });
@@ -132,18 +157,18 @@ const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 """
 
 
-def render_html(card: Card) -> str:
-    """The homepage card's HTML with this card's words and a <base> so its relative
-    asset paths resolve from the homepage folder wherever the copy is written."""
-    source = HOMEPAGE_CARD.read_text()
+def render_html(card: Card, template: Path = HOMEPAGE_CARD) -> str:
+    """The card template's HTML with this card's words and a <base> so its relative
+    asset paths resolve from the template's folder wherever the copy is written."""
+    source = template.read_text()
     if len(_H1.findall(source)) != 1 or len(_P.findall(source)) != 1 or _CHARSET not in source:
         raise ValueError(
-            f"{HOMEPAGE_CARD} no longer has one <h1>, one <p> and a charset meta; "
+            f"{template} no longer has one <h1>, one <p> and a charset meta; "
             "update render_html to match it"
         )
     page = _H1.sub(lambda _: f"<h1>{card.headline_html}</h1>", source, count=1)
     page = _P.sub(lambda _: f"<p>{html.escape(card.subhead)}</p>", page, count=1)
-    base = f'<base href="{HOMEPAGE_CARD.parent.as_uri()}/">'
+    base = f'<base href="{template.parent.as_uri()}/">'
     return page.replace(_CHARSET, _CHARSET + base, 1)
 
 
@@ -184,14 +209,14 @@ def node_problem(node: str) -> str | None:
     return None
 
 
-def render(card: Card, out: Path, node: str = "node") -> int:
+def render(card: Card, out: Path, node: str = "node", theme: Theme = THEMES["trustedrouter"]) -> int:
     """Render one card to ``out`` and return its size in bytes."""
     out = out.resolve()  # Node runs from the repo root; keep both sides on one path
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="og-card-") as tmp:
         work = Path(tmp)
         page = work / "card.html"
-        page.write_text(render_html(card))
+        page.write_text(render_html(card, theme.source))
         script = work / "render.js"
         script.write_text(_RENDER_JS)
         job = work / "job.json"
@@ -204,6 +229,8 @@ def render(card: Card, out: Path, node: str = "node") -> int:
                     "height": HEIGHT,
                     "maxWidth": HEADLINE_MAX_WIDTH,
                     "minSize": HEADLINE_MIN_SIZE,
+                    "font": theme.font,
+                    "tight": theme.tight,
                 }
             )
         )
@@ -217,7 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="PNG to write")
+    parser.add_argument("--theme", choices=sorted(THEMES), default="trustedrouter")
+    parser.add_argument("--out", type=Path, default=None, help="PNG to write (default: the theme's card)")
     parser.add_argument("--headline", default=DEFAULT_CARD.headline)
     parser.add_argument("--accent", default=DEFAULT_CARD.accent, help="italic second line; '' for none")
     parser.add_argument("--subhead", default=DEFAULT_CARD.subhead)
@@ -232,9 +260,11 @@ def main(argv: list[str] | None = None) -> int:
     if problem:
         print(problem, file=sys.stderr)
         return 2
-    size = render(card, args.out, args.node)
+    theme = THEMES[args.theme]
+    out = args.out or theme.out
+    size = render(card, out, args.node, theme)
     flag = "" if size <= MAX_BYTES else "  OVER LIMIT"
-    print(f"{args.out}  {size // 1024} KB{flag}")
+    print(f"{out}  {size // 1024} KB{flag}")
     return 0 if size <= MAX_BYTES else 1
 
 

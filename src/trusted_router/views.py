@@ -126,9 +126,10 @@ def _env() -> Environment:
     env.globals["live_model_count"] = live_model_count
     env.globals["publisher_icons"] = publisher_icons
     env.globals["auth_styles_version"] = _auth_styles_version
-    from trusted_router.brand_theme import brand_theme
+    from trusted_router.brand_theme import brand_og_image, brand_theme
 
     env.globals["brand_theme"] = brand_theme
+    env.filters["brand_og"] = brand_og_image
     return env
 
 
