@@ -232,6 +232,9 @@ def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None
     # routing, including disabled terminal behavior, must stay identical.
     assert without.count('"/earnings", "/earnings/*", ') == 1
     without = without.replace('"/earnings", "/earnings/*", ', "")
+    # Billing reconciliation adds exactly these two control-plane aliases.
+    assert without.count('"/requests", "/requests/*", ') == 1
+    without = without.replace('"/requests", "/requests/*", ', "")
     # Markets with forward_to redirect both matchers; without it, as before.
     for forwarded, base in (
         ("redirect = try(market.forward_to, null)", "redirect = null"),
@@ -273,6 +276,9 @@ def test_disabled_renderer_differential_against_base(
     assert "/earnings" not in expected_control["paths"]
     index = expected_control["paths"].index("/user-models/*") + 1
     expected_control["paths"][index:index] = ["/earnings", "/earnings/*"]
+    assert not {"/requests", "/requests/*"} & set(expected_control["paths"])
+    index = expected_control["paths"].index("/activity") + 1
+    expected_control["paths"][index:index] = ["/requests", "/requests/*"]
     if shape == "authorize":
         # Base 5f6d67c3b drops authorize. Raw equality here conflicts with the
         # explicit ruling to retain the PR's authorize preservation. Expose and
@@ -290,6 +296,22 @@ def test_earnings_aliases_route_to_control_in_both_renderers() -> None:
     for path in ("/earnings", "/earnings/transfer"):
         assert _resolve_backend(rendered, "trustedrouter.com", path) == CONTROL
     assert any({"/earnings", "/earnings/*"} <= rule
+               for rule in _terraform_rule_paths("trusted-router-control-backend"))
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_request_billing_aliases_route_to_control_in_both_renderers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
+    from tests.test_internal_surface_edge import _resolve_backend
+
+    module = _module()
+    _switch(module, tmp_path, monkeypatch, enabled)
+    rendered = _render(module, internal="internal-backend", gateway="gateway-backend")
+    for prefix in ("", "/v1"):
+        path = prefix + "/requests/rlog_00112233445566778899aabbccddeeff/billing"
+        assert _resolve_backend(rendered, "trustedrouter.com", path) == CONTROL
+    assert any({"/requests", "/requests/*", "/v1", "/v1/*"} <= rule
                for rule in _terraform_rule_paths("trusted-router-control-backend"))
 
 

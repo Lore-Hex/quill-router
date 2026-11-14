@@ -4860,6 +4860,7 @@ class SpannerStore(OperationalAnalyticsReads):
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
+        gateway_request_id: str | None = None,
         expected_pause_epoch: int | None = None,
         created_at: str | None = None,
     ) -> GatewayAuthorization:
@@ -4905,6 +4906,7 @@ class SpannerStore(OperationalAnalyticsReads):
             expires_at=expires_at,
             deferred_cap_microdollars=deferred_cap_microdollars,
             invocation_nonce=invocation_nonce,
+            gateway_request_id=gateway_request_id,
             expected_pause_epoch=expected_pause_epoch,
             created_at=created_at,
             trust_eligibility_enabled=bool(self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled),
@@ -5710,6 +5712,7 @@ class SpannerStore(OperationalAnalyticsReads):
         stage_d_max_output_tokens: int | None = None,
         stage_d_boot_kid: str | None = None,
         invocation_nonce: str | None = None,
+        gateway_request_id: str | None = None,
         created_at: dt.datetime | None = None,
         fastpath_envelope: str | None = None,
         fastpath_end_of_life: str | None = None,
@@ -5822,6 +5825,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 stage_d_max_output_tokens=stage_d_max_output_tokens,
                 stage_d_boot_kid=stage_d_boot_kid,
                 invocation_nonce=invocation_nonce,
+                gateway_request_id=gateway_request_id,
             )
             built_authorizations[authorization_id] = built
             return built

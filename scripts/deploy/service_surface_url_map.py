@@ -108,6 +108,8 @@ CONTROL_PATH_PATTERNS = (
     "/keys",
     "/keys/*",
     "/activity",
+    "/requests",
+    "/requests/*",
     "/settlements",
     "/settlements/*",
     "/generation",

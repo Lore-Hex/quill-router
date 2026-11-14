@@ -970,9 +970,8 @@ class GatewayAuthorization:
     # part of the idempotency fingerprint: a fresh invocation must recover the
     # original value so the enclave can refuse a second provider dispatch.
     invocation_nonce: str | None = None
-    # Public request-log correlation returned by the enclave and written only
-    # when settle/refund finalizes. It is content-free evidence used by the
-    # Stage D cross-repository gate.
+    # Public, content-free correlation persisted at authorization. Older
+    # gateways supply it only at settlement; never erase it during recovery.
     gateway_request_id: str | None = None
     stage_d_reason: str | None = None
     stage_d_prompt_tokens: int | None = None
@@ -1049,7 +1048,8 @@ class GatewayAuthorization:
         self.finalized_cached_input_tokens = (
             max(0, int(generation.cached_input_tokens)) if generation is not None else 0
         )
-        self.gateway_request_id = generation.gateway_request_id if generation is not None else None
+        if self.gateway_request_id is None and generation is not None:
+            self.gateway_request_id = generation.gateway_request_id
 
 
 @dataclass(frozen=True)

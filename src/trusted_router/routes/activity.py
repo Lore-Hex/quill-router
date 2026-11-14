@@ -11,20 +11,72 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import ManagementPrincipal, Principal, require_scope
+from trusted_router.client_context import parse_gateway_request_id
 from trusted_router.errors import api_error, error_response
 from trusted_router.operational_analytics import (
     is_analytics_unavailable,
     log_analytics_unavailable,
 )
 from trusted_router.request_tags import InvalidTags, validate_tags
+from trusted_router.schemas import RequestBillingResponse
 from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.storage import STORE
+from trusted_router.storage_models import AmbiguousGatewayRequestId
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
 
 
 def register_activity_routes(router: APIRouter) -> None:
+    @router.get("/requests/{gateway_request_id}/billing", response_model=RequestBillingResponse)
+    def request_billing(
+        gateway_request_id: str,
+        principal: Annotated[Principal, Depends(require_scope(SCOPE_INFERENCE))],
+    ) -> JSONResponse:
+        """Read the durable billing outcome for an authorized request ID.
+
+        A missing or ambiguous ID returns 404, not proof of a zero charge.
+        This lookup does not depend on the activity/Observability pipeline.
+        """
+        headers = {"Cache-Control": "private, no-store"}
+        if parse_gateway_request_id(gateway_request_id) is None:
+            raise api_error(400, "Invalid gateway request ID", ErrorType.BAD_REQUEST, headers=headers)
+        try:
+            # Exact trace-index seek, not the eventually consistent analytics
+            # store. Missing evidence never establishes a zero charge.
+            authorization = STORE.get_gateway_authorization_by_gateway_request_id(gateway_request_id)
+        except AmbiguousGatewayRequestId:
+            authorization = None
+        if (
+            authorization is None
+            or authorization.workspace_id != principal.workspace.id
+            or (
+                principal.api_key is not None
+                and principal.scopes
+                and authorization.key_hash != principal.api_key.hash
+            )
+        ):
+            raise api_error(404, "Billing outcome unavailable for this request", ErrorType.NOT_FOUND, headers=headers)
+        outcome = authorization.finalization_outcome
+        status = "pending" if not authorization.settled else "unknown"
+        cost = None
+        if authorization.settled and outcome == "refunded":
+            status, cost = "refunded", 0
+        elif (
+            authorization.settled
+            and outcome in {"settled", "reaped_snapshot"}
+            and authorization.finalized_cost_microdollars is not None
+        ):
+            status, cost = "settled", authorization.finalized_cost_microdollars
+        return JSONResponse({"data": {
+            "gateway_request_id": gateway_request_id,
+            "billing_status": status,
+            "cost_microdollars": cost,
+            "currency": "USD",
+            "finalization_outcome": outcome,
+            "generation_id": authorization.finalized_generation_id,
+        }}, headers=headers)
+
     @router.get("/activity")
     async def activity(
         principal: ManagementPrincipal,

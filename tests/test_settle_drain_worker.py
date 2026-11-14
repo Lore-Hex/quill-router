@@ -67,10 +67,18 @@ def inventory_settings(surface, enabled):
 
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False,
-              wallet_email_verify=False, routing_evidence=False):
+              wallet_email_verify=False, routing_evidence=False, request_billing=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    # Only the two reviewed billing-lookup aliases may extend this inventory;
+    # keep the frozen lifecycle and all other route identities unchanged.
+    for prefix in ("", "/v1"):
+        billing_route = [f"{prefix}/requests/{{gateway_request_id}}/billing", ["GET"],
+                         "register_activity_routes.<locals>.request_billing"]
+        assert routes.count(billing_route) == int(request_billing)
+        if request_billing:
+            routes.remove(billing_route)
     evidence_route = ["/routing-evidence.json", ["GET"],
                       "register_public_routes.<locals>.model_routing_evidence"]
     assert routes.count(evidence_route) == int(routing_evidence)
@@ -141,6 +149,7 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
                      abliterated_page=surface in {"combined", "public", "observer"},
                      routing_evidence=surface in {"combined", "public", "observer"},
                      management_key=surface in {"combined", "control"},
+                     request_billing=surface in {"combined", "control"},
                      wallet_email_verify=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 
 

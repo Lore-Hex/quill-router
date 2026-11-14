@@ -1010,6 +1010,7 @@ class Store(Protocol):
         deferred_cap_microdollars: int | None = ...,
         invocation_nonce: str | None = ...,
         expected_pause_epoch: int | None = ...,
+        gateway_request_id: str | None = ...,
         created_at: str | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
@@ -1229,6 +1230,7 @@ class TypedBillingStore(Protocol):
         stage_d_max_output_tokens: int | None = ...,
         stage_d_boot_kid: str | None = ...,
         invocation_nonce: str | None = ...,
+        gateway_request_id: str | None = ...,
         created_at: datetime | None = ...,
         fastpath_envelope: str | None = ...,
         fastpath_end_of_life: str | None = ...,

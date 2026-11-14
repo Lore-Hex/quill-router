@@ -3374,6 +3374,7 @@ class InMemoryStore:
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
+        gateway_request_id: str | None = None,
         expected_pause_epoch: int | None = None,
         created_at: str | None = None,
     ) -> GatewayAuthorization:
@@ -3447,6 +3448,7 @@ class InMemoryStore:
                 expires_at=expires_at,
                 deferred_cap_microdollars=deferred_cap_microdollars,
                 invocation_nonce=invocation_nonce,
+                gateway_request_id=gateway_request_id,
                 created_at=created_at,
             )
 
