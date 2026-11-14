@@ -138,9 +138,7 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer{max-width:none;background:var(--ink);color:var(--cream);font-family:var(--font-sans);padding-inline:max(60px,calc((100% - 1160px)/2))}
 .site-footer .brand{color:var(--cream)}
 .site-footer a{color:var(--ink-2-dark)}
-.site-footer a:hover,.site-footer .market-links a:hover,.site-footer .footer-credit small a:hover{color:var(--cream)}
-.site-footer .footer-credit small{font-family:var(--font-sans);color:var(--ink-2-dark)}
-.site-footer .footer-credit small a{text-decoration-color:var(--ink-2-dark)}
+.site-footer a:hover,.site-footer .market-links a:hover{color:var(--cream)}
 .site-footer .footer-markets,.site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--dark-sunken)}
 .site-footer .market-pin{stroke:var(--ink-2-dark)}
 .site-footer .market-links a[aria-current="page"]{background:var(--dark-rule);color:var(--cream)}
@@ -225,7 +223,10 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer{overflow:hidden;--globe-bleed:60px}
 @media(min-width:601px){.site-footer{padding-top:56px;padding-bottom:24px}}
 .site-footer .footer-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;column-gap:64px}
-.site-footer .footer-top .brand{grid-column:1;grid-row:1;align-self:start}
+.site-footer .footer-brand{grid-column:1;grid-row:1;align-self:start}
+/* The credit sits with the name it belongs to, apart from the page links and the small print. */
+.site-footer .footer-credit{margin:12px 0 0;color:var(--ink-2-dark);font:400 14px/1.5 var(--font-sans)}
+.site-footer .footer-credit a{color:var(--cream);text-decoration:underline;text-decoration-color:var(--ink-2-dark);text-underline-offset:3px}
 .site-footer .back-to-top{display:none}
 .site-footer .footer-links{grid-column:2;grid-row:1;display:grid;grid-template-columns:repeat(4,minmax(0,180px));gap:28px 40px}
 .site-footer .footer-col{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
@@ -233,7 +234,8 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .footer-col a{color:var(--cream);font-size:15px;line-height:1.5;text-decoration:none}
 .site-footer .footer-col a:hover,.site-footer .footer-col a[aria-current="page"]{text-decoration:underline;text-underline-offset:4px}
 .site-footer .footer-top::after{content:"";grid-column:3;grid-row:1;align-self:center;width:min(360px,24vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
-@media(max-width:1100px){.site-footer .footer-links{grid-template-columns:repeat(2,minmax(0,200px))}}
+/* Tablet and small laptop: name and globe on one row, the four link columns full width below. */
+@media(max-width:1100px){.site-footer .footer-top{grid-template-columns:minmax(0,1fr) auto;row-gap:32px}.site-footer .footer-links{grid-column:1/-1;grid-row:2;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px 20px}.site-footer .footer-top::after{grid-column:2;width:min(240px,30vw)}}
 .site-footer .footer-markets{margin-top:40px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
 .site-footer .market-links a{padding:0 12px;font-size:15px}
 .site-footer .market-links a[aria-current="page"]{background:transparent;color:var(--cream);font-weight:500;box-shadow:inset 0 -3px 0 var(--purple)}
@@ -242,25 +244,26 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .geo-scroll.can-right::after{top:10px;bottom:10px;background:linear-gradient(90deg,transparent,var(--ink))}
 .site-footer .footer-base{display:flex;flex-wrap:wrap;align-items:center;gap:4px 20px;margin-top:40px;padding-top:12px;border-top:1.5px solid var(--dark-rule);font-size:14px;line-height:1.6;color:var(--ink-2-dark)}
 .site-footer .footer-markets+.footer-base{margin-top:16px;border-top:0;padding-top:0}
-.site-footer .footer-credit{display:flex;flex-wrap:wrap;align-items:center;gap:4px 20px}
-.site-footer .footer-credit small{margin:0;font-size:14px}
-.site-footer .footer-related{display:contents}
 .site-footer .footer-base a{display:inline-flex;align-items:center;min-height:32px;color:var(--ink-2-dark);font-size:14px}
 .site-footer .footer-base a:hover{color:var(--cream)}
-.site-footer .footer-credit small a{display:inline;min-height:0}
 .site-footer .footer-contact svg{display:none}
 .site-footer .footer-base .footer-contact a{color:var(--ink-2-dark);font-size:14px;font-weight:400}
 .site-footer .legal{display:flex;flex-wrap:wrap;gap:4px 20px;margin:0 0 0 auto;padding:0;border:0;font-size:14px}
 @media(max-width:600px){
   .site-footer{padding-top:32px;padding-bottom:16px}
   [data-market="new-york"] .site-footer .brand>span::before{margin-bottom:0}
-  .site-footer .footer-top{grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:28px}
-  .site-footer .footer-links{grid-column:1/-1;grid-row:2;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 20px}
-  /* Phone globe: small, in the secondary text colour, beside the name. */
-  .site-footer .footer-top::after{grid-column:2;grid-row:1;align-self:start;width:123px;height:60px;aspect-ratio:auto;margin:0 -20px 0 0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
+  .site-footer .footer-top{grid-template-columns:minmax(0,1fr);row-gap:24px}
+  .site-footer .footer-links{grid-column:1/-1;grid-row:2;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 16px}
+  .site-footer .footer-col{gap:0}
+  .site-footer .footer-col h2{margin-bottom:2px}
+  .site-footer .footer-col a{display:flex;align-items:center;min-height:28px;font-size:14px;line-height:1.3}
+  .site-footer .footer-credit{margin-top:6px}
+  /* Phone: the one-line lockup the header uses instead of the stacked name and globe, so the
+     page links start near the top of the footer. */
+  .site-footer .footer-top::after{display:none}
+  [data-market="new-york"] .site-footer .brand>span::before{width:124px;height:24px;background-image:url(logos/lockup-horizontal-paper.svg)}
   .site-footer .footer-markets{margin-top:28px}
-  .site-footer .footer-base{margin-top:28px;gap:0 18px}
-  .site-footer .footer-credit{gap:0 18px}
+  .site-footer .footer-base{margin-top:24px;padding-top:8px;gap:0 18px}
   .site-footer .legal{margin-left:0;gap:0 18px}
 }
 
@@ -306,24 +309,27 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   .hdr>.btn-sm{order:0;margin-left:12px}
   .menu-open .hdr>.btn-sm{visibility:hidden}
   html.menu-open{overflow:hidden}
-  .nav{flex:none;position:fixed;top:var(--header);left:0;right:0;bottom:0;max-height:none;padding:24px 20px;gap:24px;background:var(--ink);border-top:1px solid var(--dark-rule);border-bottom:0}
-  .nav-group{width:100%}
+  /* Phone menu: Products and Market side by side, the other links on one row, the action right
+     under them, so the whole menu fits a 568px-tall screen and still scrolls when turned sideways. */
+  .nav{flex:none;position:fixed;top:var(--header);left:0;right:0;bottom:0;max-height:none;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:20px 16px;padding:24px 20px calc(24px + env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;background:var(--ink);border-top:1px solid var(--dark-rule);border-bottom:0}
+  .nav.open{display:grid}
+  .nav-group{width:auto;min-width:0}
   .nav-heading{display:block;margin:0 0 4px;color:var(--group);font:500 12px/1.5 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase}
-  .nav-heading::before{content:"";display:block;width:40px;height:4px;margin-bottom:10px;background:var(--group)}
+  .nav-heading::before{content:"";display:block;width:32px;height:4px;margin-bottom:8px;background:var(--group)}
   .nav-panel{position:static;padding:0;border:0;background:none}
   .nav .nav-panel>.wrap{max-width:none;padding:0}
   .nav-items{display:block}
   .nav-items:last-child{margin-bottom:0}
   .nav-panel a{display:flex;align-items:center;min-height:44px;padding:0;border:0}
-  .nav-label{margin:0;font-size:20px}
+  .nav-label{margin:0;font-size:17px;line-height:1.25}
   .nav-panel a.on .nav-label{color:var(--cream)}
   .nav-description,.nav-foot{display:none}
-  .nav-links{flex-direction:column;align-items:stretch;gap:0;padding-top:8px;border-top:1px solid var(--dark-rule)}
-  .nav-links a{display:flex;align-items:center;min-height:44px;font-size:20px;font-weight:400}
-  .nav-actions{display:block;margin-top:auto;padding-top:8px;text-align:center}
-  .nav-actions .btn{display:flex;width:100%;min-height:48px;border-color:var(--orange)}
-  .nav-actions p{margin:16px 0 0;color:var(--ink-2-dark);font-size:15px}
-  .nav-actions p a{color:var(--cream);text-decoration:underline;text-underline-offset:3px}
+  .nav-links{grid-column:1/-1;flex-direction:row;flex-wrap:wrap;align-items:center;gap:0 28px;padding-top:4px;border-top:1px solid var(--dark-rule)}
+  .nav-links a{display:flex;align-items:center;min-height:44px;font-size:17px;font-weight:400}
+  .nav-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
+  .nav-actions .btn{display:flex;flex:1 1 180px;min-height:48px;border-color:var(--orange)}
+  .nav-actions p{margin:0;color:var(--ink-2-dark);font-size:15px}
+  .nav-actions p a{display:inline-flex;align-items:center;min-height:44px;color:var(--cream);text-decoration:underline;text-underline-offset:3px}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */

@@ -193,9 +193,9 @@ MENU_EXTRAS = {"exchange": [("index", {"key": "models", "route": f"{TR}/models",
                                         "menu_description": "Every model on the exchange and who runs it"})]}
 HEADER_LINKS = (("Trust", f"{TR}/trust"), ("Docs", f"{TR}/docs"), ("Pricing", f"{TR}/pricing"))
 SIGN_IN = f"{TR}/console"
-FOOTER_EXTRAS = {"buy": [("Pricing", f"{TR}/pricing")]}
+FOOTER_EXTRAS = {"buy": [("Pricing", f"{TR}/pricing")], "exchange": [("Exchange overview", f"{TR}/token-exchange")]}
 FOOTER_TRUST = (("Trust & attestation", f"{TR}/trust"), ("Security", f"{TR}/security"),
-                ("Docs", f"{TR}/docs"), ("Service status", f"{TR}/status"))
+                ("Docs", f"{TR}/docs"), ("Service status", f"{TR}/status"), ("Let's Encrypt AI", "https://letsencrypt.ai/"))
 COPY_ICON = ('<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="12" height="12"/>'
              '<path d="M16 8V4H4v12h4"/></svg>')
 
@@ -253,7 +253,7 @@ def render_footer_links() -> str:
     columns.append(("trust", "Trust", list(FOOTER_TRUST)))
     return "".join(
         f'<div class="footer-col" style="--group:var(--{GROUP_COLOURS[group]})"><h2>{label}</h2>'
-        + "".join(f'<a href="{html.escape(href, quote=True)}">{html.escape(text)}</a>' for text, href in links)
+        + "".join(f'<a href="{html.escape(href, quote=True)}">{html.escape(text, quote=False)}</a>' for text, href in links)
         + '</div>'
         for group, label, links in columns
     )

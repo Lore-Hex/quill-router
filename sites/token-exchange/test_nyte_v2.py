@@ -213,14 +213,15 @@ class NavigationRegistryTests(unittest.TestCase):
             legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
             labels = re.findall(r'>([^<>]+)</a>', legal)
             self.assertEqual(labels, (['Trust center'] if key in ('providers', 'badge') else []) + ['Media kit', 'Privacy', 'Terms'])
-            related = re.search(r'<nav class="footer-related" aria-label="More from TrustedRouter">(.*?)</nav>', footer, re.S).group(1)
-            # Outbound TrustedRouter links carry campaign parameters; compare without them.
-            self.assertEqual([(href.split('?', 1)[0], text) for href, text in
-                              re.findall(r'<a href="([^"]+)">([^<]+)</a>', related)], [
-                ('https://trustedrouter.com/token-exchange', 'Exchange overview'),
-                ('https://letsencrypt.ai/', "Let's Encrypt AI"),
-            ])
-            self.assertLess(footer.index('Powered by'), footer.index('class="footer-related"'))
+            # Sister TrustedRouter sites sit in the columns they belong to; the credit sits under the name.
+            column = dict(columns)
+            self.assertIn('href="https://trustedrouter.com/token-exchange?', column["Market"])
+            self.assertIn('>Exchange overview</a>', column["Market"])
+            self.assertIn('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>', column["Trust"])
+            self.assertNotIn('footer-related', footer)
+            credit = re.search(r'<p class="footer-credit">(.*?)</p>', footer, re.S).group(1)
+            self.assertIn('Powered by <a href="https://trustedrouter.com/?', credit)
+            self.assertLess(footer.index('class="footer-credit"'), footer.index('class="footer-links"'))
 
     def test_added_page_gets_automatic_date_without_changing_test_lists(self):
         import re
@@ -332,7 +333,7 @@ class NavigationRegistryTests(unittest.TestCase):
             page = render_nyte(market=market)
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
             self.assertIn(f'<span class="brand-place">{market.get("logo_place", market["region"])}</span>', page)
-            self.assertIn(f'<span>{market["name"]}</span></div><nav class="footer-links" aria-label="Site">', page)
+            self.assertIn(f'<span>{market["name"]}</span></div><p class="footer-credit">', page)
             self.assertIn(f'href="https://{market["domain"]}/" aria-current="page"', page)
             self.assertIn(f'utm_source={market["domain"]}', page)
             self.assertIn(f'exchange_market={market["slug"]}', page)
