@@ -98,7 +98,7 @@ test.describe("iPhone 13", () => {
 
 test.describe("smallest phones", () => {
   test.use({ viewport: { width: 320, height: 700 } });
-  test("header keeps Sign in and a short search label at 320px", async ({ page }) => {
+  test("header keeps Sign up and a short search label at 320px", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".trnav .signin")).toBeVisible();
     await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText(/^models$/i, { useInnerText: true }); // capitalised by CSS

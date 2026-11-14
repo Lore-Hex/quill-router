@@ -328,7 +328,7 @@ html {
   .brand-link .brand-word { display: none; }
   .trnav .menu { width: 44px; padding: 0; }
   .trnav .menu > span { display: none; }
-  .trnav .signin.button-primary { min-height: 44px; padding: 0 14px; font-size: 14px; }
+  .trnav .signin.button-primary { min-height: 44px; padding: 0 12px; font-size: 14px; }
 }
 
 @media (max-width: 480px) {

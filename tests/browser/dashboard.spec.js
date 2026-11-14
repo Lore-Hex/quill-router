@@ -44,8 +44,10 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   expect(faintTextContrast.note).toBeGreaterThanOrEqual(4.5);
   expect(faintTextContrast.press).toBeGreaterThanOrEqual(4.5);
 
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign up", exact: true }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Get your API key" })).toBeVisible();
+  await page.locator("#signinModal [data-switch-mode]").click();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 
   await page.getByRole("button", { name: /MetaMask/ }).click();
