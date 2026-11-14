@@ -239,8 +239,7 @@ def render_nav() -> str:
             f'<div class="nav-items">{"".join(items)}</div>{foot}</div></div></div>'
         )
     links = "".join(f'<a href="{href}" data-cta="nav_{text.lower()}">{text}</a>' for text, href in HEADER_LINKS)
-    actions = (f'<div class="nav-actions"><a class="btn btn-primary" href="/confidential#start">Start building</a>'
-               f'<p>Have an account? <a href="{SIGN_IN}" data-cta="nav_sign_in">Sign in</a></p></div>')
+    actions = '<div class="nav-actions"><a class="btn btn-primary" href="/confidential#start">Start building</a></div>'
     return "".join(groups) + f'<div class="nav-links">{links}</div>' + actions
 
 

@@ -5,12 +5,13 @@ const groups=[...nav.querySelectorAll('.nav-group')];
 const closeGroups=()=>groups.forEach(group=>{group.classList.remove('open','pinned');group.querySelector('button').setAttribute('aria-expanded','false');});
 const closeMenu=()=>{nav.classList.remove('open');document.documentElement.classList.remove('menu-open');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-label','Menu');closeGroups();};
 const openGroup=group=>{closeGroups();group.classList.add('open');group.querySelector('button').setAttribute('aria-expanded','true');};
-// Desktop menus open and close on click only (kit NavMenu); on phones every group is listed open.
+// Desktop menus open and close on click only (kit NavMenu). In the phone menu they are tabs:
+// one is always open, so tapping the open one leaves it open.
 groups.forEach(group=>{
  const button=group.querySelector('button');
- button.addEventListener('click',()=>{if(group.classList.contains('open'))closeGroups();else openGroup(group);});
+ button.addEventListener('click',()=>{if(!group.classList.contains('open'))openGroup(group);else if(!nav.classList.contains('open'))closeGroups();});
 });
-menu.addEventListener('click',()=>{const open=!nav.classList.contains('open');closeMenu();nav.classList.toggle('open',open);document.documentElement.classList.toggle('menu-open',open);menu.setAttribute('aria-expanded',String(open));menu.setAttribute('aria-label',open?'Close menu':'Menu');});
+menu.addEventListener('click',()=>{const open=!nav.classList.contains('open');closeMenu();nav.classList.toggle('open',open);document.documentElement.classList.toggle('menu-open',open);menu.setAttribute('aria-expanded',String(open));menu.setAttribute('aria-label',open?'Close menu':'Menu');if(open)openGroup(groups[0]);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && !e.target.closest('dialog')){
  const expanded=nav.querySelector('.nav-group.open button');
  const phone=nav.classList.contains('open');
