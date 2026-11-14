@@ -357,6 +357,25 @@ CLOUDFLARE_INKLING_2_SMALL_ROW = {
 }
 
 
+# DeepInfra began serving Inkling 2 Small on 2026-11-14 at 1M context
+# (api.deepinfra.com/models/list: $0.30/$1.00 per M, cached input at 0.1x).
+DEEPINFRA_INKLING_2_SMALL_ROW = {
+    "id": "thinkingmachines/inkling-2-small",
+    "upstream_id": "thinkingmachines/Inkling-2-Small",
+    "display_name": "thinkingmachines/Inkling-2-Small",
+    "context_length": 1048576,
+    "max_output_tokens": 1048576,
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1000000,
+    "cached_input_token_price_per_m": 30000,
+}
+
+
 def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_join_liberty_4_1(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
@@ -372,13 +391,23 @@ def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_join_
         model_open_weights,
     )
 
+    model = MODELS["thinkingmachines/inkling-2-small"]
+    # Judge the pinned third-party routes, not whichever providers the live
+    # manifests list today: drop the live third-party routes for the model.
+    # The Tinker route stays, so its hold is still checked on live data.
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == model.id and endpoint.provider != "thinkingmachines":
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
     serve_manifest_rows(monkeypatch, tmp_path, "nebius", [NEBIUS_INKLING_2_SMALL_ROW])
     serve_manifest_rows(monkeypatch, tmp_path, "cloudflare-workers-ai", [CLOUDFLARE_INKLING_2_SMALL_ROW])
-    model = MODELS["thinkingmachines/inkling-2-small"]
-    routes = {
-        (endpoint.provider, endpoint.upstream_id, endpoint.effective_context_length(model))
-        for endpoint in endpoints_for_model(model.id)
-    }
+
+    def current_routes() -> set[tuple[str, str, int | None]]:
+        return {
+            (endpoint.provider, endpoint.upstream_id, endpoint.effective_context_length(model))
+            for endpoint in endpoints_for_model(model.id)
+        }
+
+    routes = current_routes()
 
     assert ("nebius", "thinkingmachines/Inkling-2-Small", 1_048_576) in routes
     assert ("cloudflare-workers-ai", "@cf/thinkingmachines/inkling-2-small", 1_048_576) in routes
@@ -401,7 +430,14 @@ def test_third_party_inkling_2_small_routes_serve_while_tinker_is_held_and_join_
     assert model_open_weights(liberty_4_1)
     assert ("cloudflare-workers-ai", "@cf/thinkingmachines/inkling-2-small", 1_048_576) in routes
     assert PROVIDERS["cloudflare-workers-ai"].provider_headquarters_country == "US"
+    # Only pinned third-party routes are served here: no DeepInfra route
+    # until its row is served, and then it joins as another US 1M route.
     assert not any(provider == "deepinfra" for provider, _, _ in routes)
+    serve_manifest_rows(monkeypatch, tmp_path, "deepinfra", [DEEPINFRA_INKLING_2_SMALL_ROW])
+    routes = current_routes()
+    assert ("deepinfra", "thinkingmachines/Inkling-2-Small", 1_048_576) in routes
+    assert PROVIDERS["deepinfra"].provider_headquarters_country == "US"
+    assert not any(provider == "thinkingmachines" for provider, _, _ in routes)
 
 
 def _held_manifest(tmp_path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202

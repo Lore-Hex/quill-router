@@ -72,6 +72,9 @@ EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
 # The price refresh holds one listed route the provider has refused to serve
 # for hours (scripts/pricing/unserved_route_holds.py) and lifts it on expiry.
 UNSERVED_ROUTE_HOLD_REASON = "provider-route-unserved"
+# When that hold was placed; it expires HOLD_HOURS later. Only meaningful while
+# the row carries UNSERVED_ROUTE_HOLD_REASON.
+UNSERVED_ROUTE_HELD_AT_FIELD = "unserved_held_at"
 _CANARY_QUARANTINE_REASONS = frozenset({
     "provider-canary-failed", "upstream-usage-unavailable", "upstream-output-limit-unenforced",
     UNSERVED_ROUTE_HOLD_REASON,

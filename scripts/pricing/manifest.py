@@ -14,6 +14,8 @@ from scripts.pricing.base import (
     reconcile_manifest_tombstones,
 )
 from trusted_router.provider_manifest_policy import (
+    UNSERVED_ROUTE_HELD_AT_FIELD,
+    UNSERVED_ROUTE_HOLD_REASON,
     request_billed_speech_price_is_valid,
     request_billed_transcription_price_is_valid,
 )
@@ -454,12 +456,23 @@ def set_manifest_model_canary_states(
     healthy_model_ids: Collection[str],
     failure_reason: str = "provider-canary-failed",
 ) -> None:
-    """Apply authenticated canary state per model without disturbing holds."""
+    """Apply authenticated canary state per model without disturbing holds.
+
+    The one hold a failed canary replaces is the unserved-route hold
+    (``provider-route-unserved``). The refresh places that hold from
+    configured-route probe evidence and lifts it on a timer, so if it stayed,
+    the route would be published routable at expiry although the newest
+    authenticated canary of that model failed. ``failure_reason`` is lifted
+    only by a passing canary of the same model, so the replacement never makes
+    a route more routable. A passing canary does not lift an unserved-route
+    hold: that hold is the unserved step's to lift, as in the shared writer.
+    """
 
     checked = set(checked_model_ids)
     healthy = set(healthy_model_ids)
     if not healthy <= checked:
         raise ValueError("healthy model ids must be a subset of checked model ids")
+    superseded = {failure_reason, UNSERVED_ROUTE_HOLD_REASON}
 
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = raw.get("models")
@@ -468,19 +481,17 @@ def set_manifest_model_canary_states(
     for row in rows:
         if not isinstance(row, dict) or row.get("id") not in checked:
             continue
+        existing_reason = row.get("routable_reason")
         if row["id"] in healthy:
-            if row.get("routable_reason") == failure_reason:
+            if existing_reason == failure_reason:
                 row.pop("routable", None)
                 row.pop("routable_reason", None)
             continue
-        existing_reason = row.get("routable_reason")
-        if row.get("routable") is False and existing_reason not in {
-            None,
-            failure_reason,
-        }:
+        if row.get("routable") is False and existing_reason not in {None, *superseded}:
             continue
         row["routable"] = False
         row["routable_reason"] = failure_reason
+        row.pop(UNSERVED_ROUTE_HELD_AT_FIELD, None)
     manifest_path.write_text(
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
