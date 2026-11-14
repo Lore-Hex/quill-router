@@ -442,7 +442,7 @@ def edge_ticket(*, body: EdgeTicketRequest, settings: Settings, runtime: Runtime
         effective = [effective_endpoint(endpoint, at=at) for endpoint in endpoints]
         requested = Eligibility(route_type=body.route_type, streamed=body.streamed)
         try:
-            require_eligible(requested)
+            # build_snapshot refuses an ineligible request first.
             snapshot = build_snapshot(effective, requested)
         except ValueError:
             reason = "snapshot"
