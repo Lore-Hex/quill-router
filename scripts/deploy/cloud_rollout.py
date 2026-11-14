@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import http.client
 import json
 import os
 import re
@@ -54,6 +55,9 @@ PLANES = {
 }
 SHA = re.compile(r"[a-f0-9]{7,40}")
 MAX_BYTES = 1_048_576
+# The longest Retry-After fetch converts to a number. Nine digits is over 31
+# years, far past the 5 s fetch waits for; anything longer gives up at once.
+RETRY_AFTER_DIGITS = 9
 COMPONENTS = ("control-plane", "gateway", "public-surface")
 # v3 only. Clouds where the control plane and the gateway may hold leases at
 # the same time. Only gcp's gateway gates tell a moving control plane from a
@@ -231,7 +235,13 @@ def fetch(url: str) -> dict[str, Any]:
                 if retry_after is not None:
                     # Long or date-form retry windows fail closed; never retry
                     # earlier than the server asked or hold a job indefinitely.
-                    if not retry_after.isdigit() or int(retry_after) > 5:
+                    # Only ASCII decimal seconds of at most RETRY_AFTER_DIGITS
+                    # digits reach int(). str.isdigit() alone also passes
+                    # superscript digits and strings past Python's 4300 digit
+                    # conversion limit, and int() raises ValueError on both,
+                    # which callers read as an answer, not as this HTTP error.
+                    if (not retry_after.isascii() or not retry_after.isdigit()
+                            or len(retry_after) > RETRY_AFTER_DIGITS or int(retry_after) > 5):
                         raise
                     delay = max(delay, int(retry_after))
             if attempt == 2:
@@ -273,14 +283,41 @@ def probe_cloud(cloud: str) -> str:
 # itself without storage. /health and /trust/control-plane.json are served by
 # the public service, which a control-plane deploy does not change.
 API_PROBE_PATH = "/v1/internal/synthetic/health"
+# The application's own source limiter once its bucket is spent
+# (_rate_limit_request in src/trusted_router/middleware.py), byte for byte.
+# The limiter runs before internal auth, and without a credential the probe
+# shares one bucket with every unauthenticated /internal/ and /v1/internal/
+# request (namespace internal_ip; in `untrusted` client-ip mode one subject
+# for all callers), so outside traffic can spend it. tests/test_cloud_rollout_v3.py
+# checks that the application still sends exactly these bytes.
+LIMITER_429 = b'{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}'
+# The planes where that bucket exists: the observer app itself answers the
+# plane host, with the limiter on in `untrusted` mode (azure_control_plane.sh,
+# aws_eu_control_plane.sh). gcp's control backend runs with the limiter off
+# (TR_RATE_LIMIT_ENABLED=false in rollout.sh), and every other app surface
+# sends the same bytes once its own bucket is spent, so on gcp those bytes
+# can only come from a service that is not the API service: refused.
+SHARED_LIMITER_PLANES = frozenset({PLANES["aws"][0], PLANES["azure"][0]})
 
 
 def api_service_answers(plane: str) -> None:
-    """The control plane's API service answers its own unauthenticated 401.
+    """The control plane's API service answers: its own 401, or its own limiter's 429.
 
     No token is sent: the coordinator carries no secrets. The application, and
-    only the application, answers with this exact structured error, so a load
+    only the application, answers with these exact structured errors, so a load
     balancer error, a redirect or another service fails the check.
+
+    On aws and azure, while the shared unauthenticated bucket is spent, the
+    application answers the limiter's 429 instead of the 401. That still
+    proves the application answered, so it passes at once, but it does not
+    show that internal auth refuses the call (docs/design/component-leases-v3.md,
+    rule 9). On gcp, and for any other 429 (a proxy's, a load balancer's,
+    or one with another body), it is retried and then refused, as before.
+
+    A body is read only when it decides the answer: a 429, or the last
+    attempt. A retried 502, 503 or 504 is never read, so one that breaks off
+    mid-body (http.client.IncompleteRead, not an OSError) is retried, and a
+    body that breaks off when it is read refuses instead of raising.
     """
     request = urllib.request.Request(  # noqa: S310 - fixed HTTPS origins in PLANES
         f"{plane}{API_PROBE_PATH}?rollout_check={uuid.uuid4().hex}",
@@ -292,10 +329,20 @@ def api_service_answers(plane: str) -> None:
             with urllib.request.build_opener(NoRedirect()).open(request, timeout=15):
                 raise Refused("control-plane API answered an unauthenticated internal call")
         except urllib.error.HTTPError as exc:
-            if exc.code in {429, 502, 503, 504} and attempt < 2:
+            retry = exc.code in {429, 502, 503, 504} and attempt < 2
+            raw: bytes | None = b""
+            if exc.code == 429 or not retry:
+                try:
+                    raw = exc.read(MAX_BYTES + 1)
+                except (OSError, http.client.HTTPException):
+                    raw = None  # the body broke off
+            if exc.code == 429 and raw == LIMITER_429 and plane in SHARED_LIMITER_PLANES:
+                return
+            if retry:
                 time.sleep(2 ** attempt)
                 continue
-            raw = exc.read(MAX_BYTES + 1)
+            if raw is None:
+                raise Refused(f"control-plane API answered HTTP {exc.code} and its body broke off") from exc
             try:
                 body = json.loads(raw) if len(raw) <= MAX_BYTES else None
             except ValueError:
