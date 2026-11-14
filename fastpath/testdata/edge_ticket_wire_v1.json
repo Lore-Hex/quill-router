@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "The edge ticket route's wire, read by both sides: the Go edge (fastpath/internal/edge/ticket_test.go,",
+    "TestEdgeTicketWireFixture) and Python (tests/test_edge_ticket_wire_fixture.py). request is the body the edge",
+    "posts to /internal/fastpath/async-ticket; issued and declined are the two answers it accepts. The ticket here",
+    "is shaped like a compact JWS and signs nothing."
+  ],
+  "request": {
+    "v": 1,
+    "authorization_id": "auth_wire_1",
+    "workspace_id": "ws_test_1",
+    "key_hash": "key_wire_1",
+    "reservation_id": "res_wire_1",
+    "invocation_nonce": "nonce_wire_1",
+    "route_type": "chat.completions",
+    "streamed": false,
+    "region": "us-central1",
+    "candidate_endpoint_ids": [
+      "openai/billing-v1@openai/prepaid"
+    ],
+    "priced_at": 1792368000,
+    "billing_snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4"
+  },
+  "issued": {
+    "async_eligible": true,
+    "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6IndpcmUtZml4dHVyZSJ9.eyJ2IjoxfQ.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "settlement_status_url": "/v1/settlements/auth_wire_1.settle"
+  },
+  "declined": {
+    "async_eligible": false
+  }
+}
