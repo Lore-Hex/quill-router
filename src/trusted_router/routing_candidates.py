@@ -383,7 +383,6 @@ def zdr_candidate_models(limit: int = 12) -> list[Model]:
             "openai",
             "google-ai-studio",
             "tinfoil",
-            "venice",
             "phala",
             "nextbit-eu",
         ),
