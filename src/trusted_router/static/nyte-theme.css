@@ -1307,23 +1307,49 @@ body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"] #top::after {
   content: "";
   display: block;
-  height: 120px;
+  height: var(--nyte-band-height);
   background: var(--nyte-ink) url("/static/nyte/band-lime.svg") 0 0 / 100% 120px no-repeat;
 }
 
-/* Without the photo the hero takes its content's height, not the screen's */
+/* First screen: the hero, its model marquee and the Band fit in the
+   viewport under the header and the Token Exchange strip, on any phone
+   tall enough to hold them; shorter screens simply scroll. */
+:root[data-brand="nyte"] {
+  --nyte-band-height: 120px;
+}
+
 :root[data-brand="nyte"] #top .hero {
-  min-height: 0;
-  padding-bottom: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(20px, calc(var(--hero-vh, 1svh) * 5), 64px);
+  min-height: calc(
+    var(--hero-vh, 1svh) * 100 - var(--preview-bar-height, 0px) - var(--site-header-height, 64px)
+    - var(--exchange-banner-height, 0px) - var(--nyte-band-height)
+  );
+  padding: clamp(20px, calc(var(--hero-vh, 1svh) * 5), 72px) 20px clamp(16px, calc(var(--hero-vh, 1svh) * 3), 40px);
 }
 
 :root[data-brand="nyte"] #top .hero > .copy {
-  padding-top: 72px;
+  position: static;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 0;
+}
+
+/* Free space goes above the bar and above the model names, so the copy
+   sits in the middle and the names stay just above the Band. */
+:root[data-brand="nyte"] #top .hero > .copy::before {
+  margin-top: auto;
 }
 
 :root[data-brand="nyte"] #top .hero .labs {
   position: static;
-  margin: 56px auto 0;
+  width: 100%;
+  margin: auto auto 0;
+  padding-top: 24px;
 }
 
 :root[data-brand="nyte"] .closing-cta {
@@ -1454,4 +1480,37 @@ body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"] .page .trpr .press-read:hover {
   background: var(--nyte-ink);
   color: var(--nyte-cream);
+}
+
+/* Phones: a shorter Band (four of its five rows, same 24 px pitch) and
+   tighter hero type so the first screen holds the whole hero. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] {
+    --nyte-band-height: 72px;
+  }
+
+  :root[data-brand="nyte"] #top .hero h1 {
+    font-size: clamp(40px, 11.5vw, 52px);
+  }
+
+  :root[data-brand="nyte"] #top .hero .sub {
+    margin: 16px 0 20px;
+    font-size: 17px;
+  }
+
+  :root[data-brand="nyte"] #top .hero .hero-promises {
+    margin-bottom: 18px;
+  }
+}
+
+/* Short laptop screens: a 96 px Band (four rows) keeps it in the first screen */
+@media (min-width: 761px) and (max-height: 860px) {
+  :root[data-brand="nyte"] {
+    --nyte-band-height: 96px;
+  }
+
+  :root[data-brand="nyte"] #top .hero {
+    gap: clamp(16px, calc(var(--hero-vh, 1svh) * 3), 40px);
+    padding-top: clamp(16px, calc(var(--hero-vh, 1svh) * 3), 48px);
+  }
 }
