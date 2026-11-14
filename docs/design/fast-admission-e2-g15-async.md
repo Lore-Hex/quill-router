@@ -1143,9 +1143,9 @@ it: shape C); `edge_decide` false passing `async.off` and a stream without
 `fastpath_edge_streams` passing `body.stream`, each with Python's leased
 shape B for the shadow; and the policy without `edge_leased`, passing
 `policy.async_admission` while Python answers the leased shape B, the case
-this change exists for. The twelfth, `answer:async.C:edge_tickets:leased`,
-has the publisher write `edge_tickets`, `edge_leased` and
-`overlap_workspaces` together: edge
+this change exists for. The twelfth,
+`answer:async.C:edge_tickets:leased:overlap_listed`, has the publisher
+write `edge_tickets`, `edge_leased` and `overlap_workspaces` together: edge
 tickets take the request, and the edge splices Python's signed shape C.
 The gate tests (`leased_test.go`) cover each fact and policy gate a leased
 answer meets, the credit rows and the key-windows mode among them.

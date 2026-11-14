@@ -2021,7 +2021,7 @@ def leased_cases(add: Any) -> None:
     # Edge tickets beside the leased answers: a workspace edge tickets cover
     # takes the ticket path whatever edge_leased says. On the overlap list,
     # so Python's own leased answer is the signed shape C the edge splices.
-    add("answer:async.C:edge_tickets:leased", body=nonce,
+    add("answer:async.C:edge_tickets:leased:overlap_listed", body=nonce,
         policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "fastpath_overlap_workspaces": [COHORT_WS],
                                              "edge_tickets": True}})
 

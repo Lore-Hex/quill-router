@@ -208,7 +208,7 @@ func TestEdgeTicketsKeepTheirPathWithEdgeLeased(t *testing.T) {
 	// The Python-generated policy carrying edge_tickets, edge_leased and
 	// overlap_workspaces together: the ticket path, Python's signed shape C
 	// (TestEveryAsyncGoldenThroughThePipeline answers it byte for byte).
-	golden := asyncCaseNamed(t, "answer:async.C:edge_tickets:leased")
+	golden := asyncCaseNamed(t, "answer:async.C:edge_tickets:leased:overlap_listed")
 	p := policyOf(t, f, golden).AsyncSettle
 	if p == nil || p.EdgeTickets == nil || p.EdgeLeased == nil || p.OverlapWorkspaces == nil {
 		t.Fatalf("the golden's policy does not carry all three members: %+v", p)

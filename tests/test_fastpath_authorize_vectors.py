@@ -785,7 +785,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert claims["workspace_id"] == case["facts"]["key"]["workspace_id"], name
             assert claims["streamed"] is (json.loads(case["request"]["body"]).get("stream") is True), name
             assert effective.get("edge_ticket_workspaces", [claims["workspace_id"]]) == [claims["workspace_id"]], name
-            if name.endswith(":leased"):
+            if ":leased" in name:
                 # Beside the leased answers: the policy carries all three
                 # members, and edge tickets take the request.
                 assert effective.get("edge_leased") is True, name
