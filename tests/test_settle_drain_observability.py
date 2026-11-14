@@ -149,82 +149,222 @@ def test_worker_events_pass_through_unchanged(caplog):
         cleanup()
 
 
-_FIXED_VOCABULARY_MODULES = ('storage_gcp_channel_failover', 'storage_gcp_transport_watch')
+_LOG_METHODS = frozenset({'debug', 'info', 'warning', 'error', 'exception', 'critical', 'log'})
+# Reviewed argument expressions, by module. Anything else needs a review and
+# an entry here: a literal and type(x).__name__ are the only other shapes.
+_REVIEWED_ARGUMENTS = {
+    'storage_gcp_channel_failover': frozenset({
+        'name', 'self._name', 'suspicion.reason', 'suspicion.stalled_ms', 'waiting', 'streak',
+        'probe_ms', 'failovers', "'answered' if standby_answered else 'silent'",
+        "'answered' if active_answered else 'silent'",
+    }),
+    'storage_gcp_transport_watch': frozenset({
+        'name', 'self._name', 'state', "previous or 'none'",
+        '0 if previous is None else max(0, round((now - since) * 1000))',
+        'max(0, round((now - started) * 1000))', '_inline()', 'self._ttl_seconds()',
+        'suppressed', 'error_class',
+        # logger.log levels, not output text
+        'level', 'logging.WARNING if slow else logging.INFO',
+    }),
+}
+_FIXED_VOCABULARY_MODULES = tuple(_REVIEWED_ARGUMENTS)
 
 
-def _logging_calls(module):
-    """(method, format literal node, call) for every ``logger.<method>(...)`` in the module."""
-    import ast
+def _source(module):
     from pathlib import Path
 
-    source = Path(output.__file__).resolve().parents[1] / f'{module}.py'
-    calls = []
-    for node in ast.walk(ast.parse(source.read_text())):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'logger'):
-            method = node.func.attr
-            calls.append((method, node.args[1] if method == 'log' else node.args[0], node))
-    return calls
+    return (Path(output.__file__).resolve().parents[1] / f'{module}.py').read_text()
+
+
+def _log_calls(source):
+    """Every call of a log method, whatever it is called on: ``logger``,
+    ``self._logger``, an alias or a ``logging.getLogger(...)`` chain."""
+    import ast
+
+    return [node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _LOG_METHODS]
+
+
+def _is_class_name(node):
+    import ast
+
+    return (isinstance(node, ast.Attribute) and node.attr == '__name__'
+            and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == 'type' and len(node.value.args) == 1
+            and not node.value.keywords)
+
+
+def _log_call_problems(source, logger_name, reviewed):
+    import ast
+
+    problems = []
+    for call in _log_calls(source):
+        text = ast.unparse(call)
+        method = call.func.attr
+        if method in ('exception', 'critical') or call.keywords:
+            problems.append(f'method or keywords: {text}')
+            continue
+        args = list(call.args)
+        if method == 'log':
+            if not args or ast.unparse(args[0]) not in reviewed:
+                problems.append(f'level: {text}')
+                continue
+            args = args[1:]
+        if not args or not (isinstance(args[0], ast.Constant) and type(args[0].value) is str):
+            problems.append(f'format: {text}')
+            continue
+        positions = output.FIXED_FORMATS.get((logger_name, args[0].value))
+        if positions is None or len(positions) != len(args) - 1:
+            problems.append(f'unlisted format: {text}')
+        for arg in args[1:]:
+            if not (isinstance(arg, ast.Constant) or _is_class_name(arg)
+                    or ast.unparse(arg) in reviewed):
+                problems.append(f'argument {ast.unparse(arg)}: {text}')
+    return problems
 
 
 @pytest.mark.parametrize('module', _FIXED_VOCABULARY_MODULES)
-def test_fixed_vocabulary_modules_log_only_literal_formats(module):
-    # The worker keeps these modules' formats verbatim, so each one must be a
-    # literal (no f-string or concatenation) with nothing attached to it.
-    import ast
+def test_fixed_vocabulary_modules_log_only_listed_formats(module):
     import importlib
 
-    assert f'trusted_router.{module}' in output._FIXED_VOCABULARY_LOGGERS
-    assert importlib.import_module(f'trusted_router.{module}').logger.name == f'trusted_router.{module}'
-    calls = _logging_calls(module)
+    name = f'trusted_router.{module}'
+    assert importlib.import_module(name).logger.name == name
+    calls = _log_calls(_source(module))
     assert len(calls) >= 6
-    for method, message, call in calls:
-        assert method in ('debug', 'info', 'warning', 'error', 'log'), method
-        assert isinstance(message, ast.Constant) and type(message.value) is str, ast.unparse(call)
-        assert not call.keywords, ast.unparse(call)
-        assert not any(isinstance(arg, ast.Starred) for arg in call.args), ast.unparse(call)
+    assert _log_call_problems(_source(module), name, _REVIEWED_ARGUMENTS[module]) == []
 
 
-@pytest.mark.parametrize('module', _FIXED_VOCABULARY_MODULES)
-def test_fixed_vocabulary_lines_keep_their_text_on_the_worker(module, caplog):
+def test_every_listed_format_is_used_and_fits_its_positions():
+    import ast
     import re
 
-    name = f'trusted_router.{module}'
+    used = set()
+    for module in _FIXED_VOCABULARY_MODULES:
+        for call in _log_calls(_source(module)):
+            message = call.args[1] if call.func.attr == 'log' else call.args[0]
+            used.add((f'trusted_router.{module}', message.value))
+            assert isinstance(message, ast.Constant)
+    assert set(output.FIXED_FORMATS) == used
+    for (_name, message), positions in output.FIXED_FORMATS.items():
+        specs = re.findall(r'%(.)', message)
+        assert len(specs) == len(positions), message
+        for spec, position in zip(specs, positions, strict=True):
+            assert (spec == 'd') == (position is int), message
+
+
+@pytest.mark.parametrize('injected', [
+    # The independent review's injections; each must fail the guard.
+    'import logging\nlogging.getLogger(__name__).warning(f"spanner channel failover armed {database.name}")\n',
+    'logger.info("spanner channel failover armed client=%s", getattr(database, "api_key", None))\n',
+    'self._logger.info("spanner channel failover armed client=%s", token)\n',
+    'log = logger\nlog.warning("spanner channel failover armed client=%s key=%s", name, key)\n',
+    'logger.info("spanner channel failover armed client=%s", name, exc_info=True)\n',
+    'logger.exception("spanner channel failover armed client=%s", name)\n',
+    'logger.info("spanner channel failover armed client=%s", *names)\n',
+    'logger.info("spanner channel failover armed client=" + name)\n',
+])
+def test_log_call_guard_rejects_unreviewed_calls(injected):
+    module = 'storage_gcp_channel_failover'
+    source = _source(module) + '\n\ndef _injected():\n' + ''.join(
+        '    ' + line + '\n' for line in injected.splitlines())
+    assert _log_call_problems(source, f'trusted_router.{module}', _REVIEWED_ARGUMENTS[module])
+
+
+def _sample(position):
+    if position is int:
+        return 1234
+    if position is bool:
+        return True
+    if position is output._CLASS_NAME:
+        return 'DeadlineExceeded'
+    return sorted(position)[0]
+
+
+def test_listed_lines_keep_their_text_on_the_worker(caplog):
     cleanup = output.install_logging()
     try:
-        with caplog.at_level(logging.DEBUG, logger=name):
-            for _method, message, _call in _logging_calls(module):
-                args = tuple(1234 if spec == 'd' else 'deadline_streak'
-                             for spec in re.findall(r'%([sd])', message.value))
-                logging.getLogger(name).warning(message.value, *args)
-                assert caplog.records[-1].getMessage() == message.value % args
+        with caplog.at_level(logging.DEBUG):
+            for (name, message), positions in output.FIXED_FORMATS.items():
+                args = tuple(_sample(position) for position in positions)
+                logging.getLogger(name).warning(message, *args)
+                assert caplog.records[-1].getMessage() == message % args
     finally:
         cleanup()
 
 
-@pytest.mark.parametrize('args', [
-    ('private workspace',), ('ya29.private-token/x',), ('a' * 65,), ('',), (None,),
-    (b'private',), (type('Word', (str,), {})('primary'),), (type('Count', (int,), {})(7),),
+_KEPT = 'spanner channel failover armed client=%s'
+_FAILOVER = 'trusted_router.storage_gcp_channel_failover'
+
+
+@pytest.mark.parametrize('name, message, args', [
+    (_FAILOVER, _KEPT, ('sk-tr-v1-' + 'a' * 40,)),
+    (_FAILOVER, _KEPT, ('ya29.' + 'b' * 53,)),
+    (_FAILOVER, _KEPT, ('secondary',)),
+    (_FAILOVER, _KEPT, ('',)),
+    (_FAILOVER, _KEPT, (None,)),
+    (_FAILOVER, _KEPT, (b'primary',)),
+    (_FAILOVER, _KEPT, (type('Word', (str,), {})('primary'),)),
+    (_FAILOVER, _KEPT, ({'client': 'primary'},)),
+    (_FAILOVER, _KEPT, ()),
+    (_FAILOVER, _KEPT, ('primary', 'primary')),
+    (_FAILOVER, type('Format', (str,), {})(_KEPT), ('primary',)),
+    # A message off the list, with no arguments (an f-string's shape).
+    (_FAILOVER, 'spanner channel failover armed client=sk-tr-v1-private', ()),
+    (_FAILOVER, 'spanner channel failover unavailable client=%s error_class=%s',
+     ('primary', 'ya29.private-token')),
+    (_FAILOVER, 'spanner channel failover unavailable client=%s error_class=%s',
+     ('primary', 'sk-tr-v1-private')),
+    (_FAILOVER, 'spanner channel probe kept client=%s reason=%s standby=%s active=%s '
+     'stalled_ms=%d probe_ms=%d', ('primary', 'waiting', 'answered', 'silent', True, 1)),
+    ('trusted_router.storage_gcp_transport_watch',
+     'spanner credential refresh ok elapsed_ms=%d inline=%s ttl_s=%d suppressed=%d client=%s',
+     (1, 'yes', 1, 1, 'primary')),
+    # Exact logger names only: no children, no near names, no other module.
+    (_FAILOVER + '.child', _KEPT, ('primary',)),
+    (_FAILOVER + '2', _KEPT, ('primary',)),
+    ('trusted_router.storage_gcp', _KEPT, ('primary',)),
+    ('trusted_router.storage_gcp_transport_watch', _KEPT, ('primary',)),
 ])
-def test_fixed_vocabulary_logger_with_other_arguments_is_scrubbed(args, caplog):
-    name = 'trusted_router.storage_gcp_channel_failover'
+def test_unlisted_records_are_scrubbed(name, message, args, caplog):
     cleanup = output.install_logging()
     try:
-        with caplog.at_level(logging.INFO, logger=name):
-            logging.getLogger(name).info('spanner channel probe kept client=%s', *args)
-            logging.getLogger(name).info('spanner channel probe kept client=%s', {'client': 'primary'})
-            logging.getLogger(name).info('spanner channel probe kept client=%s stalled_ms=%d', 'primary')
-            logging.getLogger(name).info(type('Format', (str,), {})('spanner channel probe kept'))
+        with caplog.at_level(logging.INFO):
+            logging.getLogger(name).info(message, *args)
     finally:
         cleanup()
     assert [record.getMessage() for record in caplog.records] == [
-        f'logger={name} level=INFO exception_class=none'] * 4
-    assert 'private' not in caplog.text
+        f'logger={name} level=INFO exception_class=none']
+    assert 'private' not in caplog.text and 'sk-tr' not in caplog.text and 'ya29' not in caplog.text
+
+
+def test_listed_line_never_carries_an_exception_or_stack(caplog):
+    import io
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    logger = logging.getLogger(_FAILOVER)
+    logger.addHandler(handler)
+    cleanup = output.install_logging()
+    try:
+        with caplog.at_level(logging.INFO, logger=_FAILOVER):
+            try:
+                raise ValueError('private-exception ya29.private-token')
+            except ValueError:
+                logger.info(_KEPT, 'primary', exc_info=True, stack_info=True,
+                            extra={'secret': 'private-extra'})
+    finally:
+        cleanup()
+        logger.removeHandler(handler)
+    [record] = caplog.records
+    assert record.getMessage() == 'spanner channel failover armed client=primary'
+    assert record.exc_info is None and record.exc_text is None and record.stack_info is None
+    assert not hasattr(record, 'secret')
+    assert stream.getvalue() == 'spanner channel failover armed client=primary\n'
 
 
 def test_other_storage_loggers_stay_scrubbed(caplog):
-    # Only the two fixed-vocabulary modules are kept; a fixed-looking line
-    # from any other module still says nothing but its logger and level.
     cleanup = output.install_logging()
     try:
         with caplog.at_level(logging.INFO):

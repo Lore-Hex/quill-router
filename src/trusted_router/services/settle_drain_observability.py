@@ -9,18 +9,58 @@ from typing import Any, cast
 from trusted_router.config import Settings
 
 WORKER_LOGGER = "trusted_router.services.settle_outbox_worker"
-# Storage modules whose every line is a literal format filled with fixed words
-# and numbers, by design (their module docstrings say so, and
-# tests/test_settle_drain_observability.py checks each call). Their lines tell
-# a dead connection from a silent or a slow Spanner during a drain incident,
-# and the scrubbed form below keeps none of that. A line from one of them keeps
-# its literal format when every argument is an exact int, float or bool, or an
-# exact str that is one short word; any other line is scrubbed as before.
-_FIXED_VOCABULARY_LOGGERS = frozenset({
-    "trusted_router.storage_gcp_channel_failover",
-    "trusted_router.storage_gcp_transport_watch",
-})
-_FIXED_WORD = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+# The Spanner channel failover and transport watch lines tell a dead
+# connection from a silent or a slow Spanner during a drain incident, and the
+# scrubbed form below keeps none of that. A record from one of those two
+# loggers (exact names, no children) keeps its text only when its format is
+# one of the exact strings below and each argument fits its position: a word
+# from that position's fixed set, an exception class name, an exact int, or an
+# exact bool. Any other record is scrubbed as before.
+# tests/test_settle_drain_observability.py checks that every logging call in
+# the two modules uses one of these formats, and only literal, type(...).__name__
+# or reviewed expressions as arguments.
+_CLIENT = frozenset({"primary"})
+_REASON = frozenset({"waiting", "deadline_streak"})
+_ANSWER = frozenset({"answered", "silent"})
+_STATE = frozenset({"IDLE", "CONNECTING", "READY", "TRANSIENT_FAILURE", "SHUTDOWN"})
+_PREVIOUS = _STATE | {"none"}
+# type(exc).__name__ only: a Python class name, never a dot, dash or slash.
+_CLASS_NAME = re.compile(r"_?[A-Z][A-Za-z0-9_]{0,63}")
+_FAILOVER_LOGGER = "trusted_router.storage_gcp_channel_failover"
+_WATCH_LOGGER = "trusted_router.storage_gcp_transport_watch"
+FIXED_FORMATS: dict[tuple[str, str], tuple[Any, ...]] = {
+    (_FAILOVER_LOGGER, "spanner channel probe unavailable client=%s error_class=%s"):
+        (_CLIENT, _CLASS_NAME),
+    (_FAILOVER_LOGGER, "spanner channel probe kept client=%s reason=%s standby=%s active=%s "
+                       "stalled_ms=%d probe_ms=%d"):
+        (_CLIENT, _REASON, _ANSWER, _ANSWER, int, int),
+    (_FAILOVER_LOGGER, "spanner channel failover client=%s reason=%s stalled_ms=%d waiting=%d "
+                       "deadline_streak=%d probe_ms=%d failovers=%d"):
+        (_CLIENT, _REASON, int, int, int, int, int),
+    (_FAILOVER_LOGGER, "spanner channel standby unavailable client=%s error_class=%s"):
+        (_CLIENT, _CLASS_NAME),
+    (_FAILOVER_LOGGER, "spanner channel failover off client=%s"): (_CLIENT,),
+    (_FAILOVER_LOGGER, "spanner channel failover unavailable client=%s error_class=%s"):
+        (_CLIENT, _CLASS_NAME),
+    (_FAILOVER_LOGGER, "spanner channel failover armed client=%s"): (_CLIENT,),
+    (_FAILOVER_LOGGER, "spanner channel failover dropped client=%s error_class=%s"):
+        (_CLIENT, _CLASS_NAME),
+    (_FAILOVER_LOGGER, "spanner channel failover skipped client=%s reason=built"): (_CLIENT,),
+    (_FAILOVER_LOGGER, "spanner channel failover skipped client=%s reason=omni"): (_CLIENT,),
+    (_WATCH_LOGGER, "spanner transport watch unavailable client=%s error_class=%s"):
+        (_CLIENT, _CLASS_NAME),
+    (_WATCH_LOGGER, "spanner channel state=%s previous=%s previous_ms=%d client=%s"):
+        (_STATE, _PREVIOUS, int, _CLIENT),
+    (_WATCH_LOGGER, "spanner credential refresh unwatched client=%s"): (_CLIENT,),
+    (_WATCH_LOGGER, "spanner credential refresh watched client=%s kind=%s"):
+        (_CLIENT, _CLASS_NAME),
+    (_WATCH_LOGGER, "spanner credential refresh ok elapsed_ms=%d inline=%s ttl_s=%d "
+                    "suppressed=%d client=%s"):
+        (int, bool, int, int, _CLIENT),
+    (_WATCH_LOGGER, "spanner credential refresh failed error_class=%s elapsed_ms=%d "
+                    "inline=%s suppressed=%d client=%s"):
+        (_CLASS_NAME, int, bool, int, _CLIENT),
+}
 _ALERT_CLASSES = frozenset({"activity-repair-expired", "lost-charge", "reservation-missing",
                             "exhausted-retries"})
 # Counter events the storage layer writes while the worker applies a settle
@@ -56,28 +96,30 @@ class WorkerLogFilter(logging.Filter):
 
 
 def _fixed_vocabulary(record: logging.LogRecord) -> logging.LogRecord | None:
-    """The record rebuilt from its format and checked arguments, or None to scrub it.
+    """The record rebuilt from its listed format and checked arguments, or None.
 
     Only exact types are read, as above. The rebuilt record carries no
-    exception, stack or extras; these modules attach none.
+    exception, stack or extras.
     """
-    if record.name not in _FIXED_VOCABULARY_LOGGERS or type(record.msg) is not str:
+    if type(record.name) is not str or type(record.msg) is not str:
         return None
+    positions = FIXED_FORMATS.get((record.name, record.msg))
     args = record.args
-    if type(args) is not tuple:
+    if positions is None or type(args) is not tuple or len(args) != len(positions):
         return None
-    for arg in args:
-        if type(arg) in (int, float, bool):
-            continue
-        if type(arg) is str and _FIXED_WORD.fullmatch(arg):
-            continue
-        return None
-    try:
-        if args:  # as LogRecord.getMessage formats
-            record.msg % args  # noqa: B018 - a format that does not fit its arguments is scrubbed
-    except (TypeError, ValueError, KeyError):
+    if not all(map(_fits, args, positions)):
         return None
     return logging.LogRecord(record.name, record.levelno, "", 0, record.msg, args, None)
+
+
+def _fits(arg: Any, position: Any) -> bool:
+    if position is int or position is bool:
+        return type(arg) is position
+    if type(arg) is not str:
+        return False
+    if position is _CLASS_NAME:
+        return _CLASS_NAME.fullmatch(arg) is not None
+    return arg in position
 
 
 def install_logging() -> Callable[[], None]:
