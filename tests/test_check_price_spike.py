@@ -1853,3 +1853,53 @@ def test_dated_speech_approval_requires_exact_endpoint_and_complete_pairs(
     )
     assert bool(failures) == (change != "approved")
     assert changes  # An approval never hides the repricing from the report.
+
+
+def _regolo_apertus_manifest_rates(tmp_path: Path, rate: str) -> tuple[dict, dict]:
+    """Committed vs refreshed Regolo manifests for the published EUR tariff."""
+    from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m
+    from scripts.pricing.providers import regolo
+
+    committed = json.loads(regolo.MANIFEST_PATH.read_text(encoding="utf-8"))
+    (row,) = regolo.normalize_catalog({"data": [{
+        "model_group": "apertus-70b", "mode": "chat",
+        # https://regolo.ai/pricing (2026-11-14): EUR 1.00 / EUR 3.40 per M.
+        "input_cost_per_token": 0.000001, "output_cost_per_token": 0.0000034,
+        "max_input_tokens": 30000, "max_output_tokens": 30000,
+    }]}, Decimal(rate))
+    refreshed = json.loads(json.dumps(committed))
+    for manifest_row in refreshed["models"]:
+        if manifest_row["id"] == "swiss-ai/apertus-70b-instruct":
+            manifest_row["input_token_price_per_m"] = dollars_per_token_to_micro_per_m(
+                Decimal(row["pricing"]["prompt"])
+            )
+            manifest_row["output_token_price_per_m"] = dollars_per_token_to_micro_per_m(
+                Decimal(row["pricing"]["completion"])
+            )
+    out = []
+    for name, raw in (("before", committed), ("after", refreshed)):
+        directory = tmp_path / name
+        directory.mkdir(parents=True)
+        (directory / "regolo.json").write_text(json.dumps(raw), encoding="utf-8")
+        out.append(_load_provider_manifests(directory))
+    return out[0], out[1]
+
+
+def test_regolo_apertus_eur_tariff_approval_is_exact_to_the_ecb_fixing(tmp_path):
+    route = "swiss-ai/apertus-70b-instruct [regolo:regolo:apertus-70b]"
+    before, after = _regolo_apertus_manifest_rates(tmp_path / "fixing", "1.1052")
+    # The committed manifest still carries the old EUR 0.40 / 2.10 tariff.
+    assert {axis: Decimal(value) for axis, value in before[route].items()} == {
+        "prompt": Decimal("0.00000044688"), "completion": Decimal("0.00000234612"),
+    }
+    assert Decimal(after[route]["prompt"]) == Decimal("0.0000011052")
+    assert check(before, after)[0] == []
+    # A different ECB fixing, route or axis is not approved by this entry.
+    _, other_rate = _regolo_apertus_manifest_rates(tmp_path / "other", "1.1053")
+    assert check(before, other_rate)[0]
+    other_route = route.replace("regolo:regolo:", "other:other:")
+    assert check({other_route: before[route]}, {other_route: after[route]})[0]
+    assert check(
+        {route: {"prompt": "1", "completion": before[route]["prompt"]}},
+        {route: {"prompt": "1", "completion": after[route]["prompt"]}},
+    )[0]

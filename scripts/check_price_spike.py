@@ -42,6 +42,16 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Regolo's public price list https://regolo.ai/pricing, verified
+        # 2026-11-14: apertus-70b is EUR 1.00 input / EUR 3.40 output per M
+        # (was EUR 0.40 / EUR 2.10). Only input reaches the 2x gate. The
+        # refresher converts at the ECB reference rate; this pins the
+        # 2026-11-13 fixing (USD 1.1052), current until the next ECB fixing
+        # on Monday 2026-11-16. Other rates, routes and axes still hold.
+        (
+            "swiss-ai/apertus-70b-instruct [regolo:regolo:apertus-70b]",
+            "prompt", Decimal("0.00000044688"), Decimal("0.0000011052"),
+        ),
         # Authenticated https://api.intelligence.io.solutions/api/v1/models,
         # verified 2026-11-01: XiaomiMiMo/MiMo-V2.5 is $0.40 input,
         # $2.00 output and $0.20 cached per M. The existing snapshot uses
