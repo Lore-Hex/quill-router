@@ -78,6 +78,24 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
         Resource = "arn:aws:iam::${local.aws_account_id}:role/tr-router-github-deploy"
       },
       {
+        # infra/aws_github_oidc_roles.tf manages the GitHub OIDC trust of the
+        # two quill-cloud-proxy roles. Read-only, so every plan can refresh
+        # them; trust-policy changes themselves (iam:UpdateAssumeRolePolicy)
+        # are applied by an operator, never by this role.
+        Sid    = "ReadGitHubOidcRoles"
+        Effect = "Allow"
+        Action = [
+          "iam:GetRole",
+          "iam:GetRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+        ]
+        Resource = [
+          "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-route53-sync",
+          "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-trust-publisher",
+        ]
+      },
+      {
         # aws_config.tf points the us-east-1 Config recorder at AWS's
         # service-linked role. PutConfigurationRecorder requires iam:PassRole on
         # it even though the role is service-linked: run 37126950294 failed
