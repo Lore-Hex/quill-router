@@ -566,7 +566,20 @@ jobs:
         id: prev
         run: |
           set -euo pipefail
+          source scripts/deploy/_deploy_hold.sh
           for region in us-central1 europe-west4 us-east4 southamerica-east1; do
+            key="${region//-/_}_revision"
+            # A held region's traffic is never moved, so it needs no rollback
+            # target, and a region is often held because its traffic is split.
+            # The placeholder keeps the ramp's required inputs set; each step
+            # that reads it checks the hold first and never uses it as a
+            # revision.
+            if deploy_region_is_held "$region"; then
+              deploy_warn_region_held "$region"
+              echo "${key}=held" >> "$GITHUB_OUTPUT"
+              echo "  pre-deploy ${region}: held"
+              continue
+            fi
             service_json=$(gcloud run services describe "${SERVICE}" \
               --region="$region" --project="${PROJECT_ID}" \
               --format=json)
@@ -575,7 +588,6 @@ jobs:
               echo "::error::${region} has no unambiguous 100%-traffic rollback revision"
               exit 1
             fi
-            key="${region//-/_}_revision"
             echo "${key}=${rev}" >> "$GITHUB_OUTPUT"
             echo "  pre-deploy ${region}: ${rev}"
           done
