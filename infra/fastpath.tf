@@ -114,7 +114,17 @@ locals {
   # nodes answer as the release before until that switch moves. It also
   # carries every provider's async rules (#2451) and all-mode admission by
   # request (#2466), both already live on the Python side.
-  fastpath_release        = "949c757f6794c7a17a09d7065cf8245100efccd5"
+  # 949c757f6: takes -allowance-tier2 and -allowance-tier1 (#2542, #2545).
+  # 1732a7a89: the edge reads the policy's optional async_settle.edge_leased
+  # and overlap_workspaces members (#2590): with them, it answers an async-v1
+  # authorize of a workspace async admission covers when it leases the
+  # request itself, with Python's answer to a leased authorization (no
+  # ticket off the overlap list). Python publishes the members only with
+  # TR_FASTPATH_EDGE_ASYNC_LEASED true, false in rollout.sh, so the nodes
+  # answer as the release before until that switch moves; 949c757f6 refuses
+  # a policy carrying them, so this pin comes first. Its other fastpath/
+  # changes since 949c757f6 are tests and test data (#2555, #2586).
+  fastpath_release        = "1732a7a8925cd59639780ed4d7b08d50edb78e67"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
