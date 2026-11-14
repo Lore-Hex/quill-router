@@ -31,6 +31,13 @@ _DISPLAY_MODEL_MAP = {
     "Solar Pro 4": "upstage/solar-pro4",
 }
 _PRICING_VALID_UNTIL: datetime | None = None
+# Upstage ended API service for these on 2026-10-30 KST (provider_lifecycle
+# UPSTAGE_OCTOBER_2026_RETIREMENT_AT) and dropped them from /v1/models on
+# 2026-11-01. Keep the rows as retired tombstones: without this the refresh
+# sees 2 of 3 routes vanish, the mass-prune guard keeps the whole old
+# manifest, and solar-pro4 expires with it. A stale pricing card or a
+# relisting must never make them routable again.
+RETIRED_MODEL_IDS = frozenset({"upstage/solar-pro2", "upstage/solar-pro3"})
 
 
 def _micro_per_m(raw: str) -> int:
@@ -172,6 +179,8 @@ CATALOG = DirectOpenAIProvider(
         price_loader=_load_prices,
         expected_models=("upstage/solar-pro4",),
         pricing_source_url=PRICING_URL,
+        operator_hold_reasons=dict.fromkeys(RETIRED_MODEL_IDS, "provider-model-retired"),
+        confirmed_disabled_model_ids=RETIRED_MODEL_IDS,
     ),
     manifest_path=MANIFEST_PATH,
 )

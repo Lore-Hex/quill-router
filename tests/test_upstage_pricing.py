@@ -148,3 +148,66 @@ def test_guarded_writer_does_not_extend_old_promotion(monkeypatch, tmp_path):
     monkeypatch.setattr(upstage, "_PRICING_VALID_UNTIL", None)
     assert upstage.write_provider_manifest(None) == ["guarded"]
     assert path.read_text() == original
+
+
+def _card(name: str, input_price: str, cached: str, output: str) -> str:
+    rates = "".join(
+        f'<div class="pricing-feature-v2"><div data-rate="{axis}">{price}</div>'
+        '<div data-rate-unit="">1M tokens</div></div>'
+        for axis, price in (("input", input_price), ("cached", cached), ("output", output))
+    )
+    return f'<div class="pricing-card-v2"><h4>{name}</h4>{rates}</div>'
+
+
+# The live page still prints end-of-service cards for Pro 2 and Pro 3.
+_POST_RETIREMENT_PAGE = (
+    _card("Solar Pro 4", "0.15", "0.03", "0.60")
+    + _card("Solar Pro 3", "0.15", "0.015", "0.6")
+    + _card("Solar Pro 2", "0.15", "0.015", "0.6")
+)
+
+
+@pytest.mark.parametrize(
+    "listed",
+    [
+        ["solar-pro4"],  # /v1/models since 2026-11-01
+        ["solar-pro4", "solar-pro3", "solar-pro2"],  # a stale relisting
+    ],
+)
+def test_retired_solar_pro2_pro3_keep_tombstones_and_manifest_renews(monkeypatch, tmp_path, listed):
+    import json
+    from dataclasses import replace
+
+    from scripts.pricing.base import guard_manifest_prune
+    from scripts.pricing.providers import _direct_openai
+    from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
+
+    committed = upstage.MANIFEST_PATH.read_text(encoding="utf-8")
+    before_rows = json.loads(committed)["models"]
+    path = tmp_path / "upstage.json"
+    path.write_text(committed, encoding="utf-8")
+    monkeypatch.setenv("UPSTAGE_API_KEY", "test-only-key")
+    monkeypatch.setattr(upstage, "fetch_html", lambda url: _POST_RETIREMENT_PAGE)
+    monkeypatch.setattr(
+        _direct_openai, "fetch_json", lambda url, *, extra_headers: {"data": [{"id": i} for i in listed]}
+    )
+    probed: list[str] = []
+    monkeypatch.setattr(
+        _direct_openai, "probe_openai_chat", lambda **kwargs: probed.append(kwargs["model"]) or True
+    )
+    catalog = DirectOpenAIProvider(replace(upstage.CATALOG.spec), manifest_path=path)
+
+    notes = catalog.write_provider_manifest(catalog.fetch())
+
+    assert not any("mass-prune" in note for note in notes)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["generated_at"] != json.loads(committed)["generated_at"]
+    rows = {row["id"]: row for row in raw["models"]}
+    assert rows["upstage/solar-pro4"].get("routable") is not False
+    for model in upstage.RETIRED_MODEL_IDS:
+        assert rows[model]["routable"] is False
+        assert rows[model]["routable_reason"] == "provider-model-retired"
+        assert rows[model]["retirement_at"] == "2026-10-29T15:00:00Z"
+    assert "solar-pro2" not in probed and "solar-pro3" not in probed
+    # The refresh's outer publication gate accepts the rebuilt manifest too.
+    assert guard_manifest_prune(before_rows, raw["models"], provider_slug="upstage") == raw["models"]
