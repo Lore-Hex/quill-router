@@ -47,13 +47,14 @@ from typing import Any
 import httpx
 
 from trusted_router.provider_manifest_policy import (
+    UNSERVED_ROUTE_HELD_AT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
     provider_manifest_row_price_is_valid,
 )
 
 SOURCE = "https://trustedrouter.com/route-health/unserved.json"
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "src/trusted_router/data/provider_models"
-HELD_AT_FIELD = "unserved_held_at"
+HELD_AT_FIELD = UNSERVED_ROUTE_HELD_AT_FIELD
 HOLD_HOURS = 24
 MAX_EVIDENCE_AGE = timedelta(hours=2)
 # The server stamps generated_at when it builds; tolerate runner/server skew.

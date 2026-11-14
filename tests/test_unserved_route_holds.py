@@ -600,3 +600,78 @@ def test_the_route_cap_counts_holds_already_in_place(tmp_path: Path) -> None:
     (tmp_path / "p0.json").unlink()
     holds.apply_unserved_route_holds({("fresh", "m/a")}, manifest_dir=tmp_path, now=NOW)
     assert _rows(fresh)["m/a"]["routable_reason"] == UNSERVED_ROUTE_HOLD_REASON
+
+
+def _unserved(model: str) -> dict[str, Any]:
+    return _row(model, routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+                **{holds.HELD_AT_FIELD: "2026-11-11T12:00:00Z"})
+
+
+def test_a_failed_model_canary_replaces_an_unserved_hold(tmp_path: Path) -> None:
+    # Databricks kimi-k3, 2026-11-14: the refresh held it as unserved, then an
+    # authenticated canary of the model failed. The canary's hold must win:
+    # left alone, the timed hold expires and publishes a route whose newest
+    # canary failed.
+    from scripts.pricing.manifest import set_manifest_model_canary_states
+
+    path = _manifest(tmp_path, "phala", [_unserved("z-ai/glm-5.1"), _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+    set_manifest_model_canary_states(path, checked_model_ids={"z-ai/glm-5.1", "z-ai/glm-5.2"},
+                                     healthy_model_ids={"z-ai/glm-5.2"})
+    row = _rows(path)["z-ai/glm-5.1"]
+    assert (row["routable"], row["routable_reason"]) == (False, "provider-canary-failed")
+    assert holds.HELD_AT_FIELD not in row
+
+    # Long after the unserved hold would have expired, the expiry step leaves
+    # the canary's hold in place; only a passing canary lifts it.
+    later = NOW + dt.timedelta(hours=holds.HOLD_HOURS * 3)
+    holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=later)
+    assert _rows(path)["z-ai/glm-5.1"]["routable_reason"] == "provider-canary-failed"
+    set_manifest_model_canary_states(path, checked_model_ids={"z-ai/glm-5.1"}, healthy_model_ids={"z-ai/glm-5.1"})
+    assert {"routable", "routable_reason"}.isdisjoint(_rows(path)["z-ai/glm-5.1"])
+
+
+def test_a_passing_model_canary_leaves_an_unserved_hold_to_expire(tmp_path: Path) -> None:
+    from scripts.pricing.manifest import set_manifest_model_canary_states
+
+    path = _manifest(tmp_path, "phala", [_unserved("z-ai/glm-5.1"), _row("z-ai/glm-5.2")])
+    before = path.read_bytes()
+    set_manifest_model_canary_states(path, checked_model_ids={"z-ai/glm-5.1"}, healthy_model_ids={"z-ai/glm-5.1"})
+    assert json.loads(path.read_bytes()) == json.loads(before)
+
+
+def test_a_failed_model_canary_still_leaves_operator_holds_alone(tmp_path: Path) -> None:
+    # Negative control: only the unserved-route hold yields to the canary.
+    from scripts.pricing.manifest import set_manifest_model_canary_states
+
+    operator = _row("z-ai/glm-5.0", routable=False, routable_reason="provider-access-unavailable")
+    path = _manifest(tmp_path, "phala", [operator, _unserved("z-ai/glm-5.1"), _row("z-ai/glm-5.2")])
+    set_manifest_model_canary_states(path, checked_model_ids={"z-ai/glm-5.0", "z-ai/glm-5.1"},
+                                     healthy_model_ids=set())
+    rows = _rows(path)
+    assert rows["z-ai/glm-5.0"]["routable_reason"] == "provider-access-unavailable"
+    assert rows["z-ai/glm-5.1"]["routable_reason"] == "provider-canary-failed"
+    # Unchecked rows are untouched.
+    assert "routable" not in rows["z-ai/glm-5.2"]
+
+
+def test_a_provider_wide_canary_failure_leaves_an_unserved_hold(tmp_path: Path) -> None:
+    # A provider-wide canary proves nothing about one model, and its hold
+    # lifts on the next provider-wide pass: replacing the unserved hold with
+    # it could publish the route before the unserved hold expires.
+    from scripts.pricing.manifest import set_manifest_canary_state
+
+    path = _manifest(tmp_path, "phala", [_unserved("z-ai/glm-5.1"), _row("z-ai/glm-5.2")])
+    set_manifest_canary_state(path, healthy=False)
+    rows = _rows(path)
+    assert rows["z-ai/glm-5.1"]["routable_reason"] == UNSERVED_ROUTE_HOLD_REASON
+    assert rows["z-ai/glm-5.1"][holds.HELD_AT_FIELD] == "2026-11-11T12:00:00Z"
+    assert rows["z-ai/glm-5.2"]["routable_reason"] == "provider-canary-failed"
+
+
+def test_unserved_evidence_never_overwrites_an_existing_canary_hold(tmp_path: Path) -> None:
+    canary = _row("z-ai/glm-5.1", routable=False, routable_reason="provider-canary-failed")
+    path = _manifest(tmp_path, "phala", [canary, _row("z-ai/glm-5.2"), _row("qwen/qwen3"), _row("m/a")])
+    before = path.read_bytes()
+    notes = holds.apply_unserved_route_holds({("phala", "z-ai/glm-5.1")}, manifest_dir=tmp_path, now=NOW)
+    assert path.read_bytes() == before
+    assert any("z-ai/glm-5.1 is not a routable manifest row; not held" in note for note in notes)
