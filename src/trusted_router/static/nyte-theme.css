@@ -547,7 +547,7 @@ body:where([data-brand="nyte"] *),
 
 /* Ink areas: the header bar, the footer and the console top bar keep the
    kit's dark theme, so their own colours read Cream on Ink. */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink) {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink) {
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-ink);
   --tr-color-surface-bg-alt: var(--nyte-surface);
@@ -1044,18 +1044,18 @@ body:where([data-brand="nyte"] *),
 }
 
 /* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
   :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
   border-color: var(--nyte-cream);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
   :is(.button.button-primary, .btn.primary) {
   border-color: var(--nyte-orange);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
   :is(.button, .btn):hover {
   border-color: var(--nyte-cream);
   background: var(--nyte-cream);
@@ -1100,7 +1100,7 @@ body:where([data-brand="nyte"] *),
   background: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
   :is(.eyebrow, .kicker) {
   color: var(--nyte-cream);
 }
@@ -1124,7 +1124,7 @@ body:where([data-brand="nyte"] *),
   outline-offset: 2px;
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink) :focus-visible {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink) :focus-visible {
   outline-color: var(--nyte-cream);
 }
 
@@ -1532,13 +1532,15 @@ body:where([data-brand="nyte"] *),
   overflow-x: clip;
 }
 
-:root[data-brand="nyte"] .public-hero {
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
   border-bottom: 0;
+  background: var(--nyte-ink);
+  color: var(--tr-color-text-primary);
   box-shadow: 0 0 0 100vmax var(--nyte-ink);
   clip-path: inset(-100vmax -100vmax 0);
 }
 
-:root[data-brand="nyte"] .public-hero::after {
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
   content: "";
   display: block;
   grid-column: 1 / -1;
@@ -1547,13 +1549,13 @@ body:where([data-brand="nyte"] *),
   background: var(--nyte-ink) var(--nyte-band) 0 0 / 100% 120px no-repeat;
 }
 
-:root[data-brand="nyte"] .public-hero + * {
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) + * {
   margin-top: 56px;
 }
 
 /* The public sheets set their colour names on :root; the Ink page hero
    re-points them at its own (dark) values. */
-:root[data-brand="nyte"] .public-hero {
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
   --bg: var(--tr-legacy-0d1117, #0d1117);
   --panel: var(--tr-legacy-161b22, #161b22);
   --panel2: var(--tr-legacy-1c2230, #1c2230);
@@ -1638,37 +1640,109 @@ body:where([data-brand="nyte"] *),
   --status-failed: var(--tr-color-error);
 }
 
+/* Heroes from the page sheets: the Band is a full-width row of its own
+   (row-layout heroes wrap it onto a new line) with room above it. */
+:root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+  flex-wrap: wrap;
+}
+
+:root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+  flex: none;
+  width: 100vw;
+  max-width: none;
+  margin-top: 48px;
+}
+
+/* Green tokens and the Token Exchange drop their hero artwork (the photo
+   is not rendered), so their heroes size to the copy. */
+:root[data-brand="nyte"] :is(.green-hero, .tm-hero) {
+  min-height: 0;
+  overflow: visible;
+}
+
+:root[data-brand="nyte"] .green-hero-copy {
+  padding-bottom: 0;
+}
+
+/* Left-aligned narrow heroes span the content column so the Band reaches
+   both screen edges; their copy keeps its old measure. */
+:root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro) {
+  max-width: none;
+}
+
+:root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro) > * {
+  max-width: 900px;
+}
+
+:root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro)::after {
+  max-width: none;
+}
+
+/* The model page sets its colour names on its wrapper; the Ink hero
+   re-points them at the dark values. */
+:root[data-brand="nyte"] .model-detail-page .md-hero {
+  --md-bg: var(--tr-legacy-050706, #050706);
+  --md-text: var(--tr-legacy-edf8f5, #EDF8F5);
+  --md-secondary: var(--tr-legacy-c3c9c3, #C3C9C3);
+  --md-label: var(--tr-legacy-adbbb2, #ADBBB2);
+  --md-line: var(--tr-legacy-1e2621, #1E2621);
+  --md-line-strong: var(--tr-legacy-33403a, #33403A);
+  --md-control-line: var(--tr-legacy-526859, #526859);
+  --md-accent: var(--tr-legacy-cce8d7, #CCE8D7);
+  --md-accent-ink: var(--tr-legacy-10241a, #10241A);
+  --md-link: var(--tr-legacy-c0e1ff, #C0E1FF);
+  --md-highlight: var(--tr-legacy-1c3e2e, #1C3E2E);
+  --md-bar: var(--tr-legacy-6b9480, #6B9480);
+  --md-bar-top: var(--tr-legacy-9ee6b8, #9EE6B8);
+  --md-amber: var(--tr-legacy-f2c879, #F2C879);
+}
+
+/* Page-specific text and buttons that the Cream theme sets to Ink read
+   Cream on the Ink hero. */
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) .tm-eyebrow {
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) .tm-button:not(.tm-primary) {
+  border-color: var(--nyte-cream);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) .cc-hero-flow li > span {
+  color: var(--tr-color-text-tertiary);
+}
+
 /* The Ink hero meets the header: no Cream strip above it. Content above the
    hero (the Trust page's agent prompt) keeps its own ground. */
-:root[data-brand="nyte"] .public-hero:first-child {
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro):first-child {
   margin-top: 0;
 }
 
 /* Anything placed above the hero (the Trust page's agent prompt) sits on
    the same Ink, above the hero's painted ground. */
-:root[data-brand="nyte"] main > :has(~ .public-hero) {
+:root[data-brand="nyte"] main > :has(~ :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) {
   position: relative;
   z-index: 1;
 }
 
 /* With an Ink hero the hero's button is the one Orange button in view:
    the header Sign in is outlined, as on the homepage. */
-:root[data-brand="nyte"]:has(.public-hero) .trnav .tbar {
+:root[data-brand="nyte"]:has(:is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) .trnav .tbar {
   box-shadow: inset 0 -1.5px 0 var(--nyte-dark-rule);
 }
 
-:root[data-brand="nyte"]:has(.public-hero) .trnav .signin.button.button-primary {
+:root[data-brand="nyte"]:has(:is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) .trnav .signin.button.button-primary {
   border-color: var(--nyte-cream);
   background: transparent;
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"]:has(.public-hero) .trnav .signin.button.button-primary:hover {
+:root[data-brand="nyte"]:has(:is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) .trnav .signin.button.button-primary:hover {
   background: var(--nyte-cream);
   color: var(--nyte-ink);
 }
 
 /* Links in prose on Ink use the kit's light link colour */
-:root[data-brand="nyte"] :is(.public-hero, .site-footer) p a:not(.button, .btn) {
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .site-footer) p a:not(.button, .btn) {
   color: var(--nyte-link);
 }

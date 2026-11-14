@@ -13,22 +13,32 @@
 .model-promo-inner {
   max-width: 1280px;
   margin-inline: auto;
-  padding: 16px 24px;
+  padding: 0 24px;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px 32px;
+  justify-content: center;
+  gap: 8px 20px;
 }
 
-.model-promo-copy { display: grid; gap: 5px; min-width: 0; }
-.model-promo-copy strong { font-size: 16px; line-height: 1.4; }
-.model-promo-copy span { font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; }
-.model-promo-copy small { font-size: 12px; line-height: 1.5; max-width: 76ch; }
+.model-promo-copy {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.model-promo-copy strong { font-weight: 600; }
+.model-promo-copy span { font-variant-numeric: tabular-nums; }
+.model-promo-copy small { font-size: inherit; opacity: .8; }
 .model-promo-link {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-height: 44px;
   color: inherit;
   font-size: 14px;
@@ -39,8 +49,9 @@
 .model-promo-link:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
 
 @media (max-width: 700px) {
-  .model-promo-inner { flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 20px; }
-  .model-promo-copy { overflow-wrap: anywhere; }
+  .model-promo-inner { justify-content: space-between; padding: 6px 16px; }
+  .model-promo-copy { column-gap: 8px; }
+  .model-promo-copy small { flex-basis: 100%; }
 }
 
 .skip-link {

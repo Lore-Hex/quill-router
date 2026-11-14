@@ -218,12 +218,8 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
     banner = page.select_one("[data-fortanix-promo]")
     assert banner is not None
     assert banner.select_one("a")["href"] == f"/models/{MODEL_ID}"
-    assert "$0.01 / 1M input tokens" in banner.get_text()
-    assert "$0.01 / 1M output tokens" in banner.get_text()
-    assert "No end date announced" in banner.get_text()
-    assert "$0.000001 request minimum" in banner.get_text()
-    assert "Managed-route ZDR" in banner.get_text()
-    assert "Santa Clara inference" in banner.get_text()
+    assert "$0.01 / 1M tokens" in banner.get_text()
+    assert "Limited time, price may change" in banner.get_text()
     assert "trustedrouter/fortanix-test" not in response.text
 
 
