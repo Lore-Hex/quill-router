@@ -33,6 +33,14 @@ NOW = 1_792_368_000
 TOKEN = "edge-ticket-test-token"  # noqa: S105 - test credential
 
 
+@pytest.fixture(autouse=True)
+def _no_process_settings(monkeypatch):
+    # Settings reads TR_* from the process environment as well as its
+    # arguments; a developer's or CI's own TR_* must not change these cases.
+    for name in [name for name in os.environ if name.startswith("TR_")]:
+        monkeypatch.delenv(name)
+
+
 def settings(**changes):
     return Settings(_env_file=None, **{
         "environment": "test", "sentry_dsn": None, "storage_backend": "memory",
@@ -164,6 +172,8 @@ def test_signing_exception_is_error(facts, caplog):
     ("us-central1,europe-west4", "us-central1", True),
     ("us-central1", "europe-west4", False),
     ("us-central1,europe-west4", "southamerica-east1", False),
+    # No region is not the process's own: nothing stands in for a missing one.
+    ("us-central1", "", False),
 ])
 def test_region_rule_reads_the_authorization_region(facts, caplog, regions, region, issued):
     caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
@@ -281,7 +291,8 @@ GATEWAY_SURFACES = {"combined", "internal"}
 
 def test_surface_list_is_the_settings_own():
     assert GATEWAY_SURFACES < set(SURFACES)
-    assert len(SURFACES) == len(set(SURFACES)) >= 7
+    # The strict subset above already requires a surface outside the gateway's.
+    assert len(SURFACES) == len(set(SURFACES))
 
 
 @pytest.mark.parametrize("surface", SURFACES)

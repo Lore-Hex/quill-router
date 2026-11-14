@@ -1037,7 +1037,8 @@ class Settings(BaseSettings):
     # All mode with the pilot set above empty: async admission covers every
     # workspace, and the rule holds per request instead of per workspace
     # (docs/design/fast-admission-widening.md section 9.1). A request the
-    # pilot leased takes no ticket (async_settle_admits_request), and the
+    # pilot leased takes no ticket from Python's own answer
+    # (async_settle_admits_request), and the
     # workspaces listed here stay outside admission altogether, so the edge
     # may answer their async-v1 authorizes. The edge passes every other
     # workspace's to Python, the one ticket signer, unless the edge ticket
@@ -1935,8 +1936,8 @@ class Settings(BaseSettings):
         fast-admission-widening.md) it is what keeps the two paths apart.
         Python's own authorize answer reads it at the ticket's issue
         (async_settle.snapshot_projection). The edge ticket route
-        (async_settle.edge_ticket) does not: every id it signs for is one the
-        edge minted for its own leased commit, the edge releases the ticket
+        (async_settle.edge_ticket) does not: every id the edge asks it to
+        sign is one the edge minted for its own leased commit, the edge releases the ticket
         only once that leased row is durable, and the route's rule is
         fastpath_edge_async_ticket_allows. The settle's acceptance has only
         the ticket's claims and checks the workspace, and a ticketed leased
