@@ -105,7 +105,8 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       await page.locator('#copy').click();
       await page.waitForFunction(() => document.getElementById('copy-status').textContent.includes('copy manually'));
       await page.goto(`${base}/providers.html`, {waitUntil: 'networkidle'});
-      assert.equal(await page.locator('#nav [aria-current="page"]').getAttribute('href'), '/providers');
+      // Sell pages are listed in the footer, which marks the current page.
+      assert.equal(await page.locator('.footer-links [aria-current="page"]').getAttribute('href'), '/providers');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `provider overflow at ${width}`);
       assert.equal(await page.locator('a[href$=".pdf"],iframe,object,embed').count(), 0);
       assert.ok((await page.textContent('body')).includes('What’s in the deck'));

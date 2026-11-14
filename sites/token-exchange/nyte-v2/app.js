@@ -3,17 +3,14 @@
 const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn');
 const groups=[...nav.querySelectorAll('.nav-group')];
 const closeGroups=()=>groups.forEach(group=>{group.classList.remove('open','pinned');group.querySelector('button').setAttribute('aria-expanded','false');});
-const closeMenu=()=>{nav.classList.remove('open');menu.setAttribute('aria-expanded','false');closeGroups();};
+const closeMenu=()=>{nav.classList.remove('open');document.documentElement.classList.remove('menu-open');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-label','Menu');closeGroups();};
 const openGroup=group=>{closeGroups();group.classList.add('open');group.querySelector('button').setAttribute('aria-expanded','true');};
+// Desktop menus open and close on click only (kit NavMenu); on phones every group is listed open.
 groups.forEach(group=>{
  const button=group.querySelector('button');
- button.addEventListener('click',()=>{if(group.classList.contains('pinned'))closeGroups();else{openGroup(group);group.classList.add('pinned');}});
- group.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse' && innerWidth>800)openGroup(group);});
- group.addEventListener('pointerleave',()=>{if(!group.contains(document.activeElement))closeGroups();});
- group.addEventListener('focusin',()=>{if(innerWidth>800 && !group.classList.contains('open'))openGroup(group);});
- group.addEventListener('focusout',e=>{if(!group.contains(e.relatedTarget))closeGroups();});
+ button.addEventListener('click',()=>{if(group.classList.contains('open'))closeGroups();else openGroup(group);});
 });
-menu.addEventListener('click',()=>{const open=!nav.classList.contains('open');closeMenu();nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));});
+menu.addEventListener('click',()=>{const open=!nav.classList.contains('open');closeMenu();nav.classList.toggle('open',open);document.documentElement.classList.toggle('menu-open',open);menu.setAttribute('aria-expanded',String(open));menu.setAttribute('aria-label',open?'Close menu':'Menu');});
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && !e.target.closest('dialog')){
  const expanded=nav.querySelector('.nav-group.open button');
  const phone=nav.classList.contains('open');
@@ -21,7 +18,17 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape' && !e.target.closest
 }});
 document.addEventListener('click',e=>{if(!e.target.closest('header'))closeMenu();});
 const active=document.body.dataset.nytePage==='home' ? '/' : location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/';
-nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group').querySelector('button').classList.add('on');}});
+nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group')?.querySelector('button').classList.add('on');}});
+// Footer columns mark the current page too; sell pages are listed only there.
+document.querySelectorAll('.footer-links a').forEach(a=>{if(a.getAttribute('href')===active)a.setAttribute('aria-current','page');});
+// Products menu: copy the agent setup prompt. Mirrors the quick start on /confidential#start.
+const AGENT_PROMPT='Add the New York Token Exchange confidential API to this project. Use the OpenAI SDK with base_url https://api.confidential.nytokenexchange.com/v1 and model nyte/auto. Read the key from the TR_API_KEY environment variable; if it is missing, ask me to create one at https://trustedrouter.com/console/api-keys. Require confidential routing on every request with extra_body={"provider": {"min_privacy": "confidential"}}. Setup guide: https://trustedrouter.com/docs/agent-setup. Then send one test request and show me the reply.';
+nav.querySelectorAll('.nav-prompt').forEach(button=>button.addEventListener('click',async()=>{
+ const status=button.parentElement.querySelector('.nav-prompt-status');
+ try{await navigator.clipboard.writeText(AGENT_PROMPT);status.textContent='Setup prompt copied. Paste it into your agent.';}
+ catch{status.textContent='Copy unavailable here. The prompt is in the quick start on the Confidential API page.';}
+ button.classList.add('copied');setTimeout(()=>{button.classList.remove('copied');status.textContent='';},4000);
+}));
 const updateNew=()=>{
  const today=new Date();today.setHours(0,0,0,0);
  const dated=[...nav.querySelectorAll('a[data-added]')];

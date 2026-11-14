@@ -180,28 +180,84 @@ def page_added(source: str) -> str:
     return dates[-1] if dates else ""
 
 
+# Header menus (designer's Concept 1, real pages only): Products opens the buy group and
+# Market the exchange group. Sell pages are listed in the footer under "For providers".
+HEADER_MENUS = {"buy": "Products", "exchange": "Market"}
+FOOTER_GROUPS = {"buy": "Products", "exchange": "Market", "sell": "For providers"}
+# Kit colour for each menu item's bar, by page key; the group's colour otherwise.
+MENU_COLOURS = {"api": "sky", "cowork": "lime", "buy": "yellow", "index": "yellow", "models": "purple", "deck": "sky"}
+GROUP_COLOURS = {"buy": "lime", "exchange": "purple", "sell": "sky", "trust": "yellow"}
+TR = "https://trustedrouter.com"
+# TrustedRouter pages shown beside NYTE's own; they are linked, never rebuilt here.
+MENU_EXTRAS = {"exchange": [("index", {"key": "models", "route": f"{TR}/models", "label": "Models & providers",
+                                        "menu_description": "Every model on the exchange and who runs it"})]}
+HEADER_LINKS = (("Trust", f"{TR}/trust"), ("Docs", f"{TR}/docs"), ("Pricing", f"{TR}/pricing"))
+SIGN_IN = f"{TR}/console"
+FOOTER_EXTRAS = {"buy": [("Pricing", f"{TR}/pricing")]}
+FOOTER_TRUST = (("Trust & attestation", f"{TR}/trust"), ("Security", f"{TR}/security"),
+                ("Docs", f"{TR}/docs"), ("Service status", f"{TR}/status"))
+COPY_ICON = ('<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="12" height="12"/>'
+             '<path d="M16 8V4H4v12h4"/></svg>')
+
+
+def menu_items(group: str) -> list[dict]:
+    """A group's labelled pages in registry order, with TrustedRouter extras placed after their anchor."""
+    items = []
+    for key, entry in PAGES.items():
+        if entry.get("group") != group or not entry["label"]:
+            continue
+        items.append({"key": key, **entry})
+        items.extend(extra for after, extra in MENU_EXTRAS.get(group, ()) if after == key)
+    return items
+
+
 def render_nav() -> str:
     groups = []
-    for group, label in GROUPS.items():
+    for group, label in HEADER_MENUS.items():
         items = []
-        for key, entry in PAGES.items():
-            if entry.get("group") != group or not entry["label"]:
-                continue
-            added = page_added(entry.get("body", f"nyte-v2/{key}.html"))
+        for entry in menu_items(group):
+            key = entry["key"]
+            colour = MENU_COLOURS.get(key, GROUP_COLOURS[group])
+            added = "" if entry["route"].startswith("http") else page_added(entry.get("body", f"nyte-v2/{key}.html"))
             date_attribute = f' data-added="{added}"' if added else ""
             items.append(
-                f'<a href="{html.escape(entry["route"], quote=True)}"{date_attribute} '
-                f'aria-labelledby="nav-label-{key}"><span class="nav-label" id="nav-label-{key}">'
+                f'<a href="{html.escape(entry["route"], quote=True)}"{date_attribute} style="--item:var(--{colour})" '
+                f'data-cta="nav_{key}" aria-labelledby="nav-label-{key}"><span class="nav-label" id="nav-label-{key}">'
                 f'{html.escape(entry["label"])}</span> <span class="tag cc" hidden>NEW</span>'
                 f'<span class="nav-description">{html.escape(entry["menu_description"])}</span></a>'
             )
+        foot = ""
+        if group == "buy":
+            foot = (f'<div class="nav-foot"><button type="button" class="nav-prompt" data-cta="nav_agent_prompt">{COPY_ICON}'
+                    '<span>Using an agent? <span class="nav-prompt-action">Copy its setup prompt</span></span></button>'
+                    '<span class="nav-prompt-status" role="status"></span></div>')
         groups.append(
-            f'<div class="nav-group" data-group="{group}">'
+            f'<div class="nav-group" data-group="{group}" style="--group:var(--{GROUP_COLOURS[group]})">'
             f'<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="nav-{group}">{label}'
             '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>'
-            f'<h2 class="nav-heading">{label}</h2><div class="nav-panel" id="nav-{group}">' + ''.join(items) + '</div></div>'
+            f'<h2 class="nav-heading">{label}</h2><div class="nav-panel" id="nav-{group}"><div class="wrap">'
+            f'<div class="nav-items">{"".join(items)}</div>{foot}</div></div></div>'
         )
-    return ''.join(groups)
+    links = "".join(f'<a href="{href}" data-cta="nav_{text.lower()}">{text}</a>' for text, href in HEADER_LINKS)
+    actions = (f'<div class="nav-actions"><a class="btn btn-primary" href="/confidential#start">Start building</a>'
+               f'<p>Have an account? <a href="{SIGN_IN}" data-cta="nav_sign_in">Sign in</a></p></div>')
+    return "".join(groups) + f'<div class="nav-links">{links}</div>' + actions
+
+
+def render_footer_links() -> str:
+    """Footer columns: every labelled page by group, then TrustedRouter's trust pages."""
+    columns = []
+    for group, label in FOOTER_GROUPS.items():
+        links = [(e["label"], e["route"]) for e in menu_items(group)] + list(FOOTER_EXTRAS.get(group, ()))
+        columns.append((group, label, links))
+    columns.append(("trust", "Trust", list(FOOTER_TRUST)))
+    return "".join(
+        f'<div class="footer-col" style="--group:var(--{GROUP_COLOURS[group]})"><h2>{label}</h2>'
+        + "".join(f'<a href="{html.escape(href, quote=True)}">{html.escape(text)}</a>' for text, href in links)
+        + '</div>'
+        for group, label, links in columns
+    )
+
 
 def index_panel() -> str:
     """Use the same dated public snapshot as the full index page."""
@@ -459,7 +515,7 @@ def render_nyte(
     extra_head += home_head + late_head
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
-    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=buyer_deck_html(), extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
+    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), footer_links=render_footer_links(), sign_in=SIGN_IN, buyer_deck=buyer_deck_html(), extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     # A page may share a shorter line than its search title and description.
     for field in ("title", "description"):

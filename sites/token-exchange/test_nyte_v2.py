@@ -35,7 +35,8 @@ class NyteV2Tests(unittest.TestCase):
             self.assertIn('name="website"', page)
             self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
             self.assertEqual(page.count('id="m-deck"'), 1)
-            self.assertEqual(page.count('href="/#deck"'), 1)
+            # Market menu and footer.
+            self.assertEqual(page.count('href="/#deck"'), 2)
             self.assertNotIn('Send the deck', page)
         self.assertEqual(render_nyte('sup').count('href="/providers">Get the provider deck</a>'), 2)
 
@@ -176,24 +177,39 @@ class NavigationRegistryTests(unittest.TestCase):
     def test_registry_navigation_on_every_shell_page(self):
         import re
 
-        from nyte_v2 import GROUPS, PAGES
+        from nyte_v2 import FOOTER_GROUPS, HEADER_MENUS, MENU_EXTRAS, PAGES
         from token_index_page import render_token_index
+
+        def routes(group):
+            listed = []
+            for key, p in PAGES.items():
+                if p.get("group") == group and p["label"]:
+                    listed.append(p["route"])
+                    listed += [extra["route"] for after, extra in MENU_EXTRAS.get(group, ()) if after == key]
+            return listed
 
         for key, entry in PAGES.items():
             if entry.get("builder") in {"press", "anchor"}:
                 continue
             page = render_token_index() if key == "index" else render_nyte(key)
             nav = re.search(r'<nav class="nav".*?</nav>', page, re.S).group()
-            for group in GROUPS:
-                panel = re.search(r'id="nav-' + group + r'">(.*?)</div>', nav, re.S).group(1)
-                expected = [p["route"] for p in PAGES.values() if p.get("group") == group and p["label"]]
-                self.assertEqual(re.findall(r'<a href="([^"]+)"', panel), expected)
-            self.assertNotIn('data-nav=', nav)
+            # Header menus: Products (buy) and Market (exchange); sell pages live in the footer.
+            for group in HEADER_MENUS:
+                items = re.search(r'id="nav-' + group + r'"><div class="wrap"><div class="nav-items">(.*?)</div>', nav, re.S).group(1)
+                self.assertEqual([h.split('?', 1)[0] for h in re.findall(r'<a href="([^"]+)"', items)], routes(group))
+            for sell in (p["route"] for p in PAGES.values() if p.get("group") == "sell"):
+                self.assertNotIn(f'href="{sell}"', nav)
             self.assertNotIn('href="/media-kit"', nav)
+            self.assertEqual(nav.count('aria-expanded="false"'), 2)
+            self.assertEqual(nav.count('class="nav-prompt"'), 1)
             self.assertIn('href="/media-kit">Media kit</a>', page)
             footer = re.search(r'<footer\b[^>]*>.*?</footer>', page, re.S).group()
+            columns = re.findall(r'<div class="footer-col"[^>]*><h2>([^<]+)</h2>(.*?)</div>', footer, re.S)
+            self.assertEqual([label for label, _ in columns], list(FOOTER_GROUPS.values()) + ["Trust"])
+            for (_, links), group in zip(columns[:len(FOOTER_GROUPS)], FOOTER_GROUPS, strict=True):
+                hrefs = [h.split('?', 1)[0] for h in re.findall(r'<a href="([^"]+)"', links)]
+                self.assertEqual(hrefs[:len(routes(group))], routes(group))
             self.assertEqual(footer.count('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>'), 1)
-            # Bottom row: legal links only. TrustedRouter's related sites share the "Powered by" line.
             legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
             labels = re.findall(r'>([^<>]+)</a>', legal)
             self.assertEqual(labels, (['Trust center'] if key in ('providers', 'badge') else []) + ['Media kit', 'Privacy', 'Terms'])
@@ -205,23 +221,27 @@ class NavigationRegistryTests(unittest.TestCase):
                 ('https://letsencrypt.ai/', "Let's Encrypt AI"),
             ])
             self.assertLess(footer.index('Powered by'), footer.index('class="footer-related"'))
-            self.assertEqual(nav.count('aria-expanded="false"'), 3)
 
     def test_added_page_gets_automatic_date_without_changing_test_lists(self):
         import re
         from unittest.mock import patch
 
-        from nyte_v2 import PAGES, render_nav
+        from nyte_v2 import PAGES, render_footer_links, render_nav
 
-        sample = {"route": "/sample", "label": "Sample", "group": "sell",
+        sample = {"route": "/sample", "label": "Sample", "group": "buy",
                   "menu_description": "Sample description"}
         with patch.dict(PAGES, {"sample": sample}), patch('nyte_v2.page_added', return_value='2026-10-20'):
             nav = render_nav()
-            panel = re.search(r'id="nav-sell">(.*?)</div>', nav, re.S).group(1)
-            self.assertEqual(panel.count('href="/sample"'), 1)
-            item = re.search(r'<a href="/sample".*?</a>', panel).group()
+            self.assertEqual(nav.count('href="/sample"'), 1)
+            item = re.search(r'<a href="/sample".*?</a>', nav).group()
             self.assertIn('data-added="2026-10-20"', item)
             self.assertIn('class="tag cc" hidden>NEW', item)
+            self.assertEqual(render_footer_links().count('href="/sample"'), 1)
+        # A new sell page is listed in the footer, not the header.
+        with patch.dict(PAGES, {"sample": {**sample, "group": "sell"}}):
+            self.assertNotIn('href="/sample"', render_nav())
+            self.assertEqual(render_footer_links().count('href="/sample"'), 1)
+
 
     def test_creation_date_uses_real_history(self):
         import os
@@ -312,7 +332,7 @@ class NavigationRegistryTests(unittest.TestCase):
             page = render_nyte(market=market)
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
             self.assertIn(f'<span class="brand-place">{market.get("logo_place", market["region"])}</span>', page)
-            self.assertIn(f'<span>{market["name"]}</span></div><div class="footer-credit"><small>', page)
+            self.assertIn(f'<span>{market["name"]}</span></div><nav class="footer-links" aria-label="Site">', page)
             self.assertIn(f'href="https://{market["domain"]}/" aria-current="page"', page)
             self.assertIn(f'utm_source={market["domain"]}', page)
             self.assertIn(f'exchange_market={market["slug"]}', page)
