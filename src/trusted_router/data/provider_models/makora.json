@@ -776,10 +776,7 @@
         "repetition_penalty",
         "stop",
         "max_tokens"
-      ],
-      "routable": false,
-      "routable_reason": "provider-route-unserved",
-      "unserved_held_at": "2026-11-13T03:55:02Z"
+      ]
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
