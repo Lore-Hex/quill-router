@@ -538,3 +538,14 @@ def leased_key_usage_reads_finish(monkeypatch: pytest.MonkeyPatch) -> Iterator[N
         assert cache._wait_for_idle_reads(5.0), (
             "Leaked leased key usage read: background reader still in flight after 5 s at test teardown"
         )
+
+
+@pytest.fixture
+def previous_theme(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Render with the look the site had before the NYTE theme became the default."""
+    from trusted_router.brand_theme import brand_theme
+
+    monkeypatch.setenv("TR_BRAND_THEME", "trustedrouter")
+    brand_theme.cache_clear()
+    yield
+    brand_theme.cache_clear()

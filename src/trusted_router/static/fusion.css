@@ -80,8 +80,8 @@
 }
 
 .fusion-run-card:hover {
-  border-color: #3b4b65;
-  background: #152033;
+  border-color: var(--tr-legacy-3b4b65, #3b4b65);
+  background: var(--tr-legacy-152033, #152033);
 }
 
 .fusion-run-card strong {
@@ -192,9 +192,9 @@
 }
 
 .fusion-advanced {
-  border: 1px solid rgb(39, 50, 68, .72);
+  border: 1px solid var(--tr-legacy-273244-b8, rgb(39, 50, 68, .72));
   border-radius: var(--fusion-radius);
-  background: rgb(11, 18, 32, .56);
+  background: var(--tr-legacy-0b1220-8f, rgb(11, 18, 32, .56));
 }
 
 .fusion-advanced summary {
@@ -240,7 +240,7 @@
 }
 
 .fusion-advanced-body {
-  border-top: 1px solid rgb(39, 50, 68, .72);
+  border-top: 1px solid var(--tr-legacy-273244-b8, rgb(39, 50, 68, .72));
   display: grid;
   gap: 13px;
   padding: 13px;
@@ -267,7 +267,7 @@
   width: 100%;
   border: 1px solid var(--fusion-border);
   border-radius: var(--fusion-radius);
-  background: #0b1220;
+  background: var(--tr-legacy-0b1220, #0b1220);
   color: var(--fusion-ink);
   padding: 10px 11px;
   font: 13px/1.45 var(--fusion-font);
@@ -281,8 +281,8 @@
 .fusion-field select:focus,
 .fusion-field textarea:focus {
   outline: none;
-  border-color: #456087;
-  box-shadow: 0 0 0 3px rgb(69, 96, 135, .35);
+  border-color: var(--tr-legacy-456087, #456087);
+  box-shadow: 0 0 0 3px var(--tr-legacy-456087-59, rgb(69, 96, 135, .35));
 }
 
 .fusion-model-set {
@@ -325,9 +325,9 @@
 }
 
 .fusion-option-pill {
-  border: 1px solid #244937;
-  background: #10251a;
-  color: #b8f1cb;
+  border: 1px solid var(--tr-legacy-244937, #244937);
+  background: var(--tr-color-surface-hover);
+  color: var(--tr-legacy-b8f1cb, #b8f1cb);
   border-radius: 999px;
   padding: 5px 8px;
   font-size: 11px;
@@ -353,7 +353,7 @@
 .fusion-details details {
   border: 1px solid var(--fusion-border);
   border-radius: var(--fusion-radius);
-  background: rgb(7, 11, 20, .55);
+  background: var(--tr-legacy-070b14-8c, rgb(7, 11, 20, .55));
   margin-bottom: 10px;
 }
 
@@ -374,7 +374,7 @@
 .fusion-detail-card {
   border: 1px solid var(--fusion-border);
   border-radius: var(--fusion-radius);
-  background: #080d16;
+  background: var(--tr-legacy-080d16, #080d16);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -483,7 +483,7 @@
 .fusion-code pre {
   margin: 12px 0 0;
   overflow: auto;
-  background: #070b14;
+  background: var(--tr-legacy-070b14, #070b14);
   border: 1px solid var(--fusion-border);
   border-radius: var(--fusion-radius);
   padding: 12px;
@@ -491,9 +491,9 @@
 
 .fusion-error {
   margin: 0;
-  border: 1px solid rgb(248, 113, 113, .45);
-  background: rgb(248, 113, 113, .12);
-  color: #fecaca;
+  border: 1px solid var(--tr-legacy-f87171-73, rgb(248, 113, 113, .45));
+  background: var(--tr-legacy-f87171-1f, rgb(248, 113, 113, .12));
+  color: var(--tr-legacy-fecaca, #fecaca);
   padding: 10px 12px;
   border-radius: var(--fusion-radius);
   font-size: 13px;

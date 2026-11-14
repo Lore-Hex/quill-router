@@ -7,7 +7,7 @@
 .green-tokens p { font-size: 18px; line-height: 1.65; text-wrap: pretty; max-width: 720px; }
 .green-tokens a { text-underline-offset: 4px; }
 .green-tokens .green-eyebrow { font: 500 12px/1.5 var(--font-mono); letter-spacing: 0.06em; color: var(--text-accent); text-transform: uppercase; margin: 0 0 20px; }
-.green-hero { isolation: isolate; position: relative; overflow: hidden; background: #0b2119; /* matches the hero artwork's own background */ color: var(--text-display); text-align: center; }
+.green-hero { isolation: isolate; position: relative; overflow: hidden; background: var(--tr-legacy-0b2119, #0b2119); /* matches the hero artwork's own background */ color: var(--text-display); text-align: center; }
 .green-art { position: absolute; z-index: -1; bottom: -130px; left: 50%; transform: translateX(-50%); width: 1536px; max-width: none; height: 1024px; object-fit: contain; }
 .green-hero-copy { padding-top: 52px; padding-bottom: 330px; }
 .green-hero h1 { color: var(--text-display); margin-inline: auto; /* the shared h1 max-width would otherwise sit left of a centred hero */ }
@@ -16,7 +16,7 @@
 .green-hero .green-lead { font-size: 24px; line-height: 1.4; margin-block: 18px; }
 .green-hero .green-intro { color: var(--text-body); font-size: 17px; max-width: 620px; margin-block: 18px 24px; }
 .green-actions { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
-.green-actions .btn { min-height: 48px; border-radius: 3px; font-size: 16px; }
+.green-actions .btn { min-height: 48px; border-radius: var(--tr-square, 3px); font-size: 16px; }
 .green-hero .btn { background: var(--surface-card); color: var(--text-display); border-color: var(--border-strong); }
 .green-tokens .btn.primary { background: var(--text-accent); color: var(--text-inverse); border-color: var(--text-accent); }
 .green-tokens .btn:active { transform: scale(.96); }
@@ -27,7 +27,7 @@
 .green-facts strong { display: block; font-size: 23px; color: var(--text-display); margin-bottom: 8px; }
 .green-section { padding-block: 72px; }
 .green-section > p:not(.green-eyebrow) { color: var(--text-body); }
-.green-code { margin-top: 30px; max-width: 850px; border: 1px solid var(--border-default); border-radius: 4px; overflow: hidden; background: var(--surface-raised); }
+.green-code { margin-top: 30px; max-width: 850px; border: 1px solid var(--border-default); border-radius: var(--tr-square, 4px); overflow: hidden; background: var(--surface-raised); }
 .green-code-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border-default); font: 13px var(--font-mono); }
 .green-code pre { margin: 0; padding: 24px; overflow-x: auto; font: 14px/1.8 var(--font-mono); }
 .green-code .btn { min-height: 40px; }

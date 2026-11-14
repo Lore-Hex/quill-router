@@ -4,43 +4,60 @@
  * type and spacing come from tokens.css. */
 
 .model-promo {
-  background: #e5f6ec;
-  color: #153d29;
-  border-bottom: 1px solid #bfdfca;
+  background: var(--tr-legacy-e5f6ec, #e5f6ec);
+  color: var(--tr-legacy-153d29, #153d29);
+  border-bottom: 1px solid var(--tr-legacy-bfdfca, #bfdfca);
   font-family: var(--tr-font-family-sans);
 }
 
+/* The whole strip is one link, like the homepage exchange banner */
 .model-promo-inner {
-  max-width: 1280px;
-  margin-inline: auto;
-  padding: 16px 24px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px 32px;
+  justify-content: center;
+  gap: 8px 24px;
+  max-width: 1280px;
+  min-height: 48px;
+  margin-inline: auto;
+  padding: 8px 24px;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1.35;
+  text-decoration: none;
 }
 
-.model-promo-copy { display: grid; gap: 5px; min-width: 0; }
-.model-promo-copy strong { font-size: 16px; line-height: 1.4; }
-.model-promo-copy span { font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; }
-.model-promo-copy small { font-size: 12px; line-height: 1.5; max-width: 76ch; }
-.model-promo-link {
+.model-promo-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  min-width: 0;
+}
+.model-promo-copy strong { font-weight: 600; }
+.model-promo-copy span { font-variant-numeric: tabular-nums; }
+.model-promo-copy small { font-size: inherit; opacity: .8; }
+.model-promo-action {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  color: inherit;
-  font-size: 14px;
+  gap: 8px;
+  min-height: 36px;
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  white-space: nowrap;
 }
-.model-promo-link:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.model-promo-arrow { display: inline-block; transition: transform .15s ease; }
+.model-promo-inner:hover .model-promo-arrow { transform: translateX(3px); }
+.model-promo-inner:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
 
 @media (max-width: 700px) {
-  .model-promo-inner { flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 20px; }
-  .model-promo-copy { overflow-wrap: anywhere; }
+  .model-promo-inner { justify-content: space-between; padding: 6px 16px; font-size: 14px; }
+  .model-promo-copy { column-gap: 8px; }
+  .model-promo-copy small { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-promo-arrow { transition: none; }
 }
 
 .skip-link {
@@ -415,7 +432,7 @@ html {
 }
 
 #model-search::backdrop {
-  background: rgb(0 0 0 / 73%);
+  background: var(--tr-legacy-000000-ba, rgb(0 0 0 / 73%));
   backdrop-filter: blur(4px);
 }
 
@@ -717,8 +734,8 @@ html {
    mode switch. The dialog box itself is styled by dashboard.css (public
    pages) and homepage/application.css (homepage); these rules apply on both. */
 .signin-modal .signin-btn { width: 100%; font: inherit; font-size: 15px; text-align: left; text-decoration: none; cursor: pointer; }
-.signin-modal .signin-btn .signin-logo { display: inline-grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border: 0; border-radius: 6px; background: #fff; }
+.signin-modal .signin-btn .signin-logo { display: inline-grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border: 0; border-radius: var(--tr-square, 6px); background: var(--tr-legacy-ffffff, #fff); }
 .signin-modal .signin-btn .signin-logo img { display: block; width: 18px; height: 18px; object-fit: contain; }
 .signin-modal .signin-switch { margin: 18px 0 0; color: var(--tr-color-text-secondary); font-size: 14px; }
 .signin-modal .signin-switch-btn { padding: 0; border: 0; background: none; color: var(--tr-color-text-primary); font: inherit; font-weight: var(--tr-font-weight-semibold); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.signin-modal .signin-switch-btn:focus-visible { border-radius: 2px; outline: 2px solid var(--tr-color-focus); outline-offset: 3px; }
+.signin-modal .signin-switch-btn:focus-visible { border-radius: var(--tr-square, 2px); outline: 2px solid var(--tr-color-focus); outline-offset: 3px; }

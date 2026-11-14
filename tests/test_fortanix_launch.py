@@ -218,12 +218,8 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
     banner = page.select_one("[data-fortanix-promo]")
     assert banner is not None
     assert banner.select_one("a")["href"] == f"/models/{MODEL_ID}"
-    assert "$0.01 / 1M input tokens" in banner.get_text()
-    assert "$0.01 / 1M output tokens" in banner.get_text()
-    assert "No end date announced" in banner.get_text()
-    assert "$0.000001 request minimum" in banner.get_text()
-    assert "Managed-route ZDR" in banner.get_text()
-    assert "Santa Clara inference" in banner.get_text()
+    assert "$0.01 / 1M tokens" in banner.get_text()
+    assert "Limited time, price may change" in banner.get_text()
     assert "trustedrouter/fortanix-test" not in response.text
 
 
@@ -474,7 +470,7 @@ def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
         assert "free" not in text.casefold()
 
 
-def test_offer_page_uses_its_own_social_card_while_gate_is_on():
+def test_offer_page_uses_its_own_social_card_while_gate_is_on(previous_theme):
     card = "https://trustedrouter.com/static/og/glm-5.3-flash-fortanix.png"
     page = _model_page_seo(MODEL_ID)
     assert page["og_image"] == page["twitter_image"] == card
@@ -502,7 +498,7 @@ def test_offer_seo_drops_lowest_claim_when_another_glm_flash_route_is_cheaper(mo
     assert "lowest GLM 5.3 Flash price" not in cost
 
 
-def test_offer_seo_reverts_when_gate_turns_off(monkeypatch):
+def test_offer_seo_reverts_when_gate_turns_off(monkeypatch, previous_theme):
     route = endpoints_for_model(MODEL_ID)[0]
     monkeypatch.setitem(
         MODEL_ENDPOINTS,

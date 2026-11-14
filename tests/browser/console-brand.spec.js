@@ -29,10 +29,10 @@ for (const kind of ['api_keys', 'welcome']) for (const width of [390, 1280]) {
     await page.setViewportSize({width,height:900});
     await page.goto('https://brand.test/console/'+kind);
     await page.evaluate(() => document.fonts.ready);
-    await expect(page.locator('h1')).toHaveCSS('font-family', 'Archivo, Arial, sans-serif');
-    await expect(page.locator('h1')).toHaveCSS('color', 'rgb(237, 248, 245)');
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(10, 16, 13)');
-    expect(await page.evaluate(() => document.fonts.check('16px Archivo'))).toBe(true);
+    await expect(page.locator('h1')).toHaveCSS('font-family', '"ABC Pelikan", "Helvetica Neue", Helvetica, Arial, sans-serif');
+    await expect(page.locator('h1')).toHaveCSS('color', 'rgb(21, 19, 17)');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(250, 248, 244)');
+    expect(await page.evaluate(() => document.fonts.check('16px "ABC Pelikan"'))).toBe(true);
     await page.screenshot({path:testInfo.outputPath(`${kind}-${width}.png`),fullPage:true});
     await expect(page.locator('[data-rewards-api-keys]')).toHaveCount(0);
   });

@@ -3,7 +3,9 @@
 {% block head_extra %}<link rel="stylesheet" href="/static/green-tokens.css?v={{ static_version }}">{% endblock %}
 {% block hero %}
 <section class="green-hero" aria-labelledby="green-title">
+  {% if brand_theme() != "nyte" %}
   <img class="green-art" src="/static/green-tokens-hero.webp" alt="Conceptual illustration of wind and solar power connected to an AI server building." width="1536" height="1024" fetchpriority="high">
+  {% endif %}
   <div class="green-inner green-hero-copy">
     <p class="green-eyebrow">TrustedRouter / Renewable-powered inference</p>
     <h1 id="green-title">Green tokens.</h1>

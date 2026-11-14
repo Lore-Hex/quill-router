@@ -24,7 +24,7 @@
   overflow: auto;
   padding: 20px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--tr-square, 4px);
   font-size: 14px;
   line-height: 1.65;
   max-width: 100%;

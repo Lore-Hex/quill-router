@@ -7,7 +7,7 @@
 .md-code {
   overflow: hidden;
   border: 1px solid var(--md-line, #1E2621);
-  border-radius: 12px;
+  border-radius: var(--tr-square, 12px);
   background: var(--md-code-bg, #0F1411);
 }
 
@@ -56,7 +56,7 @@
   height: 36px;
   margin-left: auto;
   border: 1px solid var(--md-control-line, #526859);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   background: transparent;
   color: var(--md-accent, #CCE8D7);
   cursor: pointer;
@@ -179,7 +179,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   overflow-x: auto;
   padding: 0 40px 8px 0;
   scrollbar-width: none;
-  mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
+  mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 112px), transparent calc(100% - 40px));
 }
 
 .md-chips::-webkit-scrollbar {
@@ -268,7 +268,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
     gap: 8px;
     margin: 0 -20px;
     padding: 0 60px 8px 20px;
-    mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
+    mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 112px), transparent calc(100% - 40px));
   }
 
   .md-chips-wrap .md-chips a {
@@ -284,6 +284,6 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   .md-code.md-collapsible:not(.md-expanded) .md-code-body {
     max-height: 132px;
     overflow: hidden;
-    mask-image: linear-gradient(#000 55%, transparent);
+    mask-image: linear-gradient(var(--tr-legacy-000000, #000) 55%, transparent);
   }
 }

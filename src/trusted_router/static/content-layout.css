@@ -389,7 +389,7 @@ table.content-reference,
   }
 
   .scroll-table.can-scroll-right {
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 24px), transparent);
   }
 
   .scroll-table-controls {
@@ -1065,7 +1065,7 @@ table.content-reference,
 }
 
 [data-docs-code] pre.can-scroll-right {
-  mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+  mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 56px), transparent);
 }
 
 @media (max-width: 700px) {
@@ -1082,13 +1082,13 @@ table.content-reference,
   [data-docs-code] pre.is-collapsed {
     max-height: calc(10 * 1.5 * 11.5px + var(--tr-space-stack-md));
     overflow-y: hidden;
-    mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+    mask-image: linear-gradient(to bottom, var(--tr-legacy-000000, #000) calc(100% - 40px), transparent);
   }
 
   [data-docs-code] pre.is-collapsed.can-scroll-right {
     mask-image:
-      linear-gradient(to bottom, #000 calc(100% - 40px), transparent),
-      linear-gradient(to right, #000 calc(100% - 56px), transparent);
+      linear-gradient(to bottom, var(--tr-legacy-000000, #000) calc(100% - 40px), transparent),
+      linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 56px), transparent);
     mask-composite: intersect;
   }
 

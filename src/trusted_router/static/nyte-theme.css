@@ -1,0 +1,1914 @@
+/* NY Token Exchange theme for trustedrouter.com.
+ *
+ * Loaded last, and only when TR_BRAND_THEME=nyte (see brand_theme.py), which
+ * also sets data-brand="nyte" and data-page on <html>. Everything here is
+ * scoped to that attribute, so the default site is untouched.
+ *
+ * Palette: NYTE Brand System V2, light theme. Cream ground, Ink text, an Ink
+ * header bar and footer. Each page takes its family's lead colour (COL-01):
+ * Market purple, Price yellow, Trust lime, Knowledge sky. Orange is the
+ * primary button fill only. Square corners, 1.5 px rules, no shadows.
+ * Font: the kit stack. ABC Pelikan needs a Dinamo web licence before it can be
+ * served; until then browsers fall back to Helvetica Neue / Arial.
+ */
+
+:root[data-brand="nyte"] {
+  /* Kit values, named as in nyte-tokens.css */
+  --nyte-ink: #151311;
+  --nyte-cream: #FAF8F4;
+  --nyte-white: #FFFFFF;
+  --nyte-gray: #F1EEE7;
+  --nyte-stone: #DEDAD0;
+  --nyte-ink-2: #57514A;
+  --nyte-ink-2-dark: #B9B2A8;
+  --nyte-dark-rule: #3A3631;
+  --nyte-surface: #1E1B18;
+  --nyte-sunken: #221F1C;
+  --nyte-raised: #2A2825;
+  --nyte-purple: #9B93F5;
+  --nyte-yellow: #FFC800;
+  --nyte-lime: #C9E265;
+  --nyte-sky: #BFE3EC;
+  --nyte-orange: #FF6B35;
+  --nyte-deep-purple: #4B3FA8;
+  --nyte-green: #2E3313;
+  --nyte-lilac: #DCD8FB;
+  --nyte-yellow-tint: #FCE79F;
+  --nyte-lime-tint: #E9F0C2;
+  --nyte-sky-tint: #E5F1F1;
+  --nyte-link: #B7AEF7;
+
+  /* Page lead colour (COL-01); Market is the default family */
+  --nyte-lead: var(--nyte-purple);
+  --nyte-lead-ink: var(--nyte-deep-purple);
+  --nyte-band: url("/static/nyte/band-purple.svg");
+
+  /* Surfaces */
+  --tr-color-surface-bg: var(--nyte-cream);
+  --tr-color-surface-bg-alt: var(--nyte-gray);
+  --tr-color-surface-bg-deep: var(--nyte-gray);
+  --tr-color-surface-photo-fallback: var(--nyte-stone);
+  --tr-color-surface-panel: var(--nyte-white);
+  --tr-color-surface-panel-inset: var(--nyte-gray);
+  --tr-color-surface-panel-raised: var(--nyte-white);
+  --tr-color-surface-control: var(--nyte-white);
+  --tr-color-surface-hover: var(--nyte-gray);
+  --tr-color-surface-selected: var(--nyte-stone);
+  --tr-color-surface-overlay-button: rgb(21 19 17 / 70%);
+
+  /* Text */
+  --tr-color-text-primary: var(--nyte-ink);
+  --tr-color-text-secondary: var(--nyte-ink);
+  --tr-color-text-tertiary: var(--nyte-ink-2);
+  --tr-color-text-quaternary: var(--nyte-ink-2);
+  --tr-color-text-on-photo: var(--nyte-cream);
+
+  /* Accent. On Cream the page's lead colour is a fill only (COL-04), so the
+     accent used for text and small marks is its readable dark partner. */
+  --tr-color-accent-base: var(--nyte-lead-ink);
+  --tr-color-accent-hover: var(--nyte-ink);
+  --tr-color-accent-ink: var(--nyte-cream);
+
+  /* Links */
+  --tr-color-link-base: var(--nyte-deep-purple);
+  --tr-color-link-underline: var(--nyte-deep-purple);
+  --tr-color-link-dot: var(--nyte-deep-purple);
+  --tr-color-link-button: var(--nyte-deep-purple);
+
+  /* Rules */
+  --tr-color-line-rule: var(--nyte-stone);
+  --tr-color-line-rule-soft: var(--nyte-gray);
+  --tr-color-line-control: var(--nyte-ink-2-dark);
+  --tr-color-line-strong: var(--nyte-ink-2);
+  --tr-color-line-emphasis: var(--nyte-ink);
+  --tr-color-line-connector: var(--nyte-ink-2-dark);
+  --tr-color-line-quote: var(--nyte-lead);
+  --tr-color-line-tag: var(--nyte-ink-2-dark);
+  --tr-color-information-note: var(--nyte-deep-purple);
+  --tr-color-focus: var(--nyte-ink);
+  --tr-color-error: #A8360F;
+
+  /* Privacy states: outline chips; only verified carries Lime */
+  --tr-color-privacy-zdr-bg: var(--nyte-yellow-tint);
+  --tr-color-privacy-zdr-border: var(--nyte-ink-2-dark);
+  --tr-color-privacy-zdr-text: var(--nyte-ink);
+  --tr-color-privacy-e2ee-bg: var(--nyte-lilac);
+  --tr-color-privacy-e2ee-border: var(--nyte-ink-2-dark);
+  --tr-color-privacy-e2ee-text: var(--nyte-ink);
+  --tr-color-privacy-neutral-bg: var(--nyte-gray);
+  --tr-color-privacy-neutral-border: var(--nyte-stone);
+  --tr-color-privacy-neutral-text: var(--nyte-ink-2);
+  --tr-color-privacy-verified-bg: var(--nyte-lime);
+  --tr-color-privacy-verified-border: var(--nyte-green);
+  --tr-color-privacy-verified-text: var(--nyte-green);
+
+  /* Live status */
+  --tr-color-status-up: #5E7A12;
+  --tr-color-status-degraded: #B58A00;
+  --tr-color-status-down: #A8360F;
+  --tr-color-status-unknown: var(--nyte-ink-2-dark);
+
+  /* Diffs */
+  --tr-color-diff-removed-bg: #FFE1D6;
+  --tr-color-diff-removed-text: #7A2508;
+  --tr-color-diff-added-bg: var(--nyte-lime-tint);
+  --tr-color-diff-added-text: var(--nyte-green);
+
+  /* Colour fields: text on any colour field is Ink. The old mint panel takes
+     the page's lead colour. */
+  --tr-color-panel-blue-bg: var(--nyte-sky);
+  --tr-color-panel-blue-ink: var(--nyte-ink);
+  --tr-color-panel-blue-ink-2: var(--nyte-ink-2);
+  --tr-color-panel-blue-divider: rgb(21 19 17 / 25%);
+  --tr-color-panel-mint-bg: var(--nyte-lead);
+  --tr-color-panel-mint-ink: var(--nyte-ink);
+  --tr-color-panel-mint-ink-2: var(--nyte-ink);
+  --tr-color-panel-mint-divider: rgb(21 19 17 / 25%);
+  --tr-color-panel-mint-button-border: var(--nyte-ink);
+  --tr-color-panel-mint-button-fill: rgb(21 19 17 / 8%);
+  --tr-color-panel-mint-button-fill-hover: rgb(21 19 17 / 16%);
+
+  /* Header (the header bar itself is Ink, see below) */
+  --tr-color-header-link: var(--nyte-ink);
+  --tr-color-header-search-bg: var(--nyte-white);
+  --tr-color-header-search-border: var(--nyte-stone);
+
+  /* Type */
+  --tr-font-family-sans: "ABC Pelikan", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --tr-font-family-mono: "ABC Pelikan Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Square corners, no shadows */
+  --tr-radius-panel: 0;
+  --tr-radius-control: 0;
+  --tr-radius-image: 0;
+  --tr-radius-kbd: 0;
+  --tr-radius-dialog: 0;
+  --tr-radius-toast: 0;
+  --tr-shadow-tooltip: 0 0 0 1.5px var(--nyte-ink);
+  --tr-shadow-modal: 0 0 0 1.5px var(--nyte-ink);
+
+  color-scheme: light;
+}
+
+:root[data-brand="nyte"][data-page="price"] {
+  --nyte-band: url("/static/nyte/band-yellow.svg");
+  --nyte-lead: var(--nyte-yellow);
+  --nyte-lead-ink: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"][data-page="trust"] {
+  --nyte-band: url("/static/nyte/band-lime.svg");
+  --nyte-lead: var(--nyte-lime);
+  --nyte-lead-ink: var(--nyte-green);
+}
+
+:root[data-brand="nyte"][data-page="knowledge"] {
+  --nyte-band: url("/static/nyte/band-sky.svg");
+  --nyte-lead: var(--nyte-sky);
+  --nyte-lead-ink: var(--nyte-deep-purple);
+}
+
+:root[data-brand="nyte"] body {
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+/* Square corners: every small fixed radius in the site's sheets reads
+   var(--tr-square, <its old value>). Circles and pills keep their shape. */
+:root[data-brand="nyte"] {
+  --tr-square: 0;
+  --r-control: 0;
+  --r-panel: 0;
+  --chat-radius: 0;
+}
+
+/* Local font variables used by the homepage and older pages */
+:root[data-brand="nyte"],
+[data-brand="nyte"] body {
+  --font: var(--tr-font-family-sans);
+  --sans: var(--tr-font-family-sans);
+  --heading-font: var(--tr-font-family-sans);
+  --mono: var(--tr-font-family-mono);
+}
+[data-brand="nyte"] .tm-button,
+[data-brand="nyte"] .tm-download-tool input,
+[data-brand="nyte"] .tm-download-tool h2 { font-family: var(--tr-font-family-sans); }
+
+/* Older hard-coded colours. Each sheet reads var(--tr-legacy-<hex>, <hex>),
+   so the default theme keeps the exact old value. The old site was dark, so
+   lightness is turned over: dark grounds become Cream, White and Gray, light
+   text becomes Ink. Light accents become their readable dark partner, fills
+   keep the bright colour, dark tinted grounds become tints. */
+:root[data-brand="nyte"] {
+  --tr-legacy-000000: var(--nyte-ink);
+  --tr-legacy-000000-0d: color-mix(in srgb, var(--nyte-ink) 5.1%, transparent);
+  --tr-legacy-000000-14: color-mix(in srgb, var(--nyte-ink) 7.8%, transparent);
+  --tr-legacy-000000-1a: color-mix(in srgb, var(--nyte-ink) 10.2%, transparent);
+  --tr-legacy-000000-26: color-mix(in srgb, var(--nyte-ink) 14.9%, transparent);
+  --tr-legacy-000000-2e: color-mix(in srgb, var(--nyte-ink) 18%, transparent);
+  --tr-legacy-000000-33: color-mix(in srgb, var(--nyte-ink) 20%, transparent);
+  --tr-legacy-000000-3d: color-mix(in srgb, var(--nyte-ink) 23.9%, transparent);
+  --tr-legacy-000000-40: color-mix(in srgb, var(--nyte-ink) 25.1%, transparent);
+  --tr-legacy-000000-52: color-mix(in srgb, var(--nyte-ink) 32.2%, transparent);
+  --tr-legacy-000000-55: color-mix(in srgb, var(--nyte-ink) 33.3%, transparent);
+  --tr-legacy-000000-66: color-mix(in srgb, var(--nyte-ink) 40%, transparent);
+  --tr-legacy-000000-73: color-mix(in srgb, var(--nyte-ink) 45.1%, transparent);
+  --tr-legacy-000000-80: color-mix(in srgb, var(--nyte-ink) 50.2%, transparent);
+  --tr-legacy-000000-88: color-mix(in srgb, var(--nyte-ink) 53.3%, transparent);
+  --tr-legacy-000000-99: color-mix(in srgb, var(--nyte-ink) 60%, transparent);
+  --tr-legacy-000000-a6: color-mix(in srgb, var(--nyte-ink) 65.1%, transparent);
+  --tr-legacy-000000-b2: color-mix(in srgb, var(--nyte-ink) 69.8%, transparent);
+  --tr-legacy-000000-ba: color-mix(in srgb, var(--nyte-ink) 72.9%, transparent);
+  --tr-legacy-000000-bb: color-mix(in srgb, var(--nyte-ink) 73.3%, transparent);
+  --tr-legacy-000000-c7: color-mix(in srgb, var(--nyte-ink) 78%, transparent);
+  --tr-legacy-000000-cc: color-mix(in srgb, var(--nyte-ink) 80%, transparent);
+  --tr-legacy-010409: var(--nyte-cream);
+  --tr-legacy-010409-80: color-mix(in srgb, var(--nyte-cream) 50.2%, transparent);
+  --tr-legacy-010409-99: color-mix(in srgb, var(--nyte-cream) 60%, transparent);
+  --tr-legacy-010409-b2: color-mix(in srgb, var(--nyte-cream) 69.8%, transparent);
+  --tr-legacy-030704-b8: color-mix(in srgb, var(--nyte-cream) 72.2%, transparent);
+  --tr-legacy-04101f: var(--nyte-cream);
+  --tr-legacy-050706: var(--nyte-cream);
+  --tr-legacy-050706-0a: color-mix(in srgb, var(--nyte-cream) 3.9%, transparent);
+  --tr-legacy-050706-2e: color-mix(in srgb, var(--nyte-cream) 18%, transparent);
+  --tr-legacy-050706-52: color-mix(in srgb, var(--nyte-cream) 32.2%, transparent);
+  --tr-legacy-050706-73: color-mix(in srgb, var(--nyte-cream) 45.1%, transparent);
+  --tr-legacy-050706-80: color-mix(in srgb, var(--nyte-cream) 50.2%, transparent);
+  --tr-legacy-050706-85: color-mix(in srgb, var(--nyte-cream) 52.2%, transparent);
+  --tr-legacy-050706-94: color-mix(in srgb, var(--nyte-cream) 58%, transparent);
+  --tr-legacy-050706-a6: color-mix(in srgb, var(--nyte-cream) 65.1%, transparent);
+  --tr-legacy-050706-a8: color-mix(in srgb, var(--nyte-cream) 65.9%, transparent);
+  --tr-legacy-050706-b3: color-mix(in srgb, var(--nyte-cream) 70.2%, transparent);
+  --tr-legacy-050706-c0: color-mix(in srgb, var(--nyte-cream) 75.3%, transparent);
+  --tr-legacy-050806-47: color-mix(in srgb, var(--nyte-cream) 27.8%, transparent);
+  --tr-legacy-050806-bd: color-mix(in srgb, var(--nyte-cream) 74.1%, transparent);
+  --tr-legacy-050806-d6: color-mix(in srgb, var(--nyte-cream) 83.9%, transparent);
+  --tr-legacy-070a08: var(--nyte-cream);
+  --tr-legacy-070b14: var(--nyte-cream);
+  --tr-legacy-070b14-8c: color-mix(in srgb, var(--nyte-cream) 54.9%, transparent);
+  --tr-legacy-07110e-ee: color-mix(in srgb, var(--nyte-cream) 93.3%, transparent);
+  --tr-legacy-07111f: var(--nyte-cream);
+  --tr-legacy-080d0a-e0: color-mix(in srgb, var(--nyte-cream) 87.8%, transparent);
+  --tr-legacy-080d16: var(--nyte-cream);
+  --tr-legacy-090911-66: color-mix(in srgb, var(--nyte-cream) 40%, transparent);
+  --tr-legacy-090911-8c: color-mix(in srgb, var(--nyte-cream) 54.9%, transparent);
+  --tr-legacy-090911-d9: color-mix(in srgb, var(--nyte-cream) 85.1%, transparent);
+  --tr-legacy-090911-eb: color-mix(in srgb, var(--nyte-cream) 92.2%, transparent);
+  --tr-legacy-0a0d12: var(--nyte-cream);
+  --tr-legacy-0a0e0b: var(--nyte-cream);
+  --tr-legacy-0a1726: var(--nyte-white);
+  --tr-legacy-0a66c2: var(--nyte-sky);
+  --tr-legacy-0b121a: var(--nyte-white);
+  --tr-legacy-0b1220: var(--nyte-white);
+  --tr-legacy-0b1220-8f: color-mix(in srgb, var(--nyte-white) 56.1%, transparent);
+  --tr-legacy-0b1410: var(--nyte-white);
+  --tr-legacy-0b1814-b3: color-mix(in srgb, var(--nyte-white) 70.2%, transparent);
+  --tr-legacy-0b182c-2e: color-mix(in srgb, var(--nyte-white) 18%, transparent);
+  --tr-legacy-0b182c-38: color-mix(in srgb, var(--nyte-white) 22%, transparent);
+  --tr-legacy-0b2119: var(--nyte-gray);
+  --tr-legacy-0d1117: var(--nyte-cream);
+  --tr-legacy-0d1117-c7: color-mix(in srgb, var(--nyte-cream) 78%, transparent);
+  --tr-legacy-0f1411: var(--nyte-white);
+  --tr-legacy-0f1622: var(--nyte-white);
+  --tr-legacy-0f172a-2e: color-mix(in srgb, var(--nyte-white) 18%, transparent);
+  --tr-legacy-0f1c14: var(--nyte-white);
+  --tr-legacy-0f1f18: var(--nyte-gray);
+  --tr-legacy-0f2138: var(--nyte-gray);
+  --tr-legacy-0f7a4a: var(--nyte-lime);
+  --tr-legacy-10161f: var(--nyte-white);
+  --tr-legacy-101820: var(--nyte-white);
+  --tr-legacy-101820-14: color-mix(in srgb, var(--nyte-white) 7.8%, transparent);
+  --tr-legacy-101820-29: color-mix(in srgb, var(--nyte-white) 16.1%, transparent);
+  --tr-legacy-101828: var(--nyte-white);
+  --tr-legacy-101828-14: color-mix(in srgb, var(--nyte-white) 7.8%, transparent);
+  --tr-legacy-10231b: var(--nyte-gray);
+  --tr-legacy-10241a: var(--nyte-gray);
+  --tr-legacy-10a37f-b2: color-mix(in srgb, var(--nyte-lime) 69.8%, transparent);
+  --tr-legacy-111410: var(--nyte-white);
+  --tr-legacy-11724c: var(--nyte-lime);
+  --tr-legacy-121915: var(--nyte-white);
+  --tr-legacy-121a26: var(--nyte-gray);
+  --tr-legacy-13202b: var(--nyte-gray);
+  --tr-legacy-151c18: var(--nyte-gray);
+  --tr-legacy-152033: var(--nyte-gray);
+  --tr-legacy-152035-42: color-mix(in srgb, var(--nyte-gray) 25.9%, transparent);
+  --tr-legacy-153d29: var(--nyte-stone);
+  --tr-legacy-161b22: var(--nyte-gray);
+  --tr-legacy-161b22-a8: color-mix(in srgb, var(--nyte-gray) 65.9%, transparent);
+  --tr-legacy-161b22-d1: color-mix(in srgb, var(--nyte-gray) 82%, transparent);
+  --tr-legacy-16263b: #E8E4DB;
+  --tr-legacy-163a44: var(--nyte-stone);
+  --tr-legacy-171c16-2e: color-mix(in srgb, var(--nyte-gray) 18%, transparent);
+  --tr-legacy-172027: var(--nyte-gray);
+  --tr-legacy-17384a: var(--nyte-stone);
+  --tr-legacy-183226: #E8E4DB;
+  --tr-legacy-19a06d: var(--nyte-lime);
+  --tr-legacy-19a06d-17: color-mix(in srgb, var(--nyte-lime) 9%, transparent);
+  --tr-legacy-19a06d-1f: color-mix(in srgb, var(--nyte-lime) 12.2%, transparent);
+  --tr-legacy-19a06d-33: color-mix(in srgb, var(--nyte-lime) 20%, transparent);
+  --tr-legacy-19a06d-38: color-mix(in srgb, var(--nyte-lime) 22%, transparent);
+  --tr-legacy-19a06d-52: color-mix(in srgb, var(--nyte-lime) 32.2%, transparent);
+  --tr-legacy-19a06d-73: color-mix(in srgb, var(--nyte-lime) 45.1%, transparent);
+  --tr-legacy-1c2230: var(--nyte-gray);
+  --tr-legacy-1c2733: #E8E4DB;
+  --tr-legacy-1c2a22: #E8E4DB;
+  --tr-legacy-1c3e2e: var(--nyte-stone);
+  --tr-legacy-1e2621: #E8E4DB;
+  --tr-legacy-1f2a33: #E8E4DB;
+  --tr-legacy-1f4a4f: var(--nyte-stone);
+  --tr-legacy-203c2c: var(--nyte-stone);
+  --tr-legacy-21262d: #E8E4DB;
+  --tr-legacy-22342a: #E8E4DB;
+  --tr-legacy-232b26: #E8E4DB;
+  --tr-legacy-234636: var(--nyte-stone);
+  --tr-legacy-2355a6: var(--nyte-sky);
+  --tr-legacy-2355a6-0f: color-mix(in srgb, var(--nyte-sky) 5.9%, transparent);
+  --tr-legacy-2355a6-14: color-mix(in srgb, var(--nyte-sky) 7.8%, transparent);
+  --tr-legacy-24292f: #E8E4DB;
+  --tr-legacy-244937: var(--nyte-stone);
+  --tr-legacy-2457a6: var(--nyte-sky);
+  --tr-legacy-252d27: #E8E4DB;
+  --tr-legacy-273244-b8: color-mix(in srgb, var(--nyte-stone) 72.2%, transparent);
+  --tr-legacy-273c4d: var(--nyte-stone);
+  --tr-legacy-29332d: var(--nyte-stone);
+  --tr-legacy-2a332c: var(--nyte-stone);
+  --tr-legacy-2a332d: var(--nyte-stone);
+  --tr-legacy-2a3b32: var(--nyte-stone);
+  --tr-legacy-2b3a46: var(--nyte-stone);
+  --tr-legacy-2c6ecb: var(--nyte-sky);
+  --tr-legacy-2ea043: var(--nyte-lime);
+  --tr-legacy-2f3731: var(--nyte-stone);
+  --tr-legacy-30363d: var(--nyte-stone);
+  --tr-legacy-30363d-e6: color-mix(in srgb, var(--nyte-stone) 90.2%, transparent);
+  --tr-legacy-33403a: var(--nyte-stone);
+  --tr-legacy-33414d: var(--nyte-stone);
+  --tr-legacy-33473b: var(--nyte-stone);
+  --tr-legacy-3b4b65: #C9C3B8;
+  --tr-legacy-3f6583: var(--nyte-sky);
+  --tr-legacy-3fb950: var(--nyte-green);
+  --tr-legacy-3fb950-14: color-mix(in srgb, var(--nyte-lime) 7.8%, transparent);
+  --tr-legacy-3fb950-17: color-mix(in srgb, var(--nyte-lime) 9%, transparent);
+  --tr-legacy-3fb950-24: color-mix(in srgb, var(--nyte-lime) 14.1%, transparent);
+  --tr-legacy-3fb950-57: color-mix(in srgb, var(--nyte-lime) 34.1%, transparent);
+  --tr-legacy-3fb950-66: color-mix(in srgb, var(--nyte-lime) 40%, transparent);
+  --tr-legacy-42e07f: var(--nyte-green);
+  --tr-legacy-42e07f-38: color-mix(in srgb, var(--nyte-lime) 22%, transparent);
+  --tr-legacy-4493f8: var(--nyte-sky);
+  --tr-legacy-4493f8-12: color-mix(in srgb, var(--nyte-sky) 7.1%, transparent);
+  --tr-legacy-4493f8-14: color-mix(in srgb, var(--nyte-sky) 7.8%, transparent);
+  --tr-legacy-4493f8-17: color-mix(in srgb, var(--nyte-sky) 9%, transparent);
+  --tr-legacy-4493f8-1a: color-mix(in srgb, var(--nyte-sky) 10.2%, transparent);
+  --tr-legacy-4493f8-1f: color-mix(in srgb, var(--nyte-sky) 12.2%, transparent);
+  --tr-legacy-4493f8-2e: color-mix(in srgb, var(--nyte-sky) 18%, transparent);
+  --tr-legacy-4493f8-33: color-mix(in srgb, var(--nyte-sky) 20%, transparent);
+  --tr-legacy-4493f8-42: color-mix(in srgb, var(--nyte-sky) 25.9%, transparent);
+  --tr-legacy-4493f8-4c: color-mix(in srgb, var(--nyte-sky) 29.8%, transparent);
+  --tr-legacy-4493f8-52: color-mix(in srgb, var(--nyte-sky) 32.2%, transparent);
+  --tr-legacy-4493f8-59: color-mix(in srgb, var(--nyte-sky) 34.9%, transparent);
+  --tr-legacy-4493f8-66: color-mix(in srgb, var(--nyte-sky) 40%, transparent);
+  --tr-legacy-4493f8-80: color-mix(in srgb, var(--nyte-sky) 50.2%, transparent);
+  --tr-legacy-4493f8-ad: color-mix(in srgb, var(--nyte-sky) 67.8%, transparent);
+  --tr-legacy-454d42: #C9C3B8;
+  --tr-legacy-456087: var(--nyte-sky);
+  --tr-legacy-456087-59: color-mix(in srgb, var(--nyte-sky) 34.9%, transparent);
+  --tr-legacy-475467: #C9C3B8;
+  --tr-legacy-4a6a85: var(--nyte-sky);
+  --tr-legacy-4ade80: var(--nyte-green);
+  --tr-legacy-526859: var(--nyte-lime);
+  --tr-legacy-5c6974: #C9C3B8;
+  --tr-legacy-5e6b62: #C9C3B8;
+  --tr-legacy-6467f2-38: color-mix(in srgb, var(--nyte-purple) 22%, transparent);
+  --tr-legacy-6467f2-99: color-mix(in srgb, var(--nyte-purple) 60%, transparent);
+  --tr-legacy-6467f2-b2: color-mix(in srgb, var(--nyte-purple) 69.8%, transparent);
+  --tr-legacy-6b7280: #6E675F;
+  --tr-legacy-6b9480: var(--nyte-lime);
+  --tr-legacy-779080: var(--nyte-lime);
+  --tr-legacy-788479: #6E675F;
+  --tr-legacy-7be0b1: var(--nyte-green);
+  --tr-legacy-7be0b1-14: color-mix(in srgb, var(--nyte-lime) 7.8%, transparent);
+  --tr-legacy-7be0b1-1f: color-mix(in srgb, var(--nyte-lime) 12.2%, transparent);
+  --tr-legacy-7be0b1-2e: color-mix(in srgb, var(--nyte-lime) 18%, transparent);
+  --tr-legacy-7be0b1-47: color-mix(in srgb, var(--nyte-lime) 27.8%, transparent);
+  --tr-legacy-7be0b1-4c: color-mix(in srgb, var(--nyte-lime) 29.8%, transparent);
+  --tr-legacy-7be0b1-52: color-mix(in srgb, var(--nyte-lime) 32.2%, transparent);
+  --tr-legacy-7be0b1-73: color-mix(in srgb, var(--nyte-lime) 45.1%, transparent);
+  --tr-legacy-7be0b1-e6: color-mix(in srgb, var(--nyte-lime) 90.2%, transparent);
+  --tr-legacy-7caa90: var(--nyte-green);
+  --tr-legacy-86dbb1: var(--nyte-green);
+  --tr-legacy-88b4e2: var(--nyte-deep-purple);
+  --tr-legacy-8a5a00: var(--nyte-yellow);
+  --tr-legacy-8b949e: var(--nyte-ink-2);
+  --tr-legacy-8bb4d6: var(--nyte-deep-purple);
+  --tr-legacy-8bb4d6-0d: color-mix(in srgb, var(--nyte-sky) 5.1%, transparent);
+  --tr-legacy-8bb4d6-1f: color-mix(in srgb, var(--nyte-sky) 12.2%, transparent);
+  --tr-legacy-8bb4d6-29: color-mix(in srgb, var(--nyte-sky) 16.1%, transparent);
+  --tr-legacy-8bb4d6-47: color-mix(in srgb, var(--nyte-sky) 27.8%, transparent);
+  --tr-legacy-8d96a3: var(--nyte-ink-2);
+  --tr-legacy-8f3d22: var(--nyte-orange);
+  --tr-legacy-8fb0c9: var(--nyte-deep-purple);
+  --tr-legacy-8fc3a5: var(--nyte-green);
+  --tr-legacy-8fc3a5-8a: color-mix(in srgb, var(--nyte-lime) 54.1%, transparent);
+  --tr-legacy-90a795: var(--nyte-green);
+  --tr-legacy-93c5fd: var(--nyte-deep-purple);
+  --tr-legacy-98a198: var(--nyte-ink-2);
+  --tr-legacy-991b1b: #FFE1D6;
+  --tr-legacy-9ac2ff: var(--nyte-deep-purple);
+  --tr-legacy-9ca3af: var(--nyte-ink-2);
+  --tr-legacy-9da99b: var(--nyte-ink-2);
+  --tr-legacy-9ee6b8: var(--nyte-green);
+  --tr-legacy-a1b5a8: var(--nyte-ink-2);
+  --tr-legacy-a8d9bd: var(--nyte-green);
+  --tr-legacy-a8e0bb: var(--nyte-green);
+  --tr-legacy-acb5a4: var(--nyte-ink);
+  --tr-legacy-adbbb2: var(--nyte-ink);
+  --tr-legacy-aeb3aa: var(--nyte-ink);
+  --tr-legacy-b00020: var(--nyte-orange);
+  --tr-legacy-b42318: var(--nyte-orange);
+  --tr-legacy-b7e4ca: var(--nyte-green);
+  --tr-legacy-b87b13: var(--nyte-yellow);
+  --tr-legacy-b8c6d2: var(--nyte-ink);
+  --tr-legacy-b8d5ee: var(--nyte-deep-purple);
+  --tr-legacy-b8d8c5: var(--nyte-green);
+  --tr-legacy-b8dec9: var(--nyte-green);
+  --tr-legacy-b8f1cb: var(--nyte-green);
+  --tr-legacy-bac9bf: var(--nyte-ink);
+  --tr-legacy-bcd6e8: var(--nyte-deep-purple);
+  --tr-legacy-bfdfca: var(--nyte-green);
+  --tr-legacy-bfe0cd: var(--nyte-green);
+  --tr-legacy-c0e1ff: var(--nyte-deep-purple);
+  --tr-legacy-c3c9c3: var(--nyte-ink);
+  --tr-legacy-c3d2df: var(--nyte-ink);
+  --tr-legacy-c4d3c9: var(--nyte-ink);
+  --tr-legacy-c5d1ca: var(--nyte-ink);
+  --tr-legacy-c8d7e5: var(--nyte-ink);
+  --tr-legacy-c8ead7: var(--nyte-green);
+  --tr-legacy-c9d0c5: var(--nyte-ink);
+  --tr-legacy-c9d1d9: var(--nyte-ink);
+  --tr-legacy-cad8e5: var(--nyte-ink);
+  --tr-legacy-cbd3c8: var(--nyte-ink);
+  --tr-legacy-cce8d7: var(--nyte-green);
+  --tr-legacy-cd6116: var(--nyte-orange);
+  --tr-legacy-cfd6dd: var(--nyte-ink);
+  --tr-legacy-d0d5dd: var(--nyte-ink);
+  --tr-legacy-d0ded7: var(--nyte-ink);
+  --tr-legacy-d2452a: var(--nyte-orange);
+  --tr-legacy-d2452a-47: color-mix(in srgb, var(--nyte-orange) 27.8%, transparent);
+  --tr-legacy-d29922: #6B5300;
+  --tr-legacy-d29922-24: color-mix(in srgb, var(--nyte-yellow) 14.1%, transparent);
+  --tr-legacy-d29922-6b: color-mix(in srgb, var(--nyte-yellow) 42%, transparent);
+  --tr-legacy-d3d6f0: var(--nyte-deep-purple);
+  --tr-legacy-d49b23: #6B5300;
+  --tr-legacy-d49b23-3d: color-mix(in srgb, var(--nyte-yellow) 23.9%, transparent);
+  --tr-legacy-d6dcd6: var(--nyte-ink);
+  --tr-legacy-d8e1e8: var(--nyte-ink);
+  --tr-legacy-d8e1e8-e6: color-mix(in srgb, var(--nyte-ink) 90.2%, transparent);
+  --tr-legacy-d8e6f3: var(--nyte-ink);
+  --tr-legacy-d8ffe9: var(--nyte-green);
+  --tr-legacy-d9e0ea: var(--nyte-ink);
+  --tr-legacy-d9f2e3: var(--nyte-ink);
+  --tr-legacy-db8a6a: #A8360F;
+  --tr-legacy-dce5e0: var(--nyte-ink);
+  --tr-legacy-dfe6ec: var(--nyte-ink);
+  --tr-legacy-dfe9f6: var(--nyte-ink);
+  --tr-legacy-e2761b: var(--nyte-orange);
+  --tr-legacy-e2c98a: #6B5300;
+  --tr-legacy-e2e8f0: var(--nyte-ink);
+  --tr-legacy-e5e8df: var(--nyte-ink);
+  --tr-legacy-e5f6ec: var(--nyte-ink);
+  --tr-legacy-e6edf3: var(--nyte-ink);
+  --tr-legacy-e6edf3-99: color-mix(in srgb, var(--nyte-ink) 60%, transparent);
+  --tr-legacy-ead49b: #6B5300;
+  --tr-legacy-eaf6ff: var(--nyte-ink);
+  --tr-legacy-ede8db-1a: color-mix(in srgb, var(--nyte-ink) 10.2%, transparent);
+  --tr-legacy-ede8db-38: color-mix(in srgb, var(--nyte-ink) 22%, transparent);
+  --tr-legacy-edf2f6: var(--nyte-ink);
+  --tr-legacy-edf6ff: var(--nyte-ink);
+  --tr-legacy-edf8f5: var(--nyte-ink);
+  --tr-legacy-eef0e9: var(--nyte-ink);
+  --tr-legacy-eef8f2: var(--nyte-ink);
+  --tr-legacy-eefaf3: var(--nyte-ink);
+  --tr-legacy-f0b3a6: #A8360F;
+  --tr-legacy-f0f6fc: var(--nyte-ink);
+  --tr-legacy-f0f6ff: var(--nyte-ink);
+  --tr-legacy-f0faf4: var(--nyte-ink);
+  --tr-legacy-f1c1bb: #A8360F;
+  --tr-legacy-f1fff5: var(--nyte-ink);
+  --tr-legacy-f2c879: #6B5300;
+  --tr-legacy-f2efe6: var(--nyte-ink);
+  --tr-legacy-f2faf6: var(--nyte-ink);
+  --tr-legacy-f3f0e7: var(--nyte-ink);
+  --tr-legacy-f5f9fc: var(--nyte-ink);
+  --tr-legacy-f6cf72: #6B5300;
+  --tr-legacy-f6f6f3: var(--nyte-ink);
+  --tr-legacy-f6f8fa: var(--nyte-ink);
+  --tr-legacy-f6f8fb: var(--nyte-ink);
+  --tr-legacy-f85149: var(--nyte-orange);
+  --tr-legacy-f85149-1f: color-mix(in srgb, var(--nyte-orange) 12.2%, transparent);
+  --tr-legacy-f85149-66: color-mix(in srgb, var(--nyte-orange) 40%, transparent);
+  --tr-legacy-f87171-1f: color-mix(in srgb, var(--nyte-orange) 12.2%, transparent);
+  --tr-legacy-f87171-73: color-mix(in srgb, var(--nyte-orange) 45.1%, transparent);
+  --tr-legacy-f8fafc: var(--nyte-ink);
+  --tr-legacy-f8fbfd: var(--nyte-ink);
+  --tr-legacy-fbbf24: #6B5300;
+  --tr-legacy-fbfcfd: var(--nyte-ink);
+  --tr-legacy-fecaca: #A8360F;
+  --tr-legacy-ff0033: var(--nyte-orange);
+  --tr-legacy-ffb1a4: #A8360F;
+  --tr-legacy-ffeb3b-73: color-mix(in srgb, var(--nyte-yellow) 45.1%, transparent);
+  --tr-legacy-fff7f6: var(--nyte-ink);
+  --tr-legacy-fff8e4: var(--nyte-ink);
+  --tr-legacy-ffffff: var(--nyte-ink);
+  --tr-legacy-ffffff-0a: color-mix(in srgb, var(--nyte-ink) 3.9%, transparent);
+  --tr-legacy-ffffff-0f: color-mix(in srgb, var(--nyte-ink) 5.9%, transparent);
+  --tr-legacy-ffffff-14: color-mix(in srgb, var(--nyte-ink) 7.8%, transparent);
+  --tr-legacy-ffffff-1a: color-mix(in srgb, var(--nyte-ink) 10.2%, transparent);
+  --tr-legacy-ffffff-1f: color-mix(in srgb, var(--nyte-ink) 12.2%, transparent);
+  --tr-legacy-ffffff-26: color-mix(in srgb, var(--nyte-ink) 14.9%, transparent);
+  --tr-legacy-ffffff-29: color-mix(in srgb, var(--nyte-ink) 16.1%, transparent);
+  --tr-legacy-ffffff-2e: color-mix(in srgb, var(--nyte-ink) 18%, transparent);
+  --tr-legacy-ffffff-33: color-mix(in srgb, var(--nyte-ink) 20%, transparent);
+  --tr-legacy-ffffff-4c: color-mix(in srgb, var(--nyte-ink) 29.8%, transparent);
+  --tr-legacy-ffffff-59: color-mix(in srgb, var(--nyte-ink) 34.9%, transparent);
+  --tr-legacy-ffffff-66: color-mix(in srgb, var(--nyte-ink) 40%, transparent);
+  --tr-legacy-ffffff-8c: color-mix(in srgb, var(--nyte-ink) 54.9%, transparent);
+  --tr-legacy-ffffff-99: color-mix(in srgb, var(--nyte-ink) 60%, transparent);
+  --tr-legacy-ffffff-b8: color-mix(in srgb, var(--nyte-ink) 72.2%, transparent);
+  --tr-legacy-ffffff-c7: color-mix(in srgb, var(--nyte-ink) 78%, transparent);
+  --tr-legacy-ffffff-d1: color-mix(in srgb, var(--nyte-ink) 82%, transparent);
+  --tr-legacy-ffffff-d9: color-mix(in srgb, var(--nyte-ink) 85.1%, transparent);
+  --tr-legacy-ffffff-e6: color-mix(in srgb, var(--nyte-ink) 90.2%, transparent);
+  --tr-legacy-ffffff-f0: color-mix(in srgb, var(--nyte-ink) 94.1%, transparent);
+}
+
+/* Ink areas: the header bar, the footer and the console top bar keep the
+   kit's dark theme, so their own colours read Cream on Ink. */
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+  /* Surfaces */
+  --tr-color-surface-bg: var(--nyte-ink);
+  --tr-color-surface-bg-alt: var(--nyte-surface);
+  --tr-color-surface-bg-deep: var(--nyte-ink);
+  --tr-color-surface-photo-fallback: var(--nyte-ink);
+  --tr-color-surface-panel: var(--nyte-surface);
+  --tr-color-surface-panel-inset: var(--nyte-sunken);
+  --tr-color-surface-panel-raised: var(--nyte-sunken);
+  --tr-color-surface-control: var(--nyte-surface);
+  --tr-color-surface-hover: var(--nyte-raised);
+  --tr-color-surface-selected: var(--nyte-raised);
+  --tr-color-surface-overlay-button: rgb(21 19 17 / 70%);
+
+  /* Text */
+  --tr-color-text-primary: var(--nyte-cream);
+  --tr-color-text-secondary: var(--nyte-stone);
+  --tr-color-text-tertiary: var(--nyte-ink-2-dark);
+  --tr-color-text-quaternary: #9A938A;
+  --tr-color-text-on-photo: var(--nyte-cream);
+
+  /* Accent: the Trust lead colour */
+  --tr-color-accent-base: var(--nyte-lead);
+  --tr-color-accent-hover: var(--nyte-lime-tint);
+  --tr-color-accent-ink: var(--nyte-ink);
+
+  /* Links */
+  --tr-color-link-base: var(--nyte-link);
+  --tr-color-link-underline: var(--nyte-purple);
+  --tr-color-link-dot: var(--nyte-purple);
+  --tr-color-link-button: var(--nyte-link);
+
+  /* Rules */
+  --tr-color-line-rule: var(--nyte-dark-rule);
+  --tr-color-line-rule-soft: var(--nyte-raised);
+  --tr-color-line-control: var(--nyte-ink-2);
+  --tr-color-line-strong: #8E877E;
+  --tr-color-line-emphasis: var(--nyte-ink-2-dark);
+  --tr-color-line-connector: var(--nyte-ink-2-dark);
+  --tr-color-line-quote: var(--nyte-purple);
+  --tr-color-line-tag: var(--nyte-ink-2);
+  --tr-color-information-note: var(--nyte-lilac);
+  --tr-color-focus: var(--nyte-cream);
+  --tr-color-error: var(--nyte-orange);
+
+  /* Privacy states: outline chips; only verified carries Lime */
+  --tr-color-privacy-zdr-bg: var(--nyte-sunken);
+  --tr-color-privacy-zdr-border: var(--nyte-ink-2);
+  --tr-color-privacy-zdr-text: var(--nyte-yellow-tint);
+  --tr-color-privacy-e2ee-bg: var(--nyte-sunken);
+  --tr-color-privacy-e2ee-border: var(--nyte-ink-2);
+  --tr-color-privacy-e2ee-text: var(--nyte-lilac);
+  --tr-color-privacy-neutral-bg: var(--nyte-sunken);
+  --tr-color-privacy-neutral-border: var(--nyte-ink-2);
+  --tr-color-privacy-neutral-text: var(--nyte-stone);
+  --tr-color-privacy-verified-bg: var(--nyte-green);
+  --tr-color-privacy-verified-border: var(--nyte-lime);
+  --tr-color-privacy-verified-text: var(--nyte-lime);
+
+  /* Live status */
+  --tr-color-status-up: var(--nyte-lime);
+  --tr-color-status-degraded: var(--nyte-yellow);
+  --tr-color-status-down: var(--nyte-orange);
+  --tr-color-status-unknown: var(--nyte-ink-2);
+
+  /* Diffs */
+  --tr-color-diff-removed-bg: #3A1E14;
+  --tr-color-diff-removed-text: #FFB49A;
+  --tr-color-diff-added-bg: var(--nyte-green);
+  --tr-color-diff-added-text: var(--nyte-lime-tint);
+
+  /* Colour fields: text on any colour field is Ink */
+  --tr-color-panel-blue-bg: var(--nyte-sky);
+  --tr-color-panel-blue-ink: var(--nyte-ink);
+  --tr-color-panel-blue-ink-2: var(--nyte-ink-2);
+  --tr-color-panel-blue-divider: rgb(21 19 17 / 25%);
+  --tr-color-panel-mint-bg: var(--nyte-lime);
+  --tr-color-panel-mint-ink: var(--nyte-ink);
+  --tr-color-panel-mint-ink-2: var(--nyte-green);
+  --tr-color-panel-mint-divider: rgb(21 19 17 / 25%);
+  --tr-color-panel-mint-button-border: var(--nyte-ink);
+  --tr-color-panel-mint-button-fill: rgb(21 19 17 / 8%);
+  --tr-color-panel-mint-button-fill-hover: rgb(21 19 17 / 16%);
+
+  /* Header */
+  --tr-color-header-link: var(--nyte-stone);
+  --tr-color-header-search-bg: var(--nyte-surface);
+  --tr-color-header-search-border: var(--nyte-dark-rule);
+  --tr-legacy-000000: var(--nyte-ink);
+  --tr-legacy-000000-0d: color-mix(in srgb, var(--nyte-ink) 5.1%, transparent);
+  --tr-legacy-000000-14: color-mix(in srgb, var(--nyte-ink) 7.8%, transparent);
+  --tr-legacy-000000-1a: color-mix(in srgb, var(--nyte-ink) 10.2%, transparent);
+  --tr-legacy-000000-26: color-mix(in srgb, var(--nyte-ink) 14.9%, transparent);
+  --tr-legacy-000000-2e: color-mix(in srgb, var(--nyte-ink) 18%, transparent);
+  --tr-legacy-000000-33: color-mix(in srgb, var(--nyte-ink) 20%, transparent);
+  --tr-legacy-000000-3d: color-mix(in srgb, var(--nyte-ink) 23.9%, transparent);
+  --tr-legacy-000000-40: color-mix(in srgb, var(--nyte-ink) 25.1%, transparent);
+  --tr-legacy-000000-52: color-mix(in srgb, var(--nyte-ink) 32.2%, transparent);
+  --tr-legacy-000000-55: color-mix(in srgb, var(--nyte-ink) 33.3%, transparent);
+  --tr-legacy-000000-66: color-mix(in srgb, var(--nyte-ink) 40%, transparent);
+  --tr-legacy-000000-73: color-mix(in srgb, var(--nyte-ink) 45.1%, transparent);
+  --tr-legacy-000000-80: color-mix(in srgb, var(--nyte-ink) 50.2%, transparent);
+  --tr-legacy-000000-88: color-mix(in srgb, var(--nyte-ink) 53.3%, transparent);
+  --tr-legacy-000000-99: color-mix(in srgb, var(--nyte-ink) 60%, transparent);
+  --tr-legacy-000000-a6: color-mix(in srgb, var(--nyte-ink) 65.1%, transparent);
+  --tr-legacy-000000-b2: color-mix(in srgb, var(--nyte-ink) 69.8%, transparent);
+  --tr-legacy-000000-ba: color-mix(in srgb, var(--nyte-ink) 72.9%, transparent);
+  --tr-legacy-000000-bb: color-mix(in srgb, var(--nyte-ink) 73.3%, transparent);
+  --tr-legacy-000000-c7: color-mix(in srgb, var(--nyte-ink) 78%, transparent);
+  --tr-legacy-000000-cc: color-mix(in srgb, var(--nyte-ink) 80%, transparent);
+  --tr-legacy-010409: var(--nyte-ink);
+  --tr-legacy-010409-80: color-mix(in srgb, var(--nyte-ink) 50.2%, transparent);
+  --tr-legacy-010409-99: color-mix(in srgb, var(--nyte-ink) 60%, transparent);
+  --tr-legacy-010409-b2: color-mix(in srgb, var(--nyte-ink) 69.8%, transparent);
+  --tr-legacy-030704-b8: color-mix(in srgb, var(--nyte-ink) 72.2%, transparent);
+  --tr-legacy-04101f: var(--nyte-ink);
+  --tr-legacy-050706: var(--nyte-ink);
+  --tr-legacy-050706-0a: color-mix(in srgb, var(--nyte-ink) 3.9%, transparent);
+  --tr-legacy-050706-2e: color-mix(in srgb, var(--nyte-ink) 18%, transparent);
+  --tr-legacy-050706-52: color-mix(in srgb, var(--nyte-ink) 32.2%, transparent);
+  --tr-legacy-050706-73: color-mix(in srgb, var(--nyte-ink) 45.1%, transparent);
+  --tr-legacy-050706-80: color-mix(in srgb, var(--nyte-ink) 50.2%, transparent);
+  --tr-legacy-050706-85: color-mix(in srgb, var(--nyte-ink) 52.2%, transparent);
+  --tr-legacy-050706-94: color-mix(in srgb, var(--nyte-ink) 58%, transparent);
+  --tr-legacy-050706-a6: color-mix(in srgb, var(--nyte-ink) 65.1%, transparent);
+  --tr-legacy-050706-a8: color-mix(in srgb, var(--nyte-ink) 65.9%, transparent);
+  --tr-legacy-050706-b3: color-mix(in srgb, var(--nyte-ink) 70.2%, transparent);
+  --tr-legacy-050706-c0: color-mix(in srgb, var(--nyte-ink) 75.3%, transparent);
+  --tr-legacy-050806-47: color-mix(in srgb, var(--nyte-ink) 27.8%, transparent);
+  --tr-legacy-050806-bd: color-mix(in srgb, var(--nyte-ink) 74.1%, transparent);
+  --tr-legacy-050806-d6: color-mix(in srgb, var(--nyte-ink) 83.9%, transparent);
+  --tr-legacy-070a08: var(--nyte-ink);
+  --tr-legacy-070b14: var(--nyte-ink);
+  --tr-legacy-070b14-8c: color-mix(in srgb, var(--nyte-ink) 54.9%, transparent);
+  --tr-legacy-07110e-ee: color-mix(in srgb, var(--nyte-ink) 93.3%, transparent);
+  --tr-legacy-07111f: var(--nyte-ink);
+  --tr-legacy-080d0a-e0: color-mix(in srgb, var(--nyte-ink) 87.8%, transparent);
+  --tr-legacy-080d16: var(--nyte-ink);
+  --tr-legacy-090911-66: color-mix(in srgb, var(--nyte-ink) 40%, transparent);
+  --tr-legacy-090911-8c: color-mix(in srgb, var(--nyte-ink) 54.9%, transparent);
+  --tr-legacy-090911-d9: color-mix(in srgb, var(--nyte-ink) 85.1%, transparent);
+  --tr-legacy-090911-eb: color-mix(in srgb, var(--nyte-ink) 92.2%, transparent);
+  --tr-legacy-0a0d12: var(--nyte-ink);
+  --tr-legacy-0a0e0b: var(--nyte-ink);
+  --tr-legacy-0a1726: var(--nyte-ink);
+  --tr-legacy-0a66c2: var(--nyte-deep-purple);
+  --tr-legacy-0b121a: var(--nyte-ink);
+  --tr-legacy-0b1220: var(--nyte-ink);
+  --tr-legacy-0b1220-8f: color-mix(in srgb, var(--nyte-ink) 56.1%, transparent);
+  --tr-legacy-0b1410: var(--nyte-ink);
+  --tr-legacy-0b1814-b3: color-mix(in srgb, var(--nyte-ink) 70.2%, transparent);
+  --tr-legacy-0b182c-2e: color-mix(in srgb, var(--nyte-surface) 18%, transparent);
+  --tr-legacy-0b182c-38: color-mix(in srgb, var(--nyte-surface) 22%, transparent);
+  --tr-legacy-0b2119: var(--nyte-surface);
+  --tr-legacy-0d1117: var(--nyte-ink);
+  --tr-legacy-0d1117-c7: color-mix(in srgb, var(--nyte-ink) 78%, transparent);
+  --tr-legacy-0f1411: var(--nyte-ink);
+  --tr-legacy-0f1622: var(--nyte-ink);
+  --tr-legacy-0f172a-2e: color-mix(in srgb, var(--nyte-ink) 18%, transparent);
+  --tr-legacy-0f1c14: var(--nyte-surface);
+  --tr-legacy-0f1f18: var(--nyte-surface);
+  --tr-legacy-0f2138: var(--nyte-sunken);
+  --tr-legacy-0f7a4a: var(--nyte-green);
+  --tr-legacy-10161f: var(--nyte-ink);
+  --tr-legacy-101820: var(--nyte-ink);
+  --tr-legacy-101820-14: color-mix(in srgb, var(--nyte-ink) 7.8%, transparent);
+  --tr-legacy-101820-29: color-mix(in srgb, var(--nyte-ink) 16.1%, transparent);
+  --tr-legacy-101828: var(--nyte-surface);
+  --tr-legacy-101828-14: color-mix(in srgb, var(--nyte-surface) 7.8%, transparent);
+  --tr-legacy-10231b: var(--nyte-sunken);
+  --tr-legacy-10241a: var(--nyte-sunken);
+  --tr-legacy-10a37f-b2: color-mix(in srgb, var(--nyte-lime) 69.8%, transparent);
+  --tr-legacy-111410: var(--nyte-ink);
+  --tr-legacy-11724c: var(--nyte-green);
+  --tr-legacy-121915: var(--nyte-ink);
+  --tr-legacy-121a26: var(--nyte-surface);
+  --tr-legacy-13202b: var(--nyte-sunken);
+  --tr-legacy-151c18: var(--nyte-surface);
+  --tr-legacy-152033: var(--nyte-sunken);
+  --tr-legacy-152035-42: color-mix(in srgb, var(--nyte-sunken) 25.9%, transparent);
+  --tr-legacy-153d29: var(--nyte-dark-rule);
+  --tr-legacy-161b22: var(--nyte-surface);
+  --tr-legacy-161b22-a8: color-mix(in srgb, var(--nyte-surface) 65.9%, transparent);
+  --tr-legacy-161b22-d1: color-mix(in srgb, var(--nyte-surface) 82%, transparent);
+  --tr-legacy-16263b: var(--nyte-raised);
+  --tr-legacy-163a44: var(--nyte-dark-rule);
+  --tr-legacy-171c16-2e: color-mix(in srgb, var(--nyte-surface) 18%, transparent);
+  --tr-legacy-172027: var(--nyte-sunken);
+  --tr-legacy-17384a: var(--nyte-dark-rule);
+  --tr-legacy-183226: var(--nyte-raised);
+  --tr-legacy-19a06d: var(--nyte-lime);
+  --tr-legacy-19a06d-17: color-mix(in srgb, var(--nyte-lime) 9%, transparent);
+  --tr-legacy-19a06d-1f: color-mix(in srgb, var(--nyte-lime) 12.2%, transparent);
+  --tr-legacy-19a06d-33: color-mix(in srgb, var(--nyte-lime) 20%, transparent);
+  --tr-legacy-19a06d-38: color-mix(in srgb, var(--nyte-lime) 22%, transparent);
+  --tr-legacy-19a06d-52: color-mix(in srgb, var(--nyte-lime) 32.2%, transparent);
+  --tr-legacy-19a06d-73: color-mix(in srgb, var(--nyte-lime) 45.1%, transparent);
+  --tr-legacy-1c2230: var(--nyte-sunken);
+  --tr-legacy-1c2733: var(--nyte-raised);
+  --tr-legacy-1c2a22: var(--nyte-raised);
+  --tr-legacy-1c3e2e: var(--nyte-dark-rule);
+  --tr-legacy-1e2621: var(--nyte-raised);
+  --tr-legacy-1f2a33: var(--nyte-raised);
+  --tr-legacy-1f4a4f: var(--nyte-dark-rule);
+  --tr-legacy-203c2c: var(--nyte-dark-rule);
+  --tr-legacy-21262d: var(--nyte-raised);
+  --tr-legacy-22342a: var(--nyte-dark-rule);
+  --tr-legacy-232b26: var(--nyte-raised);
+  --tr-legacy-234636: var(--nyte-dark-rule);
+  --tr-legacy-2355a6: var(--nyte-deep-purple);
+  --tr-legacy-2355a6-0f: color-mix(in srgb, var(--nyte-deep-purple) 5.9%, transparent);
+  --tr-legacy-2355a6-14: color-mix(in srgb, var(--nyte-deep-purple) 7.8%, transparent);
+  --tr-legacy-24292f: var(--nyte-raised);
+  --tr-legacy-244937: var(--nyte-dark-rule);
+  --tr-legacy-2457a6: var(--nyte-deep-purple);
+  --tr-legacy-252d27: var(--nyte-raised);
+  --tr-legacy-273244-b8: color-mix(in srgb, var(--nyte-dark-rule) 72.2%, transparent);
+  --tr-legacy-273c4d: var(--nyte-dark-rule);
+  --tr-legacy-29332d: var(--nyte-dark-rule);
+  --tr-legacy-2a332c: var(--nyte-dark-rule);
+  --tr-legacy-2a332d: var(--nyte-dark-rule);
+  --tr-legacy-2a3b32: var(--nyte-dark-rule);
+  --tr-legacy-2b3a46: var(--nyte-dark-rule);
+  --tr-legacy-2c6ecb: var(--nyte-deep-purple);
+  --tr-legacy-2ea043: var(--nyte-lime);
+  --tr-legacy-2f3731: var(--nyte-dark-rule);
+  --tr-legacy-30363d: var(--nyte-dark-rule);
+  --tr-legacy-30363d-e6: color-mix(in srgb, var(--nyte-dark-rule) 90.2%, transparent);
+  --tr-legacy-33403a: var(--nyte-dark-rule);
+  --tr-legacy-33414d: var(--nyte-dark-rule);
+  --tr-legacy-33473b: var(--nyte-dark-rule);
+  --tr-legacy-3b4b65: var(--nyte-ink-2);
+  --tr-legacy-3f6583: var(--nyte-deep-purple);
+  --tr-legacy-3fb950: var(--nyte-lime);
+  --tr-legacy-3fb950-14: color-mix(in srgb, var(--nyte-lime) 7.8%, transparent);
+  --tr-legacy-3fb950-17: color-mix(in srgb, var(--nyte-lime) 9%, transparent);
+  --tr-legacy-3fb950-24: color-mix(in srgb, var(--nyte-lime) 14.1%, transparent);
+  --tr-legacy-3fb950-57: color-mix(in srgb, var(--nyte-lime) 34.1%, transparent);
+  --tr-legacy-3fb950-66: color-mix(in srgb, var(--nyte-lime) 40%, transparent);
+  --tr-legacy-42e07f: var(--nyte-lime);
+  --tr-legacy-42e07f-38: color-mix(in srgb, var(--nyte-lime) 22%, transparent);
+  --tr-legacy-4493f8: var(--nyte-link);
+  --tr-legacy-4493f8-12: color-mix(in srgb, var(--nyte-link) 7.1%, transparent);
+  --tr-legacy-4493f8-14: color-mix(in srgb, var(--nyte-link) 7.8%, transparent);
+  --tr-legacy-4493f8-17: color-mix(in srgb, var(--nyte-link) 9%, transparent);
+  --tr-legacy-4493f8-1a: color-mix(in srgb, var(--nyte-link) 10.2%, transparent);
+  --tr-legacy-4493f8-1f: color-mix(in srgb, var(--nyte-link) 12.2%, transparent);
+  --tr-legacy-4493f8-2e: color-mix(in srgb, var(--nyte-link) 18%, transparent);
+  --tr-legacy-4493f8-33: color-mix(in srgb, var(--nyte-link) 20%, transparent);
+  --tr-legacy-4493f8-42: color-mix(in srgb, var(--nyte-link) 25.9%, transparent);
+  --tr-legacy-4493f8-4c: color-mix(in srgb, var(--nyte-link) 29.8%, transparent);
+  --tr-legacy-4493f8-52: color-mix(in srgb, var(--nyte-link) 32.2%, transparent);
+  --tr-legacy-4493f8-59: color-mix(in srgb, var(--nyte-link) 34.9%, transparent);
+  --tr-legacy-4493f8-66: color-mix(in srgb, var(--nyte-link) 40%, transparent);
+  --tr-legacy-4493f8-80: color-mix(in srgb, var(--nyte-link) 50.2%, transparent);
+  --tr-legacy-4493f8-ad: color-mix(in srgb, var(--nyte-link) 67.8%, transparent);
+  --tr-legacy-454d42: var(--nyte-ink-2);
+  --tr-legacy-456087: var(--nyte-deep-purple);
+  --tr-legacy-456087-59: color-mix(in srgb, var(--nyte-deep-purple) 34.9%, transparent);
+  --tr-legacy-475467: var(--nyte-ink-2);
+  --tr-legacy-4a6a85: var(--nyte-deep-purple);
+  --tr-legacy-4ade80: var(--nyte-lime);
+  --tr-legacy-526859: var(--nyte-green);
+  --tr-legacy-5c6974: var(--nyte-ink-2);
+  --tr-legacy-5e6b62: var(--nyte-ink-2);
+  --tr-legacy-6467f2-38: color-mix(in srgb, var(--nyte-purple) 22%, transparent);
+  --tr-legacy-6467f2-99: color-mix(in srgb, var(--nyte-purple) 60%, transparent);
+  --tr-legacy-6467f2-b2: color-mix(in srgb, var(--nyte-purple) 69.8%, transparent);
+  --tr-legacy-6b7280: #8E877E;
+  --tr-legacy-6b9480: var(--nyte-lime);
+  --tr-legacy-779080: var(--nyte-lime);
+  --tr-legacy-788479: #8E877E;
+  --tr-legacy-7be0b1: var(--nyte-lime);
+  --tr-legacy-7be0b1-14: color-mix(in srgb, var(--nyte-lime) 7.8%, transparent);
+  --tr-legacy-7be0b1-1f: color-mix(in srgb, var(--nyte-lime) 12.2%, transparent);
+  --tr-legacy-7be0b1-2e: color-mix(in srgb, var(--nyte-lime) 18%, transparent);
+  --tr-legacy-7be0b1-47: color-mix(in srgb, var(--nyte-lime) 27.8%, transparent);
+  --tr-legacy-7be0b1-4c: color-mix(in srgb, var(--nyte-lime) 29.8%, transparent);
+  --tr-legacy-7be0b1-52: color-mix(in srgb, var(--nyte-lime) 32.2%, transparent);
+  --tr-legacy-7be0b1-73: color-mix(in srgb, var(--nyte-lime) 45.1%, transparent);
+  --tr-legacy-7be0b1-e6: color-mix(in srgb, var(--nyte-lime) 90.2%, transparent);
+  --tr-legacy-7caa90: var(--nyte-lime);
+  --tr-legacy-86dbb1: var(--nyte-lime);
+  --tr-legacy-88b4e2: var(--nyte-link);
+  --tr-legacy-8a5a00: var(--nyte-yellow);
+  --tr-legacy-8b949e: #9A938A;
+  --tr-legacy-8bb4d6: var(--nyte-link);
+  --tr-legacy-8bb4d6-0d: color-mix(in srgb, var(--nyte-link) 5.1%, transparent);
+  --tr-legacy-8bb4d6-1f: color-mix(in srgb, var(--nyte-link) 12.2%, transparent);
+  --tr-legacy-8bb4d6-29: color-mix(in srgb, var(--nyte-link) 16.1%, transparent);
+  --tr-legacy-8bb4d6-47: color-mix(in srgb, var(--nyte-link) 27.8%, transparent);
+  --tr-legacy-8d96a3: #9A938A;
+  --tr-legacy-8f3d22: var(--nyte-orange);
+  --tr-legacy-8fb0c9: var(--nyte-link);
+  --tr-legacy-8fc3a5: var(--nyte-lime);
+  --tr-legacy-8fc3a5-8a: color-mix(in srgb, var(--nyte-lime) 54.1%, transparent);
+  --tr-legacy-90a795: var(--nyte-lime);
+  --tr-legacy-93c5fd: var(--nyte-link);
+  --tr-legacy-98a198: #9A938A;
+  --tr-legacy-991b1b: var(--nyte-orange);
+  --tr-legacy-9ac2ff: var(--nyte-link);
+  --tr-legacy-9ca3af: #9A938A;
+  --tr-legacy-9da99b: var(--nyte-ink-2-dark);
+  --tr-legacy-9ee6b8: var(--nyte-lime);
+  --tr-legacy-a1b5a8: var(--nyte-ink-2-dark);
+  --tr-legacy-a8d9bd: var(--nyte-lime);
+  --tr-legacy-a8e0bb: var(--nyte-lime);
+  --tr-legacy-acb5a4: var(--nyte-ink-2-dark);
+  --tr-legacy-adbbb2: var(--nyte-ink-2-dark);
+  --tr-legacy-aeb3aa: var(--nyte-ink-2-dark);
+  --tr-legacy-b00020: var(--nyte-orange);
+  --tr-legacy-b42318: var(--nyte-orange);
+  --tr-legacy-b7e4ca: var(--nyte-lime);
+  --tr-legacy-b87b13: var(--nyte-yellow);
+  --tr-legacy-b8c6d2: var(--nyte-ink-2-dark);
+  --tr-legacy-b8d5ee: var(--nyte-link);
+  --tr-legacy-b8d8c5: var(--nyte-lime);
+  --tr-legacy-b8dec9: var(--nyte-lime);
+  --tr-legacy-b8f1cb: var(--nyte-lime-tint);
+  --tr-legacy-bac9bf: var(--nyte-ink-2-dark);
+  --tr-legacy-bcd6e8: var(--nyte-link);
+  --tr-legacy-bfdfca: var(--nyte-lime);
+  --tr-legacy-bfe0cd: var(--nyte-lime);
+  --tr-legacy-c0e1ff: var(--nyte-link);
+  --tr-legacy-c3c9c3: var(--nyte-stone);
+  --tr-legacy-c3d2df: var(--nyte-stone);
+  --tr-legacy-c4d3c9: var(--nyte-stone);
+  --tr-legacy-c5d1ca: var(--nyte-stone);
+  --tr-legacy-c8d7e5: var(--nyte-stone);
+  --tr-legacy-c8ead7: var(--nyte-lime);
+  --tr-legacy-c9d0c5: var(--nyte-stone);
+  --tr-legacy-c9d1d9: var(--nyte-stone);
+  --tr-legacy-cad8e5: var(--nyte-stone);
+  --tr-legacy-cbd3c8: var(--nyte-stone);
+  --tr-legacy-cce8d7: var(--nyte-lime);
+  --tr-legacy-cd6116: var(--nyte-orange);
+  --tr-legacy-cfd6dd: var(--nyte-stone);
+  --tr-legacy-d0d5dd: var(--nyte-stone);
+  --tr-legacy-d0ded7: var(--nyte-stone);
+  --tr-legacy-d2452a: var(--nyte-orange);
+  --tr-legacy-d2452a-47: color-mix(in srgb, var(--nyte-orange) 27.8%, transparent);
+  --tr-legacy-d29922: var(--nyte-yellow);
+  --tr-legacy-d29922-24: color-mix(in srgb, var(--nyte-yellow) 14.1%, transparent);
+  --tr-legacy-d29922-6b: color-mix(in srgb, var(--nyte-yellow) 42%, transparent);
+  --tr-legacy-d3d6f0: var(--nyte-link);
+  --tr-legacy-d49b23: var(--nyte-yellow);
+  --tr-legacy-d49b23-3d: color-mix(in srgb, var(--nyte-yellow) 23.9%, transparent);
+  --tr-legacy-d6dcd6: var(--nyte-stone);
+  --tr-legacy-d8e1e8: var(--nyte-stone);
+  --tr-legacy-d8e1e8-e6: color-mix(in srgb, var(--nyte-stone) 90.2%, transparent);
+  --tr-legacy-d8e6f3: var(--nyte-stone);
+  --tr-legacy-d8ffe9: var(--nyte-lime-tint);
+  --tr-legacy-d9e0ea: var(--nyte-stone);
+  --tr-legacy-d9f2e3: #F1EEE7;
+  --tr-legacy-db8a6a: var(--nyte-orange);
+  --tr-legacy-dce5e0: var(--nyte-stone);
+  --tr-legacy-dfe6ec: #F1EEE7;
+  --tr-legacy-dfe9f6: #F1EEE7;
+  --tr-legacy-e2761b: var(--nyte-orange);
+  --tr-legacy-e2c98a: var(--nyte-yellow);
+  --tr-legacy-e2e8f0: #F1EEE7;
+  --tr-legacy-e5e8df: #F1EEE7;
+  --tr-legacy-e5f6ec: #F1EEE7;
+  --tr-legacy-e6edf3: #F1EEE7;
+  --tr-legacy-e6edf3-99: color-mix(in srgb, #F1EEE7 60%, transparent);
+  --tr-legacy-ead49b: var(--nyte-yellow-tint);
+  --tr-legacy-eaf6ff: var(--nyte-cream);
+  --tr-legacy-ede8db-1a: color-mix(in srgb, #F1EEE7 10.2%, transparent);
+  --tr-legacy-ede8db-38: color-mix(in srgb, #F1EEE7 22%, transparent);
+  --tr-legacy-edf2f6: #F1EEE7;
+  --tr-legacy-edf6ff: var(--nyte-cream);
+  --tr-legacy-edf8f5: var(--nyte-cream);
+  --tr-legacy-eef0e9: #F1EEE7;
+  --tr-legacy-eef8f2: var(--nyte-cream);
+  --tr-legacy-eefaf3: var(--nyte-cream);
+  --tr-legacy-f0b3a6: #FFB49A;
+  --tr-legacy-f0f6fc: var(--nyte-cream);
+  --tr-legacy-f0f6ff: var(--nyte-cream);
+  --tr-legacy-f0faf4: var(--nyte-cream);
+  --tr-legacy-f1c1bb: #FFB49A;
+  --tr-legacy-f1fff5: var(--nyte-cream);
+  --tr-legacy-f2c879: var(--nyte-yellow);
+  --tr-legacy-f2efe6: #F1EEE7;
+  --tr-legacy-f2faf6: var(--nyte-cream);
+  --tr-legacy-f3f0e7: #F1EEE7;
+  --tr-legacy-f5f9fc: var(--nyte-cream);
+  --tr-legacy-f6cf72: var(--nyte-yellow);
+  --tr-legacy-f6f6f3: var(--nyte-cream);
+  --tr-legacy-f6f8fa: var(--nyte-cream);
+  --tr-legacy-f6f8fb: var(--nyte-cream);
+  --tr-legacy-f85149: var(--nyte-orange);
+  --tr-legacy-f85149-1f: color-mix(in srgb, var(--nyte-orange) 12.2%, transparent);
+  --tr-legacy-f85149-66: color-mix(in srgb, var(--nyte-orange) 40%, transparent);
+  --tr-legacy-f87171-1f: color-mix(in srgb, var(--nyte-orange) 12.2%, transparent);
+  --tr-legacy-f87171-73: color-mix(in srgb, var(--nyte-orange) 45.1%, transparent);
+  --tr-legacy-f8fafc: var(--nyte-cream);
+  --tr-legacy-f8fbfd: var(--nyte-cream);
+  --tr-legacy-fbbf24: var(--nyte-yellow);
+  --tr-legacy-fbfcfd: var(--nyte-cream);
+  --tr-legacy-fecaca: #FFB49A;
+  --tr-legacy-ff0033: var(--nyte-orange);
+  --tr-legacy-ffb1a4: #FFB49A;
+  --tr-legacy-ffeb3b-73: color-mix(in srgb, var(--nyte-yellow-tint) 45.1%, transparent);
+  --tr-legacy-fff7f6: var(--nyte-cream);
+  --tr-legacy-fff8e4: var(--nyte-cream);
+  --tr-legacy-ffffff: var(--nyte-cream);
+  --tr-legacy-ffffff-0a: color-mix(in srgb, var(--nyte-cream) 3.9%, transparent);
+  --tr-legacy-ffffff-0f: color-mix(in srgb, var(--nyte-cream) 5.9%, transparent);
+  --tr-legacy-ffffff-14: color-mix(in srgb, var(--nyte-cream) 7.8%, transparent);
+  --tr-legacy-ffffff-1a: color-mix(in srgb, var(--nyte-cream) 10.2%, transparent);
+  --tr-legacy-ffffff-1f: color-mix(in srgb, var(--nyte-cream) 12.2%, transparent);
+  --tr-legacy-ffffff-26: color-mix(in srgb, var(--nyte-cream) 14.9%, transparent);
+  --tr-legacy-ffffff-29: color-mix(in srgb, var(--nyte-cream) 16.1%, transparent);
+  --tr-legacy-ffffff-2e: color-mix(in srgb, var(--nyte-cream) 18%, transparent);
+  --tr-legacy-ffffff-33: color-mix(in srgb, var(--nyte-cream) 20%, transparent);
+  --tr-legacy-ffffff-4c: color-mix(in srgb, var(--nyte-cream) 29.8%, transparent);
+  --tr-legacy-ffffff-59: color-mix(in srgb, var(--nyte-cream) 34.9%, transparent);
+  --tr-legacy-ffffff-66: color-mix(in srgb, var(--nyte-cream) 40%, transparent);
+  --tr-legacy-ffffff-8c: color-mix(in srgb, var(--nyte-cream) 54.9%, transparent);
+  --tr-legacy-ffffff-99: color-mix(in srgb, var(--nyte-cream) 60%, transparent);
+  --tr-legacy-ffffff-b8: color-mix(in srgb, var(--nyte-cream) 72.2%, transparent);
+  --tr-legacy-ffffff-c7: color-mix(in srgb, var(--nyte-cream) 78%, transparent);
+  --tr-legacy-ffffff-d1: color-mix(in srgb, var(--nyte-cream) 82%, transparent);
+  --tr-legacy-ffffff-d9: color-mix(in srgb, var(--nyte-cream) 85.1%, transparent);
+  --tr-legacy-ffffff-e6: color-mix(in srgb, var(--nyte-cream) 90.2%, transparent);
+  --tr-legacy-ffffff-f0: color-mix(in srgb, var(--nyte-cream) 94.1%, transparent);
+
+  background-color: var(--nyte-ink);
+  color: var(--nyte-cream);
+  color-scheme: dark;
+}
+
+/* ---- Components (NYTE Component Specs V2) ---- */
+
+/* Buttons: square, 1.5 px Ink rule, Medium. Primary is the Orange fill;
+   hover turns any button Ink with a Cream label. */
+:root[data-brand="nyte"] :is(
+  .button.button-primary,
+  .button.button-secondary,
+  .btn,
+  .tm-button,
+  .tx-button,
+  .credits-submit
+) {
+  border-width: 1.5px;
+  border-radius: 0;
+  font-weight: 500;
+  box-shadow: none;
+  transition:
+    background-color 160ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 160ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    color 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+:root[data-brand="nyte"] :is(
+  .button.button-primary,
+  .btn.primary,
+  .token-exchange .tm-primary,
+  .tx-button,
+  .credits-submit
+) {
+  border-color: var(--nyte-ink);
+  background: var(--nyte-orange);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(
+  .button.button-secondary,
+  .btn.secondary,
+  .btn.green,
+  .tm-button:not(.tm-primary)
+) {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(
+  .button.button-primary,
+  .button.button-secondary,
+  .btn.primary,
+  .btn.secondary,
+  .btn.green,
+  .tm-button,
+  .tx-button,
+  .credits-submit
+):hover {
+  border-color: var(--nyte-ink);
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] .btn:not(.primary, .secondary, .green, .danger) {
+  border-color: var(--nyte-ink-2-dark);
+}
+
+/* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+  :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
+  border-color: var(--nyte-cream);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+  :is(.button.button-primary, .btn.primary) {
+  border-color: var(--nyte-orange);
+}
+
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+  :is(.button, .btn):hover {
+  border-color: var(--nyte-cream);
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+/* Display type: Pelikan Light with tight tracking; headings Medium */
+:root[data-brand="nyte"] :is(h1, h2) {
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+
+:root[data-brand="nyte"] :is(h3, h4) {
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+:root[data-brand="nyte"] :is(h1, h2) :is(b, strong) {
+  font-weight: 500;
+}
+
+/* Eyebrow: a 40 x 4 px bar in the page's lead colour over a Condensed
+   caps label. On a colour field the bar is Ink. */
+:root[data-brand="nyte"] :is(.eyebrow, .kicker, .md-eyebrow, .tm-eyebrow, .panel-kicker) {
+  color: var(--nyte-ink);
+  font-family: "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+:root[data-brand="nyte"] :is(.eyebrow, .kicker, .md-eyebrow, .tm-eyebrow)::before {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin-bottom: 10px;
+  background: var(--nyte-lead);
+}
+
+:root[data-brand="nyte"] :is(.trs, .trpr) :is(.eyebrow, .kicker)::before {
+  background: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+  :is(.eyebrow, .kicker) {
+  color: var(--nyte-cream);
+}
+
+/* The Band: a lead-colour rule under the Ink header (the kit's Band under a
+   Cream hero) */
+:root[data-brand="nyte"] .trnav .tbar {
+  box-shadow: inset 0 -5px 0 var(--nyte-lead);
+}
+
+/* Links in prose: Deep purple, underlined; Medium weight */
+:root[data-brand="nyte"] :is(main, .page, article) p a:not(.button, .btn) {
+  color: var(--nyte-deep-purple);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+/* Focus: 2 px solid outline in the text colour, never removed */
+:root[data-brand="nyte"] :focus-visible {
+  outline: 2px solid var(--nyte-ink);
+  outline-offset: 2px;
+}
+
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) :focus-visible {
+  outline-color: var(--nyte-cream);
+}
+
+/* Buttons on a colour field take an Ink rule and label */
+:root[data-brand="nyte"] :is(.trs, .trpr) .button.button-secondary {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(.trs, .trpr) .button.button-secondary:hover {
+  border-color: var(--nyte-ink);
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+/* Large decorative quote mark on /vibe-coders */
+:root[data-brand="nyte"] .cc-moment-mark {
+  color: var(--nyte-lead-ink);
+}
+
+/* Selected segments and tabs: a 3 px lead-colour underline (kit Tabs);
+   segmented controls fill Ink */
+:root[data-brand="nyte"] .section-tabs a.active {
+  border-color: transparent;
+  border-bottom: 3px solid var(--nyte-lead);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .usage-segmented-control input:checked + span {
+  border-color: var(--nyte-ink);
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+/* Console navigation: the current page carries the lead bar */
+:root[data-brand="nyte"] .sidebar-link.active {
+  background: var(--nyte-gray);
+  color: var(--nyte-ink);
+  box-shadow: inset 4px 0 0 var(--nyte-lead);
+}
+
+/* No decorative gradients or dot textures in the kit */
+:root[data-brand="nyte"] :is(.console-topbar, .social-rewards-head) {
+  background-image: none;
+}
+
+:root[data-brand="nyte"] :is(.console-topbar, .social-rewards-head)::before,
+:root[data-brand="nyte"] .social-rewards-head::after {
+  background-image: none;
+}
+
+
+
+/* The console sheet sets its colour names on :root; the Ink top bar
+   re-points them at its own values. */
+:root[data-brand="nyte"] .console-topbar {
+  --bg: var(--tr-legacy-0d1117, #0d1117);
+  --panel: var(--tr-legacy-161b22, #161b22);
+  --panel2: var(--tr-legacy-1c2230, #1c2230);
+  --ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --inkstrong: var(--tr-legacy-f0f6fc, #f0f6fc);
+  --muted: var(--tr-legacy-8b949e, #8b949e);
+  --line: var(--tr-legacy-30363d, #30363d);
+  --line2: var(--tr-legacy-21262d, #21262d);
+  --blue: var(--tr-legacy-4493f8, #4493f8);
+  --green: var(--tr-legacy-3fb950, #3fb950);
+  --amber: var(--tr-legacy-d29922, #d29922);
+  --red: var(--tr-legacy-f85149, #f85149);
+  --soft: var(--tr-legacy-16263b, #16263b);
+  --rust: var(--tr-legacy-db8a6a, #db8a6a);
+  --top: var(--tr-legacy-0d1117-c7, rgb(13,17,23,.78));
+  --btn: var(--tr-legacy-21262d, #21262d);
+  --ring: var(--tr-legacy-4493f8, #4493f8);
+  --shadow: var(--tr-legacy-010409-80, rgb(1,4,9,.5));
+  --shadow-strong: var(--tr-legacy-010409-b2, rgb(1,4,9,.7));
+  --code-bg: var(--tr-legacy-010409, #010409);
+  --code-ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --code-line: var(--tr-legacy-30363d, #30363d);
+  --code-muted: var(--tr-legacy-8b949e, #8b949e);
+  --code-pre-bg: var(--tr-legacy-0d1117, #0d1117);
+  --chip-bg: var(--tr-legacy-3fb950-24, rgb(63,185,80,.14));
+  --chip-border: var(--tr-legacy-3fb950-57, rgb(63,185,80,.34));
+  --pill-bg: var(--tr-legacy-21262d, #21262d);
+  --pill-ink: var(--tr-legacy-c9d1d9, #c9d1d9);
+  --good-bg: var(--tr-legacy-3fb950-24, rgb(63,185,80,.14));
+  --good-border: var(--tr-legacy-3fb950-66, rgb(63,185,80,.4));
+  --warn-bg: var(--tr-legacy-d29922-24, rgb(210,153,34,.14));
+  --warn-border: var(--tr-legacy-d29922-6b, rgb(210,153,34,.42));
+  --danger-bg: var(--tr-legacy-f85149-1f, rgb(248,81,73,.12));
+  --danger-border: var(--tr-legacy-f85149-66, rgb(248,81,73,.4));
+  --history-empty: var(--tr-legacy-21262d, #21262d);
+  --glass-bg: var(--tr-legacy-161b22-d1, rgb(22,27,34,.82));
+  --glass-border: var(--tr-legacy-30363d-e6, rgb(48,54,61,.9));
+  --glass-bg-soft: var(--tr-legacy-161b22-a8, rgb(22,27,34,.66));
+  --grid-line: var(--tr-legacy-4493f8-1a, rgb(68,147,248,.10));
+  --grid-line-soft: var(--tr-legacy-4493f8-12, rgb(68,147,248,.07));
+}
+
+/* Homepage stat panel: a full-strength lead-colour field with Ink text */
+:root[data-brand="nyte"] .sp {
+  background: var(--nyte-lead);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .sp * {
+  color: var(--nyte-ink);
+}
+
+/* Status badges on /encrypted-ai (page-local colours, not the old dark site) */
+:root[data-brand="nyte"] .eai-badge {
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .eai-badge.verified {
+  border-color: var(--nyte-green);
+  background: var(--nyte-lime);
+}
+
+:root[data-brand="nyte"] .eai-badge.watchlist {
+  color: var(--nyte-ink-2);
+}
+
+/* Notes that used the on-photo colour on a plain panel read Ink */
+:root[data-brand="nyte"] :is(
+  .compare-band .compare-cta-note,
+  .model-detail-page .md-closing .md-no-card,
+  .press-q
+) {
+  color: var(--nyte-ink);
+}
+
+/* The story card inside the stat panel shares the panel's field */
+:root[data-brand="nyte"] .trs .sp :is(.stat, .story-actions) {
+  background: transparent;
+}
+
+:root[data-brand="nyte"] .trs .sp :is(.body, .go, .who, .nums, .story-results, .disclosure-indicator) {
+  color: var(--nyte-ink);
+}
+
+/* Step numbers in the /vibe-coders flow read Ink, not a fill colour */
+:root[data-brand="nyte"] .cc-hero-flow li > span {
+  color: var(--nyte-ink);
+}
+
+/* Buttons on the stat panel: Ink outline, Ink label */
+:root[data-brand="nyte"] .trs .sp :is(.button, a.button) {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .trs .sp :is(.button, a.button):hover {
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+/* ---- Homepage hero: Ink, centred, no photograph ----
+   TrustedRouter's hero is Ink (it sets the site apart from the Token
+   Exchange's coloured fields), with the one emphasised phrase in Lime and a
+   Lime Band closing the hero. The closing call to action is a Lime field.
+   Text on a field is Ink (COL-03); type on Ink is Cream. */
+:root[data-brand="nyte"] #top .hero {
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] #top .hero > .copy::before {
+  content: "";
+  display: block;
+  width: 40px;
+  flex: none;
+  align-self: center;
+  height: 4px;
+  min-height: 0;
+  max-height: 4px;
+  margin: 0 auto 14px;
+  background: var(--nyte-lime);
+}
+
+:root[data-brand="nyte"] #top::after {
+  content: "";
+  display: block;
+  height: var(--nyte-band-height);
+  background: var(--nyte-ink) url("/static/nyte/band-lime.svg") 0 0 / 100% 120px no-repeat;
+}
+
+/* First screen: the hero, its model marquee and the Band fit in the
+   viewport under the header and the Token Exchange strip, on any phone
+   tall enough to hold them; shorter screens simply scroll. */
+:root[data-brand="nyte"] {
+  --nyte-band-height: 120px;
+}
+
+:root[data-brand="nyte"] #top .hero {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(20px, calc(var(--hero-vh, 1svh) * 5), 64px);
+  min-height: calc(
+    var(--hero-vh, 1svh) * 100 - var(--preview-bar-height, 0px) - var(--site-header-height, 64px)
+    - var(--exchange-banner-height, 0px) - var(--nyte-band-height)
+  );
+  padding: clamp(20px, calc(var(--hero-vh, 1svh) * 5), 72px) 20px clamp(16px, calc(var(--hero-vh, 1svh) * 3), 40px);
+}
+
+:root[data-brand="nyte"] #top .hero > .copy {
+  position: static;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 0;
+}
+
+/* Free space goes above the bar and above the model names, so the copy
+   sits in the middle and the names stay just above the Band. */
+:root[data-brand="nyte"] #top .hero > .copy::before {
+  margin-top: auto;
+}
+
+:root[data-brand="nyte"] #top .hero .labs {
+  position: static;
+  width: 100%;
+  margin: auto auto 0;
+  padding-top: 24px;
+}
+
+:root[data-brand="nyte"] .closing-cta {
+  background: var(--nyte-lime);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta)::before,
+:root[data-brand="nyte"] #top .hero::after {
+  display: none;
+}
+
+:root[data-brand="nyte"] #top .hero :is(h1, .sub, .cta-note) {
+  color: var(--nyte-cream);
+  text-shadow: none;
+}
+
+:root[data-brand="nyte"] #top .hero h1 em {
+  color: var(--nyte-lime);
+  font-style: normal;
+}
+
+/* Model names in the type of the data voice, beside their logos */
+:root[data-brand="nyte"] #top .hero .labs {
+  background: transparent;
+}
+
+:root[data-brand="nyte"] #top .hero .lab {
+  color: var(--nyte-ink-2-dark);
+  font-family: var(--tr-font-family-mono);
+  text-shadow: none;
+}
+
+
+:root[data-brand="nyte"] #top .hero .button.button-primary {
+  border-color: var(--nyte-orange);
+}
+
+:root[data-brand="nyte"] #top .hero .button.button-secondary {
+  border-color: var(--nyte-cream);
+  background: transparent;
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] #top .hero .button:hover {
+  border-color: var(--nyte-cream);
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] #top .hero :focus-visible {
+  outline-color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] .closing-cta :is(h2, h2 em) {
+  color: var(--nyte-ink);
+  text-shadow: none;
+}
+
+:root[data-brand="nyte"] .closing-cta h2 em {
+  font-style: italic;
+}
+
+:root[data-brand="nyte"] .closing-cta .button.button-secondary {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .closing-cta .button:hover {
+  border-color: var(--nyte-ink);
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] .closing-cta :focus-visible {
+  outline-color: var(--nyte-ink);
+}
+
+/* On the homepage the hero's button is the one Orange button in view
+   (COL-05): the header Sign in is outlined, and the header has no lead band
+   because the Ink hero follows it. */
+:root[data-brand="nyte"]:has(#top .hero) .trnav .tbar {
+  box-shadow: inset 0 -1.5px 0 var(--nyte-dark-rule);
+}
+
+:root[data-brand="nyte"]:has(#top .hero) .trnav .signin.button.button-primary {
+  border-color: var(--nyte-cream);
+  background: transparent;
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"]:has(#top .hero) .trnav .signin.button.button-primary:hover {
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+/* Press: the outlet logos read Ink on the white list (they are drawn white
+   for the old dark site); the featured story is a lead-colour field. */
+:root[data-brand="nyte"] .trpr .press-src img {
+  filter: brightness(0);
+}
+
+:root[data-brand="nyte"] .trpr .press-lead {
+  background: var(--nyte-lead);
+}
+
+:root[data-brand="nyte"] .trpr .press-lead,
+:root[data-brand="nyte"] .trpr .press-lead * {
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .page .trpr .press-read {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .page .trpr .press-read:hover {
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+/* Phones: a shorter Band (four of its five rows, same 24 px pitch) and
+   tighter hero type so the first screen holds the whole hero. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] {
+    --nyte-band-height: 72px;
+  }
+
+  :root[data-brand="nyte"] #top .hero h1 {
+    font-size: clamp(40px, 11.5vw, 52px);
+  }
+
+  :root[data-brand="nyte"] #top .hero .sub {
+    margin: 16px 0 20px;
+    font-size: 17px;
+  }
+}
+
+/* Short laptop screens: a 96 px Band (four rows) keeps it in the first screen */
+@media (min-width: 761px) and (max-height: 860px) {
+  :root[data-brand="nyte"] {
+    --nyte-band-height: 96px;
+  }
+
+  :root[data-brand="nyte"] #top .hero {
+    gap: clamp(16px, calc(var(--hero-vh, 1svh) * 3), 40px);
+    padding-top: clamp(16px, calc(var(--hero-vh, 1svh) * 3), 48px);
+  }
+}
+
+/* Homepage hero: the bar stands alone, without the benefits line */
+:root[data-brand="nyte"] #top .hero .hero-promises {
+  display: none;
+}
+
+/* ---- Page heroes: Ink, full-bleed, closed by the page's lead-colour Band ----
+   Every public page hero is Ink, which sets TrustedRouter apart from the
+   Token Exchange's colour-field heroes. The page family still shows in the
+   eyebrow bar and in the Band under the hero. */
+:root[data-brand="nyte"] body {
+  overflow-x: clip;
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+  border-bottom: 0;
+  background: var(--nyte-ink);
+  color: var(--tr-color-text-primary);
+  box-shadow: 0 0 0 100vmax var(--nyte-ink);
+  clip-path: inset(-100vmax -100vmax 0);
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+  content: "";
+  display: block;
+  grid-column: 1 / -1;
+  height: 96px;
+  margin: 0 calc(50% - 50vw) -56px;
+  background: var(--nyte-ink) var(--nyte-band) 0 0 / 100% 120px no-repeat;
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) + * {
+  margin-top: 56px;
+}
+
+/* The public sheets set their colour names on :root; the Ink page hero
+   re-points them at its own (dark) values. */
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+  --bg: var(--tr-legacy-0d1117, #0d1117);
+  --panel: var(--tr-legacy-161b22, #161b22);
+  --panel2: var(--tr-legacy-1c2230, #1c2230);
+  --ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --inkstrong: var(--tr-legacy-f0f6fc, #f0f6fc);
+  --muted: var(--tr-legacy-8b949e, #8b949e);
+  --line: var(--tr-legacy-30363d, #30363d);
+  --line2: var(--tr-legacy-21262d, #21262d);
+  --blue: var(--tr-legacy-4493f8, #4493f8);
+  --green: var(--tr-legacy-3fb950, #3fb950);
+  --amber: var(--tr-legacy-d29922, #d29922);
+  --red: var(--tr-legacy-f85149, #f85149);
+  --soft: var(--tr-legacy-16263b, #16263b);
+  --rust: var(--tr-legacy-db8a6a, #db8a6a);
+  --top: var(--tr-legacy-0d1117-c7, rgb(13,17,23,.78));
+  --btn: var(--tr-legacy-21262d, #21262d);
+  --ring: var(--tr-legacy-4493f8, #4493f8);
+  --shadow: var(--tr-legacy-010409-80, rgb(1,4,9,.5));
+  --shadow-strong: var(--tr-legacy-010409-b2, rgb(1,4,9,.7));
+  --code-bg: var(--tr-legacy-010409, #010409);
+  --code-ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --code-line: var(--tr-legacy-30363d, #30363d);
+  --code-muted: var(--tr-legacy-8b949e, #8b949e);
+  --code-pre-bg: var(--tr-legacy-0d1117, #0d1117);
+  --chip-bg: var(--tr-legacy-3fb950-24, rgb(63,185,80,.14));
+  --chip-border: var(--tr-legacy-3fb950-57, rgb(63,185,80,.34));
+  --pill-bg: var(--tr-legacy-21262d, #21262d);
+  --pill-ink: var(--tr-legacy-c9d1d9, #c9d1d9);
+  --good-bg: var(--tr-legacy-3fb950-24, rgb(63,185,80,.14));
+  --good-border: var(--tr-legacy-3fb950-66, rgb(63,185,80,.4));
+  --warn-bg: var(--tr-legacy-d29922-24, rgb(210,153,34,.14));
+  --warn-border: var(--tr-legacy-d29922-6b, rgb(210,153,34,.42));
+  --danger-bg: var(--tr-legacy-f85149-1f, rgb(248,81,73,.12));
+  --danger-border: var(--tr-legacy-f85149-66, rgb(248,81,73,.4));
+  --history-empty: var(--tr-legacy-21262d, #21262d);
+  --glass-bg: var(--tr-legacy-161b22-d1, rgb(22,27,34,.82));
+  --glass-border: var(--tr-legacy-30363d-e6, rgb(48,54,61,.9));
+  --glass-bg-soft: var(--tr-legacy-161b22-a8, rgb(22,27,34,.66));
+  --grid-line: var(--tr-legacy-4493f8-1a, rgb(68,147,248,.10));
+  --grid-line-soft: var(--tr-legacy-4493f8-12, rgb(68,147,248,.07));
+  --green-black-0: var(--tr-color-surface-bg);
+  --line-1: var(--tr-color-line-rule-soft);
+  --line-3: var(--tr-color-line-rule);
+  --line-4: var(--tr-color-line-control);
+  --ivory: var(--tr-color-text-primary);
+  --ivory-dim: var(--tr-color-text-secondary);
+  --sage: var(--tr-color-accent-base);
+  --sage-bright: var(--tr-color-accent-hover);
+  --sage-dim: var(--tr-color-line-control);
+  --sage-deep: var(--tr-color-privacy-neutral-border);
+  --gold: var(--tr-color-privacy-zdr-text);
+  --gold-dim: var(--tr-color-privacy-zdr-border);
+  --gold-tint: var(--tr-color-privacy-zdr-bg);
+  --clay: var(--tr-color-error);
+  --clay-tint: var(--tr-color-diff-removed-bg);
+  --surface-page: var(--tr-color-surface-bg);
+  --surface-card: var(--tr-color-surface-panel);
+  --surface-raised: var(--tr-color-surface-panel-inset);
+  --surface-hover: var(--tr-color-surface-hover);
+  --surface-input: var(--tr-color-surface-control);
+  --text-display: var(--tr-color-text-primary);
+  --text-body: var(--tr-color-text-secondary);
+  --text-muted: var(--tr-color-text-tertiary);
+  --text-faint: var(--tr-color-text-quaternary);
+  --text-accent: var(--tr-color-accent-base);
+  --text-inverse: var(--tr-color-accent-ink);
+  --border-hairline: var(--tr-color-line-rule-soft);
+  --border-default: var(--tr-color-line-rule);
+  --border-strong: var(--tr-color-line-control);
+  --border-accent: var(--tr-color-line-strong);
+  --status-pending: var(--tr-color-privacy-zdr-text);
+}
+
+/* Heroes from the page sheets: the Band is a full-width row of its own
+   (row-layout heroes wrap it onto a new line) with room above it. */
+:root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+  flex-wrap: wrap;
+}
+
+:root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+  flex: none;
+  width: 100vw;
+  max-width: none;
+  margin-bottom: 0;
+}
+
+/* Grid heroes: the Band spans the grid with its bleed margins, so it never
+   widens a column */
+:root[data-brand="nyte"] :is(.models-page-hero, .bgb-hero)::after {
+  width: auto;
+}
+
+/* Green tokens and the Token Exchange drop their hero artwork (the photo
+   is not rendered), so their heroes size to the copy. */
+:root[data-brand="nyte"] :is(.green-hero, .tm-hero) {
+  min-height: 0;
+  overflow: visible;
+}
+
+:root[data-brand="nyte"] .green-hero-copy {
+  padding-bottom: 0;
+}
+
+/* Left-aligned narrow heroes span the content column so the Band reaches
+   both screen edges; their copy keeps its old measure. */
+:root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro) {
+  max-width: none;
+}
+
+:root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro) > * {
+  max-width: 900px;
+}
+
+:root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro)::after {
+  max-width: none;
+}
+
+/* The hero starts at the header: no page padding above it. The Band is
+   shorter on phones and short screens so the whole hero, Band included,
+   fits the first screen. */
+:root[data-brand="nyte"] main:has(> :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro):first-child) {
+  padding-top: 0;
+}
+
+:root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+  margin-top: 40px;
+}
+
+@media (max-width: 760px), (max-height: 760px) {
+  :root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+    height: 64px;
+    margin-top: 32px;
+    background-size: 100% 80px;
+  }
+}
+
+/* The offer strip: Deep Purple like the homepage exchange banner, above
+   the hero's painted Ink */
+:root[data-brand="nyte"] .model-promo {
+  position: relative;
+  z-index: 1;
+  border-bottom: 0;
+  background: var(--nyte-deep-purple);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] .model-promo-inner:hover {
+  background: color-mix(in srgb, var(--nyte-deep-purple) 88%, var(--nyte-cream));
+}
+
+:root[data-brand="nyte"] .model-promo-copy small {
+  opacity: 1;
+}
+
+/* /models hero: room between the lines, one screen tall */
+:root[data-brand="nyte"] .models-page-hero {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  padding: 40px 0 0;
+}
+
+:root[data-brand="nyte"] .models-page-hero h1 {
+  margin: 16px 0 16px;
+}
+
+:root[data-brand="nyte"] .models-page-hero-cta {
+  margin-top: 24px;
+}
+
+:root[data-brand="nyte"] .models-page-hero-links {
+  justify-content: flex-start;
+  gap: 10px 20px;
+  font-size: 15px;
+}
+
+/* Tablet and up: no side graphic, so the copy is centred */
+@media (min-width: 561px) {
+  :root[data-brand="nyte"] .models-page-hero {
+    text-align: center;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero .kicker {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero :is(h1, p) {
+    margin-inline: auto;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-links {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 560px) {
+  :root[data-brand="nyte"] .models-page-hero {
+    gap: 24px;
+    padding-top: 28px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero h1 {
+    margin: 14px 0 14px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero p {
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-cta .cta-note {
+    margin-top: 12px;
+  }
+
+}
+
+/* Swipe rows on phones: chip and link rows stay on one line and scroll
+   sideways. The fade at the right edge and the cut-off last item say
+   there is more; the fade clears at the end of the row. */
+@media (max-width: 560px) {
+  :root[data-brand="nyte"] :is(
+    .model-explorer > .model-filter-row,
+    .models-page-hero-links,
+    .model-result-card .catalog-privacy-summary,
+    .model-result-card .model-card-badges,
+    .model-result-card .model-card-providers
+  ) {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    white-space: nowrap;
+    padding-right: 40px;
+    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  }
+
+  :root[data-brand="nyte"] :is(
+    .model-explorer > .model-filter-row,
+    .models-page-hero-links,
+    .model-result-card .catalog-privacy-summary,
+    .model-result-card .model-card-badges,
+    .model-result-card .model-card-providers
+  )::-webkit-scrollbar {
+    display: none;
+  }
+
+  :root[data-brand="nyte"] :is(
+    .model-explorer > .model-filter-row,
+    .models-page-hero-links,
+    .model-result-card .catalog-privacy-summary,
+    .model-result-card .model-card-badges,
+    .model-result-card .model-card-providers
+  ) > * {
+    flex: none;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-links {
+    gap: 20px;
+  }
+
+  @supports (animation-timeline: scroll(self inline)) {
+    :root[data-brand="nyte"] :is(
+      .model-explorer > .model-filter-row,
+      .models-page-hero-links,
+      .model-result-card .catalog-privacy-summary,
+      .model-result-card .model-card-badges,
+      .model-result-card .model-card-providers
+    ) {
+      animation: nyte-fade-clear linear both;
+      animation-timeline: scroll(self inline);
+      animation-range: 85% 100%;
+    }
+  }
+}
+
+@keyframes nyte-fade-clear {
+  to {
+    mask-image: linear-gradient(to right, #000 100%, transparent);
+  }
+}
+
+/* Phones: the hero fills the first screen and its Band sits at the bottom
+   of it, whatever the phone's height. nyte-page.js measures where the hero
+   starts (--nyte-above-hero). Heroes taller than a screen just grow. The
+   blog index is left out: its hero is too short to fill a screen. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+    position: relative;
+    box-sizing: border-box;
+    min-height: calc(var(--hero-vh, 1svh) * 100 - var(--nyte-above-hero, 64px));
+    padding-bottom: 96px;
+  }
+
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 100vw;
+    height: 64px;
+    margin: 0;
+    background-size: 100% 80px;
+    transform: translateX(-50%);
+  }
+}
+
+/* The model page sets its colour names on its wrapper; the Ink hero
+   re-points them at the dark values. */
+:root[data-brand="nyte"] .model-detail-page .md-hero {
+  --md-bg: var(--tr-legacy-050706, #050706);
+  --md-text: var(--tr-legacy-edf8f5, #EDF8F5);
+  --md-secondary: var(--tr-legacy-c3c9c3, #C3C9C3);
+  --md-label: var(--tr-legacy-adbbb2, #ADBBB2);
+  --md-line: var(--tr-legacy-1e2621, #1E2621);
+  --md-line-strong: var(--tr-legacy-33403a, #33403A);
+  --md-control-line: var(--tr-legacy-526859, #526859);
+  --md-accent: var(--tr-legacy-cce8d7, #CCE8D7);
+  --md-accent-ink: var(--tr-legacy-10241a, #10241A);
+  --md-link: var(--tr-legacy-c0e1ff, #C0E1FF);
+  --md-highlight: var(--tr-legacy-1c3e2e, #1C3E2E);
+  --md-bar: var(--tr-legacy-6b9480, #6B9480);
+  --md-bar-top: var(--tr-legacy-9ee6b8, #9EE6B8);
+  --md-amber: var(--tr-legacy-f2c879, #F2C879);
+}
+
+/* Page-specific text and buttons that the Cream theme sets to Ink read
+   Cream on the Ink hero. */
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) .tm-eyebrow {
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) .tm-button:not(.tm-primary) {
+  border-color: var(--nyte-cream);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) .cc-hero-flow li > span {
+  color: var(--tr-color-text-tertiary);
+}
+
+/* The Ink hero meets the header: no Cream strip above it. Content above the
+   hero (the Trust page's agent prompt) keeps its own ground. */
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro):first-child {
+  margin-top: 0;
+}
+
+/* Anything placed above the hero (the Trust page's agent prompt) sits on
+   the same Ink, above the hero's painted ground. */
+:root[data-brand="nyte"] main > :has(~ :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) {
+  position: relative;
+  z-index: 1;
+}
+
+/* With an Ink hero the hero's button is the one Orange button in view:
+   the header Sign in is outlined, as on the homepage. */
+:root[data-brand="nyte"]:has(:is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) .trnav .tbar {
+  box-shadow: inset 0 -1.5px 0 var(--nyte-dark-rule);
+}
+
+:root[data-brand="nyte"]:has(:is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) .trnav .signin.button.button-primary {
+  border-color: var(--nyte-cream);
+  background: transparent;
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"]:has(:is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)) .trnav .signin.button.button-primary:hover {
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+/* Links in prose on Ink use the kit's light link colour */
+:root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .site-footer) p a:not(.button, .btn) {
+  color: var(--nyte-link);
+}

@@ -30,17 +30,17 @@
 .lb-table .provider-identity { display: inline-flex; max-width: 100%; }
 .lb-table img { width: 24px; height: 24px; flex-shrink: 0; }
 .lb-model { display: block; margin-bottom: 8px; color: var(--text-display); }
-.lb-badge { display: inline-block; margin: 6px 4px 0 0; padding: 2px 5px; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 4px; }
+.lb-badge { display: inline-block; margin: 6px 4px 0 0; padding: 2px 5px; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: var(--tr-square, 4px); }
 .lb-warning { color: var(--status-pending); }
 .lb-detail-cell { position: relative; }
-.lb-details dl { position: absolute; z-index: 5; right: 0; top: 42px; width: 290px; max-width: calc(100vw - 48px); padding: 16px; background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 6px 20px rgb(0 0 0 / 20%); }
+.lb-details dl { position: absolute; z-index: 5; right: 0; top: 42px; width: 290px; max-width: calc(100vw - 48px); padding: 16px; background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--tr-square, 6px); box-shadow: 0 6px 20px var(--tr-legacy-000000-33, rgb(0 0 0 / 20%)); }
 .lb-details dt { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
 .lb-details dt:first-child { margin-top: 0; }
 .lb-details dd { margin: 3px 0 0; overflow-wrap: anywhere; }
 .lb-empty { padding: 24px 0; color: var(--text-muted); }
 .lb-pagination { display: flex; align-items: center; gap: 8px; padding: 20px 0; }
 .lb-pagination output { margin-right: auto; font-size: 13px; }
-.lb-pagination button { width: 44px; height: 44px; padding: 0; border-radius: 4px; }
+.lb-pagination button { width: 44px; height: 44px; padding: 0; border-radius: var(--tr-square, 4px); }
 
 @media (width <= 700px) {
   .lb-hero h1 { font-size: 28px; }

@@ -74,8 +74,10 @@ def test_consent_styles_are_versioned_by_content(consent_page: tuple[BeautifulSo
     page, _ = consent_page
     static_dir = Path(views.__file__).parent / "static"
     stylesheets = ("tokens.css", "brand.css", "auth.css", "charter.css")
+    # The NYTE theme (the default) also loads its own sheet and script.
+    fingerprinted = (*stylesheets, "nyte-page.js", "nyte-theme.css")
     expected = hashlib.sha256(
-        b"".join((static_dir / name).read_bytes() for name in stylesheets)
+        b"".join((static_dir / name).read_bytes() for name in fingerprinted)
     ).hexdigest()[:16]
     for stylesheet in stylesheets:
         href = str(_element(page, f'link[href^="/static/{stylesheet}"]')["href"])

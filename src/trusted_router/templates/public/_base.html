@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="js-off">
+<html lang="en" class="js-off"{% if brand_theme() == "nyte" %} data-brand="nyte"{% endif %}>
 <head>
   {% set meta_title = title if preserve_title|default(false) else title|seo_title %}
   {% set meta_description = description|seo_meta_description %}
@@ -16,17 +16,17 @@
   <meta property="og:title" content="{{ meta_title }}">
   <meta property="og:description" content="{{ meta_description }}">
   <meta property="og:url" content="{{ site_url }}">
-  <meta property="og:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
+  <meta property="og:image" content="{{ og_image|default('https://trustedrouter.com/og.png')|brand_og }}">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing') }}">
+  <meta property="og:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing')|brand_og_alt(og_image|default('https://trustedrouter.com/og.png')) }}">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@TrustedRouter">
   <meta name="twitter:title" content="{{ meta_title }}">
   <meta name="twitter:description" content="{{ meta_description }}">
-  <meta name="twitter:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
-  <meta name="twitter:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing') }}">
+  <meta name="twitter:image" content="{{ og_image|default('https://trustedrouter.com/og.png')|brand_og }}">
+  <meta name="twitter:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing')|brand_og_alt(og_image|default('https://trustedrouter.com/og.png')) }}">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
   <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
   <link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin>
@@ -38,7 +38,7 @@
   <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
-</head>
+{% if brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ static_version|default('local') }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head>
 <body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
   {% block promotion %}{% endblock %}
