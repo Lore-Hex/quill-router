@@ -29,6 +29,20 @@ def test_returning_delisted_routes_are_rechecked_without_overriding_operator_hol
     ) == {"new", "failed", "returned"}
 
 
+def test_newly_priced_awaiting_price_route_is_canaried_before_activation(
+    tmp_path: Path,
+) -> None:
+    # google/gemini-omni-1.1-flash sat listed-but-unpriced from August; on
+    # 2026-11-06 a parser edit priced it and it went routable with no canary,
+    # then failed every request (Interactions API only; QUILL-ROUTER-GG).
+    manifest = tmp_path / "models.json"
+    manifest.write_text(json.dumps({"models": [
+        {"id": "unpriced", "routable": False, "routable_reason": "awaiting-price"},
+        {"id": "healthy", "routable": True},
+    ]}))
+    assert models_requiring_canary(manifest, {"unpriced", "healthy"}) == {"unpriced"}
+
+
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("failure", ["raise", "invalid_json", "empty", "missing"])
 def test_manifest_failure_rolls_back_before_other_providers_continue(

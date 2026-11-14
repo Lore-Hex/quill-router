@@ -367,7 +367,14 @@ def models_requiring_canary(
     *,
     failure_reason: str = "provider-canary-failed",
 ) -> frozenset[str]:
-    """Recheck new, failed, and returning delisted routes before activation."""
+    """Recheck new, failed, returning delisted, and newly priced routes.
+
+    A row listed while unpriced ("awaiting-price") has never passed a canary.
+    When a price first appears it must pass one before it becomes routable:
+    google/gemini-omni-1.1-flash went live on a parser price alone and failed
+    every request, because the model is served only by the Interactions API
+    (Sentry QUILL-ROUTER-GG).
+    """
 
     if not manifest_path.exists():
         return frozenset(discovered_model_ids)
@@ -385,7 +392,8 @@ def models_requiring_canary(
         model_id
         for model_id in discovered_model_ids
         if model_id not in existing
-        or existing[model_id].get("routable_reason") in {failure_reason, "delisted-upstream"}
+        or existing[model_id].get("routable_reason")
+        in {failure_reason, "delisted-upstream", "awaiting-price"}
     )
 
 

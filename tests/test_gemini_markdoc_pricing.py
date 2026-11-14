@@ -138,12 +138,52 @@ def test_markdoc_does_not_use_batch_or_another_models_standard_table() -> None:
     }
 
 
-@pytest.mark.parametrize("heading", ["Gemini 3.8 Flash TTS", "Gemini 2.5 Flash Image"])
+@pytest.mark.parametrize("heading", [
+    "Gemini 3.8 Flash TTS", "Gemini 2.5 Flash Image",
+    # Video generation, served only by the Interactions API (QUILL-ROUTER-GG).
+    "Gemini Omni 1.1 Flash", "Gemini Omni 1.2 Flash",
+])
 def test_markdoc_media_headings_are_not_text_prices(heading: str) -> None:
     source = f'## {heading} {{% id="media" %}}\n' + _tab(
         "Standard", _table("$1", "$2", "$0.10"),
     )
     assert parser.parse(source) == {}
+
+
+GEMINI_MARKDOC_2026_11_07 = (
+    Path(__file__).parent / "fixtures/pricing/gemini_aistudio_markdoc_2026-11-07.md"
+)
+
+
+def test_official_page_omni_video_models_are_not_priced_as_chat() -> None:
+    # The 2026-11-07 page prices Omni 1.1/1.2 Flash input and text output in
+    # the same table shape as chat models. Google serves Omni only through the
+    # Interactions API ("This model only supports Interactions API."), so a
+    # chat price made google/gemini-omni-1.1-flash a routable chat/completions
+    # route that failed every request (Sentry QUILL-ROUTER-GG).
+    from datetime import date
+
+    from scripts.pricing.gemini_prices import current_price_source
+
+    source = current_price_source(
+        GEMINI_MARKDOC_2026_11_07.read_text(encoding="utf-8"), today=date(2026, 11, 7),
+    )
+    prices = parser.parse(source)
+    assert not [model_id for model_id in prices if "omni" in model_id]
+    assert "google/gemini-3.8-flash" in prices
+
+
+def test_ai_studio_omni_routes_are_not_routable_chat() -> None:
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    rows = json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    omni = {row["id"]: row for row in rows if "omni" in row["id"]}
+    assert "google/gemini-omni-1.1-flash" in omni
+    assert all(row.get("routable") is False for row in omni.values())
+    assert not [
+        endpoint for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "google-ai-studio" and "omni" in endpoint.model_id
+    ]
 
 
 def _result(prices: dict[str, ModelPrice]) -> ProviderPricingResult:

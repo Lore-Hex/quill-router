@@ -894,9 +894,8 @@
       "upstream_id": "gemini-omni-1.1-flash",
       "context_length": 131072,
       "max_output_tokens": 65536,
-      "routable": true,
-      "input_token_price_per_m": 1500000,
-      "output_token_price_per_m": 9000000
+      "routable": false,
+      "routable_reason": "awaiting-price"
     },
     {
       "display_name": "Gemini 3.8 Flash",
