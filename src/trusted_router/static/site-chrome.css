@@ -10,48 +10,54 @@
   font-family: var(--tr-font-family-sans);
 }
 
+/* The whole strip is one link, like the homepage exchange banner */
 .model-promo-inner {
-  max-width: 1280px;
-  margin-inline: auto;
-  padding: 0 24px;
-  min-height: 44px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px 20px;
+  gap: 8px 24px;
+  max-width: 1280px;
+  min-height: 48px;
+  margin-inline: auto;
+  padding: 8px 24px;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1.35;
+  text-decoration: none;
 }
 
 .model-promo-copy {
-  margin: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   column-gap: 12px;
   min-width: 0;
-  font-size: 14px;
-  line-height: 1.4;
 }
 .model-promo-copy strong { font-weight: 600; }
 .model-promo-copy span { font-variant-numeric: tabular-nums; }
 .model-promo-copy small { font-size: inherit; opacity: .8; }
-.model-promo-link {
+.model-promo-action {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  color: inherit;
-  font-size: 14px;
+  gap: 8px;
+  min-height: 36px;
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  white-space: nowrap;
 }
-.model-promo-link:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.model-promo-arrow { display: inline-block; transition: transform .15s ease; }
+.model-promo-inner:hover .model-promo-arrow { transform: translateX(3px); }
+.model-promo-inner:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
 
 @media (max-width: 700px) {
-  .model-promo-inner { justify-content: space-between; padding: 6px 16px; }
+  .model-promo-inner { justify-content: space-between; padding: 6px 16px; font-size: 14px; }
   .model-promo-copy { column-gap: 8px; }
   .model-promo-copy small { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-promo-arrow { transition: none; }
 }
 
 .skip-link {

@@ -41,7 +41,6 @@
   /* Page lead colour (COL-01); Market is the default family */
   --nyte-lead: var(--nyte-purple);
   --nyte-lead-ink: var(--nyte-deep-purple);
-  --nyte-lead-tint: var(--nyte-lilac);
   --nyte-band: url("/static/nyte/band-purple.svg");
 
   /* Surfaces */
@@ -155,24 +154,20 @@
   --nyte-band: url("/static/nyte/band-yellow.svg");
   --nyte-lead: var(--nyte-yellow);
   --nyte-lead-ink: var(--nyte-ink);
-  --nyte-lead-tint: var(--nyte-yellow-tint);
 }
 
 :root[data-brand="nyte"][data-page="trust"] {
   --nyte-band: url("/static/nyte/band-lime.svg");
   --nyte-lead: var(--nyte-lime);
   --nyte-lead-ink: var(--nyte-green);
-  --nyte-lead-tint: var(--nyte-lime-tint);
 }
 
 :root[data-brand="nyte"][data-page="knowledge"] {
   --nyte-band: url("/static/nyte/band-sky.svg");
   --nyte-lead: var(--nyte-sky);
   --nyte-lead-ink: var(--nyte-deep-purple);
-  --nyte-lead-tint: var(--nyte-sky-tint);
 }
 
-body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"] body {
   background: var(--nyte-cream);
   color: var(--nyte-ink);
@@ -547,7 +542,7 @@ body:where([data-brand="nyte"] *),
 
 /* Ink areas: the header bar, the footer and the console top bar keep the
    kit's dark theme, so their own colours read Cream on Ink. */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink) {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-ink);
   --tr-color-surface-bg-alt: var(--nyte-surface);
@@ -1044,18 +1039,18 @@ body:where([data-brand="nyte"] *),
 }
 
 /* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
   border-color: var(--nyte-cream);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.button.button-primary, .btn.primary) {
   border-color: var(--nyte-orange);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.button, .btn):hover {
   border-color: var(--nyte-cream);
   background: var(--nyte-cream);
@@ -1096,11 +1091,11 @@ body:where([data-brand="nyte"] *),
   background: var(--nyte-lead);
 }
 
-:root[data-brand="nyte"] :is(.trs, .trpr, .nyte-field) :is(.eyebrow, .kicker)::before {
+:root[data-brand="nyte"] :is(.trs, .trpr) :is(.eyebrow, .kicker)::before {
   background: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.eyebrow, .kicker) {
   color: var(--nyte-cream);
 }
@@ -1124,7 +1119,7 @@ body:where([data-brand="nyte"] *),
   outline-offset: 2px;
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .nyte-ink) :focus-visible {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) :focus-visible {
   outline-color: var(--nyte-cream);
 }
 
@@ -1195,7 +1190,6 @@ body:where([data-brand="nyte"] *),
   --green: var(--tr-legacy-3fb950, #3fb950);
   --amber: var(--tr-legacy-d29922, #d29922);
   --red: var(--tr-legacy-f85149, #f85149);
-  --nav: var(--tr-legacy-010409, #010409);
   --soft: var(--tr-legacy-16263b, #16263b);
   --rust: var(--tr-legacy-db8a6a, #db8a6a);
   --top: var(--tr-legacy-0d1117-c7, rgb(13,17,23,.78));
@@ -1366,7 +1360,7 @@ body:where([data-brand="nyte"] *),
   display: none;
 }
 
-:root[data-brand="nyte"] #top .hero :is(h1, .sub, .cta-note, .hero-promises, .hero-promises li, .lab) {
+:root[data-brand="nyte"] #top .hero :is(h1, .sub, .cta-note) {
   color: var(--nyte-cream);
   text-shadow: none;
 }
@@ -1374,16 +1368,6 @@ body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"] #top .hero h1 em {
   color: var(--nyte-lime);
   font-style: normal;
-}
-
-:root[data-brand="nyte"] #top .hero .hero-promises {
-  font-family: "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
-  font-weight: 500;
-  letter-spacing: 0.1em;
-}
-
-:root[data-brand="nyte"] #top .hero .hero-promises li + li::before {
-  color: var(--nyte-cream);
 }
 
 /* Model names in the type of the data voice, beside their logos */
@@ -1394,6 +1378,7 @@ body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"] #top .hero .lab {
   color: var(--nyte-ink-2-dark);
   font-family: var(--tr-font-family-mono);
+  text-shadow: none;
 }
 
 
@@ -1501,10 +1486,6 @@ body:where([data-brand="nyte"] *),
     margin: 16px 0 20px;
     font-size: 17px;
   }
-
-  :root[data-brand="nyte"] #top .hero .hero-promises {
-    margin-bottom: 18px;
-  }
 }
 
 /* Short laptop screens: a 96 px Band (four rows) keeps it in the first screen */
@@ -1568,7 +1549,6 @@ body:where([data-brand="nyte"] *),
   --green: var(--tr-legacy-3fb950, #3fb950);
   --amber: var(--tr-legacy-d29922, #d29922);
   --red: var(--tr-legacy-f85149, #f85149);
-  --nav: var(--tr-legacy-010409, #010409);
   --soft: var(--tr-legacy-16263b, #16263b);
   --rust: var(--tr-legacy-db8a6a, #db8a6a);
   --top: var(--tr-legacy-0d1117-c7, rgb(13,17,23,.78));
@@ -1598,19 +1578,11 @@ body:where([data-brand="nyte"] *),
   --grid-line: var(--tr-legacy-4493f8-1a, rgb(68,147,248,.10));
   --grid-line-soft: var(--tr-legacy-4493f8-12, rgb(68,147,248,.07));
   --green-black-0: var(--tr-color-surface-bg);
-  --green-black-1: var(--tr-color-surface-panel);
-  --green-black-2: var(--tr-color-surface-panel-inset);
-  --green-black-3: var(--tr-color-surface-hover);
-  --line-0: var(--tr-color-line-rule-soft);
   --line-1: var(--tr-color-line-rule-soft);
-  --line-2: var(--tr-color-line-rule);
   --line-3: var(--tr-color-line-rule);
   --line-4: var(--tr-color-line-control);
   --ivory: var(--tr-color-text-primary);
   --ivory-dim: var(--tr-color-text-secondary);
-  --gray-2: var(--tr-color-text-secondary);
-  --gray-3: var(--tr-color-text-tertiary);
-  --gray-4: var(--tr-color-text-quaternary);
   --sage: var(--tr-color-accent-base);
   --sage-bright: var(--tr-color-accent-hover);
   --sage-dim: var(--tr-color-line-control);
@@ -1635,9 +1607,7 @@ body:where([data-brand="nyte"] *),
   --border-default: var(--tr-color-line-rule);
   --border-strong: var(--tr-color-line-control);
   --border-accent: var(--tr-color-line-strong);
-  --status-verified: var(--tr-color-accent-base);
   --status-pending: var(--tr-color-privacy-zdr-text);
-  --status-failed: var(--tr-color-error);
 }
 
 /* Heroes from the page sheets: the Band is a full-width row of its own
@@ -1650,7 +1620,6 @@ body:where([data-brand="nyte"] *),
   flex: none;
   width: 100vw;
   max-width: none;
-  margin-top: 48px;
   margin-bottom: 0;
 }
 
@@ -1704,10 +1673,22 @@ body:where([data-brand="nyte"] *),
   }
 }
 
-/* The offer strip sits above the hero's painted Ink, not under it */
+/* The offer strip: Deep Purple like the homepage exchange banner, above
+   the hero's painted Ink */
 :root[data-brand="nyte"] .model-promo {
   position: relative;
   z-index: 1;
+  border-bottom: 0;
+  background: var(--nyte-deep-purple);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] .model-promo-inner:hover {
+  background: color-mix(in srgb, var(--nyte-deep-purple) 88%, var(--nyte-cream));
+}
+
+:root[data-brand="nyte"] .model-promo-copy small {
+  opacity: 1;
 }
 
 /* /models hero: room between the lines, one screen tall */
@@ -1715,10 +1696,6 @@ body:where([data-brand="nyte"] *),
   grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   padding: 40px 0 0;
-}
-
-:root[data-brand="nyte"] .models-page-hero-links {
-  justify-content: flex-start;
 }
 
 :root[data-brand="nyte"] .models-page-hero h1 {
@@ -1730,8 +1707,29 @@ body:where([data-brand="nyte"] *),
 }
 
 :root[data-brand="nyte"] .models-page-hero-links {
+  justify-content: flex-start;
   gap: 10px 20px;
   font-size: 15px;
+}
+
+/* Tablet and up: no side graphic, so the copy is centred */
+@media (min-width: 561px) {
+  :root[data-brand="nyte"] .models-page-hero {
+    text-align: center;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero .kicker {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero :is(h1, p) {
+    margin-inline: auto;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-links {
+    justify-content: center;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1753,51 +1751,62 @@ body:where([data-brand="nyte"] *),
     margin-top: 12px;
   }
 
-  :root[data-brand="nyte"] .models-page-hero-links {
-    flex-wrap: nowrap;
-    gap: 20px;
-    margin-right: -16px;
-    padding-right: 40px;
-    overflow-x: auto;
-    white-space: nowrap;
-    scrollbar-width: none;
-    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
-  }
+}
 
-  :root[data-brand="nyte"] .models-page-hero-links::-webkit-scrollbar {
-    display: none;
-  }
-
-  @supports (animation-timeline: scroll(self inline)) {
-    :root[data-brand="nyte"] .models-page-hero-links {
-      animation: nyte-fade-clear linear both;
-      animation-timeline: scroll(self inline);
-      animation-range: 85% 100%;
-    }
-  }
-
-  /* Filters: one swipeable line. The fade at the right edge and the cut
-     chip say there is more; the fade clears at the end of the row. */
-  :root[data-brand="nyte"] .model-explorer > .model-filter-row {
+/* Swipe rows on phones: chip and link rows stay on one line and scroll
+   sideways. The fade at the right edge and the cut-off last item say
+   there is more; the fade clears at the end of the row. */
+@media (max-width: 560px) {
+  :root[data-brand="nyte"] :is(
+    .model-explorer > .model-filter-row,
+    .models-page-hero-links,
+    .model-result-card .catalog-privacy-summary,
+    .model-result-card .model-card-badges,
+    .model-result-card .model-card-providers
+  ) {
     display: flex;
     flex-wrap: nowrap;
+    align-items: center;
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scrollbar-width: none;
+    white-space: nowrap;
     padding-right: 40px;
     mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
   }
 
-  :root[data-brand="nyte"] .model-explorer > .model-filter-row::-webkit-scrollbar {
+  :root[data-brand="nyte"] :is(
+    .model-explorer > .model-filter-row,
+    .models-page-hero-links,
+    .model-result-card .catalog-privacy-summary,
+    .model-result-card .model-card-badges,
+    .model-result-card .model-card-providers
+  )::-webkit-scrollbar {
     display: none;
   }
 
-  :root[data-brand="nyte"] .model-explorer > .model-filter-row > .pill {
+  :root[data-brand="nyte"] :is(
+    .model-explorer > .model-filter-row,
+    .models-page-hero-links,
+    .model-result-card .catalog-privacy-summary,
+    .model-result-card .model-card-badges,
+    .model-result-card .model-card-providers
+  ) > * {
     flex: none;
   }
 
+  :root[data-brand="nyte"] .models-page-hero-links {
+    gap: 20px;
+  }
+
   @supports (animation-timeline: scroll(self inline)) {
-    :root[data-brand="nyte"] .model-explorer > .model-filter-row {
+    :root[data-brand="nyte"] :is(
+      .model-explorer > .model-filter-row,
+      .models-page-hero-links,
+      .model-result-card .catalog-privacy-summary,
+      .model-result-card .model-card-badges,
+      .model-result-card .model-card-providers
+    ) {
       animation: nyte-fade-clear linear both;
       animation-timeline: scroll(self inline);
       animation-range: 85% 100%;
@@ -1808,6 +1817,30 @@ body:where([data-brand="nyte"] *),
 @keyframes nyte-fade-clear {
   to {
     mask-image: linear-gradient(to right, #000 100%, transparent);
+  }
+}
+
+/* Phones: the hero fills the first screen and its Band sits at the bottom
+   of it, whatever the phone's height. nyte-page.js measures where the hero
+   starts (--nyte-above-hero). Heroes taller than a screen just grow. The
+   blog index is left out: its hero is too short to fill a screen. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+    position: relative;
+    box-sizing: border-box;
+    min-height: calc(var(--hero-vh, 1svh) * 100 - var(--nyte-above-hero, 64px));
+    padding-bottom: 96px;
+  }
+
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 100vw;
+    height: 64px;
+    margin: 0;
+    background-size: 100% 80px;
+    transform: translateX(-50%);
   }
 }
 

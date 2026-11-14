@@ -159,8 +159,11 @@
 
 /* Table header cells: logo, name, best-for line, copyable id */
 .compare-table .compare-table-item { vertical-align: top; }
-.compare-table .compare-item { display: inline-flex; align-items: center; gap: 10px; color: var(--tr-color-text-primary); text-decoration: none; }
+.compare-table .compare-item { display: inline-flex; align-items: flex-start; gap: 10px; color: var(--tr-color-text-primary); text-decoration: none; }
 .compare-item img { width: 30px; height: 30px; border-radius: var(--tr-square, 8px); background: var(--tr-color-text-primary); flex: none; }
+/* Names that wrap keep their first line level with the logo and with the
+   other column's name */
+.compare-item > span { padding-top: 4px; padding-top: max(0px, calc((30px - 1lh) / 2)); }
 .compare-item:hover span { text-decoration: underline; text-underline-offset: 4px; }
 .compare-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 6px; }
 .compare-best { color: var(--tr-color-text-primary); font-size: 15px; font-weight: 450; }

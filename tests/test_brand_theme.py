@@ -83,6 +83,23 @@ def test_nyte_homepage_has_no_photo_heroes(client: TestClient, nyte_theme: None)
     assert "trustedrouter-landscape" not in html
 
 
+@pytest.mark.parametrize(
+    ("path", "photo"),
+    [("/green-tokens", "green-tokens-hero.webp"), ("/token-exchange", "token-exchange-hero.webp")],
+)
+def test_hero_photos_only_render_in_the_default_theme(
+    client: TestClient, path: str, photo: str
+) -> None:
+    assert photo in client.get(path).text
+
+
+@pytest.mark.parametrize("path", ["/green-tokens", "/token-exchange"])
+def test_nyte_heroes_have_no_photos(client: TestClient, nyte_theme: None, path: str) -> None:
+    html = client.get(path).text
+    assert "green-tokens-hero.webp" not in html
+    assert "token-exchange-hero.webp" not in html
+
+
 def _og_images(html: str) -> set[str]:
     return set(re.findall(r'(?:og|twitter):image" content="([^"]+)"', html))
 
@@ -93,7 +110,9 @@ def test_default_theme_keeps_its_share_images(client: TestClient, path: str) -> 
 
 
 @pytest.mark.parametrize("path", ["/", "/models", "/pricing", "/trust", "/blog"])
-def test_nyte_theme_uses_one_share_card_everywhere(client: TestClient, nyte_theme: None, path: str) -> None:
+def test_nyte_theme_uses_one_share_card_everywhere(
+    client: TestClient, nyte_theme: None, path: str
+) -> None:
     html = client.get(path).text
     assert _og_images(html) == {"https://trustedrouter.com/static/og/nyte/og.png"}
     assert (STATIC / "og" / "nyte" / "og.png").is_file()
@@ -108,5 +127,9 @@ def test_shells_tolerate_an_environment_without_the_theme_switch(shell: str) -> 
     from jinja2 import Environment, FileSystemLoader
 
     source = (STATIC.parent / "templates" / shell).read_text()
-    assert 'brand_theme() == "nyte"' not in source.replace('brand_theme is defined and brand_theme() == "nyte"', "")
-    Environment(loader=FileSystemLoader(str(STATIC.parent / "templates")), autoescape=True).get_template(shell)
+    assert 'brand_theme() == "nyte"' not in source.replace(
+        'brand_theme is defined and brand_theme() == "nyte"', ""
+    )
+    Environment(
+        loader=FileSystemLoader(str(STATIC.parent / "templates")), autoescape=True
+    ).get_template(shell)

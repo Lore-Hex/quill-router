@@ -2,7 +2,7 @@
 {% block body_attributes %}class="token-exchange"{% endblock %}
 {% block head_extra %}
 <link rel="stylesheet" href="/static/token-exchange.css?v={{ static_version }}">
-<link rel="preload" as="image" href="/static/enterprise/token-exchange-hero.webp">
+{% if brand_theme() != "nyte" %}<link rel="preload" as="image" href="/static/enterprise/token-exchange-hero.webp">{% endif %}
 {% endblock %}
 {% block hero %}
 <section class="tm-hero" aria-labelledby="marketplace-title">
