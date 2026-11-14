@@ -74,8 +74,6 @@ header .btn-primary:hover,.hero .btn-primary:hover,.hero-api .btn-primary:hover,
 /* Header */
 header{background:var(--ink);backdrop-filter:none}
 .brand-by{color:var(--ink-2-dark)}
-.nav-toggle.on,.nav-group.open>.nav-toggle,.nav-group:hover>.nav-toggle,.nav-group:focus-within>.nav-toggle{box-shadow:0 2px 0 var(--lead)}
-.nav-panel a.on .nav-label{box-shadow:0 2px 0 var(--lead)}
 .menu-btn{color:var(--cream)}
 
 /* Photo bands become Ink blocks instead of fading into the page. */
@@ -138,9 +136,7 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer{max-width:none;background:var(--ink);color:var(--cream);font-family:var(--font-sans);padding-inline:max(60px,calc((100% - 1160px)/2))}
 .site-footer .brand{color:var(--cream)}
 .site-footer a{color:var(--ink-2-dark)}
-.site-footer a:hover,.site-footer .market-links a:hover,.site-footer .footer-credit small a:hover{color:var(--cream)}
-.site-footer .footer-credit small{font-family:var(--font-sans);color:var(--ink-2-dark)}
-.site-footer .footer-credit small a{text-decoration-color:var(--ink-2-dark)}
+.site-footer a:hover,.site-footer .market-links a:hover{color:var(--cream)}
 .site-footer .footer-markets,.site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--dark-sunken)}
 .site-footer .market-pin{stroke:var(--ink-2-dark)}
 .site-footer .market-links a[aria-current="page"]{background:var(--dark-rule);color:var(--cream)}
@@ -149,12 +145,6 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .legal{border-top:1.5px solid var(--dark-rule)}
 .site-footer .back-to-top{border-color:var(--dark-rule);color:var(--cream)}
 @media(max-width:600px){.site-footer{padding-inline:20px}}
-
-/* Mobile menu sits on Ink. */
-@media (max-width:800px){
-  .nav{background:var(--ink);border-bottom-color:var(--dark-rule)}
-  .nav-panel a.on .nav-label{color:var(--lime);box-shadow:none}
-}
 
 /* Press logos and provider icons were drawn for a dark ground. */
 .plogo{filter:brightness(0)}
@@ -219,64 +209,122 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   [data-market="new-york"] .site-footer .brand>span::before{width:112px;height:67px}
 }
 
-/* Footer (kit Footer): the globe mark sits right of the name and contact in the top
-   row, in the layout and never behind text; on phones it follows the city rail. */
+/* Footer (kit Footer): stacked name, four coloured link columns, the globe mark beside them
+   (in the layout, never behind text), then one line of small links. Phones: name and a small
+   globe on top, the columns two by two, the small links wrapping underneath. */
 .site-footer{overflow:hidden;--globe-bleed:60px}
-.site-footer .footer-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:1fr auto auto auto 1fr;align-items:center;column-gap:48px}
-.site-footer .footer-top .brand{grid-column:1;grid-row:2}
-/* Credit line: Powered by TrustedRouter, then TrustedRouter's related sites as brighter links,
-   so they read above the grey legal links. The line wraps if more are added. */
-.site-footer .footer-top{row-gap:0}
-.site-footer .footer-credit{grid-column:1;grid-row:3;display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;max-width:720px;color:var(--ink-2-dark)}
-.site-footer .footer-credit small{display:inline;margin:0;font-size:14px;line-height:1.6}
-.site-footer .footer-related{display:contents;font-size:16px}
-.site-footer .footer-related a::before{content:"·";content:"·"/"";display:inline-block;margin-right:10px;color:var(--ink-2-dark)}
-.site-footer .footer-related a{display:inline-flex;align-items:center;min-height:44px;color:var(--cream);text-decoration:none}
-.site-footer .footer-related a:hover{text-decoration:underline;text-underline-offset:4px}
-.site-footer .footer-contact{grid-column:1;grid-row:4;margin-top:24px}
-.site-footer .footer-top::after{content:"";grid-column:2;grid-row:1/-1;width:min(400px,30vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
+@media(min-width:601px){.site-footer{padding-top:56px;padding-bottom:24px}}
+.site-footer .footer-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;column-gap:64px}
+.site-footer .footer-brand{grid-column:1;grid-row:1;align-self:start}
+/* The credit sits with the name it belongs to, apart from the page links and the small print. */
+.site-footer .footer-credit{margin:12px 0 0;color:var(--ink-2-dark);font:400 14px/1.5 var(--font-sans)}
+.site-footer .footer-credit a{color:var(--cream);text-decoration:underline;text-decoration-color:var(--ink-2-dark);text-underline-offset:3px}
+.site-footer .back-to-top{display:none}
+.site-footer .footer-links{grid-column:2;grid-row:1;display:grid;grid-template-columns:repeat(4,minmax(0,180px));gap:28px 40px}
+.site-footer .footer-col{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.site-footer .footer-col h2{margin:0 0 4px;color:var(--group);font:500 12px/1.5 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase}
+.site-footer .footer-col a{color:var(--cream);font-size:15px;line-height:1.5;text-decoration:none}
+.site-footer .footer-col a:hover,.site-footer .footer-col a[aria-current="page"]{text-decoration:underline;text-underline-offset:4px}
+.site-footer .footer-top::after{content:"";grid-column:3;grid-row:1;align-self:center;width:min(360px,24vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
+/* Tablet and small laptop: name and globe on one row, the four link columns full width below. */
+@media(max-width:1100px){.site-footer .footer-top{grid-template-columns:minmax(0,1fr) auto;row-gap:32px}.site-footer .footer-links{grid-column:1/-1;grid-row:2;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px 20px}.site-footer .footer-top::after{grid-column:2;width:min(240px,30vw)}}
 .site-footer .footer-markets{margin-top:40px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
 .site-footer .market-links a{padding:0 12px;font-size:15px}
 .site-footer .market-links a[aria-current="page"]{background:transparent;color:var(--cream);font-weight:500;box-shadow:inset 0 -3px 0 var(--purple)}
 .site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--ink);top:10px}
 .site-footer .geo-scroll.can-left::before{top:10px;bottom:10px;background:linear-gradient(90deg,var(--ink),transparent)}
 .site-footer .geo-scroll.can-right::after{top:10px;bottom:10px;background:linear-gradient(90deg,transparent,var(--ink))}
-.site-footer .legal{margin-top:16px;padding-top:0;border-top:0;font-size:15px}
-/* Without a market rail (New York), a rule keeps the legal links apart from the name,
-   and the footer closes up the room the rail used to take. */
-.site-footer .footer-top+.legal{margin-top:24px;padding-top:4px;border-top:1.5px solid var(--dark-rule)}
-@media(min-width:601px){
-  .site-footer:has(.footer-top+.legal){padding-top:48px;padding-bottom:16px}
-  .site-footer .footer-top:has(+.legal) .footer-credit{margin-top:0}
-  .site-footer .footer-top:has(+.legal) .footer-contact{margin-top:4px}
-}
-/* Desktop footer kept compact: less space above the name and below the legal links. */
-@media(min-width:601px){.site-footer{padding-top:64px;padding-bottom:24px}}
-.site-footer .legal a{color:var(--ink-2-dark)}
-.site-footer .legal a:hover{color:var(--cream)}
-.site-footer .footer-contact a{color:var(--cream);font-size:17px}
+.site-footer .footer-base{display:flex;flex-wrap:wrap;align-items:center;gap:4px 20px;margin-top:40px;padding-top:12px;border-top:1.5px solid var(--dark-rule);font-size:14px;line-height:1.6;color:var(--ink-2-dark)}
+.site-footer .footer-markets+.footer-base{margin-top:16px;border-top:0;padding-top:0}
+.site-footer .footer-base a{display:inline-flex;align-items:center;min-height:32px;color:var(--ink-2-dark);font-size:14px}
+.site-footer .footer-base a:hover{color:var(--cream)}
+.site-footer .footer-contact svg{display:none}
+.site-footer .footer-base .footer-contact a{color:var(--ink-2-dark);font-size:14px;font-weight:400}
+.site-footer .legal{display:flex;flex-wrap:wrap;gap:4px 20px;margin:0 0 0 auto;padding:0;border:0;font-size:14px}
 @media(max-width:600px){
-  .site-footer{display:flex;flex-direction:column;padding-top:32px;padding-bottom:20px}
-  [data-market="new-york"] .site-footer .brand>span::before{margin-bottom:10px}
-  .site-footer .footer-top{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:none;column-gap:12px;row-gap:10px}
-  /* No back-to-top on phones; the globe takes its place beside the name. */
-  .site-footer .back-to-top{display:none}
-  .site-footer .footer-top .brand{grid-row:1}
-  .site-footer .footer-credit{grid-column:1/-1;grid-row:2;column-gap:8px}
-  /* Phones: Powered by on its own line, the two links together on the next. */
-  .site-footer .footer-credit small{flex-basis:100%}
-  .site-footer .footer-related a:first-child::before{content:none}
-  .site-footer .footer-contact{grid-column:1;grid-row:3;align-self:center;margin-top:0}
-  /* Phone globe: small, drawn in the secondary text colour so it reads on Ink. Beside the
-     stacked New York name; city names are one long line, so there it sits right of the contact line. */
-  [data-market="new-york"] .site-footer .footer-top::after{grid-column:2;grid-row:1;align-self:start}
-  .site-footer .footer-top::after{content:"";grid-column:1/-1;grid-row:3;align-self:center;justify-self:end;width:123px;height:60px;aspect-ratio:auto;margin:0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
-  .site-footer .footer-markets{margin-top:16px;order:1}
-  /* Legal links only: one short line that fits the smallest phones. */
-  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:flex-start;gap:0 24px;margin-top:8px;padding-top:0;border-top:0}
-  .site-footer:has(.footer-top+.legal){padding-top:28px;padding-bottom:12px}
-  .site-footer .footer-top:has(+.legal){row-gap:4px}
-  .site-footer .footer-top+.legal{margin-top:12px;padding-top:4px}
+  .site-footer{padding-top:32px;padding-bottom:16px}
+  [data-market="new-york"] .site-footer .brand>span::before{margin-bottom:0}
+  .site-footer .footer-top{grid-template-columns:minmax(0,1fr);row-gap:24px}
+  .site-footer .footer-links{grid-column:1/-1;grid-row:2;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 16px}
+  .site-footer .footer-col{gap:0}
+  .site-footer .footer-col h2{margin-bottom:2px}
+  .site-footer .footer-col a{display:flex;align-items:center;min-height:28px;font-size:14px;line-height:1.3}
+  .site-footer .footer-credit{margin-top:6px}
+  /* Phone: the one-line lockup the header uses instead of the stacked name and globe, so the
+     page links start near the top of the footer. */
+  .site-footer .footer-top::after{display:none}
+  [data-market="new-york"] .site-footer .brand>span::before{width:124px;height:24px;background-image:url(logos/lockup-horizontal-paper.svg)}
+  .site-footer .footer-markets{margin-top:28px}
+  .site-footer .footer-base{margin-top:24px;padding-top:8px;gap:0 18px}
+  .site-footer .legal{margin-left:0;gap:0 18px}
+}
+
+/* Navigation (designer Concept 1, real pages only). Desktop: Products and Market open a
+   full-width Ink panel on click, each page under a 6px bar in its colour; Trust, Docs and
+   Pricing are plain links; Sign in, then the one orange button. Phones (900px and below):
+   the menu button opens one full-screen list of three groups. Products and Market pages sit
+   over a line in their colour; Resources (Trust, Docs, Pricing) over plain rules. Every row
+   opens a page. Start building stays pinned at the bottom; Sign in moves into the bar. */
+.hdr{gap:40px}
+.nav{gap:28px;flex:1;min-width:0}
+.nav-group{position:static}
+.nav-toggle{gap:6px;padding:22px 0 19px;color:var(--cream);font:500 15px/1 var(--font-sans);border-bottom:2px solid transparent}
+.nav-toggle.on,.nav-group.open>.nav-toggle,.nav-group:hover>.nav-toggle,.nav-group:focus-within>.nav-toggle{box-shadow:none;color:var(--cream)}
+.nav-group.open>.nav-toggle{border-bottom-color:var(--purple)}
+.nav-group.open>.nav-toggle svg{transform:rotate(180deg)}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-links a,.hdr-signin{color:var(--cream);font:500 15px/1 var(--font-sans);text-decoration:none}
+.nav-links a:hover,.hdr-signin:hover{text-decoration:underline;text-underline-offset:6px}
+.hdr-signin{order:2;margin-left:auto;font-size:14px}
+.hdr>.btn-sm{order:3}
+.nav-heading,.nav-actions{display:none}
+.nav-panel{position:absolute;top:100%;left:0;right:0;width:auto;padding:40px 0 0;background:var(--ink);border:0;border-top:1px solid var(--dark-rule);box-shadow:none;color:var(--cream)}
+.nav-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px}
+.nav-items:last-child{margin-bottom:40px}
+.nav-panel a{display:block;padding:16px 0 0;border-top:6px solid var(--item);color:var(--cream);background:none}
+.nav-panel a:hover{background:none}
+.nav-panel a:hover .nav-label,.nav-panel a.on .nav-label{box-shadow:none;text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:6px}
+.nav-label{display:inline-block;margin:10px 0;font-size:26px;font-weight:400;line-height:1.2}
+.nav-description{color:var(--ink-2-dark);font-size:15px;line-height:1.5}
+.nav-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;margin-top:36px;padding:20px 0 24px;border-top:1px solid var(--dark-rule)}
+.nav-prompt{display:inline-flex;align-items:center;gap:10px;min-height:32px;padding:0;border:0;background:none;color:var(--cream);font:500 14px/1.4 var(--font-sans);cursor:pointer}
+.nav-prompt svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+.nav-prompt-action{text-decoration:underline;text-underline-offset:4px}
+.nav-prompt-status{color:var(--ink-2-dark);font-size:14px}
+.menu-btn{border:1.5px solid var(--dark-rule);border-radius:0}
+.menu-btn .icon-close,.menu-btn[aria-expanded="true"] .icon-open{display:none}
+.menu-btn[aria-expanded="true"] .icon-close{display:block}
+@media(max-width:900px){
+  .hdr{gap:12px}
+  .hdr-signin{display:none}
+  /* The wordmark keeps at least 24px before the button on the smallest phones. */
+  .hdr .brand{margin-right:auto}
+  .hdr>.btn-sm{order:0;margin-left:12px}
+  /* Open menu: Start building moves to the bottom of the menu and Sign in takes its place. */
+  .menu-open .hdr>.btn-sm{display:none}
+  .menu-open .hdr-signin{display:flex;align-items:center;order:0;min-height:44px;margin:0;padding:0 12px;font-size:15px}
+  /* Open menu: lock the page and pin the header to the screen. A sticky header can be left
+     scrolled off the top on iPhone when the page locks mid-scroll, hiding the close button. */
+  html.menu-open{overflow:hidden}
+  html.menu-open header{position:fixed;top:0;left:0;right:0}
+  html.menu-open body{padding-top:var(--header)}
+  /* Phone menu: one list filling the screen below the bar; nothing switches in place. */
+  .nav{flex:none;position:fixed;top:var(--header);left:0;right:0;bottom:0;max-height:none;gap:0;padding:0 20px;overflow-y:auto;overscroll-behavior:contain;background:var(--ink);border:0}
+  .nav>*{flex:none}
+  .nav-group,.nav-links{display:block}
+  .nav-foot{display:none}
+  .nav-heading{display:block;margin:0;padding:24px 0 4px;color:var(--ink-2-dark);font-size:13px;line-height:1.4}
+  .nav-panel{position:static;padding:0;border:0;background:none}
+  .nav .nav-panel>.wrap{max-width:none;padding:0}
+  .nav-items{display:block}
+  .nav-items:last-child{margin-bottom:0}
+  .nav-panel a,.nav-links a{display:block;padding:14px 0 12px;border:0;font:400 20px/1.2 var(--font-sans)}
+  .nav-panel a{border-bottom:2px solid var(--item)}
+  .nav-links a{border-bottom:1px solid var(--dark-rule)}
+  .nav-label{margin:0;font-size:inherit}
+  .nav-links a:last-child{border-bottom:0}
+  .nav-actions{display:block;position:sticky;bottom:0;margin-top:auto;padding:16px 0 calc(20px + env(safe-area-inset-bottom));background:var(--ink)}
+  .nav-actions .btn{display:flex;width:100%;min-height:52px;border-color:var(--orange)}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */

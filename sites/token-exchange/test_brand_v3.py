@@ -70,7 +70,8 @@ class BrandV3Tests(unittest.TestCase):
                      'data-live-caption', 'data-uptime-label="Uptime, last 24 hours"', 'data-live-checked', 'data-live-prices', 'data-price-layout="table"',
                      'data-live-price-unit', 'id="start"', 'id="place-faq"', 'data-place', 'data-us-only', 'data-open="deck"'):
             self.assertIn(hook, page)
-        self.assertEqual(page.count('href="/confidential#start">Start building</a>'), 3)
+        # Header, the phone menu's bottom button, and the page's own quick start link.
+        self.assertEqual(page.count('href="/confidential#start">Start building</a>'), 4)
         self.assertIn('<p class="ev-intro">See for yourself what’s running, and whether it’s up.</p>', page)
         self.assertIn('<h3>What’s running</h3>', page)
         self.assertEqual(page.count('data-live-checked'), 1)
