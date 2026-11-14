@@ -1861,6 +1861,12 @@ def _regolo_apertus_manifest_rates(tmp_path: Path, rate: str) -> tuple[dict, dic
     from scripts.pricing.providers import regolo
 
     committed = json.loads(regolo.MANIFEST_PATH.read_text(encoding="utf-8"))
+    # Pin the pre-approval EUR 0.40 / 2.10 tariff (2026-11-02 publish, ECB
+    # 1.1172) on the "before" side. The refresh publishes the approved price,
+    # after which the committed manifest no longer shows the transition.
+    (apertus,) = [row for row in committed["models"] if row["id"] == "swiss-ai/apertus-70b-instruct"]
+    apertus["input_token_price_per_m"] = 446_880
+    apertus["output_token_price_per_m"] = 2_346_120
     (row,) = regolo.normalize_catalog({"data": [{
         "model_group": "apertus-70b", "mode": "chat",
         # https://regolo.ai/pricing (2026-11-14): EUR 1.00 / EUR 3.40 per M.
@@ -1888,7 +1894,7 @@ def _regolo_apertus_manifest_rates(tmp_path: Path, rate: str) -> tuple[dict, dic
 def test_regolo_apertus_eur_tariff_approval_is_exact_to_the_ecb_fixing(tmp_path):
     route = "swiss-ai/apertus-70b-instruct [regolo:regolo:apertus-70b]"
     before, after = _regolo_apertus_manifest_rates(tmp_path / "fixing", "1.1052")
-    # The committed manifest still carries the old EUR 0.40 / 2.10 tariff.
+    # The pinned "before" side carries the old EUR 0.40 / 2.10 tariff.
     assert {axis: Decimal(value) for axis, value in before[route].items()} == {
         "prompt": Decimal("0.00000044688"), "completion": Decimal("0.00000234612"),
     }
