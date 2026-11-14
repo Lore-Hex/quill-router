@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from tests.test_async_settle_ticket import endpoint, runtime
-from trusted_router import catalog
+from trusted_router import billing_snapshot, catalog
 from trusted_router.async_settle_ticket import verify_ticket
 from trusted_router.billing_snapshot import Eligibility, build_snapshot, canonical_hash
 from trusted_router.config import Settings
@@ -107,7 +107,8 @@ def test_issued_matches_projection_claim_by_claim(facts, caplog, admitted, route
     metric(caplog, facts, "issued", "none", "yes" if admitted else "no")
 
 
-@pytest.mark.parametrize("reason", ["workspace", "region", "authority", "records", "price_instant", "endpoint", "snapshot", "hash", "error"])
+@pytest.mark.parametrize("reason", ["workspace", "region", "authority", "records", "price_instant", "endpoint", "snapshot",
+                                    "ineligible", "hash", "error"])
 def test_refusal_never_signs(facts, monkeypatch, caplog, reason):
     caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
     changes = {}
@@ -126,6 +127,9 @@ def test_refusal_never_signs(facts, monkeypatch, caplog, reason):
     elif reason == "snapshot":
         candidate = replace(facts.candidate, request_price_microdollars=1)
         monkeypatch.setattr(catalog, "endpoint_for_id", lambda _: candidate)
+    elif reason == "ineligible":
+        # The request's own eligibility is checked once, by build_snapshot.
+        monkeypatch.setattr(billing_snapshot, "exclusion", lambda _context: "unsupported_route")
     elif reason == "hash":
         changed = replace(facts.candidate, completion_price_microdollars_per_million_tokens=999_999)
         digest = canonical_hash(build_snapshot([catalog.effective_endpoint(changed, at=datetime.fromtimestamp(NOW, UTC))], Eligibility()))
@@ -134,7 +138,7 @@ def test_refusal_never_signs(facts, monkeypatch, caplog, reason):
         monkeypatch.setattr(catalog, "endpoint_for_id", Mock(side_effect=RuntimeError("test")))
     assert call(facts, **changes) == {"async_eligible": False}
     facts.runtime.signer.sign.assert_not_called()
-    metric(caplog, facts, "refused", reason, "na")
+    metric(caplog, facts, "refused", "snapshot" if reason == "ineligible" else reason, "na")
 
 
 @pytest.mark.parametrize("authority", ["runtime", "signer", "epoch", "journal"])
