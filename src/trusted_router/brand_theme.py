@@ -20,29 +20,25 @@ def brand_theme() -> str:
     return get_settings().brand_theme
 
 
-_STATIC_OG = Path(__file__).parent / "static" / "og"
-# Share images that have a NYTE twin under static/og/nyte/, by URL path. The
-# homepage card and the site default are one design, so both map to og.png.
-_NYTE_OG_TWINS = {
-    "/og.png": "og.png",
-    "/static/homepage/social-card-v2.jpg": "og.png",
-}
+_NYTE_CARD = Path(__file__).parent / "static" / "og" / "nyte" / "og.png"
+NYTE_CARD_ALT = "TrustedRouter: Encrypt all your AI chats"
 
 
 def brand_og_image(url: str) -> str:
     """The share-image URL for the active theme.
 
-    With the NYTE theme on, a card that has a twin in ``static/og/nyte/`` (the
-    default card, the homepage card, and any ``static/og/<name>`` rendered
-    again in the NYTE look) is swapped for it; everything else is unchanged,
-    so a page never points at a missing image.
+    With the NYTE theme on, every page unfurls with the one NYTE card for now
+    (per-page cards can follow); the host of the page's own card is kept.
+    Without the card file nothing changes, so a page never points at a
+    missing image.
     """
-    if brand_theme() != "nyte":
+    if brand_theme() != "nyte" or not _NYTE_CARD.is_file():
         return url
-    parts = urlsplit(url)
-    twin = _NYTE_OG_TWINS.get(parts.path)
-    if twin is None and parts.path.startswith("/static/og/"):
-        twin = parts.path.removeprefix("/static/og/")
-    if twin is None or not (_STATIC_OG / "nyte" / twin).is_file():
-        return url
-    return urlunsplit(parts._replace(path=f"/static/og/nyte/{twin}"))
+    return urlunsplit(urlsplit(url)._replace(path="/static/og/nyte/og.png", query="", fragment=""))
+
+
+def brand_og_alt(alt: str) -> str:
+    """The share image's alt text, matching the card brand_og_image chose."""
+    if brand_theme() != "nyte" or not _NYTE_CARD.is_file():
+        return alt
+    return NYTE_CARD_ALT

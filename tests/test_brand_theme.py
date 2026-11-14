@@ -92,18 +92,11 @@ def test_default_theme_keeps_its_share_images(client: TestClient, path: str) -> 
     assert not any("/og/nyte/" in url for url in _og_images(client.get(path).text))
 
 
-@pytest.mark.parametrize("path", ["/", "/models"])
-def test_nyte_theme_swaps_in_its_share_card(client: TestClient, nyte_theme: None, path: str) -> None:
+@pytest.mark.parametrize("path", ["/", "/models", "/pricing", "/trust", "/blog"])
+def test_nyte_theme_uses_one_share_card_everywhere(client: TestClient, nyte_theme: None, path: str) -> None:
     html = client.get(path).text
-    images = _og_images(html)
-    assert images == {"https://trustedrouter.com/static/og/nyte/og.png"}
+    assert _og_images(html) == {"https://trustedrouter.com/static/og/nyte/og.png"}
     assert (STATIC / "og" / "nyte" / "og.png").is_file()
-    if path == "/":
-        assert 'og:image:type" content="image/png"' in html
-        assert "river" not in html.split("</head>")[0]
-
-
-def test_nyte_theme_keeps_a_page_card_that_has_no_nyte_twin(client: TestClient, nyte_theme: None) -> None:
-    images = _og_images(client.get("/pricing").text)
-    expected = "nyte/pricing.png" if (STATIC / "og" / "nyte" / "pricing.png").is_file() else "/og/pricing.png"
-    assert all(expected in url for url in images)
+    head = html.split("</head>")[0]
+    assert 'og:image:type" content="image/png"' in head
+    assert "river" not in head
