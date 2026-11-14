@@ -42,6 +42,7 @@
   --nyte-lead: var(--nyte-purple);
   --nyte-lead-ink: var(--nyte-deep-purple);
   --nyte-lead-tint: var(--nyte-lilac);
+  --nyte-band: url("/static/nyte/band-purple.svg");
 
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-cream);
@@ -151,18 +152,21 @@
 }
 
 :root[data-brand="nyte"][data-page="price"] {
+  --nyte-band: url("/static/nyte/band-yellow.svg");
   --nyte-lead: var(--nyte-yellow);
   --nyte-lead-ink: var(--nyte-ink);
   --nyte-lead-tint: var(--nyte-yellow-tint);
 }
 
 :root[data-brand="nyte"][data-page="trust"] {
+  --nyte-band: url("/static/nyte/band-lime.svg");
   --nyte-lead: var(--nyte-lime);
   --nyte-lead-ink: var(--nyte-green);
   --nyte-lead-tint: var(--nyte-lime-tint);
 }
 
 :root[data-brand="nyte"][data-page="knowledge"] {
+  --nyte-band: url("/static/nyte/band-sky.svg");
   --nyte-lead: var(--nyte-sky);
   --nyte-lead-ink: var(--nyte-deep-purple);
   --nyte-lead-tint: var(--nyte-sky-tint);
@@ -543,7 +547,7 @@ body:where([data-brand="nyte"] *),
 
 /* Ink areas: the header bar, the footer and the console top bar keep the
    kit's dark theme, so their own colours read Cream on Ink. */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink) {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink) {
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-ink);
   --tr-color-surface-bg-alt: var(--nyte-surface);
@@ -1040,18 +1044,18 @@ body:where([data-brand="nyte"] *),
 }
 
 /* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
   :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
   border-color: var(--nyte-cream);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
   :is(.button.button-primary, .btn.primary) {
   border-color: var(--nyte-orange);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
   :is(.button, .btn):hover {
   border-color: var(--nyte-cream);
   background: var(--nyte-cream);
@@ -1096,7 +1100,7 @@ body:where([data-brand="nyte"] *),
   background: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink)
   :is(.eyebrow, .kicker) {
   color: var(--nyte-cream);
 }
@@ -1120,7 +1124,7 @@ body:where([data-brand="nyte"] *),
   outline-offset: 2px;
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink) :focus-visible {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .public-hero, .nyte-ink) :focus-visible {
   outline-color: var(--nyte-cream);
 }
 
@@ -1513,4 +1517,158 @@ body:where([data-brand="nyte"] *),
     gap: clamp(16px, calc(var(--hero-vh, 1svh) * 3), 40px);
     padding-top: clamp(16px, calc(var(--hero-vh, 1svh) * 3), 48px);
   }
+}
+
+/* Homepage hero: the bar stands alone, without the benefits line */
+:root[data-brand="nyte"] #top .hero .hero-promises {
+  display: none;
+}
+
+/* ---- Page heroes: Ink, full-bleed, closed by the page's lead-colour Band ----
+   Every public page hero is Ink, which sets TrustedRouter apart from the
+   Token Exchange's colour-field heroes. The page family still shows in the
+   eyebrow bar and in the Band under the hero. */
+:root[data-brand="nyte"] body {
+  overflow-x: clip;
+}
+
+:root[data-brand="nyte"] .public-hero {
+  border-bottom: 0;
+  box-shadow: 0 0 0 100vmax var(--nyte-ink);
+  clip-path: inset(-100vmax -100vmax 0);
+}
+
+:root[data-brand="nyte"] .public-hero::after {
+  content: "";
+  display: block;
+  grid-column: 1 / -1;
+  height: 96px;
+  margin: 0 calc(50% - 50vw) -56px;
+  background: var(--nyte-ink) var(--nyte-band) 0 0 / 100% 120px no-repeat;
+}
+
+:root[data-brand="nyte"] .public-hero + * {
+  margin-top: 56px;
+}
+
+/* The public sheets set their colour names on :root; the Ink page hero
+   re-points them at its own (dark) values. */
+:root[data-brand="nyte"] .public-hero {
+  --bg: var(--tr-legacy-0d1117, #0d1117);
+  --panel: var(--tr-legacy-161b22, #161b22);
+  --panel2: var(--tr-legacy-1c2230, #1c2230);
+  --ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --inkstrong: var(--tr-legacy-f0f6fc, #f0f6fc);
+  --muted: var(--tr-legacy-8b949e, #8b949e);
+  --line: var(--tr-legacy-30363d, #30363d);
+  --line2: var(--tr-legacy-21262d, #21262d);
+  --blue: var(--tr-legacy-4493f8, #4493f8);
+  --green: var(--tr-legacy-3fb950, #3fb950);
+  --amber: var(--tr-legacy-d29922, #d29922);
+  --red: var(--tr-legacy-f85149, #f85149);
+  --nav: var(--tr-legacy-010409, #010409);
+  --soft: var(--tr-legacy-16263b, #16263b);
+  --rust: var(--tr-legacy-db8a6a, #db8a6a);
+  --top: var(--tr-legacy-0d1117-c7, rgb(13,17,23,.78));
+  --btn: var(--tr-legacy-21262d, #21262d);
+  --ring: var(--tr-legacy-4493f8, #4493f8);
+  --shadow: var(--tr-legacy-010409-80, rgb(1,4,9,.5));
+  --shadow-strong: var(--tr-legacy-010409-b2, rgb(1,4,9,.7));
+  --code-bg: var(--tr-legacy-010409, #010409);
+  --code-ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --code-line: var(--tr-legacy-30363d, #30363d);
+  --code-muted: var(--tr-legacy-8b949e, #8b949e);
+  --code-pre-bg: var(--tr-legacy-0d1117, #0d1117);
+  --chip-bg: var(--tr-legacy-3fb950-24, rgb(63,185,80,.14));
+  --chip-border: var(--tr-legacy-3fb950-57, rgb(63,185,80,.34));
+  --pill-bg: var(--tr-legacy-21262d, #21262d);
+  --pill-ink: var(--tr-legacy-c9d1d9, #c9d1d9);
+  --good-bg: var(--tr-legacy-3fb950-24, rgb(63,185,80,.14));
+  --good-border: var(--tr-legacy-3fb950-66, rgb(63,185,80,.4));
+  --warn-bg: var(--tr-legacy-d29922-24, rgb(210,153,34,.14));
+  --warn-border: var(--tr-legacy-d29922-6b, rgb(210,153,34,.42));
+  --danger-bg: var(--tr-legacy-f85149-1f, rgb(248,81,73,.12));
+  --danger-border: var(--tr-legacy-f85149-66, rgb(248,81,73,.4));
+  --history-empty: var(--tr-legacy-21262d, #21262d);
+  --glass-bg: var(--tr-legacy-161b22-d1, rgb(22,27,34,.82));
+  --glass-border: var(--tr-legacy-30363d-e6, rgb(48,54,61,.9));
+  --glass-bg-soft: var(--tr-legacy-161b22-a8, rgb(22,27,34,.66));
+  --grid-line: var(--tr-legacy-4493f8-1a, rgb(68,147,248,.10));
+  --grid-line-soft: var(--tr-legacy-4493f8-12, rgb(68,147,248,.07));
+  --green-black-0: var(--tr-color-surface-bg);
+  --green-black-1: var(--tr-color-surface-panel);
+  --green-black-2: var(--tr-color-surface-panel-inset);
+  --green-black-3: var(--tr-color-surface-hover);
+  --line-0: var(--tr-color-line-rule-soft);
+  --line-1: var(--tr-color-line-rule-soft);
+  --line-2: var(--tr-color-line-rule);
+  --line-3: var(--tr-color-line-rule);
+  --line-4: var(--tr-color-line-control);
+  --ivory: var(--tr-color-text-primary);
+  --ivory-dim: var(--tr-color-text-secondary);
+  --gray-2: var(--tr-color-text-secondary);
+  --gray-3: var(--tr-color-text-tertiary);
+  --gray-4: var(--tr-color-text-quaternary);
+  --sage: var(--tr-color-accent-base);
+  --sage-bright: var(--tr-color-accent-hover);
+  --sage-dim: var(--tr-color-line-control);
+  --sage-deep: var(--tr-color-privacy-neutral-border);
+  --gold: var(--tr-color-privacy-zdr-text);
+  --gold-dim: var(--tr-color-privacy-zdr-border);
+  --gold-tint: var(--tr-color-privacy-zdr-bg);
+  --clay: var(--tr-color-error);
+  --clay-tint: var(--tr-color-diff-removed-bg);
+  --surface-page: var(--tr-color-surface-bg);
+  --surface-card: var(--tr-color-surface-panel);
+  --surface-raised: var(--tr-color-surface-panel-inset);
+  --surface-hover: var(--tr-color-surface-hover);
+  --surface-input: var(--tr-color-surface-control);
+  --text-display: var(--tr-color-text-primary);
+  --text-body: var(--tr-color-text-secondary);
+  --text-muted: var(--tr-color-text-tertiary);
+  --text-faint: var(--tr-color-text-quaternary);
+  --text-accent: var(--tr-color-accent-base);
+  --text-inverse: var(--tr-color-accent-ink);
+  --border-hairline: var(--tr-color-line-rule-soft);
+  --border-default: var(--tr-color-line-rule);
+  --border-strong: var(--tr-color-line-control);
+  --border-accent: var(--tr-color-line-strong);
+  --status-verified: var(--tr-color-accent-base);
+  --status-pending: var(--tr-color-privacy-zdr-text);
+  --status-failed: var(--tr-color-error);
+}
+
+/* The Ink hero meets the header: no Cream strip above it. Content above the
+   hero (the Trust page's agent prompt) keeps its own ground. */
+:root[data-brand="nyte"] .public-hero:first-child {
+  margin-top: 0;
+}
+
+/* Anything placed above the hero (the Trust page's agent prompt) sits on
+   the same Ink, above the hero's painted ground. */
+:root[data-brand="nyte"] main > :has(~ .public-hero) {
+  position: relative;
+  z-index: 1;
+}
+
+/* With an Ink hero the hero's button is the one Orange button in view:
+   the header Sign in is outlined, as on the homepage. */
+:root[data-brand="nyte"]:has(.public-hero) .trnav .tbar {
+  box-shadow: inset 0 -1.5px 0 var(--nyte-dark-rule);
+}
+
+:root[data-brand="nyte"]:has(.public-hero) .trnav .signin.button.button-primary {
+  border-color: var(--nyte-cream);
+  background: transparent;
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"]:has(.public-hero) .trnav .signin.button.button-primary:hover {
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+/* Links in prose on Ink use the kit's light link colour */
+:root[data-brand="nyte"] :is(.public-hero, .site-footer) p a:not(.button, .btn) {
+  color: var(--nyte-link);
 }
