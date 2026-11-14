@@ -188,7 +188,8 @@ FOOTER_GROUPS = {"buy": "Products", "exchange": "Market", "sell": "For providers
 MENU_COLOURS = {"api": "sky", "cowork": "lime", "buy": "yellow", "index": "yellow", "models": "purple", "deck": "sky"}
 GROUP_COLOURS = {"buy": "lime", "exchange": "purple", "sell": "sky", "trust": "yellow"}
 TR = "https://trustedrouter.com"
-# TrustedRouter pages shown beside NYTE's own; they are linked, never rebuilt here.
+# TrustedRouter pages shown beside NYTE's own, each placed before the page key it names;
+# they are linked, never rebuilt here.
 MENU_EXTRAS = {"exchange": [("index", {"key": "models", "route": f"{TR}/models", "label": "Models & providers",
                                         "menu_description": "Every model on the exchange and who runs it"})]}
 HEADER_LINKS = (("Trust", f"{TR}/trust"), ("Docs", f"{TR}/docs"), ("Pricing", f"{TR}/pricing"))
@@ -201,13 +202,13 @@ COPY_ICON = ('<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rec
 
 
 def menu_items(group: str) -> list[dict]:
-    """A group's labelled pages in registry order, with TrustedRouter extras placed after their anchor."""
+    """A group's labelled pages in registry order, with TrustedRouter extras placed before their anchor."""
     items = []
     for key, entry in PAGES.items():
         if entry.get("group") != group or not entry["label"]:
             continue
+        items.extend(extra for before, extra in MENU_EXTRAS.get(group, ()) if before == key)
         items.append({"key": key, **entry})
-        items.extend(extra for after, extra in MENU_EXTRAS.get(group, ()) if after == key)
     return items
 
 

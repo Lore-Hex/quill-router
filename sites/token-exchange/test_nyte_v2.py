@@ -184,8 +184,8 @@ class NavigationRegistryTests(unittest.TestCase):
             listed = []
             for key, p in PAGES.items():
                 if p.get("group") == group and p["label"]:
+                    listed += [extra["route"] for before, extra in MENU_EXTRAS.get(group, ()) if before == key]
                     listed.append(p["route"])
-                    listed += [extra["route"] for after, extra in MENU_EXTRAS.get(group, ()) if after == key]
             return listed
 
         for key, entry in PAGES.items():
