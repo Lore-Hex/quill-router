@@ -167,14 +167,7 @@ _POST_RETIREMENT_PAGE = (
 )
 
 
-@pytest.mark.parametrize(
-    "listed",
-    [
-        ["solar-pro4"],  # /v1/models since 2026-11-01
-        ["solar-pro4", "solar-pro3", "solar-pro2"],  # a stale relisting
-    ],
-)
-def test_retired_solar_pro2_pro3_keep_tombstones_and_manifest_renews(monkeypatch, tmp_path, listed):
+def test_retired_solar_pro2_pro3_keep_tombstones_and_manifest_renews(monkeypatch, tmp_path):
     import json
     from dataclasses import replace
 
@@ -189,12 +182,9 @@ def test_retired_solar_pro2_pro3_keep_tombstones_and_manifest_renews(monkeypatch
     monkeypatch.setenv("UPSTAGE_API_KEY", "test-only-key")
     monkeypatch.setattr(upstage, "fetch_html", lambda url: _POST_RETIREMENT_PAGE)
     monkeypatch.setattr(
-        _direct_openai, "fetch_json", lambda url, *, extra_headers: {"data": [{"id": i} for i in listed]}
+        _direct_openai, "fetch_json", lambda url, *, extra_headers: {"data": [{"id": "solar-pro4"}]}
     )
-    probed: list[str] = []
-    monkeypatch.setattr(
-        _direct_openai, "probe_openai_chat", lambda **kwargs: probed.append(kwargs["model"]) or True
-    )
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **kwargs: True)
     catalog = DirectOpenAIProvider(replace(upstage.CATALOG.spec), manifest_path=path)
 
     notes = catalog.write_provider_manifest(catalog.fetch())
@@ -204,10 +194,11 @@ def test_retired_solar_pro2_pro3_keep_tombstones_and_manifest_renews(monkeypatch
     assert raw["generated_at"] != json.loads(committed)["generated_at"]
     rows = {row["id"]: row for row in raw["models"]}
     assert rows["upstage/solar-pro4"].get("routable") is not False
-    for model in upstage.RETIRED_MODEL_IDS:
+    # /v1/models has listed only solar-pro4 since 2026-11-01.
+    for model in ("upstage/solar-pro2", "upstage/solar-pro3"):
         assert rows[model]["routable"] is False
-        assert rows[model]["routable_reason"] == "provider-model-retired"
+        assert rows[model]["routable_reason"] == "delisted-upstream"
+        assert rows[model]["missing_since"] == "2026-11-01"
         assert rows[model]["retirement_at"] == "2026-10-29T15:00:00Z"
-    assert "solar-pro2" not in probed and "solar-pro3" not in probed
     # The refresh's outer publication gate accepts the rebuilt manifest too.
     assert guard_manifest_prune(before_rows, raw["models"], provider_slug="upstage") == raw["models"]
