@@ -17,7 +17,7 @@
   {% block scripts %}{% endblock %}
 <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
 <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
-{% if brand_theme() == "nyte" %}<link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head>
+{% if brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ static_version|default('local') }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head>
 <body class="console">
   {#- Console header. It shares only the brand home link (_brand.html) with the
       public header in public/_nav.html; the rest differs on purpose: a dark

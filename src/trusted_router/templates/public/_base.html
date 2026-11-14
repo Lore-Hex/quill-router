@@ -38,7 +38,7 @@
   <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
-{% if brand_theme() == "nyte" %}<link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head>
+{% if brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ static_version|default('local') }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head>
 <body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
   {% block promotion %}{% endblock %}

@@ -28,6 +28,7 @@ def test_default_theme_renders_no_nyte_markup(client: TestClient, path: str) -> 
     html = client.get(path).text
     assert 'data-brand="nyte"' not in html
     assert "nyte-theme.css" not in html
+    assert "nyte-page.js" not in html
 
 
 @pytest.mark.parametrize("path", PAGES)
@@ -38,6 +39,18 @@ def test_nyte_theme_tags_html_and_loads_its_sheet_last(
     assert re.search(r'<html[^>]*data-brand="nyte"', html)
     sheets = re.findall(r'<link rel="stylesheet" href="(/static/[^"?]+)', html)
     assert sheets[-1] == "/static/nyte-theme.css"
+    assert '<script src="/static/nyte-page.js' in html.split("</head>")[0]
+
+
+@pytest.mark.parametrize(
+    ("family", "path"),
+    [("price", "/pricing"), ("trust", "/trust"), ("knowledge", "/docs/quickstart")],
+)
+def test_page_family_script_covers_each_lead_colour(family: str, path: str) -> None:
+    script = (STATIC / "nyte-page.js").read_text()
+    assert f'["{family}", /' in script
+    first_segment = path.strip("/").split("/")[0]
+    assert re.search(rf"[(|]{re.escape(first_segment)}[|)]", script)
 
 
 def _theme_defines() -> set[str]:
