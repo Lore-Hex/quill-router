@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -579,5 +582,61 @@ func TestEdgeTicketDetachedTimeout(t *testing.T) {
 	n := h.edge.DecideCounts().Tickets
 	if n["failed.transport"] != 1 || n["spliced"] != 0 || n["late"] != 0 {
 		t.Fatal(n)
+	}
+}
+
+// TestEdgeTicketWireFixture reads the literal wire Python's tests read too
+// (fastpath/testdata/edge_ticket_wire_v1.json; tests/test_edge_ticket_wire_fixture.py):
+// the request the edge posts, field for field, and the two answers it accepts.
+func TestEdgeTicketWireFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "edge_ticket_wire_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Request  json.RawMessage `json:"request"`
+		Issued   json.RawMessage `json:"issued"`
+		Declined json.RawMessage `json:"declined"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var body ticketRequest
+	decoder := json.NewDecoder(bytes.NewReader(fixture.Request))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	marshalled, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want map[string]any
+	if err := json.Unmarshal(marshalled, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(fixture.Request, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the edge's request differs from the fixture:\n got %v\nwant %v", got, want)
+	}
+	if !ticketAuthorizationID.MatchString(body.AuthorizationID) {
+		t.Fatalf("the fixture's authorization id is one the edge never asks a ticket for: %q", body.AuthorizationID)
+	}
+
+	ticket, stage := parseTicket(fixture.Issued, ticketStatusURL(body.AuthorizationID))
+	if ticket == nil || stage != "" || !ticket.Eligible {
+		t.Fatalf("issued answer: ticket %+v stage %q", ticket, stage)
+	}
+	var issued map[string]any
+	if err := json.Unmarshal(fixture.Issued, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if ticket.SettlementTicket != issued["settlement_ticket"] || ticket.StatusURL != issued["settlement_status_url"] {
+		t.Fatalf("issued answer read as %+v", ticket)
+	}
+	if ticket, stage := parseTicket(fixture.Declined, ticketStatusURL(body.AuthorizationID)); ticket != nil || stage != "" {
+		t.Fatalf("declined answer: ticket %+v stage %q", ticket, stage)
 	}
 }
