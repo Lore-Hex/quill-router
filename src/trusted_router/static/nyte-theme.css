@@ -1281,12 +1281,49 @@ body:where([data-brand="nyte"] *),
   color: var(--nyte-cream);
 }
 
-/* ---- Homepage hero and closing: kit colour fields, no photographs ----
-   The hero is a full lead-colour Field; the closing call to action is a
-   full-strength accent section (COL-02). Text on a field is Ink (COL-03). */
+/* ---- Homepage hero: Ink, centred, no photograph ----
+   TrustedRouter's hero is Ink (it sets the site apart from the Token
+   Exchange's coloured fields), with the one emphasised phrase in Lime and a
+   Lime Band closing the hero. The closing call to action is a Lime field.
+   Text on a field is Ink (COL-03); type on Ink is Cream. */
 :root[data-brand="nyte"] #top .hero {
-  background: var(--nyte-lead);
-  color: var(--nyte-ink);
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] #top .hero > .copy::before {
+  content: "";
+  display: block;
+  width: 40px;
+  flex: none;
+  align-self: center;
+  height: 4px;
+  min-height: 0;
+  max-height: 4px;
+  margin: 0 auto 14px;
+  background: var(--nyte-lime);
+}
+
+:root[data-brand="nyte"] #top::after {
+  content: "";
+  display: block;
+  height: 120px;
+  background: var(--nyte-ink) url("/static/nyte/band-lime.svg") 0 0 / 100% 120px no-repeat;
+}
+
+/* Without the photo the hero takes its content's height, not the screen's */
+:root[data-brand="nyte"] #top .hero {
+  min-height: 0;
+  padding-bottom: 56px;
+}
+
+:root[data-brand="nyte"] #top .hero > .copy {
+  padding-top: 72px;
+}
+
+:root[data-brand="nyte"] #top .hero .labs {
+  position: static;
+  margin: 56px auto 0;
 }
 
 :root[data-brand="nyte"] .closing-cta {
@@ -1299,39 +1336,99 @@ body:where([data-brand="nyte"] *),
   display: none;
 }
 
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :is(h1, h2, h1 em, h2 em, .sub, .cta-note, .hero-promises, .lab) {
-  color: var(--nyte-ink);
+:root[data-brand="nyte"] #top .hero :is(h1, .sub, .cta-note, .hero-promises, .hero-promises li, .lab) {
+  color: var(--nyte-cream);
   text-shadow: none;
 }
 
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :is(h1, h2) em {
-  font-style: italic;
+:root[data-brand="nyte"] #top .hero h1 em {
+  color: var(--nyte-lime);
+  font-style: normal;
+}
+
+:root[data-brand="nyte"] #top .hero .hero-promises {
+  font-family: "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
+  font-weight: 500;
+  letter-spacing: 0.1em;
 }
 
 :root[data-brand="nyte"] #top .hero .hero-promises li + li::before {
-  color: var(--nyte-ink);
+  color: var(--nyte-cream);
 }
 
+/* Model names in type, not logos (brand book ICN-03) */
 :root[data-brand="nyte"] #top .hero .labs {
   background: transparent;
 }
 
-:root[data-brand="nyte"] #top .hero .lab img {
-  opacity: 1;
+:root[data-brand="nyte"] #top .hero .lab {
+  color: var(--nyte-ink-2-dark);
+  font-family: var(--tr-font-family-mono);
 }
 
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) .button.button-secondary {
+:root[data-brand="nyte"] #top .hero .lab img {
+  display: none;
+}
+
+:root[data-brand="nyte"] #top .hero .button.button-primary {
+  border-color: var(--nyte-orange);
+}
+
+:root[data-brand="nyte"] #top .hero .button.button-secondary {
+  border-color: var(--nyte-cream);
+  background: transparent;
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] #top .hero .button:hover {
+  border-color: var(--nyte-cream);
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] #top .hero :focus-visible {
+  outline-color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] .closing-cta :is(h2, h2 em) {
+  color: var(--nyte-ink);
+  text-shadow: none;
+}
+
+:root[data-brand="nyte"] .closing-cta h2 em {
+  font-style: italic;
+}
+
+:root[data-brand="nyte"] .closing-cta .button.button-secondary {
   border-color: var(--nyte-ink);
   background: transparent;
   color: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) .button:hover {
+:root[data-brand="nyte"] .closing-cta .button:hover {
   border-color: var(--nyte-ink);
   background: var(--nyte-ink);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :focus-visible {
+:root[data-brand="nyte"] .closing-cta :focus-visible {
   outline-color: var(--nyte-ink);
+}
+
+/* On the homepage the hero's button is the one Orange button in view
+   (COL-05): the header Sign in is outlined, and the header has no lead band
+   because the Ink hero follows it. */
+:root[data-brand="nyte"]:has(#top .hero) .trnav .tbar {
+  box-shadow: inset 0 -1.5px 0 var(--nyte-dark-rule);
+}
+
+:root[data-brand="nyte"]:has(#top .hero) .trnav .signin.button.button-primary {
+  border-color: var(--nyte-cream);
+  background: transparent;
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"]:has(#top .hero) .trnav .signin.button.button-primary:hover {
+  background: var(--nyte-cream);
+  color: var(--nyte-ink);
 }
