@@ -1651,6 +1651,13 @@ body:where([data-brand="nyte"] *),
   width: 100vw;
   max-width: none;
   margin-top: 48px;
+  margin-bottom: 0;
+}
+
+/* Grid heroes: the Band spans the grid with its bleed margins, so it never
+   widens a column */
+:root[data-brand="nyte"] :is(.models-page-hero, .bgb-hero)::after {
+  width: auto;
 }
 
 /* Green tokens and the Token Exchange drop their hero artwork (the photo
@@ -1676,6 +1683,132 @@ body:where([data-brand="nyte"] *),
 
 :root[data-brand="nyte"] :is(.routing-feature-hero, .company-intro, .media-intro)::after {
   max-width: none;
+}
+
+/* The hero starts at the header: no page padding above it. The Band is
+   shorter on phones and short screens so the whole hero, Band included,
+   fits the first screen. */
+:root[data-brand="nyte"] main:has(> :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro):first-child) {
+  padding-top: 0;
+}
+
+:root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+  margin-top: 40px;
+}
+
+@media (max-width: 760px), (max-height: 760px) {
+  :root[data-brand="nyte"] :is(.models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+    height: 64px;
+    margin-top: 32px;
+    background-size: 100% 80px;
+  }
+}
+
+/* The offer strip sits above the hero's painted Ink, not under it */
+:root[data-brand="nyte"] .model-promo {
+  position: relative;
+  z-index: 1;
+}
+
+/* /models hero: room between the lines, one screen tall */
+:root[data-brand="nyte"] .models-page-hero {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  padding: 40px 0 0;
+}
+
+:root[data-brand="nyte"] .models-page-hero-links {
+  justify-content: flex-start;
+}
+
+:root[data-brand="nyte"] .models-page-hero h1 {
+  margin: 16px 0 16px;
+}
+
+:root[data-brand="nyte"] .models-page-hero-cta {
+  margin-top: 24px;
+}
+
+:root[data-brand="nyte"] .models-page-hero-links {
+  gap: 10px 20px;
+  font-size: 15px;
+}
+
+@media (max-width: 560px) {
+  :root[data-brand="nyte"] .models-page-hero {
+    gap: 24px;
+    padding-top: 28px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero h1 {
+    margin: 14px 0 14px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero p {
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-cta .cta-note {
+    margin-top: 12px;
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-links {
+    flex-wrap: nowrap;
+    gap: 20px;
+    margin-right: -16px;
+    padding-right: 40px;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  }
+
+  :root[data-brand="nyte"] .models-page-hero-links::-webkit-scrollbar {
+    display: none;
+  }
+
+  @supports (animation-timeline: scroll(self inline)) {
+    :root[data-brand="nyte"] .models-page-hero-links {
+      animation: nyte-fade-clear linear both;
+      animation-timeline: scroll(self inline);
+      animation-range: 85% 100%;
+    }
+  }
+
+  /* Filters: one swipeable line. The fade at the right edge and the cut
+     chip say there is more; the fade clears at the end of the row. */
+  :root[data-brand="nyte"] .model-explorer > .model-filter-row {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding-right: 40px;
+    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  }
+
+  :root[data-brand="nyte"] .model-explorer > .model-filter-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  :root[data-brand="nyte"] .model-explorer > .model-filter-row > .pill {
+    flex: none;
+  }
+
+  @supports (animation-timeline: scroll(self inline)) {
+    :root[data-brand="nyte"] .model-explorer > .model-filter-row {
+      animation: nyte-fade-clear linear both;
+      animation-timeline: scroll(self inline);
+      animation-range: 85% 100%;
+    }
+  }
+}
+
+@keyframes nyte-fade-clear {
+  to {
+    mask-image: linear-gradient(to right, #000 100%, transparent);
+  }
 }
 
 /* The model page sets its colour names on its wrapper; the Ink hero
