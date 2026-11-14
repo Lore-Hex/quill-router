@@ -5,12 +5,15 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
 // Leased answers (docs/design/fast-admission-e2-g15-async.md, "Leased
@@ -132,8 +135,8 @@ func TestTheLeasedAnswerGate(t *testing.T) {
 	}
 	t.Logf("%d leased answers, %d overlap passes, %d outside admission, %d without the header", leased, overlap,
 		outside, plain)
-	// 55 answered async-v1 goldens and the one without the header.
-	if leased != 4*55 || overlap != 2*55 || outside != 2*55 || plain != 8 {
+	// 56 answered async-v1 goldens and the one without the header.
+	if leased != 4*56 || overlap != 2*56 || outside != 2*56 || plain != 8 {
 		t.Fatalf("leased %d, overlap %d, outside %d, plain %d: not the goldens' counts", leased, overlap, outside, plain)
 	}
 }
@@ -202,6 +205,19 @@ func TestEdgeTicketsKeepTheirPathWithEdgeLeased(t *testing.T) {
 	if _, ok := ticketRequestOf(dec); !ok {
 		t.Fatal("no ticket request for an edge-ticket workspace")
 	}
+	// The Python-generated policy carrying edge_tickets, edge_leased and
+	// overlap_workspaces together: the ticket path, Python's signed shape C
+	// (TestEveryAsyncGoldenThroughThePipeline answers it byte for byte).
+	golden := asyncCaseNamed(t, "answer:async.C:edge_tickets:leased:overlap_listed")
+	p := policyOf(t, f, golden).AsyncSettle
+	if p == nil || p.EdgeTickets == nil || p.EdgeLeased == nil || p.OverlapWorkspaces == nil {
+		t.Fatalf("the golden's policy does not carry all three members: %+v", p)
+	}
+	in, _ = caseInputs(t, f, golden)
+	dec, ok = Decide(in).Admit()
+	if !ok || dec.LeasedAnswer || !dec.Staged.Async().WantTicket {
+		t.Fatalf("the golden: decision %v, leased answer %v", ok, dec != nil && dec.LeasedAnswer)
+	}
 }
 
 // TestALeasedAnswerMeetsEveryGate: a leased answer's request is gated as a
@@ -250,6 +266,142 @@ func TestALeasedAnswerMeetsEveryGate(t *testing.T) {
 		}
 		if _, ok := d.Admit(); ok != (v.gate == "") {
 			t.Errorf("%s: admitted %v", v.name, ok)
+		}
+	}
+}
+
+// TestALeasedAnswerMeetsTheFactAndPolicyGates: the gates before the
+// compose read a leased answer's request as any other, each passing it with
+// its own reason and no decision: the credit rows (creditPass), the
+// workspace's own facts, the key's, and the policy's (region, coverage,
+// records). Each change's positive control is the unchanged read, a leased
+// answer decided.
+func TestALeasedAnswerMeetsTheFactAndPolicyGates(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	c := asyncCaseNamed(t, "answer:async.B:leased")
+	ws := c.Facts.Key.WorkspaceID
+	base, _ := caseInputs(t, f, c)
+	if d, ok := Decide(base).Admit(); !ok || !d.LeasedAnswer {
+		t.Fatalf("positive control: the leased golden is not a leased answer (%v)", ok)
+	}
+	for _, v := range []struct {
+		name   string
+		change func(*gwstate.Read)
+		want   string
+	}{
+		{"credit stale", func(r *gwstate.Read) { r.Credit = gwstate.Stale }, PassCacheWorkspace},
+		{"rows incomplete", func(r *gwstate.Read) { r.CreditRows = false }, PassWorkspaceCreditRows},
+		{"row paused", func(r *gwstate.Read) { r.CreditState.Paused = true }, PassWorkspacePaused},
+		{"row refuses paused", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedPaused }, PassWorkspacePaused},
+		{"row in debt", func(r *gwstate.Read) { r.CreditState.InDebt = true }, PassWorkspaceInDebt},
+		{"row refuses in debt", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedInDebt },
+			PassWorkspaceInDebt},
+		{"row latched", func(r *gwstate.Read) { r.CreditState.Latched = true }, PassWorkspaceTier},
+		{"row below the tier", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedTier }, PassWorkspaceTier},
+		{"row's tier has no allowance", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedTierAllowance },
+			PassWorkspaceTier},
+		{"row refuses otherwise", func(r *gwstate.Read) { r.CreditState.Refused = store.RefusedAllowance },
+			PassWorkspaceRefused},
+		{"entity paused", func(r *gwstate.Read) {
+			r.Facts.Workspace.Eligible, r.Facts.Workspace.Reason = false, gwstate.ReasonWorkspacePaused
+		}, PassWorkspacePaused},
+		{"entity gone", func(r *gwstate.Read) {
+			r.Facts.Workspace.Eligible, r.Facts.Workspace.Reason = false, gwstate.ReasonWorkspaceGone
+		}, PassWorkspaceMissing},
+		{"entity deleted", func(r *gwstate.Read) {
+			r.Facts.Workspace.Eligible, r.Facts.Workspace.Reason = false, gwstate.ReasonWorkspaceGone
+			r.Facts.Workspace.Deleted = true
+		}, PassWorkspaceDeleted},
+		{"entity federated", func(r *gwstate.Read) {
+			r.Facts.Workspace.Eligible, r.Facts.Workspace.Reason = false, gwstate.ReasonWorkspaceFederal
+		}, PassWorkspaceFederated},
+		{"broadcast", func(r *gwstate.Read) { r.Facts.BroadcastDestination = true }, PassWorkspaceBroadcast},
+		{"key expired", func(r *gwstate.Read) { r.Facts.Key.ExpiresAt = base.Request.At }, PassKeyExpired},
+	} {
+		if d := Decide(withRead(t, base, v.change)); d.Pass != v.want || d.ForShadow() != nil {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, d.Pass, d.ForShadow() != nil, v.want)
+		}
+	}
+	for _, v := range []struct {
+		name   string
+		change func(*routingsnapshot.EdgePolicy)
+		want   string
+	}{
+		{"another pilot region", func(p *routingsnapshot.EdgePolicy) { p.FastpathPilotRegions = []string{"x-region-1"} },
+			PassPilotRegion},
+		{"regions disagree with the snapshot", func(p *routingsnapshot.EdgePolicy) {
+			p.MultiRegionEnabled = !p.MultiRegionEnabled
+		}, PassRegionsMismatch},
+		{"all mode excludes the workspace", func(p *routingsnapshot.EdgePolicy) {
+			x := []string{ws}
+			p.FastpathPilotExclude = &x
+		}, PassNotPilotWorkspace},
+		{"records not durable", func(p *routingsnapshot.EdgePolicy) { p.RecordsDurable = false }, PassRecordsNotDurable},
+		{"an async-settle shadow workspace", func(p *routingsnapshot.EdgePolicy) {
+			p.AsyncSettleShadowWorkspaces = []string{ws}
+		}, PassAsyncSettleShadow},
+	} {
+		in := base
+		p := *in.Policy
+		v.change(&p)
+		in.Policy = &p
+		if d := Decide(in); d.Pass != v.want || d.ForShadow() != nil {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, d.Pass, d.ForShadow() != nil, v.want)
+		}
+	}
+}
+
+// TestALeasedAnswerMeetsTheKeyWindowsGate: the policy's
+// fastpath_pilot_key_windows gates a leased answer's windowed key as any
+// other (key-windows section 5): absent, a windowed key passes with its
+// window reason, a decision gate with a decision for the shadow; alert covers
+// an alert-only key, decided as uncapped; enforce covers an enforcing key,
+// whose decision carries its window check for the decide path. A lifetime cap
+// passes whatever the mode.
+func TestALeasedAnswerMeetsTheKeyWindowsGate(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	c := asyncCaseNamed(t, "answer:async.B:leased")
+	enforcing := map[string]any{"limit_daily_microdollars": 5000}
+	alertOnly := map[string]any{"limit_weekly_microdollars": 7, "budget_alert_only": true}
+	for _, v := range []struct {
+		name    string
+		fields  map[string]any
+		mode    string
+		want    string
+		decided bool // a decision for the shadow
+		check   bool // the decision carries a window check
+	}{
+		{"enforcing, mode absent", enforcing, "", PassKeyWindow, true, true},
+		{"enforcing, mode alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow, true, true},
+		{"enforcing, mode enforce", enforcing, routingsnapshot.KeyWindowsEnforce, "", true, true},
+		{"alert only, mode absent", alertOnly, "", PassKeyWindowAlert, true, false},
+		{"alert only, mode alert", alertOnly, routingsnapshot.KeyWindowsAlert, "", true, false},
+		{"lifetime cap, mode enforce", map[string]any{"limit_microdollars": 5}, routingsnapshot.KeyWindowsEnforce,
+			PassKeyCap, false, false},
+	} {
+		k := c
+		body := keyBodyWith(t, k, v.fields)
+		k.Key.KeyBody = &body
+		in, _ := caseInputs(t, f, k)
+		p := *in.Policy
+		p.FastpathPilotKeyWindows = nil
+		if v.mode != "" {
+			mode := v.mode
+			p.FastpathPilotKeyWindows = &mode
+		}
+		in.Policy = &p
+		d := Decide(in)
+		dec := d.ForShadow()
+		if d.Pass != v.want || (dec != nil) != v.decided {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, d.Pass, dec != nil, v.want)
+			continue
+		}
+		if dec == nil {
+			continue
+		}
+		if !dec.LeasedAnswer || (dec.Windows != nil) != v.check || d.DecideGate != v.want {
+			t.Errorf("%s: leased answer %v, window check %v, gate %q", v.name, dec.LeasedAnswer, dec.Windows != nil,
+				d.DecideGate)
 		}
 	}
 }
@@ -305,14 +457,16 @@ func TestALeasedAnswerIsGivenOnlyUnderTheEdgesLease(t *testing.T) {
 	}
 }
 
-// TestTheShadowDoesNotCountAPythonTicketAgainstALeasedAnswer
+// TestTheShadowComparesALeasedAnswerWithPythonsAnswerLessItsTicket
 // (leasedUnleased): a leased answer the decide path passed, which Python
-// answered with a ticket (its own pilot did not lease it), is
-// python_answered_go_passed under the decide path's pass, not a differ,
-// with its decide gate and async counts (async_python_admitted) kept. The
-// controls: Python's leased answer (shape B) agrees; a decision that is not
-// a leased answer still differs on Python's ticket.
-func TestTheShadowDoesNotCountAPythonTicketAgainstALeasedAnswer(t *testing.T) {
+// answered with a ticket (its own pilot did not lease it), is compared with
+// Python's answer less the ticket, the status URL and async_eligible's
+// value: equal, agree_full, counted async_python_admitted with its async
+// members not compared; Python's estimate, reservation or candidates
+// otherwise, a differ naming them, never the async shape. Python's leased
+// answer (shape B) agrees. The control: a decision that is not a leased
+// answer still differs on Python's ticket, in its shape.
+func TestTheShadowComparesALeasedAnswerWithPythonsAnswerLessItsTicket(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
 	c := asyncCaseNamed(t, "answer:async.B:leased")
 	in, _ := caseInputs(t, f, c)
@@ -322,17 +476,41 @@ func TestTheShadowDoesNotCountAPythonTicketAgainstALeasedAnswer(t *testing.T) {
 		t.Fatalf("passed %q (decision %v)", d.Pass, d.ForShadow() != nil)
 	}
 	sh := &fullShadow{}
-	ticket := pyAnswer{status: http.StatusOK, body: ticketed(t, c.Expect.Response)}
-	r := sh.safeCompare(d, ticket, nil, PassWorkspaceNotEnabled)
-	if r.class != ClassPythonAnsweredGoPassed+"."+PassWorkspaceNotEnabled || len(r.fields) != 0 || !r.decided ||
-		r.gate != PassWorkspaceNotEnabled || !r.async.pythonAdmitted || r.async.pop != AsyncPlain || r.rows {
-		t.Fatalf("Python's ticket: %+v", r)
+	// Python's shape C, async_eligible true as admission answers it.
+	eligible := string(mutated(t, string(ticketed(t, c.Expect.Response)), func(o pyjson.Object) pyjson.Object {
+		return setMember(o, "async_eligible", true)
+	}))
+	for _, pass := range []string{PassWorkspaceNotEnabled, ""} {
+		r := sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: []byte(eligible)}, nil, pass)
+		if r.class != ClassAgreeFull || len(r.fields) != 0 || !r.decided || r.gate != PassWorkspaceNotEnabled ||
+			!r.async.pythonAdmitted || r.async.compared != "" || r.async.pop != AsyncPlain || !r.rows {
+			t.Fatalf("Python's ticket (decide path pass %q): %+v", pass, r)
+		}
 	}
-	if r := sh.safeCompare(d, ticket, nil, ""); r.class != ClassPythonAnsweredGoPassed+"."+inFlightNotDecided {
-		t.Fatalf("Python's ticket with no decide path: %s", r.class)
+	for _, v := range []struct {
+		name   string
+		change func(pyjson.Object) pyjson.Object
+	}{
+		{"estimate", func(o pyjson.Object) pyjson.Object {
+			est, _ := memberOf(o, "estimated_cost_microdollars").(int64)
+			return setMember(o, "estimated_cost_microdollars", est+1)
+		}},
+		{"candidates", func(o pyjson.Object) pyjson.Object {
+			return setMember(o, "route_candidates", []any{})
+		}},
+		{"snapshot hash", func(o pyjson.Object) pyjson.Object {
+			return setMember(o, "billing_snapshot_hash", strings.Repeat("0", 64))
+		}},
+	} {
+		changed := mutated(t, eligible, v.change)
+		r := sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: changed}, nil, PassWorkspaceNotEnabled)
+		if r.class != ClassDifferAny || len(r.fields) == 0 || slices.Contains(r.fields, FieldAsyncShape) ||
+			!r.async.pythonAdmitted {
+			t.Errorf("Python's ticket with its %s changed: %s %v", v.name, r.class, r.fields)
+		}
 	}
 	if r := sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: []byte(c.Expect.Response)}, nil,
-		PassWorkspaceNotEnabled); r.class != ClassAgreeFull || r.async.compared != "agree" {
+		PassWorkspaceNotEnabled); r.class != ClassAgreeFull || r.async.compared != "agree" || r.async.pythonAdmitted {
 		t.Fatalf("Python's leased answer: %s %+v", r.class, r.async)
 	}
 	// The control: the same request in a workspace outside admission (the
@@ -344,9 +522,24 @@ func TestTheShadowDoesNotCountAPythonTicketAgainstALeasedAnswer(t *testing.T) {
 	if d.ForShadow() == nil || d.ForShadow().LeasedAnswer {
 		t.Fatal("the reserved golden is a leased answer")
 	}
-	r = sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: ticketed(t, reserved.Expect.Response)}, nil,
+	r := sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: ticketed(t, reserved.Expect.Response)}, nil,
 		PassWorkspaceNotEnabled)
 	if r.class != ClassDifferAny || !slices.Contains(r.fields, FieldAsyncShape) {
 		t.Fatalf("a ticket against a decision outside admission: %s %v", r.class, r.fields)
+	}
+}
+
+// TestLeasedBytesIsTheOnlyChange: the ticket members out and async_eligible
+// false is all leasedBytes changes, and a body that is not its own encoding
+// is refused, so a re-encoding can never be what the comparison sees.
+func TestLeasedBytesIsTheOnlyChange(t *testing.T) {
+	c := asyncCaseNamed(t, "answer:async.B:leased")
+	got, ok := leasedBytes(ticketed(t, c.Expect.Response))
+	if !ok || string(got) != c.Expect.Response {
+		t.Fatalf("leased bytes %v:\n got %s\nwant %s", ok, got, c.Expect.Response)
+	}
+	spaced := strings.Replace(string(ticketed(t, c.Expect.Response)), `{"data":{`, `{"data": {`, 1)
+	if _, ok := leasedBytes([]byte(spaced)); ok {
+		t.Fatal("a body that is not its own encoding was re-encoded")
 	}
 }
