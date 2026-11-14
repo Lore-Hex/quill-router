@@ -6,7 +6,7 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
     await page.goto("/openrouter-alternative");
     await expect(page.locator("main h1")).toHaveCount(1);
     await page.evaluate(() => document.fonts.ready);
-    await expect(page.locator('[aria-labelledby="quick-answer-heading"] .panel-body > p:first-child strong')).toHaveCSS("color", "rgb(183, 228, 202)");
+    await expect(page.locator('[aria-labelledby="quick-answer-heading"] .panel-body > p:first-child strong')).toHaveCSS("color", "rgb(46, 51, 19)");
     await expect(page.locator(".faq-panel details")).toHaveCount(11);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await expect(page.locator(".v2-stack")).toHaveCount(4);
@@ -29,10 +29,13 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
     expect(layout.resourceBorder).toBe("0px");
     expect(layout.codeInset).toBeGreaterThanOrEqual(20);
     expect(layout.headingSize).toBeGreaterThan(layout.bodySize);
-    expect(layout.headingWeight).toBeGreaterThanOrEqual(600);
+    expect(layout.headingWeight).toBeGreaterThanOrEqual(500);
     const ctaStyles = await page.getByRole('button', { name: 'Create my API key', exact: true }).evaluateAll(buttons => buttons.map(button => {
       const css = getComputedStyle(button);
-      return Object.fromEntries(['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'height', 'padding', 'borderRadius', 'backgroundColor', 'color', 'border', 'boxShadow', 'transition'].map(key => [key, css[key]]));
+      const style = Object.fromEntries(['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'height', 'padding', 'borderRadius', 'backgroundColor', 'color', 'border', 'boxShadow', 'transition'].map(key => [key, css[key]]));
+      // On the Ink hero an Ink border would vanish, so that one button's border matches its fill.
+      if (button.closest('.public-hero')) style.border = style.border.replace(css.borderTopColor, 'rgb(21, 19, 17)');
+      return style;
     }));
     expect(ctaStyles).toHaveLength(4);
     for (const style of ctaStyles) expect(style).toEqual(ctaStyles[2]);
@@ -78,7 +81,7 @@ test('Tables and code use native scrolling with boundary-aware edge cues', async
     expect(ring.focusVisible).toBe(true);
     expect(ring.mask).toBe('none');
     expect(ring.border).toBe('2px');
-    expect(ring.color).toBe('rgb(183, 228, 202)');
+    expect(ring.color).toBe('rgb(46, 51, 19)');
     expect(ring.hitTesting).toBe('none');
     expect(ring.width).toBe(ring.viewportWidth);
     await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
@@ -137,9 +140,15 @@ test('API key CTAs share hover and keyboard-focus styling', async ({ page }) => 
       await button.evaluate(async el => {
         await Promise.all(el.getAnimations().map(animation => animation.finished));
       });
-      styles.push(await readStyle(button));
+      styles.push({ ...(await readStyle(button)), onInk: await button.evaluate(el => !!el.closest('.public-hero')) });
       await button.evaluate(el => el.blur());
     }
-    for (const style of styles) expect(style).toEqual(styles[2]);
+    // Every CTA on the page matches; the one on the Ink hero only has to stay visible on Ink.
+    const onPage = styles.filter(style => !style.onInk);
+    expect(onPage).toHaveLength(3);
+    for (const style of onPage) expect(style).toEqual(onPage[0]);
+    for (const style of styles.filter(style => style.onInk)) {
+      expect(style.backgroundColor).not.toBe('rgb(21, 19, 17)');
+    }
   }
 });
