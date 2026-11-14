@@ -626,17 +626,27 @@ func TestTheAdmissionExcludedWorkspacesMemberIsOptional(t *testing.T) {
 // admission_excluded_workspaces: with Python's validators met, the pilot set
 // alone decides. With the pilot set empty every workspace is admitted but
 // the reserved list, which is admission_excluded_workspaces with no
-// admission_workspaces beside it.
+// admission_workspaces beside it. Each combination comes twice, with the
+// leased-answer switch (fastpath_edge_async_leased) off and on: on, with
+// admission on, the body carries edge_leased and overlap_workspaces, and
+// AdmitsLeased agrees with Python's async_settle_admits_request(ws,
+// leased=True) per probe, so the edge composes the admission-off answer for
+// exactly the leased requests Python answers without a ticket; off, the
+// body is the one from before the switch and AdmitsLeased is Admits. The
+// leased members' other spellings are refused by both readers, each with an
+// error naming its member.
 func TestTheAsyncAdmissionVectors(t *testing.T) {
 	var file struct {
 		Generator string   `json:"generator"`
 		Probes    []string `json:"probes"`
 		Cases     []struct {
-			Name     string          `json:"name"`
-			Settings json.RawMessage `json:"settings"`
-			Body     string          `json:"body"`
-			Accept   bool            `json:"accept"`
-			Admits   map[string]bool `json:"admits"`
+			Name          string          `json:"name"`
+			Settings      json.RawMessage `json:"settings"`
+			Body          string          `json:"body"`
+			Accept        bool            `json:"accept"`
+			Admits        map[string]bool `json:"admits"`
+			AdmitsLeased  map[string]bool `json:"admits_leased"`
+			RefusedMember *string         `json:"refused_member"`
 		} `json:"cases"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "edge_policy_admission_v1.json")))
@@ -645,6 +655,7 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted, refused, excluded, admitted, left, all, reserved, everyone := 0, 0, 0, 0, 0, 0, 0, 0
+	leased, overlap, leasedRefused, leasedOff := 0, 0, 0, 0
 	for _, c := range file.Cases {
 		p, err := ParseEdgePolicy([]byte(c.Body))
 		if (err == nil) != c.Accept {
@@ -653,6 +664,13 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 		}
 		if err != nil {
 			refused++
+			if c.RefusedMember != nil {
+				// Refused for its member, not for anything else in the body.
+				leasedRefused++
+				if !strings.Contains(err.Error(), *c.RefusedMember) {
+					t.Errorf("%s: refused for %v, not for %s", c.Name, err, *c.RefusedMember)
+				}
+			}
 			continue
 		}
 		accepted++
@@ -674,12 +692,23 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 				everyone++
 			}
 		}
+		a := p.AsyncSettle
+		if a.EdgeLeased != nil {
+			leased++
+		}
+		if a.OverlapWorkspaces != nil {
+			overlap++
+		}
+		if (c.AdmitsLeased == nil) != (a.EdgeLeased == nil) && a.AdmissionEnabled {
+			t.Errorf("%s: edge_leased %v with Python's leased answers %v", c.Name, a.EdgeLeased != nil,
+				c.AdmitsLeased != nil)
+		}
 		for _, ws := range file.Probes {
 			want, ok := c.Admits[ws]
 			if !ok {
 				t.Fatalf("%s: no answer for %s", c.Name, ws)
 			}
-			if got := p.AsyncSettle.Admits(ws); got != want {
+			if got := a.Admits(ws); got != want {
 				t.Errorf("%s: Admits(%s) %v, Python's %v", c.Name, ws, got, want)
 			}
 			if want {
@@ -687,13 +716,30 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 			} else {
 				left++
 			}
+			wantLeased := want // the switch off: the policy does not say, so Admits
+			if c.AdmitsLeased != nil {
+				if wantLeased, ok = c.AdmitsLeased[ws]; !ok {
+					t.Fatalf("%s: no leased answer for %s", c.Name, ws)
+				}
+				if want && !wantLeased {
+					leasedOff++
+				}
+			}
+			if got := a.AdmitsLeased(ws); got != wantLeased {
+				t.Errorf("%s: AdmitsLeased(%s) %v, want %v", c.Name, ws, got, wantLeased)
+			}
 		}
 	}
-	if accepted != 72 || refused != 6 || excluded != 11 || all != 40 || reserved != 6 || everyone != 8 ||
+	if accepted != 144 || refused != 21 || excluded != 22 || all != 80 || reserved != 12 || everyone != 16 ||
 		admitted == 0 || left == 0 {
 		t.Fatalf("%d accepted (%d with the member, %d in all mode, %d of them with a reserved list and %d "+
 			"admitting every other workspace), %d refused, %d admitted and %d left-out answers: not the "+
-			"vectors' 72 (11, 40, 6, 8) and 6", accepted, excluded, all, reserved, everyone, refused, admitted, left)
+			"vectors' 144 (22, 80, 12, 16) and 21", accepted, excluded, all, reserved, everyone, refused, admitted, left)
+	}
+	if leased != 36 || overlap != 14 || leasedRefused != 15 || leasedOff != 59 {
+		t.Fatalf("%d with edge_leased, %d with overlap_workspaces, %d leased refusals, %d admitted workspaces "+
+			"whose leased requests take no ticket: not the vectors' 36, 14, 15 and 59",
+			leased, overlap, leasedRefused, leasedOff)
 	}
 }
 

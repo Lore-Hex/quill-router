@@ -900,6 +900,15 @@ ENV_VARS=(
   # nothing for a workspace whose decide row is off; false here is the
   # off switch of step 5. A literal, so no revision inherits it.
   "TR_FASTPATH_EDGE_DECIDE_ASYNC=true"
+  # The edge policy's async_settle.edge_leased and overlap_workspaces
+  # (docs/design/fast-admission-e2-g15-async.md, "Leased answers"): with it
+  # true the edge answers an async-v1 authorize of a workspace async
+  # admission covers when it leases the request itself, with the answer
+  # Python gives a leased authorization (no ticket off the overlap list). A
+  # node release from before the members refuses a policy carrying them, so
+  # this turns true only once every node runs a release that reads them. Off
+  # until then; false is the way back. A literal, so no revision inherits it.
+  "TR_FASTPATH_EDGE_ASYNC_LEASED=false"
   # trusted_router.serve exits a process whose event loop has gone this many
   # seconds without a tick, after dumping every thread's stack. Safe only
   # because the deploy below keeps CPU allocated between requests

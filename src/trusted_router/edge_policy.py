@@ -73,7 +73,17 @@ Fields, all required:
   requires admission enabled. Its optional ``edge_ticket_workspaces`` is a
   sorted, unique set of 1 to 32 ids; absent means every workspace admission
   covers. Both members are absent with the edge-ticket switch off; null and
-  false are refused.
+  false are refused. Optional ``edge_leased: true``
+  (``fastpath_edge_async_leased``, docs/design/fast-admission-e2-g15-async.md
+  "Leased answers") requires admission enabled: the edge answers an async-v1
+  authorize of a covered workspace that it leases itself, with Python's
+  answer to a leased authorization (``async_settle_admits_request`` with
+  ``leased=True``, the admission-off answer). Its optional
+  ``overlap_workspaces`` is the sorted overlap workspaces admission covers,
+  1 to 32, within ``admission_workspaces`` when present and outside
+  ``admission_excluded_workspaces``: their leased authorizations are still
+  ticketed, so the edge passes them. Both members are absent with the switch
+  off; null and false are refused.
 
 Five fields are optional:
 
@@ -115,7 +125,7 @@ from __future__ import annotations
 
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 
 from trusted_router.billing_snapshot import Digest, Frozen, Identity, UInt, canonical_bytes
 
@@ -185,25 +195,42 @@ class EdgeAsyncSettle(Frozen):
     edge_ticket_workspaces: tuple[WorkspaceId, ...] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
+    # Optional: the edge answers an async-v1 authorize of a covered workspace
+    # it leases itself, with Python's answer to a leased authorization
+    # (fastpath_edge_async_leased; Settings.async_settle_admits_request with
+    # leased=True). Present only as true and with admission on.
+    edge_leased: Literal[True] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    # Optional: the overlap workspaces admission covers, whose leased
+    # authorizations Python still tickets; present only with edge_leased and
+    # at least one. The canonical bytes omit it when absent.
+    overlap_workspaces: tuple[WorkspaceId, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
-    @field_validator("edge_tickets", mode="before")
+    @field_validator("edge_tickets", "edge_leased", mode="before")
     @classmethod
-    def tickets_true(cls, value: object) -> object:
+    def tickets_true(cls, value: object, info: ValidationInfo) -> object:
         if value is not None and value is not True:
-            raise ValueError("edge_tickets is absent when off, never null or false")
+            raise ValueError(f"{info.field_name} is absent when off, never null or false")
         return value
 
     @model_validator(mode="after")
     def admission_set(self) -> Self:
-        if "edge_tickets" in self.model_fields_set and self.edge_tickets is not True:
-            raise ValueError("edge_tickets is absent when off, never null or false")
-        if self.edge_tickets and not self.admission_enabled:
-            raise ValueError("edge_tickets requires admission_enabled")
+        for switch, on in (("edge_tickets", self.edge_tickets), ("edge_leased", self.edge_leased)):
+            if switch in self.model_fields_set and on is not True:
+                raise ValueError(f"{switch} is absent when off, never null or false")
+            if on and not self.admission_enabled:
+                raise ValueError(f"{switch} requires admission_enabled")
         if "edge_ticket_workspaces" in self.model_fields_set and not self.edge_tickets:
             raise ValueError("edge_ticket_workspaces requires edge_tickets")
+        if "overlap_workspaces" in self.model_fields_set and not self.edge_leased:
+            raise ValueError("overlap_workspaces requires edge_leased")
         for name, workspaces in (("admission_workspaces", self.admission_workspaces),
                                  ("admission_excluded_workspaces", self.admission_excluded_workspaces),
-                                 ("edge_ticket_workspaces", self.edge_ticket_workspaces)):
+                                 ("edge_ticket_workspaces", self.edge_ticket_workspaces),
+                                 ("overlap_workspaces", self.overlap_workspaces)):
             if workspaces is None:
                 if name in self.model_fields_set:
                     raise ValueError(f"{name} is absent when it names none, never null")
@@ -218,6 +245,12 @@ class EdgeAsyncSettle(Frozen):
         excluded, covered = self.admission_excluded_workspaces, self.admission_workspaces
         if excluded is not None and covered is not None and not set(excluded) <= set(covered):
             raise ValueError("admission_excluded_workspaces must be within admission_workspaces")
+        # And an overlap workspace is one admission covers.
+        overlap = self.overlap_workspaces
+        if overlap is not None and covered is not None and not set(overlap) <= set(covered):
+            raise ValueError("overlap_workspaces must be within admission_workspaces")
+        if overlap is not None and excluded is not None and set(overlap) & set(excluded):
+            raise ValueError("overlap_workspaces must be outside admission_excluded_workspaces")
         return self
 
 

@@ -115,7 +115,15 @@ const (
 	// admission covers that workspace (async_settle.Admits), so the ticket is
 	// Python's; a workspace its admission_workspaces leaves out, or its
 	// admission_excluded_workspaces names (§4.5), is composed as with
-	// admission off, Python's own answer to it. PassAsyncOff is a
+	// admission off, Python's own answer to it. With the policy's
+	// edge_leased, a covered workspace whose leased authorizations Python
+	// answers as with admission off (AdmitsLeased false) goes on instead,
+	// composed as that answer (Decision.LeasedAnswer) and gated as a
+	// workspace outside admission is: each later gate passes it with its
+	// own reason, and the edge answers it only when every gate passes and
+	// its own lease holds (the leased answers section of the G15 design).
+	// PassAsyncAdmission then counts the overlap list's workspaces alone,
+	// whose leased authorizations Python still tickets. PassAsyncOff is a
 	// decision gate after the compose, beside the decide row's: the policy's
 	// edge_decide is false, so the request is composed (and compared by the
 	// shadow) but never answered.
@@ -291,6 +299,15 @@ type Decision struct {
 	// authorize enforces needs before the edge may admit (key-windows
 	// section 4.2): nil for any other key, an alert-only one included.
 	Windows *WindowCheck
+	// LeasedAnswer: the async members are Python's answer to this request
+	// only once a pilot leased it. Its workspace is one Python's admission
+	// covers, and the policy's edge_leased says a leased authorization of it
+	// takes no ticket (AsyncSettle.AdmitsLeased), so the edge composed the
+	// admission-off answer, which it gives only under its own lease (the
+	// decide path answers nothing it did not lease). Python's answer to the
+	// request unleased carries a ticket (shape C), which the shadow does not
+	// count as a difference (leasedUnleased).
+	LeasedAnswer bool
 }
 
 // WindowCheck is what the edge checks an enforcing windowed key against: the
@@ -334,10 +351,11 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 // policy's edge_decide is false, PassAsyncOff), and Pass is it. A windowed
 // key the mode does not cover passes with its window reason whatever gate
 // after the key's facts passes it, as it did when its windows kept it out
-// of the cohort. Only Admit hands out a decision to admit, and only when Pass is
-// "". LookupHash and Workspace are what the request named and what the
-// cache said of its key, "" when not known: the shadow and the decide path
-// evict them when Python refuses the key.
+// of the cohort. A leased answer (Decision.LeasedAnswer) meets every gate
+// as any other decision. Only Admit hands out a decision to admit, and only
+// when Pass is "". LookupHash and Workspace are what the request named and
+// what the cache said of its key, "" when not known: the shadow and the
+// decide path evict them when Python refuses the key.
 type Decided struct {
 	Pass string
 	// shadowOnly is the decision for comparison: read through ForShadow,
@@ -486,8 +504,13 @@ func Decide(in DecideInputs) Decided {
 	}
 	key, ws := read.Facts.Key, read.Facts.Workspace
 	out.Workspace = key.WorkspaceID
-	if reason := asyncAdmissionPass(r, policy, key.WorkspaceID); reason != "" {
-		return pass(reason)
+	// leased: a request of a workspace Python's admission covers that the
+	// edge composes as Python's answer to a leased authorization, and
+	// answers only under its own lease; every gate below reads it as it
+	// reads a workspace outside admission.
+	admission, leased := asyncAdmission(r, policy, key.WorkspaceID)
+	if admission != "" {
+		return pass(admission)
 	}
 	eligible, reason := key.At(at)
 	if w := key.Windows; w != nil && (eligible || reason == gwstate.ReasonKeyBudgetStrict) {
@@ -630,8 +653,10 @@ func Decide(in DecideInputs) Decided {
 	}
 	if r.Async.V1 {
 		// The additions Python splices in (shape A or B). Edge tickets
-		// may upgrade B after the durable insert; other covered workspaces
-		// still pass at asyncAdmissionPass.
+		// may upgrade B after the durable insert; a covered workspace whose
+		// leased authorizations Python answers as with admission off is
+		// composed so (leased); other covered workspaces still pass at
+		// asyncAdmission.
 		compose.Async = asyncComposeInput(r.Async, *policy.AsyncSettle, key.WorkspaceID)
 	}
 	staged, err := gwauth.Stage(compose)
@@ -643,7 +668,8 @@ func Decide(in DecideInputs) Decided {
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
 		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap, Stream: r.Streamed(),
-		Ceiling: streamCeiling(r.Streamed(), res, policy.StreamCeiling()),
+		Ceiling:      streamCeiling(r.Streamed(), res, policy.StreamCeiling()),
+		LeasedAnswer: leased,
 	}
 	if w := key.Windows; w != nil && !w.AlertOnly {
 		// An alert-only key is decided as an uncapped one: Python's
@@ -689,8 +715,9 @@ func Decide(in DecideInputs) Decided {
 // estimate and the admission carries the estimate (streamCeiling). A
 // reservation above the estimate passes either way: no ceiling can be sent
 // below the hold. An async-v1
-// stream reaches it only for a workspace Python's admission leaves out
-// (asyncAdmissionPass), and goes on as any other: Python's pilot reads no
+// stream reaches it only for a workspace Python's admission leaves out, or
+// one whose leased authorizations Python answers as with admission off
+// (asyncAdmission), and goes on as any other: Python's pilot reads no
 // settlement mode, and its additions are the non-stream request's
 // (authorize_additions reads body.stream only into a ticket's claims), so
 // the compose below splices them in after the stream's frozen pricing.
@@ -729,27 +756,45 @@ func asyncPolicyPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, s *routing
 	return ""
 }
 
-// asyncAdmissionPass is an async-v1 request's admission gate, once the key's
+// asyncAdmission is an async-v1 request's admission gate, once the key's
 // workspace is known (asyncPolicyPass passed, so the policy's object is
-// present): PassAsyncAdmission when Python's admission covers the workspace
-// without edge tickets, else "": admission off, admission_workspaces
-// leaves the workspace out, or admission_excluded_workspaces names it (a
-// fast-path workspace, section 4.5), and Python answers it as with
-// admission off (docs/design/fast-admission-e2-g15-async.md section 4.1).
-func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspace string) string {
-	if r.Async.V1 && p.AsyncSettle.Admits(workspace) && !p.AsyncSettle.Tickets(workspace) {
-		return PassAsyncAdmission
+// present). It passes PassAsyncAdmission when Python's admission covers the
+// workspace without edge tickets and would ticket the request even leased
+// (AdmitsLeased: the policy carries no edge_leased, or its
+// overlap_workspaces names the workspace). It answers "" and leased when
+// the workspace is covered without edge tickets but Python answers a leased
+// authorization of it as with admission off (the policy's edge_leased, the
+// workspace off the overlap list, docs/design/fast-admission-widening.md
+// section 9.1): the edge goes on, and answers only what it leases itself.
+// Else "": admission off, admission_workspaces leaves the workspace out, or
+// admission_excluded_workspaces names it (a fast-path workspace, section
+// 4.5, or the reserved list), and Python answers it as with admission off
+// (docs/design/fast-admission-e2-g15-async.md section 4.1); or edge tickets
+// cover it.
+func asyncAdmission(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspace string) (pass string, leased bool) {
+	a := p.AsyncSettle
+	switch {
+	case !r.Async.V1 || !a.Admits(workspace) || a.Tickets(workspace):
+		return "", false
+	case a.AdmitsLeased(workspace):
+		return PassAsyncAdmission, false
 	}
-	return ""
+	return "", true
 }
 
 // asyncComposeInput is the async input Stage composes for the workspace: the
 // policy's object as that workspace sees it, admission on only when it covers
-// the workspace (Admits), not a literal false, so that were the admission
-// gate skipped, Stage refuses a covered workspace without edge tickets.
+// the workspace (Admits; for a workspace without edge tickets, AdmitsLeased,
+// Python's answer to the authorization once leased), not a literal false, so
+// that were the admission gate skipped, Stage refuses a request Python
+// would ticket without edge tickets.
 func asyncComposeInput(r gwauth.AsyncRequest, p routingsnapshot.AsyncSettle, workspace string) *gwauth.AsyncInput {
 	tickets := p.Tickets(workspace)
-	p.AdmissionEnabled = p.Admits(workspace)
+	if tickets {
+		p.AdmissionEnabled = p.Admits(workspace)
+	} else {
+		p.AdmissionEnabled = p.AdmitsLeased(workspace)
+	}
 	return &gwauth.AsyncInput{Request: r, Policy: p, WantTicket: tickets}
 }
 

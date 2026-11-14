@@ -37,7 +37,7 @@ var (
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
 // missing one (async_settle, its admission_workspaces and
 // admission_excluded_workspaces, edge_tickets, edge_ticket_workspaces,
-// fastpath_pilot_key_windows,
+// edge_leased, overlap_workspaces, fastpath_pilot_key_windows,
 // fastpath_edge_streams, fastpath_pilot_all, fastpath_pilot_exclude and
 // fastpath_stream_ceiling alone may be absent), a float, a duplicate key,
 // null anywhere but monitor_lookup_hash, and a body that is not its own
@@ -170,9 +170,9 @@ func (p *EdgePolicy) KeyWindowsMode() string {
 // publishing Python process reads from its settings and its async-settle
 // runtime when it signs (docs/design/fast-admission-e2-g15-async.md section
 // 3.4). The four booleans are required. Only admission_workspaces,
-// admission_excluded_workspaces, edge_tickets and edge_ticket_workspaces
-// may also appear, as optional members. The edge's decide pipeline
-// reads them (edge/decide.go, G15c).
+// admission_excluded_workspaces, edge_tickets, edge_ticket_workspaces,
+// edge_leased and overlap_workspaces may also appear, as optional members.
+// The edge's decide pipeline reads them (edge/decide.go, G15c).
 type AsyncSettle struct {
 	// AdmissionEnabled is settings.async_settle_admission_enabled.
 	AdmissionEnabled bool `json:"admission_enabled"`
@@ -220,6 +220,24 @@ type AsyncSettle struct {
 	// with EdgeTickets. Absent with EdgeTickets is every workspace Admits
 	// covers. Tickets reads it.
 	EdgeTicketWorkspaces *[]string `json:"edge_ticket_workspaces,omitempty"`
+	// EdgeLeased is optional, present only when true (absent when off,
+	// never false): settings.fastpath_edge_async_leased, the edge's switch
+	// for answering an async-v1 authorize it leases itself in a workspace
+	// Python's admission covers (docs/design/fast-admission-e2-g15-async.md,
+	// the leased answers section). Python answers a leased authorization as
+	// with admission off unless its workspace is on the overlap list
+	// (Settings.async_settle_admits_request with leased=True), so the edge
+	// composes that answer for such a request and answers it once its own
+	// lease holds. Present only with AdmissionEnabled. AdmitsLeased reads it.
+	EdgeLeased *bool `json:"edge_leased,omitempty"`
+	// OverlapWorkspaces is optional: the workspaces on
+	// settings.async_settle_fastpath_overlap_workspaces that Admits covers,
+	// whose leased authorizations Python still tickets, sorted and unique, 1
+	// to maxAdmissionWorkspaces of them, present only with EdgeLeased and
+	// at least one, within AdmissionWorkspaces when that is present and
+	// never in AdmissionExcludedWorkspaces, so each answer has one encoding.
+	// AdmitsLeased reads it.
+	OverlapWorkspaces *[]string `json:"overlap_workspaces,omitempty"`
 }
 
 // maxAdmissionWorkspaces bounds admission_workspaces as
@@ -253,6 +271,25 @@ func (a *AsyncSettle) Tickets(workspace string) bool {
 	return a.EdgeTicketWorkspaces == nil || slices.Contains(*a.EdgeTicketWorkspaces, workspace)
 }
 
+// AdmitsLeased is whether Python's async admission covers an async-v1
+// authorize of the workspace that the pilot leased, so that Python's answer
+// to it carries a ticket (Settings.async_settle_admits_request with
+// leased=True): Admits, and, with EdgeLeased on, OverlapWorkspaces naming
+// the workspace. Without EdgeLeased the policy does not say, and
+// AdmitsLeased is Admits: the edge treats every covered workspace's request
+// as one Python tickets and passes it, as before the member. With it, a
+// covered workspace off the overlap list is answered as with admission off
+// once leased, which the edge composes for a request it leases itself.
+func (a *AsyncSettle) AdmitsLeased(workspace string) bool {
+	if !a.Admits(workspace) {
+		return false
+	}
+	if a.EdgeLeased == nil || !*a.EdgeLeased {
+		return true
+	}
+	return a.OverlapWorkspaces != nil && slices.Contains(*a.OverlapWorkspaces, workspace)
+}
+
 func (a *AsyncSettle) validate() error {
 	if a.EdgeTickets != nil {
 		if !*a.EdgeTickets {
@@ -265,6 +302,17 @@ func (a *AsyncSettle) validate() error {
 	if a.EdgeTicketWorkspaces != nil && a.EdgeTickets == nil {
 		return errors.New("async_settle.edge_ticket_workspaces requires edge_tickets")
 	}
+	if a.EdgeLeased != nil {
+		if !*a.EdgeLeased {
+			return errors.New("async_settle.edge_leased is absent when off, never false")
+		}
+		if !a.AdmissionEnabled {
+			return errors.New("async_settle.edge_leased requires admission_enabled")
+		}
+	}
+	if a.OverlapWorkspaces != nil && a.EdgeLeased == nil {
+		return errors.New("async_settle.overlap_workspaces requires edge_leased")
+	}
 	for _, member := range []struct {
 		name string
 		set  *[]string
@@ -272,6 +320,7 @@ func (a *AsyncSettle) validate() error {
 		{"admission_workspaces", a.AdmissionWorkspaces},
 		{"admission_excluded_workspaces", a.AdmissionExcludedWorkspaces},
 		{"edge_ticket_workspaces", a.EdgeTicketWorkspaces},
+		{"overlap_workspaces", a.OverlapWorkspaces},
 	} {
 		w := member.set
 		if w == nil {
@@ -297,6 +346,18 @@ func (a *AsyncSettle) validate() error {
 		for _, value := range *x {
 			if !slices.Contains(*w, value) {
 				return errors.New("async_settle.admission_excluded_workspaces must be within admission_workspaces")
+			}
+		}
+	}
+	// And an overlap workspace is one Admits covers: within
+	// admission_workspaces when that is present, and never excluded.
+	if o := a.OverlapWorkspaces; o != nil {
+		for _, value := range *o {
+			if w := a.AdmissionWorkspaces; w != nil && !slices.Contains(*w, value) {
+				return errors.New("async_settle.overlap_workspaces must be within admission_workspaces")
+			}
+			if x := a.AdmissionExcludedWorkspaces; x != nil && slices.Contains(*x, value) {
+				return errors.New("async_settle.overlap_workspaces must be outside admission_excluded_workspaces")
 			}
 		}
 	}

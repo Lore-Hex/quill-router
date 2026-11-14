@@ -712,11 +712,16 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
         assert python["status"] == 200 and python["async_shape"] == claimed, name
         if claimed == "C":
             # Admission on: only that Python ticketed it, never the ticket.
-            assert "response" not in python and expect["reason"] == "policy.async_admission", name
+            # A leased answer's request a later gate passes with its own
+            # reason (a key cap) is one Python's pilot did not lease, so
+            # Python tickets it too.
+            assert "response" not in python, name
+            assert expect["reason"] == "policy.async_admission" or (
+                ":leased" in name and not python["leased"]), name
         else:
             assert _shape(python["response"]) == claimed, name
     assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8, seen
-    assert edge_ticketed == 3 and seen["C"] == 3 + edge_ticketed, seen
+    assert edge_ticketed == 3 and seen["C"] == 5 + edge_ticketed, seen
     assert seen["affinity.warm_A.cold_B"] == 1, seen
 
 
@@ -753,14 +758,14 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
         "admission_enabled": False, "edge_decide": True, "ticket_authority": True, "typed_records": True}
     names = [case["name"] for case in vectors["cases"]]
     assert names == sorted(names) and len(set(names)) == len(names)
-    named = other = excluded = ticketed = 0
+    named = other = excluded = ticketed = leased = 0
     for case in vectors["cases"]:
         name = case["name"]
         effective = {**vectors["policy"], **case["policy_patch"]}["async_settle"]
         edge_tickets = ":edge_tickets" in name
         assert effective["admission_enabled"] is (
             name.startswith("pass:policy.async_admission:") or ":admission_workspaces_" in name
-            or ":fastpath_excluded" in name or edge_tickets), name
+            or ":fastpath_excluded" in name or edge_tickets or ":leased" in name), name
         # The policy member is true or absent, and only the edge-ticket
         # cases carry it or its workspace list.
         assert effective.get("edge_tickets", False) is edge_tickets, name
@@ -786,6 +791,36 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             continue
         assert "settlement_ticket" not in json.dumps(case), name
         assert "settlement_status_url" not in json.dumps(case), name
+        # Leased answers (G15 "Leased answers", widening section 9.1): all
+        # mode with admission on and no async pilot set, so admission covers
+        # the cohort workspace, and Python answers a request its pilot
+        # leased as with admission off. The policy says so with edge_leased
+        # (absent in the one case that shows the edge passing such a
+        # request without it), names the workspace in overlap_workspaces
+        # only for the overlap case (Python tickets it leased), and excludes
+        # it only for the reserved case (outside admission altogether).
+        if ":leased" in name:
+            leased += 1
+            workspace = case["facts"]["key"]["workspace_id"]
+            patch = case["policy_patch"]
+            assert patch["fastpath_pilot_all"] is True and patch["fastpath_pilot_workspaces"] == [], name
+            assert "admission_workspaces" not in effective, name
+            assert ("edge_leased" in effective) is not name.endswith(":leased_member_absent"), name
+            assert effective.get("edge_leased", True) is True, name
+            assert effective.get("overlap_workspaces") == ([workspace] if name.endswith(":overlap") else None), name
+            assert effective.get("admission_excluded_workspaces") == (
+                [workspace] if name.endswith(":reserved") else None), name
+            expect = case["expect"]
+            if expect["outcome"] == "answer":
+                assert expect["async_shape"] in ("A", "B"), name
+                assert json.loads(expect["response"])["data"]["async_eligible"] is False, name
+            if name.endswith(":leased_member_absent"):
+                # Why the member: without it the edge passes a request whose
+                # Python answer is the leased, admission-off one.
+                python = expect["python"]
+                assert expect["reason"] == "policy.async_admission", name
+                assert python["leased"] and python["async_shape"] == "B", name
+            continue
         # Async settle takes no request the fast path takes (G15 §4.5): the
         # cohort workspace is a fast-path one, so without the overlap list
         # admission excludes it (the policy names it in
@@ -821,9 +856,10 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
             data = json.loads(case["expect"]["response"])["data"]
             assert data["async_eligible"] is False, name
-    assert named == 1 and other == 3 and excluded == 4 and ticketed == 3
+    assert named == 1 and other == 3 and excluded == 4 and ticketed == 3 and leased == 11
     # The edge's async switch off is a pass with Python's admission-off answer.
-    (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
+    (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"
+              and ":leased" not in case["name"]]
     assert off["policy_patch"]["async_settle"]["edge_decide"] is False
     # typed_records false: Python leases nothing without typed records, so
     # the pilot is off too (the edge passes) and Python answers shape A.
@@ -970,8 +1006,11 @@ def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
     by_name = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
     plain = json.loads(by_name["answer:async.B:single:openai/gpt-4.1"]["expect"]["response"])["data"]
     streamed_bodies = [case for case in by_name.values() if json.loads(case["request"]["body"]).get("stream") is True]
-    assert len(streamed_bodies) == 12
-    for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent"):
+    assert len(streamed_bodies) == 14
+    # And for a leased answer's stream (G15 "Leased answers"): Python's
+    # leased answer to it in a workspace admission covers is the same.
+    for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent", "answer:async.B:leased:stream",
+                 "pass:body.stream:async.B:leased:member_absent"):
         expect = by_name[name]["expect"]
         streamed = json.loads((expect.get("shadow") or expect)["response"])["data"]
         assert streamed["stage_d"] == {"eligible": True, "reason": "ok"}, name

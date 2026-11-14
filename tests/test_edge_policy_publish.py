@@ -733,6 +733,10 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
     what its published members say; the refused spellings are refused."""
     vectors = json.loads(VECTORS.OUTPUT_ADMISSION.read_text())
     cases, probes = vectors["cases"], vectors["probes"]
+    # The leased-answer switch's cases are checked by
+    # test_every_leased_admission_vector_is_python_s_own_leased_answer; this
+    # test reads the rest, the bodies from before the switch.
+    cases = [c for c in cases if not (c["settings"] or {}).get("leased") and c.get("refused_member") is None]
     published = [c for c in cases if c["settings"] is not None]
     all_mode = [c for c in published if "exclude" in c["settings"]]
     assert len(published) - len(all_mode) == 2 * len(VECTORS.ADMISSION_PILOTS) * len(VECTORS.ADMISSION_OVERLAPS) * 2
@@ -780,6 +784,105 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
             answers.add((ws, python))
     # Every probe is both admitted and left out somewhere.
     assert answers == {(ws, value) for ws in probes for value in (False, True)}
+
+
+def test_every_leased_admission_vector_is_python_s_own_leased_answer() -> None:
+    """The leased-answer switch (docs/design/fast-admission-e2-g15-async.md,
+    "Leased answers"): every publisher combination comes again with
+    fastpath_edge_async_leased on. Its body is the switch-off body plus
+    edge_leased and overlap_workspaces, both only with admission on; its
+    admits are the switch-off case's; and its admits_leased is Python's
+    answer to a leased request per probe (async_settle_admits_request with
+    leased=True, which snapshot_projection reads), recomputed here, and what
+    the published members say: admitted, and named by overlap_workspaces.
+    The members' other spellings are refused, each for its member."""
+    vectors = json.loads(VECTORS.OUTPUT_ADMISSION.read_text())
+    cases, probes = vectors["cases"], vectors["probes"]
+    published = {c["name"]: c for c in cases if c["settings"] is not None}
+    leased = [c for c in published.values() if c["settings"]["leased"]]
+    assert len(leased) == len(published) // 2 == 72
+    answers, members_seen = set(), set()
+    for case in leased:
+        off = published[case["name"].removesuffix(":leased")]
+        assert off["admits_leased"] is None and not off["settings"]["leased"], case["name"]
+        assert case["admits"] == off["admits"], case["name"]
+        s = case["settings"]
+        settings = VECTORS.admission_settings(s["admission"], s["pilots"], s["overlap"], s["fastpath"],
+                                              s.get("exclude"), s.get("reserved", ""), leased=True)
+        policy = parse_edge_policy(case["body"])
+        assert canonical_edge_policy_bytes(policy).decode("ascii") == case["body"]
+        parsed, before = policy.async_settle, parse_edge_policy(off["body"]).async_settle
+        # The switch adds the two members and changes nothing else.
+        assert parsed.model_copy(update={"edge_leased": None, "overlap_workspaces": None}) == before, case["name"]
+        assert (parsed.edge_leased is True) is s["admission"], case["name"]
+        if not s["admission"]:
+            assert case["body"] == off["body"], case["name"]
+        for ws in probes:
+            python = settings.async_settle_admission_enabled and settings.async_settle_admits_request(ws, leased=True)
+            members = case["admits"][ws] and (
+                parsed.edge_leased is not True or ws in (parsed.overlap_workspaces or ()))
+            assert case["admits_leased"][ws] is python is members, (case["name"], ws)
+            answers.add((case["admits"][ws], python))
+        if parsed.overlap_workspaces:
+            members_seen.add("overlap_workspaces")
+    # An admitted workspace whose leased request takes no ticket, one still
+    # ticketed (the overlap list's), and one not admitted at all.
+    assert answers == {(True, False), (True, True), (False, False)}
+    assert members_seen == {"overlap_workspaces"}
+    refused = [c for c in cases if c.get("refused_member") is not None]
+    assert [c["name"].removeprefix("refused:") for c in refused] == list(VECTORS.LEASED_REFUSED)
+    for case in refused:
+        assert case["accept"] is False
+        with pytest.raises(ValidationError) as caught:
+            parse_edge_policy(case["body"])
+        assert case["refused_member"] in str(caught.value), case["name"]
+
+
+def test_the_leased_answer_switch_defaults_off_and_reads_its_environment_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_edge_async_leased is False  # type: ignore[call-arg]
+    monkeypatch.setenv("TR_FASTPATH_EDGE_ASYNC_LEASED", "true")
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_edge_async_leased is True  # type: ignore[call-arg]
+
+
+def test_the_leased_answer_switch_off_preserves_published_bytes() -> None:
+    """Off, the body is byte-identical to the committed golden and to the
+    body of every admission combination from before the switch; on with
+    admission off, too: the members need admission."""
+    assert canonical_edge_policy_bytes(VECTORS.policy(VECTORS.fixture_settings())) == VECTORS.OUTPUT_BODY.read_bytes()
+    assert "edge_leased" not in VECTORS.OUTPUT_BODY.read_text()
+    assert "overlap_workspaces" not in VECTORS.OUTPUT_BODY.read_text()
+    on = VECTORS.fixture_settings(fastpath_edge_async_leased=True)
+    assert canonical_edge_policy_bytes(VECTORS.policy(on)) == VECTORS.OUTPUT_BODY.read_bytes()
+
+
+def test_the_publisher_writes_the_leased_members_only_with_admission_and_the_switch() -> None:
+    def members(**overrides: Any) -> dict[str, Any]:
+        settings = VECTORS.fixture_settings(**overrides)
+        async_settle = json.loads(canonical_edge_policy_bytes(VECTORS.policy(settings)))["async_settle"]
+        return {k: v for k, v in async_settle.items() if k in ("edge_leased", "overlap_workspaces")}
+
+    admission = {"async_settle_enabled": True, "async_settle_protection": True}
+    assert members() == {}
+    assert members(fastpath_edge_async_leased=True) == {}
+    assert members(**admission) == {}
+    assert members(**admission, fastpath_edge_async_leased=True) == {"edge_leased": True}
+    # The overlap list's workspaces admission covers, sorted; one admission
+    # leaves out (outside a named pilot set) is not named.
+    assert members(**admission, fastpath_edge_async_leased=True, fastpath_pilot_workspaces="",
+                   async_settle_fastpath_overlap_workspaces="ws-synthetic-b,ws-synthetic-a") == {
+        "edge_leased": True, "overlap_workspaces": ["ws-synthetic-a", "ws-synthetic-b"]}
+    assert members(**admission, fastpath_edge_async_leased=True, fastpath_pilot_workspaces="",
+                   async_settle_pilot_workspaces="ws-synthetic-a",
+                   async_settle_fastpath_overlap_workspaces="ws-synthetic-b,ws-synthetic-a") == {
+        "edge_leased": True, "overlap_workspaces": ["ws-synthetic-a"]}
+
+
+def test_rollout_renders_the_leased_answer_switch_as_a_literal_false() -> None:
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'"TR_FASTPATH_EDGE_ASYNC_LEASED=[^"]*"', rollout) == [
+        '"TR_FASTPATH_EDGE_ASYNC_LEASED=false"']
 
 
 def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
