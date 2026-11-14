@@ -48,8 +48,6 @@ for (const width of [1440,390]) {
  }
 }
 await page.getByRole('button',{name:'Menu',exact:true}).click();
-// Keyboard: the open Products tab first, then its first page.
-await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.closest('.nav-group')?.dataset.group),'buy');
 await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('href')),'/confidential');
 await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'menuBtn');
 assert.equal(await page.locator('#menuBtn').getAttribute('aria-expanded'),'false');
@@ -165,19 +163,10 @@ for (const path of shellRoutes) {
   assert.equal(await page.locator('#menuBtn').isVisible(),width<=900);
   if(width<=900){
    await page.locator('#menuBtn').click();
-   // Phone menu: the bar's five items as tabs, Products open first, Sign in in the bar.
-   for(const label of ['Products','Market'])assert(await page.locator('#nav .nav-toggle',{hasText:label}).isVisible());
-   for(const item of await page.locator('#nav .nav-links a').all())assert(await item.isVisible());
+   // Phone menu: one list of three groups, every link showing; Sign in moves into the bar.
+   assert.deepEqual(await page.locator('#nav .nav-heading').allTextContents(),['Products','Market','Resources']);
+   for(const item of await page.locator('#nav a').all())assert(await item.isVisible());
    assert(await page.locator('.hdr-signin').isVisible());
-   assert(await page.locator('#nav .nav-actions .btn').isVisible());
-   for(const [open,shut] of [['buy','exchange'],['exchange','buy']]){
-    if(open==='exchange')await page.locator('[data-group=exchange] .nav-toggle').click();
-    for(const item of await page.locator(`#nav-${open} a`).all())assert(await item.isVisible());
-    for(const item of await page.locator(`#nav-${shut} a`).all())assert(!(await item.isVisible()));
-   }
-   // Tapping the open tab keeps it open.
-   await page.locator('[data-group=exchange] .nav-toggle').click();
-   assert(await page.locator('#nav-exchange').isVisible());
    await page.locator('#menuBtn').click();
   }else{
    for(const group of ['buy','exchange']){

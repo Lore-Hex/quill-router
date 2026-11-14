@@ -33,8 +33,6 @@ async function indexMime(context) {
       if (width <= 880) {
         await page.getByRole('button', {name:'Menu',exact:true}).click();
         await page.keyboard.press('Tab');
-        assert.equal(await page.evaluate(()=>document.activeElement.closest('.nav-group')?.dataset.group), 'buy');
-        await page.keyboard.press('Tab');
         assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('href')), '/confidential');
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('#menuBtn').getAttribute('aria-expanded'), 'false');

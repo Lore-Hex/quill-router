@@ -232,7 +232,7 @@ def render_nav() -> str:
                     '<span>Using an agent? <span class="nav-prompt-action">Copy its setup prompt</span></span></button>'
                     '<span class="nav-prompt-status" role="status"></span></div>')
         groups.append(
-            f'<div class="nav-group" data-group="{group}" style="--group:var(--{GROUP_COLOURS[group]})">'
+            f'<div class="nav-group" data-group="{group}">'
             f'<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="nav-{group}">{label}'
             '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>'
             f'<h2 class="nav-heading">{label}</h2><div class="nav-panel" id="nav-{group}"><div class="wrap">'
@@ -240,7 +240,7 @@ def render_nav() -> str:
         )
     links = "".join(f'<a href="{href}" data-cta="nav_{text.lower()}">{text}</a>' for text, href in HEADER_LINKS)
     actions = '<div class="nav-actions"><a class="btn btn-primary" href="/confidential#start">Start building</a></div>'
-    return "".join(groups) + f'<div class="nav-links">{links}</div>' + actions
+    return "".join(groups) + f'<div class="nav-links"><h2 class="nav-heading">Resources</h2>{links}</div>' + actions
 
 
 def render_footer_links() -> str:
