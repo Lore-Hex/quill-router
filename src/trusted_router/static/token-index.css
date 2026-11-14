@@ -37,9 +37,9 @@
 .ti-code { font: 500 0.8em var(--font-mono); color: var(--stripe); letter-spacing: 0.04em; }
 .ti-aaa { --stripe: var(--clay); }
 .ti-a { --stripe: var(--gold); }
-.ti-b { --stripe: #8fb0c9; }
+.ti-b { --stripe: var(--tr-legacy-8fb0c9, #8fb0c9); }
 .ti-c { --stripe: var(--sage); }
-:root[data-theme="light"] .ti-b { --stripe: #3f6583; }
+:root[data-theme="light"] .ti-b { --stripe: var(--tr-legacy-3f6583, #3f6583); }
 .ti-note { padding-block: 8px 72px; border-top: 1px solid var(--border-hairline); }
 .ti-note p { font-size: 14px; color: var(--text-muted); }
 .ti-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -47,8 +47,8 @@
 /* Interactive charts (token-index.js). Lines take their grade's --stripe; NYTE is sage in its own
    chart and a dotted reference line among the grades. */
 :root .ti-chart.is-live > img { display: none !important; }   /* outranks the light-theme image rule */
-.token-index { --ti-ref: #acb5a4; }
-:root[data-theme="light"] .token-index { --ti-ref: #454d42; }
+.token-index { --ti-ref: var(--tr-legacy-acb5a4, #acb5a4); }
+:root[data-theme="light"] .token-index { --ti-ref: var(--tr-legacy-454d42, #454d42); }
 .ti-all { --stripe: var(--sage); }
 .ti-chart-grades .ti-all { --stripe: var(--ti-ref); }
 .ti-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 14px; }
@@ -77,7 +77,7 @@
 .ti-end-dot { fill: var(--stripe); }
 .ti-crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .ti-dot { fill: var(--surface-card); stroke: var(--stripe); stroke-width: 2; }
-.ti-tip { position: absolute; z-index: 2; min-width: 168px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: var(--r-panel, 4px); background: var(--surface-card); box-shadow: 0 6px 18px rgb(0 0 0 / 25%); font: 12px/1.6 var(--font-mono); color: var(--text-body); pointer-events: none; }
+.ti-tip { position: absolute; z-index: 2; min-width: 168px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: var(--r-panel, 4px); background: var(--surface-card); box-shadow: 0 6px 18px var(--tr-legacy-000000-40, rgb(0 0 0 / 25%)); font: 12px/1.6 var(--font-mono); color: var(--text-body); pointer-events: none; }
 .ti-tip-date { color: var(--text-muted); margin-bottom: 2px; }
 .ti-tip-row { display: flex; justify-content: space-between; gap: 16px; }
 .ti-tip-name { display: inline-flex; align-items: center; gap: 6px; }

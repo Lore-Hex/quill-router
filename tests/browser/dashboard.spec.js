@@ -257,9 +257,9 @@ test("Charter design remains shared and responsive across public surfaces", asyn
         overflow: document.documentElement.scrollWidth - window.innerWidth,
       };
     });
-    expect(theme.bodyFont).toContain("Archivo");
-    expect(theme.headingFont).toContain("Archivo");
-    expect(theme.background).toBe("rgb(5, 7, 6)");
+    expect(theme.bodyFont).toContain("ABC Pelikan");
+    expect(theme.headingFont).toContain("ABC Pelikan");
+    expect(theme.background).toBe("rgb(250, 248, 244)");
     expect(theme.overflow).toBeLessThanOrEqual(2);
   }
 });

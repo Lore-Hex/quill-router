@@ -9,14 +9,14 @@
 .token-exchange p { font-size: 17px; line-height: 1.7; }
 .token-exchange a { text-underline-offset: 4px; }
 .token-exchange .tm-eyebrow { font: 500 12px/1.5 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-accent); margin: 0 0 22px; }
-.tm-hero { position: relative; isolation: isolate; min-height: 700px; overflow: hidden; color: var(--text-display); background: #0a0e0b; /* matches the hero artwork background */ text-align: center; }
+.tm-hero { position: relative; isolation: isolate; min-height: 700px; overflow: hidden; color: var(--text-display); background: var(--tr-legacy-0a0e0b, #0a0e0b); /* matches the hero artwork background */ text-align: center; }
 .tm-hero-art { position: absolute; z-index: -1; bottom: -140px; left: 50%; transform: translateX(-50%); width: max(100%, 760px); max-width: 1440px; height: auto; }
 .tm-hero-copy { padding-top: 82px; padding-bottom: 340px; }
 .tm-hero .tm-eyebrow { color: var(--text-accent); }
 .tm-hero h1 { color: var(--text-display); margin-inline: auto; /* the shared h1 max-width would otherwise sit left of a centred hero */ }
 .tm-hero .tm-lead { color: var(--text-body); font-size: 19px; line-height: 1.6; margin: 22px auto 26px; max-width: 660px; }
 .tm-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
-.tm-button { display: inline-flex; align-items: center; justify-content: center; gap: 22px; border: 1px solid transparent; border-radius: 3px; min-height: 50px; padding: 12px 22px; font: 500 16px/1.4 "Archivo", sans-serif; cursor: pointer; text-decoration: none; transition: background-color 150ms, transform 150ms; box-sizing: border-box; }
+.tm-button { display: inline-flex; align-items: center; justify-content: center; gap: 22px; border: 1px solid transparent; border-radius: var(--tr-square, 3px); min-height: 50px; padding: 12px 22px; font: 500 16px/1.4 "Archivo", sans-serif; cursor: pointer; text-decoration: none; transition: background-color 150ms, transform 150ms; box-sizing: border-box; }
 .tm-button:active { transform: scale(.98); }
 .token-exchange .tm-primary { background: var(--text-accent); color: var(--text-inverse); border-color: var(--text-accent); }
 .token-exchange .tm-primary:hover { background: var(--tr-color-accent-hover); color: var(--text-inverse); border-color: var(--tr-color-accent-hover); text-decoration: none; }
@@ -40,7 +40,7 @@
 .tm-flow strong { display: block; font-size: 23px; font-weight: 500; margin-block: 14px 10px; color: var(--text-display); }
 .tm-flow-end, .tm-flow-router { min-width: 0; }
 .tm-flow-end > span:last-child, .tm-flow-router > span:last-child { display: block; color: var(--text-body); font-size: 14px; }
-.tm-flow-router { padding: 30px 22px; border: 1px solid var(--border-strong); text-align: center; border-radius: 4px; background: var(--surface-page); }
+.tm-flow-router { padding: 30px 22px; border: 1px solid var(--border-strong); text-align: center; border-radius: var(--tr-square, 4px); background: var(--surface-page); }
 .tm-flow-arrow { color: var(--text-accent); font-size: 28px; text-align: center; }
 .tm-inline-links { display: flex; justify-content: space-between; gap: 22px; flex-wrap: wrap; }
 .tm-privacy-list { margin: 48px 0 0; }
@@ -64,13 +64,13 @@
 .tm-download-copy li { border-bottom: 1px solid var(--tm-rule); padding: 12px 0; font-size: 15px; color: var(--text-body); }
 .tm-download-copy .tm-direct-contact { font-size: 15px; margin-top: 30px; }
 .tm-direct-contact a { overflow-wrap: anywhere; }
-.tm-download-tool { border: 1px solid var(--tm-rule); border-radius: 4px; background: var(--surface-card); padding: 32px; }
+.tm-download-tool { border: 1px solid var(--tm-rule); border-radius: var(--tr-square, 4px); background: var(--surface-card); padding: 32px; }
 .tm-document-label { display: flex; align-items: center; gap: 16px; margin-bottom: 32px; }
 .tm-document-label strong { display: block; font-size: 17px; line-height: 1.5; color: var(--text-display); }
 .tm-document-label span:not(.tm-document-icon) { font-size: 13px; color: var(--text-muted); }
-.tm-document-icon { flex: 0 0 44px; height: 58px; display: grid; place-items: center; border: 1px solid var(--text-muted); color: var(--text-accent); font: 12px var(--font-mono); border-radius: 2px; }
+.tm-document-icon { flex: 0 0 44px; height: 58px; display: grid; place-items: center; border: 1px solid var(--text-muted); color: var(--text-accent); font: 12px var(--font-mono); border-radius: var(--tr-square, 2px); }
 .tm-download-tool label { display: block; font-size: 15px; font-weight: 500; color: var(--text-display); margin-bottom: 10px; }
-.tm-download-tool input[type="email"] { width: 100%; min-height: 50px; padding: 12px 14px; border: 1px solid var(--text-muted); border-radius: 3px; background: var(--surface-page); color: var(--text-display); font: 16px "Archivo", sans-serif; box-sizing: border-box; }
+.tm-download-tool input[type="email"] { width: 100%; min-height: 50px; padding: 12px 14px; border: 1px solid var(--text-muted); border-radius: var(--tr-square, 3px); background: var(--surface-page); color: var(--text-display); font: 16px "Archivo", sans-serif; box-sizing: border-box; }
 .tm-download-tool input::placeholder { color: var(--text-muted); }
 .tm-download-tool button { width: 100%; margin-top: 16px; }
 .tm-download-tool .tm-form-note { font-size: 13px; line-height: 1.7; color: var(--text-muted); margin: 16px 0 0; }

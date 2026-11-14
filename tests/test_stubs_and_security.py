@@ -562,7 +562,9 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
     assert "alpha@trustedrouter.local" not in html
 
 
-def test_dashboard_emits_open_graph_and_twitter_card(client: TestClient) -> None:
+def test_dashboard_emits_open_graph_and_twitter_card(
+    client: TestClient, previous_theme: None
+) -> None:
     dashboard = client.get("/")
     assert dashboard.status_code == 200
     assert '<link rel="icon" href="/favicon.ico" sizes="any">' in dashboard.text

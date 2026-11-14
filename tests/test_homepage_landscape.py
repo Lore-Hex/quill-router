@@ -152,7 +152,9 @@ def test_pricing_comparison_does_not_reuse_a_removed_model_or_missing_prices(
     assert _pricing_comparison({"z-ai/glm-5.3-flash"}) is None
 
 
-def test_homepage_social_card_is_fetchable_for_every_brand(client: TestClient) -> None:
+def test_homepage_social_card_is_fetchable_for_every_brand(
+    client: TestClient, previous_theme: None
+) -> None:
     page = BeautifulSoup(client.get("/").text, "html.parser")
     url = page.select_one('meta[property="og:image"]')["content"]
     assert url.startswith("https://")

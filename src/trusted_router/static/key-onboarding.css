@@ -61,7 +61,7 @@ body.console:has(.key-console) {
 .ux-key {
   padding: 24px;
   background: var(--tr-color-surface-selected);
-  border-radius: 5px;
+  border-radius: var(--tr-square, 5px);
   border: 1px solid var(--tr-color-line-control);
 }
 
@@ -257,7 +257,7 @@ body.console:has(.key-console) {
   width: 5px;
   height: 5px;
   border-radius: 100%;
-  background: #a8d9bd;
+  background: var(--tr-legacy-a8d9bd, #a8d9bd);
 }
 
 .ux-sr {
@@ -292,7 +292,7 @@ body.console:has(.key-console) {
   background: var(--tr-color-surface-panel);
   color: var(--tr-color-text-primary);
   border: 1px solid var(--tr-color-line-control);
-  border-radius: 4px;
+  border-radius: var(--tr-square, 4px);
   resize: vertical;
 }
 
@@ -641,7 +641,7 @@ body.console:has(.key-console) {
 .ux-tile:focus-visible {
   outline: 2px solid var(--tr-color-accent-base);
   outline-offset: 6px;
-  border-radius: 4px;
+  border-radius: var(--tr-square, 4px);
 }
 
 .ux-result a {

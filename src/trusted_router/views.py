@@ -29,10 +29,13 @@ def _auth_styles_version() -> str:
     # Auth routes do not receive the dashboard's release context. Fingerprint
     # every sheet the auth pages load once per process so immutable CSS URLs
     # change with their bytes.
+    from trusted_router.brand_theme import brand_theme
+
     static_dir = Path(__file__).parent / "static"
-    content = b"".join(
-        (static_dir / name).read_bytes() for name in ("tokens.css", "brand.css", "auth.css", "charter.css")
-    )
+    sheets = ["tokens.css", "brand.css", "auth.css", "charter.css"]
+    if brand_theme() == "nyte":
+        sheets += ["nyte-page.js", "nyte-theme.css"]
+    content = b"".join((static_dir / name).read_bytes() for name in sheets)
     return hashlib.sha256(content).hexdigest()[:16]
 
 
@@ -125,6 +128,11 @@ def _env() -> Environment:
     env.globals["live_model_count"] = live_model_count
     env.globals["publisher_icons"] = publisher_icons
     env.globals["auth_styles_version"] = _auth_styles_version
+    from trusted_router.brand_theme import brand_og_alt, brand_og_image, brand_theme
+
+    env.globals["brand_theme"] = brand_theme
+    env.filters["brand_og"] = brand_og_image
+    env.filters["brand_og_alt"] = brand_og_alt
     return env
 
 

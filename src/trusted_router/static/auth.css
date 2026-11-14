@@ -12,33 +12,33 @@
 :root {
   color-scheme: dark;
 
-  --auth-bg: #0d1117;
-  --auth-ink: #e6edf3;
-  --auth-muted: #8b949e;
-  --auth-panel: #161b22;
-  --auth-line: #30363d;
-  --auth-line-soft: #21262d;
-  --auth-accent: #4493f8;
-  --auth-accent-ink: #ffffff;
-  --auth-btn-secondary-bg: #21262d;
-  --auth-error: #f85149;
-  --auth-shadow: rgb(1, 4, 9, 0.6);
+  --auth-bg: var(--tr-legacy-0d1117, #0d1117);
+  --auth-ink: var(--tr-legacy-e6edf3, #e6edf3);
+  --auth-muted: var(--tr-legacy-8b949e, #8b949e);
+  --auth-panel: var(--tr-legacy-161b22, #161b22);
+  --auth-line: var(--tr-legacy-30363d, #30363d);
+  --auth-line-soft: var(--tr-legacy-21262d, #21262d);
+  --auth-accent: var(--tr-legacy-4493f8, #4493f8);
+  --auth-accent-ink: var(--tr-legacy-ffffff, #ffffff);
+  --auth-btn-secondary-bg: var(--tr-legacy-21262d, #21262d);
+  --auth-error: var(--tr-legacy-f85149, #f85149);
+  --auth-shadow: var(--tr-legacy-010409-99, rgb(1, 4, 9, 0.6));
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --auth-bg: #f6f8fb;
-  --auth-ink: #101828;
-  --auth-muted: #475467;
-  --auth-panel: #ffffff;
-  --auth-line: #d9e0ea;
-  --auth-line-soft: #d0d5dd;
-  --auth-accent: #101828;
-  --auth-accent-ink: #ffffff;
-  --auth-btn-secondary-bg: #ffffff;
-  --auth-error: #b00020;
-  --auth-shadow: rgb(16, 24, 40, 0.08);
+  --auth-bg: var(--tr-legacy-f6f8fb, #f6f8fb);
+  --auth-ink: var(--tr-legacy-101828, #101828);
+  --auth-muted: var(--tr-legacy-475467, #475467);
+  --auth-panel: var(--tr-legacy-ffffff, #ffffff);
+  --auth-line: var(--tr-legacy-d9e0ea, #d9e0ea);
+  --auth-line-soft: var(--tr-legacy-d0d5dd, #d0d5dd);
+  --auth-accent: var(--tr-legacy-101828, #101828);
+  --auth-accent-ink: var(--tr-legacy-ffffff, #ffffff);
+  --auth-btn-secondary-bg: var(--tr-legacy-ffffff, #ffffff);
+  --auth-error: var(--tr-legacy-b00020, #b00020);
+  --auth-shadow: var(--tr-legacy-101828-14, rgb(16, 24, 40, 0.08));
 }
 
 body.auth {
@@ -54,7 +54,7 @@ body.auth {
   padding: 32px;
   border: 1px solid var(--auth-line);
   background: var(--auth-panel);
-  border-radius: 8px;
+  border-radius: var(--tr-square, 8px);
   box-shadow: 0 20px 60px var(--auth-shadow);
 }
 
@@ -100,13 +100,13 @@ body.auth {
   height: 52px;
   flex: 0 0 52px;
   object-fit: cover;
-  border-radius: 10px;
-  outline: 1px solid rgb(255 255 255 / 10%);
+  border-radius: var(--tr-square, 10px);
+  outline: 1px solid var(--tr-legacy-ffffff-1a, rgb(255 255 255 / 10%));
   outline-offset: -1px;
 }
 
 :root[data-theme="light"] .oauth-app-logo {
-  outline-color: rgb(0 0 0 / 10%);
+  outline-color: var(--tr-legacy-000000-1a, rgb(0 0 0 / 10%));
 }
 
 .verified-developer {
@@ -137,7 +137,7 @@ body.auth {
   background: var(--auth-accent);
   color: var(--auth-accent-ink);
   text-decoration: none;
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   font-weight: 700;
   cursor: pointer;
 }
@@ -160,7 +160,7 @@ body.auth {
   padding: 10px;
   font-size: 16px;
   border: 1px solid var(--auth-line-soft);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   margin-top: 12px;
   background: var(--auth-panel);
   color: var(--auth-ink);
@@ -170,7 +170,7 @@ body.auth {
   margin-top: 22px;
   padding: 20px;
   border: 1px solid var(--auth-line);
-  border-radius: 8px;
+  border-radius: var(--tr-square, 8px);
   background: color-mix(in srgb, var(--auth-panel) 92%, var(--auth-bg));
 }
 
@@ -283,7 +283,7 @@ body.auth {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--auth-line);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   font-weight: 700;
   cursor: pointer;
 }
@@ -325,12 +325,12 @@ body.auth {
   margin-top: 18px;
   padding: 12px 14px;
   border: 1px solid var(--auth-line);
-  border-radius: 6px;
+  border-radius: var(--tr-square, 6px);
   background: var(--auth-btn-secondary-bg);
 }
 
 .notice.success {
-  border-color: #2ea043;
+  border-color: var(--tr-legacy-2ea043, #2ea043);
 }
 
 @media (max-width: 720px) {
