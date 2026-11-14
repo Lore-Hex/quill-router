@@ -35,7 +35,6 @@ from trusted_router.catalog import (
     TRUSTED_MODEL_ID,
     TRUSTED_PROVIDER_ORDER,
     US_PROVIDER_ONLY_MODEL_IDS,
-    ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
     auto_candidate_models,
@@ -225,11 +224,16 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 }
 
 
-# Cloudflare AI Gateway unified billing is not covered by startup credits.
-# Keep it behind healthy/unknown prepaid hosts (ranks < 1_500), but ahead of
-# degraded hosts (>= 2_000) when its own health permits. This is a floor, never
-# a promotion of a degraded route. BYOK and explicit order/sort stay unchanged.
-_PREPAID_PROVIDER_MIN_RANK = {"cloudflare-workers-ai": 1_500}
+# Default commercial preferences, behind healthy/unknown prepaid hosts but
+# ahead of degraded hosts (>= 2_000) when their own health permits. These are
+# floors, never promotions of degraded routes. BYOK and explicit order/sort
+# stay unchanged, as do the requested model and privacy requirements.
+_PREPAID_PROVIDER_MIN_RANK = {
+    # Unified billing is not covered by startup credits.
+    "cloudflare-workers-ai": 1_500,
+    # Operator policy: prefer other eligible hosts; retain Venice as fallback.
+    "venice": 1_600,
+}
 
 # Narrow, evidence-backed exceptions to the global provider preference. These
 # affect only default routing; caller-supplied provider.order/sort still wins.
@@ -1216,11 +1220,9 @@ def _requested_model_ids(
             requirements = set(overrides.get("privacy_requirements", ()))
             requirements.add(enforced_privacy_tier)
             overrides["privacy_requirements"] = frozenset(requirements)
-        if stripped == ZDR_MODEL_ID:
-            overrides["order"] = (
-                "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala,nextbit-eu"
-            )
-        elif stripped == E2E_MODEL_ID:
+        # ZDR uses the normal host ranking inside its privacy-filtered pool.
+        # An implicit order would override both commercial floors and user pins.
+        if stripped == E2E_MODEL_ID:
             overrides["order"] = "tinfoil,phala"
         elif stripped == TRUSTED_MODEL_ID:
             overrides["order"] = ",".join(TRUSTED_PROVIDER_ORDER)
