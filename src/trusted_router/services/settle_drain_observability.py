@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -132,11 +133,11 @@ def _fits(arg: Any, position: Any) -> bool:
     if position is _EXCEPTION_CLASS:
         return arg in _class_names(BaseException)
     if position is _CREDENTIALS_CLASS:
-        try:
-            from google.auth import credentials
-        except ImportError:
-            return False
-        return arg in _class_names(credentials.Credentials)
+        # Looked up, not imported: cloud SDKs stay in the storage adapters
+        # (tests/test_cloud_sdk_boundary.py). The line is logged after the
+        # SDK built its credentials, so the module is loaded by then.
+        credentials = getattr(sys.modules.get("google.auth.credentials"), "Credentials", None)
+        return isinstance(credentials, type) and arg in _class_names(credentials)
     return bool(arg in position)
 
 
