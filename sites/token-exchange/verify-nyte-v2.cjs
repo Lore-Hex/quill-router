@@ -72,7 +72,7 @@ assert.equal(await page.locator('[data-catalog-providers]').textContent(),'—')
 modelCount=813;providerRows=[{id:'restored',routing_status:'active'}];await page.clock.fastForward(60000);
 await page.waitForFunction(()=>document.querySelector('[data-catalog-models]').textContent==='813');
 await page.clock.resume();
-await page.getByRole('button',{name:'Menu',exact:true}).click();await page.locator('nav').getByRole('link',{name:'Confidential API',exact:true}).click();await page.waitForURL('**/confidential');
+await page.getByRole('button',{name:'Menu',exact:true}).click();await page.locator('#nav').getByRole('link',{name:'Confidential API',exact:true}).click();await page.waitForURL('**/confidential');
 await page.locator('.privacy-price').first().waitFor();assert.match(await page.locator('[data-live-price-unit]').textContent(),/^Updated .* UTC$/);assert.equal(await page.locator('.tbl-foot').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert.equal(await page.locator('.uptime-figure').count(),1);assert.equal(await page.locator('.uptime-figure').textContent(),'100.00%');assert.equal(await page.locator('.build-digest').count(),1);assert.equal(await page.locator('.att-unproven dd').textContent(),'Not proven by attestation');assert.equal(await page.locator('.privacy-provider').first().textContent(),'Confidential + E2EE');
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 await page.locator('.hero-api a',{hasText:'Start building'}).click();await page.waitForURL('**/confidential#start');
@@ -151,28 +151,32 @@ for (const [width,height] of [[320,568],[390,667],[390,844]]) {
 }
 // Compare each shell's menu with the homepage; Python checks it against the registry.
 await page.goto(base+'/');
-const expectedNavigation=await page.locator('#nav a').evaluateAll(items=>items.map(item=>({
- href:item.getAttribute('href'),group:item.closest('.nav-group').dataset.group,
+const expectedNavigation=await page.locator('#nav .nav-panel a').evaluateAll(items=>items.map(item=>({
+ href:item.getAttribute('href').split('?')[0],group:item.closest('.nav-group').dataset.group,
  label:item.querySelector('.nav-label').textContent
 })));
-const shellRoutes=['/',...expectedNavigation.map(item=>item.href).filter(href=>!href.includes('#')),'/reserved-tokens-terms'];
-// Every shell page uses the same three groups across the collapse boundary.
+const shellRoutes=['/',...expectedNavigation.map(item=>item.href).filter(href=>href.startsWith('/')&&!href.includes('#')),'/reserved-tokens-terms'];
+// Every shell page uses the same two menus across the collapse boundary (900px, kit Nav).
 for (const path of shellRoutes) {
- for (const width of [390,768,800,801,1024,1440]) {
+ for (const width of [390,768,900,901,1024,1440]) {
   await page.setViewportSize({width,height:900});await page.goto(base+path);await page.evaluate(()=>document.fonts.ready);
-  assert.equal(await page.locator('#menuBtn').isVisible(),width<=800);
-  if(width<=800){
+  assert.equal(await page.locator('#menuBtn').isVisible(),width<=900);
+  if(width<=900){
    await page.locator('#menuBtn').click();
-   assert.deepEqual(await page.locator('.nav-heading').allTextContents(),['Buy','Sell','Exchange']);
+   // Phone menu: one list of three groups, every link showing; Sign in moves into the bar.
+   assert.deepEqual(await page.locator('#nav .nav-heading').allTextContents(),['Products','Market','Resources']);
    for(const item of await page.locator('#nav a').all())assert(await item.isVisible());
+   assert(await page.locator('.hdr-signin').isVisible());
+   await page.locator('#menuBtn').click();
   }else{
-   for(const group of ['buy','sell','exchange']){
-    await page.locator(`[data-group=${group}]`).hover();
+   for(const group of ['buy','exchange']){
+    await page.locator(`[data-group=${group}] .nav-toggle`).click();
     for(const item of await page.locator(`#nav-${group} a`).all())assert(await item.isVisible());
+    await page.locator(`[data-group=${group}] .nav-toggle`).click();
    }
   }
-  assert.deepEqual(await page.locator('#nav a').evaluateAll(items=>items.map(item=>({
-   href:item.getAttribute('href'),group:item.closest('.nav-group').dataset.group,
+  assert.deepEqual(await page.locator('#nav .nav-panel a').evaluateAll(items=>items.map(item=>({
+   href:item.getAttribute('href').split('?')[0],group:item.closest('.nav-group').dataset.group,
    label:item.querySelector('.nav-label').textContent
   }))),expectedNavigation);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
@@ -180,10 +184,10 @@ for (const path of shellRoutes) {
 }
 // Shared interaction behavior is exercised once per desktop width, not on every route.
 await page.goto(base+'/');
-for(const width of [801,1024,1440]){
+for(const width of [901,1024,1440]){
  await page.setViewportSize({width,height:900});
- for(const group of ['buy','sell','exchange']){
-  const button=page.locator(`[data-group=${group}] button`);
+ for(const group of ['buy','exchange']){
+  const button=page.locator(`[data-group=${group}] .nav-toggle`);
   await button.focus();await page.keyboard.press('Enter');
   assert.equal(await button.getAttribute('aria-expanded'),'true');
   assert(await page.locator(`#nav-${group}`).isVisible());
@@ -191,15 +195,19 @@ for(const width of [801,1024,1440]){
   await page.keyboard.press('Escape');
   assert(!(await page.locator(`#nav-${group}`).isVisible()));
   assert.equal(await button.getAttribute('aria-expanded'),'false');
+  // Menus open on click only (kit NavMenu), and a click outside closes them.
   await page.locator(`[data-group=${group}]`).hover();
+  assert(!(await page.locator(`#nav-${group}`).isVisible()));
+  await button.click();
   assert(await page.locator(`#nav-${group}`).isVisible());
-  await page.locator('main').click({position:{x:4,y:4}});
+  // The full-width panel covers the top of the page, so click below it.
+  await page.mouse.click(4,860);
   assert(!(await page.locator(`#nav-${group}`).isVisible()));
  }
 }
 await page.goto(base+'/trusted-cowork');
 assert.equal(await page.locator('#nav a[href="/trusted-cowork"]').getAttribute('aria-current'),'page');
-assert.match(await page.locator('[data-group=buy] button').getAttribute('class'),/on/);
+assert.match(await page.locator('[data-group=buy] .nav-toggle').getAttribute('class'),/on/);
 await page.setViewportSize({width:390,height:844});
 assert(await page.locator('.cw-screenshot img').evaluate(el=>el.complete&&el.naturalWidth===1600));
 await page.keyboard.press('Tab');
@@ -252,7 +260,7 @@ await page.clock.resume();await page.unroute(base+'/');
 await page.goto(base+'/#deck');await page.locator('#m-deck').waitFor({state:'visible'});
 await page.keyboard.press('Escape');await page.goto(base+'/');
 await page.setViewportSize({width:1440,height:900});
-const exchange=page.locator('[data-group=exchange] button');
+const exchange=page.locator('[data-group=exchange] .nav-toggle');
 await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
 await page.locator('#m-deck').waitFor({state:'visible'});await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
 // The menu link opens the form in place: no navigation, no hash, and it reopens on a second click.
@@ -273,16 +281,16 @@ for(const route of ['/suppliers','/confidential','/buy']){
 }
 await page.goto(base+'/');
 // Escape from a panel item returns focus without reopening the panel.
-await page.locator('[data-group=buy]').hover();await page.locator('#nav a[href="/confidential"]').focus();
+await page.locator('[data-group=buy] .nav-toggle').click();await page.locator('#nav a[href="/confidential"]').focus();
 await page.keyboard.press('Escape');assert(!(await page.locator('#nav-buy').isVisible()));
-const buyToggle=page.locator('[data-group=buy] button');
+const buyToggle=page.locator('[data-group=buy] .nav-toggle');
 await buyToggle.click();assert(await page.locator('#nav-buy').isVisible());
 await buyToggle.click();assert(!(await page.locator('#nav-buy').isVisible()));
 if(process.env.NYTE_NAV_SHOTS){
  const fs=require('node:fs');fs.mkdirSync(process.env.NYTE_NAV_SHOTS,{recursive:true});
  for(const width of [390,768,1024,1440]){
   await page.setViewportSize({width,height:1000});await page.goto(base+'/');await page.evaluate(()=>document.fonts.ready);
-  if(width<=800)await page.locator('#menuBtn').click();else await page.locator('[data-group=buy]').hover();
+  if(width<=900)await page.locator('#menuBtn').click();else await page.locator('[data-group=buy] .nav-toggle').click();
   await page.screenshot({path:`${process.env.NYTE_NAV_SHOTS}/nav-${width}.png`});
  }
 }
@@ -342,8 +350,8 @@ const noJs=await browser.newContext({javaScriptEnabled:false,viewport:{width:110
 const noJsPage=await noJs.newPage();
 await noJsPage.goto(base+'/trusted-cowork');
 assert.equal(await noJsPage.locator('#menuBtn').isVisible(),false);
-for(const group of ['buy','sell','exchange']){
- await noJsPage.locator(`[data-group=${group}] button`).focus();
+for(const group of ['buy','exchange']){
+ await noJsPage.locator(`[data-group=${group}] .nav-toggle`).focus();
  assert(await noJsPage.locator(`#nav-${group}`).isVisible());
 }
 await noJsPage.setViewportSize({width:390,height:844});
