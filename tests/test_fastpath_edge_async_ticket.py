@@ -35,9 +35,13 @@ TOKEN = "edge-ticket-test-token"  # noqa: S105 - test credential
 
 @pytest.fixture(autouse=True)
 def _no_process_settings(monkeypatch):
-    # Settings reads TR_* from the process environment as well as its
-    # arguments; a developer's or CI's own TR_* must not change these cases.
-    for name in [name for name in os.environ if name.startswith("TR_")]:
+    # Settings reads TR_<field> from the process environment as well as its
+    # arguments; a developer's or CI's own settings must not change these
+    # cases. Only Settings' own names go: the rest of TR_* (conftest's
+    # lifecycle clock pin, which CI's post-cutover job sets) stays as the
+    # process has it.
+    fields = {"TR_" + field.upper() for field in Settings.model_fields}
+    for name in [name for name in os.environ if name.upper() in fields]:
         monkeypatch.delenv(name)
 
 
