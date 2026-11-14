@@ -2018,6 +2018,12 @@ def leased_cases(add: Any) -> None:
         policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "edge_decide": False}})
     add("pass:body.stream:async.B:leased:member_absent", "body.stream", body={**nonce, "stream": True},
         policy={**leased, **streams, "fastpath_edge_streams": False})
+    # Edge tickets beside the leased answers: a workspace edge tickets cover
+    # takes the ticket path whatever edge_leased says. On the overlap list,
+    # so Python's own leased answer is the signed shape C the edge splices.
+    add("answer:async.C:edge_tickets:leased:overlap_listed", body=nonce,
+        policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "fastpath_overlap_workspaces": [COHORT_WS],
+                                             "edge_tickets": True}})
 
 
 def async_streams_cases(add: Any) -> None:

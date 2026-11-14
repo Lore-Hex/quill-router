@@ -721,7 +721,7 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
         else:
             assert _shape(python["response"]) == claimed, name
     assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8, seen
-    assert edge_ticketed == 3 and seen["C"] == 5 + edge_ticketed, seen
+    assert edge_ticketed == 4 and seen["C"] == 5 + edge_ticketed, seen
     assert seen["affinity.warm_A.cold_B"] == 1, seen
 
 
@@ -785,6 +785,11 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert claims["workspace_id"] == case["facts"]["key"]["workspace_id"], name
             assert claims["streamed"] is (json.loads(case["request"]["body"]).get("stream") is True), name
             assert effective.get("edge_ticket_workspaces", [claims["workspace_id"]]) == [claims["workspace_id"]], name
+            if ":leased" in name:
+                # Beside the leased answers: the policy carries all three
+                # members, and edge tickets take the request.
+                assert effective.get("edge_leased") is True, name
+                assert effective.get("overlap_workspaces") == [claims["workspace_id"]], name
             assert json.dumps(case).count("settlement_ticket") == 1, name
             assert json.dumps(case).count("settlement_status_url") == 1, name
             assert data["settlement_ticket"] not in json.dumps(case["expect"]["authorization_row"]), name
@@ -856,7 +861,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
             data = json.loads(case["expect"]["response"])["data"]
             assert data["async_eligible"] is False, name
-    assert named == 1 and other == 3 and excluded == 4 and ticketed == 3 and leased == 11
+    assert named == 1 and other == 3 and excluded == 4 and ticketed == 4 and leased == 11
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"
               and ":leased" not in case["name"]]
