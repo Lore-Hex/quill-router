@@ -543,7 +543,7 @@ body:where([data-brand="nyte"] *),
 
 /* Ink areas: the header bar, the footer and the console top bar keep the
    kit's dark theme, so their own colours read Cream on Ink. */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, #top .hero, .closing-cta, .nyte-ink) {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink) {
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-ink);
   --tr-color-surface-bg-alt: var(--nyte-surface);
@@ -1040,18 +1040,18 @@ body:where([data-brand="nyte"] *),
 }
 
 /* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, #top .hero, .closing-cta, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
   :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
   border-color: var(--nyte-cream);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, #top .hero, .closing-cta, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
   :is(.button.button-primary, .btn.primary) {
   border-color: var(--nyte-orange);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, #top .hero, .closing-cta, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
   :is(.button, .btn):hover {
   border-color: var(--nyte-cream);
   background: var(--nyte-cream);
@@ -1096,7 +1096,7 @@ body:where([data-brand="nyte"] *),
   background: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, #top .hero, .closing-cta, .nyte-ink)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink)
   :is(.eyebrow, .kicker) {
   color: var(--nyte-cream);
 }
@@ -1120,7 +1120,7 @@ body:where([data-brand="nyte"] *),
   outline-offset: 2px;
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, #top .hero, .closing-cta, .nyte-ink) :focus-visible {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .nyte-ink) :focus-visible {
   outline-color: var(--nyte-cream);
 }
 
@@ -1174,21 +1174,7 @@ body:where([data-brand="nyte"] *),
   background-image: none;
 }
 
-/* Headline emphasis on Ink takes the lead colour (Eyebrow spec) */
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :is(h1, h2) em {
-  color: var(--nyte-lead);
-}
 
-/* The homepage's local colour names are set on :root, so the photo hero and
-   closing section re-point them at their own (Ink) values. */
-:root[data-brand="nyte"] :is(#top .hero, .closing-cta) {
-  --bg: var(--tr-legacy-050706, #050706);
-  --blue: var(--tr-legacy-88b4e2, #88b4e2);
-  --cream: var(--tr-legacy-edf8f5, #edf8f5);
-  --green: var(--tr-legacy-cce8d7, #cce8d7);
-  --line: var(--tr-legacy-2a3b32, #2a3b32);
-  --muted: var(--tr-legacy-adbbb2, #adbbb2);
-}
 
 /* The console sheet sets its colour names on :root; the Ink top bar
    re-points them at its own values. */
@@ -1270,7 +1256,7 @@ body:where([data-brand="nyte"] *),
 }
 
 /* The story card inside the stat panel shares the panel's field */
-:root[data-brand="nyte"] .trs .sp .stat {
+:root[data-brand="nyte"] .trs .sp :is(.stat, .story-actions) {
   background: transparent;
 }
 
@@ -1293,4 +1279,59 @@ body:where([data-brand="nyte"] *),
 :root[data-brand="nyte"] .trs .sp :is(.button, a.button):hover {
   background: var(--nyte-ink);
   color: var(--nyte-cream);
+}
+
+/* ---- Homepage hero and closing: kit colour fields, no photographs ----
+   The hero is a full lead-colour Field; the closing call to action is a
+   full-strength accent section (COL-02). Text on a field is Ink (COL-03). */
+:root[data-brand="nyte"] #top .hero {
+  background: var(--nyte-lead);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .closing-cta {
+  background: var(--nyte-lime);
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta)::before,
+:root[data-brand="nyte"] #top .hero::after {
+  display: none;
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :is(h1, h2, h1 em, h2 em, .sub, .cta-note, .hero-promises, .lab) {
+  color: var(--nyte-ink);
+  text-shadow: none;
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :is(h1, h2) em {
+  font-style: italic;
+}
+
+:root[data-brand="nyte"] #top .hero .hero-promises li + li::before {
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] #top .hero .labs {
+  background: transparent;
+}
+
+:root[data-brand="nyte"] #top .hero .lab img {
+  opacity: 1;
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta) .button.button-secondary {
+  border-color: var(--nyte-ink);
+  background: transparent;
+  color: var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta) .button:hover {
+  border-color: var(--nyte-ink);
+  background: var(--nyte-ink);
+  color: var(--nyte-cream);
+}
+
+:root[data-brand="nyte"] :is(#top .hero, .closing-cta) :focus-visible {
+  outline-color: var(--nyte-ink);
 }

@@ -71,3 +71,13 @@ def test_nyte_theme_maps_every_legacy_colour_the_sheets_use() -> None:
         used |= set(re.findall(r"var\((--tr-legacy-[0-9a-f-]+),", page.read_text()))
     assert used, "expected the sheets to reference legacy colours"
     assert used - _theme_defines() == set()
+
+
+def test_homepage_photos_only_render_in_the_default_theme(client: TestClient) -> None:
+    assert client.get("/").text.count('class="landscape-picture"') == 2
+
+
+def test_nyte_homepage_has_no_photo_heroes(client: TestClient, nyte_theme: None) -> None:
+    html = client.get("/").text
+    assert "landscape-picture" not in html
+    assert "trustedrouter-landscape" not in html
