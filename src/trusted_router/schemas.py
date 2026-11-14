@@ -395,6 +395,19 @@ class GatewaySettleResponse(BaseModel):
     data: GatewaySettleData
 
 
+class RequestBillingData(BaseModel):
+    gateway_request_id: str
+    billing_status: Literal["pending", "settled", "refunded", "unknown"]
+    cost_microdollars: int | None = Field(description="Final charge in microdollars; null is unknown, not zero.")
+    currency: Literal["USD"]
+    finalization_outcome: str | None
+    generation_id: str | None
+
+
+class RequestBillingResponse(BaseModel):
+    data: RequestBillingData
+
+
 class GatewayAuthorizeRequest(_Lenient):
     speech_input_characters: int | None = Field(default=None, ge=1, le=60_000)
     transcription_duration_ms: int | None = Field(default=None, ge=1, le=600_000, strict=True)
@@ -413,6 +426,9 @@ class GatewayAuthorizeRequest(_Lenient):
     # so it stays out of the authorize body and its idempotency fingerprint: a
     # retry that carries it replays an authorization whose original did not.
     idempotency_key_source: str | None = Field(default=None, max_length=16, exclude=True)
+    # Correlation is not request identity: retries must retain their original
+    # authorization and fingerprint even when the transport request ID changes.
+    gateway_request_id: str | None = Field(default=None, pattern="^rlog_[0-9a-f]{32}$", exclude=True)
     request_fingerprint: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
     model: str = Field(min_length=1)
     models: list[str] | None = None

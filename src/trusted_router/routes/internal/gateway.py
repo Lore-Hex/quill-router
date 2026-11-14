@@ -1840,6 +1840,7 @@ def _authorize_gateway_sync_impl(
                         else None
                     ),
                     invocation_nonce=body.invocation_nonce,
+                    gateway_request_id=body.gateway_request_id,
                     created_at=pricing_effective_at,
                     fastpath_envelope=admitted.envelope if admitted is not None else None,
                     fastpath_end_of_life=(
@@ -2152,6 +2153,7 @@ def _authorize_gateway_sync_impl(
                 else None
             ),
             invocation_nonce=body.invocation_nonce,
+            gateway_request_id=body.gateway_request_id,
             expected_pause_epoch=expected_pause_epoch,
             created_at=pricing_effective_at.isoformat().replace("+00:00", "Z"),
         )

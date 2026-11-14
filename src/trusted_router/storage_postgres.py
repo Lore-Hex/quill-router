@@ -6860,6 +6860,7 @@ class PostgresStore(OperationalAnalyticsReads):
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
+        gateway_request_id: str | None = None,
         expected_pause_epoch: int | None = None,
         created_at: str | None = None,
     ) -> GatewayAuthorization:
@@ -6924,6 +6925,7 @@ class PostgresStore(OperationalAnalyticsReads):
             settlement=settlement,
             expires_at=expires_at,
             invocation_nonce=invocation_nonce,
+            gateway_request_id=gateway_request_id,
         )
         if created_at is not None:
             # The caller's instant, which priced the request; settlement

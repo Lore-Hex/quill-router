@@ -78,6 +78,18 @@ def test_generated_public_openapi_assets_are_deterministic_and_current(monkeypat
         assert stream[9] == 0xFF, "gzip OS byte must be pinned to 255"
 
 
+def test_public_openapi_documents_request_billing() -> None:
+    schema = json.loads(JSON_PATH.read_bytes())
+    operation = schema["paths"]["/requests/{gateway_request_id}/billing"]["get"]
+    assert operation["servers"] == [{"url": "https://trustedrouter.com/v1"}]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/RequestBillingResponse",
+    }
+    fields = schema["components"]["schemas"]["RequestBillingData"]["properties"]
+    assert fields["billing_status"]["enum"] == ["pending", "settled", "refunded", "unknown"]
+    assert {"type": "null"} in fields["cost_microdollars"]["anyOf"]
+
+
 def test_public_openapi_asset_is_sanitized_and_reference_closed() -> None:
     body = JSON_PATH.read_bytes()
     schema = json.loads(body)
