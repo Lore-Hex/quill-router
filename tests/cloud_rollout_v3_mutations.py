@@ -205,37 +205,52 @@ MUTATIONS = [
     # like it: each mutant below lets one kind of other 429 through, and only
     # that kind's cases catch it.
     ("API probe refuses the limiter's 429", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:\n                return",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane in SHARED_LIMITER_PLANES:\n                return",
      "            if False:\n                return",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
     ("API probe accepts any 429", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:",
-     "            if exc.code == 429:",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane",
+     "            if exc.code == 429 and plane",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
     ("API probe accepts the limiter's body at any status", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:",
-     "            if raw == LIMITER_429:",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane",
+     "            if raw == LIMITER_429 and plane",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
     ("API probe accepts a 429 with no or another source", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:",
-     "            if exc.code == 429 and raw.startswith(LIMITER_429.split(b',\"source\"')[0]):",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane",
+     "            if exc.code == 429 and raw is not None"
+     " and raw.startswith(LIMITER_429.split(b',\"source\"')[0]) and plane",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
     ("API probe accepts any 429 naming rate_limited", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:",
-     "            if exc.code == 429 and b'\"rate_limited\"' in raw:",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane",
+     "            if exc.code == 429 and raw is not None and b'\"rate_limited\"' in raw and plane",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
     ("API probe accepts the limiter's object in other bytes", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:",
-     "            if exc.code == 429 and b\"\".join(raw.split()) == LIMITER_429:",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane",
+     "            if exc.code == 429 and b\"\".join((raw or b\"\").split()) == LIMITER_429 and plane",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
     ("API probe retries the limiter's 429 before passing it", COORDINATOR,
-     "            if exc.code == 429 and raw == LIMITER_429:\n                return\n"
-     "            if exc.code in {429, 502, 503, 504} and attempt < 2:\n"
-     "                time.sleep(2 ** attempt)\n                continue\n",
-     "            if exc.code in {429, 502, 503, 504} and attempt < 2:\n"
-     "                time.sleep(2 ** attempt)\n                continue\n"
-     "            if exc.code == 429 and raw == LIMITER_429:\n                return\n",
+     "            if exc.code == 429 and raw == LIMITER_429 and plane in SHARED_LIMITER_PLANES:\n                return\n"
+     "            if retry:\n                time.sleep(2 ** attempt)\n                continue\n",
+     "            if retry:\n                time.sleep(2 ** attempt)\n                continue\n"
+     "            if exc.code == 429 and raw == LIMITER_429 and plane in SHARED_LIMITER_PLANES:\n                return\n",
      T + "test_api_service_answers_with_its_own_limiters_429_and_no_other"),
+    # Review of #2581: gcp's control backend runs with the limiter off, so
+    # there the limiter's bytes come from some other service.
+    ("API probe accepts the limiter's 429 on gcp", COORDINATOR,
+     "            if exc.code == 429 and raw == LIMITER_429 and plane in SHARED_LIMITER_PLANES:",
+     "            if exc.code == 429 and raw == LIMITER_429:",
+     T + "test_the_limiters_429_is_never_the_api_service_on_gcp"),
+    # Review of #2581: a retried body is never read, and one that breaks off
+    # when read refuses instead of raising IncompleteRead (not an OSError).
+    ("API probe reads every attempt's body", COORDINATOR,
+     "            if exc.code == 429 or not retry:\n                try:",
+     "            if True:\n                try:",
+     T + "test_a_retried_error_body_that_breaks_off_is_never_read"),
+    ("API probe lets a broken-off body raise", COORDINATOR,
+     "                except (OSError, http.client.HTTPException):\n                    raw = None",
+     "                except OSError:\n                    raw = None",
+     T + "test_a_retried_error_body_that_breaks_off_is_never_read"),
     # The pinned bytes and the application's limiter must not drift apart:
     # either side changed alone turns the application-side pin red.
     ("API probe pins bytes the application does not send", COORDINATOR,

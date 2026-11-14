@@ -10,6 +10,7 @@ import copy
 import datetime as dt
 import email.message
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
@@ -392,7 +393,8 @@ class FakeOpener:
         headers = email.message.Message()
         for name, value in (extra[0] if extra else {}).items():
             headers[name] = value
-        raise urllib.error.HTTPError(request.full_url, code, "x", headers, io.BytesIO(body))
+        fp = io.BytesIO(body) if isinstance(body, bytes) else body  # or a body that breaks off
+        raise urllib.error.HTTPError(request.full_url, code, "x", headers, fp)
 
 
 ROUTER_401 = json.dumps({"error": {"code": 401, "message": "Invalid internal service token",
@@ -483,28 +485,89 @@ NOT_THE_LIMITER = {
     pytest.param([(403, RATE_LIMITED)], False, id="the limiter's body at 403"),
     pytest.param([(200, RATE_LIMITED)], False, id="the limiter's body at 200"),
 ])
-def test_api_service_answers_with_its_own_limiters_429_and_no_other(monkeypatch, outcomes, ok):
+@pytest.mark.parametrize("cloud", ["aws", "azure"])
+def test_api_service_answers_with_its_own_limiters_429_and_no_other(monkeypatch, cloud, outcomes, ok):
     """The #2577 review: with the shared unauthenticated bucket spent, the
     probe got the limiter's 429 three times and refused, so `release` and
-    `recover` of a control-plane lease failed on traffic from anyone."""
+    `recover` of a control-plane lease failed on traffic from anyone. On aws
+    and azure the plane host is the observer app, whose limiter keeps that
+    bucket (TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted)."""
+    plane = rollout.PLANES[cloud][0]
     opener = real_api_probe(monkeypatch, outcomes)
     if ok:
-        API_SERVICE_ANSWERS("https://aws.trustedrouter.com")
+        API_SERVICE_ANSWERS(plane)
         assert opener.outcomes == []  # and asked nothing after the answer it passed
     else:
         with pytest.raises(rollout.Refused, match="control-plane API answered"):
-            API_SERVICE_ANSWERS("https://aws.trustedrouter.com")
+            API_SERVICE_ANSWERS(plane)
         assert opener.outcomes == []
-    assert all(u.startswith("https://aws.trustedrouter.com/v1/internal/synthetic/health?rollout_check=")
-               for u in opener.urls)
+    assert all(u.startswith(f"{plane}/v1/internal/synthetic/health?rollout_check=") for u in opener.urls)
 
 
-def test_the_api_probe_passes_both_answers_the_application_itself_sends(monkeypatch):
+def test_the_limiters_429_is_never_the_api_service_on_gcp(monkeypatch):
+    """gcp's control backend runs with the limiter off (TR_RATE_LIMIT_ENABLED=false
+    in scripts/deploy/rollout.sh), and every other app surface sends the same
+    bytes once its own bucket is spent. So on gcp they came from a service
+    that is not the API service: retried, then refused, as before #2581."""
+    assert rollout.SHARED_LIMITER_PLANES == {"https://aws.trustedrouter.com", "https://azure.trustedrouter.com"}
+    opener = real_api_probe(monkeypatch, [(429, RATE_LIMITED, LIMITER_HEADERS)] * 3)
+    with pytest.raises(rollout.Refused, match="HTTP 429 without its own error"):
+        API_SERVICE_ANSWERS("https://trustedrouter.com")
+    assert opener.outcomes == [] and len(opener.urls) == 3
+    real_api_probe(monkeypatch, [(429, RATE_LIMITED), (401, ROUTER_401)])
+    API_SERVICE_ANSWERS("https://trustedrouter.com")  # its own 401 still passes after a retry
+
+
+class BreaksOff:
+    """An error body that ends mid-transfer: a truncated chunked 503."""
+
+    def __init__(self, reads):
+        self.reads = reads
+
+    def read(self, *args):
+        self.reads.append(args)
+        raise http.client.IncompleteRead(b"upstream conn")
+
+    def close(self):
+        pass
+
+
+def test_a_retried_error_body_that_breaks_off_is_never_read(monkeypatch):
+    """Review of #2581: reading every attempt's body let a truncated 503
+    raise http.client.IncompleteRead, which is not an OSError, out of
+    probe_component and main(). A retried 503 is not read, and one that
+    breaks off on the last attempt refuses."""
+    reads = []
+    real_api_probe(monkeypatch, [(503, BreaksOff(reads)), (503, BreaksOff(reads)), (401, ROUTER_401)])
+    API_SERVICE_ANSWERS("https://trustedrouter.com")
+    assert reads == []
+    real_api_probe(monkeypatch, [(503, BreaksOff(reads))] * 3)
+    with pytest.raises(rollout.Refused, match="HTTP 503 and its body broke off"):
+        API_SERVICE_ANSWERS("https://trustedrouter.com")
+    assert len(reads) == 1  # the last attempt only
+    # A 429 is read on every attempt, so one that breaks off is retried, then refused.
+    del reads[:]
+    real_api_probe(monkeypatch, [(429, BreaksOff(reads))] * 3)
+    with pytest.raises(rollout.Refused, match="HTTP 429 and its body broke off"):
+        API_SERVICE_ANSWERS("https://aws.trustedrouter.com")
+    assert len(reads) == 3
+    # Through probe_component, as release and recover call it: refused, never a traceback.
+    monkeypatch.setattr(rollout, "api_service_answers", API_SERVICE_ANSWERS)
+    monkeypatch.setattr(rollout, "fetch", lambda url: PLANE_JSON if url.endswith(".json") else {"status": "ok"})
+    real_api_probe(monkeypatch, [(503, BreaksOff(reads))] * 3)
+    with pytest.raises(rollout.Refused, match="gcp/control-plane is not verified healthy"):
+        rollout.probe_component("gcp", "control-plane")
+
+
+@pytest.mark.parametrize("surface", ["observer", "combined"])
+def test_the_api_probe_passes_both_answers_the_application_itself_sends(monkeypatch, surface):
     """Pins the application's side. The 401 and the 429 below are what the
     real application answers the probe's own request, not fixtures: first its
     internal auth, then, once any unauthenticated internal request (here one
     to a route that does not exist) has spent the shared bucket, its source
-    limiter, which runs before internal auth. Each passes the real probe."""
+    limiter, which runs before internal auth. Each passes the real probe on
+    aws and azure, whose plane host is the observer surface; on gcp the
+    limiter's 429 is refused and only the 401 passes."""
     from fastapi.testclient import TestClient
 
     from trusted_router import storage_rate_limits
@@ -513,8 +576,9 @@ def test_the_api_probe_passes_both_answers_the_application_itself_sends(monkeypa
 
     # Mid-window, so the bucket cannot roll over between the requests.
     monkeypatch.setattr(storage_rate_limits, "utcnow", lambda: dt.datetime(2026, 8, 19, 12, 0, 30, tzinfo=dt.UTC))
-    settings = Settings(environment="test", rate_limit_enabled=True, rate_limit_ip_per_window=2,
-                        rate_limit_client_ip_mode="untrusted", observer_internal_token="o" * 40)
+    settings = Settings(environment="test", service_surface=surface, rate_limit_enabled=True,
+                        rate_limit_ip_per_window=2, rate_limit_client_ip_mode="untrusted",
+                        observer_internal_token="o" * 40)
     client = TestClient(create_app(settings, init_observability=False))
     probe = {"Accept": "application/json", "Cache-Control": "no-cache",
              "User-Agent": "TrustedRouter-Release-Coordinator/2"}
@@ -530,10 +594,16 @@ def test_the_api_probe_passes_both_answers_the_application_itself_sends(monkeypa
     assert limited.content == RATE_LIMITED == rollout.LIMITER_429
     assert {name: limited.headers[name] for name in LIMITER_HEADERS} == {
         **LIMITER_HEADERS, "X-RateLimit-Limit": "2"}
-    for answer in (refused, limited):
-        opener = real_api_probe(monkeypatch, [(answer.status_code, answer.content, dict(answer.headers))])
-        API_SERVICE_ANSWERS("https://azure.trustedrouter.com")
-        assert opener.outcomes == []
+    for cloud in ("aws", "azure"):
+        for answer in (refused, limited):
+            opener = real_api_probe(monkeypatch, [(answer.status_code, answer.content, dict(answer.headers))])
+            API_SERVICE_ANSWERS(rollout.PLANES[cloud][0])
+            assert opener.outcomes == []
+    real_api_probe(monkeypatch, [(refused.status_code, refused.content, dict(refused.headers))])
+    API_SERVICE_ANSWERS("https://trustedrouter.com")
+    real_api_probe(monkeypatch, [(limited.status_code, limited.content, dict(limited.headers))] * 3)
+    with pytest.raises(rollout.Refused, match="HTTP 429 without its own error"):
+        API_SERVICE_ANSWERS("https://trustedrouter.com")
 
 
 def test_probe_component_requires_stable_release_evidence(monkeypatch):
@@ -987,6 +1057,7 @@ def test_default_coordinator_refuses_on_either_of_the_two_reads(monkeypatch, ver
 def test_fetch_converts_only_a_short_ascii_retry_after(monkeypatch, retry_after, attempts):
     """However the header reads, a retryable status leaves fetch as its own
     HTTPError (no document was served), never as a ValueError (an answer)."""
+    assert rollout.RETRY_AFTER_DIGITS == 9  # over 31 years, far under int()'s 4300 digits
     served = canned_planes(monkeypatch, aws_evidence=(429, RATE_LIMITED, {"Retry-After": retry_after}))
     with pytest.raises(urllib.error.HTTPError) as caught:
         rollout.fetch(AWS_EVIDENCE)

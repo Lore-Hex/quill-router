@@ -63,8 +63,10 @@ Under v3:
      - `fetch` converts a `Retry-After` on a 429, 502, 503 or 504 to a
        number only when it is one to nine ASCII digits
        (`RETRY_AFTER_DIGITS`), and retries only when that number is at most
-       5. Any other value fails closed: `fetch` gives up at once and raises
-       the HTTP error, so the read served no document. That covers a date,
+       5. On any other value `fetch` does not retry: it gives up at once and
+       raises the HTTP error, so the read served no document, and a
+       protected holdback answering that way is leasable, the same as a
+       plain 503 or `Retry-After: 37` under this rule. That covers a date,
        a longer decimal (leading zeros count toward the nine), and
        characters `str.isdigit()` passes but `int()` does not (the bytes
        0xB2, 0xB3 and 0xB9, which decode to superscript digits).
@@ -151,42 +153,58 @@ Under v3:
      `trusted-router-control-backend`. No token is sent; the coordinator
      carries no secrets. All three planes answer it identically (checked
      2026-11-13).
-     - **Or the application's own limiter's 429.** The source limiter
-       (`_rate_limit_request` in `src/trusted_router/middleware.py`) runs
-       before internal auth. With no credential the probe lands in namespace
-       `internal_ip`, under the constant `untrusted` subject on aws and
-       azure: one bucket per replica or task, shared by every
-       unauthenticated `/internal/` and `/v1/internal/` request, routes that
-       do not exist included (240 a minute per replica on azure, 6000 a
-       minute per task on aws). Once anyone spends it, the application
-       answers 429 instead of the 401. Until the review of #2577 the probe
-       retried that after 1 s and 2 s and refused, so `release` and
-       `recover` of a control-plane lease left it held, and on aws and azure
-       a held lease also blocks that cloud's gateway. About 4 requests a
-       second per azure replica was enough. That failed closed, so it was a
-       liveness problem that outside traffic could cause, not a safety one.
-     - The probe passes that 429 at once, matched byte for byte
-       (`LIMITER_429`): status 429 and exactly the body
+     - **Or, on aws and azure only, the application's own limiter's 429.**
+       There the plane host is the observer app itself, with the source
+       limiter on in `untrusted` client-ip mode (`azure_control_plane.sh`,
+       `aws_eu_control_plane.sh`). The limiter (`_rate_limit_request` in
+       `src/trusted_router/middleware.py`) runs before internal auth. With
+       no credential the probe lands in namespace `internal_ip` under the
+       constant `untrusted` subject: one bucket per replica or task, shared
+       by every unauthenticated `/internal/` and `/v1/internal/` request,
+       routes that do not exist included (240 a minute per replica on
+       azure, 6000 a minute per task on aws). Once anyone spends it, the
+       application answers 429 instead of the 401. Until the review of
+       #2577 the probe retried that after 1 s and 2 s and refused, so
+       `release` and `recover` of a control-plane lease left it held, and a
+       held lease there also blocks that cloud's gateway. About 4 requests
+       a second per azure replica was enough. That failed closed, so it was
+       a liveness problem that outside traffic could cause, not a safety
+       one.
+     - On those two planes (`SHARED_LIMITER_PLANES`) the probe passes that
+       429 at once, matched byte for byte (`LIMITER_429`): status 429 and
+       exactly the body
        `{"error":{"code":429,"message":"Rate limit exceeded","type":"rate_limited","source":"router"}}`.
        The limiter also sends `Content-Type: application/json`,
        `Retry-After` (what is left of the 60 s window) and the
-       `X-RateLimit-*` headers; the probe does not check them. Any other 429 is retried and refused as before:
-       a proxy's or a load balancer's, HTML, an empty body, or the
-       limiter's object reformatted, wrapped, or with a field changed,
-       added or missing. So is that body at any other status.
+       `X-RateLimit-*` headers; the probe does not check them. Any other
+       429 is retried and refused as before: a proxy's or a load balancer's,
+       HTML, an empty body, or the limiter's object reformatted, wrapped,
+       or with a field changed, added or missing. So is that body at any
+       other status.
        `test_the_api_probe_passes_both_answers_the_application_itself_sends`
-       takes the 401 and the 429 from the real application, so the pinned
+       takes the 401 and the 429 from the real application, on the observer
+       surface aws and azure run and on the combined one, so the pinned
        bytes cannot drift from what the limiter sends.
-     - The trade-off: while the bucket is spent, the probe shows that the
-       application answers, not that it refuses an unauthenticated call. On
-       aws and azure that refusal adds nothing beyond the release evidence
-       and `/health` checks, because the plane host is the same process.
-       On gcp the API service is a separate service from the one serving
-       `/health` and the evidence. There, during the window, the probe still
-       shows `trusted-router-control-backend` is up and is the application,
-       but not that its internal auth refuses the call. The probe is a
-       liveness check before a lease is freed, not a security gate. The
-       release's own tests cover internal auth.
+     - **gcp keeps the refusal.** gcp's control backend runs with the
+       limiter off (`TR_RATE_LIMIT_ENABLED=false` in
+       `scripts/deploy/rollout.sh`), so it never sends those bytes. Every
+       other app surface does once its own bucket is spent, and the public
+       and control surfaces would otherwise answer this path 404. So on gcp
+       the limiter's 429 can only come from a service that is not the API
+       service, and it is retried and refused as before #2581. gcp has no
+       shared bucket for outside traffic to spend at the API service, so
+       it does not need the pass.
+     - The trade-off, on aws and azure only: while the bucket is spent the
+       probe shows that the application answers, not that it refuses an
+       unauthenticated call. That refusal adds nothing there beyond the
+       release evidence and `/health` checks, because the plane host is the
+       same process. The probe is a liveness check before a lease is freed,
+       not a security gate; the release's own tests cover internal auth.
+     - The probe reads an error body only when it decides the answer: a
+       429, or the last attempt. A retried 502, 503 or 504 is not read, so
+       one whose body breaks off mid-transfer (`http.client.IncompleteRead`,
+       which is not an `OSError`) is retried as before. A body that breaks
+       off when it is read refuses instead of raising out of the command.
    - **public-surface:** `/health` and the release evidence.
 10. Every grant increments `epochs[key]`. `lanes --cloud C` prints, for each
     component, whether it holds a lease, its state and its epoch, plus the
