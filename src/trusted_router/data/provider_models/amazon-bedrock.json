@@ -259,7 +259,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 90000,
-      "output_token_price_per_m": 290000
+      "output_token_price_per_m": 290000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "gemma-3-27b-it",
@@ -310,7 +311,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 40000,
-      "output_token_price_per_m": 80000
+      "output_token_price_per_m": 80000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "gemma-4-26b-a4b",
@@ -416,7 +418,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "minimax-m2.1",
@@ -441,7 +444,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "minimax-m2.5",
@@ -466,7 +470,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "devstral-2-123b",
@@ -749,7 +754,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 240000
+      "output_token_price_per_m": 240000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "nemotron-super-3-120b",
@@ -774,7 +780,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 650000
+      "output_token_price_per_m": 650000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "nemotron-nano-12b-v2",
@@ -1137,7 +1144,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "gpt-oss-20b",
@@ -1162,7 +1170,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "gpt-oss-safeguard-120b",
@@ -1187,7 +1196,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "gpt-oss-safeguard-20b",
@@ -1212,7 +1222,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "qwen3-235b-a22b-2507",
@@ -1237,7 +1248,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 220000,
-      "output_token_price_per_m": 880000
+      "output_token_price_per_m": 880000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "qwen3-32b",
@@ -1262,7 +1274,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "qwen3-coder-30b-a3b-instruct",
@@ -1287,7 +1300,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "qwen3-coder-480b-a35b-instruct",
@@ -1312,7 +1326,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 450000,
-      "output_token_price_per_m": 1800000
+      "output_token_price_per_m": 1800000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "qwen3-coder-next",
@@ -1337,7 +1352,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "qwen3-next-80b-a3b-instruct",
@@ -1414,7 +1430,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "grok-4.3",
@@ -1493,7 +1510,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 2200000
+      "output_token_price_per_m": 2200000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "glm-4.7-flash",
@@ -1518,7 +1536,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "limits_source": "model-card"
     },
     {
       "display_name": "glm-5",
@@ -1693,7 +1712,7 @@
   ],
   "source": "https://bedrock-mantle.us-east-1.api.aws/v1/models",
   "pricing_source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/us-east-1/index.json",
-  "generated_at": "2026-11-13T03:55:00Z",
+  "generated_at": "2026-11-14T17:38:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 65
 }

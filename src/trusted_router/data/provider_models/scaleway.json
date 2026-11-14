@@ -19,9 +19,9 @@
       "upstream_id": "deepseek-v4-flash-0731",
       "created": 1786376637,
       "routable": true,
-      "input_token_price_per_m": 465402,
-      "output_token_price_per_m": 930804,
-      "cached_input_token_price_per_m": 93081
+      "input_token_price_per_m": 464184,
+      "output_token_price_per_m": 928368,
+      "cached_input_token_price_per_m": 92837
     },
     {
       "display_name": "gemma-4-26b-a4b-it",
@@ -41,8 +41,8 @@
       "upstream_id": "gemma-4-26b-a4b-it",
       "created": 1777469299,
       "routable": true,
-      "input_token_price_per_m": 290877,
-      "output_token_price_per_m": 581753
+      "input_token_price_per_m": 290115,
+      "output_token_price_per_m": 580230
     },
     {
       "display_name": "llama-3.3-70b-instruct",
@@ -62,8 +62,8 @@
       "upstream_id": "llama-3.3-70b-instruct",
       "created": 1736258559,
       "routable": true,
-      "input_token_price_per_m": 1047155,
-      "output_token_price_per_m": 1047155
+      "input_token_price_per_m": 1044414,
+      "output_token_price_per_m": 1044414
     },
     {
       "display_name": "mistral-medium-3.5-128b",
@@ -83,8 +83,8 @@
       "upstream_id": "mistral-medium-3.5-128b",
       "created": 1778158991,
       "routable": true,
-      "input_token_price_per_m": 1745258,
-      "output_token_price_per_m": 8726288
+      "input_token_price_per_m": 1740690,
+      "output_token_price_per_m": 8703450
     },
     {
       "display_name": "mistral-small-3.2-24b-instruct-2506",
@@ -104,8 +104,8 @@
       "upstream_id": "mistral-small-3.2-24b-instruct-2506",
       "created": 1755006551,
       "routable": true,
-      "input_token_price_per_m": 174526,
-      "output_token_price_per_m": 407227
+      "input_token_price_per_m": 174069,
+      "output_token_price_per_m": 406161
     },
     {
       "display_name": "pixtral-12b-2409",
@@ -148,8 +148,8 @@
       "upstream_id": "gpt-oss-120b",
       "created": 1755093042,
       "routable": true,
-      "input_token_price_per_m": 174526,
-      "output_token_price_per_m": 698103
+      "input_token_price_per_m": 174069,
+      "output_token_price_per_m": 696276
     },
     {
       "display_name": "qwen3-235b-a22b-instruct-2507",
@@ -169,8 +169,8 @@
       "upstream_id": "qwen3-235b-a22b-instruct-2507",
       "created": 1754049528,
       "routable": true,
-      "input_token_price_per_m": 872629,
-      "output_token_price_per_m": 2617887
+      "input_token_price_per_m": 870345,
+      "output_token_price_per_m": 2611035
     },
     {
       "display_name": "qwen3-coder-30b-a3b-instruct",
@@ -213,8 +213,8 @@
       "upstream_id": "qwen3.5-397b-a17b",
       "created": 1773394870,
       "routable": true,
-      "input_token_price_per_m": 698103,
-      "output_token_price_per_m": 4188618
+      "input_token_price_per_m": 696276,
+      "output_token_price_per_m": 4177656
     },
     {
       "display_name": "qwen3.6-35b-a3b",
@@ -234,8 +234,8 @@
       "upstream_id": "qwen3.6-35b-a3b",
       "created": 1778158991,
       "routable": true,
-      "input_token_price_per_m": 290877,
-      "output_token_price_per_m": 1745258
+      "input_token_price_per_m": 290115,
+      "output_token_price_per_m": 1740690
     },
     {
       "display_name": "glm-5.2",
@@ -257,13 +257,13 @@
       "replacement_model_id": "z-ai/glm-5.3",
       "created": 1782376549,
       "routable": true,
-      "input_token_price_per_m": 2094309,
-      "output_token_price_per_m": 6399278
+      "input_token_price_per_m": 2088828,
+      "output_token_price_per_m": 6382530
     }
   ],
   "source": "https://api.scaleway.ai/v1/models",
   "pricing_source": "https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products",
-  "generated_at": "2026-11-13T03:55:01Z",
+  "generated_at": "2026-11-14T17:38:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }

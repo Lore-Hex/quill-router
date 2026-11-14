@@ -37,10 +37,10 @@
   },
   "alibaba": {
     "card_version": 2,
-    "model_count": 44,
+    "model_count": 40,
     "name": "Alibaba Cloud Model Studio",
     "privacy": "Policy documented",
-    "route_count": 44,
+    "route_count": 40,
     "route_mode": "Prepaid",
     "slug": "alibaba"
   },
@@ -73,10 +73,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 71,
+    "model_count": 69,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 71,
+    "route_count": 69,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 89,
+    "model_count": 90,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 170,
+    "route_count": 172,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -505,10 +505,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -730,10 +730,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },

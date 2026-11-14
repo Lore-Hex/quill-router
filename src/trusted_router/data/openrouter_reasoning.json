@@ -392,12 +392,6 @@
       ],
       "default_effort": "high"
     },
-    "apodex/apodex-1.1-mini:free": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "baidu/ernie-5.5-flash-preview:free": {
       "mandatory": true,
       "default_enabled": true,
@@ -1012,18 +1006,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "inclusionai/ling-3.0-flash-fin": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "inclusionai/ling-3.0-flash-sante": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "inclusionai/ling-3.0-flash-vl": {
       "mandatory": false,
       "default_enabled": true,
@@ -1042,20 +1024,14 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "inclusionai/ling-3.2-flash:free": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "kt/midm-k-3.0-pro": {
       "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "liquid/lfm-2.5-2.6b": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "liquid/lfm-2.5-2.6b:free": {
-      "mandatory": true,
       "default_enabled": false,
       "supported_efforts": [],
       "default_effort": null

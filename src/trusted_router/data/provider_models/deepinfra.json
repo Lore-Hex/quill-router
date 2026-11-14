@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for DeepInfra models whose live /v1/openai/models feed is ahead of the shared snapshot. Verified against https://api.deepinfra.com/v1/openai/models on 2026-06-20. DeepInfra uses mixed-case upstream author/model IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
-  "generated_at": "2026-11-13T03:55:00Z",
-  "model_count": 125,
+  "generated_at": "2026-11-14T17:38:06Z",
+  "model_count": 126,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -3095,7 +3095,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "api"
     },
     {
       "display_name": "zai-org/GLM-5.3",
@@ -3123,7 +3124,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "limits_source": "api"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
@@ -3513,7 +3515,8 @@
       "context_length": 1048576,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 6000
+      "cached_input_token_price_per_m": 6000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
@@ -3541,7 +3544,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "limits_source": "placeholder"
     },
     {
       "display_name": "moonshotai/Kimi-K3.1-Pro",
@@ -3569,7 +3573,37 @@
       "context_length": 1048576,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "limits_source": "placeholder"
+    },
+    {
+      "display_name": "thinkingmachines/Inkling-2-Small",
+      "title": "thinkingmachines/Inkling-2-Small",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "thinkingmachines/inkling-2-small",
+      "upstream_id": "thinkingmachines/Inkling-2-Small",
+      "supported_features": [
+        "tools",
+        "structured-outputs",
+        "json-mode",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "limits_source": "placeholder",
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1000000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
   "price_scale": "microdollars_per_million"
