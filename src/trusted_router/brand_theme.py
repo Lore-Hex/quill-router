@@ -21,24 +21,27 @@ def brand_theme() -> str:
 
 
 _NYTE_CARD = Path(__file__).parent / "static" / "og" / "nyte" / "og.png"
+# The site-wide cards. Pages with a card of their own (a blog post, a provider,
+# an offer) keep it in every theme.
+_GENERIC_CARDS = frozenset({"/og.png", "/static/og.png", "/static/homepage/social-card-v2.jpg"})
 NYTE_CARD_ALT = "TrustedRouter: Encrypt all your AI chats"
 
 
 def brand_og_image(url: str) -> str:
     """The share-image URL for the active theme.
 
-    With the NYTE theme on, every page unfurls with the one NYTE card for now
-    (per-page cards can follow); the host of the page's own card is kept.
-    Without the card file nothing changes, so a page never points at a
-    missing image.
+    With the NYTE theme on, the site-wide card becomes the NYTE card; a page's
+    own card is kept, and so is the host. Without the card file nothing
+    changes, so a page never points at a missing image.
     """
-    if brand_theme() != "nyte" or not _NYTE_CARD.is_file():
+    parts = urlsplit(url)
+    if brand_theme() != "nyte" or not _NYTE_CARD.is_file() or parts.path not in _GENERIC_CARDS:
         return url
-    return urlunsplit(urlsplit(url)._replace(path="/static/og/nyte/og.png", query="", fragment=""))
+    return urlunsplit(parts._replace(path="/static/og/nyte/og.png", query="", fragment=""))
 
 
-def brand_og_alt(alt: str) -> str:
+def brand_og_alt(alt: str, url: str = "https://trustedrouter.com/og.png") -> str:
     """The share image's alt text, matching the card brand_og_image chose."""
-    if brand_theme() != "nyte" or not _NYTE_CARD.is_file():
+    if brand_og_image(url) == url:
         return alt
     return NYTE_CARD_ALT

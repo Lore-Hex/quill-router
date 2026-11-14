@@ -611,7 +611,8 @@ class Settings(BaseSettings):
     # data-brand="nyte" to <html> and loads static/nyte-theme.css after the
     # other sheets, which re-points the shared --tr-* tokens at the NY Token
     # Exchange palette. Look only: markup, copy and behaviour are unchanged.
-    brand_theme: Literal["trustedrouter", "nyte"] = "trustedrouter"
+    # On by default; TR_BRAND_THEME=trustedrouter restores the previous look.
+    brand_theme: Literal["trustedrouter", "nyte"] = "nyte"
 
     # Plain-email `POST /v1/signup` (no OAuth) is a credit-farming vector: an
     # open endpoint that mints a management key + trial credit for ANY email,

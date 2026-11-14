@@ -470,7 +470,7 @@ def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
         assert "free" not in text.casefold()
 
 
-def test_offer_page_uses_its_own_social_card_while_gate_is_on():
+def test_offer_page_uses_its_own_social_card_while_gate_is_on(previous_theme):
     card = "https://trustedrouter.com/static/og/glm-5.3-flash-fortanix.png"
     page = _model_page_seo(MODEL_ID)
     assert page["og_image"] == page["twitter_image"] == card
@@ -498,7 +498,7 @@ def test_offer_seo_drops_lowest_claim_when_another_glm_flash_route_is_cheaper(mo
     assert "lowest GLM 5.3 Flash price" not in cost
 
 
-def test_offer_seo_reverts_when_gate_turns_off(monkeypatch):
+def test_offer_seo_reverts_when_gate_turns_off(monkeypatch, previous_theme):
     route = endpoints_for_model(MODEL_ID)[0]
     monkeypatch.setitem(
         MODEL_ENDPOINTS,

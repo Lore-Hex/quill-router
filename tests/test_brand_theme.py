@@ -1,4 +1,4 @@
-"""The site-wide NYTE theme switch: off by default, complete when on."""
+"""The site-wide NYTE theme switch: on by default, complete, and reversible."""
 
 from __future__ import annotations
 
@@ -23,8 +23,19 @@ def nyte_theme(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     brand_theme.cache_clear()
 
 
+def test_nyte_is_the_default_theme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TR_BRAND_THEME", raising=False)
+    brand_theme.cache_clear()
+    try:
+        assert brand_theme() == "nyte"
+    finally:
+        brand_theme.cache_clear()
+
+
 @pytest.mark.parametrize("path", PAGES)
-def test_default_theme_renders_no_nyte_markup(client: TestClient, path: str) -> None:
+def test_previous_theme_renders_no_nyte_markup(
+    client: TestClient, previous_theme: None, path: str
+) -> None:
     html = client.get(path).text
     assert 'data-brand="nyte"' not in html
     assert "nyte-theme.css" not in html
@@ -73,7 +84,9 @@ def test_nyte_theme_maps_every_legacy_colour_the_sheets_use() -> None:
     assert used - _theme_defines() == set()
 
 
-def test_homepage_photos_only_render_in_the_default_theme(client: TestClient) -> None:
+def test_homepage_photos_only_render_in_the_previous_theme(
+    client: TestClient, previous_theme: None
+) -> None:
     assert client.get("/").text.count('class="landscape-picture"') == 2
 
 
@@ -87,8 +100,8 @@ def test_nyte_homepage_has_no_photo_heroes(client: TestClient, nyte_theme: None)
     ("path", "photo"),
     [("/green-tokens", "green-tokens-hero.webp"), ("/token-exchange", "token-exchange-hero.webp")],
 )
-def test_hero_photos_only_render_in_the_default_theme(
-    client: TestClient, path: str, photo: str
+def test_hero_photos_only_render_in_the_previous_theme(
+    client: TestClient, previous_theme: None, path: str, photo: str
 ) -> None:
     assert photo in client.get(path).text
 
@@ -105,12 +118,14 @@ def _og_images(html: str) -> set[str]:
 
 
 @pytest.mark.parametrize("path", ["/", "/pricing", "/models"])
-def test_default_theme_keeps_its_share_images(client: TestClient, path: str) -> None:
+def test_previous_theme_keeps_its_share_images(
+    client: TestClient, previous_theme: None, path: str
+) -> None:
     assert not any("/og/nyte/" in url for url in _og_images(client.get(path).text))
 
 
-@pytest.mark.parametrize("path", ["/", "/models", "/pricing", "/trust", "/blog"])
-def test_nyte_theme_uses_one_share_card_everywhere(
+@pytest.mark.parametrize("path", ["/", "/models", "/trust"])
+def test_nyte_theme_replaces_the_site_wide_share_card(
     client: TestClient, nyte_theme: None, path: str
 ) -> None:
     html = client.get(path).text
@@ -119,6 +134,15 @@ def test_nyte_theme_uses_one_share_card_everywhere(
     head = html.split("</head>")[0]
     assert 'og:image:type" content="image/png"' in head
     assert "river" not in head
+
+
+@pytest.mark.parametrize("path", ["/token-exchange", "/claude-code"])
+def test_nyte_theme_keeps_a_page_s_own_share_card(
+    client: TestClient, nyte_theme: None, path: str
+) -> None:
+    images = _og_images(client.get(path).text)
+    assert images
+    assert not any("/og/nyte/" in url for url in images)
 
 
 @pytest.mark.parametrize("shell", ["console/_layout.html", "auth/_base.html"])
