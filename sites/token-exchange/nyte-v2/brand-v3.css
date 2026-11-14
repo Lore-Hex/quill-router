@@ -308,7 +308,11 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   .hdr .brand{margin-right:auto}
   .hdr>.btn-sm{order:0;margin-left:12px}
   .menu-open .hdr>.btn-sm{visibility:hidden}
+  /* Open menu: lock the page and pin the header to the screen. A sticky header can be left
+     scrolled off the top on iPhone when the page locks mid-scroll, hiding the close button. */
   html.menu-open{overflow:hidden}
+  html.menu-open header{position:fixed;top:0;left:0;right:0}
+  html.menu-open body{padding-top:var(--header)}
   /* Phone menu: Products and Market side by side, the other links on one row, the action right
      under them, so the whole menu fits a 568px-tall screen and still scrolls when turned sideways. */
   .nav{flex:none;position:fixed;top:var(--header);left:0;right:0;bottom:0;max-height:none;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:20px 16px;padding:24px 20px calc(24px + env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain;background:var(--ink);border-top:1px solid var(--dark-rule);border-bottom:0}
