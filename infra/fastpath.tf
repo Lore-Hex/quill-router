@@ -136,7 +136,17 @@ locals {
   # 1732a7a89 reports row.gateway_request_id in its decide shadow until
   # it is restarted. Its other fastpath/ change since 1732a7a89 is the
   # shadow's comparison of a leased answer (#2597).
-  fastpath_release        = "d3aa9c0a01d6b7acd21decdbc1457cd02d69a37d"
+  # 5133a83c6: the edge's ordinary requested parameters are Python's 26
+  # (#2607): tools, a reasoning setting and the sampling parameters the
+  # enclave reports keep an async-v1 answer eligible. Python answers so
+  # since its own deploy of #2607. A node still on d3aa9c0a0 answers
+  # such a request ineligible, the narrower way, and its decide shadow
+  # reports async_shape for it until the node is restarted. The nodes take
+  # the release one at a time in either order. Its fastpathctl takes
+  # us-east4 and europe-west4 for the decide wildcard and, without -region,
+  # stops and reads every wildcard region (#2610); the node binary's only
+  # other fastpath/ change since d3aa9c0a0 is a test with comments (#2604).
+  fastpath_release        = "5133a83c6cf981e31fb5d97ffa9610088fd0256c"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"

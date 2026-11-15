@@ -220,8 +220,9 @@ def test_all_the_enclaves_parameters_together_are_ordinary():
     assert additions(body(requested_parameters=list(ENCLAVE_CAPABILITY_NAMES)))['async_eligible'] is True
 
 
-@pytest.mark.parametrize('case', ['cost_reservation', 'service_tier', 'web_search_route', 'orchestration_route',
-                                  'image_input', 'unlisted_beside_them'])
+@pytest.mark.parametrize('case', ['cost_reservation', 'service_tier', 'web_search_planner_route',
+                                  'web_search_final_route', 'orchestration_route', 'image_input',
+                                  'unlisted_beside_them'])
 def test_what_carries_its_own_price_stays_out_whatever_parameters_are_named(case):
     """Each exclusion holds beside the ordinary parameters, tools and a
     reasoning setting among them: it is the request's own fact, never the
@@ -231,8 +232,12 @@ def test_what_carries_its_own_price_stays_out_whatever_parameters_are_named(case
         auth.additional_cost_reservation_microdollars = 7_000
     if case == 'service_tier':
         b.service_tier = 'flex'
-    if case == 'web_search_route':
-        b.route_type = 'chat.completions.web_search'
+    # The enclave's hosted search authorizes its two calls as the route's
+    # .web_search.planner and .web_search.final.
+    if case == 'web_search_planner_route':
+        b.route_type = 'chat.completions.web_search.planner'
+    if case == 'web_search_final_route':
+        b.route_type = 'responses.web_search.final'
     if case == 'orchestration_route':
         b.route_type = 'advisor.worker'
     if case == 'image_input':
