@@ -88,16 +88,6 @@ const (
 	// agreement nor a would-admit: counted by the decide path's pass, never
 	// paged.
 	ClassInFlightUnchecked = "inflight_unchecked"
-	// ClassFundingUnchecked: Python refused the credit (402
-	// insufficient_credits, read through) of a request Go would decide.
-	// Go's decision carries no funding verdict to compare: what Go answers
-	// is held by the front door's reservation under a lease (decision 14),
-	// and with no lease to take it the owner is Busy and the request
-	// passes to Python, which answers this 402. A workspace whose credit
-	// runs out between two enabler passes (every 15 minutes) reaches it
-	// while its switch is still on. Neither an agreement nor a would-admit:
-	// counted, never paged. An unread 402 stays a would-admit.
-	ClassFundingUnchecked = "funding_unchecked"
 	// ClassWindowRace: Go read the key's windows and would have admitted,
 	// Python refused a window it read more spent (its 429 names a window
 	// whose limit Go holds, with RateLimit-Remaining below what Go's rows
@@ -123,11 +113,6 @@ const WindowReadTimestampHeader = "X-TR-Key-Window-Read-Timestamp"
 // windowRefusal is the error type of Python's 429 for a spend window
 // (gateway.py, ErrorType.KEY_WINDOW_LIMIT_EXCEEDED).
 const windowRefusal = "key_window_limit_exceeded"
-
-// fundingRefusal is the error type of Python's 402 for a workspace whose
-// credit does not cover the request's estimate (gateway.py,
-// billing.insufficient_credits).
-const fundingRefusal = "insufficient_credits"
 
 // Python's 429 from its per-key in-flight gate (gateway.py authorize_gateway,
 // _AUTHORIZE_ADMISSION, KeyedConcurrencyAdmission): a count of one key's
@@ -860,8 +845,6 @@ func compareClass(d Decided, a pyAnswer, py asyncMembers) fullResult {
 		r.class = ClassPythonError + "." + strconv.Itoa(a.status)
 	case unchecked && refusal.kind == windowRefusal:
 		r.class = ClassWindowUnchecked + "." + strconv.Itoa(a.status) + "." + refusal.kind
-	case a.status == http.StatusPaymentRequired && refusal.kind == fundingRefusal:
-		r.class = ClassFundingUnchecked + "." + strconv.Itoa(a.status) + "." + refusal.kind
 	default:
 		r.class = ClassWouldAdmit + "." + strconv.Itoa(a.status) + "." + refusal.kind
 	}

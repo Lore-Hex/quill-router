@@ -1781,10 +1781,7 @@ the columns those leave alone (`moved_on`, or `moved_on_differ` with its
 fields); one Python wrote off the pilot's lease (no `fastpath_envelope`) is
 `python_not_leased` and not compared. Python's status classifies whether
 or not its body was read through (a 4xx unread is
-`would_admit_python_refused.<status>.unread`). A 402 `insufficient_credits` read through is
-`funding_unchecked.402.insufficient_credits`, neither an agreement nor a
-would-admit: Go's decision carries no funding verdict, since the front
-door's reservation under a lease holds what Go answers (decision 14). A Python 401, 402 or 403 (by
+`would_admit_python_refused.<status>.unread`). A Python 401, 402 or 403 (by
 status alone), or a pause 503, evicts the lookup hash the request named,
 whether the cache held it or not (read leniently from a body the strict
 parse passed), and the key's workspace when the cache said which. Each
