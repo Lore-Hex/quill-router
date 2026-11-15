@@ -2394,12 +2394,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "qwen/qwen3-vl-30b-a3b-thinking": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "qwen/qwen3.5-122b-a10b": {
       "mandatory": false,
       "default_enabled": false,
@@ -2651,12 +2645,6 @@
       ],
       "default_effort": "high"
     },
-    "stepfun/step-3.5-flash": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "stepfun/step-3.7-flash": {
       "mandatory": true,
       "default_enabled": false,
@@ -2676,12 +2664,6 @@
         "low"
       ],
       "default_effort": "medium"
-    },
-    "tencent/hunyuan-a13b-instruct": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
     },
     "tencent/hy3": {
       "mandatory": false,
