@@ -61,6 +61,9 @@ func payloadMembers(in ComposeInput, tags []ComposeTag, stream *streamPricing) p
 	if in.InvocationNonce != nil {
 		p = append(p, pyjson.Member{Key: "invocation_nonce", Value: *in.InvocationNonce})
 	}
+	if in.GatewayRequestID != nil {
+		p = append(p, pyjson.Member{Key: "gateway_request_id", Value: *in.GatewayRequestID})
+	}
 	if stream != nil {
 		// A stream Stage D lets in: the row's pricing snapshot, and its
 		// heartbeat_seq, 0 until the first heartbeat.

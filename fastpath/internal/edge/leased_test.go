@@ -135,8 +135,8 @@ func TestTheLeasedAnswerGate(t *testing.T) {
 	}
 	t.Logf("%d leased answers, %d overlap passes, %d outside admission, %d without the header", leased, overlap,
 		outside, plain)
-	// 56 answered async-v1 goldens and the one without the header.
-	if leased != 4*56 || overlap != 2*56 || outside != 2*56 || plain != 8 {
+	// 58 answered async-v1 goldens and the one without the header.
+	if leased != 4*58 || overlap != 2*58 || outside != 2*58 || plain != 8 {
 		t.Fatalf("leased %d, overlap %d, outside %d, plain %d: not the goldens' counts", leased, overlap, outside, plain)
 	}
 }

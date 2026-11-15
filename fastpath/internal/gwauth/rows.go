@@ -26,6 +26,7 @@ type AuthorizationRow struct {
 	IdempotencyFingerprint string
 	StageDBootKid          string
 	InvocationNonce        *string // nil writes NULL
+	GatewayRequestID       *string // nil writes NULL
 	// A stream's (Stage D "ok"): its pricing snapshot and heartbeat_seq 0;
 	// nil, NULL, for any other request.
 	PricingSnapshot *string

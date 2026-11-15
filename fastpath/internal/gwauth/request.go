@@ -44,6 +44,10 @@ type Request struct {
 	APIKeyLookupHash   string
 	BodyIdempotencyKey *string // stripped
 	InvocationNonce    *string // stripped
+	// GatewayRequestID is body.gateway_request_id: the enclave's request-log
+	// id, correlation and not request identity (excluded from the dump, so
+	// from the fingerprint), written to the authorization row.
+	GatewayRequestID *string
 	// Tags are body.tags in body order, validated (§6's rules, ASCII);
 	// HasTags is whether body.tags is present and not null, even {}.
 	Tags                 []Tag
@@ -247,6 +251,9 @@ type field struct {
 
 var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// requestLogID is gateway_request_id's pattern: the enclave's request-log id.
+var requestLogID = regexp.MustCompile(`^rlog_[0-9a-f]{32}$`)
+
 // declared is every field of schemas.GatewayAuthorizeRequest.
 var declared = map[string]field{
 	"speech_input_characters":   {kind: kindInt, optional: true, bounded: true, min: 1, max: 60_000},
@@ -258,6 +265,7 @@ var declared = map[string]field{
 	"api_key_lookup_hash":       {kind: kindStr, optional: true, min: 1},
 	"idempotency_key":           {kind: kindStr, optional: true, min: 1, max: 256},
 	"idempotency_key_source":    {kind: kindAnything, optional: true, exclude: true},
+	"gateway_request_id":        {kind: kindStr, optional: true, exclude: true, pattern: requestLogID},
 	"request_fingerprint":       {kind: kindStr, optional: true, pattern: hex64},
 	"model":                     {kind: kindStr, required: true, min: 1},
 	"models":                    {kind: kindStrList, optional: true},
@@ -549,6 +557,7 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	}
 	r.BodyIdempotencyKey, r.InvocationNonce, r.RequestedRegion = str("idempotency_key"), str("invocation_nonce"),
 		str("region")
+	r.GatewayRequestID = str("gateway_request_id")
 	// The schema's pattern (hex64) admits no empty key.
 	r.CacheAffinity = str("cache_affinity_key") != nil
 	cost, _ := new(big.Int).SetString(string(dumped["additional_cost_reservation_microdollars"].(json.Number)), 10)

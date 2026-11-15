@@ -118,7 +118,7 @@ var authorizationColumns = []string{
 // batch orders them. The shards and the reserved amounts are §5's
 // constants.
 func leasedMutations(a gwauth.AuthorizationRow, r gwauth.ReservationRow) []*spanner.Mutation {
-	nonce, pricing, seq := leasedNullables(a)
+	nonce, pricing, seq, requestID := leasedNullables(a)
 	return []*spanner.Mutation{
 		spanner.Insert("tr_reservation", reservationColumns, []any{
 			r.ReservationID, r.WorkspaceID, r.KeyHash, int64(0), int64(0), int64(0),
@@ -132,15 +132,16 @@ func leasedMutations(a gwauth.AuthorizationRow, r gwauth.ReservationRow) []*span
 			spanner.NullTime{}, a.Payload, a.IdempotencyFingerprint, spanner.NullString{},
 			spanner.NullInt64{}, spanner.NullTime{}, seq, spanner.NullTime{},
 			spanner.NullString{}, spanner.NullString{}, spanner.NullString{}, pricing,
-			a.StageDBootKid, nonce, spanner.NullString{},
+			a.StageDBootKid, nonce, requestID,
 		}),
 	}
 }
 
 // leasedNullables are the row's nullable columns as the insert writes
-// them: invocation_nonce, pricing_snapshot and heartbeat_seq, NULL when
-// the row has none.
-func leasedNullables(a gwauth.AuthorizationRow) (nonce, pricing spanner.NullString, seq spanner.NullInt64) {
+// them: invocation_nonce, pricing_snapshot, heartbeat_seq and
+// gateway_request_id, NULL when the row has none.
+func leasedNullables(a gwauth.AuthorizationRow) (nonce, pricing spanner.NullString, seq spanner.NullInt64,
+	requestID spanner.NullString) {
 	if a.InvocationNonce != nil {
 		nonce = spanner.NullString{StringVal: *a.InvocationNonce, Valid: true}
 	}
@@ -150,7 +151,10 @@ func leasedNullables(a gwauth.AuthorizationRow) (nonce, pricing spanner.NullStri
 	if a.HeartbeatSeq != nil {
 		seq = spanner.NullInt64{Int64: *a.HeartbeatSeq, Valid: true}
 	}
-	return nonce, pricing, seq
+	if a.GatewayRequestID != nil {
+		requestID = spanner.NullString{StringVal: *a.GatewayRequestID, Valid: true}
+	}
+	return nonce, pricing, seq, requestID
 }
 
 // checkLeasedRows refuses rows that are not one authorization's two rows,
@@ -462,18 +466,18 @@ func isOurs(a gwauth.AuthorizationRow, got StoredAuthorization) bool {
 	some := func(v string) spanner.NullString { return spanner.NullString{StringVal: v, Valid: true} }
 	// A read-back follows a commit whose answer the enclave has not had,
 	// so a stream's row has had no heartbeat: heartbeat_seq is still 0.
-	nonce, pricing, seq := leasedNullables(a)
+	nonce, pricing, seq, requestID := leasedNullables(a)
 	return got.AuthorizationID == a.AuthorizationID && got.WorkspaceID == a.WorkspaceID && got.KeyHash == a.KeyHash &&
 		got.ModelID == a.ModelID && got.Provider == a.Provider && got.UsageType == a.UsageType &&
 		got.EstimatedMicrodollars == a.EstimatedMicrodollars && !got.Settled && got.CreatedAt.Equal(a.CreatedAt) &&
 		!got.TerminalAt.Valid && got.Payload == some(a.Payload) &&
 		got.IdempotencyFingerprint == some(a.IdempotencyFingerprint) && got.StageDBootKid == some(a.StageDBootKid) &&
 		got.InvocationNonce == nonce && got.PricingSnapshot == pricing && got.HeartbeatSeq == seq &&
+		got.GatewayRequestID == requestID &&
 		// The typed columns the edge's insert leaves NULL.
 		!got.FinalizationOutcome.Valid && !got.FinalizedCostMicrodollars.Valid && !got.StartedAt.Valid &&
 		!got.HeartbeatAt.Valid && !got.HeartbeatHash.Valid &&
-		!got.SelectedEndpointID.Valid && !got.DeliveredUsage.Valid &&
-		!got.GatewayRequestID.Valid
+		!got.SelectedEndpointID.Valid && !got.DeliveredUsage.Valid
 }
 
 // StoredAuthorization is every column of an authorization's row but the

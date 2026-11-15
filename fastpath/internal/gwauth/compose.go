@@ -48,6 +48,7 @@ type ComposeInput struct {
 	RequestedModel       string       // body.model, stripped
 	RequestTags          []ComposeTag // body.tags, body order
 	InvocationNonce      *string      // nil when the body sends none
+	GatewayRequestID     *string      // body.gateway_request_id; nil when the body sends none
 	EstimatedInputTokens int64        // 1 when omitted
 	OutputEstimate       int64        // max_tokens, max_completion_tokens, max_output_tokens, else 512
 
