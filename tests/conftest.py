@@ -306,9 +306,13 @@ def shadow_deadline_clock(monkeypatch):
 
 
 # Files that drive the settle handler and route through the 0.5 s handoff.
+# test_settle_drain_recovery.py and test_missing_key_usage.py enqueue through
+# test_async_settle_handler's call(); on main's run 43661558442 a slow shard
+# spent the handoff inside the outbox enqueue, before its transaction
+# callback, and the setup call answered 503.
 _SETTLE_HANDLER_BUDGET_FILES = frozenset({
     'test_async_settle_handler.py', 'test_async_settle_proof.py', 'test_async_settle_proof_faults.py',
-    'test_async_settle_tier_caps.py',
+    'test_async_settle_tier_caps.py', 'test_settle_drain_recovery.py', 'test_missing_key_usage.py',
 })
 
 
