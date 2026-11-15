@@ -836,8 +836,10 @@ ENV_VARS=(
   # workspace and the probe's, as this line read before 2026-11-10).
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES="
   # Async settle takes no request the fast path takes (G15 section 4.5). With
-  # the pilot set empty the rule is per request: an authorization the edge
-  # leased gets no ticket unless its workspace is listed here. The operator
+  # the pilot set empty the rule is per request: Python's own answer to an
+  # authorization the edge leased carries no ticket unless its workspace is
+  # listed here (a request edge tickets cover is ticketed through the
+  # sign-only route instead, further below). The operator
   # workspace was in both pilots (R3) and keeps its async settles. With a
   # named pilot set, all mode refuses to start with a pilot workspace on
   # neither this list nor TR_FASTPATH_PILOT_EXCLUDE.

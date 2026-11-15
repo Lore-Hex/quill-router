@@ -195,7 +195,8 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
       explicit fast-path set's, at most 32, or in all mode the reserved list
       (``async_settle_fastpath_reserved_workspace_ids``, section 9.1), at
       most 32: every other workspace is admitted. Without edge tickets,
-      the edge passes its async-v1 authorizes to Python.
+      the edge passes its async-v1 authorizes to Python, but for a request
+      it leases itself under the leased members (``edge_leased`` below).
 
     Python answers a workspace they leave out as with admission off
     (``async_settle.snapshot_projection``), which the edge composes itself

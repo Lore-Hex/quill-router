@@ -1050,7 +1050,10 @@ class Settings(BaseSettings):
     # may answer their async-v1 authorizes. The edge passes every other
     # workspace's to Python, the one ticket signer, unless the edge ticket
     # switch covers the workspace (fastpath_edge_async_ticket_workspaces):
-    # then the edge answers and asks Python for the signature. Comma-separated,
+    # then the edge answers and asks Python for the signature. Without that
+    # switch and with fastpath_edge_async_leased, the edge also answers a
+    # request it leases itself off the overlap list, with no ticket.
+    # Comma-separated,
     # at most 32, all mode only, none of them on the overlap list; empty by
     # default.
     async_settle_fastpath_reserved_workspaces: str = ""

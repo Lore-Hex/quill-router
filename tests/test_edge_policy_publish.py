@@ -601,8 +601,8 @@ def test_the_deployed_pins_admit_every_workspace_but_the_reserved_list() -> None
     list; the body carries the reserved list as admission_excluded_workspaces
     and no admission_workspaces, so without a ticket the edge answers
     async-v1 for the reserved workspaces alone (edge tickets, the next test,
-    cover the rest). A leased request takes no ticket outside the
-    overlap list. The way back, the async pilot set named again, starts on
+    cover the rest). From Python's own answer a leased request takes no
+    ticket outside the overlap list. The way back, the async pilot set named again, starts on
     the same pins and reads no reserved list."""
     from tests.test_fastpath_lists import resolved_lists
 
