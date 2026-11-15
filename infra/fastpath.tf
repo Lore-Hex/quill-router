@@ -112,9 +112,9 @@ locals {
   # async_settle.edge_tickets member names, which Python publishes only with
   # TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES set (rollout.sh). Every node
   # must run d23591a1f or later while that switch is set: an older release
-  # refuses a policy carrying the member. It also
-  # carries every provider's async rules (#2451) and all-mode admission by
-  # request (#2466), both already live on the Python side.
+  # refuses a policy carrying the member. d23591a1f also carries every
+  # provider's async rules (#2451) and all-mode admission by request (#2466),
+  # both already live on the Python side.
   # 949c757f6: takes -allowance-tier2 and -allowance-tier1 (#2542, #2545).
   # 1732a7a89: the edge reads the policy's optional async_settle.edge_leased
   # and overlap_workspaces members (#2590): with them, it answers an async-v1
