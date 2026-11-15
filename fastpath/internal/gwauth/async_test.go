@@ -496,7 +496,7 @@ func TestTheOrdinaryParametersArePythons(t *testing.T) {
 	slices.Sort(ours)
 	theirs := slices.Clone(g.ordered)
 	slices.Sort(theirs)
-	if !slices.Equal(ours, theirs) || len(ours) != 15 {
+	if !slices.Equal(ours, theirs) || len(ours) != 26 {
 		t.Fatalf("Go's ordinary parameters %q, P6's %q", ours, theirs)
 	}
 }
@@ -774,7 +774,7 @@ func TestEachAsyncRefusalHasItsReason(t *testing.T) {
 		{"route type absent", req(func(r *AsyncRequest) { r.RouteType = nil }), AsyncFalseOnly, AsyncReasonRouteType},
 		{"route type messages", req(func(r *AsyncRequest) { r.RouteType = ptr("messages") }), AsyncFalseOnly, AsyncReasonRouteType},
 		{"input modalities", req(func(r *AsyncRequest) { r.InputModalities = true }), AsyncFalseOnly, AsyncReasonInputModalities},
-		{"a non-ordinary parameter", req(func(r *AsyncRequest) { r.RequestedParameters = []string{"temperature", "tools"} }),
+		{"a non-ordinary parameter", req(func(r *AsyncRequest) { r.RequestedParameters = []string{"temperature", "tools", "web_search_options"} }),
 			AsyncFalseOnly, AsyncReasonRequestedParameter},
 		{"untyped records", pol(func(p *routingsnapshot.AsyncSettle) { p.TypedRecords = false }), AsyncFalseOnly, AsyncReasonUntyped},
 		{"a service tier", req(func(r *AsyncRequest) { r.ServiceTier = ptr("flex") }), AsyncFalseOnly, AsyncReasonServiceTier},

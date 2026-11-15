@@ -179,6 +179,9 @@ COHORT_WS, OTHER_WS, FINGERPRINT_WS = "ws_e2_cohort", "ws_e2_other", "ws_e2_fing
 # The enclave's request-log id, as it sends one with every authorize
 # (schemas.GatewayAuthorizeRequest.gateway_request_id): synthetic.
 REQUEST_LOG_ID, OTHER_REQUEST_LOG_ID = "rlog_" + "5a" * 16, "rlog_" + "6b" * 16
+# A requested parameter outside async_settle.ORDINARY_PARAMETERS: a name no
+# enclave validator reports, standing for one a later adapter might.
+UNLISTED_PARAMETER = "web_search_options"
 DIGEST = "sha256:" + hashlib.sha256(b"e2 p1 synthetic accepted image").hexdigest()
 OTHER_DIGEST = "sha256:" + hashlib.sha256(b"e2 p1 synthetic other image").hexdigest()
 # A TEST boot key, public by construction: the seed is this repository's text.
@@ -1862,9 +1865,18 @@ def async_cases() -> list[dict[str, Any]]:
     add("answer:async.A:input_modalities:text", body={"input_modalities": ["text"]})
     add("answer:async.A:input_modalities:null", None, raw_body(
         lookup, f'"model":"{GPT41}"', '"estimated_input_tokens":1000', '"input_modalities":null', PLAIN_TAIL))
-    add("answer:async.A:requested_parameter:tools", body={"requested_parameters": ["tools"]})
-    add("answer:async.A:requested_parameter:tools_among_ordinary",
-        body={"requested_parameters": ["temperature", "tools"]})
+    # A requested parameter outside ORDINARY_PARAMETERS, alone and among
+    # ordinary ones: shape A. Tools, a reasoning setting and the sampling
+    # parameters are ordinary (shape B). A cost reservation beside them
+    # cannot be recorded here: authorize answers 400 for one on a chat or
+    # responses route, which a hosted tool never uses.
+    add(f"answer:async.A:requested_parameter:{UNLISTED_PARAMETER}",
+        body={"requested_parameters": [UNLISTED_PARAMETER]})
+    add(f"answer:async.A:requested_parameter:{UNLISTED_PARAMETER}_among_ordinary",
+        body={"requested_parameters": ["temperature", "tools", UNLISTED_PARAMETER]})
+    add("answer:async.B:requested_parameters:tools",
+        body={"requested_parameters": ["parallel_tool_calls", "tool_choice", "tools"]})
+    add("answer:async.B:requested_parameters:reasoning", body={"requested_parameters": ["reasoning"]})
     # Every provider's Credits endpoint is a candidate the snapshot takes,
     # whatever the model's publisher: a model only resellers serve (one of
     # them amazon-bedrock, from a qualified gateway region), a publisher that
@@ -2019,8 +2031,8 @@ def leased_cases(add: Any) -> None:
     add("answer:async.B:leased", body=nonce, policy=leased)
     add(f"answer:async.B:leased:tiered:{SONNET}", body={**nonce, "model": SONNET}, policy=leased)
     add("answer:async.A:route_type:embeddings:leased", body={**nonce, "route_type": "embeddings"}, policy=leased)
-    add("answer:async.A:requested_parameter:tools:leased",
-        body={"requested_parameters": ["tools"]}, policy=leased)
+    add(f"answer:async.A:requested_parameter:{UNLISTED_PARAMETER}:leased",
+        body={"requested_parameters": [UNLISTED_PARAMETER]}, policy=leased)
     add("answer:async.B:leased:stream", body={**nonce, "stream": True}, policy={**leased, **streams})
     add("answer:async.B:leased:reserved", body=nonce,
         policy={**ALL_MODE, "async_settle": {**LEASED_ADMISSION, "fastpath_reserved_workspaces": [COHORT_WS]}})
@@ -2059,8 +2071,8 @@ def async_streams_cases(add: Any) -> None:
     add(f"answer:async.B:stream:resold:{GLM}", body={"stream": True, "model": GLM}, policy=streams)
     add("pass:evaluate.pass:async.A:partner:trustedrouter/auto:stream", "evaluate.pass",
         body={"stream": True, "model": "trustedrouter/auto"}, policy=streams)
-    add("answer:async.A:requested_parameter:tools:stream", body={"stream": True, "requested_parameters": ["tools"]},
-        policy=streams)
+    add(f"answer:async.A:requested_parameter:{UNLISTED_PARAMETER}:stream",
+        body={"stream": True, "requested_parameters": [UNLISTED_PARAMETER]}, policy=streams)
     add("answer:async.B:stream:admission_workspaces_other",
         body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
         policy={**streams, "async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})

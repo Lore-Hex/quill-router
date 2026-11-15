@@ -475,10 +475,30 @@ def edge_ticket(*, body: EdgeTicketRequest, settings: Settings, runtime: Runtime
 # The requested parameters an async-v1 authorize may name; any other makes
 # the answer async_eligible false only. The edge's authorize goldens carry
 # this set (scripts/fastpath/authorize_vectors.py, authorize_async_cases_v1.json).
+#
+# The second block (2026-11-15) completes the set with every capability name
+# the enclave's request validators report (enclave-go internal/adapter
+# chat_request.go endpointCapabilityFields and responses.go
+# responsesRequestedParameters): the enclave reports reasoning_effort as
+# "reasoning" and max_completion_tokens as "max_tokens", so a request that
+# set a reasoning effort was left out by the first block alone.
+#
+# A requested parameter chooses routes and never a price: the charge is the
+# selected endpoint's rates over the reported token counts, reasoning inside
+# output and cache reads and writes at their own rates, with or without the
+# parameter. What does carry its own price stays out by its own fact,
+# whatever parameters are named: a hosted web search or an orchestration
+# call authorizes under its own route type and with a cost reservation
+# (route_type, tool_cost), a service tier besides default by service_tier,
+# and image, audio or video input by input_modalities. A name outside this
+# set is one no adapter reports today; it stays ineligible until it is
+# added here and to the edge's copy.
 ORDINARY_PARAMETERS: frozenset[str] = frozenset({
     "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
     "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias",
     "logprobs", "top_logprobs", "response_format", "reasoning_effort", "stream",
+    "reasoning", "tools", "tool_choice", "parallel_tool_calls", "top_k", "top_a",
+    "min_p", "repetition_penalty", "prediction", "prompt_cache_key", "service_tier",
 })
 
 
