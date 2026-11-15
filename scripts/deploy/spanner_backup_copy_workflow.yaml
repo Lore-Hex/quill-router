@@ -20,6 +20,12 @@ main:
           - source_id: ${text.split(source_backup, "/")[5]}
           - destination_id: ${"copy-" + source_id}
           - expire_time: ${time.format(sys.now() + 2592000)}
+    # 2026-11-15: Spanner accepted the copy at 08:00:10 but the response
+    # never came back, so the call ran out the default 300 s timeout. The
+    # timeout error has no `code`, which failed the 409 check below, and no
+    # copy was made that day. A retry is safe because the destination id is
+    # deterministic: a copy the first attempt did start answers 409, which
+    # is already_copied.
     - copy_backup:
         try:
           call: http.post
@@ -27,6 +33,7 @@ main:
             url: https://spanner.googleapis.com/v1/projects/trustedrouter-dr/instances/trusted-router-backups/backups:copy
             auth:
               type: OAuth2
+            timeout: 120
             body:
               backupId: ${destination_id}
               sourceBackup: ${source_backup}
@@ -34,12 +41,19 @@ main:
               encryptionConfig:
                 encryptionType: GOOGLE_DEFAULT_ENCRYPTION
           result: copy_response
+        retry:
+          predicate: ${copy_retryable}
+          max_retries: 4
+          backoff:
+            initial_delay: 15
+            max_delay: 120
+            multiplier: 2
         except:
           as: error
           steps:
             - return_if_already_copied:
                 switch:
-                  - condition: ${error.code == 409}
+                  - condition: ${default(map.get(error, "code"), 0) == 409}
                     return:
                       status: already_copied
                       sourceBackup: ${source_backup}
@@ -52,3 +66,22 @@ main:
           sourceBackup: ${source_backup}
           destinationBackup: ${destination_id}
           operation: ${copy_response.body.name}
+
+# copy_retryable retries what may succeed on another attempt: a timeout or a
+# dropped connection, 429 and 5xx. Anything else, a 409 included, goes
+# straight to the except steps.
+copy_retryable:
+  params: [e]
+  steps:
+    - read_error:
+        assign:
+          - tags: ${default(map.get(e, "tags"), [])}
+          - code: ${default(map.get(e, "code"), 0)}
+    - classify:
+        switch:
+          - condition: ${"TimeoutError" in tags or "ConnectionError" in tags or "ConnectionFailedError" in tags}
+            return: true
+          - condition: ${code == 429 or code >= 500}
+            return: true
+    - not_retryable:
+        return: false

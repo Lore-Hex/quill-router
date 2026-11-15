@@ -102,10 +102,29 @@ def test_backup_copy_workflow_is_deterministic_and_idempotent() -> None:
     )
 
     assert 'destination_id: ${"copy-" + source_id}' in workflow
-    assert "condition: ${error.code == 409}" in workflow
+    assert 'condition: ${default(map.get(error, "code"), 0) == 409}' in workflow
     assert "status: already_copied" in workflow
     assert "pageSize: 1" in workflow
     assert "backupSchedules:default_daily_full_backup_schedule" in workflow
+
+
+def test_backup_copy_retries_a_lost_response() -> None:
+    """2026-11-15: the copy call timed out after Spanner accepted it, and the
+    timeout error (which has no `code`) failed the workflow, so no copy was
+    made that day. Timeouts, dropped connections, 429 and 5xx retry, a 409
+    still means already copied, and the 409 check reads `code` safely."""
+    workflow = (DEPLOY / "spanner_backup_copy_workflow.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "error.code" not in workflow
+    assert "timeout: 120" in workflow
+    assert "predicate: ${copy_retryable}" in workflow
+    assert "max_retries: 4" in workflow
+    assert "copy_retryable:\n  params: [e]" in workflow
+    assert '"TimeoutError" in tags' in workflow
+    assert '"ConnectionError" in tags' in workflow
+    assert "code == 429 or code >= 500" in workflow
 
 
 def test_spanner_reliability_baseline_is_production_safe() -> None:
