@@ -782,7 +782,11 @@ on `owner.off`; with it the pass is named and cheaper.
   wildcard off, as today.
 - **`decide wildcard on|off|status [-cloud gcp] [-region us-central1]`**
   sets and reads the wildcard. `on` and `off` take `us-central1`,
-  `us-east4` and `europe-west4` (§4(c)), each region its own row.
+  `us-east4` and `europe-west4` (§4(c)), each region its own row. Without
+  `-region`, the stop direction (`decide off WORKSPACE`, `decide wildcard
+  off`) writes all three and `status` exits 3 while any decides, so the
+  runbooks' first stop stays whole as the wildcard widens; `on` without
+  `-region` names us-central1 alone.
 - **`decide-off-all`** turns the wildcard off with every other row
   (`WHERE decide`), so it is still "nobody decides". Every row it turns off
   shares its commit timestamp, which it prints.

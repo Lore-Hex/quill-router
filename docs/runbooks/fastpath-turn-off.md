@@ -14,8 +14,12 @@ keyed by workspace, cloud and region; `docs/design/fast-admission-e2-decide.md`
 §9, `fastpath-edge-decide.md`):
 
 ```bash
-fastpathctl -database projects/P/instances/I/databases/D decide off WORKSPACE [-cloud gcp] [-region us-central1]
+fastpathctl -database projects/P/instances/I/databases/D decide off WORKSPACE
 ```
+
+Without `-region` it writes the workspace's off row in every region the
+wildcard may name (us-central1, us-east4 and europe-west4, since
+2026-11-15), so the stop is whole; `-region R` writes that region alone.
 
 or, for every row at once, `fastpathctl -database D decide-off-all`. This
 is the first step of any abuse pause or key revocation for a workspace that
@@ -31,11 +35,13 @@ deciding as that copy said, until the copy is 15 s old (three intervals,
 `DecideView.gate`), and then decides nothing (`cache.decide`); so a row
 turned off is honoured within 10 s, or by the time the copy a node holds is
 15 s old, whichever a node's reads give.
-`decide status WORKSPACE` exits 0 while the workspace does not decide in
-that cloud and region and 3 while it does, by its own row or the wildcard
-row, with `via` (`own`, `wildcard` or `none`) and every row of the
-workspace's beside: a row of another cloud or region stays as it was, so
-read the rows it prints, or run `decide-off-all`. A workspace with no row
+`decide status WORKSPACE` without `-region` reads every one of those
+regions: it exits 3 while the workspace decides in any of them, by its own
+row or the wildcard row, and 0 while it decides in none, with `via` (`own`,
+`wildcard` or `none`) for the first region where it decides, each region's
+decision under `regions`, and every row of the workspace's beside. A row of
+another cloud stays as it was, so read the rows it prints, or run
+`decide-off-all`. A workspace with no row
 of its own follows the wildcard row `*` of the cloud and region, and with
 none decides nowhere (`docs/design/fast-admission-widening.md` §6). `decide
 off` writes the workspace's own off row, which wins over an on wildcard, so
@@ -43,7 +49,8 @@ it is the lever under the wildcard too; do not `decide delete` the
 workspace's row to turn it off: under an on wildcard deleting an off row is
 refused (exit 2), since the workspace would start deciding, and an on row
 deleted under it leaves the workspace deciding. To stop every workspace the
-wildcard decides, `fastpathctl -database D decide wildcard off`.
+wildcard decides, `fastpathctl -database D decide wildcard off`, which
+without `-region` turns off the wildcard of every region.
 `decide-off-all` turns every row off, the wildcard's too, and prints the
 commit timestamp `at` that each row it turned off keeps; `decide-restore -at
 AT` with that value turns back on exactly those rows, and no off override

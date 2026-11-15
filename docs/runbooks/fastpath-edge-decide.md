@@ -175,7 +175,10 @@ fastpathctl -database $DB decide wildcard on|off|status [-cloud gcp] [-region us
 
 `on` and `off` take `-region` `us-central1`, `us-east4` or `europe-west4`, each
 its own row; the region is the request's (`gwauth.ChooseRegion`), not the
-node's, which stays us-central1. Any other cloud or region exits 2.
+node's, which stays us-central1. Any other cloud or region exits 2. Without
+`-region`, `decide off WORKSPACE`, `decide wildcard off` and both statuses
+cover all three regions (the stop is whole, status the worst case); `on`
+without `-region` names us-central1 alone.
 
 `decide wildcard status` exits 3 while the wildcard row is on and 0 while
 it is off or absent. The row is written only once `fastpathwatch edge`

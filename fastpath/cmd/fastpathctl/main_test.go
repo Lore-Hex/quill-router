@@ -992,6 +992,56 @@ func TestTheWildcardDecidesInEachWidenedRegion(t *testing.T) {
 	}
 }
 
+// TestTheStopCoversEveryRegion (review of the widening to us-east4 and
+// europe-west4): without -region, decide off and decide wildcard off write
+// every region the wildcard may name, and status reads the worst case, so
+// the runbooks' first stop, decide off WORKSPACE, is whole; an explicit
+// -region names that region alone.
+func TestTheStopCoversEveryRegion(t *testing.T) {
+	open := onOwn(t)
+	ws := storetest.UniqueID("ws")
+	if code, _, err := doOn(t, open, "decide", "wildcard", "on", "-region", "us-east4"); code != 0 || err != nil {
+		t.Fatalf("decide wildcard on -region us-east4: exit %d, %v", code, err)
+	}
+	// An override of us-central1 alone leaves the workspace deciding in
+	// us-east4, and status without -region says so.
+	if code, _, err := doOn(t, open, "decide", "off", ws, "-region", "us-central1"); code != 0 || err != nil {
+		t.Fatalf("decide off -region us-central1: exit %d, %v", code, err)
+	}
+	code, got, err := doOn(t, open, "decide", "status", ws)
+	if code != 3 || err != nil || got["region"] != "us-east4" || got["via"] != "wildcard" ||
+		got["regions"].(map[string]any)["us-central1"] != false || got["regions"].(map[string]any)["us-east4"] != true {
+		t.Fatalf("status after a us-central1 override: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "status", ws, "-region", "us-central1"); code != 0 || err != nil ||
+		got["region"] != "us-central1" {
+		t.Fatalf("status -region us-central1: exit %d, %v, %v", code, err, got)
+	}
+	// decide off without -region writes every region's override.
+	code, got, err = doOn(t, open, "decide", "off", ws)
+	if code != 0 || err != nil || len(got["regions"].([]any)) != 3 {
+		t.Fatalf("decide off: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "status", ws); code != 0 || err != nil || got["via"] != "own" {
+		t.Fatalf("status after decide off: exit %d, %v, %v", code, err, got)
+	}
+	// decide wildcard off without -region turns every region's wildcard off.
+	if code, _, err := doOn(t, open, "decide", "wildcard", "on", "-region", "europe-west4"); code != 0 || err != nil {
+		t.Fatalf("decide wildcard on -region europe-west4: exit %d, %v", code, err)
+	}
+	if code, _, err := doOn(t, open, "decide", "wildcard", "off"); code != 0 || err != nil {
+		t.Fatalf("decide wildcard off: exit %d, %v", code, err)
+	}
+	if code, got, err := doOn(t, open, "decide", "wildcard", "status"); code != 0 || err != nil {
+		t.Fatalf("the wildcards after decide wildcard off: exit %d, %v, %v", code, err, got)
+	}
+	// on without -region still names us-central1 alone.
+	code, got, err = doOn(t, open, "decide", "on", ws)
+	if code != 0 || err != nil || got["region"] != "us-central1" || len(got["regions"].([]any)) != 1 {
+		t.Fatalf("decide on: exit %d, %v, %v", code, err, got)
+	}
+}
+
 // TestDecideStatusIsTheEffectiveAnswer (docs/design/fast-admission-widening.md
 // section 6.2): a workspace with no row of its own decides under an on
 // wildcard, exit 3 and via wildcard; its off override holds under it, exit 0
