@@ -57,10 +57,14 @@
 // over the wildcard (docs/design/fast-admission-widening.md section 6), so
 // decide off is an override that holds under the wildcard. The cloud is gcp
 // and the region us-central1 unless -cloud or -region, before the command
-// or after the workspace, say otherwise. decide status reports the
-// workspace's effective answer there, by its own row or the wildcard, with
-// via (own, wildcard or none) and every row of the workspace's beside: exit
-// 0 while it does not decide in that cloud and region and 3 while it does.
+// or after the workspace, say otherwise, except that without -region, gcp's
+// decide off, decide wildcard off and both statuses cover every region the
+// wildcard may name (us-central1, us-east4, europe-west4): the stop is
+// whole and status reads the worst case. decide status reports the
+// workspace's effective answer, by its own row or the wildcard, with via
+// (own, wildcard or none) and every row of the workspace's beside, in the
+// first region where it decides, and each region's decision under regions:
+// exit 0 while it decides in none of them and 3 while it decides in any.
 // decide delete removes the workspace's row for the cloud and region, exit 0
 // when there was one and 3 when there was none, and only ever stops one
 // deciding: it refuses, exit 2 and nothing written, to remove an off row
@@ -69,8 +73,8 @@
 // removes the wildcard row itself, so every workspace without a row of its
 // own stops deciding there. decide wildcard on, off and status set and read
 // the wildcard row (status exits 3 while it is on); on and off write only
-// gcp/us-central1, the one cloud and region the widening covers, and refuse
-// any other, exit 2; decide wildcard off is the same stop as deleting it
+// gcp in us-central1, us-east4 and europe-west4, the cloud and regions the
+// widening covers, and refuse any other, exit 2; decide wildcard off is the same stop as deleting it
 // and keeps the row for decide-restore.
 // decide-off-all turns every row off, the wildcard's too, and prints the
 // commit timestamp they all keep; decide-restore -at that timestamp turns
@@ -142,6 +146,8 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -188,14 +194,18 @@ var workspaceForm = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@+\-]{0,63}$`)
 // bracket, so a flag after the command is not taken for an address.
 var addressForm = regexp.MustCompile(`^[A-Za-z0-9\[][A-Za-z0-9._:\[\]\-]{0,254}$`)
 
-// The one cloud and region decide wildcard on and off write
+// The cloud and regions decide wildcard on and off write
 // (docs/design/fast-admission-widening.md section 4(c): the AWS and Azure
-// planes and every region but us-central1 stay out). status reads any, and
-// decide delete '*' removes any, both the stop direction.
-const (
-	wildcardCloud  = "gcp"
-	wildcardRegion = "us-central1"
-)
+// planes stay out). The region is the request's (gwauth.ChooseRegion), not
+// the deciding node's, which stays us-central1 (fastpath_pilot_regions):
+// us-east4 and europe-west4 are the enclave regions whose requests reach
+// the us-central1 nodes and whose terminals all land in us-central1 since
+// 2026-11-04 (docs/runbooks/control-terminals-us-central1.md). Joseph
+// approved them 2026-11-15. status reads any, and decide delete '*'
+// removes any, both the stop direction.
+const wildcardCloud = "gcp"
+
+var wildcardRegions = []string{"us-central1", "us-east4", "europe-west4"}
 
 // decideStatus is decide status's answer from the whole table and whether
 // the workspace decides in the cloud and region by section 6.1's rule
@@ -300,6 +310,17 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 2, usage
 		}
 	}
+	// Without -region, the stop direction (decide off, decide wildcard off)
+	// and status cover every region the wildcard may name, so an operator's
+	// first stop is whole once the wildcard decides beyond us-central1; on,
+	// delete and an explicit -region name one region. Visit sees the flags
+	// either parse set.
+	regionGiven := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "region" {
+			regionGiven = true
+		}
+	})
 	// -follow-wildcard is decide delete's and -at decide-restore's: on any
 	// other command each would be ignored, which an operator could misread.
 	if *followWildcard && (command != "decide" || verb != "delete") {
@@ -369,9 +390,9 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if wildcardVerb != "on" && wildcardVerb != "off" && wildcardVerb != "status" {
 			return 2, fmt.Errorf("decide wildcard %q is not on, off or status: %w", wildcardVerb, usage)
 		}
-		if wildcardVerb != "status" && (*cloud != wildcardCloud || *region != wildcardRegion) {
-			return 2, fmt.Errorf("decide wildcard %s: the wildcard row names only %s/%s, not %s/%s", wildcardVerb,
-				wildcardCloud, wildcardRegion, *cloud, *region)
+		if wildcardVerb != "status" && (*cloud != wildcardCloud || !slices.Contains(wildcardRegions, *region)) {
+			return 2, fmt.Errorf("decide wildcard %s: the wildcard row names only %s in %s, not %s/%s", wildcardVerb,
+				wildcardCloud, strings.Join(wildcardRegions, ", "), *cloud, *region)
 		}
 		if err := store.CheckDecideKey(workspace, *cloud, *region); err != nil {
 			return 2, err
@@ -459,25 +480,47 @@ func run(ctx context.Context, args []string, out io.Writer,
 			}
 			break
 		}
+		everyRegion := !regionGiven && *cloud == wildcardCloud
 		if verb == "wildcard" && wildcardVerb != "status" || verb == "on" || verb == "off" {
 			decide := verb == "on" || wildcardVerb == "on"
-			at, err := s.SetDecide(ctx, workspace, *cloud, *region, decide)
-			if err != nil {
-				return 1, err
+			regions := []string{*region}
+			if !decide && everyRegion {
+				regions = wildcardRegions
+			}
+			var at time.Time
+			for _, r := range regions {
+				if at, err = s.SetDecide(ctx, workspace, *cloud, r, decide); err != nil {
+					return 1, fmt.Errorf("decide %s in %s/%s (the regions before it in %v are written): %w",
+						verb, *cloud, r, regions, err)
+				}
 			}
 			answer = map[string]any{"workspace": workspace, "wildcard": verb == "wildcard", "cloud": *cloud,
-				"region": *region, "decide": decide, "at": at}
+				"region": regions[0], "regions": regions, "decide": decide, "at": at}
 			break
 		}
 		all, read, err := s.ReadDecide(ctx)
 		if err != nil {
 			return 1, err
 		}
-		var decide bool
-		answer, decide = decideStatus(all, read, workspace, *cloud, *region)
-		if decide {
-			code = notDone
+		regions := []string{*region}
+		if everyRegion {
+			regions = wildcardRegions
 		}
+		// The answer is the first region where the workspace decides (the
+		// first region's when none does), with each region's decision
+		// beside it under regions; exit 3 while it decides in any.
+		byRegion := map[string]any{}
+		for _, r := range regions {
+			got, decide := decideStatus(all, read, workspace, *cloud, r)
+			byRegion[r] = decide
+			if answer == nil || decide && code == 0 {
+				answer = got
+			}
+			if decide {
+				code = notDone
+			}
+		}
+		answer["regions"] = byRegion
 	case "ready":
 		why, err := s.GrantReadiness(ctx, workspace)
 		if err != nil {

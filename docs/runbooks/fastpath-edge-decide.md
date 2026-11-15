@@ -142,10 +142,15 @@ withdrawn digest within 60 s, and Python's own 401, 402, 403 or pause 503
 on a request the edge passes evicts the key sooner (`decide_path.go`,
 `evict`). The decide row is the lever the edge reads soonest.
 
-What `decide off` does: one transaction writes the workspace's row for the
-cloud and region with `decide` false and `changed_at` the commit's
-timestamp (`fastpath/internal/store/decide.go`, `SetDecide`, an
-`InsertOrUpdate`); `decide-off-all` sets every row false in one statement,
+What `decide off` does: one transaction per region writes the workspace's
+row for the cloud and region with `decide` false and `changed_at` the
+commit's timestamp (`fastpath/internal/store/decide.go`, `SetDecide`, an
+`InsertOrUpdate`), every wildcard region in turn without `-region`; on exit
+1 the regions before the failed one are written, so run it again. Undoing
+a whole stop names each region: `decide on WORKSPACE -region R` (or `decide
+delete WORKSPACE -region R -follow-wildcard`) for us-central1, us-east4 and
+europe-west4, since `on` and `delete` without `-region` touch us-central1
+alone; `decide-off-all` sets every row false in one statement,
 rows kept (`DecideOffAll`). Each node with `-edge-decide` copies the whole table: a read begins every
 5 s and is given 5 s (`fastpath/internal/edge/decide.go`, `DecideEvery`,
 `decideCopy.run`), so a row turned off is seen by a node within 10 s of the
@@ -158,8 +163,9 @@ The row touches neither the switch nor the leases: what the edge admitted
 settles as before.
 
 **The wildcard row** (`docs/design/fast-admission-widening.md` §6). The
-row `('*', gcp, us-central1)` decides for every workspace with no row of
-its own for that cloud and region; a workspace's own row, on or off, wins
+row `('*', gcp, R)`, one per region R (us-central1, and from 2026-11-15
+us-east4 and europe-west4), decides for every workspace with no row of its
+own for that cloud and region; a workspace's own row, on or off, wins
 over it, so `decide off WORKSPACE` writes an override that holds under the
 wildcard, and `decide on WORKSPACE` decides with the wildcard off. With no
 wildcard row the table means what it meant before. The node's copy keeps
@@ -172,6 +178,13 @@ refuse it, and the wildcard has commands of its own:
 ```bash
 fastpathctl -database $DB decide wildcard on|off|status [-cloud gcp] [-region us-central1]
 ```
+
+`on` and `off` take `-region` `us-central1`, `us-east4` or `europe-west4`, each
+its own row; the region is the request's (`gwauth.ChooseRegion`), not the
+node's, which stays us-central1. Any other cloud or region exits 2. Without
+`-region`, `decide off WORKSPACE`, `decide wildcard off` and both statuses
+cover all three regions (the stop is whole, status the worst case); `on`
+without `-region` names us-central1 alone.
 
 `decide wildcard status` exits 3 while the wildcard row is on and 0 while
 it is off or absent. The row is written only once `fastpathwatch edge`
@@ -579,7 +592,11 @@ hour and a day before the next; the pilot workspace after the operator's.
 From WS3 of `docs/design/fast-admission-widening.md` (§8.2) the wildcard
 row decides instead: `decide wildcard on` for `gcp`, `us-central1`, after
 every node runs a release that reads it, then the include list's own on
-rows deleted (`decide delete WORKSPACE`), so they decide under it. The
+rows deleted (`decide delete WORKSPACE`), so they decide under it. WS3r
+turns on the wildcard of the enclave regions whose requests reach the
+nodes, one at a time with step 4's reads an hour apart: `decide wildcard
+on -region us-east4`, then `-region europe-west4`; `decide wildcard off
+-region R` is that region's way back. The
 decide path's count line then attributes each answer, the 200s and the
 503s, to the row it came from (`decided_via={"own":N,"wildcard":M}`, the
 design's `decided.via`), which `fastpathwatch edge` sums under
