@@ -657,14 +657,18 @@ def test_the_deployed_pins_admit_every_workspace_but_the_reserved_list() -> None
 
 def test_the_deployed_pins_publish_edge_tickets_for_every_admitted_workspace() -> None:
     """rollout.sh's ticket pin since 2026-11-14 is "*". With the deployed
-    admission pins the body carries edge_tickets true and no
-    edge_ticket_workspaces, which the edge reads as every workspace
-    admission covers (routingsnapshot's AsyncSettle.Tickets); the reserved
-    list stays outside admission and so takes no ticket. The ways back the
-    pin's comment names: the operator workspace alone publishes that one
-    workspace, and the pin emptied publishes neither member."""
+    admission, edge decide and leased pins the body carries edge_tickets
+    true and no edge_ticket_workspaces, which the edge reads as every
+    workspace admission covers (routingsnapshot's AsyncSettle.Tickets); the
+    reserved list stays outside admission and so takes no ticket. The ways
+    back the pin's comment names: the overlap list's workspaces alone (the
+    operator workspace) publish that list, and the pin emptied publishes
+    neither member. The leased members ride along in each, so with the pin
+    emptied the edge still answers what it leases itself off the overlap
+    list (rollout.sh's leased switch)."""
     rendered = _rendered_rollout_env()
     assert rendered["TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES"] == "*"
+    assert rendered["TR_FASTPATH_EDGE_DECIDE_ASYNC"] == rendered["TR_FASTPATH_EDGE_ASYNC_LEASED"] == "true"
 
     def deployed(ticket_pin: str) -> Settings:
         return VECTORS.fixture_settings(
@@ -676,12 +680,18 @@ def test_the_deployed_pins_publish_edge_tickets_for_every_admitted_workspace() -
             fastpath_pilot_exclude=rendered["TR_FASTPATH_PILOT_EXCLUDE"],
             async_settle_fastpath_overlap_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES"],
             async_settle_fastpath_reserved_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES"],
+            fastpath_edge_decide_async=rendered["TR_FASTPATH_EDGE_DECIDE_ASYNC"],
+            fastpath_edge_async_leased=rendered["TR_FASTPATH_EDGE_ASYNC_LEASED"],
             fastpath_edge_async_ticket_workspaces=ticket_pin)
 
     def published(settings: Settings) -> dict[str, Any]:
         body = canonical_edge_policy_bytes(VECTORS.policy(settings))
         assert canonical_edge_policy_bytes(parse_edge_policy(body)) == body
-        return json.loads(body)["async_settle"]
+        members = json.loads(body)["async_settle"]
+        # The leased members, whatever the ticket pin reads.
+        assert members["edge_decide"] is True and members["edge_leased"] is True
+        assert members["overlap_workspaces"] == sorted(settings.async_settle_fastpath_overlap_workspace_ids)
+        return members
 
     everyone = deployed(rendered["TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES"])
     overlap = sorted(everyone.async_settle_fastpath_overlap_workspace_ids)
