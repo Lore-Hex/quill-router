@@ -1,4 +1,4 @@
-FROM node:24.22.1-bookworm-slim@sha256:1681862882da07ee5476fee047bcf34138833f1df42633bb25bcb0f438d5bf3d AS frontend
+FROM node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS frontend
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
