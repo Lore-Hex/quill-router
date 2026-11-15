@@ -852,10 +852,13 @@ ENV_VARS=(
   # ticket while its own commit is in flight. Python publishes the policy's
   # edge_tickets member only with this set, and a node release before
   # d23591a1f refuses a policy carrying it, so this is set only once every
-  # node runs that release or a later one (infra/fastpath.tf). First the
-  # operator workspace, which is on the overlap list above. The way back is
-  # this one pin, emptied.
-  "TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # node runs that release or a later one (infra/fastpath.tf). The operator
+  # workspace from 2026-11-13; every workspace from 2026-11-14 (Joseph): "*"
+  # covers each workspace async admission takes, so the reserved list above
+  # keeps the edge's own answers without a ticket. A ticket that is late or
+  # fails is not spliced, and the enclave settles that request synchronously.
+  # The way back is this one pin: the operator workspace alone, or emptied.
+  "TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES=*"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4
