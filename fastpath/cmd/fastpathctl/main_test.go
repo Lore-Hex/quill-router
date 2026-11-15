@@ -297,8 +297,15 @@ func TestDecideDeleteRemovesARow(t *testing.T) {
 		got["region"] != "us-central1" || got["at"] == nil {
 		t.Fatalf("decide delete: exit %d, %v", code, got)
 	}
-	if code, got := do("decide", "status", ws); code != 0 || got["found"] != false || len(got["rows"].([]any)) != 1 {
+	if code, got := do("decide", "status", ws, "-region", "us-central1"); code != 0 || got["found"] != false ||
+		len(got["rows"].([]any)) != 1 {
 		t.Fatalf("the deleted row's status: exit %d, %v", code, got)
+	}
+	// Without -region, status reads every region: the other region's on row
+	// still decides.
+	if code, got := do("decide", "status", ws); code != 3 || got["region"] != "europe-west4" ||
+		got["regions"].(map[string]any)["us-central1"] != false || got["regions"].(map[string]any)["europe-west4"] != true {
+		t.Fatalf("the whole status after the delete: exit %d, %v", code, got)
 	}
 	if code, got := do("decide", "status", ws, "-region", "europe-west4"); code != 3 || got["found"] != true {
 		t.Fatalf("the other region's row: exit %d, %v", code, got)

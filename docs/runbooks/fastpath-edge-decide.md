@@ -142,10 +142,15 @@ withdrawn digest within 60 s, and Python's own 401, 402, 403 or pause 503
 on a request the edge passes evicts the key sooner (`decide_path.go`,
 `evict`). The decide row is the lever the edge reads soonest.
 
-What `decide off` does: one transaction writes the workspace's row for the
-cloud and region with `decide` false and `changed_at` the commit's
-timestamp (`fastpath/internal/store/decide.go`, `SetDecide`, an
-`InsertOrUpdate`); `decide-off-all` sets every row false in one statement,
+What `decide off` does: one transaction per region writes the workspace's
+row for the cloud and region with `decide` false and `changed_at` the
+commit's timestamp (`fastpath/internal/store/decide.go`, `SetDecide`, an
+`InsertOrUpdate`), every wildcard region in turn without `-region`; on exit
+1 the regions before the failed one are written, so run it again. Undoing
+a whole stop names each region: `decide on WORKSPACE -region R` (or `decide
+delete WORKSPACE -region R -follow-wildcard`) for us-central1, us-east4 and
+europe-west4, since `on` and `delete` without `-region` touch us-central1
+alone; `decide-off-all` sets every row false in one statement,
 rows kept (`DecideOffAll`). Each node with `-edge-decide` copies the whole table: a read begins every
 5 s and is given 5 s (`fastpath/internal/edge/decide.go`, `DecideEvery`,
 `decideCopy.run`), so a row turned off is seen by a node within 10 s of the
@@ -158,8 +163,9 @@ The row touches neither the switch nor the leases: what the edge admitted
 settles as before.
 
 **The wildcard row** (`docs/design/fast-admission-widening.md` §6). The
-row `('*', gcp, us-central1)` decides for every workspace with no row of
-its own for that cloud and region; a workspace's own row, on or off, wins
+row `('*', gcp, R)`, one per region R (us-central1, and from 2026-11-15
+us-east4 and europe-west4), decides for every workspace with no row of its
+own for that cloud and region; a workspace's own row, on or off, wins
 over it, so `decide off WORKSPACE` writes an override that holds under the
 wildcard, and `decide on WORKSPACE` decides with the wildcard off. With no
 wildcard row the table means what it meant before. The node's copy keeps
