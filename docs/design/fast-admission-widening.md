@@ -297,7 +297,7 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Async-shadow workspaces | edge `policy.async_settle_shadow`; enabler; Python's `pilot_reason` has no such gate today, so PR 5 adds `async_shadow` | |
 | The monitor key | edge `policy.monitor_key`; enabler skips its workspace; PR 5 adds `monitor_key` to `pilot_reason` | |
 | Async-admission pilot workspaces outside the overlap list | `fastpath_pilot_exclude`, required by a validator (§9) | |
-| Request regions other than `us-central1`, `us-east4` and `europe-west4` | the wildcard row names only those three (the request's region, `gwauth.ChooseRegion`); `fastpath_pilot_regions`, the deciding plane's region, stays `us-central1` | us-east4 and europe-west4 added 2026-11-15 (Joseph): their requests reach the us-central1 nodes, and every enclave's settle, heartbeat and refund lands in us-central1 since 2026-11-04 (`control-terminals-us-central1.md`); us-west1 stays out |
+| Request regions other than `us-central1`, `us-east4`, `europe-west4` and `us-west1` | the wildcard row names only those four, every enclave region there is (`enclave_regions.py`; the request's region, `gwauth.ChooseRegion`); `fastpath_pilot_regions`, the deciding plane's region, stays `us-central1` | us-east4 and europe-west4 added 2026-11-15 (Joseph), us-west1 the same day after their hours read clean: their requests reach the us-central1 nodes, and every enclave's settle, heartbeat and refund lands in us-central1 since 2026-11-04 (`control-terminals-us-central1.md`); us-west1 is gateway-only, with no control-plane service of its own, and negotiates async-v1 as us-central1 and us-east4 do |
 | The AWS and Azure planes | the edge's `boot.signature`; their control planes leave the pilot off; the enabler runs only against GCP's database; `fastpath_pilot_all` refuses to start without the typed Spanner store | held, (2) |
 | Held workspaces | enabler, in each enable's transaction (§5.6) | |
 | Streams the enclave does not heartbeat, idempotency keys over the edge's bounds, speculation descriptors | request, unchanged | §4.11 |
@@ -782,9 +782,9 @@ on `owner.off`; with it the pass is named and cheaper.
   wildcard off, as today.
 - **`decide wildcard on|off|status [-cloud gcp] [-region us-central1]`**
   sets and reads the wildcard. `on` and `off` take `us-central1`,
-  `us-east4` and `europe-west4` (§4(c)), each region its own row. Without
-  `-region`, the stop direction (`decide off WORKSPACE`, `decide wildcard
-  off`) writes all three and `status` exits 3 while any decides, so the
+  `us-east4`, `europe-west4` and `us-west1` (§4(c)), each region its own
+  row. Without `-region`, the stop direction (`decide off WORKSPACE`,
+  `decide wildcard off`) writes all four and `status` exits 3 while any decides, so the
   runbooks' first stop stays whole as the wildcard widens; `on` without
   `-region` names us-central1 alone.
 - **`decide-off-all`** turns the wildcard off with every other row
@@ -922,7 +922,7 @@ Any alert, or any bar missed, is the way back (§8.3), then the cause.
 | WS1 | `fastpathctl hold-backfill` run (PR 4); the enabler in `dry-run` | four consecutive runs whose reports were read: every current pilot workspace eligible, every exclusion of (c) counted where it should be, and `unheld_disabled` (§5.4) zero: no `enabled = false` row anywhere without a hold |
 | WS2 | Entry, in this order: every node's release, and so every `fastpathctl` in use, carries PR 4; `hold-backfill` run again, which holds any stop an older node made since WS1's run (it is idempotent, and the enabler has written no disable yet); a dry-run report taken after it with `unheld_disabled` zero; `fastpathctl enabler arm`, which checks the same itself. Then the enabler in `apply` with `max_rank` 0 (it keeps the include list and enables nobody new); then, once a run's report shows the enabled set within the include list and nothing to disable, `TR_FASTPATH_PILOT_ALL=true` with the explicit list emptied | 2,000 leased settles under all mode; no `workspace` pass from Python for an enabled workspace (its switch copy works) |
 | WS3 | The wildcard row on for `gcp`, `us-central1`, then the include list's own on rows deleted, so they decide under the wildcard | 2,000 authorizes with `decided.via` `wildcard`; no `edge_decide_unavailable_sustained` |
-| WS3r | The wildcard row on for `gcp`, `us-east4`; after an hour of the runbook's step 4 reads, `europe-west4` (2026-11-15) | per region: no `edge_decide_unavailable_sustained` or `edge_would_admit_python_refused`, no refund failures, and the region's answered requests settling in us-central1 |
+| WS3r | The wildcard row on for `gcp`, `us-east4`; after an hour of the runbook's step 4 reads, `europe-west4`; after its hour, `us-west1` (2026-11-15) | per region: no `edge_decide_unavailable_sustained` or `edge_would_admit_python_refused`, no refund failures, and the region's answered requests settling in us-central1 |
 | WS4 | `max_rank` 10: the ten largest workspaces at or above the enabler's required tier (1 since 2026-11-13) | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
 | WS5 | `max_rank` 100, the $30 join balance, PR 7's 503 on | 20,000 leased settles from the step's workspaces, and at least half of those that sent an eligible request granted (26 joined at entry, so 50 cannot be met) |
 | WS6 | (PR 7's 503 already on since WS5) `max_rank` unbounded: every workspace at or above the enabler's required tier | 20,000 leased settles from the step's workspaces, and at least 80% of those that sent an eligible request granted |

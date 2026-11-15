@@ -18,8 +18,8 @@ fastpathctl -database projects/P/instances/I/databases/D decide off WORKSPACE
 ```
 
 Without `-region` it writes the workspace's off row in every region the
-wildcard may name (us-central1, us-east4 and europe-west4, since
-2026-11-15), so the stop is whole; `-region R` writes that region alone.
+wildcard may name (us-central1, us-east4, europe-west4 and us-west1,
+since 2026-11-15), so the stop is whole; `-region R` writes that region alone.
 
 or, for every row at once, `fastpathctl -database D decide-off-all`. This
 is the first step of any abuse pause or key revocation for a workspace that
