@@ -69,8 +69,8 @@
 // removes the wildcard row itself, so every workspace without a row of its
 // own stops deciding there. decide wildcard on, off and status set and read
 // the wildcard row (status exits 3 while it is on); on and off write only
-// gcp/us-central1, the one cloud and region the widening covers, and refuse
-// any other, exit 2; decide wildcard off is the same stop as deleting it
+// gcp in us-central1, us-east4 and europe-west4, the cloud and regions the
+// widening covers, and refuse any other, exit 2; decide wildcard off is the same stop as deleting it
 // and keeps the row for decide-restore.
 // decide-off-all turns every row off, the wildcard's too, and prints the
 // commit timestamp they all keep; decide-restore -at that timestamp turns
@@ -142,6 +142,8 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -188,14 +190,18 @@ var workspaceForm = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@+\-]{0,63}$`)
 // bracket, so a flag after the command is not taken for an address.
 var addressForm = regexp.MustCompile(`^[A-Za-z0-9\[][A-Za-z0-9._:\[\]\-]{0,254}$`)
 
-// The one cloud and region decide wildcard on and off write
+// The cloud and regions decide wildcard on and off write
 // (docs/design/fast-admission-widening.md section 4(c): the AWS and Azure
-// planes and every region but us-central1 stay out). status reads any, and
-// decide delete '*' removes any, both the stop direction.
-const (
-	wildcardCloud  = "gcp"
-	wildcardRegion = "us-central1"
-)
+// planes stay out). The region is the request's (gwauth.ChooseRegion), not
+// the deciding node's, which stays us-central1 (fastpath_pilot_regions):
+// us-east4 and europe-west4 are the enclave regions whose requests reach
+// the us-central1 nodes and whose terminals all land in us-central1 since
+// 2026-11-04 (docs/runbooks/control-terminals-us-central1.md). Joseph
+// approved them 2026-11-15. status reads any, and decide delete '*'
+// removes any, both the stop direction.
+const wildcardCloud = "gcp"
+
+var wildcardRegions = []string{"us-central1", "us-east4", "europe-west4"}
 
 // decideStatus is decide status's answer from the whole table and whether
 // the workspace decides in the cloud and region by section 6.1's rule
@@ -369,9 +375,9 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if wildcardVerb != "on" && wildcardVerb != "off" && wildcardVerb != "status" {
 			return 2, fmt.Errorf("decide wildcard %q is not on, off or status: %w", wildcardVerb, usage)
 		}
-		if wildcardVerb != "status" && (*cloud != wildcardCloud || *region != wildcardRegion) {
-			return 2, fmt.Errorf("decide wildcard %s: the wildcard row names only %s/%s, not %s/%s", wildcardVerb,
-				wildcardCloud, wildcardRegion, *cloud, *region)
+		if wildcardVerb != "status" && (*cloud != wildcardCloud || !slices.Contains(wildcardRegions, *region)) {
+			return 2, fmt.Errorf("decide wildcard %s: the wildcard row names only %s in %s, not %s/%s", wildcardVerb,
+				wildcardCloud, strings.Join(wildcardRegions, ", "), *cloud, *region)
 		}
 		if err := store.CheckDecideKey(workspace, *cloud, *region); err != nil {
 			return 2, err

@@ -173,6 +173,10 @@ refuse it, and the wildcard has commands of its own:
 fastpathctl -database $DB decide wildcard on|off|status [-cloud gcp] [-region us-central1]
 ```
 
+`on` and `off` take `-region` `us-central1`, `us-east4` or `europe-west4`, each
+its own row; the region is the request's (`gwauth.ChooseRegion`), not the
+node's, which stays us-central1. Any other cloud or region exits 2.
+
 `decide wildcard status` exits 3 while the wildcard row is on and 0 while
 it is off or absent. The row is written only once `fastpathwatch edge`
 shows every node on a release that reads it (widening §6.3): a node from
@@ -579,7 +583,11 @@ hour and a day before the next; the pilot workspace after the operator's.
 From WS3 of `docs/design/fast-admission-widening.md` (§8.2) the wildcard
 row decides instead: `decide wildcard on` for `gcp`, `us-central1`, after
 every node runs a release that reads it, then the include list's own on
-rows deleted (`decide delete WORKSPACE`), so they decide under it. The
+rows deleted (`decide delete WORKSPACE`), so they decide under it. WS3r
+turns on the wildcard of the enclave regions whose requests reach the
+nodes, one at a time with step 4's reads an hour apart: `decide wildcard
+on -region us-east4`, then `-region europe-west4`; `decide wildcard off
+-region R` is that region's way back. The
 decide path's count line then attributes each answer, the 200s and the
 503s, to the row it came from (`decided_via={"own":N,"wildcard":M}`, the
 design's `decided.via`), which `fastpathwatch edge` sums under

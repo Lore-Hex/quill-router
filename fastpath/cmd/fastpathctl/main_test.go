@@ -944,14 +944,51 @@ func TestTheWildcardCommandsRefuseWhatTheyCannotDo(t *testing.T) {
 		{"decide-restore", "-at", ""}, {"decide-restore", "-at", "yesterday"}, {"decide-restore", "-at", "1792368000"},
 		{"decide-restore", "-at", "2026-11-06T00:00:00Z", "more"}, {"-at", "2026-11-06T00:00:00Z", "decide-off-all"},
 		{"decide", "delete", "ws", "-at", "2026-11-06T00:00:00Z"}, {"decide-restore", "-at", "0001-01-01T00:00:00Z"},
-		// The wildcard row names only gcp/us-central1 (widening section 4(c)).
-		{"decide", "wildcard", "on", "-region", "europe-west4"}, {"decide", "wildcard", "off", "-region", "us-east4"},
+		// The wildcard row names only gcp in us-central1, us-east4 and
+		// europe-west4 (widening section 4(c)).
+		{"decide", "wildcard", "on", "-region", "us-west1"}, {"decide", "wildcard", "off", "-region", "southamerica-east1"},
+		{"decide", "wildcard", "on", "-region", "US-EAST4"}, {"decide", "wildcard", "on", "-region", ""},
 		{"-cloud", "aws", "decide", "wildcard", "on"}, {"decide", "wildcard", "on", "-cloud", "azure"},
 	} {
 		if code, err := run(context.Background(), append([]string{"-database", "d"}, args...), &bytes.Buffer{},
 			never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
+	}
+}
+
+// TestTheWildcardDecidesInEachWidenedRegion: decide wildcard on writes the
+// wildcard row of us-east4 and europe-west4 as of us-central1 (approved
+// 2026-11-15), each its own row: a rowless workspace decides under the
+// region whose wildcard is on, not in another, and wildcard off in one
+// region leaves the other on.
+func TestTheWildcardDecidesInEachWidenedRegion(t *testing.T) {
+	open := onOwn(t)
+	rowless := storetest.UniqueID("ws")
+	for _, region := range []string{"us-east4", "europe-west4"} {
+		if code, got, err := doOn(t, open, "decide", "wildcard", "on", "-region", region); code != 0 || err != nil ||
+			got["wildcard"] != true || got["decide"] != true || got["cloud"] != "gcp" || got["region"] != region {
+			t.Fatalf("decide wildcard on -region %s: exit %d, %v, %v", region, code, err, got)
+		}
+		if code, got, err := doOn(t, open, "decide", "status", rowless, "-region", region); code != 3 || err != nil ||
+			got["via"] != "wildcard" || got["decide"] != true {
+			t.Fatalf("a rowless workspace in %s: exit %d, %v, %v", region, code, err, got)
+		}
+	}
+	if code, got, err := doOn(t, open, "decide", "status", rowless, "-region", "us-west1"); code != 0 || err != nil ||
+		got["via"] != "none" {
+		t.Fatalf("us-west1, no wildcard there: exit %d, %v, %v", code, err, got)
+	}
+	if code, _, err := doOn(t, open, "decide", "wildcard", "off", "-region", "us-east4"); code != 0 || err != nil {
+		t.Fatalf("decide wildcard off -region us-east4: exit %d, %v", code, err)
+	}
+	if code, got, err := doOn(t, open, "decide", "status", rowless, "-region", "us-east4"); code != 0 || err != nil ||
+		got["via"] != "wildcard" || got["decide"] != false {
+		t.Fatalf("us-east4 after its wildcard off: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "wildcard", "status", "-region", "europe-west4"); code != 3 ||
+		err != nil || got["decide"] != true {
+		t.Fatalf("europe-west4 after us-east4's off: exit %d, %v, %v", code, err, got)
 	}
 }
 
