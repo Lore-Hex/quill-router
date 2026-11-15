@@ -125,7 +125,18 @@ locals {
   # both nodes ran this release); 949c757f6 refuses a policy carrying them,
   # so this pin came first. Its other fastpath/
   # changes since 949c757f6 are tests and test data (#2555, #2586).
-  fastpath_release        = "1732a7a8925cd59639780ed4d7b08d50edb78e67"
+  # d3aa9c0a0: the edge reads the authorize body's gateway_request_id as
+  # the schema declares it (#2603). The enclave sends the id with every
+  # authorize since 2026-11-14, and 1732a7a89 takes it for an undeclared
+  # member: it composes every async-v1 answer as ineligible (so asks for
+  # no edge ticket), puts the id in the idempotency fingerprint, and
+  # leaves the row's gateway_request_id NULL. This release answers as
+  # Python does. The nodes take it one at a time in either order: a row
+  # is read back only by the process that wrote it. A node still on
+  # 1732a7a89 reports row.gateway_request_id in its decide shadow until
+  # it is restarted. Its other fastpath/ change since 1732a7a89 is the
+  # shadow's comparison of a leased answer (#2597).
+  fastpath_release        = "d3aa9c0a01d6b7acd21decdbc1457cd02d69a37d"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
