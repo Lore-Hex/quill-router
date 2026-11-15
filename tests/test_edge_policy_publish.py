@@ -599,8 +599,9 @@ def test_the_deployed_pins_admit_every_workspace_but_the_reserved_list() -> None
     on and an empty async pilot set. Admission covers every workspace but
     the reserved list, which is the enabler's include list less the overlap
     list; the body carries the reserved list as admission_excluded_workspaces
-    and no admission_workspaces, so the edge answers async-v1 for the
-    reserved workspaces alone. A leased request takes no ticket outside the
+    and no admission_workspaces, so without a ticket the edge answers
+    async-v1 for the reserved workspaces alone (edge tickets, the next test,
+    cover the rest). A leased request takes no ticket outside the
     overlap list. The way back, the async pilot set named again, starts on
     the same pins and reads no reserved list."""
     from tests.test_fastpath_lists import resolved_lists
@@ -652,6 +653,68 @@ def test_the_deployed_pins_admit_every_workspace_but_the_reserved_list() -> None
     assert all(named.async_settle_pilot_allows(ws) for ws in overlap)
     assert not any(named.async_settle_pilot_allows(ws) for ws in (*sorted(reserved), *sorted(exclude),
                                                                   "ws-synthetic-anyone"))
+
+
+def test_the_deployed_pins_publish_edge_tickets_for_every_admitted_workspace() -> None:
+    """rollout.sh's ticket pin since 2026-11-14 is "*". With the deployed
+    admission, edge decide and leased pins the body carries edge_tickets
+    true and no edge_ticket_workspaces, which the edge reads as every
+    workspace admission covers (routingsnapshot's AsyncSettle.Tickets); the
+    reserved list stays outside admission and so takes no ticket. The ways
+    back the pin's comment names: the overlap list's workspaces alone (the
+    operator workspace) publish that list, and the pin emptied publishes
+    neither member. The leased members ride along in each, so with the pin
+    emptied the edge still answers what it leases itself off the overlap
+    list (rollout.sh's leased switch)."""
+    rendered = _rendered_rollout_env()
+    assert rendered["TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES"] == "*"
+    assert rendered["TR_FASTPATH_EDGE_DECIDE_ASYNC"] == rendered["TR_FASTPATH_EDGE_ASYNC_LEASED"] == "true"
+
+    def deployed(ticket_pin: str) -> Settings:
+        return VECTORS.fixture_settings(
+            storage_backend="spanner-clickhouse",
+            async_settle_enabled=True, async_settle_protection=True,
+            async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
+            fastpath_pilot_all=rendered["TR_FASTPATH_PILOT_ALL"],
+            fastpath_pilot_workspaces=rendered["TR_FASTPATH_PILOT_WORKSPACES"],
+            fastpath_pilot_exclude=rendered["TR_FASTPATH_PILOT_EXCLUDE"],
+            async_settle_fastpath_overlap_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES"],
+            async_settle_fastpath_reserved_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES"],
+            fastpath_edge_decide_async=rendered["TR_FASTPATH_EDGE_DECIDE_ASYNC"],
+            fastpath_edge_async_leased=rendered["TR_FASTPATH_EDGE_ASYNC_LEASED"],
+            fastpath_edge_async_ticket_workspaces=ticket_pin)
+
+    def published(settings: Settings) -> dict[str, Any]:
+        body = canonical_edge_policy_bytes(VECTORS.policy(settings))
+        assert canonical_edge_policy_bytes(parse_edge_policy(body)) == body
+        members = json.loads(body)["async_settle"]
+        # The leased members, whatever the ticket pin reads.
+        assert members["edge_decide"] is True and members["edge_leased"] is True
+        assert members["overlap_workspaces"] == sorted(settings.async_settle_fastpath_overlap_workspace_ids)
+        return members
+
+    everyone = deployed(rendered["TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES"])
+    overlap = sorted(everyone.async_settle_fastpath_overlap_workspace_ids)
+    reserved = sorted(everyone.async_settle_fastpath_reserved_workspace_ids)
+    exclude = sorted(everyone.fastpath_pilot_exclude_ids)
+    assert overlap and reserved and exclude
+    body = published(everyone)
+    assert body["admission_enabled"] is True and body["edge_tickets"] is True
+    assert "edge_ticket_workspaces" not in body
+    assert body["admission_excluded_workspaces"] == reserved
+    assert all(everyone.fastpath_edge_async_ticket_allows(ws) for ws in (*overlap, *exclude, "ws-synthetic-anyone"))
+    assert not any(everyone.fastpath_edge_async_ticket_allows(ws) for ws in reserved)
+
+    operator = deployed(",".join(overlap))
+    body = published(operator)
+    assert body["edge_tickets"] is True and body["edge_ticket_workspaces"] == overlap
+    assert all(operator.fastpath_edge_async_ticket_allows(ws) for ws in overlap)
+    assert not any(operator.fastpath_edge_async_ticket_allows(ws) for ws in (*reserved, *exclude, "ws-synthetic-anyone"))
+
+    off = deployed("")
+    body = published(off)
+    assert "edge_tickets" not in body and "edge_ticket_workspaces" not in body
+    assert not any(off.fastpath_edge_async_ticket_allows(ws) for ws in (*overlap, *reserved, "ws-synthetic-anyone"))
 
 
 def _rendered_rollout_env() -> dict[str, str]:

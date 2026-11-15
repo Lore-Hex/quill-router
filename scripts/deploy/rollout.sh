@@ -819,7 +819,10 @@ ENV_VARS=(
   # R3: turned on for the customer pilot, after the probe drain measurement,
   # single crash trial and rollback rehearsal; every workspace since
   # 2026-11-10 (below). Apply on R1 protection, retain worker drain.
-  # Admission-on edge policy passes async-v1 authorizes to Python.
+  # With admission on, the edge passes an async-v1 authorize of a workspace
+  # admission covers to Python unless edge tickets cover the workspace or,
+  # with the leased switch, the edge leases the request itself off the
+  # overlap list (both below).
   "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"
   # 2026-11-02: read ahead; preserve synchronous admission freshness limits.
@@ -843,8 +846,13 @@ ENV_VARS=(
   # pilot set is empty (at most 32; all mode only; ignored under a named pilot
   # set): the enabler's include list (fastpath_lists.sh) less the overlap list
   # above. They stay outside async admission and are published as the edge
-  # policy's excluded member; every other workspace's async-v1 authorize
-  # passes to Python, the only ticket signer.
+  # policy's excluded member. For every other workspace Python is the only
+  # ticket signer. With edge tickets (below) the edge answers the async-v1
+  # authorize and asks Python's sign-only route for the ticket. Without
+  # them, and with the leased switch (TR_FASTPATH_EDGE_ASYNC_LEASED, further
+  # below), the edge answers a request it leases itself with no ticket,
+  # but for the overlap list's, which pass to Python; with neither, every
+  # such authorize passes to Python.
   "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES=84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
   # Edge tickets (docs/design/fast-admission-e2-g15-async.md, the edge
   # tickets section): for the workspaces named here the edge answers the
