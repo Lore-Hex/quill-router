@@ -33,8 +33,8 @@ type Request struct {
 	// Dump is §7 step 1: the declared fields present and not null, with
 	// their defaults, strings stripped, then the extras whose value is not
 	// null; body order, defaults last. cache_affinity_key,
-	// cache_affinity_explicit and idempotency_key_source are excluded, as
-	// the schema excludes them.
+	// cache_affinity_explicit, idempotency_key_source and gateway_request_id
+	// are excluded, as the schema excludes them.
 	Dump    pyjson.Object
 	Routing routingsnapshot.Request
 	// Model is body.model stripped (identity under

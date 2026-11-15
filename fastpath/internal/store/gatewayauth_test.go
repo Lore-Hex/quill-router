@@ -491,7 +491,7 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonces, streams := 0, 0
+	nonces, streams, requestIDs := 0, 0, 0
 	for _, g := range goldenAnswered(t) {
 		if g.Expect.ReservationRow.CreatedAt != "commit_timestamp" {
 			t.Fatalf("%s: the golden reservation's created_at is %q, not the commit's timestamp", g.Name, g.Expect.ReservationRow.CreatedAt)
@@ -499,6 +499,9 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 		a, r := g.rows()
 		if a.InvocationNonce != nil {
 			nonces++
+		}
+		if a.GatewayRequestID != nil {
+			requestIDs++
 		}
 		if a.PricingSnapshot != nil && a.HeartbeatSeq != nil && *a.HeartbeatSeq == 0 {
 			streams++
@@ -530,6 +533,9 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 	}
 	if streams == 0 {
 		t.Error("no golden case is a stream's: pricing_snapshot and heartbeat_seq went untested")
+	}
+	if requestIDs == 0 {
+		t.Error("no golden case sends a request-log id: the typed column's non-NULL value went untested")
 	}
 	if _, found, err := goStore.ReadAuthorizationForCompare(ctx, "gwa-none"); found || err != nil {
 		t.Errorf("an id with no row: %v %v", found, err)
@@ -1323,6 +1329,30 @@ func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
 	}
 	if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
 		t.Errorf("our own stream rows: %v, want landed", out)
+	}
+	// The enclave's request-log id, which every authorize of its carries:
+	// our rows with the id are ours only as we wrote them (stored without
+	// one, or with another, is not ours), and as written they are Landed.
+	id, otherID := "rlog_"+strings.Repeat("ab", 16), "rlog_"+strings.Repeat("cd", 16)
+	for name, stored := range map[string]*string{"none": nil, "another": &otherID} {
+		a, r = leasedRows("")
+		a.GatewayRequestID = &id
+		theirs := a
+		theirs.GatewayRequestID = stored
+		if err := pythonInsert(ctx, shared, theirs, r); err != nil {
+			t.Fatal(err)
+		}
+		if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+			t.Errorf("our request id, %s stored: %v, want unknown", name, out)
+		}
+	}
+	a, r = leasedRows("")
+	a.GatewayRequestID = &id
+	if err := pythonInsert(ctx, shared, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
+		t.Errorf("our own rows with a request id: %v, want landed", out)
 	}
 }
 

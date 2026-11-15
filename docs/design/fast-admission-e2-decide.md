@@ -674,9 +674,9 @@ Absent, because `None` with a `None` default: `key_reserved_microdollars`,
 `user_model_completion_price_microdollars_per_m`, `user_model_owner_user_id`,
 `video_pricing_snapshot`, `expires_at`, `started_at`, `heartbeat_seq`,
 `heartbeat_at`, `heartbeat_hash`, `selected_endpoint_id`,
-`delivered_usage`, `pricing_snapshot`, `gateway_request_id`,
+`delivered_usage`, `pricing_snapshot`,
 `finalization_outcome`, every `finalized_*` field, and `invocation_nonce`
-when the body sends none.
+and `gateway_request_id`, each when the body sends none.
 
 **Schema copies** (G2): `fastpath/schema/fastpath.sql` gains verbatim
 copies of production's `tr_gateway_authorization` (the `CREATE TABLE` at
@@ -812,8 +812,9 @@ None presented: Go mints `str(uuid4())`, hyphenated.
    (`schemas.py:389-453`, `_Lenient`: `extra="allow"`,
    `str_strip_whitespace`): declared fields present and non-null, defaults
    included (`estimated_input_tokens: 1`, `inference_receipt: false`,
-   `additional_cost_reservation_microdollars: 0`), `cache_affinity_key` and
-   `cache_affinity_explicit` excluded. Declared `str` and `list[str]` fields
+   `additional_cost_reservation_microdollars: 0`), `cache_affinity_key`,
+   `cache_affinity_explicit`, `idempotency_key_source` and
+   `gateway_request_id` excluded. Declared `str` and `list[str]` fields
    are stripped; `input_modalities` (a `Literal` list) is not. The
    top-level keys of the declared `dict[str, Any]` fields (`provider`,
    `trace`, `metadata`, `tags`) are stripped too, a collision keeping the
@@ -1156,7 +1157,7 @@ returns:
 |---|---|---|
 | none | `Inserted` | answer |
 | any, with the callback never run before the deadline (no session, no transaction began); checked first | retried once within the deadline; still failing, or the deadline reached first, `Failed` | refund, pass: nothing was sent, and nothing will be: a transaction still waiting for its session at the deadline is abandoned, and its callback refuses when the session comes; so this is never a 503 |
-| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row that is ours column for column is `Landed` (every column but the retired spend-lease ones: the ids, workspace, key, model, provider, usage type, estimate, `created_at`, payload, fingerprint, boot kid and invocation nonce equal to ours, a NULL told from an empty string, and `settled` false with `terminal_at`, `gateway_request_id` and the nine typed columns ours leaves NULL still NULL); no row, or one naming another reservation, is `ScopeTaken`; one naming our reservation with other content, or a read error, is `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
+| `AlreadyExists` | read our id back, strong, with a 0.5 s deadline on a fresh context: a row that is ours column for column is `Landed` (every column but the retired spend-lease ones: the ids, workspace, key, model, provider, usage type, estimate, `created_at`, payload, fingerprint, boot kid, invocation nonce and `gateway_request_id` equal to ours, a NULL told from an empty string, and `settled` false with `terminal_at` and the nine typed columns ours leaves NULL still NULL); no row, or one naming another reservation, is `ScopeTaken`; one naming our reservation with other content, or a read error, is `Unknown` | `Landed` answers as after a read-back; `ScopeTaken` refunds and passes (Python replays or 409s). Python re-reads the scope the same way (`storage_gcp.py:5122-5129`) |
 | `Aborted`, `InvalidArgument`, `OutOfRange`, `Unimplemented`, with the callback run exactly once | `Failed` | refund, pass: Spanner applied nothing, and these codes are the request's own, so a re-sent commit is answered as the first was |
 | `NotFound`, `FailedPrecondition`, `PermissionDenied`, `Unauthenticated`, once the callback has run | `Unknown` | as below: the client re-sends a commit that met `Unavailable` or `ResourceExhausted`, of the same transaction, and returns the re-send's answer. Spanner answers a re-sent commit with the first one's outcome while it remembers the transaction, but nothing guarantees that a re-send refused as a forgotten transaction or for its credentials followed a first commit that did not apply |
 | any code but `AlreadyExists`, with the callback run more than once | `Unknown` | as below: the client re-runs the whole transaction after `Aborted`, `ResourceExhausted` with a retry delay, or `Internal` of a broken stream (`retry.go`, `runWithRetryOnAbortedOrFailedInlineBegin`), each of which can be the lost answer to a first commit that applied; the re-run's error proves nothing about it |
@@ -1372,7 +1373,7 @@ EXPECT =
       "heartbeat_seq": null, "heartbeat_at_us": null, "heartbeat_hash": null,
       "selected_endpoint_id": null, "delivered_usage": null,
       "pricing_snapshot": null, "stage_d_boot_kid": STR,
-      "invocation_nonce": STR | null, "gateway_request_id": null},
+      "invocation_nonce": STR | null, "gateway_request_id": STR | null},
     "reservation_row": {                 // RESERVATION_COLUMNS
       "reservation_id": STR, "workspace_id": STR, "key_hash": STR,
       "ws_shard": 0, "credit_shard": 0, "key_shard": 0,
