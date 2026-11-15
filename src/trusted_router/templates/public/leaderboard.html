@@ -15,6 +15,11 @@
 {% endblock %}
 
 {% block body %}
+<section class="lb-hero" aria-labelledby="choose-llm-performance">
+  <h2 id="choose-llm-performance">How to choose an LLM API by speed and reliability</h2>
+  <p>For interactive chat, compare <strong>time to first token (TTFT)</strong>: lower values mean the response starts sooner. For long answers, compare <strong>effective throughput</strong> in tokens per second. For production traffic, inspect <strong>completion rate, provider availability and sample counts</strong> together; a fast result from a small sample is limited evidence.</p>
+  <p>Use the model rows below to open each model's performance page and compare providers serving the same model. Different model mixes, workloads and measurement windows can change the ranking. Start with <a href="/models/abliteration/abliterated-model-large-flash/performance">Abliterated Large Flash performance</a> or <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored/performance">uncensored DeepSeek performance</a>, then evaluate your own workload.</p>
+</section>
 <section class="lb-explorer" data-leaderboard>
   <div class="lb-overview">
     <span><strong>{{ snapshot.provider_count }}</strong> providers</span>
