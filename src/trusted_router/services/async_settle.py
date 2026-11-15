@@ -351,7 +351,9 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         # under the explicit list, the fast-path workspaces outside the
         # overlap list; in all mode with no pilot set, the reserved list
         # (fast-admission-widening.md section 9.1). Without edge tickets,
-        # pilots pass to Python, which checks their stored enclave region here
+        # pilots pass to Python (but for a request the edge leases itself
+        # under the policy's edge_leased), which checks their stored enclave
+        # region here
         # (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5).
         # A request the pilot leased gets the same answer unless its
         # workspace is on the overlap list: its settle goes through the
