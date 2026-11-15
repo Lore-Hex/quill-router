@@ -488,11 +488,11 @@ def edge_ticket(*, body: EdgeTicketRequest, settings: Settings, runtime: Runtime
 # output and cache reads and writes at their own rates, with or without the
 # parameter. What does carry its own price stays out by its own fact,
 # whatever parameters are named: a hosted web search or an orchestration
-# call authorizes under its own route type (route_type; the search's
-# planner call with a cost reservation besides, tool_cost), a service tier
-# besides default by service_tier, and image, audio or video input by
-# input_modalities. A name outside this set is one no adapter reports
-# today; it stays ineligible until it is added here and to the edge's copy.
+# call authorizes under its own route type and with a cost reservation
+# (route_type, tool_cost), a service tier besides default by service_tier,
+# and image, audio or video input by input_modalities. A name outside this
+# set is one no adapter reports today; it stays ineligible until it is
+# added here and to the edge's copy.
 ORDINARY_PARAMETERS: frozenset[str] = frozenset({
     "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
     "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias",
