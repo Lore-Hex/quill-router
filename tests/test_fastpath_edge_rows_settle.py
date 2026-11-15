@@ -101,11 +101,13 @@ TTL = real_dt.timedelta(seconds=7_200)
 # `settled` is among them: G9 names settled=false explicitly rather than
 # relying on a column default. pricing_snapshot and heartbeat_seq hold a
 # value only on a stream's row (docs/design/fast-admission-streams.md
-# section 8.4), NULL on any other.
+# section 8.4), NULL on any other; gateway_request_id only when the body
+# sends the enclave's request-log id.
 GO_AUTHORIZATION_COLUMNS = (
     "authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id", "provider", "usage_type",
     "estimated_microdollars", "settled", "created_at", "terminal_at", "payload",
     "idempotency_fingerprint", "stage_d_boot_kid", "invocation_nonce", "pricing_snapshot", "heartbeat_seq",
+    "gateway_request_id",
 )
 AUTHORIZATION_COLUMNS = (
     "authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id", "provider", "usage_type",

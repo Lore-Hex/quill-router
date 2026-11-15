@@ -642,6 +642,7 @@ func Decide(in DecideInputs) Decided {
 		RequestedModel:         r.Model,
 		RequestTags:            composeTags(r.Tags),
 		InvocationNonce:        r.InvocationNonce,
+		GatewayRequestID:       r.GatewayRequestID,
 		EstimatedInputTokens:   r.EstimatedInputTokens,
 		OutputEstimate:         r.OutputEstimate,
 		Region:                 region,

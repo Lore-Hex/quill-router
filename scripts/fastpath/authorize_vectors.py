@@ -176,6 +176,9 @@ FUGU, BEDROCK, INKLING = ROUTING.FUGU, ROUTING.BEDROCK, ROUTING.INKLING
 
 # Synthetic identities: never a real workspace, key, image or envelope.
 COHORT_WS, OTHER_WS, FINGERPRINT_WS = "ws_e2_cohort", "ws_e2_other", "ws_e2_fingerprint"
+# The enclave's request-log id, as it sends one with every authorize
+# (schemas.GatewayAuthorizeRequest.gateway_request_id): synthetic.
+REQUEST_LOG_ID, OTHER_REQUEST_LOG_ID = "rlog_" + "5a" * 16, "rlog_" + "6b" * 16
 DIGEST = "sha256:" + hashlib.sha256(b"e2 p1 synthetic accepted image").hexdigest()
 OTHER_DIGEST = "sha256:" + hashlib.sha256(b"e2 p1 synthetic other image").hexdigest()
 # A TEST boot key, public by construction: the seed is this repository's text.
@@ -1407,6 +1410,11 @@ def cases() -> list[dict[str, Any]]:
     add("answer:idempotency:fresh_key_after_another", body={"idempotency_key": "second"},
         prior=(({"idempotency_key": "first"}, ADMIT),))
     add("answer:invocation_nonce", body={"invocation_nonce": "nonce-e2-1"})
+    # The request-log id is a declared member, correlation and not identity:
+    # the row carries it and the fingerprint does not.
+    add("answer:gateway_request_id", body={"gateway_request_id": REQUEST_LOG_ID})
+    add("answer:gateway_request_id:read_back",
+        body={"gateway_request_id": REQUEST_LOG_ID, "invocation_nonce": "nonce-e2-1"}, insert="unknown_landed")
     add("answer:attribution", body={"user": "user-1", "session_id": "s-1", "trace": {"trace_id": "t-1", "n": 3},
                                     "app": "My App", "http_referer": "https://example.com/x",
                                     "app_categories": ["cli-agent"]})
@@ -1839,6 +1847,9 @@ def async_cases() -> list[dict[str, Any]]:
     add(f"answer:async.B:several:{GPT41}+{GPT41_MINI}+{SONNET}", body={"models": [GPT41_MINI, SONNET]})
     add(f"answer:async.B:route_order_sorted:{SONNET}+{GPT41}", body={"model": SONNET, "models": [GPT41]})
     add("answer:async.B:invocation_nonce", body={"invocation_nonce": "nonce-e2-async-1"})
+    # Every enclave authorize carries the request-log id: a declared member,
+    # so the request keeps shape B (an undeclared one is shape A, below).
+    add("answer:async.B:gateway_request_id", body={"gateway_request_id": REQUEST_LOG_ID})
     add("answer:async.B:route_type:responses", body={"route_type": "responses"})
     add("answer:async.B:ordinary_parameters", body={"requested_parameters": sorted(ORDINARY_PARAMETERS)})
     add("pass:body.service_tier:async.B:default", "body.service_tier", body={"service_tier": "default"})
@@ -1950,6 +1961,9 @@ def async_cases() -> list[dict[str, Any]]:
     # Python itself leases and signs these answers. Publication facts are
     # explicit here; they do not depend on the new Python setting.
     add("answer:async.C:edge_tickets", body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}})
+    add("answer:async.C:edge_tickets:gateway_request_id",
+        body={"invocation_nonce": "nonce-e2-async-admission", "gateway_request_id": REQUEST_LOG_ID},
         policy={"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}})
     add("answer:async.C:edge_tickets:listed:read_back",
         body={"invocation_nonce": "nonce-e2-async-admission", "route_type": "responses"},
@@ -2171,7 +2185,7 @@ JSON_CONTENT_TYPE = re.compile(r"^application/json(;\s*charset=utf-8)?$", re.IGN
 _DECLARED_STRINGS = ("model", "models", "region", "service_tier", "route_type", "user", "session_id", "app",
                      "http_referer", "app_categories", "requested_parameters", "idempotency_key",
                      "invocation_nonce", "video_resolution", "api_key_hash", "api_key_lookup_hash",
-                     "request_fingerprint", "cache_affinity_key")
+                     "request_fingerprint", "cache_affinity_key", "gateway_request_id")
 _SENT_WITH_EVERY_BODY = [("x-trustedrouter-internal-token", INTERNAL_TOKEN), ("accept-encoding", "identity")]
 
 
@@ -2543,6 +2557,19 @@ def fingerprint_bodies() -> list[dict[str, Any]]:
         raw_body(lookup, f'"model":"{GLM}"', '"x_null":null,"tags":{" a ":"1","a":"2"}'),
         "\ufeff" + raw_body(lookup, f'"model":"{GLM}"'),
         '["not", "an", "object"]', '"text"', "null", '{"api_key_lookup_hash":', "",
+        # The request-log id: declared and excluded, so one body sent under
+        # two ids, a padded id, null and none at all share a fingerprint,
+        # and an id off the pattern or of another type is refused.
+        raw_body(lookup, f'"model":"{GLM}"'),
+        raw_body(lookup, f'"model":"{GLM}"', f'"gateway_request_id":"{REQUEST_LOG_ID}"'),
+        raw_body(lookup, f'"model":"{GLM}"', f'"gateway_request_id":"{OTHER_REQUEST_LOG_ID}"'),
+        raw_body(lookup, f'"model":"{GLM}"', f'"gateway_request_id":"  {REQUEST_LOG_ID} "'),
+        raw_body(lookup, f'"model":"{GLM}"', '"gateway_request_id":null'),
+        raw_body(lookup, f'"model":"{GLM}"', '"gateway_request_id":"rlog_5a5a"'),
+        raw_body(lookup, f'"model":"{GLM}"', f'"gateway_request_id":"{REQUEST_LOG_ID.upper()}"'),
+        raw_body(lookup, f'"model":"{GLM}"', '"gateway_request_id":""'),
+        raw_body(lookup, f'"model":"{GLM}"', '"gateway_request_id":7'),
+        raw_body(lookup, f'"model":"{GLM}"', f'"gateway_request_id":["{REQUEST_LOG_ID}"]'),
     ):
         out.append({"body": raw, "headers": json_only})
     return out

@@ -739,6 +739,10 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 		seq = num(*a.HeartbeatSeq)
 	}
 	gotA["pricing_snapshot"], gotA["heartbeat_seq"] = pricing, seq
+	// The request-log id, NULL when the body sends none.
+	if a.GatewayRequestID != nil {
+		gotA["gateway_request_id"] = *a.GatewayRequestID
+	}
 	gotR := map[string]any{
 		"reservation_id": r.ReservationID, "workspace_id": r.WorkspaceID, "key_hash": r.KeyHash,
 		"ws_shard": num(0), "credit_shard": num(0), "key_shard": num(0), "credit_reserved_micro": num(0),

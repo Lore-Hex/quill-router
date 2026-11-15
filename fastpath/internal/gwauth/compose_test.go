@@ -294,6 +294,10 @@ func inputOf(t *testing.T, f goldenFile, snap snapshotFacts, c goldenCase) Compo
 		n = strings.TrimSpace(n)
 		in.InvocationNonce = &n
 	}
+	if id, ok := member(body, "gateway_request_id").(string); ok {
+		id = strings.TrimSpace(id)
+		in.GatewayRequestID = &id
+	}
 	if v := member(body, "estimated_input_tokens"); v != nil {
 		in.EstimatedInputTokens = intOf(t, v)
 	}
@@ -455,6 +459,10 @@ func TestEveryPayloadAndRowIsPythons(t *testing.T) {
 			"settled": false, "created_at_us": json.Number(strconv.FormatInt(a.CreatedAt.UnixMicro(), 10)),
 			"payload": a.Payload, "idempotency_fingerprint": a.IdempotencyFingerprint,
 			"stage_d_boot_kid": a.StageDBootKid, "invocation_nonce": nonce,
+		}
+		// The request-log id, written only when the body sends one.
+		if a.GatewayRequestID != nil {
+			gotA["gateway_request_id"] = *a.GatewayRequestID
 		}
 		// A stream's two columns, written only for one (NULL otherwise).
 		if a.PricingSnapshot != nil {

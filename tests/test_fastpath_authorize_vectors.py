@@ -487,6 +487,59 @@ def test_the_fingerprint_bodies_cover_what_go_must_pass() -> None:
     assert sum(len(texts) > 1 for texts in by_fingerprint.values()) > 50
 
 
+def test_gos_declared_fields_are_the_schemas() -> None:
+    """Go's parser mirrors schemas.GatewayAuthorizeRequest field for field
+    (fastpath/internal/gwauth/request.go's ``declared``). A member the schema
+    declares and Go does not is, to Go, an undeclared one: it enters the
+    idempotency fingerprint, and an async-v1 request that carries it is
+    composed as shape A (gateway_request_id, 2026-11-14, which the enclave
+    sends with every authorize). The names agree, and so do the fields the
+    schema excludes from its dump."""
+    from trusted_router.schemas import GatewayAuthorizeRequest
+
+    text = (ROOT / "fastpath" / "internal" / "gwauth" / "request.go").read_text()
+    block = re.search(r"^var declared = map\[string\]field\{\n(.*?)^\}", text, re.DOTALL | re.MULTILINE)
+    assert block is not None
+    entries = dict(re.findall(r'^\t"([a-z_0-9]+)":\s*\{(.*?)\},$', block.group(1), re.DOTALL | re.MULTILINE))
+    fields = GatewayAuthorizeRequest.model_fields
+    assert len(entries) == block.group(1).count('":'), "an entry of declared this test did not read"
+    assert set(entries) == set(fields), (sorted(set(fields) - set(entries)), sorted(set(entries) - set(fields)))
+    assert ({name for name, spec in entries.items() if re.search(r"\bexclude: true\b", spec)}
+            == {name for name, field in fields.items() if field.exclude})
+
+
+def test_the_request_log_id_is_correlation_not_identity() -> None:
+    """gateway_request_id through the app: one body sent under two ids, a
+    padded id, null and no id at all has one fingerprint; an id off the
+    pattern or of another type is refused. An answered case writes the id to
+    the authorization row and its payload, and an async-v1 request carrying
+    one keeps shape B (and takes an edge ticket)."""
+    bodies = [body for body in _load(FINGERPRINTS)["cases"]
+              if "gateway_request_id" in body["body"] or body["body"].endswith('"model":"z-ai/glm-5.3"}')]
+    sent = [body for body in bodies if "gateway_request_id" in body["body"]]
+    assert len(sent) == 9
+    plain = [body for body in bodies if body not in sent and body["labels"] == ["defaults"]]
+    assert plain, "the same body without an id"
+    accepted = [body for body in sent if body["expect"]["outcome"] == "fingerprint"]
+    assert len(accepted) == 4 and len({body["body"] for body in accepted}) == 4
+    assert {body["expect"]["fingerprint"] for body in accepted} == {plain[-1]["expect"]["fingerprint"]}
+    assert all(body["expect"] == {"outcome": "refused", "status": 400, "type": "bad_request"}
+               for body in sent if body not in accepted)
+    cases = {case["name"]: case for case in _load(CASES)["cases"]}
+    for name in ("answer:gateway_request_id", "answer:gateway_request_id:read_back"):
+        case = cases[name]
+        sent_id = json.loads(case["request"]["body"])["gateway_request_id"]
+        row = case["expect"]["authorization_row"]
+        assert re.fullmatch(r"rlog_[0-9a-f]{32}", sent_id)
+        assert row["gateway_request_id"] == json.loads(row["payload"])["gateway_request_id"] == sent_id
+        assert "gateway_request_id" not in case["expect"]["fingerprint_material"]
+    assert cases["answer:invocation_nonce"]["expect"]["authorization_row"]["gateway_request_id"] is None
+    async_cases = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
+    assert async_cases["answer:async.B:gateway_request_id"]["expect"]["async_shape"] == "B"
+    assert async_cases["answer:async.C:edge_tickets:gateway_request_id"]["expect"]["async_shape"] == "C"
+    assert async_cases["answer:async.A:undeclared_member"]["expect"]["async_shape"] == "A"
+
+
 def _signature(vectors: dict[str, Any], body: bytes) -> str:
     """The boot signature as the file's header says to make it, from its seed alone."""
     key, rule = vectors["boot_test_key"], vectors["boot_auth"]
@@ -721,7 +774,7 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
         else:
             assert _shape(python["response"]) == claimed, name
     assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8, seen
-    assert edge_ticketed == 4 and seen["C"] == 5 + edge_ticketed, seen
+    assert edge_ticketed == 5 and seen["C"] == 5 + edge_ticketed, seen
     assert seen["affinity.warm_A.cold_B"] == 1, seen
 
 
@@ -861,7 +914,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
             data = json.loads(case["expect"]["response"])["data"]
             assert data["async_eligible"] is False, name
-    assert named == 1 and other == 3 and excluded == 4 and ticketed == 4 and leased == 11
+    assert named == 1 and other == 3 and excluded == 4 and ticketed == 5 and leased == 11
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"
               and ":leased" not in case["name"]]

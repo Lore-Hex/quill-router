@@ -1464,7 +1464,7 @@ func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthoriza
 		{"pricing_snapshot", nullString(g.PricingSnapshot), ns(p.PricingSnapshot, p.PricingSnapshot.StringVal)},
 		{"stage_d_boot_kid", g.StageDBootKid, ns(p.StageDBootKid, p.StageDBootKid.StringVal)},
 		{"invocation_nonce", nullString(g.InvocationNonce), ns(p.InvocationNonce, p.InvocationNonce.StringVal)},
-		{"gateway_request_id", nil, ns(p.GatewayRequestID, p.GatewayRequestID.StringVal)},
+		{"gateway_request_id", nullString(g.GatewayRequestID), ns(p.GatewayRequestID, p.GatewayRequestID.StringVal)},
 	}
 	for _, c := range cols {
 		if moved && !settleStable[c.name] {

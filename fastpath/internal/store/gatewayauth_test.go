@@ -223,7 +223,7 @@ func pythonInsert(ctx context.Context, c *spanner.Client, a gwauth.Authorization
 				"pricing_snapshot":            nullString(a.PricingSnapshot),
 				"stage_d_boot_kid":            spanner.NullString{StringVal: a.StageDBootKid, Valid: true},
 				"invocation_nonce":            nonce,
-				"gateway_request_id":          spanner.NullString{},
+				"gateway_request_id":          nullString(a.GatewayRequestID),
 			}},
 		})
 		return err
@@ -330,7 +330,8 @@ func (g goldenCase) rows() (gwauth.AuthorizationRow, gwauth.ReservationRow) {
 			ReservationID: a.ReservationID, ModelID: a.ModelID, Provider: a.Provider, UsageType: a.UsageType,
 			EstimatedMicrodollars: a.EstimatedMicrodollars, CreatedAt: fromUS(a.CreatedAtUS), Payload: a.Payload,
 			IdempotencyFingerprint: a.IdempotencyFingerprint, StageDBootKid: a.StageDBootKid,
-			InvocationNonce: a.InvocationNonce, PricingSnapshot: a.PricingSnapshot, HeartbeatSeq: a.HeartbeatSeq},
+			InvocationNonce: a.InvocationNonce, GatewayRequestID: a.GatewayRequestID,
+			PricingSnapshot: a.PricingSnapshot, HeartbeatSeq: a.HeartbeatSeq},
 		gwauth.ReservationRow{ReservationID: r.ReservationID, WorkspaceID: r.WorkspaceID, KeyHash: r.KeyHash,
 			HoldUsageType: r.HoldUsageType, AuthorizationID: r.AuthorizationID, IdempotencyScope: r.IdempotencyScope,
 			IdempotencyFingerprint: r.IdempotencyFingerprint, ExpiresAt: fromUS(r.ExpiresAtUS)}
@@ -453,6 +454,9 @@ func typedColumnsWritten(t *testing.T, name string, got StoredAuthorization, a g
 	}
 	if got.InvocationNonce != nullString(a.InvocationNonce) {
 		t.Errorf("%s: invocation_nonce %+v, want %+v", name, got.InvocationNonce, nullString(a.InvocationNonce))
+	}
+	if got.GatewayRequestID != nullString(a.GatewayRequestID) {
+		t.Errorf("%s: gateway_request_id %+v, want %+v", name, got.GatewayRequestID, nullString(a.GatewayRequestID))
 	}
 	if got.PricingSnapshot != nullString(a.PricingSnapshot) || got.HeartbeatSeq != nullInt(a.HeartbeatSeq) {
 		t.Errorf("%s: pricing_snapshot %+v, heartbeat_seq %+v", name, got.PricingSnapshot, got.HeartbeatSeq)
@@ -1232,6 +1236,10 @@ func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
 		"nonce": func(a *gwauth.AuthorizationRow) {
 			nonce := "n"
 			a.InvocationNonce = &nonce
+		},
+		"request id": func(a *gwauth.AuthorizationRow) {
+			id := "rlog_" + strings.Repeat("ab", 16)
+			a.GatewayRequestID = &id
 		},
 	} {
 		a, r := leasedRows("")

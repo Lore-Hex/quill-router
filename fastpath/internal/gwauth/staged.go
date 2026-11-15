@@ -176,6 +176,7 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 			IdempotencyFingerprint: in.IdempotencyFingerprint,
 			StageDBootKid:          in.BootKid,
 			InvocationNonce:        cloneString(in.InvocationNonce),
+			GatewayRequestID:       cloneString(in.GatewayRequestID),
 			PricingSnapshot:        pricing,
 			HeartbeatSeq:           heartbeatSeq,
 		},
