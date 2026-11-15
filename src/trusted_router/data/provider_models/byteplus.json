@@ -1369,11 +1369,30 @@
       "upstream_id": "dola-seedream-5-5-261028",
       "routable": false,
       "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "dreamina-seedance-2-5-flash",
+      "title": "dreamina-seedance-2-5-flash-261115",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/dreamina-seedance-2-5-flash-261115",
+      "upstream_id": "dreamina-seedance-2-5-flash-261115",
+      "routable": false,
+      "routable_reason": "unsupported-api"
     }
   ],
   "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
   "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
-  "generated_at": "2026-11-15T03:05:35Z",
+  "generated_at": "2026-11-15T11:30:35Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 61
+  "model_count": 62
 }

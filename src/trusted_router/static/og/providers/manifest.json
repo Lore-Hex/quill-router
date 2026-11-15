@@ -730,10 +730,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
