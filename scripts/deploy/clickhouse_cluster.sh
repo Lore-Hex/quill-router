@@ -96,15 +96,12 @@ ensure_service_account() {
   done
   ensure_project_role "serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" roles/monitoring.metricWriter
   ensure_project_role "serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" roles/logging.logWriter
-  # Node 1 drains the durable Spanner analytics outbox. Keep this grant at the
-  # database boundary: changing the VM from the broad default Compute identity
-  # must not silently stop ingestion with spanner.sessions.create 403s.
-  gc spanner databases add-iam-policy-binding "$SPANNER_DATABASE_ID" \
-    --instance="$SPANNER_INSTANCE_ID" \
-    --member="serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" \
-    --role=roles/spanner.databaseUser \
-    --condition=None \
-    --quiet >/dev/null
+  # The node programs reach Spanner only as the table-scoped database role
+  # tr_clickhouse_node. Its two bindings (fineGrainedAccessUser, and
+  # databaseRoleUser conditioned on that role) are in
+  # infra/clickhouse_node_role.tf. This script grants no database-wide Spanner
+  # access: the database-wide binding it used to add was the path the
+  # 2026-11-11 stolen token used (INC-2026-003).
 }
 
 ensure_network() {
