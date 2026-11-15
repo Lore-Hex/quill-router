@@ -54,7 +54,7 @@
           <input type="number" name="other_amount" inputmode="decimal" min="1" max="{{ checkout_max_credit_dollars }}" step="0.01" aria-label="Amount in US dollars" data-checkout-amount>
         </span>
       </fieldset>
-      <p data-checkout-maximum-message>Maximum credit: ${{ checkout_max_credit_dollars }}. Stripe's $10,000 total includes processing fees.</p>
+      <p data-checkout-maximum-message hidden>Maximum credit: ${{ checkout_max_credit_dollars }}. Stripe's $10,000 total includes processing fees.</p>
 
       {% if wallet_only_billing %}
       <input type="hidden" name="payment_method" value="stablecoin">
@@ -96,19 +96,18 @@
 
       <p class="credits-status" role="status" data-paypal-minimum-message hidden>{{ icons.svg('alert', 18, 1.8) }}<span data-paypal-minimum-text></span></p>
 
-      <dl class="credits-summary">
-        <dt>Credit</dt>
-        <dd class="credits-summary-credit" data-summary-credit>{{ checkout_summary.credit }}</dd>
-        <dt>Processing fee</dt>
-        <dd data-summary-fee>{{ checkout_summary.fee }}</dd>
-        <dt class="credits-summary-total">Total at checkout</dt>
-        <dd class="credits-summary-total" data-summary-total>{{ checkout_summary.total }}</dd>
-      </dl>
-
       <div class="credits-actions">
         <button class="credits-submit" type="submit" data-checkout-submit><span data-checkout-submit-label>Continue to checkout</span>{{ icons.svg('arrow', 18, 1.8) }}</button>
         <details class="credits-fees">
           <summary>{{ icons.svg('info', 16) }}<span>Fees</span></summary>
+          <dl class="credits-summary">
+            <dt>Credit</dt>
+            <dd class="credits-summary-credit" data-summary-credit>{{ checkout_summary.credit }}</dd>
+            <dt>Processing fee</dt>
+            <dd data-summary-fee>{{ checkout_summary.fee }}</dd>
+            <dt class="credits-summary-total">Total at checkout</dt>
+            <dd class="credits-summary-total" data-summary-total>{{ checkout_summary.total }}</dd>
+          </dl>
           <p>Card and PayPal checkouts list the credit and the processing fee as separate line items before you pay, with a {{ stripe_paypal_minimum_fee_display }} minimum fee. Bank account (ACH) and USDC have lower fees; the ACH fee is capped at {{ stripe_ach_maximum_fee_display }}. ACH can take up to four business days, and bank-funded credit appears only after settlement.</p>
         </details>
       </div>

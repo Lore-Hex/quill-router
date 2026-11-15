@@ -51,7 +51,8 @@ async function load(page, state) {
   return posts;
 }
 
-const summary = (page) => Promise.all(['credit', 'fee', 'total'].map((cell) => page.locator(`[data-summary-${cell}]`).innerText()));
+// The breakdown lives inside the closed Fees disclosure, so read text, not rendered text.
+const summary = (page) => Promise.all(['credit', 'fee', 'total'].map(async (cell) => (await page.locator(`[data-summary-${cell}]`).textContent()).trim()));
 const preset = (page, label) => page.getByRole('radio', { name: label, exact: true });
 
 for (const width of [320, 390, 1280]) test(`presets, method and fee summary at ${width}px`, async ({ page }) => {
@@ -59,6 +60,12 @@ for (const width of [320, 390, 1280]) test(`presets, method and fee summary at $
   await load(page);
   await expect(preset(page, '$25')).toBeChecked();
   expect(await summary(page)).toEqual(['$25.00', '$1.59', '$26.59']);
+  // The fee breakdown and the rail maximum stay out of sight until asked for.
+  await expect(page.locator('.credits-summary')).toBeHidden();
+  await expect(page.locator('[data-checkout-maximum-message]')).toBeHidden();
+  await page.locator('.credits-fees summary').click();
+  await expect(page.locator('.credits-summary')).toBeVisible();
+  await page.locator('.credits-fees').evaluate((details) => { details.open = false; });
   await expect(page.locator('.credits-other')).toBeHidden();
 
   await preset(page, '$200').check();
@@ -262,9 +269,11 @@ for (const suppliedMaxima of [false, true]) test(`cent amounts and rail ceilings
     await amount.fill(maximum);
     await expect(submit).toBeEnabled();
     await expect(page.locator('[data-checkout-maximum-message]')).toContainText(`$${maximum}`);
+    await expect(page.locator('[data-checkout-maximum-message]')).toBeHidden();
     if (!['paypal', 'adyen'].includes(rail)) expect((await summary(page))[2]).toBe('$10000.00');
     await amount.fill((Number(maximum) + 0.01).toFixed(2));
     await expect(submit).toBeDisabled();
+    await expect(page.locator('[data-checkout-maximum-message]')).toBeVisible();
     expect(await summary(page)).toEqual(['—', '—', '—']);
   }
   await method.selectOption('paypal');

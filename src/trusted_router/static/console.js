@@ -431,6 +431,9 @@ function initCreditsCheckout() {
       methodWrap.dataset.method = icon ? icon.dataset.methodIcon : "card";
     }
     const cents = amountCents();
+    // Only buyers who type an amount above the rail's limit need the maximum.
+    if (maximumMessage)
+      maximumMessage.hidden = !(other && Number.isFinite(cents) && cents > maximumCents);
     const tooLow = paypal && Number.isFinite(cents) && cents < minimumCents;
     const valid = Number.isFinite(cents) && cents >= 100 && cents <= maximumCents && !tooLow;
     if (message && messageText) {
