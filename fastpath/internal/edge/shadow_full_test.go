@@ -1699,6 +1699,52 @@ func TestTheCriticalClassIsAnAlert(t *testing.T) {
 	}
 }
 
+// TestACreditRefusalIsNotAWouldAdmit: Go's decision carries no funding
+// verdict (the front door's reservation under a lease holds what Go
+// answers, and with no lease the owner is Busy and the request passes), so
+// Python's read 402 insufficient_credits is funding_unchecked: counted,
+// never paged. 2026-11-15: a workspace whose credit ran out between two
+// enabler passes paged as a would-admit. A 402 of another type, and a 402
+// whose body was not read, stay would-admits and page.
+func TestACreditRefusalIsNotAWouldAdmit(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	var mu sync.Mutex
+	var alerts []string
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) {
+		cfg.Alert = func(kind, subject, what string) {
+			mu.Lock()
+			defer mu.Unlock()
+			alerts = append(alerts, kind+"|"+what)
+		}
+	})
+	h.answer(answerWith(402, errorBody(402, fundingRefusal, "Insufficient credits")))
+	h.send(t, c)
+	if got := h.edge.DecideShadowCounts(); got.Classes[ClassFundingUnchecked+".402."+fundingRefusal] != 1 ||
+		got.Classes[ClassWouldAdmit+".402."+fundingRefusal] != 0 {
+		t.Fatalf("counts %+v", got)
+	}
+	mu.Lock()
+	if len(alerts) != 0 {
+		t.Fatalf("a credit refusal paged: %q", alerts)
+	}
+	mu.Unlock()
+	for _, v := range []struct {
+		a    pyAnswer
+		want string
+	}{
+		{pyAnswer{status: 402, body: errorBody(402, "payment_required", "Insufficient credits")},
+			ClassWouldAdmit + ".402.payment_required"},
+		{pyAnswer{status: 402, why: "bound"}, ClassWouldAdmit + ".402.unread"},
+	} {
+		in, _ := caseInputs(t, f, c)
+		d := Decide(in)
+		if got := compareFull(d, v.a); got.class != v.want || !got.decided {
+			t.Errorf("%d %q: %+v, want %s", v.a.status, v.a.body, got, v.want)
+		}
+	}
+}
+
 // TestRunEndsWhileRequestsAreServed: Run's context ends while handlers
 // still begin following requests (a server shutting down serves its
 // in-flight requests). Run must not wait on what the handlers add to, which
@@ -1896,8 +1942,8 @@ func TestAWindowRefusalOfAnUncheckedDecisionIsNotAWouldAdmit(t *testing.T) {
 		{"429 unread", enforcing, pyAnswer{status: 429, why: "bound"}, ClassWindowUnchecked + ".429.unread"},
 		{"another 429", enforcing, pyAnswer{status: 429, body: errorBody(429, "rate_limited", "slow down")},
 			ClassWouldAdmit + ".429.rate_limited"},
-		{"402", enforcing, pyAnswer{status: 402, body: errorBody(402, "insufficient_credits", "no")},
-			ClassWouldAdmit + ".402.insufficient_credits"},
+		{"402", enforcing, pyAnswer{status: 402, body: errorBody(402, "payment_required", "no")},
+			ClassWouldAdmit + ".402.payment_required"},
 		{"alert only, window refusal", alertOnly, pyAnswer{status: 429, body: window},
 			ClassWouldAdmit + ".429." + windowRefusal},
 		{"alert only, 429 unread", alertOnly, pyAnswer{status: 429, why: "bound"}, ClassWouldAdmit + ".429.unread"},
