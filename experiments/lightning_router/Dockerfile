@@ -13,7 +13,7 @@ RUN curl --fail --location --proto '=https' --tlsv1.2 \
       -o /tmp/lexe.zip \
     && echo '3417ce147e1d0bd9db7e328dd42526338a6dbf874762700a010806e7b09e1f49  /tmp/lexe.zip' | sha256sum -c - \
     && unzip /tmp/lexe.zip -d /opt/lexe && chmod 0555 /opt/lexe/lexe-sidecar
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=lexe /opt/lexe/lexe-sidecar /usr/local/bin/lexe-sidecar
 WORKDIR /app
