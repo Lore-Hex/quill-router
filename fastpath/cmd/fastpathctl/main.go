@@ -59,7 +59,8 @@
 // and the region us-central1 unless -cloud or -region, before the command
 // or after the workspace, say otherwise, except that without -region, gcp's
 // decide off, decide wildcard off and both statuses cover every region the
-// wildcard may name (us-central1, us-east4, europe-west4): the stop is
+// wildcard may name (us-central1, us-east4, europe-west4, us-west1): the
+// stop is
 // whole and status reads the worst case. decide status reports the
 // workspace's effective answer, by its own row or the wildcard, with via
 // (own, wildcard or none) and every row of the workspace's beside, in the
@@ -73,8 +74,8 @@
 // removes the wildcard row itself, so every workspace without a row of its
 // own stops deciding there. decide wildcard on, off and status set and read
 // the wildcard row (status exits 3 while it is on); on and off write only
-// gcp in us-central1, us-east4 and europe-west4, the cloud and regions the
-// widening covers, and refuse any other, exit 2; decide wildcard off is the same stop as deleting it
+// gcp in us-central1, us-east4, europe-west4 and us-west1, the cloud and
+// regions the widening covers, and refuse any other, exit 2; decide wildcard off is the same stop as deleting it
 // and keeps the row for decide-restore.
 // decide-off-all turns every row off, the wildcard's too, and prints the
 // commit timestamp they all keep; decide-restore -at that timestamp turns
@@ -198,14 +199,16 @@ var addressForm = regexp.MustCompile(`^[A-Za-z0-9\[][A-Za-z0-9._:\[\]\-]{0,254}$
 // (docs/design/fast-admission-widening.md section 4(c): the AWS and Azure
 // planes stay out). The region is the request's (gwauth.ChooseRegion), not
 // the deciding node's, which stays us-central1 (fastpath_pilot_regions):
-// us-east4 and europe-west4 are the enclave regions whose requests reach
-// the us-central1 nodes and whose terminals all land in us-central1 since
-// 2026-11-04 (docs/runbooks/control-terminals-us-central1.md). Joseph
-// approved them 2026-11-15. status reads any, and decide delete '*'
+// us-east4, europe-west4 and us-west1 are the enclave regions whose
+// requests reach the us-central1 nodes and whose terminals all land in
+// us-central1 since 2026-11-04
+// (docs/runbooks/control-terminals-us-central1.md). Joseph approved
+// us-east4 and europe-west4 2026-11-15, and us-west1, the fourth and last
+// enclave region (enclave_regions.py), the same day. status reads any, and decide delete '*'
 // removes any, both the stop direction.
 const wildcardCloud = "gcp"
 
-var wildcardRegions = []string{"us-central1", "us-east4", "europe-west4"}
+var wildcardRegions = []string{"us-central1", "us-east4", "europe-west4", "us-west1"}
 
 // decideStatus is decide status's answer from the whole table and whether
 // the workspace decides in the cloud and region by section 6.1's rule
