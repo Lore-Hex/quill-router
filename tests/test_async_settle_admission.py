@@ -12,6 +12,7 @@ from tests.test_async_settle_ticket import authorization, endpoint, runtime, set
 from trusted_router.billing_snapshot import Eligibility
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.services.async_settle import (
+    ORDINARY_PARAMETERS,
     Admission,
     AdmissionCache,
     DrainHealth,
@@ -161,7 +162,7 @@ def body(**changes):
                                    route_type='chat.completions', **changes)
 
 
-@pytest.mark.parametrize('change', ['receipt_zero_fee', 'unknown', 'tools', 'missing_route', 'federated',
+@pytest.mark.parametrize('change', ['receipt_zero_fee', 'unknown', 'unlisted_parameter', 'missing_route', 'federated',
                                    'legacy', 'replay', 'lease', 'missing_nonce', 'missing_reservation', 'image'])
 def test_route_fact_exclusions(change):
     auth = authorization()
@@ -170,8 +171,8 @@ def test_route_fact_exclusions(change):
         b.inference_receipt = True
     if change in {'unknown', 'lease'}:
         b = body(**{'unknown_feature' if change == 'unknown' else 'spend_lease_id': 'x'})
-    if change == 'tools':
-        b.requested_parameters = ['tools']
+    if change == 'unlisted_parameter':
+        b.requested_parameters = ['temperature', 'web_search_options']
     if change == 'image':
         b.input_modalities = ['text', 'image']
     if change == 'missing_route':
@@ -184,6 +185,69 @@ def test_route_fact_exclusions(change):
                               endpoints=[endpoint()], settings=settings(), typed=change != 'legacy',
                               federated=change == 'federated', replay=change == 'replay',
                               effective_at=None) == {'async_eligible': False}
+
+
+# The capability names the enclave's request validators report, copied as
+# literals from quill-cloud-proxy (enclave-go internal/adapter
+# chat_request.go, the values of endpointCapabilityFields; responses.go
+# responsesRequestedParameters reports a subset of them).
+ENCLAVE_CAPABILITY_NAMES = (
+    'frequency_penalty', 'logit_bias', 'logprobs', 'max_tokens', 'min_p', 'parallel_tool_calls',
+    'prediction', 'presence_penalty', 'prompt_cache_key', 'reasoning', 'repetition_penalty',
+    'response_format', 'seed', 'service_tier', 'stop', 'temperature', 'tool_choice', 'tools',
+    'top_a', 'top_k', 'top_logprobs', 'top_p',
+)
+
+
+def additions(b, auth=None):
+    return authorize_additions(request=request(runtime()), body=b, authorization=auth or authorization(),
+                               endpoints=[endpoint()], settings=settings(), typed=True,
+                               federated=False, replay=False, effective_at=None)
+
+
+@pytest.mark.parametrize('name', ENCLAVE_CAPABILITY_NAMES)
+def test_every_parameter_the_enclave_reports_is_ordinary(name):
+    """A request naming any one of them is answered as one naming none."""
+    assert name in ORDINARY_PARAMETERS
+    plain = additions(body())
+    assert plain['async_eligible'] is True
+    named = additions(body(requested_parameters=[name]))
+    assert named['async_eligible'] is True
+    assert named['billing_snapshot'] == plain['billing_snapshot']
+
+
+def test_all_the_enclaves_parameters_together_are_ordinary():
+    assert additions(body(requested_parameters=list(ENCLAVE_CAPABILITY_NAMES)))['async_eligible'] is True
+
+
+@pytest.mark.parametrize('case', ['cost_reservation', 'service_tier', 'web_search_route', 'orchestration_route',
+                                  'image_input', 'unlisted_beside_them'])
+def test_what_carries_its_own_price_stays_out_whatever_parameters_are_named(case):
+    """Each exclusion holds beside the ordinary parameters, tools and a
+    reasoning setting among them: it is the request's own fact, never the
+    parameter list, that keeps it out."""
+    auth, b = authorization(), body(requested_parameters=list(ENCLAVE_CAPABILITY_NAMES))
+    if case == 'cost_reservation':
+        auth.additional_cost_reservation_microdollars = 7_000
+    if case == 'service_tier':
+        b.service_tier = 'flex'
+    if case == 'web_search_route':
+        b.route_type = 'chat.completions.web_search'
+    if case == 'orchestration_route':
+        b.route_type = 'advisor.worker'
+    if case == 'image_input':
+        b.input_modalities = ['text', 'image']
+    if case == 'unlisted_beside_them':
+        b.requested_parameters = [*ENCLAVE_CAPABILITY_NAMES, 'web_search_options']
+    assert additions(b, auth) == {'async_eligible': False}
+
+
+def test_the_authorization_row_carries_no_requested_parameter():
+    """Why a parameter cannot choose a price: authorize reads the list to
+    route and to answer here, and records none of it, so no settle,
+    synchronous or async, has one to price by."""
+    assert not [name for name in vars(authorization()) if 'parameter' in name]
+    assert 'requested_parameters' in GatewayAuthorizeRequest.model_fields
 
 
 def test_no_optin_no_metadata_or_admission():

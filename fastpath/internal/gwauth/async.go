@@ -117,6 +117,9 @@ var ordinaryParameters = map[string]bool{
 	"max_output_tokens": true, "stop": true, "seed": true, "frequency_penalty": true,
 	"presence_penalty": true, "logit_bias": true, "logprobs": true, "top_logprobs": true,
 	"response_format": true, "reasoning_effort": true, "stream": true,
+	"reasoning": true, "tools": true, "tool_choice": true, "parallel_tool_calls": true,
+	"top_k": true, "top_a": true, "min_p": true, "repetition_penalty": true,
+	"prediction": true, "prompt_cache_key": true, "service_tier": true,
 }
 
 // identity is billing_snapshot.Identity: 1 to 512 characters of this set.

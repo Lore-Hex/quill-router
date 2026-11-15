@@ -219,7 +219,7 @@ def test_a_snapshot_is_compared_as_canonical_bytes_even_when_the_set_is_kept(ver
                                                      "billing_snapshot_hash": "0" * 64}), expected_async=expected)
 
 
-def _python_additions(*, tools: bool = False, **authorization_changes: Any) -> dict[str, Any]:
+def _python_additions(*, unlisted_parameter: bool = False, **authorization_changes: Any) -> dict[str, Any]:
     """Python's own authorize_additions (admission off) over the async-settle
     tests' authorization, body and endpoint, with these changes."""
     from tests.test_async_settle_admission import body, request
@@ -230,7 +230,8 @@ def _python_additions(*, tools: bool = False, **authorization_changes: Any) -> d
     for name, value in authorization_changes.items():
         setattr(auth, name, value)
     additions: dict[str, Any] = authorize_additions(
-        request=request(runtime()), body=body(requested_parameters=["tools"]) if tools else body(),
+        request=request(runtime()),
+        body=body(requested_parameters=["web_search_options"]) if unlisted_parameter else body(),
         authorization=auth, endpoints=[endpoint()],
         settings=settings(async_settle_enabled=False, async_settle_protection=False),
         typed=True, federated=False, replay=False, effective_at=None)
@@ -243,14 +244,15 @@ def _answer(members: dict[str, Any]) -> dict[str, Any]:
 
 def test_the_check_follows_pythons_additions_not_a_reimplementation() -> None:
     """Whatever Python's own code answers is what an answer must carry:
-    tools requested make both answers shape A (the genuine A accepted, a
-    forged B with a correct hash refused); a markup of -1, which Eligibility
-    refuses to validate, is caught by Python and answers false only; a
-    markup of false is whatever Python makes of it."""
+    a requested parameter outside the ordinary ones makes both answers shape
+    A (the genuine A accepted, a forged B with a correct hash refused); a
+    markup of -1, which Eligibility refuses to validate, is caught by Python
+    and answers false only; a markup of false is whatever Python makes of
+    it."""
     eligible = _python_additions()
     assert list(eligible) == ["async_eligible", "billing_snapshot", "billing_snapshot_hash"]
     forged_b, false_only = _answer(eligible), _answer({"async_eligible": False})
-    for label, expected in (("tools", _python_additions(tools=True)),
+    for label, expected in (("unlisted parameter", _python_additions(unlisted_parameter=True)),
                             ("markup -1", _python_additions(app_markup_basis_points=-1))):
         assert expected == {"async_eligible": False}, label
         affinity_rule.check_async(label, "warm", false_only, expected)
@@ -262,16 +264,16 @@ def test_the_check_follows_pythons_additions_not_a_reimplementation() -> None:
     with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
         affinity_rule.check_async("markup false", "warm", other, as_false)
     # The genuine A/A pair over the golden's candidates, swapped round (cold
-    # over azure, warm over openai), with tools requested: accepted; the
-    # warm answer forged to B, refused.
+    # over azure, warm over openai), with an unlisted parameter requested:
+    # accepted; the warm answer forged to B, refused.
     case, _ = _async_affinity("warm_A.cold_B")
     a = case["expect"]["affinity"]
     azure, openai = json.loads(a["response"])["data"], json.loads(a["cold_response"])["data"]
-    tools = _python_additions(tools=True)
-    affinity_rule.check_async("tools", "cold", azure, tools)
-    affinity_rule.check_async("tools", "warm", _data_with(openai, {"async_eligible": False}), tools)
+    unlisted = _python_additions(unlisted_parameter=True)
+    affinity_rule.check_async("unlisted parameter", "cold", azure, unlisted)
+    affinity_rule.check_async("unlisted parameter", "warm", _data_with(openai, {"async_eligible": False}), unlisted)
     with pytest.raises(AssertionError, match="warm answer's async members are not Python's"):
-        affinity_rule.check_async("tools", "warm", openai, tools)
+        affinity_rule.check_async("unlisted parameter", "warm", openai, unlisted)
 
 
 def test_the_rules_inputs() -> None:
