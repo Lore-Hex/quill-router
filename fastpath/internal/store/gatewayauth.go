@@ -102,8 +102,9 @@ var reservationColumns = []string{
 // (storage_gcp_request_records.py, _INSERT_GATEWAY_AUTHORIZATION_SQL), in
 // its order: settled false and terminal_at NULL as constants, then the
 // payload and the 13 typed columns (AUTHORIZATION_TYPED_COLUMNS), of which
-// the edge's rows set three, and a stream's five (pricing_snapshot and
-// heartbeat_seq too). The retired spend-lease columns are not named,
+// the edge's rows set three, a fourth (gateway_request_id) when the body
+// sends the enclave's request-log id, and a stream's two more
+// (pricing_snapshot and heartbeat_seq). The retired spend-lease columns are not named,
 // so they are NULL, as Python leaves them.
 var authorizationColumns = []string{
 	"authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id",
