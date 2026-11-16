@@ -5,12 +5,13 @@
   <div class="marketing-copy">
     <span class="eyebrow">DeepSeek API privacy</span>
     <h2>DeepSeek V4 on attested infrastructure. With Confidential privacy, your prompts never reach the model vendor.</h2>
+    <p><strong>Is the DeepSeek API private?</strong> It depends on the route you choose. Set <code>provider.min_privacy</code> to <code>confidential</code> to require a qualified confidential-compute host and exclude DeepSeek's own API. If no eligible route is available, the request fails instead of falling back to a weaker privacy tier.</p>
     <p>The worry behind "is the DeepSeek API safe" is specific. api.deepseek.com runs on the vendor's own infrastructure, several US states have restricted it on government devices, and a January 2025 incident exposed plaintext chat logs. The V4 weights themselves are MIT-licensed. The risk lives in where the endpoint runs.</p>
     <p>TrustedRouter serves deepseek-v4-pro and deepseek-v4-flash through a hardware-attested confidential-compute gateway, and DeepSeek's own API is one of the routes. {{ vendor_exclusion_claim }} {{ content_handling_claim }} Zero-Data-Retention routes are available, and each route's privacy tier is listed on the models page. Migration is one line: change base_url, keep your OpenAI SDK.</p>
     <p><a class="btn primary" href="/pricing">See DeepSeek pricing</a> <a class="btn" href="/security">Check the attestation</a></p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Same SDK, new base_url</span><span>Python</span></div>
+    <div class="code-head"><span>Require Confidential DeepSeek routing</span><span>Python</span></div>
     <pre><code>from openai import OpenAI
 
 client = OpenAI(
@@ -21,6 +22,7 @@ client = OpenAI(
 r = client.chat.completions.create(
     model="deepseek-v4-pro",  # or deepseek-v4-flash
     messages=[{"role": "user", "content": "Summarize this contract."}],
+    extra_body={"provider": {"min_privacy": "confidential"}},
 )</code></pre>
   </div>
 </section>

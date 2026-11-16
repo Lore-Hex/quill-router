@@ -130,7 +130,6 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": false,
       "account_rate_limit_request": {
         "tier": 2,
         "status": "submitted",
@@ -140,9 +139,7 @@
       },
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000,
-      "unserved_held_at": "2026-11-14T21:13:59Z",
-      "routable_reason": "provider-route-unserved"
+      "cached_input_token_price_per_m": 300000
     },
     {
       "display_name": "GPT OSS 120B",
@@ -324,6 +321,6 @@
       "cached_input_token_price_per_m": 260000
     }
   ],
-  "generated_at": "2026-11-15T18:01:49Z",
+  "generated_at": "2026-11-15T23:11:44Z",
   "model_count": 11
 }
