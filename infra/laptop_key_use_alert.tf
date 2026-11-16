@@ -2,7 +2,7 @@
 #
 # Two service accounts have a user-managed key that lives in a file on the
 # operator's laptop: tr-deploy and tr-ops-local. The keys do not expire. They
-# are revoked if stolen, and that needs someone to notice. Every call made
+# are removed if stolen, and that needs someone to notice. Every call made
 # with one of them is recorded with the key's name and the caller's address
 # (Admin Activity always, and ADMIN_READ for reads), and over a month of
 # sampled days both keys were used from one address only. A call with either
@@ -10,20 +10,18 @@
 #
 # The known addresses are not in this repository, which is public. They are
 # the comma-separated CIDR list in the secret tr-laptop-key-known-addresses,
-# which the operator creates before this merges and replaces when the
-# laptop's address changes:
+# which the operator makes with gcloud before this merges, and replaces when
+# the laptop's address changes by adding a version:
 #
-#   printf '%s' 'ADDRESS/32' | gcloud secrets create \
-#     tr-laptop-key-known-addresses --project=quill-cloud-proxy \
-#     --replication-policy=automatic --data-file=-
+#   printf '%s' 'ADDRESS/32' | gcloud secrets versions add \
+#     tr-laptop-key-known-addresses --project=quill-cloud-proxy --data-file=-
 #
-# (later: gcloud secrets versions add tr-laptop-key-known-addresses
-# --data-file=-, then an infra-apply run.) The value is sensitive to
-# Terraform, so a plan in the public CI log shows the filter as hidden.
+# followed by an infra-apply run. The value is sensitive to Terraform, so a
+# plan in the public CI log shows the filter as hidden.
 #
 # CI authenticates by federation and presents no key name, so its calls never
 # match. A page here that is the operator travelling is expected: add the new
-# address. Otherwise revoke the key from the operator's own login:
+# address. Otherwise remove the key from the operator's own login:
 #
 #   gcloud iam service-accounts keys list --iam-account=ACCOUNT --managed-by=user
 #   gcloud iam service-accounts keys delete KEY_ID --iam-account=ACCOUNT
