@@ -890,6 +890,87 @@ def test_plain_workspace_member_cannot_manage_org_resources(
         assert response.json()["error"]["type"] == "forbidden"
 
 
+def _console_org_session(client: TestClient, user_headers: dict[str, str], role: str) -> tuple[str, str]:
+    """An org owned by alice with one more user of ``role`` signed in to the
+    console on it. Returns (workspace id, that user's id)."""
+    org = client.post("/v1/workspaces", headers=user_headers, json={"name": "Org"}).json()["data"]
+    email = f"console-{role}@example.com"
+    add = client.post(
+        f"/v1/workspaces/{org['id']}/members/add",
+        headers={**user_headers, "x-trustedrouter-workspace": org["id"]},
+        json={"emails": [email], "role": role},
+    )
+    assert add.status_code == 200
+    user = STORE.find_user_by_email(email)
+    assert user is not None
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id, provider="test", label=role, ttl_seconds=3600,
+        workspace_id=org["id"], state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+    return org["id"], user.id
+
+
+# The console counterparts of the API calls a member is refused above. Each
+# one is a manager action through ManagementPrincipal on the API side.
+CONSOLE_MANAGER_ONLY = [
+    ("POST", "/console/credits/checkout", {"amount": "25"}),
+    ("POST", "/console/credits/auto-refill", {"enabled": "1", "threshold": "10", "amount": "25"}),
+    ("POST", "/console/credits/payment-methods/add", None),
+    ("POST", "/console/credits/payment-methods/manage", None),
+    ("POST", "/console/credits/payment-methods/remove", None),
+    ("GET", "/console/credits/stripe-details", None),
+    ("POST", "/console/broadcast", {"name": "x", "destination_type": "webhook",
+                                    "endpoint": "https://collector.example/otlp", "enabled": "on",
+                                    "include_content": "on"}),
+    ("POST", "/console/broadcast/any-destination/delete", None),
+    ("POST", "/console/byok", {"provider": "mistral", "api_key": "member-should-not-save"}),
+]
+
+
+def test_plain_workspace_member_cannot_manage_org_resources_in_the_console(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    org_id, _ = _console_org_session(client, user_headers, "member")
+    STORE.set_stripe_customer(org_id, customer_id="cus_org", payment_method_id="pm_org")
+    for method, path, data in CONSOLE_MANAGER_ONLY:
+        response = client.request(method, path, data=data, follow_redirects=False)
+        assert response.status_code == 403, (method, path, response.text)
+        assert "Requires workspace manager role" in response.text, (method, path)
+    account = STORE.get_credit_account(org_id)
+    assert account is not None
+    assert (account.stripe_customer_id, account.stripe_payment_method_id) == ("cus_org", "pm_org")
+    assert account.auto_refill_enabled is False
+    assert STORE.list_broadcast_destinations(org_id) == []
+    assert STORE.list_byok_providers(org_id) == []
+
+
+def test_workspace_admin_can_manage_org_resources_in_the_console(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    org_id, _ = _console_org_session(client, user_headers, "admin")
+    for method, path, data in CONSOLE_MANAGER_ONLY:
+        response = client.request(method, path, data=data, follow_redirects=False)
+        assert response.status_code != 403, (method, path, response.text)
+    assert len(STORE.list_broadcast_destinations(org_id)) == 1
+    assert [provider.provider for provider in STORE.list_byok_providers(org_id)] == ["mistral"]
+
+
+def test_chat_browser_key_issuance_is_same_origin_only(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    org_id, _ = _console_org_session(client, user_headers, "member")
+    foreign = client.post("/internal/chat/issue-browser-key", headers={"origin": "https://evil.example"})
+    assert foreign.status_code == 403
+    assert STORE.list_keys(org_id) == []
+    same = client.post("/internal/chat/issue-browser-key", headers={"origin": "http://testserver"})
+    assert same.status_code == 200, same.text
+    assert [key.management for key in STORE.list_keys(org_id)] == [False]
+
+
 def test_workspace_admin_can_manage_org_resources(
     client: TestClient,
     user_headers: dict[str, str],

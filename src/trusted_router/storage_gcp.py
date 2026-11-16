@@ -23,7 +23,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
 from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, GatewayBoot
-from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS, check_auto_refill_settings
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
     BACKEND_SPANNER,
@@ -4734,6 +4734,14 @@ class SpannerStore(OperationalAnalyticsReads):
         threshold_microdollars: int,
         amount_microdollars: int,
     ) -> CreditAccount | None:
+        # Same rule as the in-memory store: no enabled threshold at or above
+        # the amount, whoever the caller is (money.py).
+        check_auto_refill_settings(
+            enabled=enabled,
+            threshold_microdollars=threshold_microdollars,
+            amount_microdollars=amount_microdollars,
+        )
+
         def txn(transaction: Any) -> CreditAccount | None:
             account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
             if account is None:

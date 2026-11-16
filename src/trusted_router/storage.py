@@ -24,7 +24,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
 from trusted_router.gateway_boot import GatewayBoot
-from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS, check_auto_refill_settings
 from trusted_router.operational_analytics_freshness import (
     BACKEND_MEMORY,
     REASON_NOT_CONFIGURED,
@@ -3039,9 +3039,15 @@ class InMemoryStore:
         threshold_microdollars: int,
         amount_microdollars: int,
     ) -> CreditAccount | None:
-        """Update auto-refill thresholds. Caller validates ranges; we just
-        store. Disabling clears the schedule but keeps the saved Stripe
-        customer/payment-method so re-enabling doesn't require re-onboarding."""
+        """Update auto-refill thresholds. Caller validates ranges; the store
+        refuses only a threshold at or above the amount (money.py). Disabling
+        clears the schedule but keeps the saved Stripe customer/payment-method
+        so re-enabling doesn't require re-onboarding."""
+        check_auto_refill_settings(
+            enabled=enabled,
+            threshold_microdollars=threshold_microdollars,
+            amount_microdollars=amount_microdollars,
+        )
         with self._lock:
             account = self.credits.get(workspace_id)
             if account is None:

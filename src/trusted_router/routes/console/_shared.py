@@ -87,6 +87,17 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
 ConsoleDep = Annotated[ConsoleContext, Depends(require_console_context)]
 
 
+def require_manager(ctx: ConsoleContext) -> None:
+    """Refuse a console action that needs the owner or admin role.
+
+    The API gates the same actions with ``ManagementPrincipal``. A console
+    route that checks only membership lets a plain member do what the API
+    refuses them, so every manager-only console action calls this first.
+    """
+    if not ctx.can_manage:
+        raise HTTPException(status_code=403, detail="Requires workspace manager role")
+
+
 def render(
     template: str,
     *,

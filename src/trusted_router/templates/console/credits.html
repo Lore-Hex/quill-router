@@ -16,9 +16,18 @@
         {% endif %}
       </div>
     </div>
+    {% if can_manage %}
     <a class="credits-send" href="/console/credit-transfers" aria-label="Send credits">{{ icons.svg('transfer', 18) }}<span>Send credits</span></a>
+    {% endif %}
   </section>
 
+  {# Members see the balance only: no card, payment history, receipts or
+     billing controls. The routes refuse members too; this only hides them. #}
+  {% if not can_manage %}
+  <section class="credits-add" aria-label="Billing" data-billing-manager-note>
+    <p class="credits-status" role="note">{{ icons.svg('shield', 18, 1.8) }}<span>Only workspace owners and managers can manage billing.</span></p>
+  </section>
+  {% else %}
   <section class="credits-add" aria-labelledby="credits-add-title">
     <form class="credits-form" method="post" action="/console/credits/checkout"
           data-checkout-form
@@ -114,8 +123,10 @@
       </div>
     </form>
   </section>
+  {% endif %}
 
   <div class="credits-rows">
+    {% if can_manage %}
     {# Wallet-only accounts cannot add or manage cards; a card saved before
        the account became wallet-only can still be removed here. #}
     {% if not wallet_only_billing or has_payment_method %}
@@ -153,6 +164,9 @@
           <input class="credits-switch" type="checkbox" role="switch" name="enabled" value="1" aria-labelledby="credits-refill-title"{% if auto_refill_enabled %} checked{% endif %}{% if not has_payment_method %} disabled{% endif %} data-auto-refill-switch>
         </span>
       </div>
+      {% if auto_refill_error_message %}
+      <p class="credits-status" role="alert" data-auto-refill-error>{{ icons.svg('alert', 18, 1.8) }}<span>{{ auto_refill_error_message }}</span></p>
+      {% endif %}
       <div class="credits-refill-settings{% if auto_refill_enabled %} is-open{% endif %}" data-auto-refill-settings>
         <label class="credits-field">
           <span>When balance is below</span>
@@ -172,6 +186,7 @@
       </div>
     </form>
     {% endif %}
+    {% endif %}
 
     <button class="credits-row credits-row-button credits-row-stack credits-row-rewards" type="button" data-rewards-open hidden>
       <span class="credits-disc credits-disc-blue" aria-hidden="true">{{ icons.svg('gift') }}</span>
@@ -180,11 +195,13 @@
     </button>
   </div>
 
+  {% if can_manage %}
   <section class="credits-history" aria-labelledby="credits-history-title" data-credits-stripe-details-url="/console/credits/stripe-details">
     <h2 id="credits-history-title">Payment history</h2>
     <div data-credits-payment-history aria-busy="true">
       <noscript><p class="credits-quiet"><a href="/console/credits/stripe-details">Open Stripe payment details</a></p></noscript>
     </div>
   </section>
+  {% endif %}
 </div>
 {% endblock %}

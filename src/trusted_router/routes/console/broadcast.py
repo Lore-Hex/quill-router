@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
 from trusted_router.byok_crypto import encrypt_control_secret
-from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console._shared import ConsoleDep, render, require_manager
 from trusted_router.services.broadcast import (
     broadcast_secret_context,
     public_destination_shape,
@@ -33,6 +33,8 @@ def register(app: FastAPI) -> None:
     def console_broadcast(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         destinations = [
             public_destination_shape(destination)
+            if ctx.can_manage
+            else _member_destination_shape(destination)
             for destination in STORE.list_broadcast_destinations(ctx.workspace.id)
         ]
         return HTMLResponse(render(
@@ -44,6 +46,7 @@ def register(app: FastAPI) -> None:
             page_subtitle="Export generation metadata to PostHog or an OTLP webhook.",
             destinations=destinations,
             default_posthog_endpoint=POSTHOG_DEFAULT_ENDPOINT,
+            can_manage=ctx.can_manage,
         ))
 
     @app.post("/console/broadcast")
@@ -59,6 +62,10 @@ def register(app: FastAPI) -> None:
         enabled: str | None = Form(None),
         include_content: str | None = Form(None),
     ) -> Response:
+        # An enabled destination with content included receives every prompt
+        # and output of the workspace. The API (routes/broadcast.py) allows
+        # this to owners and admins only; so does the console.
+        require_manager(ctx)
         destination_type = destination_type.strip().lower()
         adapter = adapter_for(destination_type)
         if adapter is None:
@@ -94,8 +101,21 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/broadcast/{destination_id}/delete")
     def console_delete_broadcast(ctx: ConsoleDep, destination_id: str) -> Response:
+        require_manager(ctx)
         STORE.delete_broadcast_destination(ctx.workspace.id, destination_id)
         return RedirectResponse(url="/console/broadcast", status_code=303)
+
+
+def _member_destination_shape(destination: BroadcastDestination) -> dict[str, Any]:
+    """What a plain member may see of a destination: that it exists and what
+    it exports. Never its endpoint, header names or which secrets it holds;
+    the API does not show members destinations at all."""
+    return {
+        "name": destination.name,
+        "type": destination.type,
+        "enabled": destination.enabled,
+        "include_content": destination.include_content,
+    }
 
 
 def _parse_headers(raw: str) -> dict[str, str] | None:

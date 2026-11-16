@@ -429,6 +429,21 @@
         try { sessionStorage.removeItem(KEY_STORAGE_PREFIX); } catch (_) {}
     }
 
+    // The issue-key endpoint can refuse a signed-in user: a member who has
+    // used their $5 chat allowance for the last 24 hours (429), too many
+    // keys issued today (429), or a key issued at the same moment (409).
+    // Its JSON error says which, in words meant for the user.
+    async function issueKeyRefusal(resp) {
+        let message = "";
+        try {
+            const body = await resp.json();
+            message = (body && body.error && body.error.message) || "";
+        } catch (_) {}
+        const err = new Error(message || "Could not get a chat key (" + resp.status + "). Try again shortly.");
+        err.issueKeyRefused = true;
+        return err;
+    }
+
     /** Returns the raw browser-API key. Fetches a new one if missing. */
     async function ensureBrowserKey(opts) {
         const forceRefresh = !!(opts && opts.forceRefresh);
@@ -470,7 +485,7 @@
             throw new Error("not signed in");
         }
         if (!resp.ok) {
-            throw new Error("issue-key failed: " + resp.status);
+            throw await issueKeyRefusal(resp);
         }
         // Body has the raw key. Cookie was also set; clear it
         // immediately for the one-shot guarantee even though we got
@@ -2956,7 +2971,9 @@
                             return;
                         }
                         const msg = String(e && e.message ? e.message : e);
-                        r.error = friendlyStreamError(msg);
+                        // A refused key re-issue already says why in words
+                        // for the user; do not reword it.
+                        r.error = e && e.issueKeyRefused ? msg : friendlyStreamError(msg);
                         saveState();
                         renderThread();
                     }),
@@ -3060,9 +3077,12 @@
                     const freshKey = await ensureBrowserKey({ forceRefresh: true });
                     resp = await _sendOnce(freshKey);
                 } catch (e) {
-                    // ensureBrowserKey already pops the sign-in modal on a
-                    // hard 401/302 from issue-key; propagate the original
-                    // 401 if re-issue itself failed.
+                    // A refused re-issue says why (for example, a member's
+                    // chat allowance is used up); show that. Otherwise
+                    // ensureBrowserKey already popped the sign-in modal on a
+                    // hard 401/302 from issue-key, so propagate the original
+                    // 401.
+                    if (e && e.issueKeyRefused) throw e;
                 }
             }
             if (!resp.ok) {
@@ -3337,9 +3357,17 @@
         if (m.includes("Failed to fetch") || m.includes("NetworkError")) {
             return "Network hiccup — check your connection and retry.";
         }
+        // A chat key at its own lifetime limit (402 key_limit_exceeded,
+        // "API key spend limit exceeded"): a member's limit is what was
+        // left of their $5 per 24 hours, so a card does not help them.
+        if (/key_limit_exceeded|API key spend limit/i.test(m)) {
+            return (
+                "This chat key has reached its spending limit. Try again later, " +
+                "or use an API key from the console."
+            );
+        }
         // 402 = Payment Required. The attested gateway uses this for
-        // both "workspace out of credits" (most common) and "browser
-        // key's $5/day cap reached". The body says "gateway
+        // "workspace out of credits" (most common). The body says "gateway
         // authorization failed" generically — match status code first.
         if (
             /\b402\b/.test(m) ||

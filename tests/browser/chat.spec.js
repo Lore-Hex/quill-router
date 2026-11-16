@@ -190,3 +190,41 @@ test("retired user-chat is unavailable and ordinary chat has no creator-model li
   expect(await page.evaluate(() => Object.keys(window.__TR_CHAT__))).not.toContain("lockedModelId");
   await expect(page.locator('[data-action="toggle-model-dropdown"]').first()).toBeVisible();
 });
+
+const ALLOWANCE_USED_UP = "You have used this workspace's $5 chat allowance for the last 24 hours. Try again later, or ask a workspace owner or admin for an API key.";
+
+test("a refused chat key shows the server's reason and chat keeps working", async ({ page, context }) => {
+  await setup(page, context);
+  let issued = 0;
+  await page.route("**/internal/chat/issue-browser-key", (route) => {
+    issued++;
+    return route.fulfill({ status: 429, json: { error: { code: 429, message: ALLOWANCE_USED_UP, type: "http_error" } } });
+  });
+  await page.goto(`/chat?model=${MODEL}`);
+  await send(page);
+  await expect(page.locator(".chat-msg-error")).toContainText("$5 chat allowance for the last 24 hours");
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
+  expect(issued).toBe(1);
+});
+
+test("a stale key whose re-issue is refused shows the refusal, not an auth error", async ({ page, context }) => {
+  await setup(page, context);
+  // The first key is rejected (say, superseded on another device); the
+  // client re-issues once, and that re-issue is refused.
+  let completions = 0;
+  await page.route("**/v1/chat/completions", (route) => {
+    completions++;
+    return route.fulfill({ status: 401, json: { error: { code: 401, message: "Invalid API key", type: "invalid_api_key" } } });
+  });
+  let issued = 0;
+  await page.route("**/internal/chat/issue-browser-key", (route) => {
+    issued++;
+    if (issued === 1) return route.fulfill({ json: { data: { raw_key: "sk-tr-first" } } });
+    return route.fulfill({ status: 429, json: { error: { code: 429, message: ALLOWANCE_USED_UP, type: "http_error" } } });
+  });
+  await page.goto(`/chat?model=${MODEL}`);
+  await send(page);
+  await expect(page.locator(".chat-msg-error")).toContainText("$5 chat allowance for the last 24 hours");
+  await expect(page.locator(".chat-msg-error")).not.toContainText("Authentication expired");
+  expect(completions).toBe(1);
+});
