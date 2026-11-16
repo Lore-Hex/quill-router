@@ -74,8 +74,46 @@ def _is_perplexity_route(row: dict[str, Any]) -> bool:
     return normalized == "sonar"
 
 
+SONAR_FEE_WITHDRAWN = (
+    "perplexity: Sonar request fee withdrawn upstream (Sonar moved to the Agent API); "
+    "billing-contract-unverified, see issue #1700"
+)
+
+
+def _documents_agent_api_tool_prices(soup: BeautifulSoup) -> bool:
+    """Whether the page is the post-Sonar price list: per-invocation Agent API tools."""
+
+    if not any(
+        heading.get_text(" ", strip=True).casefold() == "agent api pricing"
+        for heading in soup.select("h2")
+    ):
+        return False
+    for table in soup.select("table"):
+        headers = [cell.get_text(" ", strip=True).casefold() for cell in table.select("thead th")]
+        if headers[:2] != ["tool", "price"]:
+            continue
+        for row in table.select("tbody tr"):
+            cells = row.find_all(["td", "th"])
+            if (
+                len(cells) >= 2
+                and cells[0].get_text(" ", strip=True).casefold().startswith("web_search")
+                and "per invocation" in cells[1].get_text(" ", strip=True).casefold()
+            ):
+                return True
+    return False
+
+
 def _parse_low_context_request_price(html: str) -> int:
-    """Return Sonar's exact low-context fee in microdollars per request."""
+    """Return Sonar's exact low-context fee in microdollars per request.
+
+    Perplexity ended Sonar Chat Completions support on 2026-09-27. Sonar calls
+    are now reformulated as Agent API requests, billed per token plus per tool
+    invocation, and the price list dropped the Sonar fee table. A price list
+    with only Agent API tool prices is reported as that withdrawal rather than
+    as a parser fault. The legacy Sonar model page is superseded and its rates
+    are stale, so it is not a source. No fee means the fixed-fee contract is
+    unverified (issue #1700), and the refresh keeps the provider held.
+    """
 
     soup = BeautifulSoup(html, "html.parser")
     for table in soup.select("table"):
@@ -97,6 +135,8 @@ def _parse_low_context_request_price(html: str) -> int:
                 break
             # The official table is dollars per 1,000 successful requests.
             return int((Decimal(match.group(1)) * Decimal(1000)).to_integral_exact())
+    if _documents_agent_api_tool_prices(soup):
+        raise RuntimeError(SONAR_FEE_WITHDRAWN)
     raise RuntimeError("perplexity: Sonar low-context request price not found")
 
 
@@ -122,8 +162,10 @@ UPSTREAM_ID_MAP = CATALOG.upstream_id_map
 
 
 def fetch() -> ProviderPricingResult:
-    result = CATALOG.fetch()
+    # Read the public fee first: without one, no credentialed catalog call or
+    # paid canary is useful.
     request_price = _parse_low_context_request_price(fetch_html(PRICING_URL))
+    result = CATALOG.fetch()
     for row in CATALOG.discovered_rows.values():
         row["fixed_request_price_microdollars"] = request_price
     guard_fixed_output_prices(MANIFEST_PATH, CATALOG.discovered_rows)
