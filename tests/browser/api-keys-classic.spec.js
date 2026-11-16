@@ -3,17 +3,17 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const secret = 'sk-tr-demo-not-a-real-key';
-function fixture(reveal = false, empty = false, management = false) {
+function fixture(reveal = false, empty = false, management = false, member = false) {
   return execFileSync(process.env.TEST_PYTHON || path.join(root, '.venv/bin/python'), ['-c', `
 from jinja2 import Environment, FileSystemLoader
 env = Environment(loader=FileSystemLoader('src/trusted_router/templates'))
 key=dict(name='Production',label='sk-tr-v1-...demo',hash='demo',disabled=False,limit_input='',limit_display='none',usage_display='$1.25',windows=[dict(name=w,input='',limit_display=None) for w in ['daily','weekly','monthly']])
 key['management'] = ${management ? 'True' : 'False'}
-print(env.get_template('console/api_keys.html').render(user={'id':'test-user'},user_email='preview@example.test',workspaces=[dict(id='preview',name='Personal Workspace')],current_workspace=dict(id='preview',name='Personal Workspace'),current_workspace_id='preview',page_title='API Keys',page_subtitle='Long-lived keys for your applications.',active='api-keys',keys=[] if ${empty ? 'True' : 'False'} else [key],created_key='${secret}' if ${reveal ? 'True' : 'False'} else None,can_manage=${management ? 'True' : 'False'},created_management_key=${management && reveal ? 'True' : 'False'},management_key_token='fixture-not-a-real-token',suggested=dict(daily=20,weekly=100,monthly=200)))
+print(env.get_template('console/api_keys.html').render(user={'id':'test-user'},user_email='preview@example.test',workspaces=[dict(id='preview',name='Personal Workspace')],current_workspace=dict(id='preview',name='Personal Workspace'),current_workspace_id='preview',page_title='API Keys',page_subtitle='Long-lived keys for your applications.',active='api-keys',keys=[] if ${empty ? 'True' : 'False'} else [key],created_key='${secret}' if ${reveal ? 'True' : 'False'} else None,can_manage=${member ? 'False' : 'True'},created_management_key=${management && reveal ? 'True' : 'False'},management_key_token='fixture-not-a-real-token',suggested=dict(daily=20,weekly=100,monthly=200)))
 `], { cwd: root, encoding: 'utf8' });
 }
-async function load(page, reveal = false, empty = false, management = false) {
-  const html = fixture(reveal, empty, management);
+async function load(page, reveal = false, empty = false, management = false, member = false) {
+  const html = fixture(reveal, empty, management, member);
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', {value: {writeText: async value => {window.copied = value;}}}));
   await page.route('https://keys.test/**', route => {
     const url = new URL(route.request().url());
@@ -122,9 +122,19 @@ test('management creation is usable without JavaScript', async ({browser}) => {
 });
 
 test('workspace members do not see the management creation form', async ({page}) => {
-  await load(page);
+  await load(page,false,false,false,true);
   await expect(page.locator('form[action="/console/api-keys/management"]')).toHaveCount(0);
-  await expect(page.getByText('Only workspace owners and managers', {exact:false})).toBeVisible();
+  await expect(page.getByText('Only workspace owners and managers can create management keys', {exact:false})).toBeVisible();
+});
+
+test('workspace members see budgets but no key or budget controls', async ({page}) => {
+  await load(page,false,false,false,true);
+  await expect(page.getByText('Used $1.25')).toBeVisible();
+  await expect(page.locator('.key-budget-form')).toHaveCount(0);
+  await expect(page.locator('form[action="/console/api-keys"]')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Disable',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'New key',exact:true})).toHaveCount(0);
+  await expect(page.getByText('Only workspace owners and managers can create keys or change budgets', {exact:false})).toBeVisible();
 });
 
 test('management form sends the origin and explicit confirmation', async ({page}) => {

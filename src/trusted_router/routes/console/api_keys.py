@@ -116,6 +116,9 @@ def register(app: FastAPI) -> None:
         budget_alert_only: str = Form(""),
         budget_strict: str = Form(""),
     ) -> Response:
+        # A member who could mint a key with no budget would make every cap a
+        # manager sets meaningless; POST /v1/keys needs the same role.
+        _require_manager(ctx)
         try:
             limit_microdollars = _parse_limit(limit)
             daily_micro = _parse_limit(limit_daily)
@@ -150,8 +153,7 @@ def register(app: FastAPI) -> None:
         acknowledge: str = Form(""),
     ) -> Response:
         _same_origin(request, settings)
-        if not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
-            raise HTTPException(403, "Requires workspace manager role")
+        _require_manager(ctx)
         if not hmac.compare_digest(csrf_token.encode(), _management_key_token(ctx).encode()):
             raise HTTPException(403, "Invalid confirmation. Reload the page and try again.")
         if acknowledge != "yes":
@@ -180,7 +182,7 @@ def register(app: FastAPI) -> None:
         limit_monthly: str = Form(""),
         budget_alert_only: str = Form(""),
     ) -> Response:
-        _require_key(ctx, key_hash)
+        _require_key(ctx, key_hash, manage=True)
         try:
             patch: dict[str, Any] = {
                 "limit_microdollars": _parse_limit(limit),
@@ -229,15 +231,21 @@ def register(app: FastAPI) -> None:
 
 def _require_key(ctx: Any, key_hash: str, *, manage: bool = False) -> ApiKey:
     """Ownership check for every mutating route; `manage=True` additionally
-    requires owner/manager role (codex #94: disable/enable/delete are
-    destructive — a plain workspace member must not kill another member's
-    keys; budget edits keep the console's pre-existing member-level access)."""
+    requires owner/manager role. Every mutating route passes it: a plain
+    member must not disable or delete another member's keys (codex #94), nor
+    clear, raise or switch to alert-only a budget a manager set to contain
+    them. The /v1/keys routes require the same role."""
     key = STORE.get_key_by_hash(key_hash)
     if key is None or key.workspace_id != ctx.workspace.id:
         raise HTTPException(status_code=404, detail="API key not found")
-    if manage and not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
-        raise HTTPException(status_code=403, detail="Requires workspace manager role")
+    if manage:
+        _require_manager(ctx)
     return key
+
+
+def _require_manager(ctx: Any) -> None:
+    if not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
+        raise HTTPException(status_code=403, detail="Requires workspace manager role")
 
 
 def _parse_limit(value: str) -> int | None:

@@ -113,7 +113,8 @@ def test_cross_workspace_key_is_404(console: dict, client: TestClient) -> None:
 
 def test_member_cannot_disable_enable_or_delete(console: dict, client: TestClient) -> None:
     """codex #94: disable/enable/delete are manager-only; a plain workspace
-    member gets 403 (budget edits keep pre-existing member-level access)."""
+    member gets 403. Budget edits and key creation are manager-only too (see
+    the spend-cap tests below)."""
     workspace, key = console["workspace"], console["key"]
     member = STORE.add_members(workspace.id, ["member@example.com"], role="member")[0]
     raw_session, _ = STORE.create_auth_session(
@@ -126,6 +127,166 @@ def test_member_cannot_disable_enable_or_delete(console: dict, client: TestClien
         assert resp.status_code == 403, (action, resp.status_code)
     assert STORE.get_key_by_hash(key.hash) is not None
     assert STORE.get_key_by_hash(key.hash).disabled is False
+
+
+_CAPPED = {
+    "limit_microdollars": 10_000_000,
+    "limit_daily_microdollars": 1_000_000,
+    "limit_weekly_microdollars": 3_000_000,
+    "limit_monthly_microdollars": 8_000_000,
+    "budget_alert_only": False,
+}
+
+# Each form a plain member could post to escape a cap: clear every limit,
+# raise every limit, or keep the numbers and switch to alert-only (no block).
+_ESCAPES = {
+    "clear": {"limit": "", "limit_daily": "", "limit_weekly": "", "limit_monthly": ""},
+    "raise": {
+        "limit": "100000", "limit_daily": "100000",
+        "limit_weekly": "100000", "limit_monthly": "100000",
+    },
+    "alert-only": {
+        "limit": "10", "limit_daily": "1", "limit_weekly": "3",
+        "limit_monthly": "8", "budget_alert_only": "on",
+    },
+}
+
+
+def _sign_in(client: TestClient, workspace_id: str, user_id: str) -> str:
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user_id, provider="test", label="s", ttl_seconds=3600,
+        workspace_id=workspace_id, state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+    return raw_session
+
+
+def _caps(key_hash: str) -> dict:
+    key = STORE.get_key_by_hash(key_hash)
+    assert key is not None
+    return {field: getattr(key, field) for field in _CAPPED}
+
+
+@pytest.mark.parametrize("escape", sorted(_ESCAPES))
+@pytest.mark.parametrize("creator", ["owner", "member"])
+def test_member_cannot_lift_a_capped_key_budget(
+    console: dict, client: TestClient, creator: str, escape: str
+) -> None:
+    """A plain member cannot clear, raise or switch to alert-only the budget
+    on a key an owner capped, whether the key is the member's own or not."""
+    workspace = console["workspace"]
+    member = STORE.add_members(workspace.id, ["capped@example.com"], role="member")[0]
+    creator_id = member.user_id if creator == "member" else workspace.owner_user_id
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id, name="capped", creator_user_id=creator_id, **_CAPPED,
+    )
+    _sign_in(client, workspace.id, member.user_id)
+
+    resp = client.post(
+        f"/console/api-keys/{key.hash}/limit", data=_ESCAPES[escape], follow_redirects=False,
+    )
+
+    assert resp.status_code == 403
+    assert _caps(key.hash) == _CAPPED
+
+
+def test_member_cannot_bypass_caps_with_a_new_key(console: dict, client: TestClient) -> None:
+    """Creating a fresh uncapped key is the same escape, so it is manager-only."""
+    workspace = console["workspace"]
+    member = STORE.add_members(workspace.id, ["new-key@example.com"], role="member")[0]
+    _sign_in(client, workspace.id, member.user_id)
+    before = {k.hash for k in STORE.list_keys(workspace.id)}
+
+    for data in ({"name": "uncapped"}, {"name": "capped", "limit": "1", "limit_daily": "1"}):
+        resp = client.post("/console/api-keys", data=data, follow_redirects=False)
+        assert resp.status_code == 403, data
+
+    assert {k.hash for k in STORE.list_keys(workspace.id)} == before
+
+
+def test_member_page_shows_budgets_without_edit_or_create_forms(
+    console: dict, client: TestClient
+) -> None:
+    workspace, key = console["workspace"], console["key"]
+    STORE.update_key(key.hash, {"limit_microdollars": 10_000_000})
+    member = STORE.add_members(workspace.id, ["viewer@example.com"], role="member")[0]
+    _sign_in(client, workspace.id, member.user_id)
+
+    page = client.get("/console/api-keys")
+
+    assert page.status_code == 200
+    assert "prod key" in page.text and "of $10.00" in page.text
+    assert 'action="/console/api-keys"' not in page.text
+    assert f'action="/console/api-keys/{key.hash}/limit"' not in page.text
+    assert f'action="/console/api-keys/{key.hash}/disable"' not in page.text
+    assert 'data-action="open-new-key"' not in page.text
+    assert "Only workspace owners and managers can create keys or change budgets" in page.text
+
+
+@pytest.mark.parametrize("role", ["owner", "admin"])
+def test_managers_can_still_change_budgets_and_create_keys(
+    console: dict, client: TestClient, role: str
+) -> None:
+    workspace = console["workspace"]
+    if role == "admin":
+        admin = STORE.add_members(workspace.id, ["boss@example.com"], role="admin")[0]
+        _sign_in(client, workspace.id, admin.user_id)
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id, name="capped", creator_user_id=workspace.owner_user_id,
+        **_CAPPED,
+    )
+
+    page = client.get("/console/api-keys")
+    assert f'action="/console/api-keys/{key.hash}/limit"' in page.text
+    assert 'action="/console/api-keys"' in page.text
+
+    resp = client.post(
+        f"/console/api-keys/{key.hash}/limit", data=_ESCAPES["clear"], follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/console/api-keys?saved=limit"
+    assert STORE.get_key_by_hash(key.hash).limit_microdollars is None
+
+    resp = client.post("/console/api-keys", data={"name": f"{role}-made"})
+    assert resp.status_code == 200
+    assert any(k.name == f"{role}-made" for k in STORE.list_keys(workspace.id))
+
+
+@pytest.mark.parametrize("transport", ["cookie", "bearer"])
+def test_api_key_routes_apply_the_same_member_rule(
+    console: dict, client: TestClient, transport: str
+) -> None:
+    """The /v1/keys routes already require the manager role for a session; a
+    member session gets the same answer there as in the console."""
+    workspace = console["workspace"]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id, name="capped", creator_user_id=workspace.owner_user_id,
+        **_CAPPED,
+    )
+
+    def as_role(role: str) -> dict[str, str]:
+        added = STORE.add_members(workspace.id, [f"api-{role}@example.com"], role=role)[0]
+        raw_session = _sign_in(client, workspace.id, added.user_id)
+        if transport == "cookie":
+            return {}
+        client.cookies.clear()
+        return {"Authorization": f"Bearer {raw_session}"}
+
+    headers = as_role("member")
+    for body in (
+        {"limit": None, "limit_daily": None, "limit_weekly": None, "limit_monthly": None},
+        {"limit": "100000"},
+        {"budget_alert_only": True},
+    ):
+        resp = client.patch(f"/v1/keys/{key.hash}", json=body, headers=headers)
+        assert resp.status_code == 403, body
+    assert client.post("/v1/keys", json={"name": "uncapped"}, headers=headers).status_code == 403
+    assert _caps(key.hash) == _CAPPED
+
+    headers = as_role("admin")
+    resp = client.patch(f"/v1/keys/{key.hash}", json={"limit": "20"}, headers=headers)
+    assert resp.status_code == 200
+    assert STORE.get_key_by_hash(key.hash).limit_microdollars == 20_000_000
 
 
 def test_create_form_budget_alert_only_checkbox(console: dict) -> None:
