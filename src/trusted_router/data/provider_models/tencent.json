@@ -800,11 +800,43 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "Hy4 flash",
+      "title": "hy4-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "tencent/hy4-flash",
+      "upstream_id": "hy4-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "created": 1794787200,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "supported_features": [
+        "function-calling",
+        "json-mode",
+        "reasoning-effort",
+        "prompt-cache"
+      ],
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 281000,
+      "cached_input_token_price_per_m": 3000
     }
   ],
   "source": "https://tokenhub-intl.tencentcloudmaas.com/v1/models",
   "pricing_source": "https://intl.cloud.tencent.com/document/product/1300/78937",
-  "generated_at": "2026-11-15T23:11:44Z",
+  "generated_at": "2026-11-16T09:21:39Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 26
+  "model_count": 27
 }

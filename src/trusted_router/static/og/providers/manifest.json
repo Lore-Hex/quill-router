@@ -640,10 +640,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 82,
+    "model_count": 84,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 159,
+    "route_count": 163,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -811,10 +811,10 @@
   },
   "sail-research": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "Sail Research",
     "privacy": "Zero retention",
-    "route_count": 9,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "sail-research"
   },
@@ -964,10 +964,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 65,
+    "model_count": 66,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 112,
+    "route_count": 114,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },

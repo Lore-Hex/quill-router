@@ -390,7 +390,7 @@
   ],
   "source": "https://api.regolo.ai/model_group/info",
   "pricing_source": "https://docs.regolo.ai/models/catalog/",
-  "generated_at": "2026-11-15T23:11:44Z",
+  "generated_at": "2026-11-16T09:21:39Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }
