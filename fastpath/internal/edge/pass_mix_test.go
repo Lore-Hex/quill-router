@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,17 +22,19 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
-// The decide line's pass mix (decide_path.go: passMix, decider.attribute):
-// where a body.float pass's first float is, and whether a pass's key belongs
-// to a workspace the switch copy enables. It is counted and changes nothing
-// the edge answers, refuses or passes, and its attribution reads the cache
-// without a fill, a use or a read of the store.
+// The decide line's pass mix (decide_path.go: pendingMix, decider.countMix,
+// decider.attribute): where a body.float pass's first float is, and whether
+// a pass's key belongs to a workspace the switch copy enables. It is counted
+// once the forward to Python has returned, changes nothing the edge
+// answers, refuses or passes, and its attribution reads the cache without a
+// fill, a use or a read of the store.
 
 // attributionCache is the case's cache for the pipeline's own lookups, with
 // a Peek the test answers, each lookup and peek counted. failLookup fails
 // the test on any Lookup, a call that fills on a miss: for a request passed
 // before the key's facts, only Peek may be asked. stale serves a fresh entry
-// as stale (cache.key, its facts still held).
+// as stale (cache.key, its facts still held). seq, when set, numbers each
+// peek in the order of events the test keeps (peekedAt, the last).
 type attributionCache struct {
 	KeyCache
 	t              *testing.T
@@ -39,6 +42,8 @@ type attributionCache struct {
 	stale          bool
 	held           map[string]string
 	lookups, peeks atomic.Int64
+	seq            *atomic.Int64
+	peekedAt       atomic.Int64
 }
 
 func (c *attributionCache) Lookup(hash string, now time.Time) gwstate.Read {
@@ -55,8 +60,25 @@ func (c *attributionCache) Lookup(hash string, now time.Time) gwstate.Read {
 
 func (c *attributionCache) Peek(hash string) (string, bool) {
 	c.peeks.Add(1)
+	if c.seq != nil {
+		c.peekedAt.Store(c.seq.Add(1))
+	}
 	ws, ok := c.held[hash]
 	return ws, ok
+}
+
+// countLenient counts the decide path's lenient decodes (decider.lenient),
+// numbering each in seq's order when seq is set.
+func countLenient(dp *decider, seq *atomic.Int64) (calls, at *atomic.Int64) {
+	calls, at = &atomic.Int64{}, &atomic.Int64{}
+	dp.lenient = func(body []byte) string {
+		calls.Add(1)
+		if seq != nil {
+			at.Store(seq.Add(1))
+		}
+		return lenientLookupHash(body)
+	}
+	return calls, at
 }
 
 // withoutBootHeader is the case's request with no boot header: the edge
@@ -74,10 +96,11 @@ func withoutBootHeader(c authorizeCase) authorizeCase {
 // body.float pass under where its first float is (float_at). A request
 // passed before the key's facts is attributed by Peek alone, never a Lookup
 // (which fills), and a pass after them by what the pipeline already read,
-// with no lookup of its own; nothing is admitted, inserted or refunded. The
-// blind spot is shown too: a key the cache does not hold, a body the edge
-// did not read or cannot read, and a node with no front door bound are
-// unknown.
+// with no lookup of its own; the body is decoded leniently only when the
+// strict parse did not read its lookup hash (a cohort reason's is the
+// parse's); nothing is admitted, inserted or refunded. The blind spot is
+// shown too: a key the cache does not hold, a body the edge did not read or
+// cannot read, and a node with no front door bound are unknown.
 func TestThePassMixAttributesEachPass(t *testing.T) {
 	f := authorizeGoldens(t)
 	const ws = "ws_e2_cohort"
@@ -97,24 +120,25 @@ func TestThePassMixAttributesEachPass(t *testing.T) {
 		unknown        bool // counted in passed_unknown
 		floatAt        string
 		lookups, peeks int64
+		lenient        int64 // lenient decodes
 	}{
 		{name: "a float, its key held, enabled", caseName: "pass:body.float", held: heldHere, before: true,
-			reason: gwauth.ReasonFloat, enabled: true, floatAt: gwauth.FloatAtMetadata, peeks: 1},
+			reason: gwauth.ReasonFloat, enabled: true, floatAt: gwauth.FloatAtMetadata, peeks: 1, lenient: 1},
 		{name: "a float, its key held, not enabled", caseName: "pass:body.float", held: heldHere, off: true,
-			before: true, reason: gwauth.ReasonFloat, floatAt: gwauth.FloatAtMetadata, peeks: 1},
+			before: true, reason: gwauth.ReasonFloat, floatAt: gwauth.FloatAtMetadata, peeks: 1, lenient: 1},
 		{name: "a float, its key never held (the blind spot)", caseName: "pass:body.float", before: true,
-			reason: gwauth.ReasonFloat, unknown: true, floatAt: gwauth.FloatAtMetadata, peeks: 1},
+			reason: gwauth.ReasonFloat, unknown: true, floatAt: gwauth.FloatAtMetadata, peeks: 1, lenient: 1},
 		{name: "a declared field written as a float", caseName: "pass:body.float:integral_spelling", held: heldHere,
 			before: true, reason: gwauth.ReasonFloat, enabled: true,
-			floatAt: gwauth.FloatAtDeclared + "estimated_input_tokens", peeks: 1},
+			floatAt: gwauth.FloatAtDeclared + "estimated_input_tokens", peeks: 1, lenient: 1},
 		{name: "a cohort reason after the parse", caseName: "pass:body.internal_model:monitor", held: heldHere,
 			before: true, reason: gwauth.ReasonInternalModel, enabled: true, peeks: 1},
 		{name: "a schema reason", caseName: "pass:body.lax_type", held: heldHere, before: true,
-			reason: gwauth.ReasonLaxType, enabled: true, peeks: 1},
+			reason: gwauth.ReasonLaxType, enabled: true, peeks: 1, lenient: 1},
 		{name: "a boot that fails, its body read leniently", caseName: "pass:boot.signature:bad_signature",
-			held: heldHere, before: true, reason: PassBootSignature, enabled: true, peeks: 1},
+			held: heldHere, before: true, reason: PassBootSignature, enabled: true, peeks: 1, lenient: 1},
 		{name: "a body that is not JSON", caseName: "pass:body.unparseable:bom", held: heldHere, before: true,
-			reason: gwauth.ReasonUnparseable, unknown: true},
+			reason: gwauth.ReasonUnparseable, unknown: true, lenient: 1},
 		{name: "no boot header, the body never read", caseName: "pass:body.float", request: withoutBootHeader,
 			held: heldHere, before: true, reason: bootPass(BootSeen{Verdict: Absent}), unknown: true},
 		{name: "a policy gate before the key", caseName: "pass:policy.pilot_off", held: heldHere, before: true,
@@ -138,6 +162,7 @@ func TestThePassMixAttributesEachPass(t *testing.T) {
 		h := newDecideEdge(t, f, c, nil)
 		cache := &attributionCache{KeyCache: h.cache, t: t, failLookup: tc.before, stale: tc.stale, held: tc.held}
 		h.edge.decider.cfg.Cache = cache
+		lenients, _ := countLenient(h.edge.decider, nil)
 		if tc.off {
 			h.admitter.off = map[string]bool{ws: true}
 		}
@@ -169,8 +194,10 @@ func TestThePassMixAttributesEachPass(t *testing.T) {
 			t.Errorf("%s: enabled %v, unknown %v (%d), float_at %v; want %v, %v, %v", tc.name, got.PassedEnabled,
 				got.PassedUnknown, got.EnabledUnknown, got.FloatAt, wantEnabled, wantUnknown, wantFloat)
 		}
-		if l, p := cache.lookups.Load(), cache.peeks.Load(); l != tc.lookups || p != tc.peeks {
-			t.Errorf("%s: %d lookups and %d peeks, want %d and %d", tc.name, l, p, tc.lookups, tc.peeks)
+		if l, p, d := cache.lookups.Load(), cache.peeks.Load(), lenients.Load(); l != tc.lookups || p != tc.peeks ||
+			d != tc.lenient {
+			t.Errorf("%s: %d lookups, %d peeks and %d lenient decodes, want %d, %d and %d", tc.name, l, p, d,
+				tc.lookups, tc.peeks, tc.lenient)
 		}
 	}
 }
@@ -318,36 +345,78 @@ func (s bootSigner) sign(c authorizeCase, body string, headers [][2]string) auth
 	return c
 }
 
+// carriedTransport keeps what the proxy carries of each pass it forwards
+// (decidePassed: the lookup hash and workspace Python's refusal evicts, and
+// the reason), its arrival and pending mix aside, then sends it on.
+type carriedTransport struct {
+	base http.RoundTripper
+	mu   sync.Mutex
+	seen []decidePassed
+}
+
+func (c *carriedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if p, ok := r.Context().Value(decidePassedKey{}).(decidePassed); ok {
+		p.arrived, p.mix = time.Time{}, nil
+		c.mu.Lock()
+		c.seen = append(c.seen, p)
+		c.mu.Unlock()
+	}
+	return c.base.RoundTrip(r)
+}
+
+func (c *carriedTransport) carried() []decidePassed {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.seen)
+}
+
+// recordedEdge is a decide edge whose proxy keeps what it carries.
+type recordedEdge struct {
+	*decideEdge
+	carried *carriedTransport
+}
+
+func recording(h *decideEdge) recordedEdge {
+	c := &carriedTransport{base: h.python.transport}
+	h.edge.proxy.Transport = tracedTransport{base: c}
+	return recordedEdge{decideEdge: h, carried: c}
+}
+
 // sentOnce is what one request through a decide edge did: the edge's
-// answer (timing values aside, and Python's own Date), whether it reached
-// Python, what it asked of the front door, the rows it inserted, the
-// refunds, and its counts but the pass mix.
+// answer (timing values aside, Python's own Date, and the Content-Length,
+// which follows the timing values' digits; the body is compared), whether
+// it reached Python and what the proxy carried of it, what it asked of the
+// front door, the rows it inserted, the refunds, and its counts but the
+// pass mix.
 type sentOnce struct {
 	code    int
 	header  http.Header
 	body    string
 	reached int64
+	carried []decidePassed
 	asked   []frontdoor.AuthorizeOf
 	refunds []frontdoor.RefundOf
 	rows    []gwauth.Composed
 	counts  DecideCounts
 }
 
-func sendRecorded(t *testing.T, h *decideEdge, c authorizeCase) sentOnce {
+func sendRecorded(t *testing.T, h recordedEdge, c authorizeCase) sentOnce {
 	t.Helper()
 	hits := h.python.hits.Load()
 	askedBefore, refundsBefore, _ := h.admitter.seen()
-	rowsBefore := len(h.rows.inserted())
+	rowsBefore, carriedBefore := len(h.rows.inserted()), len(h.carried.carried())
 	rec := h.send(t, c)
 	asked, refunds, _ := h.admitter.seen()
 	header := rec.Header().Clone()
 	header.Del("Date")
+	header.Del("Content-Length")
 	counts := h.edge.DecideCounts()
 	counts.FloatAt, counts.PassedEnabled, counts.PassedUnknown, counts.EnabledUnknown = nil, nil, nil, 0
 	counts.Slow = nil // timing, not an answer
 	return sentOnce{code: rec.Code, header: header, body: withGoldenTiming(rec.Body.Bytes()),
-		reached: h.python.hits.Load() - hits, asked: asked[len(askedBefore):], refunds: refunds[len(refundsBefore):],
-		rows: h.rows.inserted()[rowsBefore:], counts: counts}
+		reached: h.python.hits.Load() - hits, carried: h.carried.carried()[carriedBefore:],
+		asked: asked[len(askedBefore):], refunds: refunds[len(refundsBefore):], rows: h.rows.inserted()[rowsBefore:],
+		counts: counts}
 }
 
 // checkMix holds a measuring edge's pass mix to its bounds: every float_at
@@ -386,14 +455,15 @@ func checkMix(t *testing.T, name string, got DecideCounts) {
 // every fingerprint vector (its key the goldens', signed with the goldens'
 // boot key), through two decide edges, one counting the pass mix and one
 // not: each answer is the same bytes and headers (timing values aside),
-// reaches Python or not alike, asks the front door the same, inserts the
+// reaches Python or not alike, with the same lookup hash, workspace and
+// reason carried for the eviction, asks the front door the same, inserts the
 // same rows and refunds the same, and every count but the pass mix is the
 // same. The measuring edge's mix stays within its bounds, and is not empty:
 // the measurement ran.
 func TestTheDecideAnswersAreTheSameWithoutThePassMix(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
-	setUp := func(c authorizeCase, measure bool) *decideEdge {
+	setUp := func(c authorizeCase, measure bool) recordedEdge {
 		h := newDecideEdge(t, f, c, py)
 		h.edge.decider.measure = measure
 		reason := c.Expect.Reason
@@ -408,18 +478,19 @@ func TestTheDecideAnswersAreTheSameWithoutThePassMix(t *testing.T) {
 		}
 		outcome, code := insertOf(t, c)
 		h.rows.insert, h.rows.code = func(context.Context) store.InsertOutcome { return outcome }, code
-		return h
+		return recording(h)
 	}
 	compare := func(name string, on, off sentOnce) bool {
 		t.Helper()
 		if on.code != off.code || on.body != off.body || !reflect.DeepEqual(on.header, off.header) ||
-			on.reached != off.reached || !reflect.DeepEqual(on.asked, off.asked) ||
+			on.reached != off.reached || !reflect.DeepEqual(on.carried, off.carried) ||
+			!reflect.DeepEqual(on.asked, off.asked) ||
 			!reflect.DeepEqual(on.refunds, off.refunds) || !reflect.DeepEqual(on.rows, off.rows) ||
 			!reflect.DeepEqual(on.counts, off.counts) {
-			t.Errorf("%s: with the pass mix %d %v %s (reached %d, %d asks, %d rows, %+v); without %d %v %s "+
-				"(reached %d, %d asks, %d rows, %+v)", name, on.code, on.header, on.body, on.reached, len(on.asked),
-				len(on.rows), on.counts, off.code, off.header, off.body, off.reached, len(off.asked), len(off.rows),
-				off.counts)
+			t.Errorf("%s: with the pass mix %d %v %s (reached %d, carried %+v, %d asks, %d rows, %+v); without %d %v "+
+				"%s (reached %d, carried %+v, %d asks, %d rows, %+v)", name, on.code, on.header, on.body, on.reached,
+				on.carried, len(on.asked), len(on.rows), on.counts, off.code, off.header, off.body, off.reached,
+				off.carried, len(off.asked), len(off.rows), off.counts)
 			return false
 		}
 		return true
@@ -433,10 +504,17 @@ func TestTheDecideAnswersAreTheSameWithoutThePassMix(t *testing.T) {
 			}
 		}
 	}
+	carriedNamed := 0
 	for _, c := range f.Cases {
 		on, off := setUp(c, true), setUp(c, false)
-		if !compare(c.Name, sendRecorded(t, on, c), sendRecorded(t, off, c)) {
+		a := sendRecorded(t, on, c)
+		if !compare(c.Name, a, sendRecorded(t, off, c)) {
 			continue
+		}
+		for _, p := range a.carried {
+			if p.lookupHash != "" && p.workspace != "" && p.reason != "" {
+				carriedNamed++
+			}
 		}
 		measured, unmeasured := on.edge.DecideCounts(), off.edge.DecideCounts()
 		checkMix(t, c.Name, measured)
@@ -445,8 +523,10 @@ func TestTheDecideAnswersAreTheSameWithoutThePassMix(t *testing.T) {
 		}
 		add(measured)
 	}
-	if len(mix.FloatAt) == 0 || len(mix.PassedEnabled) == 0 || len(mix.PassedUnknown) == 0 {
-		t.Fatalf("the goldens' mix: %+v", mix)
+	// The comparison of what the proxy carries saw passes that name a key
+	// and a workspace, the ones an eviction reads.
+	if len(mix.FloatAt) == 0 || len(mix.PassedEnabled) == 0 || len(mix.PassedUnknown) == 0 || carriedNamed < 50 {
+		t.Fatalf("the goldens' mix: %+v; %d passes carried a key and a workspace", mix, carriedNamed)
 	}
 
 	// The fingerprint corpus, through one pair of edges over the plain
@@ -484,4 +564,96 @@ func TestTheDecideAnswersAreTheSameWithoutThePassMix(t *testing.T) {
 	}
 	t.Logf("goldens' mix %+v; corpus: %d vectors, %d answered, float_at %v, passed_enabled %v, passed_unknown %v",
 		mix, len(corpus.Cases), answered, measured.FloatAt, measured.PassedEnabled, measured.PassedUnknown)
+}
+
+// TestThePassMixWaitsForTheForward: the pass mix's work, the lenient decode
+// and the cache's Peek, comes after Python has the request, never before
+// the forward: a pass before the key's facts reaches Python first, and is
+// attributed after.
+func TestThePassMixWaitsForTheForward(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:body.float")
+	h := newDecideEdge(t, f, c, nil)
+	var seq, pythonAt atomic.Int64
+	reply := answerWith(http.StatusTeapot, []byte(`{"python":true}`))
+	respond := func(w http.ResponseWriter) {
+		pythonAt.Store(seq.Add(1))
+		reply(w)
+	}
+	h.python.respond.Store(&respond)
+	cache := &attributionCache{KeyCache: h.cache, t: t, failLookup: true,
+		held: map[string]string{c.Facts.Key.LookupHash: c.Facts.Key.WorkspaceID}, seq: &seq}
+	h.edge.decider.cfg.Cache = cache
+	lenients, lenientAt := countLenient(h.edge.decider, &seq)
+	h.send(t, c)
+	py, decoded, peeked := pythonAt.Load(), lenientAt.Load(), cache.peekedAt.Load()
+	if lenients.Load() != 1 || py == 0 || decoded <= py || peeked <= decoded {
+		t.Fatalf("python at %d, the lenient decode at %d (%d of them), the peek at %d: the mix's work must follow "+
+			"the forward", py, decoded, lenients.Load(), peeked)
+	}
+	if got := h.edge.DecideCounts(); !maps.Equal(got.PassedEnabled, map[string]int64{gwauth.ReasonFloat: 1}) {
+		t.Fatalf("the pass mix: %+v", got)
+	}
+}
+
+// paddedBody is an authorize body of exactly n bytes, its key the goldens',
+// estimated_input_tokens a string (body.lax_type, so the strict parse reads
+// no lookup hash), padded in metadata.
+func paddedBody(t *testing.T, hash string, n int) string {
+	t.Helper()
+	head := `{"api_key_lookup_hash":"` + hash + `","model":"z-ai/glm-5.3","estimated_input_tokens":"1000",` +
+		`"metadata":{"pad":"`
+	tail := `"}}`
+	if n < len(head)+len(tail) {
+		t.Fatalf("%d bytes is too short", n)
+	}
+	return head + strings.Repeat("a", n-len(head)-len(tail)) + tail
+}
+
+// TestALargeBodyIsNeverDecodedForTheMix: the lenient decode reads a body
+// only under lenientMaxBody; at that size or more, and at 5 MiB, past the
+// strict parse's 4 MiB (body.unparseable, never decoded), the pass is
+// counted unknown with no decode and no peek.
+func TestALargeBodyIsNeverDecodedForTheMix(t *testing.T) {
+	f := authorizeGoldens(t)
+	base := authorizeCaseNamed(t, "pass:body.float")
+	hash, ws := base.Facts.Key.LookupHash, base.Facts.Key.WorkspaceID
+	signer := newBootSigner(t)
+	jsonType := [][2]string{{"content-type", "application/json"}}
+	for _, tc := range []struct {
+		name        string
+		size        int
+		reason      string
+		decoded     bool
+		wantEnabled bool
+	}{
+		{"just under the bound", lenientMaxBody - 1, gwauth.ReasonLaxType, true, true},
+		{"at the bound", lenientMaxBody, gwauth.ReasonLaxType, false, false},
+		{"5 MiB", 5 << 20, gwauth.ReasonUnparseable, false, false},
+	} {
+		body := paddedBody(t, hash, tc.size)
+		if len(body) != tc.size {
+			t.Fatalf("%s: %d bytes", tc.name, len(body))
+		}
+		c := signer.sign(base, body, jsonType)
+		h := newDecideEdge(t, f, base, nil)
+		cache := &attributionCache{KeyCache: h.cache, t: t, failLookup: true, held: map[string]string{hash: ws}}
+		h.edge.decider.cfg.Cache = cache
+		lenients, _ := countLenient(h.edge.decider, nil)
+		h.send(t, c)
+		got := h.edge.DecideCounts()
+		wantEnabled, wantUnknown := map[string]int64{}, map[string]int64{}
+		if tc.wantEnabled {
+			wantEnabled[tc.reason] = 1
+		} else {
+			wantUnknown[tc.reason] = 1
+		}
+		decodes, peeks := lenients.Load(), cache.peeks.Load()
+		if !maps.Equal(got.Passed, map[string]int64{tc.reason: 1}) || !maps.Equal(got.PassedEnabled, wantEnabled) ||
+			!maps.Equal(got.PassedUnknown, wantUnknown) || (decodes == 1) != tc.decoded || decodes > 1 ||
+			(peeks == 1) != tc.decoded || peeks > 1 {
+			t.Errorf("%s: passed %v, enabled %v, unknown %v, %d decodes, %d peeks", tc.name, got.Passed,
+				got.PassedEnabled, got.PassedUnknown, decodes, peeks)
+		}
+	}
 }

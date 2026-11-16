@@ -631,12 +631,20 @@ enables, and `passed_unknown={...}` those whose workspace the node could
 not tell (`enabled_unknown=N` is its sum); a pass in neither is of a
 workspace the copy leaves off. The workspace is the pipeline's when it read
 the key's facts, else what the key cache already holds for the body's
-lookup hash, read with no fill and no use (`decider.attribute`). Its blind
-spot: the cache holds a key only once one of its requests reached the
-key's facts on that node, so a workspace whose every request fails a body
-or boot gate counts unknown, and so does a body the edge did not read or
-cannot decode. `fastpathwatch edge` sums the three maps under
-`decide.by_name` and `enabled_unknown` under `decide.counts`.
+lookup hash, read with no fill and no use (`decider.attribute`), all of it
+once the forward to Python has returned, so a pass's reason and its mix
+can fall in consecutive lines. Its blind spot: the cache holds a key only
+once one of its requests reached the key's facts on that node, so a
+workspace whose every request fails a body or boot gate counts unknown,
+and so does a body the edge did not read, cannot decode, or (when the
+strict parse did not read the lookup hash) of 64 KiB or more. Two more
+skew it the other way: a lookup hash the cache last found naming no key is
+counted not enabled even past the 5 s the cache trusts that answer, and a
+switch copy older than three of its intervals enables no workspace, which
+the edge cannot tell apart, so while the switch cannot be read
+`passed_enabled` falls to 0 without `passed_unknown` rising.
+`fastpathwatch edge` sums the three maps under `decide.by_name` and
+`enabled_unknown` under `decide.counts`.
 A row is per cloud and region: another region's row waits on `rollout.sh`
 rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves

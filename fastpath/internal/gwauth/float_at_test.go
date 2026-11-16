@@ -70,6 +70,10 @@ func TestFloatAtIsTheFirstFloat(t *testing.T) {
 		// holds a float is the latency preference, not max_price after it.
 		{"within provider", FloatAtProviderPreferredMaxLatency,
 			bodyOf(`"provider":{"sort":"price","preferred_max_latency":2.5,"max_price":{"prompt":0.1}}`)},
+		// Another member's float first: provider.other, not the named
+		// preference after it.
+		{"another provider member first", FloatAtProviderOther,
+			bodyOf(`"provider":{"only_mine":2.5,"max_price":{"prompt":0.5}}`)},
 		{"integers before", FloatAtTrace, bodyOf(`"max_tokens":8`, `"metadata":{"a":1}`, `"trace":{"t":[1,2,0.5]}`)},
 	} {
 		if _, p := ParseRequest(c.body, jsonHeaders); p.Reason != ReasonFloat || p.FloatAt != c.want {
@@ -96,7 +100,8 @@ func TestFloatAtIsOnlyForBodyFloat(t *testing.T) {
 	for name := range FloatAtNames() {
 		field, isDeclared := strings.CutPrefix(name, FloatAtDeclared)
 		if isDeclared {
-			if _, ok := declared[field]; !ok || field == "provider" || field == "metadata" {
+			if _, ok := declared[field]; !ok || field == "provider" || field == "trace" || field == "metadata" ||
+				field == "tags" {
 				t.Errorf("%q: not a declared field of its own", name)
 			}
 		}

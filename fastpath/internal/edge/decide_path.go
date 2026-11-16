@@ -197,9 +197,11 @@ type decider struct {
 	// shortens them.
 	slowAtEdge, slowInAll time.Duration
 	ticketGrace           time.Duration
-	// measure counts each pass's mix (passMix) beside its reason; a test
-	// turns it off to hold the answers to be the same without it.
+	// measure counts each pass's mix (pendingMix) beside its reason; a test
+	// turns it off to hold the answers to be the same without it. lenient
+	// is lenientLookupHash; a test counts its calls.
 	measure bool
+	lenient func(body []byte) string
 
 	mu sync.Mutex
 	// total is the counts since the edge started, period the period's;
@@ -226,14 +228,16 @@ type decider struct {
 // boot, decide or admit phase, and each counted under the body's whose time
 // after the body's read alone was over SlowAtEdge.
 //
-// The pass mix (passMix) is counted beside passed, each pass once: floatAt
-// counts the body.float passes by where their first float is (a
-// gwauth.FloatAt name), passedEnabled the passes, by reason, whose key's
-// workspace the switch copy enables, and passedUnknown those whose
-// workspace is not known (decider.attribute says how it is known, and what
-// it misses). A pass in neither map is of a workspace the copy does not
-// enable, or of a lookup hash that names no key. Every key is a pass reason
-// or a FloatAt name, never anything the request carried.
+// The pass mix (pendingMix) is counted each pass once, once its forward to
+// Python has returned (countMix): floatAt counts the body.float passes by
+// where their first float is (a gwauth.FloatAt name), passedEnabled the
+// passes, by reason, whose key's workspace the switch copy enables, and
+// passedUnknown those whose workspace is not known (decider.attribute says
+// how it is known, and what it misses). A pass in neither map is of a
+// workspace the copy does not enable, or of a lookup hash that names no
+// key. Every key is a pass reason or a FloatAt name, never anything the
+// request carried. A pass whose forward straddles a period's end has its
+// reason in one line and its mix in the next.
 type decideTally struct {
 	answered, readBack, refunded, refundFailed, slowOwn int64
 	unavailable, passed, slow, windows, via             map[string]int64
@@ -254,7 +258,7 @@ func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.T
 	}
 	return &decider{cfg: cfg, logf: logf, every: every, decides: newDecideCopy(cfg.Decides, 0, clock, logf),
 		slowAtEdge: SlowAtEdge, slowInAll: SlowInAll, total: newDecideTally(), period: newDecideTally(),
-		measure: true}
+		measure: true, lenient: lenientLookupHash}
 }
 
 // count adds to the period's counts and the totals.
@@ -303,10 +307,15 @@ func ownSlow(phase string, m edgeMarks, forwarded time.Time, threshold time.Dura
 // arrival, for the time Python's answer took in all, and the §3 reason it
 // passed with, for the full shadow (which compares Python's per-key
 // in-flight refusal with the decide path's own inflight.key).
+//
+// mix is what the decide line's pass mix is made from, nil when it is not
+// measured: ServeHTTP counts it (decider.countMix) once the forward to
+// Python has returned, never before it, and nothing else reads it.
 type decidePassed struct {
 	lookupHash, workspace string
 	arrived               time.Time
 	reason                string
+	mix                   *pendingMix
 }
 
 type decidePassedKey struct{}
@@ -338,15 +347,13 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 	routed := time.Now()
 	passed = decidePassed{lookupHash: decided.LookupHash, workspace: decided.Workspace, arrived: arrived}
 	pass := func(reason string) (bool, decidePassed) {
-		// The pass mix, once the reason is final: what it reads changes
-		// nothing the request meets.
-		var mix *passMix
-		if dp.measure {
-			m := dp.passMixOf(reason, decided, body, in.Enabled)
-			mix = &m
-		}
-		dp.pass(reason, mix)
+		dp.pass(reason)
 		passed.reason = reason
+		if dp.measure {
+			// Only what the pipeline already holds is copied here; the
+			// attribution's reads wait for the forward (countMix).
+			passed.mix = pendingMixOf(reason, decided, body, in.Enabled)
+		}
 		// Counted at_edge, the total the alert and the rollout gate read,
 		// and under the phase it spent the most time in (slowPhase), so
 		// that a minute's slow pass with no owner, insert or budget reason
@@ -477,22 +484,61 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 // as Decide would name it.
 func (e *Edge) passedUnread(r *http.Request, seen BootSeen) {
 	if e.decider != nil && r.Method == http.MethodPost && authorizeRoutes[r.URL.Path] {
-		var mix *passMix
+		reason := bootPass(seen)
+		e.decider.pass(reason)
 		if e.decider.measure {
-			// No body was read, so no lookup hash: its workspace is unknown.
-			mix = &passMix{}
+			// No body was read, so there is no lookup hash and nothing to
+			// read: counted unknown at once, with no attribution work.
+			e.decider.countMix(&pendingMix{reason: reason})
 		}
-		e.decider.pass(bootPass(seen), mix)
 	}
 }
 
-// passMix is what the decide line counts of a pass beside its reason
-// (decideTally's floatAt, passedEnabled and passedUnknown): where its first
-// float is, for body.float, and what the switch copy says of its key's
-// workspace.
-type passMix struct {
-	floatAt string
-	in      attribution
+// lenientMaxBody bounds the body the pass mix decodes leniently for its
+// lookup hash (decider.attribute): a larger one is counted unknown rather
+// than decoded.
+const lenientMaxBody = 64 << 10
+
+// pendingMix is what a pass's mix is made from, copied from what the
+// pipeline already holds when the request passes (pendingMixOf) and counted
+// once Python has the request (decider.countMix): its reason, where its
+// first float is (body.float only), the workspace when the pipeline learned
+// it (known), else the lookup hash its strict parse read ("" when the parse
+// did not get that far), its body and the switch copy the pipeline read.
+type pendingMix struct {
+	reason, floatAt string
+	workspace       string
+	known           bool
+	lookupHash      string
+	body            []byte
+	enabled         func(string) bool
+}
+
+// pendingMixOf copies a pass's mix from the pipeline's answer: no read, no
+// lock and no decode, so nothing is added before the forward. The lookup
+// hash is the pipeline's (Decided.LookupHash), or for a cohort reason the
+// strict parse's, which the pipeline keeps for this alone
+// (Decided.parsedLookupHash): the eviction the proxy carries is unchanged.
+func pendingMixOf(reason string, decided Decided, body []byte, enabled func(string) bool) *pendingMix {
+	m := &pendingMix{reason: reason, body: body, enabled: enabled, lookupHash: decided.LookupHash}
+	if reason == gwauth.ReasonFloat {
+		m.floatAt = decided.FloatAt
+	}
+	if m.lookupHash == "" {
+		m.lookupHash = decided.parsedLookupHash
+	}
+	switch {
+	case decided.Workspace != "":
+		m.workspace, m.known = decided.Workspace, true
+	case decided.Read.Key != gwstate.Cold:
+		// The pipeline looked the key up and the cache held an entry (a
+		// stale one, or one naming no key).
+		m.known = true
+		if decided.Read.Found {
+			m.workspace = decided.Read.Facts.Key.WorkspaceID
+		}
+	}
+	return m
 }
 
 // attribution is whether a pass's key belongs to a workspace the switch
@@ -505,24 +551,37 @@ const (
 	attributedNotEnabled
 )
 
-// passMixOf is the mix of a pass with its final reason.
-func (dp *decider) passMixOf(reason string, decided Decided, body []byte, enabled func(string) bool) passMix {
-	m := passMix{in: dp.attribute(decided, body, enabled)}
-	if reason == gwauth.ReasonFloat {
-		m.floatAt = decided.FloatAt
+// countMix counts a pass's mix (decideTally's floatAt, passedEnabled and
+// passedUnknown); nil counts nothing. ServeHTTP calls it once the forward
+// to Python has returned, so the attribution's reads (a lenient decode, the
+// cache's lock) never delay the forward or the time counted at the edge.
+func (dp *decider) countMix(m *pendingMix) {
+	if m == nil {
+		return
 	}
-	return m
+	in := dp.attribute(m)
+	dp.count(func(t *decideTally) {
+		if m.floatAt != "" {
+			t.floatAt[m.floatAt]++
+		}
+		switch in {
+		case attributedEnabled:
+			t.passedEnabled[m.reason]++
+		case attributedUnknown:
+			t.passedUnknown[m.reason]++
+		}
+	})
 }
 
 // attribute says whether a pass's key belongs to a workspace the switch copy
 // (enabled, the copy the pipeline's not_enabled gate read) enables, with no
-// read of its own: the pipeline's word when it learned the workspace (a key
-// found fresh, so every pass at or after the key's facts), else what the
-// cache held when the pipeline looked the key up (a stale entry), else what
-// the cache holds now for the lookup hash the body names, read without a
-// fill or a use (KeyPeeker). The lookup hash is the strict parse's when the
-// body parsed, else a lenient read of the body's top-level member
-// (lenientLookupHash), as the shadow reads it for an eviction.
+// read of the store: the pipeline's word when it learned the workspace (a
+// key found fresh, so every pass at or after the key's facts, or a stale
+// entry it held), else what the cache holds now for the lookup hash the
+// body names, read without a fill or a use (KeyPeeker). The lookup hash is
+// the strict parse's when it got that far, else a lenient read of the
+// body's top-level member (lenientLookupHash, as the shadow reads it for an
+// eviction), only for a body under lenientMaxBody.
 //
 // Its blind spot, counted unknown: a key the node's cache does not hold. The
 // cache holds a key only once one of its requests went past the boot, the
@@ -530,41 +589,38 @@ func (dp *decider) passMixOf(reason string, decided Decided, body []byte, enable
 // covered, the region, async-v1's) and was looked up, until the size bound
 // displaces it or Python's refusal evicts it. So a workspace whose every
 // request fails a body or boot gate is never cached and counts unknown; so
-// does a request whose body was not read (passedUnread), or does not read
-// as JSON with a string api_key_lookup_hash (body.unparseable, non_finite,
-// a key named only by api_key_hash), and every pass while no front door is
-// bound (no switch copy). A key held names the workspace of its last read,
-// of any age, and the node's switch copy can lag the switch, so a key moved
-// or a workspace switched within that time is counted as before.
-func (dp *decider) attribute(decided Decided, body []byte, enabled func(string) bool) attribution {
-	if enabled == nil {
+// does a request whose body was not read (passedUnread), is lenientMaxBody
+// or more and did not parse, or does not read as JSON with a string
+// api_key_lookup_hash (body.unparseable, non_finite, a key named only by
+// api_key_hash), and every pass while no front door is bound (no switch
+// copy). Counted not enabled where it may not be: a key held names the
+// workspace of its last read, of any age, and the switch copy can lag the
+// switch, so a key moved or a workspace switched within that time is
+// counted as before; Peek returns a lookup hash's negative entry (no key)
+// past the 5 s Lookup would hold it, so such a pass is not enabled rather
+// than unknown; and a switch copy older than three of its intervals
+// enables no workspace (service's workspaceSwitch.Enabled), which the edge
+// cannot tell from a copy that enables none, so while the switch cannot be
+// read passed_enabled falls to 0 and passed_unknown does not rise.
+func (dp *decider) attribute(m *pendingMix) attribution {
+	if m.enabled == nil {
 		return attributedUnknown
 	}
-	workspace, known := decided.Workspace, decided.Workspace != ""
-	switch {
-	case known:
-	case decided.Read.Key != gwstate.Cold:
-		known = true
-		if decided.Read.Found {
-			workspace = decided.Read.Facts.Key.WorkspaceID
-		}
-	default:
+	workspace, known := m.workspace, m.known
+	if !known {
 		peek, ok := dp.cfg.Cache.(KeyPeeker)
-		if !ok {
-			break
+		hash := m.lookupHash
+		if ok && hash == "" && len(m.body) < lenientMaxBody {
+			hash = dp.lenient(m.body)
 		}
-		hash := decided.LookupHash
-		if hash == "" {
-			hash = lenientLookupHash(body)
-		}
-		if hash != "" {
+		if ok && hash != "" {
 			workspace, known = peek.Peek(hash)
 		}
 	}
 	switch {
 	case !known:
 		return attributedUnknown
-	case workspace != "" && enabled(workspace):
+	case workspace != "" && m.enabled(workspace):
 		return attributedEnabled
 	}
 	return attributedNotEnabled
@@ -632,23 +688,8 @@ func (dp *decider) checkWindows(ctx context.Context, d *Decision, at, budget tim
 	return w.verdict
 }
 
-// pass counts a pass by its reason, and its mix when one is measured.
-func (dp *decider) pass(reason string, mix *passMix) {
-	dp.count(func(t *decideTally) {
-		t.passed[reason]++
-		if mix == nil {
-			return
-		}
-		if mix.floatAt != "" {
-			t.floatAt[mix.floatAt]++
-		}
-		switch mix.in {
-		case attributedEnabled:
-			t.passedEnabled[reason]++
-		case attributedUnknown:
-			t.passedUnknown[reason]++
-		}
-	})
+func (dp *decider) pass(reason string) {
+	dp.count(func(t *decideTally) { t.passed[reason]++ })
 }
 
 // answeredUpstream counts a pass whose answer from Python, or the proxy's

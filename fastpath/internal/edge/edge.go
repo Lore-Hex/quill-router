@@ -496,6 +496,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ctx = context.WithValue(ctx, decidePassedKey{}, passed)
+		// The pass mix once the forward has returned (or broken off), never
+		// before it: its reads delay nothing the request meets.
+		defer e.decider.countMix(passed.mix)
 	}
 	out := r.Clone(ctx)
 	out.Body = io.NopCloser(bytes.NewReader(body))
