@@ -117,8 +117,11 @@ from trusted_router.storage_key_usage import (
     CHAT_BROWSER_KEY_INDEX_KIND,
     api_key_from_json,
     api_key_usage_snapshot,
+    chat_browser_key_index_body,
+    chat_browser_key_index_expired,
     chat_browser_key_index_id,
     chat_browser_key_index_prefix,
+    chat_browser_key_index_upper,
     is_users_chat_browser_key,
 )
 from trusted_router.storage_legacy_trust import trust_program_armed
@@ -469,8 +472,12 @@ _API_KEY_AUTH_CONTEXT_SQL = """
 """
 
 # One user's indexed chat-browser keys with their usage rows: a key-range read
-# of that user's index rows (primary key prefix), point lookups of those keys,
-# and their tr_key_limit rows. Nothing else in the workspace is read.
+# of that user's index rows, point lookups of those keys, and their
+# tr_key_limit rows. Nothing else in the workspace is read. The index id range
+# is a primary-key seek under any database collation, and exact, because
+# every id of this kind is a fixed-width hex digest plus a suffix; see
+# chat_browser_key_index_prefix. Rows are also checked against the key
+# records' owner below.
 _CHAT_BROWSER_KEYS_SQL = (
     "/* chat_browser_keys */ "
     "SELECT key_record.body, key_limit.shard, key_limit.usage, key_limit.byok_usage, "
@@ -486,8 +493,14 @@ _CHAT_BROWSER_KEYS_SQL = (
     "AND key_limit.key_hash = key_record.id "
     "AND key_limit.shard >= 0 "
     "AND key_limit.shard < COALESCE(CAST(key_record.body ->> 'usage_shard_count' AS BIGINT), 1) "
-    "WHERE key_index.kind = %s AND key_index.id LIKE %s ESCAPE '\\' "
+    "WHERE key_index.kind = %s AND key_index.id >= %s AND key_index.id < %s "
     "ORDER BY key_record.id, key_limit.shard"
+)
+
+# The same key range alone, for the index's hashes and expiries.
+_CHAT_BROWSER_KEY_INDEX_SQL = (
+    "SELECT id, body ->> 'key_id', body ->> 'expires_at' FROM tr_entities "
+    "WHERE kind = %s AND id >= %s AND id < %s ORDER BY id"
 )
 
 _CONSOLE_API_KEYS_SQL = """
@@ -3575,27 +3588,34 @@ class PostgresStore(OperationalAnalyticsReads):
             results.update(self._delete_keys_batch(hashes[start:start + 100], workspace_id))
         return results
 
-    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
+    def record_chat_browser_key(
+        self, workspace_id: str, user_id: str, key_hash: str, *, expires_at: str | None = None,
+    ) -> None:
         self._run_transaction(lambda conn: self._write_entity_tx(
             conn,
             CHAT_BROWSER_KEY_INDEX_KIND,
             chat_browser_key_index_id(workspace_id, user_id, key_hash),
-            {"key_id": key_hash},
+            chat_browser_key_index_body(workspace_id, user_id, key_hash, expires_at),
         ))
 
-    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
-        def read(conn: Any) -> list[str]:
+    @staticmethod
+    def _chat_browser_key_index_range(workspace_id: str, user_id: str) -> tuple[Any, ...]:
+        prefix = chat_browser_key_index_prefix(workspace_id, user_id)
+        return (CHAT_BROWSER_KEY_INDEX_KIND, prefix, chat_browser_key_index_upper(prefix))
+
+    def _chat_browser_key_index(self, workspace_id: str, user_id: str) -> list[tuple[str, Any]]:
+        def read(conn: Any) -> list[tuple[str, Any]]:
             rows = conn.execute(
-                "SELECT body ->> 'key_id' FROM tr_entities WHERE kind = %s "
-                "AND id LIKE %s ESCAPE '\\' ORDER BY id",
-                (
-                    CHAT_BROWSER_KEY_INDEX_KIND,
-                    self._like_prefix(chat_browser_key_index_prefix(workspace_id, user_id)),
-                ),
+                _CHAT_BROWSER_KEY_INDEX_SQL,
+                self._chat_browser_key_index_range(workspace_id, user_id),
             ).fetchall()
-            return [str(row[0]) for row in rows]
+            prefix = chat_browser_key_index_prefix(workspace_id, user_id)
+            return [(str(row[1]), row[2]) for row in rows if str(row[0]).startswith(prefix)]
 
         return self._run_transaction(read)
+
+    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
+        return [key_hash for key_hash, _ in self._chat_browser_key_index(workspace_id, user_id)]
 
     def list_chat_browser_keys(
         self, workspace_id: str, user_id: str, *, key_hashes: list[str] | None = None,
@@ -3605,11 +3625,7 @@ class PostgresStore(OperationalAnalyticsReads):
         def read(conn: Any) -> list[ApiKeyUsageSnapshot]:
             rows = conn.execute(
                 _CHAT_BROWSER_KEYS_SQL,
-                (
-                    workspace_id,
-                    CHAT_BROWSER_KEY_INDEX_KIND,
-                    self._like_prefix(chat_browser_key_index_prefix(workspace_id, user_id)),
-                ),
+                (workspace_id, *self._chat_browser_key_index_range(workspace_id, user_id)),
             ).fetchall()
             grouped: dict[str, tuple[ApiKey, list[list[Any]]]] = {}
             for row in rows:
@@ -3638,6 +3654,16 @@ class PostgresStore(OperationalAnalyticsReads):
             "DELETE FROM tr_entities WHERE kind = %s AND id = ANY(%s)",
             (CHAT_BROWSER_KEY_INDEX_KIND, ids),
         ))
+
+    def forget_expired_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, expired_before: str,
+    ) -> None:
+        expired = [
+            key_hash
+            for key_hash, expires_at in self._chat_browser_key_index(workspace_id, user_id)
+            if chat_browser_key_index_expired({"expires_at": expires_at}, expired_before)
+        ]
+        self.forget_chat_browser_keys(workspace_id, user_id, expired)
 
     def _delete_keys_batch(
         self, key_hashes: list[str], workspace_id: str | None,

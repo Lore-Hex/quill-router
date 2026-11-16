@@ -230,7 +230,7 @@ def test_member_credits_page_shows_the_balance_only(gates: Gates, billing_calls:
     assert page.status_code == 200
     assert page.headers["cache-control"] == "private, no-store"
     assert "credits-balance-amount" in page.text
-    assert "Only workspace owners and managers can manage billing." in page.text
+    assert "Only workspace owners and admins can manage billing." in page.text
     for hidden in (
         "/console/credits/checkout",
         "/console/credits/payment-methods",
@@ -248,7 +248,7 @@ def test_member_credits_page_shows_the_balance_only(gates: Gates, billing_calls:
     assert billing_calls == []
 
     owner_page = gates.client("owner").get("/console/credits")
-    assert "Only workspace owners and managers can manage billing." not in owner_page.text
+    assert "Only workspace owners and admins can manage billing." not in owner_page.text
     for shown in (
         'action="/console/credits/checkout"',
         'action="/console/credits/payment-methods/remove"',
@@ -301,7 +301,7 @@ def test_member_cannot_create_or_delete_broadcast_destinations(gates: Gates) -> 
     page = member.get("/console/broadcast")
     assert page.status_code == 200
     assert "Owner collector" in page.text  # that a destination exists
-    assert "Only workspace owners and managers can manage Broadcast destinations." in page.text
+    assert "Only workspace owners and admins can manage Broadcast destinations." in page.text
     for hidden in (WEBHOOK_URL, "owner-collector.example", WEBHOOK_HEADER, existing.id,
                    'action="/console/broadcast"', "/delete", "api key", ">headers<"):
         assert hidden not in page.text, hidden
@@ -342,7 +342,7 @@ def test_member_cannot_save_byok_and_sees_no_key_hint(gates: Gates) -> None:
     page = member.get("/console/byok")
     assert page.status_code == 200
     assert "Mistral" in page.text and "Key set" in page.text
-    assert "Only workspace owners and managers can manage provider keys." in page.text
+    assert "Only workspace owners and admins can manage provider keys." in page.text
     assert BYOK_HINT not in page.text and "9876" not in page.text
     assert 'action="/console/byok"' not in page.text
     assert BYOK_HINT in owner.get("/console/byok").text
@@ -476,6 +476,8 @@ def test_member_cannot_start_identity_verification_on_the_shared_workspace(gates
 
     page = member.get("/console/account/verification").text
     assert "data-identity-manager-note" in page
+    assert "only its owners and admins can start verification here" in page
+    assert "owners and managers" not in page
     assert 'class="btn primary verification-start" type="submit" disabled' in page
 
     admin = gates.client("admin")
@@ -560,3 +562,19 @@ def test_activation_reminders_go_only_to_the_workspace_owner(
     assert len(sent) == 2
     assert {message.to for message in sent} == {"reminded-owner@example.com"}
     assert all("/console/api-keys#new-api-key" in message.text_body for message in sent)
+
+
+def test_a_members_credit_transfer_post_lands_on_the_credits_note(gates: Gates) -> None:
+    """Not on the transfers page, which a member gets 403 for: the Credits
+    page tells them to ask a workspace owner or admin."""
+    member = gates.client("member")
+    response = member.post(
+        "/console/credit-transfers",
+        data={"recipient_username": "someone", "amount": "1", "idempotency_key": "gates-transfer"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/console/credits"
+    page = member.get(response.headers["location"])
+    assert page.status_code == 200
+    assert "Only workspace owners and admins can manage billing. Ask one of them" in page.text

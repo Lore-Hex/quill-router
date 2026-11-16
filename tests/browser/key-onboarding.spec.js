@@ -101,3 +101,18 @@ for (const [role, canManage] of [['owner', true], ['member', false]]) test(`a re
     await expect(action).toBeHidden();
   }
 });
+
+for (const [role, canManage] of [['owner', true], ['member', false]]) test(`no credits tells a ${role} the right next step`, async ({page}) => {
+  await load(page, {status: 402, json: {error: {message: 'private provider detail'}}}, canManage);
+  await page.getByRole('button', {name: 'Run my first API request'}).click();
+  const error = page.locator('[data-call-error]');
+  await expect(error).toContainText('Credits are required');
+  const action = error.locator('[data-call-error-action]');
+  if (canManage) {
+    await expect(action).toBeVisible();
+    await expect(action).toHaveAttribute('href', '/console/credits');
+  } else {
+    await expect(error).toContainText('Ask a workspace owner or admin to add credits');
+    await expect(action).toBeHidden();
+  }
+});

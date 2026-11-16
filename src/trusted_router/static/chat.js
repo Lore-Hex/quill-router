@@ -3375,9 +3375,11 @@
             /spend limit/i.test(m) ||
             /key_limit_exceeded/i.test(m)
         ) {
+            // Role-neutral: a member cannot add credits, so name who can.
             return (
-                "Out of TrustedRouter credits. Add a card and top up at " +
-                "trustedrouter.com/credits, then refresh this page and retry."
+                "This workspace is out of TrustedRouter credits. A workspace owner " +
+                "or admin can add credits at trustedrouter.com/credits; then refresh " +
+                "this page and retry."
             );
         }
         if (/\b401\b|invalid_api_key|Invalid API key/i.test(m)) {

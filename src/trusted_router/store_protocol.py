@@ -544,8 +544,11 @@ class Store(Protocol):
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         """Delete only owned keys, in batches of at most 100; deduplicate input."""
         ...
-    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
-        """Index a chat-browser key under its user and workspace."""
+    def record_chat_browser_key(
+        self, workspace_id: str, user_id: str, key_hash: str, *, expires_at: str | None = ...,
+    ) -> None:
+        """Index a chat-browser key under its user and workspace, with its
+        expiry so finished rows can be removed without reading the key."""
         ...
     def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
         """The key hashes indexed for that user in that workspace: one
@@ -565,6 +568,12 @@ class Store(Protocol):
         self, workspace_id: str, user_id: str, key_hashes: list[str],
     ) -> None:
         """Remove the index rows of keys that can no longer matter."""
+        ...
+    def forget_expired_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, expired_before: str,
+    ) -> None:
+        """Remove that user's index rows whose recorded expiry is at or before
+        ``expired_before``, reading only the index rows."""
         ...
     def delete_key(self, key_hash: str) -> bool: ...
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None: ...

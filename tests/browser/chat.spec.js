@@ -241,3 +241,16 @@ test("a chat key at its own spend limit says to ask an owner or admin, not to ad
   await expect(error).toContainText("ask a workspace owner or admin");
   await expect(error).not.toContainText("Add a card");
 });
+
+test("a workspace out of credits names who can add them", async ({ page, context }) => {
+  await setup(page, context);
+  await page.route("**/v1/chat/completions", (route) => route.fulfill({
+    status: 402, json: { error: { code: 402, message: "Insufficient credits", type: "insufficient_credits" } },
+  }));
+  await page.goto(`/chat?model=${MODEL}`);
+  await send(page);
+  const error = page.locator(".chat-msg-error");
+  await expect(error).toContainText("out of TrustedRouter credits");
+  await expect(error).toContainText("A workspace owner or admin can add credits");
+  await expect(error).not.toContainText("Add a card");
+});

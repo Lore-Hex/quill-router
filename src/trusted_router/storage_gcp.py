@@ -204,6 +204,8 @@ from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_key_usage import (
     CHAT_BROWSER_KEY_INDEX_KIND,
     api_key_usage_from_typed,
+    chat_browser_key_index_body,
+    chat_browser_key_index_expired,
     chat_browser_key_index_id,
     chat_browser_key_index_prefix,
     is_users_chat_browser_key,
@@ -2866,11 +2868,13 @@ class SpannerStore(OperationalAnalyticsReads):
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         return self.api_keys.delete_many(workspace_id, key_hashes)
 
-    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
+    def record_chat_browser_key(
+        self, workspace_id: str, user_id: str, key_hash: str, *, expires_at: str | None = None,
+    ) -> None:
         self._write_entity(
             CHAT_BROWSER_KEY_INDEX_KIND,
             chat_browser_key_index_id(workspace_id, user_id, key_hash),
-            {"key_id": key_hash},
+            chat_browser_key_index_body(workspace_id, user_id, key_hash, expires_at),
         )
 
     def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
@@ -2908,6 +2912,21 @@ class SpannerStore(OperationalAnalyticsReads):
                 CHAT_BROWSER_KEY_INDEX_KIND,
                 [chat_browser_key_index_id(workspace_id, user_id, h) for h in key_hashes],
             )
+
+    def forget_expired_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, expired_before: str,
+    ) -> None:
+        """The index key-range read, then one delete if anything expired."""
+        refs = self._list_entities(
+            CHAT_BROWSER_KEY_INDEX_KIND,
+            prefix=chat_browser_key_index_prefix(workspace_id, user_id),
+            cls=dict,
+        )
+        self.forget_chat_browser_keys(
+            workspace_id,
+            user_id,
+            [str(ref["key_id"]) for ref in refs if chat_browser_key_index_expired(ref, expired_before)],
+        )
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)

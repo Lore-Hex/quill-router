@@ -47,7 +47,10 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.storage_errors import DeferredSettlementCapReached
-from trusted_router.storage_key_usage import is_users_chat_browser_key
+from trusted_router.storage_key_usage import (
+    chat_browser_key_index_expired,
+    is_users_chat_browser_key,
+)
 from trusted_router.storage_models import (
     ApiKey,
     ApiKeyUsageSnapshot,
@@ -86,9 +89,10 @@ class InMemoryApiKeys:
         # Same lazy fixed-UTC-window semantics as the typed tr_key_limit columns
         # (spend_windows.py); lives beside the key so ApiKey stays a plain record.
         self.window_usage: dict[str, dict[str, list]] = {}
-        # Chat-browser key index: (workspace_id, user_id) -> key hashes. The
-        # in-memory twin of the chat_browser_key_by_member index rows.
-        self.chat_browser_keys: dict[tuple[str, str], set[str]] = {}
+        # Chat-browser key index: (workspace_id, user_id) -> {key hash: the
+        # key's expiry}. The in-memory twin of the chat_browser_key_by_member
+        # index rows.
+        self.chat_browser_keys: dict[tuple[str, str], dict[str, str | None]] = {}
 
     def reset(self) -> None:
         # Caller holds the parent lock during the global reset, so we
@@ -103,9 +107,11 @@ class InMemoryApiKeys:
         self.chat_browser_keys.clear()
 
     # ── Per-user chat-browser key index ─────────────────────────────────
-    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
+    def record_chat_browser_key(
+        self, workspace_id: str, user_id: str, key_hash: str, *, expires_at: str | None = None,
+    ) -> None:
         with self._lock:
-            self.chat_browser_keys.setdefault((workspace_id, user_id), set()).add(key_hash)
+            self.chat_browser_keys.setdefault((workspace_id, user_id), {})[key_hash] = expires_at
 
     def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
         with self._lock:
@@ -139,7 +145,18 @@ class InMemoryApiKeys:
         with self._lock:
             indexed = self.chat_browser_keys.get((workspace_id, user_id))
             if indexed is not None:
-                indexed.difference_update(key_hashes)
+                for key_hash in key_hashes:
+                    indexed.pop(key_hash, None)
+
+    def forget_expired_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, expired_before: str,
+    ) -> None:
+        with self._lock:
+            indexed = self.chat_browser_keys.get((workspace_id, user_id), {})
+            for key_hash, expires_at in list(indexed.items()):
+                body = {"expires_at": expires_at}
+                if chat_browser_key_index_expired(body, expired_before):
+                    indexed.pop(key_hash, None)
 
     # ── API key CRUD ────────────────────────────────────────────────────
     def create(
@@ -288,6 +305,11 @@ class InMemoryApiKeys:
                 key.limit_microdollars = None if value is None else dollars_to_microdollars(value)
             if "limit_microdollars" in patch:
                 key.limit_microdollars = patch["limit_microdollars"]
+            if patch.get("limit_microdollars_at_most") is not None:
+                # Lowers, never raises; atomic with the read under the lock.
+                ceiling = int(patch["limit_microdollars_at_most"])
+                current = key.limit_microdollars
+                key.limit_microdollars = ceiling if current is None else min(current, ceiling)
             if "limit_reset" in patch:
                 key.limit_reset = patch["limit_reset"]
             for window in ("daily", "weekly", "monthly"):

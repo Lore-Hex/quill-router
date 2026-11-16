@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
+import hashlib
 import json
 from collections.abc import Sequence
 from typing import Any
@@ -68,18 +70,63 @@ def api_key_usage_snapshot(
 
 
 # ── Per-user chat-browser key index ──────────────────────────────────────
-# One small row per chat-browser key, keyed <workspace>#<user>#<key hash>, so
-# issuance reads only that user's keys in that workspace (a key-range read on
-# the primary key) instead of every key in the workspace.
+# One small row per chat-browser key, so issuance reads only that user's keys
+# in that workspace (a key-range read on the primary key) instead of every key
+# in the workspace. The id is <hex digest of workspace and user>.<key hash>.
+# A fixed-width lowercase hex prefix sorts the same under a locale collation as
+# under bytewise ("C") order, so on Postgres the range id >= prefix AND id <
+# prefix + 1 is both exact and an index seek on the primary key whatever the
+# database collation. A <workspace>#<user># prefix is neither: a locale
+# collation treats '#' as ignorable, so a range on it matches the wrong rows,
+# and LIKE can seek only under the C collation.
 CHAT_BROWSER_KEY_INDEX_KIND = "chat_browser_key_by_member"
+_CHAT_BROWSER_KEY_INDEX_DIGITS = 64
 
 
 def chat_browser_key_index_prefix(workspace_id: str, user_id: str) -> str:
-    return f"{workspace_id}#{user_id}#"
+    return hashlib.sha256(f"{workspace_id}\n{user_id}".encode()).hexdigest()
+
+
+def chat_browser_key_index_upper(prefix: str) -> str:
+    """The smallest id above every id that starts with ``prefix``: the digest
+    plus one. (Past the largest digest, any letter after f is above it.)"""
+    following = int(prefix, 16) + 1
+    if following >= 16**_CHAT_BROWSER_KEY_INDEX_DIGITS:
+        return "g"
+    return format(following, f"0{_CHAT_BROWSER_KEY_INDEX_DIGITS}x")
 
 
 def chat_browser_key_index_id(workspace_id: str, user_id: str, key_hash: str) -> str:
-    return f"{chat_browser_key_index_prefix(workspace_id, user_id)}{key_hash}"
+    return f"{chat_browser_key_index_prefix(workspace_id, user_id)}.{key_hash}"
+
+
+def chat_browser_key_index_body(
+    workspace_id: str, user_id: str, key_hash: str, expires_at: str | None,
+) -> dict[str, Any]:
+    """The row names its owner (the id is a digest) and keeps the key's
+    expiry, so finished rows can be removed without reading the keys."""
+    return {
+        "key_id": key_hash,
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "expires_at": expires_at,
+    }
+
+
+def chat_browser_key_index_expired(body: dict[str, Any], expired_before: str) -> bool:
+    expires_at = body.get("expires_at")
+    if not expires_at:
+        return False
+    try:
+        moment = dt.datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        cutoff = dt.datetime.fromisoformat(expired_before.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=dt.UTC)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=dt.UTC)
+    return moment <= cutoff
 
 
 def is_users_chat_browser_key(api_key: ApiKey, workspace_id: str, user_id: str) -> bool:

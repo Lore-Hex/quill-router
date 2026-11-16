@@ -29,12 +29,16 @@ The rule, by role in the selected workspace:
     in the last 24 hours, every other chat key of theirs is frozen (disabled
     and capped at what it has spent and holds) so at most one can take new
     holds, and their keys expire after 24 hours.
+    The cap covers chat keys issued by this code. A member's chat keys issued
+    before it (each a lifetime $5, 30-day key, any number of them) are not
+    indexed, so they are neither counted nor frozen; they stay usable up to
+    their own limits until they expire, at most 30 days after issue.
 
 Every chat key is indexed under its user and workspace, so issuance reads
 only that user's chat keys, never the rest of the workspace. For everyone,
-successful issuances are capped at CHAT_BROWSER_KEY_ISSUES_PER_DAY per user
-per workspace per UTC day, and the POST must carry this site's Origin, like
-the other sensitive console POSTs, so another site cannot mint keys with a
+issuances are capped at CHAT_BROWSER_KEY_ISSUES_PER_DAY per user per
+workspace per UTC day, and the POST must carry this site's Origin, like the
+other sensitive console POSTs, so another site cannot mint keys with a
 signed-in visitor's cookie.
 
 The endpoint is session-gated by `require_console_context` (same
@@ -90,8 +94,14 @@ CHAT_BROWSER_MEMBER_WINDOW = dt.timedelta(hours=24)
 CHAT_BROWSER_MEMBER_KEY_TTL = dt.timedelta(hours=24)
 
 # Issuance cap per (workspace, user) per UTC day, for everyone, as defence in
-# depth; the spend allowance above is what bounds money. It counts only
-# issuances that go ahead. The client reuses a key across reloads and needs a
+# depth; the spend allowance above is what bounds money. A slot is taken just
+# before a key is created, so refusals before that (cross-origin, the member's
+# allowance used up, this cap) are free. The two refusals after creation do
+# use a slot: 409 when a concurrent issuance for the same user froze the new
+# key, and 429 when the recount after a concurrent issuance leaves nothing.
+# Both need two issuances for one user at the same moment; the counter has no
+# decrement, so giving the slot back would not be race-safe. The client
+# reuses a key across reloads and needs a
 # new one only when the cached key is missing, expired or rejected, but a
 # member using two browsers re-issues on every switch (each issuance freezes
 # the other browser's key, whose next request gets a 401). Thirty a day is a
@@ -157,7 +167,16 @@ def register(router: APIRouter) -> None:
             )
             # Indexed too: if this user is later made a plain member, their
             # live owner-era chat keys are counted and frozen like any other.
-            STORE.record_chat_browser_key(ctx.workspace.id, ctx.user.id, api_key.hash)
+            STORE.record_chat_browser_key(
+                ctx.workspace.id, ctx.user.id, api_key.hash, expires_at=api_key.expires_at,
+            )
+            # Keys that expired before the member window began can no longer
+            # count; drop their rows (read from the index alone).
+            STORE.forget_expired_chat_browser_keys(
+                ctx.workspace.id,
+                ctx.user.id,
+                expired_before=_iso(now - CHAT_BROWSER_MEMBER_WINDOW),
+            )
         else:
             raw_key, api_key = _issue_member_key(
                 ctx.workspace.id, ctx.user.id, name=name, now=now
@@ -218,8 +237,14 @@ def _issue_member_key(
        concurrent issuances, at least one records its key before the other
        reads the index.
     4. Whenever anything was frozen or found, the allowance is counted again
-       from a fresh read and the new key's limit only goes down. If a
-       concurrent issuance froze this request's key, it answers 409.
+       from a fresh read. There every other key that has not expired counts
+       at the larger of its spend and its lifetime limit: a frozen key's
+       limit is the spend read before the freeze, and if one of its holds
+       settles below its estimate it gets that headroom back, usable by a
+       request that read it before the freeze. The new key's limit only goes
+       down, by a conditional lower that never raises a lower limit set
+       meanwhile. Every freeze is the same conditional lower. If a concurrent
+       issuance froze this request's key, it answers 409.
 
     For any 24-hour window, the keys that spent in it were each able to take
     holds in it and were frozen one by one, so all of them could take holds
@@ -243,7 +268,9 @@ def _issue_member_key(
         expires_at=_iso(now + CHAT_BROWSER_MEMBER_KEY_TTL),
         include_byok_in_limit=True,
     )
-    STORE.record_chat_browser_key(workspace_id, user_id, api_key.hash)
+    STORE.record_chat_browser_key(
+        workspace_id, user_id, api_key.hash, expires_at=api_key.expires_at,
+    )
 
     known = {snapshot.api_key.hash for snapshot in before}
     found = [
@@ -272,16 +299,19 @@ def _issue_member_key(
     own = next((s for s in after if s.api_key.hash == api_key.hash), None)
     if own is None or own.api_key.disabled:
         raise HTTPException(409, "Another chat key was issued at the same moment. Please retry.")
-    recount = CHAT_BROWSER_MEMBER_ALLOWANCE_MICRODOLLARS - _spent_since(
-        [s for s in after if s.api_key.hash != api_key.hash], window_start
+    recount = CHAT_BROWSER_MEMBER_ALLOWANCE_MICRODOLLARS - _committed_since(
+        [s for s in after if s.api_key.hash != api_key.hash], window_start, now
     )
     if recount <= 0:
         _freeze(own)
         raise _allowance_used_up()
     if recount < allowance:
-        lowered = STORE.update_key(api_key.hash, {"limit_microdollars": recount})
-        if lowered is not None:
-            api_key = lowered
+        lowered = STORE.update_key(api_key.hash, {"limit_microdollars_at_most": recount})
+        if lowered is None or lowered.disabled:
+            # A concurrent issuance froze this key between the recount and
+            # the lower; the lower kept that freeze.
+            raise HTTPException(409, "Another chat key was issued at the same moment. Please retry.")
+        api_key = lowered
     return raw_key, api_key
 
 
@@ -301,6 +331,34 @@ def _spent_since(snapshots: list[ApiKeyUsageSnapshot], window_start: dt.datetime
     )
 
 
+def _committed_since(
+    snapshots: list[ApiKeyUsageSnapshot], window_start: dt.datetime, now: dt.datetime,
+) -> int:
+    """For the recount, after the freezes: what each key may have spent in the
+    window or can still spend. A key that has not expired can reach its
+    lifetime limit (a frozen one through a request that read it before the
+    freeze once a hold settles below its estimate, an unfrozen one at its cap
+    the same way), so it counts at the larger of its spend and its limit. A
+    key with no limit left after the freezes counts as the whole allowance."""
+    total = 0
+    for snapshot in snapshots:
+        key = snapshot.api_key
+        if not _may_have_spent_since(key, window_start):
+            continue
+        spent = (
+            snapshot.usage_microdollars
+            + snapshot.byok_usage_microdollars
+            + snapshot.reserved_microdollars
+        )
+        if not _expired(key, now):
+            if key.limit_microdollars is None:
+                spent = max(spent, CHAT_BROWSER_MEMBER_ALLOWANCE_MICRODOLLARS)
+            else:
+                spent = max(spent, key.limit_microdollars)
+        total += spent
+    return total
+
+
 def _can_take_holds(snapshot: ApiKeyUsageSnapshot, now: dt.datetime) -> bool:
     """Not expired and with headroom under its lifetime limit, disabled or
     not: a key disabled any other way (an owner in the console) is a
@@ -312,9 +370,11 @@ def _can_take_holds(snapshot: ApiKeyUsageSnapshot, now: dt.datetime) -> bool:
 
 
 def _freeze(snapshot: ApiKeyUsageSnapshot) -> None:
+    # A conditional lower: two requests freezing the same key from reads
+    # taken at different moments leave the lower cut in place.
     STORE.update_key(
         snapshot.api_key.hash,
-        {"disabled": True, "limit_microdollars": _consumed(snapshot)},
+        {"disabled": True, "limit_microdollars_at_most": _consumed(snapshot)},
     )
 
 

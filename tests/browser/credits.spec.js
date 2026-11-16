@@ -332,7 +332,7 @@ test('a member sees the balance and a note, with no billing controls or Stripe f
     saved_payment_method: { id_tail: 'ab1234', brand: 'visa', last4: '4242', details_available: true },
   });
   await expect(page.locator('.credits-balance-amount')).toHaveText('$12.34');
-  await expect(page.getByRole('note').filter({ hasText: 'Only workspace owners and managers can manage billing.' })).toBeVisible();
+  await expect(page.getByRole('note').filter({ hasText: 'Only workspace owners and admins can manage billing.' })).toBeVisible();
   await expect(page.locator('.credits-page form')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Send credits' })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Auto refill' })).toHaveCount(0);

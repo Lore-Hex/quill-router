@@ -60,7 +60,9 @@ def register(app: FastAPI) -> None:
             return RedirectResponse("/console/credit-transfers?" + urlencode(query), status_code=303)
 
         if not ctx.can_manage:
-            return redirect(error="forbidden")
+            # The transfers page is manager-only; the Credits page tells a
+            # member to ask a workspace owner or admin.
+            return RedirectResponse("/console/credits", status_code=303)
         try:
             body = CreditTransferRequest(
                 recipient_username=recipient_username,

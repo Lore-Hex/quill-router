@@ -138,3 +138,23 @@ def test_chat_browser_key_index_and_freeze(store, unique, user_id, workspace_id)
     store.forget_chat_browser_keys(workspace_id, user_id, [key_a.hash, key_c.hash])
     assert store.chat_browser_key_hashes(workspace_id, user_id) == [key_b.hash]
     assert store.chat_browser_key_hashes(workspace_id, other_user) == [key_c.hash]
+
+
+def test_limit_at_most_lowers_and_never_raises(store, unique, user_id, workspace_id):
+    """``limit_microdollars_at_most`` is a conditional lower applied to the key
+    read inside each backend's write transaction: it cuts a higher limit,
+    leaves a lower one (and the disabled flag) alone, and the typed limit row
+    follows, so a hold above the result is refused."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="chat-browser-lower", creator_user_id=user_id,
+        limit_microdollars=5_000_000,
+    )
+    lowered = store.update_key(key.hash, {"limit_microdollars_at_most": 2_000_000})
+    assert lowered is not None and lowered.limit_microdollars == 2_000_000
+    frozen = store.update_key(key.hash, {"disabled": True, "limit_microdollars_at_most": 1_000_000})
+    assert frozen is not None and frozen.disabled and frozen.limit_microdollars == 1_000_000
+    # A later, higher lower (say from an older read) changes nothing.
+    kept = store.update_key(key.hash, {"limit_microdollars_at_most": 4_000_000})
+    assert kept is not None and kept.limit_microdollars == 1_000_000 and kept.disabled
+    assert not _hold(store, key.hash, 1_000_001)
+    assert _hold(store, key.hash, 1_000_000)  # the typed row allows exactly the limit

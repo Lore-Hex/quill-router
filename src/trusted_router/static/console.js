@@ -138,6 +138,13 @@ function activationErrorCopy(status, canCreateKeys = true) {
     };
   }
   if (status === 402) {
+    // Members cannot add credits; the Credits page shows them only the balance.
+    if (!canCreateKeys) {
+      return {
+        title: "Credits are required",
+        message: "Ask a workspace owner or admin to add credits, then run the check again.",
+      };
+    }
     return {
       title: "Credits are required",
       message: "Add credits, then return here to run the live request.",

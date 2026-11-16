@@ -25,7 +25,7 @@
      billing controls. The routes refuse members too; this only hides them. #}
   {% if not can_manage %}
   <section class="credits-add" aria-label="Billing" data-billing-manager-note>
-    <p class="credits-status" role="note">{{ icons.svg('shield', 18, 1.8) }}<span>Only workspace owners and managers can manage billing.</span></p>
+    <p class="credits-status" role="note">{{ icons.svg('shield', 18, 1.8) }}<span>Only workspace owners and admins can manage billing. Ask one of them to add or send credits.</span></p>
   </section>
   {% else %}
   <section class="credits-add" aria-labelledby="credits-add-title">

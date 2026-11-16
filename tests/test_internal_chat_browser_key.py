@@ -604,6 +604,185 @@ def test_member_reissue_racing_another_issuance_only_lowers_the_limit(
     assert [k.hash for k in _live_chat_keys(workspace_id, member_id)] == [body["key_hash"]]
 
 
+def _with_a_racing_key(
+    monkeypatch: pytest.MonkeyPatch, workspace_id: str, member_id: str, hold: int,
+) -> list[str]:
+    """Patch key creation so the first call first creates (and indexes) a
+    key for a concurrent issuance, already holding ``hold``."""
+    original_create = InMemoryStore.create_api_key
+    racer: list[str] = []
+
+    def create_with_a_racing_issuance(self: InMemoryStore, **kwargs: Any) -> Any:
+        if not racer:
+            _raw, other = original_create(self, **kwargs)
+            self.record_chat_browser_key(workspace_id, member_id, other.hash)
+            racer.append(other.hash)
+            assert self.reserve_key_limit(other.hash, hold, usage_type="Credits").reserved_microdollars
+        return original_create(self, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, "create_api_key", create_with_a_racing_issuance)
+    return racer
+
+
+def test_recount_counts_a_frozen_key_at_its_limit_when_a_hold_settles_low(
+    monkeypatch: pytest.MonkeyPatch, no_issuance_cap: None,
+) -> None:
+    """The racing key is frozen at $3 (its hold at estimate). Its hold then
+    settles at $1 before the recount, giving the frozen key $2 of headroom a
+    request that read it before the freeze can still use. The recount counts
+    the key at its $3 limit, so the new key gets $2 and the total stays $5."""
+    owner, _, workspace_id = _console_client()
+    member, member_id = _member_client(owner, workspace_id)
+    racer = _with_a_racing_key(monkeypatch, workspace_id, member_id, 3 * DOLLAR)
+    original_update = InMemoryStore.update_key
+
+    def freeze_then_settle_low(self: InMemoryStore, key_hash: str, patch: dict[str, Any]) -> Any:
+        result = original_update(self, key_hash, patch)
+        if racer and key_hash == racer[0] and patch.get("disabled"):
+            self.settle_key_limit(key_hash, 3 * DOLLAR, DOLLAR, usage_type="Credits")
+            self.api_keys.add_usage(key_hash, DOLLAR, is_byok=False)
+        return result
+
+    monkeypatch.setattr(InMemoryStore, "update_key", freeze_then_settle_low)
+    response = member.post(ISSUE_PATH)
+    monkeypatch.setattr(InMemoryStore, "update_key", original_update)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["limit_microdollars"] == 2 * DOLLAR
+
+    # Spend everything either key will still admit, ignoring "disabled" as a
+    # request that read the racing key before its freeze would.
+    for key_hash in (racer[0], response.json()["data"]["key_hash"]):
+        while True:
+            try:
+                held = STORE.reserve_key_limit(key_hash, 10_000, usage_type="Credits").reserved_microdollars
+            except KeyLimitExceeded:
+                break
+            STORE.settle_key_limit(key_hash, held, held, usage_type="Credits")
+            STORE.api_keys.add_usage(key_hash, held, is_byok=False)
+    total = sum(
+        s.usage_microdollars + s.byok_usage_microdollars + s.reserved_microdollars
+        for s in STORE.list_chat_browser_keys(workspace_id, member_id)
+    )
+    assert total == ALLOWANCE
+
+
+def test_lowering_the_new_key_never_undoes_a_concurrent_freeze_of_it(
+    monkeypatch: pytest.MonkeyPatch, no_issuance_cap: None,
+) -> None:
+    """A concurrent issuance freezes this request's new key (limit $0) after
+    the recount and before this request lowers the key to $2. The lower is
+    conditional, so the freeze stands and the request answers 409."""
+    owner, _, workspace_id = _console_client()
+    member, member_id = _member_client(owner, workspace_id)
+    _with_a_racing_key(monkeypatch, workspace_id, member_id, 3 * DOLLAR)
+    original_update = InMemoryStore.update_key
+    frozen: list[str] = []
+
+    def freeze_before_the_lower(self: InMemoryStore, key_hash: str, patch: dict[str, Any]) -> Any:
+        if "limit_microdollars_at_most" in patch and not patch.get("disabled"):
+            original_update(self, key_hash, {"disabled": True, "limit_microdollars_at_most": 0})
+            frozen.append(key_hash)
+        return original_update(self, key_hash, patch)
+
+    monkeypatch.setattr(InMemoryStore, "update_key", freeze_before_the_lower)
+    response = member.post(ISSUE_PATH)
+    monkeypatch.setattr(InMemoryStore, "update_key", original_update)
+    assert response.status_code == 409, response.text
+    assert "raw_key" not in response.text
+    [ours] = frozen
+    key = STORE.get_key_by_hash(ours)
+    assert key.disabled is True and key.limit_microdollars == 0
+
+
+def test_a_freeze_from_an_older_read_never_raises_a_lower_freeze(
+    monkeypatch: pytest.MonkeyPatch, no_issuance_cap: None,
+) -> None:
+    """This request read the old key with a $3 hold. Before its freeze lands,
+    the hold settles at $1 and a concurrent issuance freezes the key at $1.
+    This request's freeze (at $3, from its older read) is a conditional
+    lower, so the key stays capped at $1 instead of regaining $2."""
+    owner, _, workspace_id = _console_client()
+    member, _ = _member_client(owner, workspace_id)
+    old = member.post(ISSUE_PATH).json()["data"]["key_hash"]
+    assert STORE.reserve_key_limit(old, 3 * DOLLAR, usage_type="Credits").reserved_microdollars
+    original_update = InMemoryStore.update_key
+
+    def concurrent_freeze_first(self: InMemoryStore, key_hash: str, patch: dict[str, Any]) -> Any:
+        if key_hash == old and patch.get("disabled") and not self.get_key_by_hash(old).disabled:
+            self.settle_key_limit(old, 3 * DOLLAR, DOLLAR, usage_type="Credits")
+            self.api_keys.add_usage(old, DOLLAR, is_byok=False)
+            original_update(self, old, {"disabled": True, "limit_microdollars_at_most": DOLLAR})
+        return original_update(self, key_hash, patch)
+
+    monkeypatch.setattr(InMemoryStore, "update_key", concurrent_freeze_first)
+    second = member.post(ISSUE_PATH)
+    monkeypatch.setattr(InMemoryStore, "update_key", original_update)
+    assert second.status_code == 200, second.text
+    assert STORE.get_key_by_hash(old).limit_microdollars == DOLLAR
+    with pytest.raises(KeyLimitExceeded):
+        STORE.reserve_key_limit(old, 10_000, usage_type="Credits")
+    # The first count saw the $3 hold, and the new limit only goes down.
+    assert second.json()["data"]["limit_microdollars"] == 2 * DOLLAR
+
+
+def test_a_race_refusal_after_creation_uses_an_issuance_slot(
+    monkeypatch: pytest.MonkeyPatch, one_utc_day: None,
+) -> None:
+    """Documented accounting: the slot is taken just before a key is created,
+    so a 409 for a concurrent issuance uses one. (Allowance refusals, before
+    creation, do not; see test_allowance_refusals_do_not_use_up_the_issuance_cap.)"""
+    owner, _, workspace_id = _console_client()
+    member, member_id = _member_client(owner, workspace_id)
+    original_hashes = InMemoryStore.chat_browser_key_hashes
+    raced: list[int] = []
+
+    def hashes_after_a_racing_issuance(self: InMemoryStore, workspace: str, user: str) -> Any:
+        ours = original_hashes(self, workspace, user)
+        if raced:
+            return ours
+        raced.append(1)
+        _raw, racer = self.create_api_key(
+            workspace_id=workspace, name="chat-browser-racer", creator_user_id=user,
+            limit_microdollars=ALLOWANCE,
+        )
+        self.record_chat_browser_key(workspace, user, racer.hash)
+        for key_hash in ours:  # the racer's own supersede pass
+            self.update_key(key_hash, {"disabled": True, "limit_microdollars_at_most": 0})
+        return original_hashes(self, workspace, user)
+
+    monkeypatch.setattr(InMemoryStore, "chat_browser_key_hashes", hashes_after_a_racing_issuance)
+    assert member.post(ISSUE_PATH).status_code == 409
+    monkeypatch.setattr(InMemoryStore, "chat_browser_key_hashes", original_hashes)
+    for _ in range(CHAT_BROWSER_KEY_ISSUES_PER_DAY - 1):
+        assert member.post(ISSUE_PATH).status_code == 200
+    refused = member.post(ISSUE_PATH)
+    assert refused.status_code == 429
+    assert refused.headers["X-RateLimit-Remaining"] == "0"
+    assert "Too many chat keys" in refused.json()["error"]["message"]
+
+
+def test_manager_issuance_prunes_index_rows_of_keys_that_can_no_longer_count(
+    monkeypatch: pytest.MonkeyPatch, no_issuance_cap: None,
+) -> None:
+    """An owner's chat keys are indexed too; rows of keys that expired before
+    the 24-hour window began are removed at the owner's next issuance."""
+    owner, owner_id, workspace_id = _console_client()
+    old = owner.post(ISSUE_PATH).json()["data"]["key_hash"]
+    real_now = dt.datetime.now(dt.UTC)
+
+    # 29 days on, the old key has not expired: its row stays.
+    monkeypatch.setattr(chat_key_module, "_utcnow", lambda: real_now + dt.timedelta(days=29))
+    middle = owner.post(ISSUE_PATH).json()["data"]["key_hash"]
+    assert sorted(STORE.chat_browser_key_hashes(workspace_id, owner_id)) == sorted([old, middle])
+
+    # 31 days and 1 hour on, the old key expired more than 24 hours ago.
+    monkeypatch.setattr(
+        chat_key_module, "_utcnow", lambda: real_now + dt.timedelta(days=31, hours=1),
+    )
+    newest = owner.post(ISSUE_PATH).json()["data"]["key_hash"]
+    assert sorted(STORE.chat_browser_key_hashes(workspace_id, owner_id)) == sorted([middle, newest])
+
+
 def test_member_reissue_refused_when_a_racing_key_holds_the_whole_allowance(
     monkeypatch: pytest.MonkeyPatch, no_issuance_cap: None,
 ) -> None:
