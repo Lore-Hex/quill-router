@@ -189,6 +189,11 @@ type DecideShadowConfig struct {
 	// read timestamp to settle a race, within ReadsPerSecond of its own; nil
 	// checks none.
 	Windows ShadowWindowReader
+	// Credit reads a workspace's credit rows after Python refused a request
+	// Go would have answered for credit, to tell a balance that ran out from
+	// a debt mark Go's gate missed (confirmFunding), within ReadsPerSecond
+	// of its own; nil reads none, and every such refusal pages.
+	Credit ShadowCreditReader
 	// Jobs bounds the requests followed at once; SampleEvery and
 	// ReadsPerSecond the row read-backs; DecideEvery the decide copy's
 	// refresh; Wait how long a request waits for Python's answer.
@@ -238,6 +243,12 @@ type fullShadow struct {
 		tokens float64
 		at     time.Time
 	}
+	// fundingLimiter bounds the credit reads (confirmFunding) the same way.
+	fundingLimiter struct {
+		sync.Mutex
+		tokens float64
+		at     time.Time
+	}
 
 	mu       sync.Mutex
 	tallies  map[string]*fullTally
@@ -247,7 +258,9 @@ type fullShadow struct {
 	// raceLogs bounds the race lines a period logs; races is the rolling
 	// hour AlertWindowRace reads.
 	raceLogs int
-	races    raceWatch
+	// fundingLogs bounds the credit read lines a period logs.
+	fundingLogs int
+	races       raceWatch
 	// cacheAt is the cache's counts at the last line, which logs the
 	// period's: the cache keeps running totals.
 	cacheAt gwstate.Counters
@@ -365,6 +378,7 @@ func newFullShadow(cfg DecideShadowConfig, logf func(string, ...any), clock func
 	}
 	sh.limiter.tokens = cfg.ReadsPerSecond
 	sh.windowLimiter.tokens = cfg.ReadsPerSecond
+	sh.fundingLimiter.tokens = cfg.ReadsPerSecond
 	return sh, nil
 }
 
@@ -580,6 +594,10 @@ func (sh *fullShadow) follow(job *fullJob) {
 	if r.race != nil {
 		sh.confirmRace(decided.ForShadow(), windows, &r)
 	}
+	// Python's credit refusal of a request Go would have answered: the
+	// workspace's rows say whether its balance ran out or a debt mark was
+	// missed.
+	sh.confirmFunding(decided.ForShadow(), &r)
 	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
@@ -742,6 +760,9 @@ type fullResult struct {
 	windows  []string
 	stream   string
 	race     *raceCandidate
+	// funding is the credit read that settled, or failed to settle,
+	// Python's credit refusal (confirmFunding); nil for any other answer.
+	funding *fundingRead
 	// key is the request's lookup hash (Decided.LookupHash), for
 	// distinct_keys; never logged.
 	key string
@@ -1621,14 +1642,18 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		sh.logf("fastpath edge decide shadow window race: class=%s key=%s window=%s go=%d reread=%d python=%d gap=%d %s",
 			r.class, c.keyHashPrefix, c.window, c.first, c.reread, c.python, c.first-c.python, digest)
 	}
+	if f := r.funding; f != nil && sh.fundingLogs < maxDifferLogs {
+		sh.fundingLogs++
+		sh.logf("fastpath edge decide shadow funding: class=%s %s %s", r.class, f.line(), digest)
+	}
 	pages := strings.HasPrefix(r.class, ClassWouldAdmit+".") || strings.HasPrefix(r.class, ClassWindowRaceUnconfirmed+".")
 	if pages && sh.critical < maxCriticalLogs {
 		sh.critical++
+		note := windowNote(r.windows) + r.funding.note()
 		if sh.cfg.Alert != nil {
-			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+
-				windowNote(r.windows))
+			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+note)
 		} else {
-			sh.logf("fastpath edge decide shadow CRITICAL: class=%s%s %s", r.class, windowNote(r.windows), digest)
+			sh.logf("fastpath edge decide shadow CRITICAL: class=%s%s %s", r.class, note, digest)
 		}
 	}
 	if len(r.fields) > 0 && sh.differs < maxDifferLogs {
@@ -1713,7 +1738,7 @@ func (sh *fullShadow) flush() {
 	}
 	sh.logf(line, args...)
 	sh.raceAlerts(time.Now())
-	sh.tallies, sh.critical, sh.differs, sh.raceLogs = map[string]*fullTally{}, 0, 0, 0
+	sh.tallies, sh.critical, sh.differs, sh.raceLogs, sh.fundingLogs = map[string]*fullTally{}, 0, 0, 0, 0
 }
 
 // DecideShadowCounts are the full-response shadow's counts since the edge
