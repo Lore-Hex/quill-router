@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Collection
 from datetime import UTC, datetime
@@ -397,6 +398,52 @@ def models_requiring_canary(
         or existing[model_id].get("routable_reason")
         in {failure_reason, "delisted-upstream", "awaiting-price"}
     )
+
+
+def routable_models_to_recheck(
+    manifest_path: Path,
+    candidate_model_ids: Collection[str],
+    *,
+    limit: int,
+    now: datetime | None = None,
+) -> frozenset[str]:
+    """Pick up to ``limit`` currently routable rows to canary again this run.
+
+    ``models_requiring_canary`` never rechecks a route that already passed,
+    so a route that passes once stays routable until an operator acts. A
+    provider whose live routes are flaky opts in by also canarying this set;
+    a failure then holds the route with the ordinary canary-failed reason and
+    the next passing canary lifts it. When more routes are live than
+    ``limit``, the window rotates each hour over a stable hash order, so every
+    live route is rechecked within ``ceil(live / limit)`` hourly refreshes.
+    """
+
+    if limit <= 0 or not manifest_path.exists():
+        return frozenset()
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return frozenset()
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return frozenset()
+    candidates = set(candidate_model_ids)
+    live = sorted(
+        {
+            model_id
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance((model_id := row.get("id")), str)
+            and model_id in candidates
+            and row.get("routable", True) is not False
+        },
+        key=lambda model_id: (hashlib.sha256(model_id.encode("utf-8")).digest(), model_id),
+    )
+    if len(live) <= limit:
+        return frozenset(live)
+    hour = int((now or datetime.now(UTC)).timestamp() // 3600)
+    start = (hour * limit) % len(live)
+    return frozenset((live + live)[start : start + limit])
 
 
 def apply_canary_results(

@@ -28,7 +28,9 @@ from trusted_router.storage import STORE
 REQUEST_ID = "rlog_" + "a" * 32
 
 
-@pytest.mark.parametrize("parameter", ["include_reasoning", "thinking", "enable_thinking"])
+@pytest.mark.parametrize(
+    "parameter", ["include_reasoning", "thinking", "enable_thinking", "chat_template_kwargs"]
+)
 def test_reasoning_has_a_stable_diagnostic_category(parameter: str) -> None:
     assert parameter in PARAMETER_CATEGORIES
 
@@ -130,7 +132,7 @@ def test_plain_validation_is_not_an_error(
 @pytest.mark.parametrize(
     "parameter",
     [
-        "plugins", "truncation", "prompt_cache_key", "prompt_cache_options", "service_tier",
+        "deidentify", "plugins", "truncation", "prompt_cache_key", "prompt_cache_options", "service_tier",
         "usage.include", "stream_options.include_usage", "provider.quantizations",
         "provider.max_price.image", "plugins.web-fetch",
         "file", "audio", "video", "content", "input_image", "input_audio", "input_file",
@@ -223,6 +225,35 @@ def test_output_config_has_named_warning_category(
     [event] = warnings
     assert event["fingerprint"][-1] == parameter
     assert event["contexts"]["gateway_rejection"]["value_preview"] == '"high"'
+
+
+@pytest.mark.parametrize(("parameter", "path", "raw", "expected"), [
+    ("thinking", "thinking", '{"budget_tokens":8000,"type":"auto"}', '{"budget_tokens":8000,"type":"auto"}'),
+    ("thinking", "thinking", '{"type":"enabled","display":"private customer content"}',
+     '{"_redacted":true,"type":"enabled"}'),
+    ("chat_template_kwargs", "chat_template_kwargs", '{"enable_thinking":false,"thinking":true}',
+     '{"enable_thinking":false,"thinking":true}'),
+    ("chat_template_kwargs", "chat_template_kwargs.add_generation_prompt", "true", '"[redacted:boolean]"'),
+    ("chat_template_kwargs", "chat_template_kwargs.documents", '"private customer content"', '"[redacted:string]"'),
+    ("client_metadata", "client_metadata", '"[redacted:string]"', '"[redacted:string]"'),
+    ("client_metadata", "client_metadata", '{"x-codex-installation-id":"private customer content","type":"enabled"}',
+     '"[redacted:object]"'),
+])
+def test_compatibility_fields_warn_under_their_own_name(
+    warnings: list[dict[str, Any]], parameter: str, path: str, raw: str, expected: str,
+) -> None:
+    report_gateway_contract_rejection(
+        GatewayContractRejection(
+            status=400, parameter=parameter, request_id=REQUEST_ID, parameter_path=path, value_preview=raw,
+        ),
+        route="/v1/chat/completions", workspace_id="ws_verified", credential_id="key_verified",
+    )
+    [event] = warnings
+    assert event["fingerprint"][-1] == parameter
+    assert event["tags"]["parameter"] == parameter
+    assert event["contexts"]["gateway_rejection"]["parameter_path"] == path
+    assert event["contexts"]["gateway_rejection"]["value_preview"] == expected
+    assert "private customer content" not in json.dumps(event)
 
 
 @pytest.mark.parametrize(("path", "raw", "expected"), [

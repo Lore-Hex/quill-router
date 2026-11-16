@@ -45,7 +45,7 @@ def test_1017_precision_is_exact_route_evidence_not_inferred(provider, upstream,
     assert endpoint_precision_metadata(replace(endpoint, upstream_id=upstream + "-other")) is None
 
 
-@pytest.mark.parametrize("provider", ["sail-research", "featherless"])
+@pytest.mark.parametrize("provider", ["sail-research", "featherless", "cloudflare-workers-ai"])
 def test_newly_verified_policies_qualify_for_zdr_only(provider):
     endpoint = route(provider, "deepseek-ai/DeepSeek-V4.1-Flash-1017")
     assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
@@ -54,7 +54,7 @@ def test_newly_verified_policies_qualify_for_zdr_only(provider):
     assert PROVIDERS[provider].provider_e2ee is not True
 
 
-@pytest.mark.parametrize("provider", ["engy", "makora", "cloudflare-workers-ai", "boundless"])
+@pytest.mark.parametrize("provider", ["engy", "makora", "boundless"])
 def test_conditional_or_downstream_unverified_policies_stay_out_of_strict_zdr(provider):
     assert not endpoint_meets_privacy_requirement(route(provider, MODEL_ID), PRIVACY_TIER_ZERO_RETENTION)
 
