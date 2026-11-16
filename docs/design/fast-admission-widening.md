@@ -334,7 +334,9 @@ and the tidiness of the allow-list, never money.
 ### (e) The wildcard decide row
 
 **Decision.** The row `('*', 'gcp', 'us-central1')` decides for every
-workspace that has no row of its own for that cloud and region. A
+workspace that has no row of its own for that cloud and region; since
+2026-11-15 there is one such row per enclave region (§4(c): us-east4,
+europe-west4 and us-west1 beside it), each deciding for its own region. A
 workspace's own row wins over the wildcard in both directions, so an off
 row is an override. With the wildcard off, the table means what it means
 today. Details, the commands whose meaning changes, and the deploy order

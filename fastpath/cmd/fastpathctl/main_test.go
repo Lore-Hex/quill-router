@@ -1069,7 +1069,8 @@ func TestDecideStatusIsTheEffectiveAnswer(t *testing.T) {
 	if code, got, err := doOn(t, open, "decide", "wildcard", "status"); code != 0 || err != nil || got["found"] != false {
 		t.Fatalf("the wildcard before it is set: exit %d, %v, %v", code, err, got)
 	}
-	// status reads any cloud and region, though on and off write only one.
+	// status reads any cloud and region, though on and off write only gcp's
+	// four.
 	if code, got, err := doOn(t, open, "decide", "wildcard", "status", "-region", "europe-west4"); code != 0 ||
 		err != nil || got["region"] != "europe-west4" || got["found"] != false {
 		t.Fatalf("the wildcard of another region: exit %d, %v, %v", code, err, got)
