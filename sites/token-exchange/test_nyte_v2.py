@@ -331,7 +331,7 @@ class NavigationRegistryTests(unittest.TestCase):
 
         for market in nyte_markets():
             page = render_nyte(market=market)
-            self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
+            self.assertIn(f'<link rel="canonical" href="https://{market.get("canonical_domain", market["domain"])}/">', page)
             self.assertIn(f'<span class="brand-place">{market.get("logo_place", market["region"])}</span>', page)
             self.assertIn(f'<span>{market["name"]}</span></div><p class="footer-credit">', page)
             self.assertIn(f'href="https://{market["domain"]}/" aria-current="page"', page)

@@ -11,6 +11,8 @@ from pathlib import Path
 from string import Template
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from nyte_v2 import load_markets, search_canonical
+
 HERE = Path(__file__).resolve().parent
 ASSET_URL = "/assets/press"
 ASSETS = (
@@ -141,6 +143,7 @@ def build_press(output: Path) -> None:
         }).replace("<", "\\u003c"),
     )
     rendered = Template((HERE / "press.html").read_text()).substitute(values)
+    rendered = search_canonical(rendered, next(m for m in load_markets() if m["slug"] == "new-york"))
     for name in ("media-kit", "media-kit.html"):
         (output / name).write_text(rendered)
     for name in ("press.css", "press.js"):
