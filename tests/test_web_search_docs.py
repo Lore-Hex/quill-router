@@ -50,7 +50,13 @@ def test_context_dev_docs_have_a_direct_link_and_canonical_engine(client: TestCl
     example = json.loads(section.select_one("pre code").get_text())
     assert example["engine"] == "context.dev"
     assert "context is not accepted" in section.get_text(" ", strip=True)
-    assert "api.trustedrouter.com/v1" in section.get_text()
+    for endpoint in (
+        "https://api.trustedrouter.com/v1",
+        "https://api-aws.trustedrouter.com/v1",
+        "https://api-azure.trustedrouter.com/v1",
+    ):
+        assert endpoint in section.get_text()
+    assert "Other gateways return an unavailable error" not in section.get_text()
     for path in ("/docs", "/docs/llms.txt", "/docs/llms-full.txt"):
         assert "/docs/web-search#context-dev" in client.get(path).text
 

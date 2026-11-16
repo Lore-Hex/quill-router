@@ -66,7 +66,12 @@ print(response.output_text)</code></pre>
 
 <section style="margin-top:48px" aria-label="context.dev search pricing">
   <h2 id="context-dev" style="scroll-margin-top:16px">Choose context.dev</h2>
-  <p>Use the GCP gateway at <code>https://api.trustedrouter.com/v1</code>. Other gateways return an unavailable error until configured and qualified for this engine.</p>
+  <p>context.dev is available through the Google Cloud, AWS, and Azure gateways:</p>
+  <ul>
+    <li>Google Cloud: <code style="overflow-wrap:anywhere">https://api.trustedrouter.com/v1</code></li>
+    <li>AWS: <code style="overflow-wrap:anywhere">https://api-aws.trustedrouter.com/v1</code></li>
+    <li>Azure: <code style="overflow-wrap:anywhere">https://api-azure.trustedrouter.com/v1</code></li>
+  </ul>
   <p>Set <code>"engine": "context.dev"</code> on the <code>web_search</code> tool in Chat Completions or Responses. For <code>openrouter:web_search</code>, place it inside <code>parameters</code>. The name <code>context</code> is not accepted. Omitting the engine or selecting <code>auto</code> keeps Exa. An unavailable engine returns an error; it does not silently fall back to another engine or retry the search.</p>
   <pre><code>{"type": "web_search", "engine": "context.dev", "search_context_size": "medium"}</code></pre>
   <p>context.dev search costs <strong>$0.006 per provider credit</strong>, plus the selected model's token charges. This is a conservative TrustedRouter tariff, not the provider's actual dollar cost. The search requests highlights without separately billed full-page Markdown. A call requesting up to ten results reserves at most two credits ($0.012); only the provider's validated credit usage is charged and unused reservation is released.</p>
