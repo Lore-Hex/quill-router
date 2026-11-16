@@ -1,13 +1,18 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httptrace"
 	"reflect"
 	"slices"
 	"strings"
@@ -273,12 +278,13 @@ func TestTheDecideLineCarriesThePassMix(t *testing.T) {
 		t.Fatalf("the lines: %q", lines)
 	}
 	if want := ` float_at={"declared.estimated_input_tokens":1,"metadata":1} ` +
-		`passed_enabled={"body.float":2,"boot.signature":1} passed_unknown={"boot.signature":1} enabled_unknown=1`; !strings.HasSuffix(lines[0], want) ||
+		`passed_enabled={"body.float":2,"boot.signature":1} passed_unknown={"boot.signature":1} enabled_unknown=1 ` +
+		`mix_dropped=0`; !strings.HasSuffix(lines[0], want) ||
 		!strings.Contains(lines[0], ` passed={"body.float":2,"boot.signature":2,"workspace.not_enabled":1} `) ||
 		!strings.Contains(lines[0], "insert_call_ms_max=0"+want) {
 		t.Fatalf("the period's line: %s\nwant it to end %s", lines[0], want)
 	}
-	if want := ` float_at={} passed_enabled={} passed_unknown={} enabled_unknown=0`; !strings.HasSuffix(lines[1], want) {
+	if want := ` float_at={} passed_enabled={} passed_unknown={} enabled_unknown=0 mix_dropped=0`; !strings.HasSuffix(lines[1], want) {
 		t.Fatalf("the next period's line: %s", lines[1])
 	}
 	parsed := parsedLines(t, h.logs)
@@ -655,5 +661,227 @@ func TestALargeBodyIsNeverDecodedForTheMix(t *testing.T) {
 			t.Errorf("%s: passed %v, enabled %v, unknown %v, %d decodes, %d peeks", tc.name, got.Passed,
 				got.PassedEnabled, got.PassedUnknown, decodes, peeks)
 		}
+	}
+}
+
+// TestARefusedPassIsAttributedBeforeItsEviction: a pass that names its
+// lookup hash (here policy.pilot_off, before the key's facts) and that
+// Python refuses (402, 403) has its key evicted on the request's goroutine,
+// before the mix worker reads the cache. The mix reads the key first
+// (resolveBeforeEvict), so the pass is still counted as of its enabled
+// workspace, and the key is gone after.
+func TestARefusedPassIsAttributedBeforeItsEviction(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:policy.pilot_off")
+	for _, status := range []int{http.StatusPaymentRequired, http.StatusForbidden} {
+		h := newDecideEdge(t, f, c, nil)
+		refusal := answerWith(status, errorBody(status, "refused", "refused"))
+		h.python.respond.Store(&refusal)
+		h.send(t, c)
+		got := h.edge.DecideCounts()
+		if !maps.Equal(got.Passed, map[string]int64{PassPilotOff: 1}) ||
+			!maps.Equal(got.PassedEnabled, map[string]int64{PassPilotOff: 1}) || len(got.PassedUnknown) != 0 {
+			t.Errorf("%d: passed %v, enabled %v, unknown %v; want the pass counted enabled", status, got.Passed,
+				got.PassedEnabled, got.PassedUnknown)
+		}
+		h.cache.mu.Lock()
+		evicted := slices.Clone(h.cache.evicted)
+		h.cache.mu.Unlock()
+		if _, held := h.cache.Peek(c.Facts.Key.LookupHash); held || !slices.Contains(evicted, c.Facts.Key.LookupHash) {
+			t.Errorf("%d: the key was not evicted (evicted %v, still held %v)", status, evicted, held)
+		}
+	}
+}
+
+// blockingPeekCache is a cache whose Peek, the mix worker's read, waits
+// for release; entered is closed once a Peek has begun.
+type blockingPeekCache struct {
+	KeyCache
+	held    map[string]string
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *blockingPeekCache) Peek(hash string) (string, bool) {
+	c.once.Do(func() { close(c.entered) })
+	<-c.release
+	ws, ok := c.held[hash]
+	return ws, ok
+}
+
+// unreachable is a transport to a Python that cannot be reached.
+type unreachable struct{}
+
+func (unreachable) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
+}
+
+// TestTheCountIsOffTheHandlersPath: with the mix worker held inside its
+// read of the cache, the edge, served over a real connection, answers the
+// pass, and then answers a second request on the same keep-alive
+// connection, which net/http reads only once the first handler has
+// returned; and a pass whose Python cannot be reached gets its 502 at once.
+// Each pass's mix is counted once the read is let go.
+func TestTheCountIsOffTheHandlersPath(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:body.float")
+	held := map[string]string{c.Facts.Key.LookupHash: c.Facts.Key.WorkspaceID}
+	serve := func(h *decideEdge) (*blockingPeekCache, *http.Client, string) {
+		cache := &blockingPeekCache{KeyCache: h.cache, held: held, entered: make(chan struct{}),
+			release: make(chan struct{})}
+		h.edge.decider.cfg.Cache = cache
+		srv := httptest.NewServer(h.edge)
+		t.Cleanup(srv.Close)
+		t.Cleanup(func() {
+			select {
+			case <-cache.release:
+			default:
+				close(cache.release)
+			}
+		})
+		client := &http.Client{Timeout: 5 * time.Second,
+			Transport: &http.Transport{MaxConnsPerHost: 1, DisableCompression: true}}
+		t.Cleanup(client.CloseIdleConnections)
+		return cache, client, srv.URL
+	}
+	post := func(client *http.Client, url string, reused *bool) (int, error) {
+		req, err := http.NewRequest(http.MethodPost, url+c.Request.Path, bytes.NewReader(c.body()))
+		if err != nil {
+			return 0, err
+		}
+		req.Header = c.header()
+		if reused != nil {
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+				GotConn: func(info httptrace.GotConnInfo) { *reused = info.Reused }}))
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		defer resp.Body.Close()
+		_, err = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode, err
+	}
+	waitEntered := func(cache *blockingPeekCache) {
+		select {
+		case <-cache.entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the mix worker never read the cache")
+		}
+	}
+
+	h := newDecideEdge(t, f, c, nil)
+	cache, client, url := serve(h)
+	if code, err := post(client, url, nil); err != nil || code != http.StatusTeapot {
+		t.Fatalf("the first pass: %d %v", code, err)
+	}
+	waitEntered(cache)
+	reused := false
+	if code, err := post(client, url, &reused); err != nil || code != http.StatusTeapot || !reused {
+		t.Fatalf("the second request on the connection, the first's count still running: %d %v (reused %v)",
+			code, err, reused)
+	}
+	close(cache.release)
+	h.edge.decider.mixPending.Wait()
+	if got := h.edge.DecideCounts(); !maps.Equal(got.PassedEnabled, map[string]int64{gwauth.ReasonFloat: 2}) {
+		t.Fatalf("the two passes' mix: %+v", got)
+	}
+
+	// Python not reached: the ErrorHandler's 502, which net/http sends only
+	// as the handler returns, comes while the count is held.
+	h = newDecideEdge(t, f, c, nil)
+	h.edge.proxy.Transport = tracedTransport{base: unreachable{}}
+	cache, client, url = serve(h)
+	start := time.Now()
+	if code, err := post(client, url, nil); err != nil || code != http.StatusBadGateway {
+		t.Fatalf("the unreachable pass: %d %v", code, err)
+	}
+	waitEntered(cache)
+	took := time.Since(start)
+	close(cache.release)
+	h.edge.decider.mixPending.Wait()
+	if got := h.edge.DecideCounts(); !maps.Equal(got.Passed, map[string]int64{gwauth.ReasonFloat: 1}) ||
+		!maps.Equal(got.PassedEnabled, map[string]int64{gwauth.ReasonFloat: 1}) ||
+		!maps.Equal(got.FloatAt, map[string]int64{gwauth.FloatAtMetadata: 1}) {
+		t.Fatalf("the unreachable pass's mix (502 in %v): %+v", took, got)
+	}
+}
+
+// TestACohortPassCarriesNoLookupHash: the proxy carries a lookup hash for
+// the eviction only once the pipeline has gone past the request's cohort
+// (Decided.LookupHash): a cohort reason, and any reason before it, carries
+// none, though the pass mix reads the parse's own (parsedLookupHash). A
+// gate after the cohort carries it.
+func TestACohortPassCarriesNoLookupHash(t *testing.T) {
+	f := authorizeGoldens(t)
+	for _, tc := range []struct {
+		caseName, reason string
+		carries          bool
+	}{
+		{"pass:body.internal_model:monitor", gwauth.ReasonInternalModel, false},
+		{"pass:body.lax_type", gwauth.ReasonLaxType, false},
+		{"pass:body.float", gwauth.ReasonFloat, false},
+		{"pass:policy.pilot_off", PassPilotOff, true},
+	} {
+		c := authorizeCaseNamed(t, tc.caseName)
+		h := recording(newDecideEdge(t, f, c, nil))
+		h.send(t, c)
+		want := decidePassed{reason: tc.reason}
+		if tc.carries {
+			want.lookupHash = c.Facts.Key.LookupHash
+		}
+		if got := h.carried.carried(); len(got) != 1 || got[0] != want {
+			t.Errorf("%s: carried %+v, want %+v", tc.caseName, got, want)
+		}
+		if got := h.edge.DecideCounts(); !maps.Equal(got.PassedEnabled, map[string]int64{tc.reason: 1}) {
+			t.Errorf("%s: the mix %+v", tc.caseName, got)
+		}
+	}
+}
+
+// TestAFullMixQueueDropsAndCounts: the hand-off never waits. With the
+// worker held in a read and the queue full, a mix is dropped and counted
+// (mix_dropped); the queued ones are counted once the read is let go; and
+// once the decide path has stopped, a hand-off is dropped too.
+func TestAFullMixQueueDropsAndCounts(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:body.float")
+	h := newDecideEdge(t, f, c, nil)
+	cache := &blockingPeekCache{KeyCache: h.cache, held: map[string]string{"lh": "ws"},
+		entered: make(chan struct{}), release: make(chan struct{})}
+	h.edge.decider.cfg.Cache = cache
+	// A failure before the read is let go must not leave WaitDecide waiting
+	// on the held worker (cleanups run last first: this one before it).
+	released := sync.OnceFunc(func() { close(cache.release) })
+	t.Cleanup(released)
+	enabled := func(string) bool { return true }
+	mix := func() *pendingMix { return &pendingMix{reason: "r", lookupHash: "lh", enabled: enabled} }
+	dp := h.edge.decider
+	dp.handOff(mix())
+	select {
+	case <-cache.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker never read")
+	}
+	for range mixQueue + 2 {
+		dp.handOff(mix())
+	}
+	if got := h.edge.DecideCounts(); got.MixDropped != 2 {
+		t.Fatalf("%d dropped with the queue full, want 2", got.MixDropped)
+	}
+	released()
+	dp.mixPending.Wait()
+	if got := h.edge.DecideCounts(); got.PassedEnabled["r"] != mixQueue+1 || got.MixDropped != 2 {
+		t.Fatalf("counted %d, dropped %d", got.PassedEnabled["r"], got.MixDropped)
+	}
+	dp.flush()
+	if !strings.Contains(h.logs.all(), " mix_dropped=2") {
+		t.Fatalf("the line: %s", h.logs.all())
+	}
+	h.edge.WaitDecide()
+	dp.handOff(mix())
+	if got := h.edge.DecideCounts(); got.MixDropped != 3 || got.PassedEnabled["r"] != mixQueue+1 {
+		t.Fatalf("after the stop: counted %d, dropped %d", got.PassedEnabled["r"], got.MixDropped)
 	}
 }

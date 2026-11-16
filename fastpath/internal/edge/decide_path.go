@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -202,6 +203,16 @@ type decider struct {
 	// is lenientLookupHash; a test counts its calls.
 	measure bool
 	lenient func(body []byte) string
+	// mixes is the pass mixes handed off to be counted (handOff), by one
+	// worker (countMixes), started on the first; mixPending counts those
+	// handed off and not yet counted, which a test and WaitDecide wait for;
+	// mixQuit ends the worker, once mixStopped turns hand-offs away.
+	mixes      chan *pendingMix
+	mixPending sync.WaitGroup
+	mixStart   sync.Once
+	mixStop    sync.Once
+	mixQuit    chan struct{}
+	mixStopped atomic.Bool
 
 	mu sync.Mutex
 	// total is the counts since the edge started, period the period's;
@@ -228,8 +239,9 @@ type decider struct {
 // boot, decide or admit phase, and each counted under the body's whose time
 // after the body's read alone was over SlowAtEdge.
 //
-// The pass mix (pendingMix) is counted each pass once, once its forward to
-// Python has returned (countMix): floatAt counts the body.float passes by
+// The pass mix (pendingMix) is counted each pass once, by a worker off the
+// request's goroutine, handed it once the forward to Python has returned
+// (handOff, countMix): floatAt counts the body.float passes by
 // where their first float is (a gwauth.FloatAt name), passedEnabled the
 // passes, by reason, whose key's workspace the switch copy enables, and
 // passedUnknown those whose workspace is not known (decider.attribute says
@@ -237,12 +249,15 @@ type decider struct {
 // workspace the copy does not enable, or of a lookup hash that names no
 // key. Every key is a pass reason or a FloatAt name, never anything the
 // request carried. A pass whose forward straddles a period's end has its
-// reason in one line and its mix in the next.
+// reason in one line and its mix in the next. mixDropped counts the mixes
+// not counted because the worker's queue was full (or the decide path had
+// stopped).
 type decideTally struct {
 	answered, readBack, refunded, refundFailed, slowOwn int64
 	unavailable, passed, slow, windows, via             map[string]int64
 	tickets                                             map[string]int64
 	floatAt, passedEnabled, passedUnknown               map[string]int64
+	mixDropped                                          int64
 	ticketCall, ticketWait, insertCall                  elapsedTotals
 }
 
@@ -258,7 +273,8 @@ func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.T
 	}
 	return &decider{cfg: cfg, logf: logf, every: every, decides: newDecideCopy(cfg.Decides, 0, clock, logf),
 		slowAtEdge: SlowAtEdge, slowInAll: SlowInAll, total: newDecideTally(), period: newDecideTally(),
-		measure: true, lenient: lenientLookupHash}
+		measure: true, lenient: lenientLookupHash, mixes: make(chan *pendingMix, mixQueue),
+		mixQuit: make(chan struct{})}
 }
 
 // count adds to the period's counts and the totals.
@@ -309,8 +325,9 @@ func ownSlow(phase string, m edgeMarks, forwarded time.Time, threshold time.Dura
 // in-flight refusal with the decide path's own inflight.key).
 //
 // mix is what the decide line's pass mix is made from, nil when it is not
-// measured: ServeHTTP counts it (decider.countMix) once the forward to
-// Python has returned, never before it, and nothing else reads it.
+// measured: ServeHTTP hands it to the mix worker (decider.handOff) once the
+// forward to Python has returned, never before it, and evict alone touches
+// it before then (resolveBeforeEvict).
 type decidePassed struct {
 	lookupHash, workspace string
 	arrived               time.Time
@@ -351,7 +368,7 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 		passed.reason = reason
 		if dp.measure {
 			// Only what the pipeline already holds is copied here; the
-			// attribution's reads wait for the forward (countMix).
+			// attribution's reads are the mix worker's (handOff).
 			passed.mix = pendingMixOf(reason, decided, body, in.Enabled)
 		}
 		// Counted at_edge, the total the alert and the rollout gate read,
@@ -488,23 +505,30 @@ func (e *Edge) passedUnread(r *http.Request, seen BootSeen) {
 		e.decider.pass(reason)
 		if e.decider.measure {
 			// No body was read, so there is no lookup hash and nothing to
-			// read: counted unknown at once, with no attribution work.
-			e.decider.countMix(&pendingMix{reason: reason})
+			// read: counted unknown, by the worker as any other.
+			e.decider.handOff(&pendingMix{reason: reason})
 		}
 	}
 }
 
 // lenientMaxBody bounds the body the pass mix decodes leniently for its
 // lookup hash (decider.attribute): a larger one is counted unknown rather
-// than decoded.
-const lenientMaxBody = 64 << 10
+// than decoded, and is never held for the worker. mixQueue bounds the mixes
+// waiting for the worker, each holding at most such a body: past it a mix
+// is dropped and counted (mix_dropped).
+const (
+	lenientMaxBody = 64 << 10
+	mixQueue       = 256
+)
 
 // pendingMix is what a pass's mix is made from, copied from what the
 // pipeline already holds when the request passes (pendingMixOf) and counted
-// once Python has the request (decider.countMix): its reason, where its
-// first float is (body.float only), the workspace when the pipeline learned
-// it (known), else the lookup hash its strict parse read ("" when the parse
-// did not get that far), its body and the switch copy the pipeline read.
+// by the mix worker once Python has the request (decider.handOff): its
+// reason, where its first float is (body.float only), the workspace when the
+// pipeline learned it (known), else the lookup hash its strict parse read
+// ("" when the parse did not get that far), its body only when neither is
+// known and it is under lenientMaxBody (else nil, so a queued mix holds no
+// large buffer), and the switch copy the pipeline read.
 type pendingMix struct {
 	reason, floatAt string
 	workspace       string
@@ -520,7 +544,7 @@ type pendingMix struct {
 // strict parse's, which the pipeline keeps for this alone
 // (Decided.parsedLookupHash): the eviction the proxy carries is unchanged.
 func pendingMixOf(reason string, decided Decided, body []byte, enabled func(string) bool) *pendingMix {
-	m := &pendingMix{reason: reason, body: body, enabled: enabled, lookupHash: decided.LookupHash}
+	m := &pendingMix{reason: reason, enabled: enabled, lookupHash: decided.LookupHash}
 	if reason == gwauth.ReasonFloat {
 		m.floatAt = decided.FloatAt
 	}
@@ -538,7 +562,75 @@ func pendingMixOf(reason string, decided Decided, body []byte, enabled func(stri
 			m.workspace = decided.Read.Facts.Key.WorkspaceID
 		}
 	}
+	if !m.known && m.lookupHash == "" && len(body) < lenientMaxBody {
+		m.body = body
+	}
 	return m
+}
+
+// handOff gives a pass's mix to the mix worker, never waiting: with the
+// queue full, or the decide path stopped, the mix is dropped and counted
+// (mix_dropped). nil hands nothing. The worker is started on the first, one
+// for the decide path, so a request's goroutine, and the connection it
+// serves, never wait on the attribution's reads.
+func (dp *decider) handOff(m *pendingMix) {
+	if m == nil {
+		return
+	}
+	if !dp.mixStopped.Load() {
+		dp.mixStart.Do(func() { go dp.countMixes() })
+		dp.mixPending.Add(1)
+		select {
+		case dp.mixes <- m:
+			return
+		default:
+			dp.mixPending.Done()
+		}
+	}
+	dp.count(func(t *decideTally) { t.mixDropped++ })
+}
+
+// countMixes is the mix worker: it counts each mix handed off, in turn,
+// until the decide path stops (stopMixes).
+func (dp *decider) countMixes() {
+	for {
+		select {
+		case m := <-dp.mixes:
+			dp.countMix(m)
+			dp.mixPending.Done()
+		case <-dp.mixQuit:
+			return
+		}
+	}
+}
+
+// stopMixes turns hand-offs away and ends the worker, once every mix handed
+// off is counted (at shutdown, once the edge's handlers have returned).
+func (dp *decider) stopMixes() {
+	dp.mixPending.Wait()
+	dp.mixStop.Do(func() {
+		dp.mixStopped.Store(true)
+		close(dp.mixQuit)
+	})
+}
+
+// resolveBeforeEvict reads, for a pass Python refused, what the cache holds
+// of the key the eviction is about to remove, into the pass's mix when the
+// pipeline did not learn its workspace: the worker, later, would find it
+// gone and count the pass unknown. It is the refusal's path, already rare,
+// and takes the lock Evict takes; the mix has not been handed off yet.
+func (dp *decider) resolveBeforeEvict(p decidePassed) {
+	m := p.mix
+	if m == nil || m.known {
+		return
+	}
+	hash := p.lookupHash
+	if hash == "" {
+		hash = m.lookupHash
+	}
+	if peek, ok := dp.cfg.Cache.(KeyPeeker); ok && hash != "" {
+		m.workspace, m.known = peek.Peek(hash)
+	}
 }
 
 // attribution is whether a pass's key belongs to a workspace the switch
@@ -552,9 +644,9 @@ const (
 )
 
 // countMix counts a pass's mix (decideTally's floatAt, passedEnabled and
-// passedUnknown); nil counts nothing. ServeHTTP calls it once the forward
-// to Python has returned, so the attribution's reads (a lenient decode, the
-// cache's lock) never delay the forward or the time counted at the edge.
+// passedUnknown); nil counts nothing. The mix worker calls it, so the
+// attribution's reads (a lenient decode, the cache's lock) are never on a
+// request's goroutine.
 func (dp *decider) countMix(m *pendingMix) {
 	if m == nil {
 		return
@@ -581,7 +673,8 @@ func (dp *decider) countMix(m *pendingMix) {
 // body names, read without a fill or a use (KeyPeeker). The lookup hash is
 // the strict parse's when it got that far, else a lenient read of the
 // body's top-level member (lenientLookupHash, as the shadow reads it for an
-// eviction), only for a body under lenientMaxBody.
+// eviction), only for a body under lenientMaxBody (pendingMixOf keeps no
+// other).
 //
 // Its blind spot, counted unknown: a key the node's cache does not hold. The
 // cache holds a key only once one of its requests went past the boot, the
@@ -593,7 +686,10 @@ func (dp *decider) countMix(m *pendingMix) {
 // or more and did not parse, or does not read as JSON with a string
 // api_key_lookup_hash (body.unparseable, non_finite, a key named only by
 // api_key_hash), and every pass while no front door is bound (no switch
-// copy). Counted not enabled where it may not be: a key held names the
+// copy), and a pass whose lookup hash only the lenient read finds that
+// Python refuses, when the decide shadow's eviction of the key comes before
+// the worker's read (resolveBeforeEvict reads only a lookup hash the parse
+// found). Counted not enabled where it may not be: a key held names the
 // workspace of its last read, of any age, and the switch copy can lag the
 // switch, so a key moved or a workspace switched within that time is
 // counted as before; Peek returns a lookup hash's negative entry (no key)
@@ -610,7 +706,7 @@ func (dp *decider) attribute(m *pendingMix) attribution {
 	if !known {
 		peek, ok := dp.cfg.Cache.(KeyPeeker)
 		hash := m.lookupHash
-		if ok && hash == "" && len(m.body) < lenientMaxBody {
+		if ok && hash == "" && m.body != nil {
 			hash = dp.lenient(m.body)
 		}
 		if ok && hash != "" {
@@ -730,6 +826,7 @@ func (dp *decider) evict(resp *http.Response, p decidePassed) {
 	default:
 		return
 	}
+	dp.resolveBeforeEvict(p)
 	if p.lookupHash != "" {
 		dp.cfg.Cache.Evict(p.lookupHash)
 	}
@@ -765,13 +862,14 @@ func pauseAnswer(resp *http.Response) bool {
 // and the pass mix (decideTally's): the body.float passes by where their
 // first float is (FloatAt), the passes of a workspace the switch copy
 // enables (PassedEnabled) and those whose workspace is not known
-// (PassedUnknown, EnabledUnknown in all), each by reason.
+// (PassedUnknown, EnabledUnknown in all), each by reason, and the mixes
+// dropped uncounted (MixDropped).
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
 	UnavailableByCode, Passed, Slow, Windows, DecidedVia    map[string]int64
 	Tickets                                                 map[string]int64
 	FloatAt, PassedEnabled, PassedUnknown                   map[string]int64
-	EnabledUnknown                                          int64
+	EnabledUnknown, MixDropped                              int64
 }
 
 // DecideCounts are the counts now; zero with the decide path off.
@@ -788,7 +886,7 @@ func (e *Edge) DecideCounts() DecideCounts {
 		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow), Windows: maps.Clone(t.windows),
 		DecidedVia: maps.Clone(t.via), Tickets: maps.Clone(t.tickets), FloatAt: maps.Clone(t.floatAt),
 		PassedEnabled: maps.Clone(t.passedEnabled), PassedUnknown: maps.Clone(t.passedUnknown),
-		EnabledUnknown: sum(t.passedUnknown)}
+		EnabledUnknown: sum(t.passedUnknown), MixDropped: t.mixDropped}
 }
 
 func sum(m map[string]int64) int64 {
@@ -855,11 +953,11 @@ func (dp *decider) flush() {
 		"unavailable_by_code=%s passed=%s slow=%s windows=%s decided_via=%s tickets=%s "+
 		"ticket_call_ms_sum=%d ticket_call_ms_max=%d ticket_wait_ms_sum=%d ticket_wait_ms_max=%d "+
 		"insert_call_ms_sum=%d insert_call_ms_max=%d float_at=%s passed_enabled=%s passed_unknown=%s "+
-		"enabled_unknown=%d", p.answered, p.readBack, unavailable,
+		"enabled_unknown=%d mix_dropped=%d", p.answered, p.readBack, unavailable,
 		p.refunded, p.refundFailed, jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow), jsonOf(p.windows),
 		jsonOf(p.via), jsonOf(p.tickets), p.ticketCall.sum, p.ticketCall.max, p.ticketWait.sum, p.ticketWait.max,
 		p.insertCall.sum, p.insertCall.max, jsonOf(p.floatAt), jsonOf(p.passedEnabled), jsonOf(p.passedUnknown),
-		sum(p.passedUnknown))
+		sum(p.passedUnknown), p.mixDropped)
 	if unavailable > 0 {
 		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
 			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))
@@ -896,11 +994,13 @@ func (dp *decider) alert(kind, what string) {
 
 // WaitDecide waits for the decide path's refunds still running (at
 // shutdown, once the edge's handlers have returned, so no refund outlives
-// the front door or the store's client), then logs the last counts. The
-// store's own inserts are waited for apart (store.Store.WaitLeasedInserts).
+// the front door or the store's client) and the pass mixes still to count,
+// ends the mix worker, then logs the last counts. The store's own inserts
+// are waited for apart (store.Store.WaitLeasedInserts).
 func (e *Edge) WaitDecide() {
 	if e.decider != nil {
 		e.decider.refunds.Wait()
+		e.decider.stopMixes()
 		e.decider.flush()
 	}
 }

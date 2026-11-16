@@ -38,8 +38,8 @@ type logEntry struct {
 // counts by name (classes, fields, passed, unavailable_by_code, ...). Any
 // count a line gains is summed as it comes, with nothing to change here:
 // the decide path's pass mix, float_at, passed_enabled and passed_unknown,
-// under by_name, and enabled_unknown under counts; a line from before them
-// sums as it did.
+// under by_name, and enabled_unknown and mix_dropped under counts; a line
+// from before them sums as it did.
 type edgeSums struct {
 	Counts map[string]int64            `json:"counts"`
 	ByName map[string]map[string]int64 `json:"by_name"`

@@ -198,12 +198,13 @@ func request(c authorizeCase, ctx context.Context) *http.Request {
 }
 
 // send is the case's request through the edge, and the edge's answer once
-// its refunds are sent.
+// its refunds are sent and its pass mix counted.
 func (h *decideEdge) send(t *testing.T, c authorizeCase) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.edge.ServeHTTP(rec, request(c, context.Background()))
 	h.edge.decider.refunds.Wait()
+	h.edge.decider.mixPending.Wait()
 	return rec
 }
 
