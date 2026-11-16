@@ -373,6 +373,12 @@ def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
     # judged on the catalog's own clock. Expired evidence must still fail
     # closed, even for a pinned E2E provider.
     serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
+    # NEAR AI's route is the model's only route here. Another host's (today
+    # Privatemode's, which the hourly refresh holds for a day whenever
+    # Privatemode refuses the model) must not decide what this test sees.
+    for other_id, other in list(MODEL_ENDPOINTS.items()):
+        if other.model_id == model_id and other.provider != "near-ai":
+            monkeypatch.delitem(MODEL_ENDPOINTS, other_id)
     endpoint = MODEL_ENDPOINTS[f"{model_id}@near-ai/prepaid"]
     monkeypatch.setitem(
         MODEL_ENDPOINTS, endpoint.id,
@@ -381,8 +387,9 @@ def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
             catalog_valid_until=catalog_data._utc_now() + timedelta(days=-1 if expired else 1),
         ),
     )
+    # Expired evidence takes the model off the E2E ladder as well.
     e2e_ids = {model.id for model in e2e_candidate_models(limit=100)}
-    assert model_id in e2e_ids
+    assert (model_id in e2e_ids) is not expired
 
     settings = Settings(environment="test")
     request = {
