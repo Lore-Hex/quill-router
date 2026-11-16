@@ -523,6 +523,8 @@ def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int
             if endpoint.provider in renewable_provider_slugs()
         ]
         return max(tiers, default=PRIVACY_TIER_STANDARD)
+    if model.id in WEAKEST_MEMBER_PRIVACY_MODEL_IDS:
+        return _weakest_member_privacy_tier(model.id)
     if model.id in META_MODEL_IDS:
         for candidate in meta_candidate_models(model.id):
             tiers.append(model_max_privacy_tier(candidate))
@@ -532,6 +534,32 @@ def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int
         if not tiers and model.provider in PROVIDERS:
             tiers.append(model_provider_privacy_tier(model.id, model.provider))
     return max(tiers) if tiers else PRIVACY_TIER_STANDARD
+
+
+# Combos that send every request to every member: the panel answers in
+# parallel and a member fuses, so the prompt reaches all of them. Their
+# posture is the weakest member's, never the best. Each member counts only the
+# routes the combo may use (US-headquartered for US-only ids). A member with
+# no such route fails closed to Standard.
+WEAKEST_MEMBER_PRIVACY_MODEL_IDS = frozenset({LIBERTY_4_0_MODEL_ID, LIBERTY_4_1_MODEL_ID})
+
+
+def _weakest_member_privacy_tier(model_id: str) -> int:
+    us_only = model_id in US_PROVIDER_ONLY_MODEL_IDS
+    member_tiers = [
+        max(
+            (
+                endpoint_privacy_tier(endpoint)
+                for endpoint in endpoints_for_model(member.id)
+                if not us_only
+                or PROVIDERS[endpoint.provider].provider_headquarters_country
+                == PROVIDER_JURISDICTION_US
+            ),
+            default=PRIVACY_TIER_STANDARD,
+        )
+        for member in meta_candidate_models(model_id)
+    ]
+    return min(member_tiers, default=PRIVACY_TIER_STANDARD)
 
 
 def model_max_privacy_tier(model: Model) -> int:

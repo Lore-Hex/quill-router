@@ -156,7 +156,7 @@
     "card_version": 2,
     "model_count": 28,
     "name": "Cloudflare Workers AI",
-    "privacy": "Policy documented",
+    "privacy": "Zero retention",
     "route_count": 28,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
@@ -847,10 +847,10 @@
   },
   "scaleway": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "Scaleway",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "scaleway"
   },
