@@ -139,8 +139,8 @@ resource "aws_cloudwatch_metric_alarm" "cis_unauthorized_api_calls" {
 #
 # The AWS Nitro bootstrap bundle signer is a KMS key in eu-west-1 declared in
 # quill-cloud-proxy (tools/aws-secrets/signer.tf). Its key policy lets exactly one
-# principal call kms:Sign, the release signer below, and denies Sign to everyone else
-# even through a grant. tools/aws_sealed_bundle.py signs each regional bundle once,
+# principal call kms:Sign, the release signer below, and denies Sign to everyone else,
+# KMS delegations included. tools/aws_sealed_bundle.py signs each regional bundle once,
 # with MessageType DIGEST and ECDSA_SHA_384, so an AWS release signs twice (eu-west-1
 # and eu-west-3). The multi-region trail delivers those KMS events to the us-east-1
 # log group used above.
