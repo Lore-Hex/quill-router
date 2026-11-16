@@ -148,6 +148,7 @@ class Sessions:
         scope = scope_now()
         if not self.lock.acquire(timeout=scope.remaining()):
             raise SessionCheckoutTimeout("shadow_checkout")
+        issued = False  # Any session RPC (inventory, delete, create) in this checkout.
         try:
             # Read readiness while owning the lane, including after recovery
             # held it until the deadline. No RPC has started at this point.
@@ -161,8 +162,10 @@ class Sessions:
             if self.creation_unknown:
                 if not create or not self.managed:
                     raise SessionUnavailable("shadow_session_creation_unknown")
+                issued = True
                 self._reconcile()
             if self.retired is not None:
+                issued = True
                 self.retired.delete()
                 self.retired = None
                 scope.remaining()
@@ -170,6 +173,7 @@ class Sessions:
                 from google.cloud.spanner_v1.session import Session
                 session = Session(self.database, labels={"tr_component": "shadow-v2", "tr_boot": self.boot, "tr_lane": self.lane})
                 self.creation_unknown = True
+                issued = True
                 session.create()
                 self.session = session
                 self.creation_unknown = False
@@ -178,7 +182,14 @@ class Sessions:
         except SessionUnavailable:
             self.lock.release()
             raise
-        except Exception:
+        except Exception as error:
+            if isinstance(error, TimeoutError) and not issued:
+                # The lane was acquired at, or preempted past, the deadline and
+                # no RPC ran. Like a timed-out acquire, this is a missed
+                # checkout: retiring the healthy session would make the lane
+                # unready until its next recovery window.
+                self.lock.release()
+                raise SessionCheckoutTimeout("shadow_checkout") from None
             self.retire()
             self.lock.release()
             raise

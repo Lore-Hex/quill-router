@@ -240,9 +240,9 @@ delete '*'` removes the wildcard row itself (`"wildcard": true`), so every
 workspace without a row of its own stops deciding in that cloud and region;
 `decide wildcard off` is the same stop and keeps the row for
 `decide-restore`, which is why the way back below uses it. `decide wildcard
-on` and `off` write only `gcp`, `us-central1` (widening §4(c): the AWS and
-Azure planes and every other region stay out) and refuse any other
-`-cloud` or `-region`, exit 2 and nothing written; `status` and `decide
+on` and `off` write only `gcp` in `us-central1`, `us-east4`, `europe-west4`
+and `us-west1` (widening §4(c): the AWS and Azure planes stay out) and
+refuse any other `-cloud` or `-region`, exit 2 and nothing written; `status` and `decide
 delete '*'` take any.
 
 ## 2. The node attribute
