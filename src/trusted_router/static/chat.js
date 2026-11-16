@@ -3363,7 +3363,7 @@
         if (/key_limit_exceeded|API key spend limit/i.test(m)) {
             return (
                 "This chat key has reached its spending limit. Try again later, " +
-                "or use an API key from the console."
+                "or ask a workspace owner or admin."
             );
         }
         // 402 = Payment Required. The attested gateway uses this for

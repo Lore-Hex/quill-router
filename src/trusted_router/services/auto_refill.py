@@ -45,7 +45,9 @@ PENDING_RETRY_INTERVAL_SECONDS = 30 * 60
 @dataclass(frozen=True)
 class AutoRefillOutcome:
     fired: bool
-    reason: str  # "charged" | "disabled" | "above_threshold" | "pending" | "rate_limited" | "stripe_error:<code>"
+    # "charged" | "disabled" | "threshold_not_below_amount" | "above_threshold"
+    # | "pending" | "rate_limited" | "stripe_error:<code>"
+    reason: str
     payment_intent_id: str | None = None
     retryable: bool = False
 
@@ -77,6 +79,17 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="disabled")
     if account.auto_refill_amount_microdollars <= 0:
         return AutoRefillOutcome(fired=False, reason="disabled")
+    if account.auto_refill_threshold_microdollars >= account.auto_refill_amount_microdollars:
+        # Saving this is refused now (money.check_auto_refill_settings), but a
+        # configuration saved before that rule would charge again after
+        # every small settle. Do not charge it; the owner must fix it.
+        log.warning(
+            "auto_refill.threshold_not_below_amount workspace=%s threshold=%s amount=%s",
+            workspace_id,
+            account.auto_refill_threshold_microdollars,
+            account.auto_refill_amount_microdollars,
+        )
+        return AutoRefillOutcome(fired=False, reason="threshold_not_below_amount")
     summary = live_credit_summary(workspace_id, store=STORE)
     if summary is None:
         return AutoRefillOutcome(fired=False, reason="no_account")

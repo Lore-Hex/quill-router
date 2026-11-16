@@ -446,3 +446,116 @@ def test_auto_refill_rule_is_a_value_error_with_a_reason() -> None:
     check_auto_refill_settings(enabled=False, threshold_microdollars=2, amount_microdollars=1)
     with pytest.raises(ValueError, match="threshold must be below the refill amount"):
         check_auto_refill_settings(enabled=True, threshold_microdollars=2, amount_microdollars=2)
+
+
+# ── Identity verification, credit transfers, authorized apps, welcome ──────
+
+def test_member_cannot_start_identity_verification_on_the_shared_workspace(gates: Gates) -> None:
+    """The $5 fee is debited from the selected workspace, as the API route
+    (ManagementPrincipal) already requires a manager for."""
+    from trusted_router.storage_models import CreditProvenance
+    from trusted_router.typed_balance import live_credit_summary
+
+    member_id = gates.users["member"]
+    STORE.mark_user_email_verified(member_id)
+    # Meet the member's own prerequisites, so only the role can refuse.
+    assert STORE.credit_workspace_typed_direct(
+        gates.workspace_id, 25_000_000, f"gates-identity-funding:{member_id}",
+        provenance=CreditProvenance.system_grant(), lifetime_topup_user_id=member_id,
+    )
+    before = live_credit_summary(gates.workspace_id)
+    member = gates.client("member")
+
+    started = member.post("/console/account/verification/identity/start", follow_redirects=False)
+    assert started.status_code == 403, started.text
+    assert FORBIDDEN in started.text
+    assert live_credit_summary(gates.workspace_id) == before
+    user = STORE.get_user(member_id)
+    assert user is not None and not user.identity_verified and user.identity_status == "none"
+
+    page = member.get("/console/account/verification").text
+    assert "data-identity-manager-note" in page
+    assert 'class="btn primary verification-start" type="submit" disabled' in page
+
+    admin = gates.client("admin")
+    assert "data-identity-manager-note" not in admin.get("/console/account/verification").text
+
+
+def test_member_cannot_view_credit_transfers(gates: Gates) -> None:
+    refused = gates.client("member").get("/console/credit-transfers")
+    assert refused.status_code == 403
+    assert FORBIDDEN in refused.text
+    for role in ("owner", "admin"):
+        assert gates.client(role).get("/console/credit-transfers").status_code == 200
+
+
+@pytest.mark.parametrize("action", ["budget", "revoke"])
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"origin": "null"}, {"origin": "https://evil.example"}],
+    ids=["missing", "null", "foreign"],
+)
+def test_authorized_app_changes_require_same_origin(action: str, headers: dict[str, str]) -> None:
+    from tests.test_oauth_authorized_apps_increment_e import APP_ID, _grant
+
+    # The app first: creating it configures the store the grant writes to.
+    client = TestClient(create_app(Settings(environment="test"), init_observability=False))
+    user_id, workspace_id, _raw_keys = _grant()
+    raw_token, _ = STORE.create_auth_session(
+        user_id=user_id, provider="test", label="apps", ttl_seconds=3600,
+        workspace_id=workspace_id, state="active",
+    )
+    client.cookies.set("tr_session", raw_token)
+    keys = [k for k in STORE.list_keys(workspace_id) if k.app_id == APP_ID]
+    assert len(keys) == 2
+    before = [(k.disabled, k.limit_monthly_microdollars) for k in keys]
+
+    path = f"/console/authorized-apps/{APP_ID}/{action}"
+    data = {"monthly_budget": "1"} if action == "budget" else None
+    refused = client.post(path, data=data, headers=headers, follow_redirects=False)
+    assert refused.status_code == 403, refused.text
+    after = [STORE.get_key_by_hash(k.hash) for k in keys]
+    assert [(k.disabled, k.limit_monthly_microdollars) for k in after] == before
+
+    # Control: the same POST from the console's own origin goes through.
+    allowed = client.post(
+        path, data=data, headers={"origin": "http://testserver"}, follow_redirects=False,
+    )
+    assert allowed.status_code == 303, allowed.text
+    changed = [STORE.get_key_by_hash(k.hash) for k in keys]
+    assert [(k.disabled, k.limit_monthly_microdollars) for k in changed] != before
+
+
+def test_welcome_page_does_not_send_members_to_the_create_key_panel(gates: Gates) -> None:
+    member_page = gates.client("member").get("/console/welcome").text
+    assert "already been displayed" in member_page
+    assert "/console/api-keys#new-api-key" not in member_page
+    assert "data-welcome-member-note" in member_page
+    owner_page = gates.client("owner").get("/console/welcome").text
+    assert 'href="/console/api-keys#new-api-key"' in owner_page
+    assert "data-welcome-member-note" not in owner_page
+
+
+def test_activation_reminders_go_only_to_the_workspace_owner(
+    client: TestClient, test_settings: Settings,
+) -> None:
+    """The reminder links to the create-key panel, so its only recipient is
+    someone who can use it: the workspace owner, never a member."""
+    from trusted_router.services.activation_reminders import run_activation_reminder_pass
+
+    settings = test_settings
+    signup = client.post("/v1/signup", json={"email": "reminded-owner@example.com", "name": "Owner"})
+    assert signup.status_code == 201, signup.text
+    workspace_id = signup.json()["data"]["workspace_id"]
+    STORE.add_members(workspace_id, ["reminded-member@example.com"], role="member")
+    STORE.add_members(workspace_id, ["reminded-admin@example.com"], role="admin")
+
+    sent: list[Any] = []
+    for task in STORE.list_activation_reminders(limit=10):
+        run_activation_reminder_pass(
+            settings, now=task.due_at,
+            email_service=SimpleNamespace(send=lambda message: sent.append(message) or True),  # type: ignore[arg-type]
+        )
+    assert len(sent) == 2
+    assert {message.to for message in sent} == {"reminded-owner@example.com"}
+    assert all("/console/api-keys#new-api-key" in message.text_body for message in sent)

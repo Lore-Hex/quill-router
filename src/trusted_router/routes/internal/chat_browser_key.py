@@ -26,13 +26,16 @@ The rule, by role in the selected workspace:
     through chat-browser keys in the workspace, however often they reissue.
     See `_issue_member_key`: a new key's lifetime limit is whatever is left
     of the $5 after everything the member's other chat keys may have spent
-    in the last 24 hours, at most one of their chat keys is live at a time,
-    and their keys expire after 24 hours.
+    in the last 24 hours, every other chat key of theirs is frozen (disabled
+    and capped at what it has spent and holds) so at most one can take new
+    holds, and their keys expire after 24 hours.
 
-For everyone, issuance is also capped at CHAT_BROWSER_KEY_ISSUES_PER_DAY per
-user per workspace per UTC day, and the POST must carry this site's Origin,
-like the other sensitive console POSTs, so another site cannot mint keys
-with a signed-in visitor's cookie.
+Every chat key is indexed under its user and workspace, so issuance reads
+only that user's chat keys, never the rest of the workspace. For everyone,
+successful issuances are capped at CHAT_BROWSER_KEY_ISSUES_PER_DAY per user
+per workspace per UTC day, and the POST must carry this site's Origin, like
+the other sensitive console POSTs, so another site cannot mint keys with a
+signed-in visitor's cookie.
 
 The endpoint is session-gated by `require_console_context` (same
 session cookie that backs /console/*). Returns 302 → /?reason=signin
@@ -67,8 +70,7 @@ from trusted_router.storage_models import ApiKeyUsageSnapshot
 
 log = logging.getLogger(__name__)
 
-# Every chat-browser key is named chat-browser-YYYYMMDD-{6hex}; the member
-# allowance finds a member's chat keys by this prefix and their creator.
+# Every chat-browser key is named chat-browser-YYYYMMDD-{6hex}.
 CHAT_BROWSER_KEY_NAME_PREFIX = "chat-browser-"
 
 # Lifetime spend limit of an owner's or admin's chat key: $5 in
@@ -88,9 +90,14 @@ CHAT_BROWSER_MEMBER_WINDOW = dt.timedelta(hours=24)
 CHAT_BROWSER_MEMBER_KEY_TTL = dt.timedelta(hours=24)
 
 # Issuance cap per (workspace, user) per UTC day, for everyone, as defence in
-# depth. The client reuses a key across reloads, so a user needs a new one
-# only when the cached key is missing, expired or rejected.
-CHAT_BROWSER_KEY_ISSUES_PER_DAY = 5
+# depth; the spend allowance above is what bounds money. It counts only
+# issuances that go ahead. The client reuses a key across reloads and needs a
+# new one only when the cached key is missing, expired or rejected, but a
+# member using two browsers re-issues on every switch (each issuance freezes
+# the other browser's key, whose next request gets a 401). Thirty a day is a
+# switch every half hour through a long working day; a script churning keys
+# is stopped within seconds.
+CHAT_BROWSER_KEY_ISSUES_PER_DAY = 30
 CHAT_BROWSER_KEY_ISSUE_WINDOW_SECONDS = 24 * 60 * 60
 CHAT_BROWSER_KEY_RATE_LIMIT_NAMESPACE = "chat_browser_key_issue_v1"
 
@@ -137,8 +144,8 @@ def register(router: APIRouter) -> None:
         name = f"{CHAT_BROWSER_KEY_NAME_PREFIX}{now.strftime('%Y%m%d')}-{secrets.token_hex(3)}"
 
         assert_workspace_billing_active(ctx.workspace)  # quiesce: no new keys while paused
-        _enforce_issue_rate_limit(ctx.workspace.id, ctx.user.id)
         if ctx.can_manage:
+            _enforce_issue_rate_limit(ctx.workspace.id, ctx.user.id)
             raw_key, api_key = STORE.create_api_key(
                 workspace_id=ctx.workspace.id,
                 name=name,
@@ -148,6 +155,9 @@ def register(router: APIRouter) -> None:
                 expires_at=_iso(now + dt.timedelta(days=CHAT_BROWSER_KEY_TTL_DAYS)),
                 include_byok_in_limit=True,
             )
+            # Indexed too: if this user is later made a plain member, their
+            # live owner-era chat keys are counted and frozen like any other.
+            STORE.record_chat_browser_key(ctx.workspace.id, ctx.user.id, api_key.hash)
         else:
             raw_key, api_key = _issue_member_key(
                 ctx.workspace.id, ctx.user.id, name=name, now=now
@@ -185,7 +195,7 @@ def _issue_member_key(
     in this workspace, it cannot take their spend past $5 in any rolling 24
     hours.
 
-    Three facts carry the bound:
+    Four facts carry the bound:
 
     1. The new key's lifetime limit is the allowance left after the lifetime
        spend (used plus reserved, BYOK included) of each of the member's chat
@@ -193,20 +203,37 @@ def _issue_member_key(
        disabled before the window began. A key's whole lifetime spend counts,
        because the counters do not say when it was spent; that over-counts,
        never under-counts.
-    2. Every other live chat key of the member is disabled here, so at most
-       one is live, and a superseded key cannot take new spend.
-    3. The allowance is counted again after (2). A key that a concurrent
-       request created after the first count is disabled by then, and its
-       spend is in the second count, so the new key's limit only goes down.
+    2. Every other chat key of theirs that could still take a hold is frozen:
+       disabled, and its lifetime limit cut to what it has used and holds. The
+       cut is a key-limit write (update_key with limit_microdollars), which
+       every backend serializes with the reserve that checks that limit
+       (Spanner: the typed transaction over tr_key_limit; Postgres: the
+       locked tr_key_limit row; memory: the store lock). A request that read
+       the key before it was disabled and reserves afterwards is refused by
+       the cut. The cut uses the spend read earlier; a hold placed in between
+       is still in the store's counters, so the cut leaves no headroom and
+       the recount below sees that hold.
+    3. The member's index is read again after the new key is recorded, so a
+       key a concurrent request created is found, frozen and counted. Of two
+       concurrent issuances, at least one records its key before the other
+       reads the index.
+    4. Whenever anything was frozen or found, the allowance is counted again
+       from a fresh read and the new key's limit only goes down. If a
+       concurrent issuance froze this request's key, it answers 409.
 
-    For any 24-hour window, the keys that spent in it were each live in it
-    and, being superseded one by one, were all live within 24 hours before
-    the last of them was issued; that issuance counted their spend. Each
-    key's limit is enforced at authorize, like every lifetime key limit.
+    For any 24-hour window, the keys that spent in it were each able to take
+    holds in it and were frozen one by one, so all of them could take holds
+    within 24 hours before the last of them was issued; that issuance counted
+    their spend. Each key's limit is enforced at authorize, like every
+    lifetime key limit.
     """
-    allowance = _member_allowance_left(workspace_id, user_id, now=now)
+    window_start = now - CHAT_BROWSER_MEMBER_WINDOW
+    before = STORE.list_chat_browser_keys(workspace_id, user_id)
+    allowance = CHAT_BROWSER_MEMBER_ALLOWANCE_MICRODOLLARS - _spent_since(before, window_start)
     if allowance <= 0:
+        _forget_finished(workspace_id, user_id, before, window_start)
         raise _allowance_used_up()
+    _enforce_issue_rate_limit(workspace_id, user_id)
     raw_key, api_key = STORE.create_api_key(
         workspace_id=workspace_id,
         name=name,
@@ -216,48 +243,96 @@ def _issue_member_key(
         expires_at=_iso(now + CHAT_BROWSER_MEMBER_KEY_TTL),
         include_byok_in_limit=True,
     )
-    for snapshot in _member_chat_keys(workspace_id, user_id):
-        key = snapshot.api_key
-        if key.hash != api_key.hash and not key.disabled and not _expired(key, now):
-            STORE.update_key(key.hash, {"disabled": True})
-    recount = _member_allowance_left(workspace_id, user_id, now=now, excluding=api_key.hash)
+    STORE.record_chat_browser_key(workspace_id, user_id, api_key.hash)
+
+    known = {snapshot.api_key.hash for snapshot in before}
+    found = [
+        key_hash
+        for key_hash in STORE.chat_browser_key_hashes(workspace_id, user_id)
+        if key_hash not in known and key_hash != api_key.hash
+    ]
+    found_keys = (
+        STORE.list_chat_browser_keys(workspace_id, user_id, key_hashes=found) if found else []
+    )
+    dangling = set(found) - {snapshot.api_key.hash for snapshot in found_keys}
+    if dangling:  # index rows of deleted keys
+        STORE.forget_chat_browser_keys(workspace_id, user_id, sorted(dangling))
+    others = before + found_keys
+    to_freeze = [snapshot for snapshot in others if _can_take_holds(snapshot, now)]
+    for snapshot in to_freeze:
+        _freeze(snapshot)
+    if not (to_freeze or found):
+        # No other key of theirs could take a hold and none appeared, so
+        # their spend cannot have moved since the first count.
+        _forget_finished(workspace_id, user_id, before, window_start)
+        return raw_key, api_key
+
+    after = STORE.list_chat_browser_keys(workspace_id, user_id)
+    _forget_finished(workspace_id, user_id, after, window_start)
+    own = next((s for s in after if s.api_key.hash == api_key.hash), None)
+    if own is None or own.api_key.disabled:
+        raise HTTPException(409, "Another chat key was issued at the same moment. Please retry.")
+    recount = CHAT_BROWSER_MEMBER_ALLOWANCE_MICRODOLLARS - _spent_since(
+        [s for s in after if s.api_key.hash != api_key.hash], window_start
+    )
     if recount <= 0:
-        STORE.update_key(api_key.hash, {"disabled": True})
+        _freeze(own)
         raise _allowance_used_up()
     if recount < allowance:
-        STORE.update_key(api_key.hash, {"limit_microdollars": recount})
-    current = STORE.get_key_by_hash(api_key.hash)
-    if current is None or current.disabled:
-        # A concurrent issuance for the same member superseded this key.
-        raise HTTPException(409, "Another chat key was issued at the same moment. Please retry.")
-    return raw_key, current
+        lowered = STORE.update_key(api_key.hash, {"limit_microdollars": recount})
+        if lowered is not None:
+            api_key = lowered
+    return raw_key, api_key
 
 
-def _member_chat_keys(workspace_id: str, user_id: str) -> list[ApiKeyUsageSnapshot]:
-    """The member's chat keys in the workspace, disabled ones included, with
-    live usage and holds. One per-workspace key listing; no scan."""
-    return [
-        snapshot
-        for snapshot in STORE.list_api_keys_with_usage(workspace_id, include_disabled=True)
-        if snapshot.api_key.creator_user_id == user_id
-        and snapshot.api_key.name.startswith(CHAT_BROWSER_KEY_NAME_PREFIX)
-        and not snapshot.api_key.management
-    ]
+def _consumed(snapshot: ApiKeyUsageSnapshot) -> int:
+    """What the key's lifetime limit is measured against."""
+    byok = snapshot.byok_usage_microdollars if snapshot.api_key.include_byok_in_limit else 0
+    return snapshot.usage_microdollars + byok + snapshot.reserved_microdollars
 
 
-def _member_allowance_left(
-    workspace_id: str, user_id: str, *, now: dt.datetime, excluding: str | None = None
-) -> int:
-    window_start = now - CHAT_BROWSER_MEMBER_WINDOW
-    spent = sum(
+def _spent_since(snapshots: list[ApiKeyUsageSnapshot], window_start: dt.datetime) -> int:
+    return sum(
         snapshot.usage_microdollars
         + snapshot.byok_usage_microdollars
         + snapshot.reserved_microdollars
-        for snapshot in _member_chat_keys(workspace_id, user_id)
-        if snapshot.api_key.hash != excluding
-        and _may_have_spent_since(snapshot.api_key, window_start)
+        for snapshot in snapshots
+        if _may_have_spent_since(snapshot.api_key, window_start)
     )
-    return CHAT_BROWSER_MEMBER_ALLOWANCE_MICRODOLLARS - spent
+
+
+def _can_take_holds(snapshot: ApiKeyUsageSnapshot, now: dt.datetime) -> bool:
+    """Not expired and with headroom under its lifetime limit, disabled or
+    not: a key disabled any other way (an owner in the console) is a
+    metadata write, which a request that already read the key can outrun."""
+    key = snapshot.api_key
+    if _expired(key, now):
+        return False
+    return key.limit_microdollars is None or key.limit_microdollars > _consumed(snapshot)
+
+
+def _freeze(snapshot: ApiKeyUsageSnapshot) -> None:
+    STORE.update_key(
+        snapshot.api_key.hash,
+        {"disabled": True, "limit_microdollars": _consumed(snapshot)},
+    )
+
+
+def _forget_finished(
+    workspace_id: str,
+    user_id: str,
+    snapshots: list[ApiKeyUsageSnapshot],
+    window_start: dt.datetime,
+) -> None:
+    """Remove the index rows of keys whose spend can no longer count, so the
+    member's index stays as small as their recent keys."""
+    finished = [
+        snapshot.api_key.hash
+        for snapshot in snapshots
+        if not _may_have_spent_since(snapshot.api_key, window_start)
+    ]
+    if finished:
+        STORE.forget_chat_browser_keys(workspace_id, user_id, finished)
 
 
 def _may_have_spent_since(key: ApiKey, window_start: dt.datetime) -> bool:

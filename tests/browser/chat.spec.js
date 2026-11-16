@@ -228,3 +228,16 @@ test("a stale key whose re-issue is refused shows the refusal, not an auth error
   await expect(page.locator(".chat-msg-error")).not.toContainText("Authentication expired");
   expect(completions).toBe(1);
 });
+
+test("a chat key at its own spend limit says to ask an owner or admin, not to add a card", async ({ page, context }) => {
+  await setup(page, context);
+  await page.route("**/v1/chat/completions", (route) => route.fulfill({
+    status: 402, json: { error: { code: 402, message: "API key spend limit exceeded", type: "key_limit_exceeded" } },
+  }));
+  await page.goto(`/chat?model=${MODEL}`);
+  await send(page);
+  const error = page.locator(".chat-msg-error");
+  await expect(error).toContainText("This chat key has reached its spending limit");
+  await expect(error).toContainText("ask a workspace owner or admin");
+  await expect(error).not.toContainText("Add a card");
+});

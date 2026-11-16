@@ -201,6 +201,13 @@ from trusted_router.storage_gcp_user_models import SpannerUserProvidedModels
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
+from trusted_router.storage_key_usage import (
+    CHAT_BROWSER_KEY_INDEX_KIND,
+    api_key_usage_from_typed,
+    chat_browser_key_index_id,
+    chat_browser_key_index_prefix,
+    is_users_chat_browser_key,
+)
 from trusted_router.storage_models import (
     EMAIL_ATTACH_ALREADY_VERIFIED,
     EMAIL_ATTACH_ATTACHED,
@@ -2858,6 +2865,49 @@ class SpannerStore(OperationalAnalyticsReads):
 
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         return self.api_keys.delete_many(workspace_id, key_hashes)
+
+    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
+        self._write_entity(
+            CHAT_BROWSER_KEY_INDEX_KIND,
+            chat_browser_key_index_id(workspace_id, user_id, key_hash),
+            {"key_id": key_hash},
+        )
+
+    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
+        """One key-range read of this user's index rows (primary key prefix)."""
+        refs = self._list_entities(
+            CHAT_BROWSER_KEY_INDEX_KIND,
+            prefix=chat_browser_key_index_prefix(workspace_id, user_id),
+            cls=dict,
+        )
+        return [str(ref["key_id"]) for ref in refs]
+
+    def list_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, key_hashes: list[str] | None = None,
+    ) -> list[ApiKeyUsageSnapshot]:
+        """The index read (unless ``key_hashes`` is given), then per key one
+        point read of the record and one strong typed point-read of its
+        usage."""
+        wanted = (
+            self.chat_browser_key_hashes(workspace_id, user_id)
+            if key_hashes is None else sorted(set(key_hashes))
+        )
+        snapshots: list[ApiKeyUsageSnapshot] = []
+        for key_hash in wanted:
+            key = self.get_key_by_hash(key_hash)
+            if key is None or not is_users_chat_browser_key(key, workspace_id, user_id):
+                continue
+            snapshots.append(api_key_usage_from_typed(key, self.typed_key_usage(key.hash)))
+        return snapshots
+
+    def forget_chat_browser_keys(
+        self, workspace_id: str, user_id: str, key_hashes: list[str],
+    ) -> None:
+        if key_hashes:
+            self._delete_entities(
+                CHAT_BROWSER_KEY_INDEX_KIND,
+                [chat_browser_key_index_id(workspace_id, user_id, h) for h in key_hashes],
+            )
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)

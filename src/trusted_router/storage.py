@@ -1643,6 +1643,22 @@ class InMemoryStore:
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         return self.api_keys.delete_many(workspace_id, key_hashes)
 
+    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
+        self.api_keys.record_chat_browser_key(workspace_id, user_id, key_hash)
+
+    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
+        return self.api_keys.chat_browser_key_hashes(workspace_id, user_id)
+
+    def list_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, key_hashes: list[str] | None = None,
+    ) -> list[ApiKeyUsageSnapshot]:
+        return self.api_keys.list_chat_browser_keys(workspace_id, user_id, key_hashes=key_hashes)
+
+    def forget_chat_browser_keys(
+        self, workspace_id: str, user_id: str, key_hashes: list[str],
+    ) -> None:
+        self.api_keys.forget_chat_browser_keys(workspace_id, user_id, key_hashes)
+
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
 

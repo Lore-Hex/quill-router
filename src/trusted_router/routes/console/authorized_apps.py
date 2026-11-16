@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
@@ -12,6 +12,7 @@ from trusted_router.routes.console._shared import (
     render,
     require_manager,
 )
+from trusted_router.routes.console.social_rewards import _same_origin
 from trusted_router.routes.oauth_authorized_apps import (
     _authorized_app_shape,
     _live_delegated_snapshots,
@@ -54,10 +55,15 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/authorized-apps/{app_id}/budget")
     def console_update_authorized_app_budget(
+        request: Request,
         app_id: str,
         ctx: ConsoleDep,
+        settings: SettingsDep,
         monthly_budget: str = Form(""),
     ) -> Response:
+        # Same-origin before the role check, as the key routes do: this
+        # changes key budgets.
+        _same_origin(request, settings)
         require_manager(ctx)
         snapshots = _owned_app_snapshots(ctx.workspace.id, app_id)
         try:
@@ -74,7 +80,10 @@ def register(app: FastAPI) -> None:
         return RedirectResponse("/console/authorized-apps?saved=budget", status_code=303)
 
     @app.post("/console/authorized-apps/{app_id}/revoke")
-    def console_revoke_authorized_app(app_id: str, ctx: ConsoleDep) -> Response:
+    def console_revoke_authorized_app(
+        request: Request, app_id: str, ctx: ConsoleDep, settings: SettingsDep,
+    ) -> Response:
+        _same_origin(request, settings)
         require_manager(ctx)
         snapshots = _owned_app_snapshots(ctx.workspace.id, app_id)
         _update_all_or_rollback(
