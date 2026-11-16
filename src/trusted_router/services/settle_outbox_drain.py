@@ -13,6 +13,7 @@ from trusted_router.config import Settings
 from trusted_router.services.settle_outbox_apply import (
     _ACTIVITY_PARK_NOTE,
     ApplyOutcome,
+    _row_age_seconds,
     apply_frozen_settle,
 )
 from trusted_router.services.settle_outbox_audit import row_ref as _row_ref
@@ -55,9 +56,17 @@ _DRAIN_LEASE_SECONDS = 300
 # burn attempts toward dead, and retries after a fix lands without operator
 # SQL. Transient errors keep the attempts-counted exponential backoff.
 _DETERMINISTIC_PARK_SECONDS = 3600
-# A leased intent the fast path has not decided: asked again at the drain's
-# next pass, no attempt spent (settle_outbox_apply bounds this by the row's
-# age).
+# A leased intent the fast path has not decided: asked again after as long
+# as the row has already waited, at least a second and at most five minutes,
+# no attempt spent (settle_outbox_apply bounds this by the row's age). An
+# owner that is only slow decides within a second or two, and the row is
+# unresolved until it is asked again: its age is in the drain's published
+# health, where a p95 over five seconds closes async admission for every
+# workspace (2026-11-16: one such row, parked five minutes at one second
+# old, did for those five minutes). An owner that is gone decides when its
+# lease closes, hours later: the wait doubles to the five minutes, so that
+# row is asked a few dozen times.
+_LEASED_UNDECIDED_PARK_FLOOR_SECONDS = 1
 _LEASED_UNDECIDED_PARK_SECONDS = 300
 
 _monotonic = time.monotonic
@@ -310,6 +319,16 @@ def drain_settle_outbox(
         "reaped": reap_result.count,
         "deferred": deferred,
     }
+
+
+def _leased_undecided_park_seconds(row: SettleOutboxRow) -> int:
+    """How long an undecided leased intent waits before the fast path is
+    asked again: the row's age, within the floor and the cap. A row with no
+    readable creation time waits the cap."""
+    age = _row_age_seconds(row)
+    if age is None:
+        return _LEASED_UNDECIDED_PARK_SECONDS
+    return max(_LEASED_UNDECIDED_PARK_FLOOR_SECONDS, min(_LEASED_UNDECIDED_PARK_SECONDS, int(age)))
 
 
 def _resolve_row(
@@ -583,7 +602,7 @@ def _resolve_row(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
-            retry_after_seconds=_LEASED_UNDECIDED_PARK_SECONDS,
+            retry_after_seconds=_leased_undecided_park_seconds(row),
             note="fast path undecided",
         )
         logger.warning(
