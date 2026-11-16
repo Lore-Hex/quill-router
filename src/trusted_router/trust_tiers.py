@@ -170,8 +170,11 @@ def payment_recovery_target(payment: TrustEvent, adverse: Iterable[TrustEvent]) 
         ),
     )
     refund_target = credited * net_refunded // payment_amount
+    # ``closed`` is not here: it is Stripe's ``warning_closed``, an inquiry
+    # that ended without becoming a chargeback, so no funds were withdrawn.
+    # See the horizon wrapper below for the claim a closed row may keep.
     dispute_claims_all = any(
-        row.kind == "dispute" and row.lifecycle_status in {"succeeded", "lost", "closed"}
+        row.kind == "dispute" and row.lifecycle_status in {"succeeded", "lost"}
         for row in rows
     )
     return (credited if dispute_claims_all else refund_target), net_refunded
@@ -340,10 +343,14 @@ def _payment_recovery_target_with_horizon(
     credited = int(payment.credited_micro or 0)
     # Horizon terminalization is observational, not a won outcome. Preserve a
     # claim that was already active without turning a warning/pending dispute
-    # into a new monetary claim.
+    # into a new monetary claim. ``closed`` follows the same rule: a closed
+    # inquiry claims nothing of its own, and a ``closed`` row that already
+    # holds the full claim keeps it. Before this rule ``closed`` claimed all
+    # credited principal, so rows stored then hold that claim; it is released
+    # only by an operator, never by the next event on the payment.
     if any(
         row.kind == "dispute"
-        and row.lifecycle_status == "terminal_by_horizon"
+        and row.lifecycle_status in {"closed", "terminal_by_horizon"}
         and int(row.recovery_target or 0) >= credited
         for row in rows
     ):

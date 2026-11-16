@@ -538,6 +538,8 @@ def _stripe_adverse_events(
         elif raw_status == "lost":
             status = "lost"
         elif raw_status in {"closed", "warning_closed"}:
+            # An inquiry that closed without becoming a chargeback: no funds
+            # were withdrawn, so ``closed`` claims nothing (trust_tiers).
             status = "closed"
         elif raw_status in {"warning_needs_response", "warning_under_review"}:
             status = "pending"

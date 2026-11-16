@@ -189,12 +189,14 @@ def _derived_targets(events: list[TrustEvent]) -> dict[tuple[str, str], int]:
             ),
         )
         refund_target = credited * net_refunded // payment_amount
+        # Same rule as trust_tiers.payment_recovery_target: a closed inquiry
+        # claims nothing; a closed or horizon row keeps a claim it already held.
         claims_all = any(
             row.kind == "dispute"
             and (
-                row.lifecycle_status in {"succeeded", "lost", "closed"}
+                row.lifecycle_status in {"succeeded", "lost"}
                 or (
-                    row.lifecycle_status == "terminal_by_horizon"
+                    row.lifecycle_status in {"closed", "terminal_by_horizon"}
                     and int(row.recovery_target or 0) >= credited
                 )
             )
