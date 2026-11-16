@@ -44,6 +44,8 @@ _DEFAULT_MODEL_IDS: tuple[str, ...] = (
 )
 
 _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
+    "uncensored-ai-models": ("uncensored", "abliterated"),
+    "uncensored-deepseek-api": ("deepseek-v4.1-flash-1017-uncensored",),
     "abliterated-deepseek": ("deepseek-v4.1-flash-1017-uncensored",),
     "azure-openai-alternative": ("gpt-5", "claude-opus", "gemini"),
     "aws-bedrock-alternative": ("claude", "llama", "mistral"),
@@ -67,6 +69,8 @@ _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
 # Model-family guides should not fill spare rows with unrelated frontier models.
 _MODEL_PAGE_LABELS: dict[str, str] = {
     "abliterated-deepseek": "Abliterated DeepSeek",
+    "uncensored-ai-models": "Uncensored and abliterated models",
+    "uncensored-deepseek-api": "Uncensored DeepSeek",
     "claude-api-privacy": "Claude",
     "deepseek-api-privacy": "DeepSeek",
     "glm-5-api": "GLM",

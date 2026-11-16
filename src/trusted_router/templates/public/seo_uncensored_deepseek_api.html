@@ -1,0 +1,61 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel"><div class="panel-head"><h2>Run uncensored DeepSeek with your existing OpenAI client.</h2></div><div class="panel-body">
+<p>Use <code>dealignai/deepseek-v4.1-flash-1017-uncensored</code> as the model ID and your TrustedRouter API key. This is dealignai's modified checkpoint, served through Maple's dedicated route. It is separate from stock DeepSeek and from DeepSeek's first-party API.</p>
+<p><a class="btn primary" href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">Check live availability and pricing</a> <a class="btn" href="/abliterated-deepseek">Checkpoint provenance and cyberdefense examples</a></p>
+<p>Set <code>TRUSTEDROUTER_API_KEY</code> in your application environment. The examples below pin Maple, require Confidential and disable alternate-provider fallback. Keep those settings together if your application depends on this route.</p>
+</div></section>
+<section class="panel" id="python"><div class="panel-head"><h2>Uncensored DeepSeek API in Python</h2></div><div class="panel-body">
+<p>Install the OpenAI Python SDK in your project. Send the routing options through <code>extra_body</code>.</p>
+<pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+response = client.chat.completions.create(
+    model="dealignai/deepseek-v4.1-flash-1017-uncensored",
+    messages=[{"role": "user", "content": "Explain a binary search in three sentences."}],
+    max_tokens=512,
+    extra_body={"provider": {
+        "only": ["maple"],
+        "allow_fallbacks": False,
+        "min_privacy": "confidential",
+    }},
+)
+print(response.choices[0].message.content)</code></pre>
+</div></section>
+<section class="panel" id="javascript"><div class="panel-head"><h2>Uncensored DeepSeek API in JavaScript</h2></div><div class="panel-body">
+<p>Use Node.js with its built-in <code>fetch</code>. Keep the API key on your server, outside browser-delivered JavaScript.</p>
+<pre><code>const response = await fetch("{{ api_base_url }}/chat/completions", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.TRUSTEDROUTER_API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "dealignai/deepseek-v4.1-flash-1017-uncensored",
+    messages: [{role: "user", content: "Explain a binary search in three sentences."}],
+    max_tokens: 512,
+    provider: {
+      only: ["maple"],
+      allow_fallbacks: false,
+      min_privacy: "confidential",
+    },
+  }),
+});
+if (!response.ok) throw new Error(`Inference failed: ${response.status}`);
+const result = await response.json();
+console.log(result.choices[0].message.content);</code></pre>
+</div></section>
+<section class="marketing-grid three" aria-label="Integration checklist">
+<div class="marketing-card"><h3>Streaming and token usage</h3><p>For streaming, use <code>stream: true</code> and <code>stream_options: {include_usage: true}</code>. Consume the event stream instead of calling <code>response.json()</code>. The <a href="/abliterated-deepseek#maple-api">streaming curl example</a> also shows how to request routing metadata.</p></div>
+<div class="marketing-card"><h3>Supported features</h3><p>The documented Maple integration supports text Chat Completions, streaming, non-streaming and cached-input billing. Images, tools, structured-output schemas and BYOK are not currently advertised. Check the <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">current model page</a> before building around a capability.</p></div>
+<div class="marketing-card"><h3>When a request fails</h3><p>Check the exact model ID, API key, Credits balance and route availability. A request requiring Confidential fails if no qualified route is available. Keep the privacy requirement intact and surface the error to your application. Use bounded retries for transient failures.</p></div>
+</section>
+<section class="panel"><div class="panel-head"><h2>Move from a first request to a measured evaluation.</h2></div><div class="panel-body">
+<p>Use the same prompts and output limits across candidates. Record token usage and cost, measure latency, and review the answers. For defensive security work, start with the <a href="/abliterated-deepseek#cyberdefense-prompts">SOC triage and incident-response prompts</a>. For alternatives, compare the <a href="/uncensored-ai-models">uncensored and abliterated model guide</a>.</p>
+<p>Confidential applies to the qualified managed route. It does not describe stock DeepSeek, saved chats or BYOK, and content-retention claims do not remove account and billing records. Read the <a href="/providers/maple">Maple route evidence</a> and <a href="/deepseek-api-privacy">DeepSeek privacy guide</a>.</p>
+</div></section>
+{% endblock %}

@@ -184,6 +184,8 @@ _MODEL_DISCOVERY_PRIORITY_INDEX = {
 }
 SEO_CORE_PATHS: tuple[str, ...] = (
     "/abliterated-deepseek",
+    "/uncensored-ai-models",
+    "/uncensored-deepseek-api",
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
     "/glm-5-api",
@@ -851,6 +853,28 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "How does TrustedRouter handle capacity and quotas?",
                 "Routes are served across multiple providers. When a provider goes down, requests roll over to another provider serving the route automatically. Latency is measured from real routed requests and published on the latency benchmarks page. Payment is prepaid credits through Stripe, bring-your-own provider keys, or crypto pay-per-request through x402.",
             ),
+        ),
+    ),
+    "uncensored-ai-models": PublicPage(
+        template="public/seo_uncensored_ai_models.html",
+        title="Uncensored AI Models: Compare LLMs, APIs & Privacy",
+        description="Compare uncensored and abliterated AI models, including DeepSeek and Abliteration. Check model IDs, API features, current pricing and provider privacy.",
+        faq_items=(
+            ("What is an uncensored AI model?", "Uncensored is a broad label for reduced restrictions or refusal behavior, not a standardized quality score. Check the named checkpoint, hosting policy and results on your own tasks."),
+            ("Are uncensored and abliterated models the same?", "Uncensored is a broader discovery term. Abliterated describes a modification intended to change refusal behavior. For the dealignai DeepSeek release linked here, the publisher lists both names for the checkpoint."),
+            ("Which uncensored model is best?", "There is no universal winner. Compare useful answers, factual errors, unnecessary refusals, cost and latency on a representative evaluation set."),
+            ("Does uncensored mean private or encrypted?", "No. Model behavior and hosting privacy are separate. Review the selected provider's evidence and require the privacy tier your application needs."),
+        ),
+    ),
+    "uncensored-deepseek-api": PublicPage(
+        template="public/seo_uncensored_deepseek_api.html",
+        title="Uncensored DeepSeek API: Python & JavaScript Setup",
+        description="Call uncensored DeepSeek through Maple with an OpenAI-compatible API. Copy Python and JavaScript examples with explicit model selection and Confidential routing.",
+        faq_items=(
+            ("How do I use the uncensored DeepSeek API?", "Create a TrustedRouter API key, use the API base URL shown in this guide, and select dealignai/deepseek-v4.1-flash-1017-uncensored. The examples pin Maple and require Confidential routing."),
+            ("Can I use the OpenAI SDK with uncensored DeepSeek?", "Yes. Use Chat Completions with the TrustedRouter base URL and the exact checkpoint ID. In Python, pass provider selection through extra_body."),
+            ("Does uncensored DeepSeek support streaming?", "The documented Maple route supports streaming text Chat Completions. Set stream to true and include_usage in stream_options to receive usage events."),
+            ("Is this the official DeepSeek API?", "No. This guide uses a third-party modified checkpoint by dealignai, served through Maple on TrustedRouter."),
         ),
     ),
     "abliterated-deepseek": PublicPage(
@@ -5127,6 +5151,8 @@ def llms_txt(settings: Settings) -> str:
         f"- [Machine-readable URL list](https://{domain}/sitemap.xml)",
         "",
         "## Model API Guides",
+        f"- [Uncensored AI models](https://{domain}/uncensored-ai-models): compare checkpoints, API capabilities and provider privacy.",
+        f"- [Uncensored DeepSeek API setup](https://{domain}/uncensored-deepseek-api): Python and JavaScript examples with explicit Maple Confidential routing.",
         f"- [Abliterated / uncensored DeepSeek for cyberdefense](https://{domain}/abliterated-deepseek): dealignai's modified checkpoint, Maple API instructions, SOC triage and incident-response examples.",
         f"- [DeepSeek API privacy](https://{domain}/deepseek-api-privacy): provider policy and routing controls.",
         f"- [GPT-OSS 120B API](https://{domain}/gpt-oss-120b-api): current routes, pricing and integration guide.",

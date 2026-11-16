@@ -1,0 +1,32 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Choose an uncensored model">
+  <div class="marketing-copy">
+    <span class="eyebrow">Uncensored AI models · OpenAI-compatible API</span>
+    <h2>Choose an uncensored LLM by its checkpoint, capabilities and host.</h2>
+    <p>Searching for <strong>uncensored AI models</strong>, an <strong>uncensored LLM API</strong>, or <strong>abliterated models</strong>? Start with an identifiable model and a route you can evaluate. TrustedRouter puts model IDs, current prices, supported features and provider privacy evidence next to the API you use.</p>
+    <p>For a named DeepSeek modification, explore dealignai's DeepSeek V4.1 Flash Uncensored. For another model family, compare Abliteration's Large Flash and Large v2 pages. These are separate model identities; similar labels do not establish the same underlying weights.</p>
+    <p><a class="btn primary" href="/uncensored-deepseek-api">Set up the uncensored DeepSeek API</a> <a class="btn" href="/models/abliteration/abliterated-model-large-flash">Explore Large Flash</a></p>
+  </div>
+  <div class="panel"><div class="panel-head"><h2>What does uncensored mean?</h2></div><div class="panel-body">
+    <p>It is a broad label for models marketed with reduced content restrictions or refusal behavior. It is not a standardized capability or quality score. A model can still refuse a request, make mistakes or have hosting restrictions.</p>
+    <p><strong>Abliterated</strong> describes a modification intended to change refusal behavior. <strong>Open weights</strong> describes access to model parameters. Neither term establishes zero retention, encryption or a particular license.</p>
+  </div></div>
+</section>
+<section class="panel" aria-label="Uncensored model shortlist">
+  <div class="panel-head"><h2>Models and routes to compare</h2></div><div class="panel-body">
+    <h3><a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">DeepSeek V4.1 Flash Uncensored by dealignai</a></h3>
+    <p>A modified DeepSeek checkpoint with an explicit Maple route. Start with the <a href="/uncensored-deepseek-api">Python and JavaScript setup guide</a> for text Chat Completions, or use the <a href="/abliterated-deepseek">cyberdefense evaluation prompts</a> for SOC triage, detection-rule review and incident reporting.</p>
+    <h3><a href="/models/abliteration/abliterated-model-large-flash">Abliterated Large Flash</a></h3>
+    <p>A separate model from Abliteration. Check its current context limit, pricing and advertised features, then use the <a href="/models/abliteration/abliterated-model-large-flash/performance">performance page</a> to inspect latency and the supporting sample counts.</p>
+    <h3><a href="/models/abliteration/abliterated-model-large-v2">Abliterated Large v2</a></h3>
+    <p>Another candidate in the <a href="/providers/abliteration">Abliteration model family</a>. Run the same tasks against each candidate before choosing. The similarly named <a href="/providers/abliterate">Abliterate provider</a> is a separate service with its own models and policies.</p>
+  </div>
+</section>
+<section class="marketing-grid three" aria-label="Evaluate uncensored models">
+  <div class="marketing-card"><h3>Measure useful answers</h3><p>Use representative writing, research, code-review or security-analysis tasks. Score factual accuracy, evidence citations, unnecessary refusals and review time separately. <a href="/docs/evals">Build a repeatable evaluation</a>.</p></div>
+  <div class="marketing-card"><h3>Match the API to your application</h3><p>Check text, images, tools, structured outputs and streaming individually. A model card's capabilities can differ from what a hosted route exposes. The model page is the starting point for the current route contract.</p></div>
+  <div class="marketing-card"><h3>Choose privacy explicitly</h3><p>Uncensored does not mean private. Read the host's retention policy and select the required privacy tier. The <a href="/deepseek-api-privacy">DeepSeek privacy guide</a> explains route-level controls; each provider page supplies its own evidence.</p></div>
+</section>
+<section class="panel"><div class="panel-head"><h2>Looking for the best uncensored model for cybersecurity?</h2></div><div class="panel-body"><p>Use your own incident cases to define “best.” Compare missed indicators, unsupported conclusions, benign false positives and analyst review time. The <a href="/abliterated-deepseek#cyberdefense-prompts">DeepSeek cyberdefense guide</a> includes prompts that ask for evidence-backed findings. For a general integration, start with the <a href="/uncensored-deepseek-api">uncensored DeepSeek API quickstart</a>.</p></div></section>
+{% endblock %}

@@ -36,6 +36,12 @@
     <p><a href="#cyberdefense-prompts">Try the cyberdefense prompt examples</a> or <a href="#maple-api">integrate the text API</a>.</p>
   </div>
 </section>
+<section class="panel" aria-label="DeepSeek versions and API setup"><div class="panel-head"><h2>Uncensored DeepSeek, DeepSeek R1 or DeepSeek V3?</h2></div><div class="panel-body">
+<p>A version name matters. Searches for “DeepSeek R1 uncensored,” “DeepSeek V3 uncensored” and “DeepSeek V4.1 uncensored” can refer to different checkpoints. This page covers dealignai's <strong>DeepSeek V4.1 Flash 1017</strong> modification. Do not substitute it for R1 or V3 when reproducing an evaluation or integrating an application that needs those weights.</p>
+<p>Use the exact model ID and inspect the publisher's model card. The <a href="/uncensored-ai-models">uncensored AI model comparison guide</a> helps separate model identity from provider privacy. To build with this checkpoint, follow the <a href="/uncensored-deepseek-api">uncensored DeepSeek API setup guide</a> for Python and JavaScript.</p>
+<h3>Can I use uncensored DeepSeek for coding and security analysis?</h3>
+<p>Evaluate it on code explanations, defensive reviews and incident-analysis tasks that matter to your team. Compare the modified checkpoint with stock DeepSeek using the same evidence and score factual errors separately from refusals. For this Maple route, your application supplies text and handles subsequent actions; tool calling is not currently advertised.</p>
+</div></section>
 {% include "public/_maple_api.html" %}
 <section class="panel" aria-label="Abliterated DeepSeek for cyberdefense">
   <div class="panel-head"><h2>Uncensored DeepSeek for SOC triage and incident response</h2></div>
