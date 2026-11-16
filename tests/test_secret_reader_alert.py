@@ -39,10 +39,13 @@ def _code(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
-def _block(name: str) -> str:
-    found = re.search(rf"\n  {name} = \{{\n(.*?)\n  \}}\n", _code(ALERT), re.S)
-    assert found, f"{name} not found"
-    return found.group(1)
+def _block(opening: str, closing: str = "}") -> str:
+    if not opening.endswith(("{", "[")):
+        opening += " = {"
+    code = _code(ALERT)
+    marker = f"\n  {opening}\n"
+    assert marker in code, f"{opening} not found"
+    return code.split(marker, 1)[1].split(f"\n  {closing}", 1)[0]
 
 
 def _readers() -> dict[str, str]:
@@ -114,17 +117,55 @@ def test_the_first_policy_matches_any_read_of_a_secret_value_by_an_unlisted_acco
     # Every clause must hold at once.
     assert 'secret_read_filter = join(" AND ", [' in code
     assert 'unexpected_secret_reader_filter = join(" AND ", [\n    local.secret_read_filter,' in code
+    assert '"NOT (${local.operator_login_at_known_address})",\n  ])' in code
     assert "filter = local.unexpected_secret_reader_filter" in _resource("unexpected_secret_reader")
     assert "length(local.unexpected_secret_reader_filter) <= 20000" in code
 
 
-def test_no_caller_address_is_left_out() -> None:
+def test_no_service_account_read_is_left_out_by_its_address() -> None:
     # Cloud Scheduler's copies carry the literal address "private", and so
     # does every read made from inside a Cloud Run service. Scheduler reads no
-    # secret, so leaving "private" out would only hide unknown accounts.
+    # secret, so leaving "private" out would only hide unknown accounts. The
+    # caller's address is consulted in one place: a user login's read.
     code = _code(ALERT)
-    assert "callerIp" not in code
     assert "private" not in code
+    assert "callerIp=" not in code
+    filters = code.split('\nresource "', 1)[0]
+    assert filters.count("callerIp") == 1
+    assert "callerIp" in _block("operator_login_at_known_address = join(\" AND \", [", "]")
+
+
+def test_a_user_login_is_quiet_only_from_the_laptop_alerts_known_addresses() -> None:
+    clause = _block("operator_login_at_known_address = join(\" AND \", [", "]")
+    assert clause.splitlines()[:2] == [
+        '    "protoPayload.authenticationInfo.principalEmail:*",',
+        '    "NOT protoPayload.authenticationInfo.principalEmail:\\"gserviceaccount.com\\"",',
+    ]
+    # One range is enough: the ranges are alternatives, the three clauses
+    # must all hold.
+    assert (
+        '"(${join(" OR ", [\n      for cidr in local.laptop_key_known_addresses :\n'
+        '      "ip_in_net(protoPayload.requestMetadata.callerIp, \\"${cidr}\\")"\n    ])})",'
+    ) in clause
+
+    # The same list as the laptop alert: one data source for the secret in
+    # the whole root, and none here.
+    readers_of_the_list = [
+        path.name
+        for path in INFRA.glob("*.tf")
+        if 'secret  = "tr-laptop-key-known-addresses"' in _code(path.read_text())
+    ]
+    assert readers_of_the_list == ["laptop_key_use_alert.tf"]
+    assert 'data "google_secret_manager_secret_version"' not in _code(ALERT)
+
+    # The same two checks on it, word for word.
+    def address_checks(text: str) -> list[str]:
+        blocks = re.findall(r"\n    precondition \{\n(.*?)\n    \}", _code(text), re.S)
+        return [block for block in blocks if "laptop_key_known_addresses" in block]
+
+    laptop = address_checks(CHANNEL)
+    assert len(laptop) == 2
+    assert address_checks(_resource("unexpected_secret_reader")) == laptop
 
 
 def test_the_second_policy_pages_on_a_signing_key_read_by_anyone_but_its_signer() -> None:
@@ -160,7 +201,7 @@ def test_both_policies_are_rate_limited_and_notify_the_security_channel() -> Non
 
 def test_messages_quote_nothing_and_no_address_is_written() -> None:
     messages = re.findall(r'error_message\s*= "([^"]*)"', ALERT)
-    assert len(messages) == 5
+    assert len(messages) == 7
     for message in messages:
         assert "${" not in message
     for text in (ALERT, Path(__file__).read_text()):

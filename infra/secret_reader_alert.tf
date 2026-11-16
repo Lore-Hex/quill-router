@@ -8,7 +8,8 @@
 #
 # Two policies:
 #
-#   1. Any read by an account that is not in secret_readers below.
+#   1. Any read by an account that is not in secret_readers below, except a
+#      read by a user login from one of the operator's known addresses.
 #   2. A read of one of the two signing keys by anyone but the one account
 #      that signs with it. IAM already gives each key a single reader, but an
 #      account with access to every secret in the project (the Compute Engine
@@ -19,12 +20,21 @@
 #
 # Measured on 2026-11-16, the first day of records (00:24Z to 19:29Z): 64,046
 # reads by nine principals, not counting the operator's test reads. Eight are
-# below with their counts. The ninth is
-# the owner's own user login, which is not in this repository and so is not
-# in the list: until the operator decides otherwise, its reads page. The
-# accounts not seen that day are given secrets by this repository or by
-# quill-cloud-proxy, and read when a service or a node starts or when a
-# scheduled workflow runs.
+# below with their counts. The accounts not seen that day are given secrets
+# by this repository or by quill-cloud-proxy, and read when a service or a
+# node starts or when a scheduled workflow runs.
+#
+# The ninth is the owner's own user login: the operator and the operator's
+# agents read secrets with it many times a day (the ClickHouse operator
+# password, for one). Its address is not written here. Instead a read by any
+# user login, as opposed to a service account, from an address on the laptop
+# alert's known list (local.laptop_key_known_addresses, from the secret
+# tr-laptop-key-known-addresses; infra/laptop_key_use_alert.tf) does not
+# page, and from any other address it does. The project's IAM policy lets no
+# other user login read a secret, so in practice this is the owner's. The
+# list is held to the laptop alert's rule (not empty, every entry a CIDR of
+# /16 or narrower) by the same two checks, and the filter is hidden in plans
+# for the same reason.
 #
 # Accounts that can read secrets but are not in the list, so their first
 # read pages: quill-cloud-run (nine secrets; neither repository explains
@@ -98,11 +108,24 @@ locals {
     "protoPayload.methodName:\"SecretManagerService.AccessSecretVersion\"",
   ])
 
+  # A user login (an address that is not a service account's) calling from
+  # one of the operator's known addresses. A caller address that is not an
+  # address ("private", "gce-internal-ip") or is missing is in no range.
+  operator_login_at_known_address = join(" AND ", [
+    "protoPayload.authenticationInfo.principalEmail:*",
+    "NOT protoPayload.authenticationInfo.principalEmail:\"gserviceaccount.com\"",
+    "(${join(" OR ", [
+      for cidr in local.laptop_key_known_addresses :
+      "ip_in_net(protoPayload.requestMetadata.callerIp, \"${cidr}\")"
+    ])})",
+  ])
+
   # An entry with no principalEmail (a federated identity used directly,
-  # with no service account) matches the NOT clause, so it pages.
+  # with no service account) matches both NOT clauses, so it pages.
   unexpected_secret_reader_filter = join(" AND ", [
     local.secret_read_filter,
     "NOT protoPayload.authenticationInfo.principalEmail=(${join(" OR ", formatlist("\"%s\"", sort(values(local.secret_readers))))})",
+    "NOT (${local.operator_login_at_known_address})",
   ])
 
   signing_key_read_by_other_filter = join(" AND ", [
@@ -121,7 +144,7 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
   severity     = "CRITICAL"
 
   conditions {
-    display_name = "A secret's value was read by an account that is not on the readers list"
+    display_name = "A secret's value was read by an account that is not on the readers list, or by a user login from an unknown address"
     condition_matched_log {
       filter = local.unexpected_secret_reader_filter
     }
@@ -138,7 +161,7 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
   }
 
   documentation {
-    content   = "An account that is not on the readers list read a secret's value (Secret Manager AccessSecretVersion). The incident names the account (`protoPayload.authenticationInfo.principalEmail`, or `principalSubject` for a federated identity) and the secret (`protoPayload.resourceName`). If the account is a new workload that was given a secret on purpose, add it to `secret_readers` and run infra-apply. If not, treat its credential as stolen: list everything it read with `gcloud logging read 'protoPayload.serviceName=\"secretmanager.googleapis.com\" AND protoPayload.authenticationInfo.principalEmail=\"ACCOUNT\"' --project=quill-cloud-proxy --freshness=7d`, rotate each secret it read, and remove the credential. infra/secret_reader_alert.tf in Lore-Hex/quill-router."
+    content   = "An account that is not on the readers list read a secret's value (Secret Manager AccessSecretVersion), or a user login read one from an address that is not on the known list (secret tr-laptop-key-known-addresses). The incident names the account (`protoPayload.authenticationInfo.principalEmail`, or `principalSubject` for a federated identity), the secret (`protoPayload.resourceName`) and the address (`protoPayload.requestMetadata.callerIp`). If it is the operator's own login on a new network, add that address to the known list as for the laptop key alert (infra/laptop_key_use_alert.tf). If the account is a new workload that was given a secret on purpose, add it to `secret_readers` and run infra-apply. If neither, treat its credential as stolen: list everything it read with `gcloud logging read 'protoPayload.serviceName=\"secretmanager.googleapis.com\" AND protoPayload.authenticationInfo.principalEmail=\"ACCOUNT\"' --project=quill-cloud-proxy --freshness=7d`, rotate each secret it read, and remove the credential. infra/secret_reader_alert.tf in Lore-Hex/quill-router."
     mime_type = "text/markdown"
   }
 
@@ -165,6 +188,21 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
     precondition {
       condition     = length(local.unexpected_secret_reader_filter) <= 20000
       error_message = "The unexpected-secret-reader filter is longer than Cloud Logging accepts."
+    }
+    # The laptop alert's two checks on the known addresses, word for word
+    # (infra/laptop_key_use_alert.tf). Empty, the filter would not parse; too
+    # wide, a user login would not page from anywhere.
+    precondition {
+      condition     = length(local.laptop_key_known_addresses) > 0
+      error_message = "tr-laptop-key-known-addresses is empty: the policy would page on every call made with a laptop key."
+    }
+    # Fixed message, never the value. /16 is the widest range accepted.
+    precondition {
+      condition = alltrue([
+        for cidr in local.laptop_key_known_addresses :
+        can(cidrhost(cidr, 0)) && try(tonumber(split("/", cidr)[1]), 0) >= 16
+      ])
+      error_message = "tr-laptop-key-known-addresses holds an entry that is not a CIDR of /16 or narrower. Entries are separated by commas, each written ADDRESS/PREFIX."
     }
   }
 }
