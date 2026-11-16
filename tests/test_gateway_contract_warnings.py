@@ -24,6 +24,7 @@ from trusted_router.services.gateway_contract_warnings import (
     report_gateway_contract_rejection,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_operational_analytics import analytics_surrogate
 
 REQUEST_ID = "rlog_" + "a" * 32
 
@@ -117,6 +118,9 @@ def test_rejection_warns_with_verified_identity_without_billing(
     ]
     assert event["tags"]["workspace_id"] == key["workspace_id"]
     assert event["tags"]["credential_id"] == key["hash"]
+    # Sentry counts distinct users per issue: here, distinct workspaces.
+    assert event["user"] == {"id": analytics_surrogate("workspace", key["workspace_id"])}
+    assert key["workspace_id"] not in event["user"]["id"]
     assert event["contexts"]["gateway_rejection"]["request_id"] == REQUEST_ID
     assert "private-key-label" not in json.dumps(event)
     assert "alice@example.com" not in json.dumps(event)
@@ -174,6 +178,53 @@ def test_unknown_rejected_field_path_is_retained_without_value_or_new_fingerprin
 
 
 @pytest.mark.parametrize(
+    ("parameter", "path", "field"),
+    [
+        ("input", "input[148].content", "input[].content"),
+        ("input", "input[0].content", "input[].content"),
+        ("input", "input[5].namespace", "input[].namespace"),
+        ("tools", "tools[3].type", "tools[].type"),
+        ("other", "client_metadata", "client_metadata"),
+        ("other", "token_budget", "token_budget"),
+        ("thinking", "thinking", "thinking"),
+        ("other", "a[1].b[22].c[333]", "a[].b[].c[]"),
+    ],
+)
+def test_rejected_field_tag_breaks_an_issue_down_without_splitting_it(
+    warnings: list[dict[str, Any]], parameter: str, path: str, field: str
+) -> None:
+    """One issue holds every refusal of a route/status/parameter. The tag says
+    which fields those were, indices removed, so the tag breakdown can tell a
+    widely sent field (our gap) from one client's stray field."""
+    report_gateway_contract_rejection(
+        GatewayContractRejection(
+            status=400, parameter=parameter, request_id=REQUEST_ID, parameter_path=path
+        ),
+        route="/v1/responses", workspace_id="ws_verified", credential_id="key_verified",
+    )
+    [event] = warnings
+    assert event["tags"]["rejected_field"] == field
+    assert event["contexts"]["gateway_rejection"]["parameter_path"] == path
+    assert event["fingerprint"] == ["gateway-contract-rejection", "/v1/responses", "400", parameter]
+
+
+def test_each_workspace_is_its_own_sentry_user(warnings: list[dict[str, Any]]) -> None:
+    for workspace in ("ws_first", "ws_second"):
+        reset_sentry_floodgate_for_tests()
+        report_gateway_contract_rejection(
+            GatewayContractRejection(status=400, parameter="thinking", request_id=REQUEST_ID),
+            route="/v1/chat/completions", workspace_id=workspace, credential_id="key_verified",
+        )
+    assert [event["user"] for event in warnings] == [
+        {"id": analytics_surrogate("workspace", "ws_first")},
+        {"id": analytics_surrogate("workspace", "ws_second")},
+    ]
+    # Only the opaque id: no email, address or name rides along.
+    assert all(set(event["user"]) == {"id"} for event in warnings)
+    assert warnings[0]["fingerprint"] == warnings[1]["fingerprint"]
+
+
+@pytest.mark.parametrize(
     "path",
     ["alice@example.com", "sk-tr-v1-secret", "sk_private_secret", "private customer text", "usage=secret", "x\nsecret"],
 )
@@ -185,6 +236,7 @@ def test_unsafe_rejected_field_path_is_dropped_not_forwarded(
         route="/v1/chat/completions", workspace_id="ws_verified", credential_id="key_verified",
     )
     assert "parameter_path" not in warnings[0]["contexts"]["gateway_rejection"]
+    assert "rejected_field" not in warnings[0]["tags"]
 
 
 @pytest.mark.parametrize("path", ["a" * 101, "usage." + "a" * 95, "a" * 128, "a" * 129, "private_prompt_" * 100])
@@ -197,6 +249,7 @@ def test_oversized_path_is_dropped_without_losing_rejection_context(
     assert client.post("/v1/internal/gateway/validate", json=payload).status_code == 200
     [event] = warnings
     assert event["contexts"]["gateway_rejection"] == {"request_id": REQUEST_ID}
+    assert "rejected_field" not in event["tags"]
     assert event["tags"]["workspace_id"] == key["workspace_id"]
     assert event["tags"]["credential_id"] == key["hash"]
     assert event["tags"]["route"] == "/v1/chat/completions"

@@ -10,6 +10,7 @@ from trusted_router.schemas import (
 )
 from trusted_router.sentry_config import capture_gateway_contract_warning
 from trusted_router.services.contract_value_preview import safe_value_preview
+from trusted_router.storage_operational_analytics import analytics_surrogate
 
 # Public parameter categories, not a request allowlist. Unknown names might
 # themselves contain customer content, so only bounded identifier paths are
@@ -139,6 +140,13 @@ _PARAMETER_PATH = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(\[[0-9]{1,6}\])?"
     r"(\.[A-Za-z_][A-Za-z0-9_]*(\[[0-9]{1,6}\])?){0,7}"
 )
+_PATH_INDEX = re.compile(r"\[[0-9]{1,6}\]")
+
+
+def _rejected_field(path: str) -> str:
+    """The path without its item indices, so input[3].content and
+    input[148].content count as one field in Sentry's tag breakdown."""
+    return _PATH_INDEX.sub("[]", path)
 
 
 def _safe_parameter_path(value: str | None) -> str | None:
@@ -167,8 +175,19 @@ def report_gateway_contract_rejection(
         return
     parameter = rejection.parameter if rejection.parameter in PARAMETER_CATEGORIES else "other"
     context: dict[str, str | bool] = {"request_id": rejection.request_id}
+    tags = {
+        "component": "gateway-contract",
+        "route": route,
+        "http_status": str(rejection.status),
+        "parameter": parameter,
+        "workspace_id": workspace_id,
+        "credential_id": credential_id,
+    }
     if path := _safe_parameter_path(rejection.parameter_path):
         context["parameter_path"] = path
+        # A tag, never a fingerprint: the breakdown inside one issue shows
+        # which fields it refuses without splitting it into new issues.
+        tags["rejected_field"] = _rejected_field(path)
         preview, trimmed = safe_value_preview(path, rejection.value_preview)
         if preview is not None:
             context["value_preview"] = preview
@@ -178,14 +197,14 @@ def report_gateway_contract_rejection(
             "level": "warning",
             "message": "Authenticated gateway request rejected by the API contract",
             "fingerprint": ["gateway-contract-rejection", route, str(rejection.status), parameter],
-            "tags": {
-                "component": "gateway-contract",
-                "route": route,
-                "http_status": str(rejection.status),
-                "parameter": parameter,
-                "workspace_id": workspace_id,
-                "credential_id": credential_id,
-            },
+            # The verified workspace as Sentry's user, as the analytics
+            # surrogate (sha256, resolvable through tr.workspace_directory),
+            # so an issue's user count is how many workspaces hit it without
+            # adding a raw identifier. One workspace sending a field no
+            # contract defines is that client's mistake; many workspaces
+            # refused the same way is a gap or regression of ours.
+            "user": {"id": analytics_surrogate("workspace", workspace_id)},
+            "tags": tags,
             "contexts": {"gateway_rejection": context},
         }
     )
