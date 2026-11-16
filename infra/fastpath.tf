@@ -146,7 +146,19 @@ locals {
   # us-east4 and europe-west4 for the decide wildcard and, without -region,
   # stops and reads every wildcard region (#2610); the node binary's only
   # other fastpath/ change since d3aa9c0a0 is a test with comments (#2604).
-  fastpath_release        = "5133a83c6cf981e31fb5d97ffa9610088fd0256c"
+  # daedb45ad: an eligible edge ticket's answer carries the request's
+  # invocation_nonce, as Python's does (#2632). Without it the enclave
+  # bound nothing to an eligible edge ticket and settled the request
+  # synchronously; with it the enclave settles such a request
+  # asynchronously. Nothing in Python or the enclave changes for it. The
+  # decide shadow reads a workspace's credit rows once after Python's
+  # credit refusal of a request the edge would have answered, and pages
+  # only when a row is marked in debt, the rows cover the hold, or the
+  # read fails (#2631). Its fastpathctl takes us-west1 for the decide
+  # wildcard as well (#2612). The nodes take the release one at a time in
+  # either order: a node on the earlier release keeps the earlier
+  # behaviour. No node ran 5133a83c6: both went from d3aa9c0a0 to this.
+  fastpath_release        = "daedb45adc927a1e30e0d4ed41fe57c81aeccc76"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
