@@ -40,7 +40,7 @@
   </div>
 </section>
 {% endif %}
-{% if not keys %}
+{% if not keys and can_manage %}
 <section class="panel">
   <div class="panel-head"><h2>Create a new API key</h2></div>
   <div class="panel-body">
@@ -53,11 +53,12 @@
     <div>
       <h2>Existing keys</h2>
       <p class="panel-kicker">Monitor usage, budgets, and access for this workspace.</p>
+      {% if not can_manage %}<p class="panel-kicker">Only workspace owners and admins can create keys or change budgets. Ask a workspace owner or admin for access.</p>{% endif %}
     </div>
     <div class="panel-head-actions">
       {% if can_manage %}<a class="btn" href="#management-keys">Management keys</a>{% endif %}
       <span class="pill">{{ keys|length }} total</span>
-      {% if keys %}
+      {% if keys and can_manage %}
       <button class="btn" type="button" data-action="open-new-key">New key</button>
       {% endif %}
     </div>
@@ -72,6 +73,7 @@
           <td data-col="Name"><span class="key-name">{{ k.name }}</span><span class="pill{% if k.management %} warn{% endif %}">{{ 'Management' if k.management else 'Standard' }}</span></td>
           <td data-col="Label"><code>{{ k.label }}</code></td>
           <td data-col="Budgets">
+            {% if can_manage %}
             <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
               <div class="key-budget-grid">
                 <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Total budget for {{ k.name }}"></label>
@@ -83,15 +85,20 @@
               {% if k.budget_strict %}<p class="key-window-note">Strict admission includes in-flight reservations.</p>{% endif %}
               <button class="btn" type="submit">Save</button>
             </form>
+            {% endif %}
             <div class="key-budget-current">
               Used {{ k.usage_display }}{% if k.limit_display != 'none' %} of {{ k.limit_display }}{% endif %}
               {%- for w in k.windows if w.limit_display %} · {{ w.name }} {{ w.used_display }} / {{ w.limit_display }}{% endfor %}
+              {% if k.limit_display != 'none' or k.windows|selectattr('limit_display')|list %}
+              <div class="key-budget-mode">Over budget: {% if k.budget_alert_only %}email alert only, requests are not blocked{% else %}requests are blocked (429){% endif %}{% if k.budget_strict %} · strict admission{% endif %}</div>
+              {% endif %}
             </div>
           </td>
           <td data-col="Status">{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
           <td data-col="Actions">
             <div class="key-actions">
-              {% if k.disabled %}
+              {% if not can_manage %}
+              {% elif k.disabled %}
               <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/enable">
                 <button class="btn" type="submit">Enable</button>
               </form>
@@ -108,14 +115,14 @@
         </tr>
         {% endfor %}
         {% if not keys %}
-        <tr><td class="empty" colspan="5">No keys yet. Create one above.</td></tr>
+        <tr><td class="empty" colspan="5">No keys yet.{% if can_manage %} Create one above.{% endif %}</td></tr>
         {% endif %}
       </tbody>
     </table>
     </div>
   </div>
 </section>
-{% if keys %}
+{% if keys and can_manage %}
 <section class="panel key-create-panel" id="new-api-key">
   <div class="panel-head">
     <div>
@@ -151,7 +158,7 @@
     </form>
   </details>
   {% else %}
-  <p>Only workspace owners and managers can create management keys. Ask a workspace owner or manager for access.</p>
+  <p>Only workspace owners and admins can create management keys. Ask a workspace owner or admin for access.</p>
   {% endif %}
 </section>
 </div>

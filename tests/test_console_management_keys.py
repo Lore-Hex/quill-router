@@ -108,7 +108,7 @@ def test_permission_revocation_hides_form_and_blocks_old_confirmation(client: Te
     page = client.get("/console/api-keys")
     assert f'action="{PATH}"' not in page.text
     assert 'name="csrf_token"' not in page.text
-    assert "Only workspace owners and managers" in page.text
+    assert "Only workspace owners and admins can create management keys" in page.text
     response = client.post(PATH, data=data, headers=ORIGIN)
     assert response.status_code == 403
     assert len(STORE.list_keys(workspace.id)) == before
@@ -171,7 +171,9 @@ def test_management_name_validation(client: TestClient, owner: dict, name: str) 
 
 
 def test_ordinary_creation_cannot_escalate_to_management(client: TestClient, owner: dict) -> None:
-    response = client.post("/console/api-keys", data={"name": "ordinary", "management": "true"})
+    response = client.post(
+        "/console/api-keys", data={"name": "ordinary", "management": "true"}, headers=ORIGIN,
+    )
     assert response.status_code == 200
     key = next(k for k in STORE.list_keys(owner["workspace"].id) if k.name == "ordinary")
     assert key.management is False

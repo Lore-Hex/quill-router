@@ -64,6 +64,7 @@ def test_api_key_reveal_exposes_agent_message_and_raw_key_without_setup_steps(
     response = client.post(
         "/console/api-keys",
         data={"name": "Claude Code", "limit": ""},
+        headers={"Origin": "http://testserver"},
     )
 
     assert response.status_code == 200

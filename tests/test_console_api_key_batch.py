@@ -401,13 +401,16 @@ def test_spanner_console_does_not_render_or_mutate_a_foreign_workspace_key() -> 
         assert page.status_code == 200
         assert own.name in page.text
         assert foreign.name not in page.text
+        same_origin = {"Origin": "http://testserver"}
         limit = client.post(
             f"/console/api-keys/{foreign.hash}/limit",
             data={"limit": "99"},
+            headers=same_origin,
             follow_redirects=False,
         )
         disable = client.post(
             f"/console/api-keys/{foreign.hash}/disable",
+            headers=same_origin,
             follow_redirects=False,
         )
         assert limit.status_code == disable.status_code == 404

@@ -956,6 +956,10 @@ def test_email_verify_marks_user_and_upgrades_session() -> None:
 # ── Console pages ───────────────────────────────────────────────────────────
 
 
+# Console key mutations require a same-origin POST, as a browser sends.
+_SAME_ORIGIN = {"Origin": "http://testserver"}
+
+
 @pytest.fixture
 def console_session() -> tuple[TestClient, str]:
     settings = Settings(environment="local")
@@ -1216,6 +1220,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     resp = client.post(
         "/console/api-keys",
         data={"name": "console-created", "limit": "0.000001"},
+        headers=_SAME_ORIGIN,
     )
 
     assert resp.status_code == 200
@@ -1272,6 +1277,7 @@ def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
     precise = client.post(
         "/console/api-keys",
         data={"name": "precise-limit", "limit": "25.123456"},
+        headers=_SAME_ORIGIN,
     )
 
     assert precise.status_code == 200
@@ -1283,6 +1289,7 @@ def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
     invalid = client.post(
         "/console/api-keys",
         data={"name": "bad-limit", "limit": "not-a-number"},
+        headers=_SAME_ORIGIN,
         follow_redirects=False,
     )
 
@@ -1298,6 +1305,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
     created = client.post(
         "/console/api-keys",
         data={"name": "editable-budget", "limit": "1"},
+        headers=_SAME_ORIGIN,
     )
     assert created.status_code == 200
     workspace_id = next(iter(STORE.workspaces))
@@ -1311,6 +1319,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
     updated = client.post(
         f"/console/api-keys/{key.hash}/limit",
         data={"limit": "25.123456"},
+        headers=_SAME_ORIGIN,
         follow_redirects=False,
     )
     assert updated.status_code == 303
@@ -1326,6 +1335,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
     cleared = client.post(
         f"/console/api-keys/{key.hash}/limit",
         data={"limit": ""},
+        headers=_SAME_ORIGIN,
         follow_redirects=False,
     )
     assert cleared.status_code == 303
@@ -1351,6 +1361,7 @@ def test_console_api_key_budget_rejects_invalid_and_wrong_workspace_keys(
     invalid = client.post(
         f"/console/api-keys/{key.hash}/limit",
         data={"limit": "not-a-number"},
+        headers=_SAME_ORIGIN,
         follow_redirects=False,
     )
     assert invalid.status_code == 303
@@ -1369,6 +1380,7 @@ def test_console_api_key_budget_rejects_invalid_and_wrong_workspace_keys(
     blocked = client.post(
         f"/console/api-keys/{other_key.hash}/limit",
         data={"limit": "99"},
+        headers=_SAME_ORIGIN,
         follow_redirects=False,
     )
     assert blocked.status_code == 404
@@ -1426,6 +1438,7 @@ def test_console_workspace_selector_persists_session_workspace(
     created = client.post(
         "/console/api-keys",
         data={"name": "org-key", "limit": ""},
+        headers=_SAME_ORIGIN,
     )
     assert created.status_code == 200
     assert [key.name for key in STORE.list_keys(org.id)] == ["org-key"]
