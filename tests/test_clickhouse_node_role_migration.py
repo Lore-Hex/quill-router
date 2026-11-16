@@ -258,3 +258,16 @@ def test_the_node_account_may_sign_in_as_this_role_and_no_other() -> None:
     assert "roles/spanner.databaseUser" not in terraform.replace(
         "roles/spanner.databaseUser binding", ""
     )
+
+
+def test_nothing_grants_the_node_account_database_wide_spanner_access() -> None:
+    # INC-2026-003: the stolen tr-clickhouse token reached every table through
+    # roles/spanner.databaseUser. Step 4 removed it; no file may add it back.
+    assert not (ROOT / "infra/clickhouse_node_database_user.tf").exists()
+    for path in sorted((ROOT / "infra").glob("*.tf")):
+        text = path.read_text()
+        for block in re.findall(r'resource "google_spanner_database_iam_member"[^{]*\{[^}]*\}', text):
+            if "clickhouse_node_member" in block or "tr-clickhouse@" in block:
+                assert "roles/spanner.databaseUser" not in block, path
+    script = (ROOT / "scripts/deploy/clickhouse_cluster.sh").read_text()
+    assert "roles/spanner.databaseUser" not in script

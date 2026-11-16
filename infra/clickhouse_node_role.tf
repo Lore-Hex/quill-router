@@ -3,8 +3,8 @@
 # analytics outboxes and read the generation, reservation and workspace
 # directory rows. These two bindings let it sign in as the table-scoped role
 # tr_clickhouse_node (scripts/deploy/migrate_clickhouse_node_role.sh) and as
-# nothing else. They narrow nothing on their own: the account keeps its
-# roles/spanner.databaseUser binding until the nodes have moved to the role.
+# nothing else. Since step 4 (2026-11-15) they are its only Spanner bindings:
+# the database-wide binding is removed, and nothing may add it back.
 locals {
   clickhouse_node_member = "serviceAccount:tr-clickhouse@${local.gcp_project_id}.iam.gserviceaccount.com"
   clickhouse_node_role   = "tr_clickhouse_node"
