@@ -78,6 +78,15 @@ from trusted_router.services.contract_value_preview import safe_value_preview
     ("client_metadata.type", "enabled", "[redacted:string]"),
     ("client_metadata.enable_thinking", True, "[redacted:boolean]"),
     ("client_metadata.temperature", 0.7, "[redacted:number]"),
+    # repeat_penalty is llama.cpp's spelling of repetition_penalty: a number.
+    ("repeat_penalty", 1.1, 1.1),
+    ("repetition_penalty", 1.1, 1.1),
+    ("repeat_penalty", -1, -1),
+    ("repeat_penalty", 1e200, "[redacted:number]"),
+    ("repeat_penalty", "private-content", "[redacted:string]"),
+    ("repeat_penalty", {"secret": "private-content"}, "[redacted:object]"),
+    ("repeat_penalty", ["private-content"], "[redacted:array]"),
+    ("repeat_penalty.secret", 1.1, "[redacted:number]"),
 ])
 def test_sink_revalidates_configuration_only(path: str, value: object, expected: object) -> None:
     preview, truncated = safe_value_preview(path, json.dumps(value))
