@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-11-15T23:11:44Z",
+  "generated_at": "2026-11-16T09:21:39Z",
   "model_count": 130,
   "models": [
     {
@@ -23,7 +23,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "adept/fuyu-8b",
@@ -44,7 +45,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "ai21labs/jamba-1.5-large-instruct",
@@ -64,7 +66,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "aisingapore/sea-lion-7b-instruct",
@@ -84,7 +87,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "baai/bge-m3",
@@ -139,7 +143,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "deepseek-ai/deepseek-coder-6.7b-instruct",
@@ -179,7 +184,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "google/codegemma-7b",
@@ -199,7 +205,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "google/deplot",
@@ -213,7 +220,8 @@
       "output_modalities": [],
       "endpoints": [],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "google/diffusiongemma-26b-a4b-it",
@@ -248,7 +256,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "google/gemma-3-12b-it",
@@ -328,7 +337,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "ibm/granite-3.0-3b-a800m-instruct",
@@ -348,7 +358,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "ibm/granite-3.0-8b-instruct",
@@ -368,7 +379,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "ibm/granite-34b-code-instruct",
@@ -388,7 +400,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "ibm/granite-8b-code-instruct",
@@ -408,7 +421,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "meta/codellama-70b",
@@ -539,7 +553,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "microsoft/phi-3-vision-128k-instruct",
@@ -560,7 +575,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "microsoft/phi-3.5-moe-instruct",
@@ -580,7 +596,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "minimaxai/minimax-m3",
@@ -610,7 +627,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "mistralai/mistral-7b-instruct-v0.3",
@@ -630,7 +648,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "mistralai/mistral-large",
@@ -650,7 +669,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "mistralai/mistral-large-2-instruct",
@@ -670,7 +690,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "mistralai/mistral-nemotron",
@@ -711,7 +732,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -731,7 +753,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "moonshotai/kimi-k3",
@@ -838,7 +861,8 @@
       "endpoints": [],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "routable_reason": "unsupported-chat-endpoint"
+      "routable_reason": "unsupported-chat-endpoint",
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/llama-3.1-nemoguard-8b-topic-control",
@@ -872,7 +896,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-70b-instruct",
@@ -892,7 +917,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-nano-8b-v1",
@@ -969,7 +995,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
@@ -1074,7 +1101,8 @@
       "output_modalities": [],
       "endpoints": [],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/llama3-chatqa-1.5-70b",
@@ -1094,7 +1122,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
@@ -1114,7 +1143,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/nemoretriever-parse",
@@ -1203,7 +1233,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -1275,7 +1306,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/nemotron-4-340b-reward",
@@ -1289,7 +1321,8 @@
       "output_modalities": [],
       "endpoints": [],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/nemotron-mini-4b-instruct",
@@ -1352,7 +1385,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/nemotron-parse",
@@ -1366,7 +1400,8 @@
       "output_modalities": [],
       "endpoints": [],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/neva-22b",
@@ -1387,7 +1422,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/nv-embed-v1",
@@ -1484,7 +1520,8 @@
       "output_modalities": [],
       "endpoints": [],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "nvidia/riva-translate-4b-instruct-v1.1",
@@ -1534,7 +1571,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -1670,7 +1708,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "writer/palmyra-fin-70b-32k",
@@ -1690,7 +1729,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "writer/palmyra-med-70b",
@@ -1710,7 +1750,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "writer/palmyra-med-70b-32k",
@@ -1730,7 +1771,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "id": "zyphra/zamba2-7b-instruct",
@@ -1750,7 +1792,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "deepseek-ai/deepseek-coder-6.7b-instruct",
@@ -1771,7 +1814,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "deepseek-ai/deepseek-v4-flash-0731",
@@ -1814,7 +1858,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "meta/llama-3.1-70b-instruct",
@@ -1946,7 +1991,8 @@
       "upstream_id": "meta/llama-3.2-90b-vision-instruct",
       "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "meta/llama-3.3-70b-instruct",
@@ -1988,7 +2034,8 @@
       "upstream_id": "meta/llama-guard-4-12b",
       "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "meta/llama2-70b",
@@ -2009,7 +2056,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "meta/muse-glimmer-30b",
@@ -2067,7 +2115,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "nvidia/nvidia-nemotron-nano-9b-v2",
@@ -2126,7 +2175,8 @@
       "routable": false,
       "routable_reason": "unsupported-chat-endpoint",
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-11-16"
     },
     {
       "display_name": "z-ai/glm-5.3-flash",
@@ -2144,9 +2194,10 @@
       "status": 1,
       "id": "z-ai/glm-5.3-flash",
       "upstream_id": "z-ai/glm-5.3-flash",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "z-ai/glm-5.3",
@@ -2186,9 +2237,10 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-ai/deepseek-v4.1-flash",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "stepfun-ai/step-5-preview",
@@ -2206,9 +2258,10 @@
       "status": 1,
       "id": "stepfun-ai/step-5-preview",
       "upstream_id": "stepfun-ai/step-5-preview",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "nvidia/nemotron-3.5-super-vl-120b-a12b",
@@ -2317,9 +2370,10 @@
       "status": 1,
       "id": "mistralai/mistral-large-4-1t-a52b",
       "upstream_id": "mistralai/mistral-large-4-1t-a52b",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     }
   ],
   "price_scale": "microdollars_per_million"

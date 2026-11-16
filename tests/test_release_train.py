@@ -218,6 +218,87 @@ def test_failed_builds_do_not_trigger_expensive_history_reads(monkeypatch):
     assert train.select(api, api.runs[1], release())["release"]["commit"] == A
 
 
+def rest_job(job_id=1, **changes):
+    return {"id": job_id, "run_id": 4, "name": f"job-{job_id}",
+            "status": "completed", "conclusion": "success", "run_attempt": 1, **changes}
+
+
+def test_job_evidence_uses_complete_direct_latest_listing_and_existing_cache(monkeypatch):
+    rows = [rest_job(i) for i in range(1, 102)]
+    # A failed-job-only rerun retains successful jobs from the first attempt.
+    rows[-1]["run_attempt"] = 2
+    pages = [{"total_count": 101, "jobs": rows[:100]}, {"total_count": 101, "jobs": rows[100:]}]
+    calls = []
+    api = train.GitHub(deadline=1234)
+
+    def lookup(args, deadline):
+        calls.append((args, deadline))
+        return copy.deepcopy(pages)
+
+    monkeypatch.setattr(superseded_deploy, "_gh_json", lookup)
+    assert api.jobs(4) == rows
+    assert api.jobs(4) == rows
+    assert calls == [(["api", "--paginate", "--slurp",
+                      f"repos/{train.REPO}/actions/runs/4/jobs?filter=latest&per_page=100"], 1234)]
+    api.refresh()
+    assert api.jobs(4) == rows
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("pages", [
+    None, {}, [], [None], [{}], [{"total_count": True, "jobs": []}],
+    [{"total_count": -1, "jobs": []}], [{"total_count": "1", "jobs": [rest_job()]}],
+    [{"total_count": 1, "jobs": None}], [{"total_count": 1, "jobs": []}],
+    [{"total_count": 0, "jobs": [rest_job()]}],
+    [{"total_count": 2, "jobs": [rest_job()]}, {"total_count": 3, "jobs": [rest_job(2)]}],
+    [{"total_count": 2, "jobs": [rest_job(), rest_job()]}],
+    [{"total_count": 1, "jobs": [None]}],
+    *[{"total_count": 1, "jobs": [rest_job(**fields)]} for fields in (
+        {"id": True}, {"id": 0}, {"id": "1"}, {"run_id": 5}, {"run_id": True},
+        {"run_id": "4"}, {"name": ""}, {"name": None}, {"status": None},
+        {"conclusion": {}},
+    )],
+])
+def test_job_evidence_refuses_incomplete_or_invalid_pages(monkeypatch, pages):
+    # Each parametrized malformed row is a page, not a full paginated response.
+    if isinstance(pages, dict) and "total_count" in pages:
+        pages = [pages]
+    api = train.GitHub()
+    monkeypatch.setattr(api, "json", lambda *args: copy.deepcopy(pages))
+    with pytest.raises(train.Refused):
+        api.jobs(4)
+
+
+@pytest.mark.parametrize("run_id", [True, 0, -1, "4", None])
+def test_job_evidence_refuses_invalid_run_identity_before_lookup(monkeypatch, run_id):
+    api = train.GitHub()
+    monkeypatch.setattr(api, "json", lambda *args: pytest.fail("invalid ID reached GitHub"))
+    with pytest.raises(train.Refused, match="run ID"):
+        api.jobs(run_id)
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "skipped", None])
+@pytest.mark.parametrize("manual", [False, True])
+def test_direct_job_evidence_preserves_release_decisions_and_retained_attempts(monkeypatch, outcome, manual):
+    api = Evidence()
+    delivered(api)
+    api.job_rows[4][-2]["conclusion"] = outcome
+    if manual:
+        api.runs[1]["event"] = "workflow_dispatch"
+    expected = train.select(api, api.runs[1], release())
+
+    def direct_jobs(run_id):
+        rows = [rest_job(i + 1, run_id=run_id, name=row["name"],
+                         conclusion=row["conclusion"], run_attempt=2 if i else 1)
+                for i, row in enumerate(api.job_rows[run_id])]
+        direct = train.GitHub()
+        monkeypatch.setattr(direct, "json", lambda *args: [{"total_count": len(rows), "jobs": rows}])
+        return direct.jobs(run_id)
+
+    monkeypatch.setattr(api, "jobs", direct_jobs)
+    assert train.select(api, api.runs[1], release()) == expected
+
+
 @pytest.mark.parametrize("invalid", ["version", "run", "attempt", "commit", "duplicate", "expired", "oversized"])
 def test_prepared_manifest_rejects_bad_identity(monkeypatch, invalid):
     api = train.GitHub()

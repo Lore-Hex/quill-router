@@ -112,6 +112,20 @@ def harness(monkeypatch, mode='lands', *, unfixed=False, kind=CLAIM_KIND):
         result.transport = configure(result.database)
         return result
     monkeypatch.setattr(store, 'publisher_lane', publisher_lane)
+    # Completed runtime-stop reads as (logical start, exception repr or None):
+    # a failure names its exception, and callers can wait for one poll to end.
+    store.runtime_stop_reads = []
+    read_runtime_stop = store.read_runtime_stop
+    def recorded_read_runtime_stop():
+        started = store.clock()
+        try:
+            row = read_runtime_stop()
+        except Exception as error:
+            store.runtime_stop_reads.append((started, repr(error)))
+            raise
+        store.runtime_stop_reads.append((started, None))
+        return row
+    monkeypatch.setattr(store, 'read_runtime_stop', recorded_read_runtime_stop)
     # Offline session creation/recovery; native checkout, retirement, deadlines
     # and lock ownership remain real. Recovery waits until its 60s window.
     def prepare(manager, clock, boot=None):
@@ -212,6 +226,12 @@ async def test_owner_progress_after_commit_deadline(monkeypatch, mode, unfixed, 
             assert svc.runtime_stop.tripped is None
             assert not svc.bases.transport.objects.keys() & {item.key for item in svc.bases.queue}
         else:
+            # The tick count does not prove the poll at 104 ran. Never advance
+            # while it is in flight: a jump past its one-second read budget
+            # fails it, and the next poll (108) is beyond this test's clock.
+            reads = svc.store.runtime_stop_reads
+            await until(lambda: any(started == 104. for started, _ in reads))
+            assert [error for started, error in reads if started == 104.] == [None], reads
             assert not reasons and svc.runtime_stop.available and svc.policy_enabled()
             if mode != 'never':
                 # Tick counts do not prove the intermediate worker finished.

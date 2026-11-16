@@ -2570,6 +2570,17 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "qwen/qwen4-max": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "low",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "recursive/flint-v1.0:free": {
       "mandatory": true,
       "default_enabled": false,

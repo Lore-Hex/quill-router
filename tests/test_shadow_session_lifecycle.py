@@ -13,7 +13,12 @@ from google.cloud.spanner_v1.types import Session as SessionPB
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import deterministic_scheduler  # noqa: F401
 from tests.test_async_settle_shadow_sdk_retry import sdk_database
-from trusted_router.storage_gcp_shadow_io import Sessions, configure, rpc_scope
+from trusted_router.storage_gcp_shadow_io import (
+    SessionCheckoutTimeout,
+    Sessions,
+    configure,
+    rpc_scope,
+)
 
 
 @pytest.fixture
@@ -257,6 +262,54 @@ def test_managed_session_never_recreates_inside_cycle(inventory):
     assert manager.prepare(clock.monotonic)
     assert state.creates == 2 and state.deletes == 1 and len(state.live) == 1
     assert state.create_timeouts == [5., 5.]
+
+
+class PreemptedLock:
+    """The lane is granted only as the checkout deadline passes (or the worker
+    is preempted past it right after acquiring); no session RPC has started."""
+    def __init__(self, inner, clock, seconds):
+        self.inner, self.clock, self.seconds, self.armed = inner, clock, seconds, True
+
+    def acquire(self, blocking=True, timeout=-1):
+        acquired = self.inner.acquire(blocking, timeout)
+        if acquired and self.armed:
+            self.armed = False
+            self.clock.now += self.seconds
+        return acquired
+
+    def release(self):
+        self.inner.release()
+
+    def locked(self):
+        return self.inner.locked()
+
+    __enter__ = acquire
+
+    def __exit__(self, *exc):
+        self.release()
+
+
+@pytest.mark.parametrize('managed', [True, False], ids=['managed', 'unmanaged'])
+def test_deadline_expiry_after_acquire_is_a_checkout_timeout(inventory, managed):
+    db, clock, state = inventory
+    manager = db._sessions_manager
+    if managed:
+        assert manager.prepare(clock.monotonic)
+    else:
+        with rpc_scope(clock.now+1, 1, clock.monotonic):
+            manager.put_session(manager.get_session(None))
+    held = manager.session
+    manager.lock = PreemptedLock(manager.lock, clock, 1.)
+    with pytest.raises(SessionCheckoutTimeout, match='shadow_checkout'):
+        with rpc_scope(clock.now+1, 1, clock.monotonic):
+            manager.get_session(None)
+    # Missed, not failed: the healthy session stays checked in and reusable.
+    assert manager.ready and manager.session is held and manager.retired is None
+    assert not manager.lock.locked()
+    with rpc_scope(clock.now+1, 1, clock.monotonic):
+        assert manager.get_session(None) is held
+        manager.put_session(held)
+    assert state.creates == 1 and state.deletes == 0 and len(state.live) == 1
 
 
 def test_late_known_creation_recovers_once_after_sixty_seconds(inventory):

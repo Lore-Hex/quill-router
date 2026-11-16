@@ -161,3 +161,25 @@ and therefore cannot simply be dropped into a multi-tenant gateway unchanged.
 The price parser now participates in the shared 14-day stale-manifest expiry
 policy. Neither a successful price refresh nor a held manifest enables customer
 traffic; the attested gateway rollout must qualify first.
+
+## Catalog expansion inventory (2026-11-15)
+
+Discovery now records all nine chat models in Maple's
+[published catalog](https://maple.ai/docs/proxy/models), with their current
+[token prices](https://maple.ai/pricing), plus the documented embedding alias.
+This inventory is **not a production activation**. The only qualified route
+remains the managed text-only uncensored DeepSeek workload described above.
+
+The eight new chat rows, including `moonshotai/kimi-k3.1-pro`, are held with
+`attested-enclave-qualification-pending`. Maple's reported image, tool and
+reasoning capabilities describe those held rows, not verified TR support.
+The embedding alias is held without invented prices or a versioned weights
+identity: encrypted embedding support and pricing remain unqualified.
+Automatic model aliases and unrecognized new IDs fail discovery review.
+
+Before activating another row, review its exact downstream route and privacy
+boundary, extend the measured encrypted adapter with exact model-response
+checks, verify billing/cache/capability behavior with bounded canaries, and
+complete the normal full CI, trust and guarded deployment gates. Kimi and
+shared Tinfoil/Continuum routes must not inherit the dedicated uncensored
+worker's Confidential qualification. Refreshing prices cannot clear these holds.

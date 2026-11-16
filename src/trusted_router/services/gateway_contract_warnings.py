@@ -81,6 +81,7 @@ PARAMETER_CATEGORIES = frozenset(
         "prompt_cache_key",
         "prompt_cache_options",
         "repetition_penalty",
+        "repeat_penalty",
         "route",
         "safety_identifier",
         "seed",
