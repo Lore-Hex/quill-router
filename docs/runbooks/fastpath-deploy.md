@@ -388,6 +388,68 @@ the current metadata and starts it), and read the running arguments from
 the process. A reset is not enough: at boot systemd starts the unit from
 disk with its old arguments, and the script leaves a running unit alone.
 
+## Pinning a release
+
+A pin is one change to `infra/fastpath.tf`: `local.fastpath_release` set to
+a commit whose release `fastpath-release.yml` published, and that commit's
+entry added to `local.fastpath_release_digests`. The entry carries two
+sha256 digests, both read from the published release:
+
+* `fastpath`, the `fastpath` line of the release's `SHA256SUMS`;
+* `sha256sums`, the sha256 of the `SHA256SUMS` file itself.
+
+```bash
+gcloud storage cat gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/COMMIT/SHA256SUMS
+gcloud storage cat gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/COMMIT/SHA256SUMS | sha256sum
+gcloud storage cat gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/COMMIT/fastpath | sha256sum
+```
+
+The first prints the release's five digests, the second the `sha256sums`
+value, and the third must print the digest on the first's `fastpath` line:
+the binary published is the one its `SHA256SUMS` names. The entry:
+
+```hcl
+"COMMIT" = {
+  fastpath   = "the digest on SHA256SUMS's fastpath line"
+  sha256sums = "the sha256 of SHA256SUMS"
+}
+```
+
+An entry stays while a rollback may return to its release. A pin whose
+release has no entry, or a digest that is not 64 lowercase hex characters,
+fails the plan (the precondition on the nodes and the load generator) and
+`tests/test_fastpath_release_integrity.py`.
+
+The nodes and the load generator take the digests as the instance
+attributes `fastpath-release-sha256` and `fastpath-release-sums-sha256`,
+metadata applied in place like the pin. A startup script from the change
+that added them on downloads the release into a staging directory, checks
+`SHA256SUMS` against `fastpath-release-sums-sha256`, each file against
+`SHA256SUMS` and the node binary against `fastpath-release-sha256`, and
+installs only when every check passes. On any difference, a `SHA256SUMS`
+that is missing or unreadable, or a pin that is absent or malformed, it
+installs nothing, does not write or start the unit, and says so in the
+journal: `fastpath: release COMMIT failed verification: ...`. A new node
+then stays stopped; a rebooted one keeps the binaries and the unit it had.
+So a release prefix overwritten after its pin cannot change what a node
+runs. A node keeps the script it was created with, so one created before
+that script carries the attributes and reads neither; it verifies nothing
+until it is replaced under a new name, as every script change reaches the
+fleet ("Turning the edge on"). Which script a node runs is read from the
+instance (`1` verifies, `0` does not):
+
+```bash
+gcloud compute instances describe NODE --zone=ZONE --project=quill-cloud-proxy \
+  --format='value(metadata.startup-script)' | grep -c 'attribute fastpath-release-sha256)'
+```
+
+The workflow never overwrites a published object: each upload carries
+`--if-generation-match=0`, a run for an already published commit leaves a
+byte-identical object alone and fails on one that differs, and
+`SHA256SUMS` goes up last. The bucket keeps the generation an overwrite or
+a delete replaced for a year (`gcloud storage ls -a` lists them) and every
+live release indefinitely.
+
 ## Taking a pinned release
 
 A node takes a release pinned in `infra/fastpath.tf` (`fastpath_release`)

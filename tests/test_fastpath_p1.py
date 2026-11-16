@@ -22,11 +22,11 @@ pytestmark = pytest.mark.xdist_group("fastpath-pinned-source")
 
 def test_release_ships_the_load_generator_and_its_mix() -> None:
     workflow = (ROOT / ".github" / "workflows" / "fastpath-release.yml").read_text(encoding="utf-8")
-    assert "-o ../release/loadgen ./cmd/loadgen" in workflow
-    assert "-o ../release/fastpathwatch ./cmd/fastpathwatch" in workflow
-    assert "cp testdata/load-mix.json ../release/load-mix.json" in workflow
+    assert '-o "$out/loadgen" ./cmd/loadgen' in workflow
+    assert '-o "$out/fastpathwatch" ./cmd/fastpathwatch' in workflow
+    assert 'cp testdata/load-mix.json "$out/load-mix.json"' in workflow
     assert "sha256sum fastpath fastpathctl loadgen fastpathwatch load-mix.json > SHA256SUMS" in workflow
-    assert "release/loadgen release/fastpathwatch release/load-mix.json release/SHA256SUMS" in workflow
+    assert "for file in fastpath fastpathctl loadgen fastpathwatch load-mix.json SHA256SUMS; do" in workflow
 
 
 def test_node_installs_the_load_generator_when_the_release_carries_it() -> None:
