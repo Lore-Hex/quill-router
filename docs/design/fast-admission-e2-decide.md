@@ -1767,8 +1767,16 @@ counts, per snapshot and policy digest:
   a second, no reader) leave the refusal
   `would_admit_python_refused.402.insufficient_credits`, which pages
   with the reason (`funding=marked`, `covered`, `unread`, `limiter`,
-  `no_reader`). The read is strong and follows Python's answer, so credit
-  freed or added between the two reads as covering and pages. Before the
+  `no_reader`). The read is strong and follows Python's answer, so what
+  changes between the two is read as it stands afterwards. Credit freed
+  or added, or a mark set since, pages. A mark cleared since, with the
+  rows still short of the hold, is counted as the balance and not paged:
+  Python itself clears a stale mark (rows marked whose signed sum is no
+  longer negative) inside the refusing request, and its refusal is then
+  for the balance, while a mark that stands is still there at the read.
+  Python's first refusal of a workspace with several rows goes by their
+  signed sum alone, so it can refuse while one row covers the hold beside
+  one that owes; that reads as `covered` and pages. Before the
   read, each such refusal paged: on 2026-11-15 at 05:21Z and 2026-11-16
   at 00:42Z, one request each of a workspace nearly out of credit, with
   no row marked.

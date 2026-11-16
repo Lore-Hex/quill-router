@@ -31,11 +31,23 @@ import (
 //   - a row marked, a row or the sum covering the hold, or no read: it stays
 //     the would-admit and pages, with the reason beside it.
 //
-// The read is strong and comes after Python's refusal, so credit freed or
-// added between the two (a hold released, a top-up) reads as covering and
-// pages, as it did before the read existed; and a mark repaid between the
-// two, with what is left still short of the hold, reads as the balance. A
-// gate that misses marked workspaces shows on their next refusal.
+// The read is strong and comes after Python's refusal, so what changes
+// between the two is read as it stands afterwards:
+//
+//   - credit freed or added (a hold released, a top-up) reads as covering,
+//     and a mark set since reads as marked: both page, as every such
+//     refusal did before the read existed;
+//   - a mark cleared since, with what is left still short of the hold,
+//     reads as the balance and is not paged. Python itself clears a stale
+//     mark (rows marked whose signed sum is no longer negative) inside the
+//     refusing request, before it answers, so that workspace is read
+//     unmarked every time; its refusal is then for the balance. A mark
+//     that stands (a negative sum) is still there at the read and pages,
+//     on this refusal and the workspace's next.
+//
+// Python's first refusal of a workspace with several rows proves the rows
+// spent by their signed sum alone, so it can refuse while one row still
+// covers the hold beside one that owes: that reads as covering and pages.
 
 // ShadowCreditReader reads a workspace's credit rows
 // (store.Store.ReadCreditStanding) for the shadow's settling of a credit

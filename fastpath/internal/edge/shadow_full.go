@@ -36,7 +36,9 @@ import (
 // most 5 a second, the two rows Python wrote against Go's would-be rows.
 // Python decides; nothing computed here reaches the bytes the enclave
 // receives, and the proxy never waits for it. The logs carry counts, class
-// and field names and digests: never a body, an id, a key or a message.
+// and field names and digests, and a credit read's amounts with no
+// identifier beside them (the funding line): never a body, an id, a key or
+// a message.
 
 // The comparison's classes (§11). A class with a dot is counted by its
 // suffix too: a reason, a status and type, or a cache.
@@ -594,11 +596,13 @@ func (sh *fullShadow) follow(job *fullJob) {
 	if r.race != nil {
 		sh.confirmRace(decided.ForShadow(), windows, &r)
 	}
+	// The eviction first: it shares its cache with the decide path and
+	// waits on no read.
+	sh.evict(decided, a, job.in.Request.Body)
 	// Python's credit refusal of a request Go would have answered: the
 	// workspace's rows say whether its balance ran out or a debt mark was
 	// missed.
 	sh.confirmFunding(decided.ForShadow(), &r)
-	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
 		if r.warm != nil {

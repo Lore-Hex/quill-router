@@ -20,12 +20,17 @@ type fakeCredit struct {
 	standing store.CreditStanding
 	err      error
 	asked    []string
+	// onRead, when set, runs at each read.
+	onRead func()
 }
 
 func (f *fakeCredit) ReadCreditStanding(ctx context.Context, workspace string) (store.CreditStanding, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.asked = append(f.asked, workspace)
+	if f.onRead != nil {
+		f.onRead()
+	}
 	if _, bounded := ctx.Deadline(); !bounded {
 		return store.CreditStanding{}, errors.New("the credit read has no deadline")
 	}
@@ -174,6 +179,62 @@ func TestACreditRefusalIsSettledByTheWorkspacesRows(t *testing.T) {
 	}
 }
 
+// TestTheHoldComparedIsTheReservation: the rows are held to the credit hold
+// Python refused, the decision's reservation, not to its estimate, which is
+// the larger when the output budget passes the hold's bound. Rows one below
+// the reservation are short; rows at the reservation, far below the
+// estimate, cover it.
+func TestTheHoldComparedIsTheReservation(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+131072")
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	dec := d.ForShadow()
+	if dec == nil || dec.Reservation < 2 || dec.Estimate < dec.Reservation+2 {
+		t.Fatalf("the decision: %q %+v", d.Pass, dec)
+	}
+	refusal := pyAnswer{status: 402, body: errorBody(402, creditRefusal, "Insufficient credits")}
+	for _, x := range []struct {
+		name    string
+		row     int64
+		outcome string
+	}{
+		{"one below the reservation", dec.Reservation - 1, fundingShort},
+		{"at the reservation", dec.Reservation, fundingCovered},
+		{"between the reservation and the estimate", dec.Reservation + 1, fundingCovered},
+		{"at the estimate", dec.Estimate, fundingCovered},
+	} {
+		credit := &fakeCredit{standing: store.CreditStanding{Headroom: []int64{x.row}}}
+		sh, _, _ := fundingShadow(t, credit, 1e9)
+		r := compareFull(d, refusal)
+		sh.confirmFunding(dec, &r)
+		if r.funding == nil || r.funding.outcome != x.outcome || r.funding.hold != dec.Reservation {
+			t.Errorf("%s: %+v, want %s against a hold of %d", x.name, r.funding, x.outcome, dec.Reservation)
+		}
+	}
+}
+
+// TestTheFundingLinesAreBoundedByThePeriod: a period logs at most
+// maxDifferLogs funding lines however many credit refusals it settles, each
+// still counted, and the next period logs again.
+func TestTheFundingLinesAreBoundedByThePeriod(t *testing.T) {
+	sh, _, logs := fundingShadow(t, &fakeCredit{}, 1e9)
+	settled := fullResult{class: ClassFundingUnchecked + ".402." + creditRefusal,
+		funding: &fundingRead{outcome: fundingShort, hold: 5}}
+	lines := func() int { return strings.Count(logs.all(), "fastpath edge decide shadow funding: ") }
+	for i := 0; i < maxDifferLogs+7; i++ {
+		sh.record("digest", settled)
+	}
+	if lines() != maxDifferLogs || sh.totals.classes[settled.class] != maxDifferLogs+7 {
+		t.Fatalf("%d funding lines for %d refusals", lines(), sh.totals.classes[settled.class])
+	}
+	sh.flush()
+	sh.record("digest", settled)
+	if lines() != maxDifferLogs+1 {
+		t.Fatalf("%d funding lines after the period's line", lines())
+	}
+}
+
 // TestOnlyACreditRefusalReadThroughIsSettled: the credit read is made for
 // Python's 402 insufficient_credits alone, read through, of a request Go
 // would have answered. A 402 of another type, a 402 whose body was not
@@ -245,6 +306,14 @@ func TestTheFollowedCreditRefusalIsSettledBeforeItPages(t *testing.T) {
 			cfg.Credit = credit
 			cfg.Alert = taken.raise
 		})
+		// The eviction does not wait on the credit read: the key and its
+		// workspace are out of the cache by the time the rows are read.
+		evictedAtRead := -1
+		credit.onRead = func() {
+			h.cache.mu.Lock()
+			evictedAtRead = len(h.cache.evicted)
+			h.cache.mu.Unlock()
+		}
 		h.answer(answerWith(402, errorBody(402, creditRefusal, "Insufficient credits")))
 		h.send(t, c)
 		got := h.edge.DecideShadowCounts()
@@ -272,6 +341,9 @@ func TestTheFollowedCreditRefusalIsSettledBeforeItPages(t *testing.T) {
 		h.cache.mu.Unlock()
 		if len(evicted) != 1 || len(workspaces) != 1 || workspaces[0] != c.Facts.Key.WorkspaceID {
 			t.Errorf("%s: evicted %v and %v", x.name, evicted, workspaces)
+		}
+		if evictedAtRead != 1 {
+			t.Errorf("%s: %d eviction(s) before the credit read", x.name, evictedAtRead)
 		}
 	}
 }
