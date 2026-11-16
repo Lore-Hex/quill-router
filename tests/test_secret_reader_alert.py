@@ -81,8 +81,8 @@ def test_the_readers_list_holds_whole_service_account_addresses_and_no_wildcard(
     assert "length(local.secret_readers) > 0" in ALERT
 
 
-def test_every_secret_grant_made_in_terraform_has_its_reader_listed() -> None:
-    # A grant without a list entry pages on the account's first read.
+def test_every_secret_accessor_binding_in_terraform_has_its_reader_listed() -> None:
+    # A binding without a list entry pages on the account's first read.
     readers = set(_readers().values())
     granted = []
     for path in sorted(INFRA.glob("*.tf")):
@@ -98,7 +98,7 @@ def test_every_secret_grant_made_in_terraform_has_its_reader_listed() -> None:
     assert len(granted) >= 5
     for member in granted:
         email = member + ".email" if member.startswith("google_service_account.") else member
-        assert email in readers, f"{member} holds a secret grant and is not in secret_readers"
+        assert email in readers, f"{member} can read a secret and is not in secret_readers"
 
 
 def test_the_first_policy_matches_any_read_of_a_secret_value_by_an_unlisted_account() -> None:

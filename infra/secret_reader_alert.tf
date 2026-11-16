@@ -21,17 +21,17 @@
 # reads by nine principals. Eight are below with their counts. The ninth is
 # the owner's own user login, which is not in this repository and so is not
 # in the list: until the operator decides otherwise, its reads page. The
-# accounts not seen that day hold a grant made by this repository or by
+# accounts not seen that day are given secrets by this repository or by
 # quill-cloud-proxy, and read when a service or a node starts or when a
 # scheduled workflow runs.
 #
-# Accounts that hold a grant but are not in the list, so their first read
-# pages: quill-cloud-run (nine secrets; neither repository explains it), and
-# lightning-router-web and lightning-router-migrate, whose service was
-# retired on 2026-10-22 (docs/lightning-retirement.md) and whose grants
-# remain. No Google service agent read a secret that day, and
+# Accounts that can read secrets but are not in the list, so their first
+# read pages: quill-cloud-run (nine secrets; neither repository explains
+# it), and lightning-router-web and lightning-router-migrate, whose service
+# was retired on 2026-10-22 (docs/lightning-retirement.md) and whose access
+# remains. No Google service agent read a secret that day, and
 # enclave-dns-reconciler, tr-ci-audit, tr-multicloud and
-# tr-google-data-manager hold no grant.
+# tr-google-data-manager can read no secret.
 #
 # There is no clause for Cloud Scheduler's copies (the literal caller address
 # "private", infra/laptop_key_use_alert.tf). Scheduler does not read secrets,
@@ -39,7 +39,7 @@
 # entries out would hide a read by an unknown account from inside a service.
 #
 # Adding an account: put it in secret_readers with where its reads come from,
-# in the same change that grants it a secret, or its first read pages.
+# in the same change that gives it a secret, or its first read pages.
 #
 # The two policies are separate because a policy with a log-match condition
 # takes no other condition.
