@@ -405,6 +405,11 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 			if ticketed, err := composed.WithTicket(*ticket); err == nil {
 				composed = ticketed
 				dp.count(func(t *decideTally) { t.tickets["spliced"]++ })
+			} else {
+				// A ticket the answer cannot carry (an eligible one for a
+				// body with no nonce, or an answer with no one place for
+				// it): the answer goes out as composed, without it.
+				dp.count(func(t *decideTally) { t.tickets["unspliced"]++ })
 			}
 		}
 	}
