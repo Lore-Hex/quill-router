@@ -57,8 +57,11 @@ _DRAIN_LEASE_SECONDS = 300
 # SQL. Transient errors keep the attempts-counted exponential backoff.
 _DETERMINISTIC_PARK_SECONDS = 3600
 # A leased intent the fast path has not decided: asked again after as long
-# as the row has already waited, at least a second and at most five minutes,
-# no attempt spent (settle_outbox_apply bounds this by the row's age). An
+# as the row has already waited, in whole seconds from one to five minutes'
+# worth, no attempt spent (settle_outbox_apply bounds this by the row's
+# age). The park's due time is stamped from a clock in whole seconds, so a
+# wait of n falls due between n-1 and n seconds on, a wait of one within the
+# second: a row is asked at most once in a clock second. An
 # owner that is only slow decides within a second or two, and the row is
 # unresolved until it is asked again: its age is in the drain's published
 # health, where a p95 over five seconds closes async admission for every
@@ -322,9 +325,10 @@ def drain_settle_outbox(
 
 
 def _leased_undecided_park_seconds(row: SettleOutboxRow) -> int:
-    """How long an undecided leased intent waits before the fast path is
-    asked again: the row's age, within the floor and the cap. A row with no
-    readable creation time waits the cap."""
+    """The seconds an undecided leased intent is parked before the fast path
+    is asked again: the row's age in whole seconds, within the floor and the
+    cap. A row with no readable creation time waits the cap; the drain parks
+    none such (settle_outbox_apply counts its attempt instead)."""
     age = _row_age_seconds(row)
     if age is None:
         return _LEASED_UNDECIDED_PARK_SECONDS

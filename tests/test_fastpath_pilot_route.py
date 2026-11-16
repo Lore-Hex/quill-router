@@ -673,48 +673,54 @@ def test_the_drain_parks_an_undecided_leased_intent_without_spending_an_attempt(
     assert row["status"] == "pending" and (row.get("attempts") or 0) == attempts_before + 1
 
 
-def _seconds_until(stamp: str) -> float:
-    return (dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")) - dt.datetime.now(dt.UTC)).total_seconds()
-
-
 @pytest.mark.parametrize(
-    ("age_seconds", "least", "most"),
+    ("age_seconds", "parked_seconds"),
     [
-        # Just written, by a slow owner: asked again within about a second,
+        # Just written, by a slow owner: asked again within the second,
         # before the row's age reaches the drain health's five seconds.
-        (0, 0, 2),
-        (2, 1, 3),
-        (40, 38, 41),
+        (0.4, 1),
+        (2.9, 2),
+        (40.0, 40),
         # An owner that is gone: the wait stops growing at five minutes.
-        (3600, 298, 301),
+        (3600.0, 300),
     ],
 )
 def test_an_undecided_leased_intent_is_asked_again_after_as_long_as_it_has_waited(
-    door: _Door, age_seconds: int, least: int, most: int,
+    door: _Door, monkeypatch: pytest.MonkeyPatch, age_seconds: float, parked_seconds: int,
 ) -> None:
     """An unresolved row's age is in the drain's published health, and a p95
     over five seconds closes async admission for every workspace: a young
     row parked for minutes did that (2026-11-16). The wait is the row's age,
-    at least a second and at most five minutes."""
+    at least a second and at most five minutes. The age is given and the
+    park's argument read, so no clock decides the result."""
     from trusted_router.services import settle_outbox_drain
+    from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 
     _store, database, key = _seed()
     authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
     door.answers["/v1/settle"] = {"Status": "recorded"}
     gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
     row = _pending_intents(database, authorized["authorization_id"])[0]
-    created = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=age_seconds)
-    row["created_at"] = created.isoformat().replace("+00:00", "Z")
     row["next_attempt_at"] = "2020-01-01T00:00:00Z"  # due now
     row["lease_owner"] = None
     row["leased_until"] = None
+    parks: list[tuple[str, int]] = []
+    park = SpannerSettleOutbox.park
+
+    def recording(self: Any, *args: Any, **kwargs: Any) -> bool:
+        parks.append((kwargs["note"], kwargs["retry_after_seconds"]))
+        return park(self, *args, **kwargs)
+
+    monkeypatch.setattr(SpannerSettleOutbox, "park", recording)
+    monkeypatch.setattr(settle_outbox_drain, "_row_age_seconds", lambda _row: age_seconds)
     settle_outbox_drain.drain_settle_outbox(10)
+    assert parks == [("fast path undecided", parked_seconds)]
     row = _pending_intents(database, authorized["authorization_id"])[0]
     assert row["status"] == "pending" and row["last_error"] == "fast path undecided"
-    assert least <= _seconds_until(row["next_attempt_at"]) <= most, row["next_attempt_at"]
+    assert row["next_attempt_at"] > "2020-01-01T00:00:00Z"
 
 
-def test_an_undecided_leased_intent_with_no_readable_creation_time_waits_the_longest() -> None:
+def test_an_undecided_leased_intents_wait_reads_the_rows_creation_time() -> None:
     from trusted_router.services import settle_outbox_drain
 
     def wait(created_at: str) -> int:
@@ -725,10 +731,16 @@ def test_an_undecided_leased_intent_with_no_readable_creation_time_waits_the_lon
         )
         return settle_outbox_drain._leased_undecided_park_seconds(row)
 
+    def ago(seconds: int) -> str:
+        return (dt.datetime.now(dt.UTC) - dt.timedelta(seconds=seconds)).isoformat()
+
+    # No readable creation time waits the longest.
     assert wait("") == wait("not a time") == 300
     # A creation time ahead of this clock is a row just written.
-    ahead = (dt.datetime.now(dt.UTC) + dt.timedelta(seconds=30)).isoformat()
-    assert wait(ahead) == 1
+    assert wait(ago(-30)) == 1
+    # Read with this clock, so within a minute's stall of the age given.
+    assert 100 <= wait(ago(100).replace("+00:00", "Z")) <= 160
+    assert wait(ago(7200)) == 300
 
 
 def test_a_failed_insert_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
