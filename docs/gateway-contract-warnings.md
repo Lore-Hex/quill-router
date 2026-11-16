@@ -14,9 +14,20 @@ change the already-written customer response.
 
 The warning includes verified workspace and credential identifiers, route,
 HTTP status, parameter category, and request ID. It excludes prompts, outputs,
-parameter values, arbitrary field names, raw keys, email, and raw error text.
+unfiltered parameter values, field names that are not bounded identifier
+paths, raw keys, email, and raw error text.
 Unknown parameter names become `other` before leaving the enclave. The receiver
 also enforces that category boundary.
+
+Each warning names the verified workspace as its Sentry user, by opaque ID
+only, so an issue's user count is the number of distinct workspaces that hit
+it, fleet-wide. When the gateway sent a bounded identifier path, the
+`rejected_field` tag carries it with item indices removed (`input[].content`),
+so the tag breakdown shows which fields one issue refuses. Read the two
+together: a field no contract defines, from one workspace, is that client's
+mistake; many workspaces refused the same way is a gap or regression on our
+side. Every rejection, sampled or not, is still in the enclave's
+`enclave.request_contract_rejected` log line.
 
 Warnings group by route, status, and parameter, not by workspace or request ID.
 A separate in-memory limiter allows one event per group per hour and ten such
