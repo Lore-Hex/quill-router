@@ -164,11 +164,14 @@ locals {
   # on 2026-11-16 at about 01:30Z; a node takes the pinned release at any
   # reset, planned or not.
   # b1d3dbcf9: the per-minute decide line gains float_at, passed_enabled,
-  # passed_unknown, enabled_unknown and mix_dropped (#2650), counted on one
-  # background worker after the forward; nothing the edge answers, refuses,
-  # passes or evicts changes. It also counts an eligible edge ticket the
-  # answer cannot carry as unspliced (#2643). Its other fastpath/ change
-  # since daedb45ad is test data (model alias vectors). The release is
+  # passed_unknown, enabled_unknown and mix_dropped (#2650), tallied on one
+  # background worker after the forward (only the first float's place is
+  # found inline); nothing the edge answers, refuses, passes or evicts
+  # changes. It also counts an eligible edge ticket the answer cannot carry
+  # as unspliced (#2643). Its other fastpath/ changes since daedb45ad are
+  # test data (model alias vectors) and a test comment (#2640). Both nodes
+  # run daedb45ad (node 16 since 09:38Z, node 15 since 15:10Z on
+  # 2026-11-16). The release is
   # b1d3dbcf9 rather than #2650's own merge (67f6442dc) because that
   # commit's CI hit an unrelated flaky test and published nothing; their
   # fastpath/ trees are identical. The nodes take it one at a time in
