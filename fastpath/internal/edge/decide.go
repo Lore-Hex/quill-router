@@ -387,6 +387,10 @@ type Decided struct {
 	// decision: without the policy's fastpath_edge_streams every stream
 	// still passes.
 	StreamStageD string
+	// FloatAt is where the first float is of a request passed as body.float
+	// (gwauth.Pass.FloatAt), "" for any other: the decide line's float_at.
+	// It changes no decision.
+	FloatAt string
 }
 
 // The async-v1 populations (Decided.AsyncPop).
@@ -464,6 +468,7 @@ func Decide(in DecideInputs) Decided {
 		}
 	}
 	if p.Passed() {
+		out.FloatAt = p.FloatAt
 		return pass(p.Reason)
 	}
 	at := in.Request.At

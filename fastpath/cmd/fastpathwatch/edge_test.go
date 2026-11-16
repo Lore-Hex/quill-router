@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -177,6 +178,58 @@ func TestTheEdgeReportPrintsTheAsyncFigures(t *testing.T) {
 	if g := r.I3; g.AsyncSeen != 0 || g.AsyncCompared != 0 || g.AsyncComparedPlainAgreeRatio != nil ||
 		g.AsyncComparedAffinityAgreeRatio != nil || !is(g.AsyncSeenShare, 0) {
 		t.Errorf("before G15c: %+v", g)
+	}
+}
+
+// TestTheEdgeReportSumsThePassMix: a span whose nodes ran releases before
+// and after the decide line's pass mix: the older lines read as they did,
+// and the newer lines' float_at, passed_enabled and passed_unknown are
+// summed under decide.by_name, enabled_unknown under decide.counts, with
+// the I2 figures unchanged.
+func TestTheEdgeReportSumsThePassMix(t *testing.T) {
+	mixed := append([]logEntry{}, edgeEntries...)
+	mixed = append(mixed,
+		logEntry{"20", "tr-fastpath-5", `2026/10/24 12:02:00 fastpath edge decide: answered=0 read_back=0 ` +
+			`unavailable=0 refunded=0 refund_failed=0 unavailable_by_code={} passed={"body.float":5,"cache.key":2} ` +
+			`slow={} windows={} decided_via={} tickets={} ticket_call_ms_sum=0 ticket_call_ms_max=0 ` +
+			`ticket_wait_ms_sum=0 ticket_wait_ms_max=0 insert_call_ms_sum=0 insert_call_ms_max=0 ` +
+			`float_at={"declared.max_tokens":1,"provider.max_price":4} passed_enabled={"body.float":2,"cache.key":1} ` +
+			`passed_unknown={"body.float":3} enabled_unknown=3`},
+		logEntry{"21", "tr-fastpath-6", `2026/10/24 12:02:00 fastpath edge decide: answered=0 read_back=0 ` +
+			`unavailable=0 refunded=0 refund_failed=0 unavailable_by_code={} passed={"body.float":1} slow={} ` +
+			`windows={} decided_via={} tickets={} ticket_call_ms_sum=0 ticket_call_ms_max=0 ticket_wait_ms_sum=0 ` +
+			`ticket_wait_ms_max=0 insert_call_ms_sum=0 insert_call_ms_max=0 float_at={"provider.max_price":1} ` +
+			`passed_enabled={} passed_unknown={"body.float":1} enabled_unknown=1`},
+	)
+	var reports []edgeReport
+	for _, entries := range [][]logEntry{edgeEntries, mixed} {
+		d, _ := edgeDeps(entries, nil)
+		var out bytes.Buffer
+		code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"}, &out, d)
+		if code != 0 || err != nil {
+			t.Fatalf("%d %v", code, err)
+		}
+		var r edgeReport
+		if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+			t.Fatalf("%v: %s", err, out.Bytes())
+		}
+		reports = append(reports, r)
+	}
+	old, r := reports[0], reports[1]
+	if old.Decide.ByName["float_at"] != nil || old.Decide.ByName["passed_enabled"] != nil ||
+		old.Decide.Counts["enabled_unknown"] != 0 || old.Decide.Counts["answered"] != 7 {
+		t.Fatalf("the older lines alone: %+v", old.Decide)
+	}
+	if !maps.Equal(r.Decide.ByName["float_at"], map[string]int64{"declared.max_tokens": 1, "provider.max_price": 5}) ||
+		!maps.Equal(r.Decide.ByName["passed_enabled"], map[string]int64{"body.float": 2, "cache.key": 1}) ||
+		!maps.Equal(r.Decide.ByName["passed_unknown"], map[string]int64{"body.float": 4}) ||
+		r.Decide.Counts["enabled_unknown"] != 4 || r.Decide.ByName["passed"]["body.float"] != 6 ||
+		r.Decide.ByName["passed"]["owner.busy"] != 3 || r.Decide.Counts["answered"] != 7 {
+		t.Fatalf("the pass mix's sums: %+v", r.Decide)
+	}
+	if !reflect.DeepEqual(old.I2, r.I2) || !maps.Equal(r.Periods["tr-fastpath-5"], map[string]int64{"decide": 2,
+		"decide shadow": 1}) {
+		t.Fatalf("the I2 figures or the periods moved: %+v, was %+v; %v", r.I2, old.I2, r.Periods)
 	}
 }
 

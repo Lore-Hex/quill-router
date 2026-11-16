@@ -63,12 +63,21 @@ func TestTheDecideLineReadsBackAsItsCounts(t *testing.T) {
 		"unavailable": want.Unavailable, "refunded": want.Refunded, "refund_failed": want.RefundFailed,
 		"ticket_call_ms_sum": totals.ticketCall.sum, "ticket_call_ms_max": totals.ticketCall.max,
 		"ticket_wait_ms_sum": totals.ticketWait.sum, "ticket_wait_ms_max": totals.ticketWait.max,
-		"insert_call_ms_sum": totals.insertCall.sum, "insert_call_ms_max": totals.insertCall.max}) ||
+		"insert_call_ms_sum": totals.insertCall.sum, "insert_call_ms_max": totals.insertCall.max,
+		"enabled_unknown": want.EnabledUnknown}) ||
 		!maps.Equal(got.ByName["unavailable_by_code"], want.UnavailableByCode) ||
 		!maps.Equal(got.ByName["passed"], want.Passed) || !maps.Equal(got.ByName["slow"], want.Slow) ||
 		!maps.Equal(got.ByName["windows"], want.Windows) ||
-		!maps.Equal(got.ByName["decided_via"], want.DecidedVia) || !maps.Equal(got.ByName["tickets"], want.Tickets) || len(got.ByName) != 6 {
+		!maps.Equal(got.ByName["decided_via"], want.DecidedVia) || !maps.Equal(got.ByName["tickets"], want.Tickets) ||
+		!maps.Equal(got.ByName["float_at"], want.FloatAt) ||
+		!maps.Equal(got.ByName["passed_enabled"], want.PassedEnabled) ||
+		!maps.Equal(got.ByName["passed_unknown"], want.PassedUnknown) || len(got.ByName) != 9 {
 		t.Fatalf("read back %+v, counted %+v", got, want)
+	}
+	// The two insert passes are of the case's workspace, which the switch
+	// copy enables: known from the pipeline, so neither unknown.
+	if !maps.Equal(want.PassedEnabled, map[string]int64{PassInsertFailed: 2}) || want.EnabledUnknown != 0 {
+		t.Fatalf("the pass mix: %+v", want)
 	}
 	// Each answer, the 200 and the 503, by its decide row's source: the
 	// workspace's own row.
