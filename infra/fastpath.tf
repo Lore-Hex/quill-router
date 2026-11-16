@@ -163,7 +163,17 @@ locals {
   # earlier behaviour. Both nodes have run 5133a83c6 since they were reset
   # on 2026-11-16 at about 01:30Z; a node takes the pinned release at any
   # reset, planned or not.
-  fastpath_release        = "daedb45adc927a1e30e0d4ed41fe57c81aeccc76"
+  # b1d3dbcf9: the per-minute decide line gains float_at, passed_enabled,
+  # passed_unknown, enabled_unknown and mix_dropped (#2650), counted on one
+  # background worker after the forward; nothing the edge answers, refuses,
+  # passes or evicts changes. It also counts an eligible edge ticket the
+  # answer cannot carry as unspliced (#2643). Its other fastpath/ change
+  # since daedb45ad is test data (model alias vectors). The release is
+  # b1d3dbcf9 rather than #2650's own merge (67f6442dc) because that
+  # commit's CI hit an unrelated flaky test and published nothing; their
+  # fastpath/ trees are identical. The nodes take it one at a time in
+  # either order.
+  fastpath_release        = "b1d3dbcf990d6f896a65c5fe1affc61e04eec923"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
