@@ -22,7 +22,12 @@ and report; they never converge. These tests keep them that way.
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -73,6 +78,8 @@ def test_baseline_checkers_never_mutate(path: Path) -> None:
         "gcloud kms keyrings create",
         "gcloud kms keys create",
         "gcloud storage buckets update",
+        "run services update",
+        "run deploy",
         # az
         "az monitor diagnostic-settings create",
         "az monitor log-analytics workspace create",
@@ -153,6 +160,234 @@ def test_gcp_baseline_checks_the_public_client_ip_trust_boundary() -> None:
     body = _executable_lines(GCP)
     assert 'public_surface_edge.sh" check' in body
     assert 'drift "public client-IP trust boundary' in body
+
+
+CONTROL_PLANE_REGIONS = ("us-central1", "us-east4", "europe-west4", "southamerica-east1")
+INGRESS_SECTION = "=== Cloud Run ingress (every service, every region)"
+# The gcloud stub answers the one listing this section reads and fails every
+# other read, so the rest of the baseline reports its own drift and the section
+# under test is judged on its own lines. curl is stubbed so nothing leaves.
+_GCLOUD_STUB = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"$STUB_GCLOUD_LOG"
+case " $* " in
+  *" run services list "*)
+    if [ "$STUB_RUN_LIST_MODE" = "fail" ]; then
+      echo "ERROR: (gcloud.run.services.list) PERMISSION_DENIED: run.services.list" >&2
+      exit 1
+    fi
+    if [ -n "$STUB_RUN_LIST_WARNING" ]; then
+      printf '%s\\n' "$STUB_RUN_LIST_WARNING" >&2
+    fi
+    cat "$STUB_RUN_LIST_JSON"
+    exit 0
+    ;;
+esac
+echo "stub: not modelled" >&2
+exit 1
+"""
+
+
+def _cloud_run_service(
+    region: str, name: str, ingress: str | None, applied: str | None = None
+) -> dict[str, Any]:
+    annotations = {}
+    if ingress is not None:
+        annotations["run.googleapis.com/ingress"] = ingress
+    if applied is not None:
+        annotations["run.googleapis.com/ingress-status"] = applied
+    return {
+        "metadata": {
+            "name": name,
+            "labels": {"cloud.googleapis.com/location": region},
+            "annotations": annotations,
+        }
+    }
+
+
+def _restricted_fleet() -> list[dict[str, Any]]:
+    """The production shape: every service restricted, one listed public site."""
+    fleet = [
+        _cloud_run_service(region, name, "internal-and-cloud-load-balancing")
+        for name in ("trusted-router", "trusted-router-public")
+        for region in CONTROL_PLANE_REGIONS
+    ]
+    fleet.append(_cloud_run_service("us-central1", "trusted-router-settle-drain", "internal"))
+    fleet.append(_cloud_run_service("us-central1", "lorehex-site", "all", "all"))
+    return fleet
+
+
+def _run_ingress_check(
+    tmp_path: Path, listing: str | None, warning: str = ""
+) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
+    """Run the whole GCP baseline against a stub gcloud; return the ingress lines."""
+    jq = shutil.which("jq")
+    assert jq is not None, "the GCP baseline needs jq on PATH"
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    (stub_bin / "gcloud").write_text(_GCLOUD_STUB)
+    (stub_bin / "curl").write_text("#!/usr/bin/env bash\nexit 7\n")
+    for stub in stub_bin.iterdir():
+        stub.chmod(0o755)
+    listing_file = tmp_path / "run-services.json"
+    listing_file.write_text(listing or "")
+    gcloud_log = tmp_path / "gcloud.log"
+    gcloud_log.write_text("")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {
+        "PATH": f"{stub_bin}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "HOME": str(home),
+        "TMPDIR": str(tmp_path),
+        "LANG": "C",
+        "STUB_GCLOUD_LOG": str(gcloud_log),
+        "STUB_RUN_LIST_JSON": str(listing_file),
+        "STUB_RUN_LIST_MODE": "fail" if listing is None else "answer",
+        "STUB_RUN_LIST_WARNING": warning,
+    }
+    proc = subprocess.run(  # noqa: S603 - fixed script path, stub PATH
+        ["bash", str(GCP)],  # noqa: S607
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=120,
+        stdin=subprocess.DEVNULL,
+    )
+    assert INGRESS_SECTION in proc.stdout, proc.stdout + proc.stderr
+    section = proc.stdout.split(INGRESS_SECTION, 1)[1].split("\n=== ", 1)[0]
+    return proc, [line.strip() for line in section.splitlines() if line.strip()], (
+        gcloud_log.read_text().splitlines()
+    )
+
+
+def test_gcp_ingress_check_accepts_a_restricted_fleet_and_the_listed_public_site(
+    tmp_path: Path,
+) -> None:
+    _, lines, calls = _run_ingress_check(tmp_path, json.dumps(_restricted_fleet()))
+    assert not [line for line in lines if line.startswith("DRIFT")], lines
+    assert "note  us-central1/lorehex-site ingress all: listed as meant to be public" in lines
+    assert "ok    9 Cloud Run services accept only internal or load-balancer traffic" in lines
+    # One listing, with no --region, covers every region the project uses.
+    listings = [call for call in calls if call.startswith("run services list")]
+    assert listings == ["run services list --project=quill-cloud-proxy --format=json"]
+
+
+@pytest.mark.parametrize(
+    ("region", "name"),
+    [
+        *((region, "trusted-router") for region in CONTROL_PLANE_REGIONS),
+        *((region, "trusted-router-public") for region in CONTROL_PLANE_REGIONS),
+        ("us-central1", "trusted-router-settle-drain"),
+        # A region no deploy list names, and the public site outside its region.
+        ("asia-northeast1", "trusted-router"),
+        ("europe-west4", "lorehex-site"),
+        # Both ends of the allow-list match: a name that is a prefix of the
+        # listed one, and a region that is a suffix of the listed one.
+        ("us-central1", "lorehex"),
+        ("central1", "lorehex-site"),
+    ],
+)
+def test_gcp_ingress_check_flags_all_on_any_service_in_any_region(
+    tmp_path: Path, region: str, name: str,
+) -> None:
+    fleet = [
+        service
+        for service in _restricted_fleet()
+        if (service["metadata"]["labels"]["cloud.googleapis.com/location"],
+            service["metadata"]["name"]) != (region, name)
+    ]
+    fleet.append(_cloud_run_service(region, name, "all", "all"))
+    proc, lines, _ = _run_ingress_check(tmp_path, json.dumps(fleet))
+    drift = [line for line in lines if line.startswith("DRIFT")]
+    assert drift == [
+        f"DRIFT {region}/{name} ingress all: its run.app URL answers callers that skip"
+        " the load balancer"
+    ], lines
+    assert proc.returncode != 0
+
+
+@pytest.mark.parametrize(
+    ("ingress", "applied", "detail"),
+    [
+        # No annotation means Cloud Run's default, which is all.
+        (None, None, "all"),
+        # Requested internal, but the applied setting still answers everyone.
+        ("internal-and-cloud-load-balancing", "all", "internal-and-cloud-load-balancing (applied: all)"),
+    ],
+    ids=["missing-annotation", "applied-all"],
+)
+def test_gcp_ingress_check_reads_a_default_or_unapplied_ingress_as_exposed(
+    tmp_path: Path, ingress: str | None, applied: str | None, detail: str,
+) -> None:
+    fleet = [
+        service
+        for service in _restricted_fleet()
+        if (service["metadata"]["labels"]["cloud.googleapis.com/location"],
+            service["metadata"]["name"]) != ("southamerica-east1", "trusted-router")
+    ]
+    fleet.append(_cloud_run_service("southamerica-east1", "trusted-router", ingress, applied))
+    _, lines, _ = _run_ingress_check(tmp_path, json.dumps(fleet))
+    assert [line for line in lines if line.startswith("DRIFT")] == [
+        f"DRIFT southamerica-east1/trusted-router ingress {detail}: its run.app URL"
+        " answers callers that skip the load balancer"
+    ], lines
+
+
+@pytest.mark.parametrize(
+    ("listing", "reason"),
+    [
+        (None, "could not read Cloud Run services in every region (gcloud exit 1)"),
+        ("not json", "could not read Cloud Run services in every region: gcloud returned invalid JSON"),
+        ("[]", "could not read Cloud Run services in every region: the listing is empty"),
+        ('{"items": []}', "could not read Cloud Run services in every region: the listing is empty"),
+        ('["trusted-router"]', "could not read Cloud Run services in every region: the listing is empty"),
+    ],
+    ids=["gcloud-fails", "invalid-json", "empty", "not-a-list", "not-services"],
+)
+def test_gcp_ingress_check_fails_closed_on_an_unreadable_listing(
+    tmp_path: Path, listing: str | None, reason: str,
+) -> None:
+    """An unreadable listing is a checker failure, never a clean fleet."""
+    proc, lines, _ = _run_ingress_check(tmp_path, listing)
+    assert any(line.startswith(f"DRIFT {reason}") for line in lines), lines
+    assert not [line for line in lines if line.startswith("ok")], lines
+    assert proc.returncode != 0
+
+
+def test_gcp_ingress_check_treats_regions_that_did_not_respond_as_a_checker_failure(
+    tmp_path: Path,
+) -> None:
+    """gcloud exits 0 when some regions do not answer and only warns (the text
+    is googlecloudsdk/api_lib/run/global_methods.py's). A service in such a
+    region was never read, whatever the rows that did arrive say."""
+    warning = (
+        "WARNING: The following Cloud Run regions did not respond: asia-east1."
+        " List results may be incomplete."
+    )
+    proc, lines, _ = _run_ingress_check(tmp_path, json.dumps(_restricted_fleet()), warning)
+    assert [line for line in lines if line.startswith("DRIFT")] == [
+        f"DRIFT Cloud Run services listing is incomplete: {warning}"
+    ], lines
+    assert proc.returncode != 0
+
+
+def test_gcp_ingress_check_requires_every_control_plane_region_in_the_listing(
+    tmp_path: Path,
+) -> None:
+    """A listing that silently covers fewer regions must not read as clean.
+
+    The regions come from the deploy's own default in _lib.sh.
+    """
+    fleet = [
+        service
+        for service in _restricted_fleet()
+        if service["metadata"]["labels"]["cloud.googleapis.com/location"] != "southamerica-east1"
+    ]
+    _, lines, _ = _run_ingress_check(tmp_path, json.dumps(fleet))
+    assert [line for line in lines if line.startswith("DRIFT")] == [
+        "DRIFT no Cloud Run service listed in control-plane region southamerica-east1:"
+        " the listing does not cover every region"
+    ], lines
 
 
 def test_gcp_workflow_does_not_require_optional_security_label() -> None:

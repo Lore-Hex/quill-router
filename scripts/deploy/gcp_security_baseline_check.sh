@@ -50,19 +50,22 @@ g(){ gcloud "$@" --project="$PROJECT" 2>/dev/null; }
 # as absent. The same ambiguity happens when a deliberately read-only operator
 # identity lacks one list permission. Both are checker failures, not proof that
 # production alerting disappeared.
+# A successful read leaves gcloud's warnings in READ_PROJECT_STDERR for a
+# caller that must not ignore them (section 8).
+READ_PROJECT_STDERR=""
 read_project_json(){ # output-variable human-label gcloud-args...
   local output_variable="$1" label="$2" stderr_file output status=0 detail
   shift 2
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/tr-gcp-baseline.XXXXXX")"
   output="$(gcloud "$@" --project="$PROJECT" --format=json 2>"$stderr_file")" || status=$?
+  detail="$(tr '\n' ' ' <"$stderr_file" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  rm -f "$stderr_file"
+  READ_PROJECT_STDERR="$detail"
   if [ "$status" -ne 0 ]; then
-    detail="$(tr '\n' ' ' <"$stderr_file" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
-    rm -f "$stderr_file"
     drift "could not read $label (gcloud exit $status): ${detail:-no diagnostic}"
     printf -v "$output_variable" '%s' '[]'
     return 1
   fi
-  rm -f "$stderr_file"
   if ! jq -e . >/dev/null 2>&1 <<<"$output"; then
     drift "could not read $label: gcloud returned invalid JSON"
     printf -v "$output_variable" '%s' '[]'
@@ -325,6 +328,87 @@ if PROJECT_ID="$PROJECT" bash "${SCRIPT_DIR}/public_surface_edge.sh" check; then
   ok "public origins are LB-only and the backend overwrites client identity"
 else
   drift "public client-IP trust boundary failed verification"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Cloud Run ingress: every service, every region.
+# ---------------------------------------------------------------------------
+# A service at ingress `all` answers on its run.app URL from anywhere, so a
+# caller skips Cloud Armor and everything else the load balancer enforces. On
+# 2026-11-16 the combined control-plane service was at `all` in three regions,
+# and probes of /internal/admin/ arrived on those URLs, while the check above
+# read only trusted-router-public. So one listing without --region covers every
+# service in every region, and both the requested ingress and the applied
+# ingress-status must be `internal` or `internal-and-cloud-load-balancing`. A
+# service with no ingress annotation runs at Cloud Run's default, `all`.
+#
+# Services whose run.app URL is meant to answer the Internet, as region/service
+# separated by spaces, each with its reason:
+#   us-central1/lorehex-site  The static LoreHex site, deployed from source
+#       outside this repository. It has no environment, no secrets and its own
+#       runtime identity, and trusts no edge header, so its run.app URL skips
+#       nothing. (It also sits behind a serverless NEG, so it could be
+#       restricted too.)
+PUBLIC_RUN_SERVICES="us-central1/lorehex-site"
+sec "Cloud Run ingress (every service, every region)"
+# The regions a deploy puts the control plane in, read from the deploy's own
+# default in _lib.sh (not sourced: it calls gcloud). Each must appear in the
+# listing, so a listing that silently covers fewer regions cannot read clean.
+CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-$(sed -n 's/^TR_CONTROL_PLANE_REGIONS="\${TR_CONTROL_PLANE_REGIONS:-\([a-z0-9,-]*\)}"$/\1/p' "${SCRIPT_DIR}/_lib.sh")}"
+RUN_SERVICES='[]'
+if [ -z "$CONTROL_PLANE_REGIONS" ]; then
+  drift "could not derive the control-plane regions from scripts/deploy/_lib.sh"
+elif read_project_json RUN_SERVICES "Cloud Run services in every region" \
+    run services list; then
+  # gcloud exits 0 when some regions do not answer, and only warns: "The
+  # following Cloud Run regions did not respond: ... List results may be
+  # incomplete." A service in such a region was never read, so the listing
+  # is a checker failure. The rows that did arrive are still judged below.
+  if grep -Eqi 'did not respond|may be incomplete|unreachable' <<<"$READ_PROJECT_STDERR"; then
+    drift "Cloud Run services listing is incomplete: ${READ_PROJECT_STDERR}"
+  fi
+  # jq -e fails on a listing that is not a list of services, and on an empty
+  # one: every control-plane region runs at least one service.
+  if ! INGRESS_ROWS="$(jq -er '
+      if type != "array" then error("not a list") else . end
+      | .[]
+      | [(.metadata.labels["cloud.googleapis.com/location"] // "unknown-region"),
+         (.metadata.name // "unnamed-service"),
+         (.metadata.annotations["run.googleapis.com/ingress"] // "all"),
+         (.metadata.annotations["run.googleapis.com/ingress-status"] // "")]
+      | @tsv' <<<"$RUN_SERVICES" 2>/dev/null)"; then
+    drift "could not read Cloud Run services in every region: the listing is empty or not a list of services"
+  else
+    RESTRICTED=0
+    while IFS=$'\t' read -r region service ingress applied; do
+      [ -n "$service" ] || continue
+      exposed=0
+      for value in "$ingress" ${applied:+"$applied"}; do
+        case "$value" in
+          internal|internal-and-cloud-load-balancing) ;;
+          *) exposed=1 ;;
+        esac
+      done
+      detail="$ingress"
+      [ -z "$applied" ] || [ "$applied" = "$ingress" ] \
+        || detail="$ingress (applied: $applied)"
+      if [ "$exposed" = 0 ]; then
+        RESTRICTED=$((RESTRICTED + 1))
+      elif [[ " $PUBLIC_RUN_SERVICES " == *" $region/$service "* ]]; then
+        note "$region/$service ingress $detail: listed as meant to be public"
+      else
+        drift "$region/$service ingress $detail: its run.app URL answers callers that skip the load balancer"
+      fi
+    done <<<"$INGRESS_ROWS"
+    IFS=',' read -r -a WANT_REGIONS <<<"$CONTROL_PLANE_REGIONS"
+    for region in "${WANT_REGIONS[@]}"; do
+      if ! cut -f1 <<<"$INGRESS_ROWS" | grep -Fxq -- "$region"; then
+        drift "no Cloud Run service listed in control-plane region $region: the listing does not cover every region"
+      fi
+    done
+    [ "$RESTRICTED" = 0 ] \
+      || ok "$RESTRICTED Cloud Run services accept only internal or load-balancer traffic"
+  fi
 fi
 
 echo

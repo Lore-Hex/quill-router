@@ -535,12 +535,30 @@ PY
   fi
   if [[ " $* " == *" run services describe trusted-router "* ]] \
       && [[ " $* " == *" --format=json "* ]]; then
-    python3 - "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
+    # The combined service's ingress in this region: what the last deploy
+    # wrote (recorded below the failure table), else the run's initial value.
+    service_ingress="${HARNESS_ROLLOUT_INITIAL_INGRESS:-internal-and-cloud-load-balancing}"
+    if [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ] \
+        && [ -f "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}.readback-failures" ]; then
+      remaining="$(cat "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}.readback-failures")"
+      if [ "$remaining" -gt 0 ]; then
+        printf '%s\n' "$((remaining - 1))" \
+          >"${HARNESS_ROLLOUT_INGRESS_DIR}/${region}.readback-failures"
+        echo "ERROR: (gcloud.run.services.describe) harness read failure" >&2
+        exit 1
+      fi
+    fi
+    if [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ] \
+        && [ -f "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}" ]; then
+      service_ingress="$(cat "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}")"
+    fi
+    python3 - "$HARNESS_PROBE_TAG_STATE_DIR" "$region" "$service_ingress" <<'PY'
 import json
 import pathlib
 import sys
 
 tag_path = pathlib.Path(sys.argv[1]) / sys.argv[2]
+ingress = sys.argv[3]
 traffic = [{"percent": 100, "revisionName": "trusted-router-active"}]
 if tag_path.is_file():
     traffic.append(
@@ -552,7 +570,7 @@ if tag_path.is_file():
     )
 print(json.dumps({
     "metadata": {"generation": 1, "annotations": {
-        "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+        "run.googleapis.com/ingress": ingress
     }},
     "status": {
         "observedGeneration": 1,
@@ -794,6 +812,42 @@ if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
       exit 1
     fi
   done < "$HARNESS_FAILURES"
+fi
+
+# The combined service's ingress, one file per region so parallel regional
+# deploys never race: a `run deploy trusted-router` carrying --ingress writes
+# it and `run services describe trusted-router` reads it back (above).
+# HARNESS_ROLLOUT_IGNORE_INGRESS=1 models a deploy whose ingress did not take.
+# HARNESS_ROLLOUT_READBACK_FAILURES=N makes the next N describes of the
+# region after its deploy (the rollout's read-back comes first) fail as a
+# describe error would.
+if [ "${0##*/}" = "gcloud" ] \
+    && [[ " $* " == *" run deploy trusted-router "* ]] \
+    && [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ]; then
+  deploy_region=""
+  deploy_ingress=""
+  previous=""
+  for argument in "$@"; do
+    case "$previous" in
+      region) deploy_region="$argument" ;;
+      ingress) deploy_ingress="$argument" ;;
+    esac
+    previous=""
+    case "$argument" in
+      --region=*) deploy_region="${argument#--region=}" ;;
+      --region) previous="region" ;;
+      --ingress=*) deploy_ingress="${argument#--ingress=}" ;;
+      --ingress) previous="ingress" ;;
+    esac
+  done
+  if [ -n "$deploy_region" ] && [ -n "$deploy_ingress" ] \
+      && [ "${HARNESS_ROLLOUT_IGNORE_INGRESS:-0}" != "1" ]; then
+    printf '%s\n' "$deploy_ingress" >"${HARNESS_ROLLOUT_INGRESS_DIR}/${deploy_region}"
+  fi
+  if [ -n "$deploy_region" ] && [ "${HARNESS_ROLLOUT_READBACK_FAILURES:-0}" != "0" ]; then
+    printf '%s\n' "$HARNESS_ROLLOUT_READBACK_FAILURES" \
+      >"${HARNESS_ROLLOUT_INGRESS_DIR}/${deploy_region}.readback-failures"
+  fi
 fi
 
 # Immutable artifact digest: rollout.sh pins the mutable image tag to it before
@@ -1905,6 +1959,8 @@ class HarnessRun:
     stderr: str
     calls: list[list[str]]
     public_ingress_state: dict[str, str]
+    #: The combined service's ingress per region a deploy wrote during the run.
+    rollout_ingress_state: dict[str, str] = field(default_factory=dict)
 
     @property
     def verifier_calls(self) -> list[list[str]]:
@@ -2126,6 +2182,8 @@ class DeployScriptHarness:
             )
             + "\n"
         )
+        rollout_ingress_dir = run_dir / "rollout-ingress"
+        rollout_ingress_dir.mkdir()
         probe_tag_state_dir = run_dir / "probe-tags"
         probe_tag_state_dir.mkdir()
         internal_probe_tag_state_dir = run_dir / "internal-probe-tags"
@@ -2212,6 +2270,7 @@ class DeployScriptHarness:
             "HARNESS_URL_MAP_NAME": "trusted-router-control-map",
             "HARNESS_PUBLIC_INGRESS_STATE": str(public_ingress_state),
             "HARNESS_INTERNAL_INGRESS_STATE": str(internal_ingress_state),
+            "HARNESS_ROLLOUT_INGRESS_DIR": str(rollout_ingress_dir),
             "HARNESS_PROBE_TAG_STATE_DIR": str(probe_tag_state_dir),
             "HARNESS_INTERNAL_PROBE_TAG_STATE_DIR": str(
                 internal_probe_tag_state_dir
@@ -2261,6 +2320,11 @@ class DeployScriptHarness:
             proc.stderr,
             calls,
             json.loads(public_ingress_state.read_text()),
+            {
+                path.name: path.read_text().strip()
+                for path in sorted(rollout_ingress_dir.iterdir())
+                if "." not in path.name
+            },
         )
 
 

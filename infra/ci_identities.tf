@@ -59,7 +59,12 @@ locals {
   # (scripts/deploy/gcp_security_baseline_check.sh,
   # scripts/deploy/public_surface_edge.sh check and scripts/deploy/_lib.sh).
   # Nothing here creates, changes or deletes anything, and nothing reads a
-  # secret, an object or a database row.
+  # secret, an object or a database row. infra-apply cannot update the custom
+  # role either, so a change to this list needs an owner's targeted apply from
+  # its branch before it merges (docs/runbooks/ci-identities.md, "When a CI
+  # role's permissions change"):
+  #
+  #   terraform -chdir=infra apply -target='google_project_iam_custom_role.ci_tier["probe"]'
   ci_probe_project_permissions = [
     "compute.backendServices.get",           # backend-services describe (the public backend's client-IP header)
     "compute.firewalls.get",                 # firewall-rules describe tr-allow-iap-ssh-all
@@ -73,6 +78,7 @@ locals {
     "resourcemanager.projects.getIamPolicy", # projects get-iam-policy (the audit configuration)
     "run.revisions.get",                     # run revisions describe (the serving revision's client-IP mode)
     "run.services.get",                      # run services describe (ingress and traffic)
+    "run.services.list",                     # run services list (every service's ingress, every region)
   ]
 
   # What refresh-prices.yml calls at project level: generateContent and

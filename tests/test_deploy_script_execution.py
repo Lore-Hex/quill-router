@@ -1311,6 +1311,178 @@ def test_gcp_failed_candidate_warm_restores_zero_traffic_capacity(
     assert tag_index < restore_index
 
 
+RESTRICTED_INGRESS = "internal-and-cloud-load-balancing"
+
+
+def _combined_service_deploys(run: HarnessRun) -> list[tuple[int, list[str]]]:
+    return [
+        (index, call)
+        for index, call in enumerate(run.calls)
+        if call[0] == "gcloud" and call[3:6] == ["run", "deploy", "trusted-router"]
+    ]
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+@pytest.mark.parametrize(
+    "targets",
+    [*((region,) for region in ROUTER_REGIONS), ROUTER_REGIONS],
+    ids=[*ROUTER_REGIONS, "all-regions"],
+)
+def test_every_rollout_deploy_leaves_the_combined_service_load_balancer_only(
+    harness: DeployScriptHarness, targets: tuple[str, ...], no_traffic: str,
+) -> None:
+    """2026-11-16: three regions sat at ingress `all` because no deploy set it.
+
+    Each region starts at `all`, as us-east4, europe-west4 and
+    southamerica-east1 did. The workflow deploys one region per process (the
+    primary and each secondary) and an operator run deploys them together; in
+    every case the deploy call itself carries the ingress, so no separate
+    service update is added, and the warm reads the restricted value back and
+    takes the capacity check instead of probing run.app.
+    """
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "TR_DEPLOY_TARGET_REGIONS": ",".join(targets),
+            "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+            "HARNESS_ROLLOUT_INITIAL_INGRESS": "all",
+        },
+    )
+    assert run.returncode == 0, summarise(run)
+    deploys = _combined_service_deploys(run)
+    assert sorted(call[call.index("--region") + 1] for _, call in deploys) == sorted(targets)
+    for _, deploy in deploys:
+        assert deploy.count("--ingress") == 1, deploy
+        assert deploy[deploy.index("--ingress") + 1] == RESTRICTED_INGRESS
+    assert run.rollout_ingress_state == {region: RESTRICTED_INGRESS for region in targets}
+    # No second mutation of the service: the deploy call is the only writer.
+    assert not [
+        call for call in run.calls
+        if call[0] == "gcloud" and "update" in call and "trusted-router" in call
+        and "update-traffic" not in call
+    ]
+    assert not [call for call in run.calls if call[0] == "curl" and "run.app" in call[-1]]
+    last_deploy = max(index for index, _ in deploys)
+    readbacks = [
+        index for index, call in enumerate(run.calls)
+        if call[:4] == ["gcloud", "run", "services", "describe"]
+        and "trusted-router" in call and "--format=json" in call and index > last_deploy
+    ]
+    assert len(readbacks) >= len(targets)
+    if no_traffic == "1":
+        first_warm_tag = next(
+            index for index, call in enumerate(run.calls)
+            if "--update-tags=staged-probe=trusted-router-candidate" in call
+        )
+        assert last_deploy < min(readbacks) < first_warm_tag
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_stops_when_a_deploy_leaves_the_service_reachable_around_the_balancer(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    """A deploy whose ingress did not take stops the rollout before the warm
+    tags the candidate, before any traffic moves and before run.app is probed."""
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+            "HARNESS_ROLLOUT_INITIAL_INGRESS": "all",
+            "HARNESS_ROLLOUT_IGNORE_INGRESS": "1",
+        },
+    )
+    assert run.returncode != 0
+    assert (
+        "trusted-router in us-central1 has ingress all after a deploy that set "
+        f"{RESTRICTED_INGRESS}"
+    ) in run.stderr, summarise(run)
+    deploy_index = _combined_service_deploys(run)[-1][0]
+    after = run.calls[deploy_index + 1:]
+    assert not [call for call in after if "update-traffic" in call], after
+    assert not [call for call in after if call[0] == "curl"], after
+    # A read that succeeds and shows another value is not retried.
+    assert len(_ingress_readbacks(run)) == 1, after
+    assert not [call for call in after if call[0] == "sleep"], after
+
+
+def _ingress_readbacks(run: HarnessRun) -> list[list[str]]:
+    """The service describes between the last deploy and the first traffic or
+    tag change after it: the rollout's ingress read-back."""
+    start = _combined_service_deploys(run)[-1][0] + 1
+    readbacks: list[list[str]] = []
+    for call in run.calls[start:]:
+        if "update-traffic" in call or any(arg.startswith("--update-tags=") for arg in call):
+            break
+        if call[:4] == ["gcloud", "run", "services", "describe"] and "--format=json" in call:
+            readbacks.append(call)
+    return readbacks
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_retries_a_failed_ingress_read_back_a_bounded_number_of_times(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    """A transient describe error while the mutex is held must not fail the
+    deploy: two failed reads, then a good one, and the rollout continues."""
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+            "HARNESS_ROLLOUT_INITIAL_INGRESS": "all",
+            "HARNESS_ROLLOUT_READBACK_FAILURES": "2",
+        },
+    )
+    assert run.returncode == 0, summarise(run)
+    assert len(_ingress_readbacks(run)) == 3
+    deploy_index = _combined_service_deploys(run)[-1][0]
+    assert [call for call in run.calls[deploy_index + 1:] if call[0] == "sleep"] == [
+        ["sleep", "5"], ["sleep", "5"]
+    ]
+    assert run.rollout_ingress_state == {"us-central1": RESTRICTED_INGRESS}
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_stops_when_the_ingress_read_back_keeps_failing(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    """An ingress nobody could read is not an ingress that was enforced: after
+    three failed reads the rollout stops before the warm, any traffic change
+    or any run.app request."""
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+            "HARNESS_ROLLOUT_READBACK_FAILURES": "99",
+        },
+    )
+    assert run.returncode != 0
+    assert (
+        "could not read Cloud Run ingress for trusted-router in us-central1 after 3 attempts"
+    ) in run.stderr, summarise(run)
+    assert len(_ingress_readbacks(run)) == 3
+    deploy_index = _combined_service_deploys(run)[-1][0]
+    after = run.calls[deploy_index + 1:]
+    assert not [call for call in after if "update-traffic" in call], after
+    assert not [call for call in after if any(a.startswith("--update-tags=") for a in call)], after
+    assert not [call for call in after if call[0] == "curl"], after
+
+
+@pytest.mark.parametrize("ingress", ["all", "internal"])
+def test_rollout_refuses_an_ingress_other_than_load_balancer_only_before_any_mutation(
+    harness: DeployScriptHarness, ingress: str,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh", extra_env={"TR_CLOUD_RUN_INGRESS": ingress}
+    )
+    assert run.returncode != 0
+    assert (
+        "refusing rollout: TR_CLOUD_RUN_INGRESS must be internal-and-cloud-load-balancing"
+    ) in run.stderr, summarise(run)
+    # Only _lib.sh's project-number read ran; nothing was deployed or moved.
+    cloud = [call for call in run.calls if call[0] in {"gcloud", "gc", "curl"}]
+    assert cloud and all(call[3:5] == ["projects", "describe"] for call in cloud), cloud
+
+
 @pytest.mark.parametrize(
     ("script", "cloud", "mutation_prefix"),
     (

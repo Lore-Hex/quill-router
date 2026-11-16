@@ -48,6 +48,30 @@ different count as a question to settle, not as an error in the plan.
 
 Any of the three counts as "an apply of `main`" in the steps below.
 
+## When a CI role's permissions change
+
+`infra-apply` cannot update a project custom role either. A pull request that
+changes `ci_probe_project_permissions` (or `ci_prices_project_permissions`)
+needs an owner to apply that one role from its branch, rebased on `main`,
+before it merges. If it merges first, the apply of `main` fails on the role,
+and the workflow that needs the permission reads `PERMISSION_DENIED`.
+
+On 2026-11-16 `run.services.list` joined `trustedRouterCiProbe`, for the
+Cloud Run ingress section of `scripts/deploy/gcp_security_baseline_check.sh`,
+which lists every service in every region. Before that change merges:
+
+```bash
+terraform -chdir=infra apply -target='google_project_iam_custom_role.ci_tier["probe"]'
+```
+
+Expected: `0 to add, 1 to change, 0 to destroy`, the role gaining
+`run.services.list` and nothing else. Then check that it is there:
+
+```bash
+gcloud iam roles describe trustedRouterCiProbe --project=quill-cloud-proxy \
+  --format='value(includedPermissions)'
+```
+
 ## 1. An owner applies what the deploy identity cannot
 
 `infra-apply` runs as `tr-deploy`, which can neither add a project custom role
