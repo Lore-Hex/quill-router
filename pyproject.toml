@@ -77,6 +77,17 @@ timeout_method = "thread"
 # CI's explicit selections (and `-m proof_oracle` locally) still win.
 addopts = ["-m", "not provider_health and not proof_oracle"]
 asyncio_mode = "auto"
+# Keep a test's temporary directory only when the test failed. The deploy
+# script tests give each test its own copy of the repository, so one full
+# run writes about 40 GB, and pytest's default keeps every directory of the
+# last three runs. With several sessions running the suite on one machine
+# that filled the disk on 2026-11-15. A passing test's directory is now
+# removed when the test ends. A test that fails in its call phase keeps its
+# directory (one that errors only in a fixture or in teardown does not), and
+# the last three runs' kept directories stay: with one, a second session
+# that fails and exits later would remove the first session's.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 3
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
