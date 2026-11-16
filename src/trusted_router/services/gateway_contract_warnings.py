@@ -16,6 +16,7 @@ from trusted_router.services.contract_value_preview import safe_value_preview
 # retained separately. Unknown names never create new alert fingerprints.
 PARAMETER_CATEGORIES = frozenset(
     {
+        "deidentify",
         "store",
         "model",
         "models",
