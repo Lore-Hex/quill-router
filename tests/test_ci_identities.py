@@ -249,6 +249,39 @@ def test_probe_project_role_reads_configuration_only() -> None:
         assert not permission.startswith(CONTENT_PERMISSION_PREFIXES), f"{permission} reads content"
 
 
+# Each project-level gcloud read in scripts/deploy/gcp_security_baseline_check.sh
+# and the permission tr-ci-probe needs for it. The bucket reads are left out:
+# they are granted on the bucket, not by the project role.
+BASELINE_PROJECT_READS = {
+    "projects get-iam-policy": "resourcemanager.projects.getIamPolicy",
+    "logging metrics describe": "logging.logMetrics.get",
+    "alpha monitoring channels list": "monitoring.notificationChannels.list",
+    "alpha monitoring policies list": "monitoring.alertPolicies.list",
+    "compute firewall-rules describe": "compute.firewalls.get",
+    "compute firewall-rules list": "compute.firewalls.list",
+    "essential-contacts compute": "essentialcontacts.contacts.list",
+    "iam service-accounts keys list": "iam.serviceAccountKeys.list",
+    # Section 8, the Cloud Run ingress of every service in every region.
+    "run services list": "run.services.list",
+}
+
+
+def test_probe_project_role_covers_every_project_read_of_the_security_baseline() -> None:
+    """cloud-security-baseline.yml runs as tr-ci-probe. A read its role lacks
+    prints PERMISSION_DENIED every day: the check fails closed, but sees
+    nothing. Each read named here must still be in the script, so the table
+    cannot outlive the call it describes."""
+    baseline = "\n".join(
+        line
+        for line in (ROOT / "scripts/deploy/gcp_security_baseline_check.sh").read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    permissions = set(wif_tiers.string_lists(CI_IDENTITIES)["ci_probe_project_permissions"])
+    for read, permission in BASELINE_PROJECT_READS.items():
+        assert read in baseline, f"the baseline no longer makes `{read}`"
+        assert permission in permissions, f"tr-ci-probe cannot `{read}`: add {permission}"
+
+
 def test_only_the_audit_account_reads_the_database() -> None:
     """typed-audit.yml reads every table. It has a tier and an account to
     itself so that no other moved workflow can."""

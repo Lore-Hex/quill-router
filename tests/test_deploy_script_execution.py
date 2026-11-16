@@ -1400,6 +1400,71 @@ def test_rollout_stops_when_a_deploy_leaves_the_service_reachable_around_the_bal
     after = run.calls[deploy_index + 1:]
     assert not [call for call in after if "update-traffic" in call], after
     assert not [call for call in after if call[0] == "curl"], after
+    # A read that succeeds and shows another value is not retried.
+    assert len(_ingress_readbacks(run)) == 1, after
+    assert not [call for call in after if call[0] == "sleep"], after
+
+
+def _ingress_readbacks(run: HarnessRun) -> list[list[str]]:
+    """The service describes between the last deploy and the first traffic or
+    tag change after it: the rollout's ingress read-back."""
+    start = _combined_service_deploys(run)[-1][0] + 1
+    readbacks: list[list[str]] = []
+    for call in run.calls[start:]:
+        if "update-traffic" in call or any(arg.startswith("--update-tags=") for arg in call):
+            break
+        if call[:4] == ["gcloud", "run", "services", "describe"] and "--format=json" in call:
+            readbacks.append(call)
+    return readbacks
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_retries_a_failed_ingress_read_back_a_bounded_number_of_times(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    """A transient describe error while the mutex is held must not fail the
+    deploy: two failed reads, then a good one, and the rollout continues."""
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+            "HARNESS_ROLLOUT_INITIAL_INGRESS": "all",
+            "HARNESS_ROLLOUT_READBACK_FAILURES": "2",
+        },
+    )
+    assert run.returncode == 0, summarise(run)
+    assert len(_ingress_readbacks(run)) == 3
+    deploy_index = _combined_service_deploys(run)[-1][0]
+    assert [call for call in run.calls[deploy_index + 1:] if call[0] == "sleep"] == [
+        ["sleep", "5"], ["sleep", "5"]
+    ]
+    assert run.rollout_ingress_state == {"us-central1": RESTRICTED_INGRESS}
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_stops_when_the_ingress_read_back_keeps_failing(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    """An ingress nobody could read is not an ingress that was enforced: after
+    three failed reads the rollout stops before the warm, any traffic change
+    or any run.app request."""
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+            "HARNESS_ROLLOUT_READBACK_FAILURES": "99",
+        },
+    )
+    assert run.returncode != 0
+    assert (
+        "could not read Cloud Run ingress for trusted-router in us-central1 after 3 attempts"
+    ) in run.stderr, summarise(run)
+    assert len(_ingress_readbacks(run)) == 3
+    deploy_index = _combined_service_deploys(run)[-1][0]
+    after = run.calls[deploy_index + 1:]
+    assert not [call for call in after if "update-traffic" in call], after
+    assert not [call for call in after if any(a.startswith("--update-tags=") for a in call)], after
+    assert not [call for call in after if call[0] == "curl"], after
 
 
 @pytest.mark.parametrize("ingress", ["all", "internal"])

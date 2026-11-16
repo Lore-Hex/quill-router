@@ -1211,11 +1211,30 @@ fi
 
 # Read back the ingress the deploy calls set, before the warm or any traffic
 # step reads it. A region left at another value is still reachable around the
-# load balancer, so the rollout stops there instead of reporting success.
+# load balancer, so the rollout stops there instead of reporting success. The
+# mutex is held here, and a failed rollout leaves its lease blocked (or, from
+# break_glass_deploy.sh, exits before routing to the newest revision), so a
+# read that fails is retried a bounded number of times. A read that succeeds
+# and shows another value stops at once.
+INGRESS_READBACK_ATTEMPTS=3
+INGRESS_READBACK_RETRY_SECONDS=5
+read_back_service_ingress() {
+  local target="$1"
+  local attempt=1
+  local value
+  until value="$(cloud_run_service_ingress "$SERVICE" "$target" "$PROJECT_ID")"; do
+    if [ "$attempt" -ge "$INGRESS_READBACK_ATTEMPTS" ]; then
+      return 1
+    fi
+    log "could not read Cloud Run ingress for ${SERVICE} in ${target} (attempt ${attempt}/${INGRESS_READBACK_ATTEMPTS}); retrying"
+    sleep "$INGRESS_READBACK_RETRY_SECONDS" >/dev/null
+    attempt=$((attempt + 1))
+  done
+  printf '%s\n' "$value"
+}
 for ingress_region in "${TARGETS[@]}"; do
-  if ! region_ingress="$(cloud_run_service_ingress \
-      "$SERVICE" "$ingress_region" "$PROJECT_ID")"; then
-    echo "ERROR: could not read Cloud Run ingress for ${SERVICE} in ${ingress_region}" >&2
+  if ! region_ingress="$(read_back_service_ingress "$ingress_region")"; then
+    echo "ERROR: could not read Cloud Run ingress for ${SERVICE} in ${ingress_region} after ${INGRESS_READBACK_ATTEMPTS} attempts" >&2
     exit 1
   fi
   if [ "$region_ingress" != "$TR_CLOUD_RUN_INGRESS" ]; then
@@ -1258,9 +1277,11 @@ warm_no_traffic_candidate() {
   if [ "$service_ingress" = "all" ]; then
     base_url="$(cloud_run_probe_tagged_base_url \
       "$SERVICE" "$target" "$PROJECT_ID" "$WARM_PROBE_TAG" "$revision")"
-    # Public run.app ingress can prove the application route before traffic
-    # moves. Protected services deliberately return a Google platform 404 on
-    # this URL and use the capacity check below instead.
+    # Unreachable since 2026-11-16: every deploy above sets
+    # TR_CLOUD_RUN_INGRESS and the rollout stops unless it reads that value
+    # back, so the service never reads `all` here. A protected service
+    # returns a Google platform 404 on this URL, which is why the capacity
+    # check below is the path every region takes.
     curl -fsS --max-time 30 --retry 5 --retry-all-errors \
       "${base_url}/ready" >/dev/null
   else

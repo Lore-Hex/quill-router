@@ -539,6 +539,16 @@ PY
     # wrote (recorded below the failure table), else the run's initial value.
     service_ingress="${HARNESS_ROLLOUT_INITIAL_INGRESS:-internal-and-cloud-load-balancing}"
     if [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ] \
+        && [ -f "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}.readback-failures" ]; then
+      remaining="$(cat "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}.readback-failures")"
+      if [ "$remaining" -gt 0 ]; then
+        printf '%s\n' "$((remaining - 1))" \
+          >"${HARNESS_ROLLOUT_INGRESS_DIR}/${region}.readback-failures"
+        echo "ERROR: (gcloud.run.services.describe) harness read failure" >&2
+        exit 1
+      fi
+    fi
+    if [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ] \
         && [ -f "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}" ]; then
       service_ingress="$(cat "${HARNESS_ROLLOUT_INGRESS_DIR}/${region}")"
     fi
@@ -808,10 +818,12 @@ fi
 # deploys never race: a `run deploy trusted-router` carrying --ingress writes
 # it and `run services describe trusted-router` reads it back (above).
 # HARNESS_ROLLOUT_IGNORE_INGRESS=1 models a deploy whose ingress did not take.
+# HARNESS_ROLLOUT_READBACK_FAILURES=N makes the next N describes of the
+# region after its deploy (the rollout's read-back comes first) fail as a
+# describe error would.
 if [ "${0##*/}" = "gcloud" ] \
     && [[ " $* " == *" run deploy trusted-router "* ]] \
-    && [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ] \
-    && [ "${HARNESS_ROLLOUT_IGNORE_INGRESS:-0}" != "1" ]; then
+    && [ -n "${HARNESS_ROLLOUT_INGRESS_DIR:-}" ]; then
   deploy_region=""
   deploy_ingress=""
   previous=""
@@ -828,8 +840,13 @@ if [ "${0##*/}" = "gcloud" ] \
       --ingress) previous="ingress" ;;
     esac
   done
-  if [ -n "$deploy_region" ] && [ -n "$deploy_ingress" ]; then
+  if [ -n "$deploy_region" ] && [ -n "$deploy_ingress" ] \
+      && [ "${HARNESS_ROLLOUT_IGNORE_INGRESS:-0}" != "1" ]; then
     printf '%s\n' "$deploy_ingress" >"${HARNESS_ROLLOUT_INGRESS_DIR}/${deploy_region}"
+  fi
+  if [ -n "$deploy_region" ] && [ "${HARNESS_ROLLOUT_READBACK_FAILURES:-0}" != "0" ]; then
+    printf '%s\n' "$HARNESS_ROLLOUT_READBACK_FAILURES" \
+      >"${HARNESS_ROLLOUT_INGRESS_DIR}/${deploy_region}.readback-failures"
   fi
 fi
 
@@ -2306,6 +2323,7 @@ class DeployScriptHarness:
             {
                 path.name: path.read_text().strip()
                 for path in sorted(rollout_ingress_dir.iterdir())
+                if "." not in path.name
             },
         )
 

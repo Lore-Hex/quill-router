@@ -203,8 +203,11 @@ prepare_synthetic_ingest_target() {
   local target_region="$1"
 
   if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
-    # The combined service uses ingress=all in every region, matching the pre-#714
-    # jobs' public run.app path; VPC/private-ingress setup belongs to the split path.
+    # The combined service is load-balancer only in every region (rollout.sh
+    # sets and reads back its ingress), and these jobs reach it through the
+    # external load balancer (synthetic_ingest_base_for_region below), so they
+    # need no private run.app path; VPC/private-ingress setup belongs to the
+    # split path.
     return
   fi
   ensure_private_run_app_access "$target_region"

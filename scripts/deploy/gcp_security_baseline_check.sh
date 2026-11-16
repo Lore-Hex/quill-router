@@ -50,19 +50,22 @@ g(){ gcloud "$@" --project="$PROJECT" 2>/dev/null; }
 # as absent. The same ambiguity happens when a deliberately read-only operator
 # identity lacks one list permission. Both are checker failures, not proof that
 # production alerting disappeared.
+# A successful read leaves gcloud's warnings in READ_PROJECT_STDERR for a
+# caller that must not ignore them (section 8).
+READ_PROJECT_STDERR=""
 read_project_json(){ # output-variable human-label gcloud-args...
   local output_variable="$1" label="$2" stderr_file output status=0 detail
   shift 2
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/tr-gcp-baseline.XXXXXX")"
   output="$(gcloud "$@" --project="$PROJECT" --format=json 2>"$stderr_file")" || status=$?
+  detail="$(tr '\n' ' ' <"$stderr_file" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  rm -f "$stderr_file"
+  READ_PROJECT_STDERR="$detail"
   if [ "$status" -ne 0 ]; then
-    detail="$(tr '\n' ' ' <"$stderr_file" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
-    rm -f "$stderr_file"
     drift "could not read $label (gcloud exit $status): ${detail:-no diagnostic}"
     printf -v "$output_variable" '%s' '[]'
     return 1
   fi
-  rm -f "$stderr_file"
   if ! jq -e . >/dev/null 2>&1 <<<"$output"; then
     drift "could not read $label: gcloud returned invalid JSON"
     printf -v "$output_variable" '%s' '[]'
@@ -357,6 +360,13 @@ if [ -z "$CONTROL_PLANE_REGIONS" ]; then
   drift "could not derive the control-plane regions from scripts/deploy/_lib.sh"
 elif read_project_json RUN_SERVICES "Cloud Run services in every region" \
     run services list; then
+  # gcloud exits 0 when some regions do not answer, and only warns: "The
+  # following Cloud Run regions did not respond: ... List results may be
+  # incomplete." A service in such a region was never read, so the listing
+  # is a checker failure. The rows that did arrive are still judged below.
+  if grep -Eqi 'did not respond|may be incomplete|unreachable' <<<"$READ_PROJECT_STDERR"; then
+    drift "Cloud Run services listing is incomplete: ${READ_PROJECT_STDERR}"
+  fi
   # jq -e fails on a listing that is not a list of services, and on an empty
   # one: every control-plane region runs at least one service.
   if ! INGRESS_ROWS="$(jq -er '

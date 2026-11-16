@@ -53,6 +53,8 @@ on:
       - "scripts/deploy/gcp_security_baseline_check.sh"
       - "scripts/deploy/public_surface_edge.sh"
       - "scripts/deploy/_active_revision.sh"
+      # Section 8 of the GCP check reads the control-plane regions from it.
+      - "scripts/deploy/_lib.sh"
       - "scripts/deploy/azure_security_baseline_check.sh"
       - ".github/workflows/cloud-security-baseline.yml"
   workflow_dispatch:

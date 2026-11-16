@@ -175,6 +175,9 @@ case " $* " in
       echo "ERROR: (gcloud.run.services.list) PERMISSION_DENIED: run.services.list" >&2
       exit 1
     fi
+    if [ -n "$STUB_RUN_LIST_WARNING" ]; then
+      printf '%s\\n' "$STUB_RUN_LIST_WARNING" >&2
+    fi
     cat "$STUB_RUN_LIST_JSON"
     exit 0
     ;;
@@ -214,7 +217,7 @@ def _restricted_fleet() -> list[dict[str, Any]]:
 
 
 def _run_ingress_check(
-    tmp_path: Path, listing: str | None
+    tmp_path: Path, listing: str | None, warning: str = ""
 ) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
     """Run the whole GCP baseline against a stub gcloud; return the ingress lines."""
     jq = shutil.which("jq")
@@ -239,6 +242,7 @@ def _run_ingress_check(
         "STUB_GCLOUD_LOG": str(gcloud_log),
         "STUB_RUN_LIST_JSON": str(listing_file),
         "STUB_RUN_LIST_MODE": "fail" if listing is None else "answer",
+        "STUB_RUN_LIST_WARNING": warning,
     }
     proc = subprocess.run(  # noqa: S603 - fixed script path, stub PATH
         ["bash", str(GCP)],  # noqa: S607
@@ -277,6 +281,10 @@ def test_gcp_ingress_check_accepts_a_restricted_fleet_and_the_listed_public_site
         # A region no deploy list names, and the public site outside its region.
         ("asia-northeast1", "trusted-router"),
         ("europe-west4", "lorehex-site"),
+        # Both ends of the allow-list match: a name that is a prefix of the
+        # listed one, and a region that is a suffix of the listed one.
+        ("us-central1", "lorehex"),
+        ("central1", "lorehex-site"),
     ],
 )
 def test_gcp_ingress_check_flags_all_on_any_service_in_any_region(
@@ -343,6 +351,23 @@ def test_gcp_ingress_check_fails_closed_on_an_unreadable_listing(
     proc, lines, _ = _run_ingress_check(tmp_path, listing)
     assert any(line.startswith(f"DRIFT {reason}") for line in lines), lines
     assert not [line for line in lines if line.startswith("ok")], lines
+    assert proc.returncode != 0
+
+
+def test_gcp_ingress_check_treats_regions_that_did_not_respond_as_a_checker_failure(
+    tmp_path: Path,
+) -> None:
+    """gcloud exits 0 when some regions do not answer and only warns (the text
+    is googlecloudsdk/api_lib/run/global_methods.py's). A service in such a
+    region was never read, whatever the rows that did arrive say."""
+    warning = (
+        "WARNING: The following Cloud Run regions did not respond: asia-east1."
+        " List results may be incomplete."
+    )
+    proc, lines, _ = _run_ingress_check(tmp_path, json.dumps(_restricted_fleet()), warning)
+    assert [line for line in lines if line.startswith("DRIFT")] == [
+        f"DRIFT Cloud Run services listing is incomplete: {warning}"
+    ], lines
     assert proc.returncode != 0
 
 
