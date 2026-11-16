@@ -591,3 +591,14 @@ def test_required_checks_are_named_alike_everywhere() -> None:
             produced.add(f"{name} ({', '.join(str(value) for value in combination)})")
     assert set(posted) <= produced
     assert "CI" in posted
+
+
+def test_a_passing_tests_temporary_directory_is_not_kept() -> None:
+    # The deploy script tests copy the repository once per test, so a full run
+    # writes tens of gigabytes under the system temporary directory. With
+    # pytest's default every directory of the last three runs stays, and
+    # several sessions running the suite on one machine fill the disk.
+    options = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+    assert options["tmp_path_retention_policy"] == "failed"
+    assert options["tmp_path_retention_count"] == 1
+
