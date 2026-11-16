@@ -209,7 +209,8 @@ class NavigationRegistryTests(unittest.TestCase):
             for (_, links), group in zip(columns[:len(FOOTER_GROUPS)], FOOTER_GROUPS, strict=True):
                 hrefs = [h.split('?', 1)[0] for h in re.findall(r'<a href="([^"]+)"', links)]
                 self.assertEqual(hrefs[:len(routes(group))], routes(group))
-            self.assertEqual(footer.count('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>'), 1)
+            self.assertEqual(footer.count('href="https://encrypteveryprompt.org/">Encrypt Every Prompt</a>'), 1)
+            self.assertNotIn('letsencrypt.ai', footer)
             legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
             labels = re.findall(r'>([^<>]+)</a>', legal)
             self.assertEqual(labels, (['Trust center'] if key in ('providers', 'badge') else []) + ['Media kit', 'Privacy', 'Terms'])
@@ -217,7 +218,7 @@ class NavigationRegistryTests(unittest.TestCase):
             column = dict(columns)
             self.assertIn('href="https://trustedrouter.com/token-exchange?', column["Market"])
             self.assertIn('>Exchange overview</a>', column["Market"])
-            self.assertIn('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>', column["Trust"])
+            self.assertIn('href="https://encrypteveryprompt.org/">Encrypt Every Prompt</a>', column["Trust"])
             self.assertNotIn('footer-related', footer)
             credit = re.search(r'<p class="footer-credit">(.*?)</p>', footer, re.S).group(1)
             self.assertIn('Powered by <a href="https://trustedrouter.com/?', credit)

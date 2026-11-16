@@ -196,7 +196,7 @@ HEADER_LINKS = (("Trust", f"{TR}/trust"), ("Docs", f"{TR}/docs"), ("Pricing", f"
 SIGN_IN = f"{TR}/console"
 FOOTER_EXTRAS = {"buy": [("Pricing", f"{TR}/pricing")], "exchange": [("Exchange overview", f"{TR}/token-exchange")]}
 FOOTER_TRUST = (("Trust & attestation", f"{TR}/trust"), ("Security", f"{TR}/security"),
-                ("Docs", f"{TR}/docs"), ("Service status", f"{TR}/status"), ("Let's Encrypt AI", "https://letsencrypt.ai/"))
+                ("Docs", f"{TR}/docs"), ("Service status", f"{TR}/status"), ("Encrypt Every Prompt", "https://encrypteveryprompt.org/"))
 COPY_ICON = ('<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="12" height="12"/>'
              '<path d="M16 8V4H4v12h4"/></svg>')
 
