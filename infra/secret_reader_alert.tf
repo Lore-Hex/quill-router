@@ -17,8 +17,9 @@
 #      those but the owner is in secret_readers. A stolen token of any of them
 #      reading a signing key pages here.
 #
-# Measured on 2026-11-16, the first day of records (00:24Z to 19:29Z): 64,052
-# reads by nine principals. Eight are below with their counts. The ninth is
+# Measured on 2026-11-16, the first day of records (00:24Z to 19:29Z): 64,046
+# reads by nine principals, not counting the operator's test reads. Eight are
+# below with their counts. The ninth is
 # the owner's own user login, which is not in this repository and so is not
 # in the list: until the operator decides otherwise, its reads page. The
 # accounts not seen that day are given secrets by this repository or by
