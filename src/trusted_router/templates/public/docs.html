@@ -166,6 +166,18 @@ GET /v1/models/changes?upcoming=true</code></pre>
   <p><code>trustedrouter.last_route_change_at</code> in <code>/v1/models</code> gives the latest recorded route change that is already effective, or <code>null</code> if none is known. The history starts with a September 1, 2026 baseline and replays committed catalog revisions using their contemporary privacy rules. Backfilled observations use commit dates, not deployment timestamps. Later entries describe catalog observations and announced cutovers; they do not establish release completion, live provider health, capacity, or credential availability. Conditional discovery-expiry deadlines are recorded when observed, rather than forecast as provider retirements.</p>
 </section>
 
+<section id="deidentification" style="margin-top:48px">
+  <h2 class="section-center">Optional de-identification</h2>
+  <p>Send <code>"deidentify": true</code> to replace detected personal information with placeholders before a provider receives it. TrustedRouter runs <a href="https://huggingface.co/nationaldesignstudio/rampart">National Design Studio's Rampart</a> locally inside the confidential gateway, then restores the original values for you in JSON and streaming replies. The mapping stays inside the gateway for that request. The flag works with text and function tools on Chat Completions, Responses, and native Anthropic Messages.</p>
+  <pre><code>response = client.chat.completions.create(
+    model="anthropic/claude-opus-5.5",
+    messages=[{"role": "user", "content": "Write a greeting to Alice Smith."}],
+    extra_body={"deidentify": True},
+)</code></pre>
+  <p>Omit the flag or send <code>false</code> to keep the existing path: no model call, prompt copy, or privacy worker. When enabled, local scanning adds processing time. Failed scanning returns an error before the provider is called; it never falls back to raw input. Requests are limited to 256 KiB and 4,096 text fields. Images, audio, documents, signed thinking history, hosted tools/search, orchestration, predictions, and explicit prompt cache keys are not supported with this flag. Unsupported content returns <code>400</code>; unavailable processing returns <code>503</code>.</p>
+  <p>This is de-identification, not guaranteed anonymization or a provider retention policy. Rampart can miss names and contextual identifiers, especially outside its supported Latin-script languages, and can over-redact. A provider can infer details from remaining context or generate new personal information. Only exact placeholders can be restored. Reasoning and opaque/signed provider artifacts are kept unchanged so their signatures are not invalidated; they may still contain placeholders. Rampart is licensed under CC BY 4.0; TrustedRouter adds enclave execution, request-local mappings, repeat-value masking, and response restoration.</p>
+</section>
+
 <section id="model-capabilities" style="margin-top:48px">
   <h2 class="section-center">Model request capabilities</h2>
   <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
