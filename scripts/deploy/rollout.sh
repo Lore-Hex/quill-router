@@ -43,6 +43,22 @@ source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
 # shellcheck source=scripts/deploy/fastpath_lists.sh
 source "${SCRIPT_DIR}/fastpath_lists.sh"
 
+# Every deploy leaves the service at this ingress in each region it touches:
+# the deploy call below carries it. Ingress is a setting of the service, not
+# of a revision, so a region that had drifted is closed for its serving
+# revision too. The service sits behind the external load balancer. With
+# `all`, a caller reaches its run.app URL directly and skips Cloud Armor and
+# everything else the balancer enforces (found in three regions on
+# 2026-11-16); `internal` would shut out the balancer itself. Checked before
+# the mutex and before any cloud mutation.
+case "$TR_CLOUD_RUN_INGRESS" in
+  internal-and-cloud-load-balancing) ;;
+  *)
+    echo "refusing rollout: TR_CLOUD_RUN_INGRESS must be internal-and-cloud-load-balancing, got '${TR_CLOUD_RUN_INGRESS}'" >&2
+    exit 1
+    ;;
+esac
+
 WARM_PROBE_TAG="staged-probe"
 WARM_PROBE_REGIONS=()
 WARM_PROBE_CLEANUP_REQUIRED=0
@@ -1095,10 +1111,13 @@ deploy_one_region() {
   # A silent freeze exhausts probes in ~59-69s (phase dependent); replacement
   # startup is additional. Keep TCP startup unchanged. public_surface.sh,
   # internal_surface.sh and set_new_signups.sh carry this same policy.
+  # --ingress: this call is what keeps each region at TR_CLOUD_RUN_INGRESS (see
+  # the check near the top); the rollout reads it back once the deploys return.
   if gc_router_revision run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
+      --ingress "$TR_CLOUD_RUN_INGRESS" \
       --port 8080 \
       --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6' \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
@@ -1189,6 +1208,21 @@ if [ "$deploy_failed" -ne 0 ]; then
   echo "ERROR: at least one region's deploy failed; see logs in ${log_dir}" >&2
   exit 1
 fi
+
+# Read back the ingress the deploy calls set, before the warm or any traffic
+# step reads it. A region left at another value is still reachable around the
+# load balancer, so the rollout stops there instead of reporting success.
+for ingress_region in "${TARGETS[@]}"; do
+  if ! region_ingress="$(cloud_run_service_ingress \
+      "$SERVICE" "$ingress_region" "$PROJECT_ID")"; then
+    echo "ERROR: could not read Cloud Run ingress for ${SERVICE} in ${ingress_region}" >&2
+    exit 1
+  fi
+  if [ "$region_ingress" != "$TR_CLOUD_RUN_INGRESS" ]; then
+    echo "ERROR: ${SERVICE} in ${ingress_region} has ingress ${region_ingress} after a deploy that set ${TR_CLOUD_RUN_INGRESS}" >&2
+    exit 1
+  fi
+done
 
 latest_ready_revision_for_region() {
   local target="$1"

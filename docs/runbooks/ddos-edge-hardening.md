@@ -20,6 +20,14 @@ false until every provider-side verification has been captured after rollout.
   default run.app URL only when a named private consumer exists. GCP regional
   synthetic jobs are such a consumer; route them through Direct VPC egress,
   Private Google Access, and the private `run.app.` DNS zone.
+  On 2026-11-16 the combined `trusted-router` service was found at ingress
+  `all` in us-east4, europe-west4 and southamerica-east1, because no deploy
+  passed `TR_CLOUD_RUN_INGRESS` and the daily check read only
+  `trusted-router-public`. Every `scripts/deploy/rollout.sh` deploy now sets
+  that value on each region it touches and reads it back, and
+  `scripts/deploy/gcp_security_baseline_check.sh` reports any Cloud Run service
+  in any region that is not `internal` or `internal-and-cloud-load-balancing`,
+  apart from its commented list of services meant to be public.
 - Never put an HTTP/TLS-terminating CDN or WAF in front of an attested inference
   hostname. `api.trustedrouter.com`, its two brand aliases, `api-aws`, and both
   `api-azure` hosts terminate TLS inside confidential workloads. Protect these
