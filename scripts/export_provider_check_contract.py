@@ -179,6 +179,8 @@ def _decision_tables(probes: ModuleType) -> list[dict[str, Any]]:
         ("openai", "vendor/gpt-5.4"),
         ("generic", "google/gemini-2.5-pro"),
         ("generic", "google/gemini-3-pro"),
+        ("generic", "google/gemini-4-carbon"),
+        ("generic", "google/gemini-2.0-flash"),
         ("generic", "openai/gpt-oss-120b"),
         ("generic", "zai/glm-4.6"),
         ("generic", "zai/glm-4.7"),
