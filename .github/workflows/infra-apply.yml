@@ -101,7 +101,11 @@ jobs:
         run: terraform -chdir=src/infra init && terraform -chdir=src/infra plan -out=tfplan
 
       - name: Apply reviewed plan
-        run: terraform -chdir=src/infra apply tfplan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=src/infra show -json tfplan | python3 src/scripts/deploy/check_terraform_plan.py
+          terraform -chdir=src/infra apply tfplan
 
   release-coordinator:
     if: ${{ github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.operation != 'terraform' }}

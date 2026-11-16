@@ -38,7 +38,12 @@ bootstrap infrastructure. This root uses it but does not manage it.
 ## Every apply re-asserts the whole root
 
 `.github/workflows/infra-apply.yml` plans and applies this entire root on any
-merge that touches `infra/**`, with no plan gate. A pull request that changes
+merge that touches `infra/**` or `sites/token-exchange/markets.json`. Before
+applying the saved plan, `scripts/deploy/check_terraform_plan.py` rejects any
+resource deletion or replacement, including unrelated state drift. An intentional
+deletion requires a separately reviewed operator plan and apply; automated
+deployment has no override for this guard. Updates still need review of the
+whole plan. A pull request that changes
 one line therefore also reverts every live-only edit made to anything declared
 here since the last apply. That is what happened on 2026-09-21: a one-line
 change to the WIF allowlist also put `run_remediator = true` back into the
