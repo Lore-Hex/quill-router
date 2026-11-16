@@ -102,6 +102,9 @@ type Composed struct {
 	// a read-back, §6).
 	inserted, readBack []byte
 	async              Async
+	// nonce is the body's invocation_nonce (nil when it sent none), which
+	// an eligible ticket's 200 carries (WithTicket).
+	nonce *string
 }
 
 // Timing is §6 item 15, in that key order.

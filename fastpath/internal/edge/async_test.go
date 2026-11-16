@@ -191,7 +191,7 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 	}
 	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason (%d streams composed "+
 		"for the shadow)", answered, shapes, passes, shadowStreams)
-	if answered != 63 || shapes["C"] != 5 || shapes["A"] != 21 || shapes["B"] != 36 || shapes["none"] != 1 || passes != 31 ||
+	if answered != 66 || shapes["C"] != 8 || shapes["A"] != 21 || shapes["B"] != 36 || shapes["none"] != 1 || passes != 31 ||
 		shadowStreams != 2 {
 		t.Fatalf("answered %d (%v), passes %d, shadow streams %d: not the goldens' counts", answered, shapes, passes,
 			shadowStreams)
@@ -273,7 +273,7 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		}
 	}
 	t.Logf("%d async-v1 requests passed with edge_decide false, %d answered with it true", dark, answered)
-	if dark != 64 || answered != dark {
+	if dark != 67 || answered != dark {
 		t.Fatalf("dark %d, answered %d: not the goldens' counts", dark, answered)
 	}
 }
@@ -382,12 +382,7 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 			golden = withAsyncSettle(t, f, golden, func(a *routingsnapshot.AsyncSettle) {
 				a.EdgeTickets, a.EdgeTicketWorkspaces = nil, nil
 			})
-			golden.Expect.Response = string(mutated(t, golden.Expect.Response, func(d pyjson.Object) pyjson.Object {
-				d = slices.DeleteFunc(d, func(m pyjson.Member) bool {
-					return m.Key == "settlement_ticket" || m.Key == "settlement_status_url"
-				})
-				return setMember(d, "async_eligible", false)
-			}))
+			golden.Expect.Response = string(mutated(t, golden.Expect.Response, unticketed))
 		}
 		if a := policyOf(t, f, golden).AsyncSettle; a != nil && a.EdgeLeased != nil {
 			// A leased answer's request, under the policy without the
@@ -439,9 +434,9 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		}
 	}
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
-	// 60 answered async-v1 goldens and the one without the header, which
+	// 63 answered async-v1 goldens and the one without the header, which
 	// every variant decides.
-	if covered != 4*60 || composed != 3*60+7 {
+	if covered != 4*63 || composed != 3*63+7 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
 	}
 }
@@ -753,6 +748,20 @@ func TestTheShadowCountsTheAsyncPopulations(t *testing.T) {
 			t.Errorf("%s: classes %v (fields %v), async %v\nwant %v", v.name, got.Classes, got.Fields, got.Async, v.want)
 		}
 	}
+}
+
+// unticketed is a ticketed 200's data as Python answers the same request
+// with its admission off (shape B): the ticket and the status URL taken
+// out, async_eligible false, and invocation_nonce taken out when the ticket
+// was an eligible one, since Python writes that member only beside
+// async_eligible true (or on a replay, which no golden here is).
+func unticketed(d pyjson.Object) pyjson.Object {
+	eligible, _ := memberOf(d, "async_eligible").(bool)
+	d = slices.DeleteFunc(d, func(m pyjson.Member) bool {
+		return m.Key == "settlement_ticket" || m.Key == "settlement_status_url" ||
+			(eligible && m.Key == "invocation_nonce")
+	})
+	return setMember(d, "async_eligible", false)
 }
 
 // ticketed is a whole Python 200 of shape B made shape C, as Python

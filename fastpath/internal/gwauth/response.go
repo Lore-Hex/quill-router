@@ -291,8 +291,24 @@ type Ticket struct {
 	StatusURL        string
 }
 
+// replayThenCost is where the 200 writes invocation_nonce when it has one:
+// after idempotent_replay and before the additional cost reservation, both
+// constants of every answer the edge composes (responseData).
+const replayThenCost = `"idempotent_replay":false,"additional_cost_reservation_microdollars":`
+
 // WithTicket changes only the response heads. The stored rows are unchanged.
 // Callers use it only after Inserted or Landed proves durability.
+//
+// An eligible ticket's 200 is Python's (gateway.py, authorize_gateway's
+// response): async_eligible true, the ticket and the status URL after the
+// snapshot's hash, and invocation_nonce after idempotent_replay, which
+// Python writes when async_eligible is true. The enclave binds async
+// settlement only when that member is the ticket's own invocation_nonce
+// claim (async_settlement.go, bindAsyncAuthorization), so without it an
+// eligible ticket settles synchronously. A ticket Python signed for an
+// answer that is not eligible leaves the member out, as Python does. An
+// eligible ticket for a body that sent no nonce is refused: Python signs
+// none, and the enclave would bind nothing to it.
 func (c Composed) WithTicket(ticket Ticket) (Composed, error) {
 	if c.async.Shape != AsyncSnapshot {
 		return c, composeErr("a ticket needs a billing snapshot")
@@ -313,7 +329,25 @@ func (c Composed) WithTicket(ticket Ticket) (Composed, error) {
 	if bytes.Count(c.inserted, before) != 1 || bytes.Count(c.readBack, before) != 1 {
 		return c, composeErr("the response has no unique async snapshot")
 	}
-	c.inserted = bytes.Replace(c.inserted, before, after, 1)
-	c.readBack = bytes.Replace(c.readBack, before, after, 1)
+	inserted := bytes.Replace(c.inserted, before, after, 1)
+	readBack := bytes.Replace(c.readBack, before, after, 1)
+	if ticket.Eligible {
+		if c.nonce == nil {
+			return c, composeErr("an eligible ticket needs the request's invocation nonce")
+		}
+		nonce, err := pyjson.DumpsPydantic(*c.nonce)
+		if err != nil {
+			return c, err
+		}
+		at := []byte(replayThenCost)
+		if bytes.Count(inserted, at) != 1 || bytes.Count(readBack, at) != 1 {
+			return c, composeErr("the response has no unique place for the invocation nonce")
+		}
+		with := append(append([]byte(`"idempotent_replay":false,"invocation_nonce":`), nonce...),
+			`,"additional_cost_reservation_microdollars":`...)
+		inserted = bytes.Replace(inserted, at, with, 1)
+		readBack = bytes.Replace(readBack, at, with, 1)
+	}
+	c.inserted, c.readBack = inserted, readBack
 	return c, nil
 }

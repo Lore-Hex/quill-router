@@ -911,6 +911,14 @@ def python_async_additions(store: Any, call: dict[str, Any], data: dict[str, Any
     return additions
 
 
+def _admission_admits(cache: Any, workspace: str, cap: int, **_: Any) -> bool:
+    """async_settle_timing.eligible for a case whose admission admits: the
+    runtime has an admission to ask, and it says yes."""
+    if cache is None:
+        raise AssertionError("an admitting case needs a runtime with an admission")
+    return True
+
+
 def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
               region: str | None = None) -> dict[str, Any]:
     at = ROUTING._instant(case["_at"])
@@ -920,6 +928,13 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
             # Pin only these new cases' signing clock; existing vectors keep their bytes.
             stack.enter_context(patched(async_settle_service, "time",
                                         types.SimpleNamespace(**{**vars(time), "time": lambda: at.timestamp()})))
+        if case["_admits"]:
+            # The admission's verdict alone: what it reads (the drain's health
+            # record, the workspace's rows) is no input of the edge's. With it
+            # true Python signs an eligible ticket and its 200 carries
+            # invocation_nonce beside async_eligible true, which the enclave
+            # checks against the ticket's before it binds async settlement.
+            stack.enter_context(patched(async_settle_service.timing, "eligible", _admission_admits))
         for model, endpoint in (_catalog_addition(model_id) for model_id in case["_catalog"]):
             MODELS[model.id] = model
             MODEL_ENDPOINTS[endpoint.id] = endpoint
@@ -1183,7 +1198,10 @@ def make_case(name: str, reason: str | None = None, body: dict[str, Any] | str |
               body_expand: dict[str, Any] | None = None,
               affinity: tuple[tuple[str, float], ...] | None = None,
               base_policy: dict[str, Any] = DEFAULT_POLICY,
-              base_body: dict[str, Any] = BASE_BODY) -> dict[str, Any]:
+              base_body: dict[str, Any] = BASE_BODY, admits: bool = False) -> dict[str, Any]:
+    # admits: Python's async admission admits the workspace (its drain is
+    # healthy and the workspace is within its cap), so the ticket it signs
+    # is an eligible one (_run_case).
     # affinity: a body with cache_affinity_key, run cold and then with
     # these (endpoint, age in seconds) sessions remembered; () is cold.
     if (affinity is not None) != ("cache_affinity_key" in (body if isinstance(body, dict) else {})):
@@ -1205,7 +1223,7 @@ def make_case(name: str, reason: str | None = None, body: dict[str, Any] | str |
         "_front_door": door, "_reason": reason, "_catalog": catalog,
         "_stored_key_tags": stored_key_tags, "_workspace_row": workspace_row,
         "_prior": [(_request(case_world, {**base_body, **p}), answer) for p, answer in prior],
-        "_affinity": affinity,
+        "_affinity": affinity, "_admits": admits,
     }
 
 
@@ -1985,6 +2003,26 @@ def async_cases() -> list[dict[str, Any]]:
     add("answer:async.C:edge_tickets:stream", body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
         policy={"fastpath_edge_streams": True, "fastpath_pilot_streams": True, "reap_snapshot_booking_enabled": True,
                 "async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}})
+    # The same answers with Python's admission admitting the workspace: the
+    # ticket is eligible, async_eligible is true and the 200 carries
+    # invocation_nonce after idempotent_replay (gateway.py), which the
+    # enclave holds to the ticket's claim before it settles asynchronously.
+    # Fresh, read back after an insert whose outcome was not known, and a
+    # stream. A body that sends no nonce is not recorded with them: the
+    # enclave sends one with every authorize, Python signs no ticket
+    # without it (it answers async_eligible false alone), and the edge,
+    # which asks for a ticket Python then declines, keeps its snapshot
+    # answer; both are ineligible.
+    add("answer:async.C:edge_tickets:eligible", body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}}, admits=True)
+    add("answer:async.C:edge_tickets:eligible:read_back",
+        body={"invocation_nonce": "nonce-e2-async-admission", "route_type": "responses"},
+        insert="unknown_landed",
+        policy={"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}}, admits=True)
+    add("answer:async.C:edge_tickets:eligible:stream",
+        body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
+        policy={"fastpath_edge_streams": True, "fastpath_pilot_streams": True, "reap_snapshot_booking_enabled": True,
+                "async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}}, admits=True)
     leased_cases(add)
     async_streams_cases(add)
     # Any header list but exactly ["async-v1"] adds nothing (§2.1). With no

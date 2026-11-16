@@ -774,7 +774,7 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
         else:
             assert _shape(python["response"]) == claimed, name
     assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8, seen
-    assert edge_ticketed == 5 and seen["C"] == 5 + edge_ticketed, seen
+    assert edge_ticketed == 8 and seen["C"] == 5 + edge_ticketed, seen
     assert seen["affinity.warm_A.cold_B"] == 1, seen
 
 
@@ -914,7 +914,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
             data = json.loads(case["expect"]["response"])["data"]
             assert data["async_eligible"] is False, name
-    assert named == 1 and other == 3 and excluded == 4 and ticketed == 5 and leased == 11
+    assert named == 1 and other == 3 and excluded == 4 and ticketed == 8 and leased == 11
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"
               and ":leased" not in case["name"]]
@@ -1056,6 +1056,36 @@ def test_a_billing_valid_false_case_names_a_candidate_the_snapshot_refuses() -> 
         assert [_epoch(endpoints[i], case["at_us"])["billing_valid"] for i in ids].count(False) == 1, case["name"]
 
 
+def test_an_eligible_ticket_carries_the_requests_nonce() -> None:
+    """The enclave binds async settlement only when the 200's invocation_nonce
+    is the ticket's own claim. Python writes that member right after
+    idempotent_replay when async_eligible is true, and leaves it out of a
+    fresh answer otherwise: every ticketed golden is held to that, and the
+    eligible ones exist, fresh, read back and for a stream."""
+    eligible: list[str] = []
+    for case in _load(ASYNC_CASES)["cases"]:
+        expect = case["expect"]
+        if expect.get("async_shape") != "C" or expect["outcome"] != "answer":
+            continue
+        data = json.loads(expect["response"])["data"]
+        sent = json.loads(case["request"]["body"]).get("invocation_nonce")
+        assert sent, case["name"]
+        assert data["idempotent_replay"] is False, case["name"]
+        ticket = json.loads(base64.urlsafe_b64decode(data["settlement_ticket"].split(".")[1] + "=="))
+        assert ticket["invocation_nonce"] == sent and ticket["async_eligible"] is data["async_eligible"], case["name"]
+        members = list(data)
+        if data["async_eligible"]:
+            eligible.append(case["name"])
+            assert data["invocation_nonce"] == sent, case["name"]
+            assert members.index("invocation_nonce") == members.index("idempotent_replay") + 1, case["name"]
+            assert members.index("invocation_nonce") + 1 == members.index(
+                "additional_cost_reservation_microdollars"), case["name"]
+        else:
+            assert "invocation_nonce" not in data, case["name"]
+    assert eligible == ["answer:async.C:edge_tickets:eligible", "answer:async.C:edge_tickets:eligible:read_back",
+                        "answer:async.C:edge_tickets:eligible:stream"]
+
+
 def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
     """Streams section 8.5.1: outside admission, Python's async members to an
     async-v1 stream are the same request's without stream (body.stream is
@@ -1064,7 +1094,7 @@ def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
     by_name = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
     plain = json.loads(by_name["answer:async.B:single:openai/gpt-4.1"]["expect"]["response"])["data"]
     streamed_bodies = [case for case in by_name.values() if json.loads(case["request"]["body"]).get("stream") is True]
-    assert len(streamed_bodies) == 14
+    assert len(streamed_bodies) == 15
     # And for a leased answer's stream (G15 "Leased answers"): Python's
     # leased answer to it in a workspace admission covers is the same.
     for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent", "answer:async.B:leased:stream",
