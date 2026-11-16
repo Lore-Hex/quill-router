@@ -131,7 +131,7 @@ else
     ok "secret reads recorded (secretmanager DATA_READ)"
   fi
   # IAM DATA_READ (infra/iam_audit.tf) records reads of service accounts, keys
-  # and IAM policies, which the decoy-identity tripwires match.
+  # and IAM policies, so a stolen credential's reconnaissance is attributable.
   IAM_TYPES="$(jq -r '[.auditConfigs[]? | select(.service=="iam.googleapis.com") | .auditLogConfigs[].logType] | sort | join(",")' <<<"$POLICY")"
   if [ "$IAM_TYPES" != "DATA_READ" ]; then
     drift "iam.googleapis.com auditConfigs = '${IAM_TYPES}' (want DATA_READ; infra/iam_audit.tf)"

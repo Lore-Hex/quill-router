@@ -1,11 +1,11 @@
 # Data-read audit records for the IAM API.
 #
-# The operator's tripwire setup (2026-11-16) turned this on outside Terraform
-# so that reads of decoy service accounts (GetServiceAccount,
-# ListServiceAccountKeys, GetIAMPolicy on them) leave a record that its alert
-# policies can match. The daily baseline check then reported it as drift
-# ("unexpected service-level auditConfigs: iam.googleapis.com"), correctly:
-# it was not in code. This file is that config, so the baseline expects it.
+# Records reads of service accounts, their keys and IAM policies, so a stolen
+# credential's reconnaissance (listing accounts and keys, reading policies) is
+# attributable to a caller and an address. It was turned on outside Terraform
+# on 2026-11-16, and the daily baseline check then reported it as drift
+# ("unexpected service-level auditConfigs: iam.googleapis.com"), correctly: it
+# was not in code. This file is that config, so the baseline expects it.
 #
 # Volume is small: about 170 records in the first five and a half hours
 # (ListServiceAccountKeys, GetServiceAccount, GetIAMPolicy, GetRole, mostly
