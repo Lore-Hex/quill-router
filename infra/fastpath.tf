@@ -150,14 +150,19 @@ locals {
   # invocation_nonce, as Python's does (#2632). Without it the enclave
   # bound nothing to an eligible edge ticket and settled the request
   # synchronously; with it the enclave settles such a request
-  # asynchronously. Nothing in Python or the enclave changes for it. The
-  # decide shadow reads a workspace's credit rows once after Python's
-  # credit refusal of a request the edge would have answered, and pages
-  # only when a row is marked in debt, the rows cover the hold, or the
-  # read fails (#2631). Its fastpathctl takes us-west1 for the decide
-  # wildcard as well (#2612). The nodes take the release one at a time in
-  # either order: a node on the earlier release keeps the earlier
-  # behaviour. No node ran 5133a83c6: both went from d3aa9c0a0 to this.
+  # asynchronously, the first time any edge ticket binds. The switch for
+  # that is the ticket list (TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES in
+  # rollout.sh, `*` today): with the list empty the edge asks for no ticket
+  # and answers what it leases without one. Nothing in Python or the
+  # enclave changes for it. The decide shadow reads a workspace's credit
+  # rows once after Python's credit refusal of a request the edge would
+  # have answered, and pages only when a row is marked in debt, the rows
+  # cover the hold, or the read fails (#2631). Its fastpathctl takes
+  # us-west1 for the decide wildcard as well (#2612). The nodes take the
+  # release one at a time in either order: a node on 5133a83c6 keeps the
+  # earlier behaviour. Both nodes have run 5133a83c6 since they were reset
+  # on 2026-11-16 at about 01:30Z; a node takes the pinned release at any
+  # reset, planned or not.
   fastpath_release        = "daedb45adc927a1e30e0d4ed41fe57c81aeccc76"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
