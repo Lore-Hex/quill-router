@@ -11,7 +11,10 @@ Terraform manages only the resources declared in this directory: the GitHub
 AWS deploy role and policies, the ECS execution role's exact-ARN ClickHouse
 reader secret grant (`aws_ecs_control_reader.tf`), the AWS EU synthetic-monitoring rule/target,
 DLQ/policies/alarms/topic, the existing GCP GitHub workload identity pool
-provider allowlist, and the control load balancer's Certificate Manager
+provider with its allowlist and workflow tiers (`gcp_wif.tf`), the three CI
+service accounts with what they may read and every tier's impersonation
+binding (`ci_identities.tf`, see "Workflow identities" below), and the control load
+balancer's Certificate Manager
 certificates with their DNS authorizations and `_acme-challenge` records
 (`control_lb_certificates.tf`), plus the deploy account's Certificate Manager
 role that lets this root manage them, and the Cloud Armor security policies of
@@ -108,6 +111,84 @@ configuration; do not change the cloud to fit it.
 The apply workflow itself needs GCP WIF before it can update the WIF allowlist.
 That chicken-and-egg bootstrap is resolved by an operator adding
 `infra-apply.yml` once by hand (the operator command is already scripted).
+
+## Workflow identities
+
+Every workflow that reaches Google Cloud exchanges its GitHub token at one
+workload identity provider (`gcp_wif.tf`). The provider admits a workflow only
+if a tier list names it, on `main` of its repository, and maps the workflow's
+tier to `attribute.tier`. Each tier has one service account
+(`ci_identities.tf`):
+
+| Tier | Account | Workflows | What the account can do |
+|---|---|---|---|
+| `prices` | `tr-ci-prices` | `refresh-prices.yml` | Read the secrets that workflow reads, one binding per secret; call Vertex AI publisher models |
+| `audit` | `tr-ci-audit` | `typed-audit.yml` | Read the production database, and nothing else |
+| `probe` | `tr-ci-probe` | `cloud-security-baseline.yml`, `daily-embeddings-probe.yml`, `mirror-repo.yml` | Twelve read permissions on the project; read the synthetic monitor's key; administer the repository mirror's bucket; read the settings of two buckets |
+| `dns` | `enclave-dns-reconciler` | quill-cloud-proxy's `reconcile-enclave-dns.yml` | Compute and Artifact Registry reads and Cloud DNS, bound outside this root |
+| `deploy` | `tr-deploy` | every other admitted workflow | Close to a project administrator |
+
+What this holds today:
+
+- Each of the four small accounts accepts its own tier and nothing else, so a
+  workflow gets a small account only by being in that account's list.
+- `tr-deploy` is not confined yet. Besides the deploy tier it has two bindings
+  made by hand, one for the whole of each repository, and through them it
+  still accepts every admitted workflow that asks for it. Until they are
+  removed, a small-tier workflow stays off the deploy identity only because
+  its file asks for its own account, which the tests hold.
+  [The runbook](../docs/runbooks/ci-identities.md) has the rollout order and
+  the later phase that removes them. From then on a workflow gets the deploy
+  identity only when a reviewed change writes it into a deploy list.
+- A fifth account, `tr-batch-release`, is reached through the same provider
+  by one job of quill-cloud-proxy's `deploy-enclave-gcp.yml`. Its binding
+  names the token's subject (that repository's `batch-release` environment),
+  not a tier, and is not managed here.
+
+The tier expression names the four small tiers and maps every other admitted
+workflow to `deploy`. That default is safe because the condition and the
+expression are rendered from the same lists: a workflow in no list is refused
+at the token exchange. `tests/test_ci_identities.py` holds the condition's
+shape, the lists, the expression, the accounts and each workflow's
+`service_account` to each other.
+
+To change it:
+
+- A workflow that newly needs Google Cloud: add its ref to one tier list. In
+  the `deploy` list it gets the deploy identity, so the choice of list is the
+  review. If it does not deploy and no small tier fits, give it a tier of its
+  own, as `typed-audit.yml` has: a list, a line in the tier expression, an
+  entry in `github_tier_principal_sets` and in `ci_tier_accounts`, an account
+  and what it may read.
+- A secret that the price refresh newly reads: add it to
+  `ci_prices_secret_ids` in the pull request that adds it to the workflow's
+  loop (a test fails when the two differ). Add the secret itself first with
+  `scripts/deploy/secrets.sh`: the apply fails on a binding to a secret that
+  does not exist.
+- A new `gcloud` call in the security baseline scripts: add its permission to
+  `ci_probe_project_permissions`. Until it is applied the call is refused, and
+  the baseline reports a control it cannot read as drift.
+
+The deploy identity can neither add a custom role nor write the project's IAM
+policy. The two custom roles and their project bindings
+(`google_project_iam_custom_role.ci_tier`, `google_project_iam_member.ci_tier`)
+are therefore applied by an owner, from the branch, before a change to them
+merges. The same command makes the three accounts
+(`google_service_account.ci_tier`), which the bindings need:
+
+```bash
+terraform -chdir=infra apply -target=google_project_iam_member.ci_tier
+```
+
+Merge right after it. `main` does not declare these resources until then, so
+an apply of `main` in between plans to remove them, fails on the project
+bindings and exits 1 after applying everything else. Everything else in
+`ci_identities.tf`, and the provider, is applied by the post-merge workflow.
+
+Google limits the attribute condition to 4,096 characters and a mapping
+expression to 2,048. In November 2026 they render to 1,975 and 660, and each
+workflow adds about 84 to the condition, and to the expression if it is in a
+small tier. A plan that would pass a limit fails with that reason.
 
 ## Cloud Armor policies
 
