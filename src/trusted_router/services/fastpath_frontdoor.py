@@ -543,8 +543,11 @@ class FrontDoorClient:
             except Exception:  # noqa: BLE001 - a front door call must not fail the request
                 logger.exception("fastpath %s failed", path)
             finally:
-                done.set()
+                # The permit comes back before the caller is woken: a
+                # caller that calls again at once (a heartbeat's resend) must
+                # find it free, not race this thread for it.
                 pool.release()
+                done.set()
 
         worker = threading.Thread(target=run, name="fastpath-front-door", daemon=True)
         try:

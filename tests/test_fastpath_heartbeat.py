@@ -299,10 +299,13 @@ def test_a_front_door_that_always_answers_retry_is_503_after_one_resend_within_t
 
 
 def test_a_resend_the_budget_cuts_short_is_503_by_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The first retry answers at 0.6 s of a 1 s budget; the resend's answer
-    would come at 1.2 s. The caller waits no longer than the budget."""
+    """The first retry answers at 0.7 s of a 1 s budget; the resend's
+    accepted answer would come at 1.4 s. The 503 is the proof that the
+    resend had only what was left of the budget (a fresh one would have
+    taken the accept); the time is a second check, with 0.3 s of slack for a
+    loaded machine and still 0.1 s short of the accept."""
     _db, private, boot = _store(leased=True)
-    door = _Door(RETRY, ACCEPT, delay=0.6)
+    door = _Door(RETRY, ACCEPT, delay=0.7)
     _use(monkeypatch, _client(door, timeout=1.0))
     began = time.monotonic()
     with pytest.raises(HTTPException) as raised:
@@ -310,7 +313,32 @@ def test_a_resend_the_budget_cuts_short_is_503_by_the_budget(monkeypatch: pytest
     elapsed = time.monotonic() - began
     assert raised.value.status_code == 503
     assert len(door.seen) == 2
-    assert elapsed < 1.0 + 0.15
+    assert elapsed < 1.0 + 0.3
+
+
+class _SlowRelease(threading.BoundedSemaphore):
+    """A permit pool whose release takes a moment, so a worker that wakes its
+    caller before it releases leaves the caller to find the permit held."""
+
+    def release(self, n: int = 1) -> None:
+        time.sleep(0.05)
+        super().release(n)
+
+
+def test_the_resend_finds_the_first_sends_permit_free_with_one_permit_left() -> None:
+    """The first send's worker hands its permit back before it wakes the
+    caller: with every other heartbeat permit held, the resend still gets
+    one, where waking first left it 'every worker busy' and the stream a 503."""
+    door = _Door(RETRY, ACCEPT)
+    client = fd.FrontDoorClient(
+        lambda _budget: (DOOR,), timeout_seconds=1.5, transport=door.transport(), sleep=lambda _s: None,
+    )
+    client._heartbeat_permits = _SlowRelease(fd.HEARTBEAT_WORKERS)
+    for _ in range(fd.HEARTBEAT_WORKERS - 1):
+        assert client._heartbeat_permits.acquire(blocking=False)
+    got = client.heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert got.status == "accepted" and got.resent
+    assert len(door.seen) == 2
 
 
 def test_a_resend_answered_with_a_refusal_is_that_refusal(monkeypatch: pytest.MonkeyPatch) -> None:

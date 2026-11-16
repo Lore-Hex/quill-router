@@ -305,7 +305,14 @@ handed over, and takes one it refused as the first, so the resend adds no
 record (`requests.go`, the replay branch). It catches an acknowledgement
 that came after the front door's owner wait (2026-11-16: settle-log
 acknowledgements past 500 ms answered `retry`, and the route answered 503
-though the record landed moments later).
+though the record landed moments later), and only one landing within
+roughly 0.5 to 1.3 s of the first send: the first `retry` comes at the
+owner wait (0.5 s) from the owner's own front door, or at about 0.75 s
+(owner wait plus peer wait) from another, and the resend's own owner wait
+must end inside the 1.5 s budget, so a second full cycle through another
+front door does not fit. A publish the server holds for seconds is beyond
+it; the settle log's hedge is the fix for that (the owner sends a held
+Publish call's batch again beside it, `settlelog.Settings.Hedge`, #2671).
 
 `cap_micro` is e on both paths (§2.2), so the enclave's mismatch log stays
 quiet. `expires_at_ms` becomes the owner's deadline (about 30 s ahead)

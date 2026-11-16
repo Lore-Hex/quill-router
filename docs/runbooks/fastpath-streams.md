@@ -68,9 +68,19 @@ leased streams settled or reaped with zero divergence, and over those:
   unexplained;
 - the heartbeat 503 rate and first-heartbeat p99 within 1.5x Python's own
   over the same streams, and no stream stopped by a front door `retry`
-  outside a deploy or a stop (Python sends a heartbeat answered `retry`
-  once more within its budget; each resend logs `fastpath heartbeat resent`
-  with the answer it got, and only one still answered `retry` is a 503);
+  outside a deploy or a stop. Python sends a heartbeat answered `retry`
+  once more within its budget, and the resend ends in one of two lines,
+  both to be counted:
+  - `fastpath heartbeat resent authorization_id=... seq=... status=S`, the
+    resend answered: `status=accepted` is a heartbeat the resend kept,
+    `status=retry` a 503, any other status that rejection;
+  - `fastpath heartbeat unanswered authorization_id=... seq=...
+    why=/v1/heartbeat: resent`, the resend not answered in the budget: a
+    503. (`why=/v1/heartbeat` without `: resent` is a first send not
+    answered at all, which is not resent: a 503 too.)
+
+  The streams a `retry` stopped are the 503s among these, set against the
+  stream ends of the same authorization ids;
 - every `fastpath pilot terminal after a reap` line explained;
 - streams cut by `deadline_passed` counted against Python's
   `heartbeat_lost` rate.
