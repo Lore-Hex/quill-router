@@ -52,6 +52,12 @@ func TestTicketRenderEqualsResponseDataForBothHeads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if eligible {
+				// Python writes invocation_nonce after idempotent_replay
+				// beside async_eligible true (gateway.py), and only then.
+				at := slices.IndexFunc(data, func(m pyjson.Member) bool { return m.Key == "idempotent_replay" })
+				data = slices.Insert(data, at+1, pyjson.Member{Key: "invocation_nonce", Value: *in.InvocationNonce})
+			}
 			head, err := renderHead(data)
 			if err != nil {
 				t.Fatal(err)
@@ -64,6 +70,73 @@ func TestTicketRenderEqualsResponseDataForBothHeads(t *testing.T) {
 				t.Fatal("original head changed")
 			}
 		}
+	}
+}
+
+// TestAnEligibleTicketCarriesTheRequestsNonce: the eligible ticket's 200
+// has invocation_nonce, the body's own, once, right after idempotent_replay
+// in both heads, and a ticket that is not eligible has none; the enclave
+// binds async settlement only when the member equals the ticket's claim. An
+// eligible ticket for a body that sent no nonce is refused and the answer
+// is left as it was.
+func TestAnEligibleTicketCarriesTheRequestsNonce(t *testing.T) {
+	g := loadAsyncGoldens(t)
+	composedOf := func(name string) (Composed, ComposeInput) {
+		for _, c := range g.cases {
+			if c.Name != name {
+				continue
+			}
+			in, _ := asyncInputOf(t, g, c)
+			staged, err := Stage(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			composed, err := staged.Finish(c.Admitted.Envelope, endOfLife(t, c.goldenCase))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return composed, in
+		}
+		t.Fatalf("no golden %s", name)
+		return Composed{}, ComposeInput{}
+	}
+	composed, in := composedOf("answer:async.B:invocation_nonce")
+	if in.InvocationNonce == nil || *in.InvocationNonce == "" {
+		t.Fatal("the golden sends no nonce")
+	}
+	member := []byte(`"idempotent_replay":false,"invocation_nonce":"` + *in.InvocationNonce +
+		`","additional_cost_reservation_microdollars":`)
+	for _, eligible := range []bool{false, true} {
+		got, err := composed.WithTicket(Ticket{Eligible: eligible, SettlementTicket: "a.b.c",
+			StatusURL: "/v1/settlements/" + in.AuthorizationID + ".settle"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, readBack := range []bool{false, true} {
+			body := got.Render(Timing{}, readBack)
+			want := 0
+			if eligible {
+				want = 1
+			}
+			if bytes.Count(body, member) != want || bytes.Count(body, []byte(`"invocation_nonce"`)) != want {
+				t.Errorf("eligible %v, read back %v: the nonce member is there %d time(s)", eligible, readBack,
+					bytes.Count(body, []byte(`"invocation_nonce"`)))
+			}
+		}
+	}
+	plain, in := composedOf("answer:async.B:single:openai/gpt-4.1")
+	if in.InvocationNonce != nil {
+		t.Fatal("the golden sends a nonce")
+	}
+	ticket := Ticket{Eligible: true, SettlementTicket: "a.b.c", StatusURL: "/v1/settlements/" + in.AuthorizationID + ".settle"}
+	got, err := plain.WithTicket(ticket)
+	if err == nil || !bytes.Equal(got.Render(Timing{}, false), plain.Render(Timing{}, false)) ||
+		!bytes.Equal(got.Render(Timing{}, true), plain.Render(Timing{}, true)) {
+		t.Fatalf("an eligible ticket without a nonce: %v", err)
+	}
+	ticket.Eligible = false
+	if _, err := plain.WithTicket(ticket); err != nil {
+		t.Fatalf("a ticket that is not eligible needs no nonce: %v", err)
 	}
 }
 

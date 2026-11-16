@@ -618,23 +618,36 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
 }
 
-// leasedUnleased is Python's answer as Python would have given it leased,
-// and true, when Go's decision is a leased answer (Decision.LeasedAnswer)
-// and Python answered the request with a ticket (shape C): Python's pilot
-// did not lease it, so its answer is to an unleased authorization, while
-// Go's members are the answer to a leased one, which the edge gives only
-// under its own lease. The two answers differ only there: Python's leased
-// answer is its unleased one with the ticket and the status URL taken out
-// and async_eligible false (async_settle.snapshot_projection builds both
-// from the same snapshot), so the rest of the 200, the reservation, the
-// estimate, the candidates and the snapshot among them, is still compared
-// byte for byte. Any other answer is a, false; so is a ticketed answer
-// whose bytes are not their own pydantic encoding (leasedBytes), which is
-// then compared as it came and differs on its shape.
+// leasedUnleased is Python's answer as Python would have given it without
+// its ticket, and true, when Go's decision is one the edge answers without
+// a ticket of its own making and Python answered the request with a ticket
+// (shape C). Two decisions are so:
+//
+//   - a leased answer (Decision.LeasedAnswer): Python's pilot did not lease
+//     the request, so its answer is to an unleased authorization, while Go's
+//     members are the answer to a leased one, which the edge gives only
+//     under its own lease;
+//   - a decision that wants a ticket (Async.WantTicket, edge tickets): the
+//     edge composes the snapshot answer and splices in the ticket Python's
+//     sign-only route returns, after the insert (Composed.WithTicket). The
+//     shadow inserts nothing and asks for no ticket, so what it holds is the
+//     answer before the splice.
+//
+// Either way the two answers differ only by the ticket: Python's answer
+// without one is its ticketed answer with the ticket and the status URL
+// taken out, async_eligible false and, when the ticket was an eligible one,
+// invocation_nonce taken out too, which Python writes only beside
+// async_eligible true (async_settle.snapshot_projection builds both from
+// the same snapshot; gateway.py writes the nonce). So the rest of the 200,
+// the reservation, the estimate, the candidates and the snapshot among
+// them, is still compared byte for byte. Any other answer is a, false; so
+// is a ticketed answer whose bytes are not their own pydantic encoding
+// (leasedBytes), which is then compared as it came and differs on its
+// shape.
 func leasedUnleased(d Decided, a pyAnswer) (pyAnswer, bool) {
 	dec := d.ForShadow()
-	if dec == nil || !dec.LeasedAnswer || a.status != http.StatusOK || a.why != "" ||
-		pythonAsyncMembers(a.body).shape() != asyncShapeTicket {
+	if dec == nil || !(dec.LeasedAnswer || dec.Staged.Async().WantTicket) || a.status != http.StatusOK ||
+		a.why != "" || pythonAsyncMembers(a.body).shape() != asyncShapeTicket {
 		return a, false
 	}
 	body, ok := leasedBytes(a.body)
@@ -646,10 +659,12 @@ func leasedUnleased(d Decided, a pyAnswer) (pyAnswer, bool) {
 }
 
 // leasedBytes is a ticketed 200 with settlement_ticket and
-// settlement_status_url removed and async_eligible false, re-encoded as the
-// 200 is (pyjson.DumpsPydantic); false when the body does not decode to an
-// object whose data is one, or is not already its own encoding, so that the
-// removal is the only change.
+// settlement_status_url removed, async_eligible false and, when
+// async_eligible was true, invocation_nonce removed (Python's 200 carries
+// it only beside async_eligible true, or on a replay, which carries no
+// ticket), re-encoded as the 200 is (pyjson.DumpsPydantic); false when the
+// body does not decode to an object whose data is one, or is not already
+// its own encoding, so that the removal is the only change.
 func leasedBytes(raw []byte) ([]byte, bool) {
 	tree, err := pyjson.Decode(raw)
 	if err != nil {
@@ -666,11 +681,16 @@ func leasedBytes(raw []byte) ([]byte, bool) {
 	if same, err := pyjson.DumpsPydantic(top); err != nil || !bytes.Equal(same, raw) {
 		return nil, false
 	}
+	eligible, _ := memberOf(data, "async_eligible").(bool)
 	kept := make(pyjson.Object, 0, len(data))
 	for _, m := range data {
 		switch m.Key {
 		case "settlement_ticket", "settlement_status_url":
 			continue
+		case "invocation_nonce":
+			if eligible {
+				continue
+			}
 		case "async_eligible":
 			m.Value = false
 		}
