@@ -64,17 +64,21 @@ The generated schema contains **63 DDL statements: 21 tables, 14 secondary index
 The `spanner-schema-drift` job in `.github/workflows/typed-audit.yml` runs daily
 at 11:43 UTC and on manual dispatch, independently of the typed billing audit
 job so either audit still runs if the other fails. It uses the typed audit's
-existing WIF identity and its own instance of the same digest-pinned Spanner
-emulator as CI. It needs no new secrets or IAM grants.
+WIF identity and its own instance of the same digest-pinned Spanner emulator
+as CI. Both jobs run as `tr-ci-audit`, the account of this workflow alone,
+whose one binding is `roles/spanner.databaseReader` on the database
+(`infra/ci_identities.tf`): sessions and read-only snapshots, no writes and
+no schema changes.
 
-The job lives in `typed-audit.yml` because that workflow is already admitted by
-`quill_router_workflow_refs` in `infra/gcp_wif.tf`. The former standalone
+The job lives in `typed-audit.yml` because that workflow is already admitted
+by the provider, in the audit tier of `infra/gcp_wif.tf`. The former standalone
 `spanner-schema-drift.yml` was not admitted and failed authentication with
 `unauthorized_client` (the credential was rejected by the attribute condition).
-A dedicated workflow or a read-only identity would require a reviewed change
-to `infra/gcp_wif.tf`, applied through `infra-apply` on push; expanding access
-is an operator decision. The offline workflow guard scans all workflow files
-using this WIF provider and requires each to appear in that allowlist.
+A dedicated workflow would require a reviewed change to `infra/gcp_wif.tf`,
+applied through `infra-apply` on push; expanding access is an operator
+decision. The offline workflow guard scans all workflow files using this WIF
+provider and requires each to appear in a tier list and to name its tier's
+account.
 
 The production path uses ADC and reads only `INFORMATION_SCHEMA` in a single read-only snapshot,
 restricted to the GoogleSQL default schema (`TABLE_SCHEMA = ''`, or
