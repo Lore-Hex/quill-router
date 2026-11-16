@@ -6,10 +6,11 @@ shared design, regional copy, evidence scope and social-image process.
 
 Static enterprise acquisition sites for 13 markets and 31 owned domains.
 The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**.
-`nytex.com` and `www.nytex.com` permanently redirect to New York, preserving
+`nytex.com` and `www.nytex.com` temporarily redirect (302) to New York, preserving
 the request path and query string. DNS remains in `exchange-nytex-com`;
 retain the Google verification TXT and certificate authorization CNAME there.
-`markets.json` is the source of truth for canonical hosts, aliases and local copy.
+New York continues serving from `nytokenexchange.com`; its HTML canonical tags and sitemap URLs use `nytex.com`. This is a search preference, not a guarantee that Google selects the redirecting domain.
+`markets.json` separates the serving `domain`, optional search `canonical_domain`, and `temporary_aliases` from ordinary permanent aliases.
 Its `scope` field records a city, region or global audience. The header market
 picker and footer share one ordered directory and highlight the current market.
 

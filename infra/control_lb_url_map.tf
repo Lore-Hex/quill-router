@@ -29,20 +29,30 @@ locals {
     { path = "/sitemap.xml", file = "sitemap.xml" },
   ]
   exchange_matchers = flatten([
-    for market in local.exchange_markets : [
+    for market in local.exchange_markets : concat([
       {
-        name     = "exchange-${market.slug}"
-        hosts    = [market.domain]
-        slug     = market.slug
-        redirect = try(market.forward_to, null)
+        name          = "exchange-${market.slug}"
+        hosts         = [market.domain]
+        slug          = market.slug
+        redirect      = try(market.forward_to, null)
+        redirect_code = "MOVED_PERMANENTLY_DEFAULT"
       },
       {
-        name     = "exchange-${market.slug}-aliases"
-        hosts    = concat(["www.${market.domain}"], market.aliases, [for alias in market.aliases : "www.${alias}"])
-        slug     = market.slug
-        redirect = try(market.forward_to, market.domain)
+        name = "exchange-${market.slug}-aliases"
+        hosts = concat(["www.${market.domain}"],
+          [for alias in market.aliases : alias if !contains(try(market.temporary_aliases, []), alias)],
+        [for alias in market.aliases : "www.${alias}" if !contains(try(market.temporary_aliases, []), alias)])
+        slug          = market.slug
+        redirect      = try(market.forward_to, market.domain)
+        redirect_code = "MOVED_PERMANENTLY_DEFAULT"
       },
-    ]
+      ], length(try(market.temporary_aliases, [])) == 0 ? [] : [{
+        name          = "exchange-${market.slug}-temporary-aliases"
+        hosts         = flatten([for alias in market.temporary_aliases : [alias, "www.${alias}"]])
+        slug          = market.slug
+        redirect      = market.domain
+        redirect_code = "FOUND"
+    }])
   ])
 }
 
@@ -178,7 +188,7 @@ resource "google_compute_url_map" "control" {
         content {
           host_redirect          = default_url_redirect.value
           https_redirect         = true
-          redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+          redirect_response_code = path_matcher.value.redirect_code
           strip_query            = false
         }
       }

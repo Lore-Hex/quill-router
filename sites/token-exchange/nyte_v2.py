@@ -413,17 +413,26 @@ def host_brand_script(page: str) -> str:
     )
 
 
+def search_canonical(document: str, market: dict) -> str:
+    """Change only the search canonical; serving URLs and application origins stay put."""
+    domain = market.get("canonical_domain", market["domain"])
+    return document.replace(
+        f'rel="canonical" href="https://{market["domain"]}/',
+        f'rel="canonical" href="https://{domain}/',
+    )
+
+
 def render_nyte(
     page: str = "home", *, content: str | None = None, extra_head: str = "",
     image_url: str | None = None, market: dict | None = None, late_head: str = "",
 ) -> str:
+    market = market or next(m for m in load_markets() if m["slug"] == "new-york")
     if page == "badge" and not uses_brand_v3("badge"):
         # Rollback: the pre-v3 badge page is a standalone document with its own sheet.
-        return (HERE / "badge.html").read_text()
+        return search_canonical((HERE / "badge.html").read_text(), market)
     if page == "maple" and not uses_brand_v3("maple"):
         # Rollback: the pre-v3 evidence page is a standalone document (badge.css, verified.css).
-        return (HERE / "verified-maple.html").read_text()
-    market = market or next(m for m in load_markets() if m["slug"] == "new-york")
+        return search_canonical((HERE / "verified-maple.html").read_text(), market)
     market = market | CITIES.get(market["slug"], {})
     city = market["slug"] != "new-york"
     if city and page != "home":
@@ -535,7 +544,7 @@ def render_nyte(
         query.setdefault("utm_content", page)
         query.setdefault("exchange_market", market["slug"])
         return 'href="' + html.escape(urlunsplit(url._replace(query=urlencode(query))), quote=True) + '"'
-    return re.sub(r'href="([^"]+)"', tracked, result)
+    return search_canonical(re.sub(r'href="([^"]+)"', tracked, result), market)
 
 # Footer rail linking every market, shown on city home pages only.
 MARKET_RAIL = '<div class="geo-scroll footer-markets"><svg class="market-pin" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg><nav class="market-links" aria-label="Exchange markets">{{links}}</nav><button class="geo-prev" type="button" aria-label="Scroll footer markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll footer markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div>'
