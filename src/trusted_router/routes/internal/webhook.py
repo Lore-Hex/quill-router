@@ -34,6 +34,7 @@ from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
+from trusted_router.services.auto_refill import AUTO_REFILL_PAYMENT_METHOD_TYPES
 from trusted_router.services.reserved_tokens import KIND, handle_reservation_event
 from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
@@ -339,7 +340,9 @@ def _handle_stripe_event(
             # first auto-refill after a Checkout that didn't include
             # setup_future_usage might be the first time we see the PM.
             payment_method = obj.get("payment_method")
-            if isinstance(payment_method, str):
+            if isinstance(payment_method, str) and _auto_refill_method_still_eligible(
+                payment_method, settings, workspace_id=workspace_id
+            ):
                 STORE.set_stripe_customer(
                     workspace_id,
                     customer_id=str(obj.get("customer") or ""),
@@ -446,14 +449,6 @@ def _handle_stripe_event(
     return {"data": {"ignored": True, "event_id": event_id}}
 
 
-# Auto-refill charges the saved method off-session and books the result like
-# an immediate card payment. Dynamic ("auto") Checkout can also be paid by
-# bank debit, Cash App or Amazon Pay, and Checkout's setup_future_usage saves
-# those too. Saving one would let a later auto-refill start an ACH debit (or a
-# wallet charge) that the customer never chose for automatic top-ups.
-AUTO_REFILL_PAYMENT_METHOD_TYPES = frozenset({"card", "link"})
-
-
 def _auto_refill_ineligible_method_type(payment_method_id: str, settings: Settings) -> str | None:
     """Return the method's type when it must not back auto-refill, else None.
 
@@ -469,6 +464,23 @@ def _auto_refill_ineligible_method_type(payment_method_id: str, settings: Settin
     if method_type in AUTO_REFILL_PAYMENT_METHOD_TYPES:
         return None
     return method_type or "unknown"
+
+
+def _auto_refill_method_still_eligible(
+    payment_method_id: str, settings: Settings, *, workspace_id: str
+) -> bool:
+    """Whether the auto-refill success path may re-save its payment method.
+
+    The credit is already booked when this runs, so a lookup failure skips the
+    save instead of failing the webhook: the method the refill charged is the
+    one already stored.
+    """
+    try:
+        method_type = _auto_refill_ineligible_method_type(payment_method_id, settings)
+    except stripe.StripeError:
+        log.warning("stripe_webhook.auto_refill_pm_lookup_failed workspace=%s", workspace_id)
+        return False
+    return method_type is None
 
 
 def _object_id(value: Any) -> str:

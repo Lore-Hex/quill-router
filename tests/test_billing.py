@@ -1435,3 +1435,80 @@ def test_payment_method_lookup_failure_is_retried_not_saved(
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
     assert account.stripe_payment_method_id is None
+
+
+def _auto_refill_succeeded_event(workspace_id: str, payment_method: str) -> dict[str, Any]:
+    return {
+        "id": f"evt_auto_refill_pm_{payment_method}",
+        "type": "payment_intent.succeeded",
+        "data": {
+            "object": {
+                "id": f"pi_auto_refill_{payment_method}",
+                "amount": 2137,
+                "customer": "cus_checkout_pm",
+                "payment_method": payment_method,
+                "metadata": {
+                    "workspace_id": workspace_id,
+                    "auto_refill": "true",
+                    "amount_microdollars": "20000000",
+                },
+            }
+        },
+    }
+
+
+def test_auto_refill_success_with_bank_method_credits_but_keeps_the_saved_card(
+    monkeypatch, user_headers: dict[str, str], test_settings: Settings
+) -> None:
+    # The auto-refill success path re-saves its payment method. A bank method
+    # must not overwrite the card, but the payment that succeeded is credited.
+    monkeypatch.setattr(
+        "stripe.PaymentMethod.retrieve",
+        lambda payment_method_id, **_kwargs: _FakePaymentMethod(
+            "card" if payment_method_id == "pm_card_saved" else "us_bank_account"
+        ),
+    )
+    client = _stripe_keyed_client(test_settings)
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    STORE.set_stripe_customer(
+        workspace_id, customer_id="cus_checkout_pm", payment_method_id="pm_card_saved"
+    )
+    before_total = _credit_summary(workspace_id)["total_credits"]
+
+    resp = client.post(
+        "/v1/internal/stripe/webhook", json=_auto_refill_succeeded_event(workspace_id, "pm_bank")
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["credited"] is True
+    assert _credit_summary(workspace_id)["total_credits"] == before_total + 20_000_000
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.stripe_payment_method_id == "pm_card_saved"
+
+
+def test_auto_refill_success_still_credits_when_method_lookup_fails(
+    monkeypatch, user_headers: dict[str, str], test_settings: Settings
+) -> None:
+    import stripe
+
+    def boom(payment_method_id: str, **_kwargs: Any) -> _FakePaymentMethod:
+        raise stripe.APIConnectionError("stripe unreachable")
+
+    monkeypatch.setattr("stripe.PaymentMethod.retrieve", boom)
+    client = _stripe_keyed_client(test_settings)
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    STORE.set_stripe_customer(
+        workspace_id, customer_id="cus_checkout_pm", payment_method_id="pm_card_saved"
+    )
+    before_total = _credit_summary(workspace_id)["total_credits"]
+
+    resp = client.post(
+        "/v1/internal/stripe/webhook", json=_auto_refill_succeeded_event(workspace_id, "pm_other")
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert _credit_summary(workspace_id)["total_credits"] == before_total + 20_000_000
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.stripe_payment_method_id == "pm_card_saved"
