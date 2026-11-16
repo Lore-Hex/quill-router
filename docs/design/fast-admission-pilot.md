@@ -69,8 +69,11 @@ once the authorization is settled, and parks a row, spending no attempt,
 when the store is away or the fast path has not decided the terminal: the
 lease's order decides it by the time the lease closes, up to the hold's
 longest life and the grace after an owner crash, so an intent younger than
-three hours is asked again at the next pass, and an older one spends its
-attempts as today, toward `dead` and its alert. A BYOK terminal (the key's own provider
+three hours is asked again after as long as it has already waited (one
+second at the soonest, five minutes at the longest: an unresolved row's
+age is in the drain's health, which closes async admission past five
+seconds), and an older one spends its attempts as today, toward `dead` and
+its alert. A BYOK terminal (the key's own provider
 paid) charges the lease nothing, as today's path books nothing. A hold
 admitted whose authorization row then could not be written is refunded
 at once, best effort, so it does not wait for the lease to drain.

@@ -6,6 +6,7 @@ records; everything else, and every answer but `admitted`, is today's path."""
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import json
 from typing import Any
 
@@ -670,6 +671,76 @@ def test_the_drain_parks_an_undecided_leased_intent_without_spending_an_attempt(
     settle_outbox_drain.drain_settle_outbox(10)
     row = _pending_intents(database, authorized["authorization_id"])[0]
     assert row["status"] == "pending" and (row.get("attempts") or 0) == attempts_before + 1
+
+
+@pytest.mark.parametrize(
+    ("age_seconds", "parked_seconds"),
+    [
+        # Just written, by a slow owner: asked again within the second,
+        # before the row's age reaches the drain health's five seconds.
+        (0.4, 1),
+        (2.9, 2),
+        (40.0, 40),
+        # An owner that is gone: the wait stops growing at five minutes.
+        (3600.0, 300),
+    ],
+)
+def test_an_undecided_leased_intent_is_asked_again_after_as_long_as_it_has_waited(
+    door: _Door, monkeypatch: pytest.MonkeyPatch, age_seconds: float, parked_seconds: int,
+) -> None:
+    """An unresolved row's age is in the drain's published health, and a p95
+    over five seconds closes async admission for every workspace: a young
+    row parked for minutes did that (2026-11-16). The wait is the row's age,
+    at least a second and at most five minutes. The age is given and the
+    park's argument read, so no clock decides the result."""
+    from trusted_router.services import settle_outbox_drain
+    from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
+
+    _store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    door.answers["/v1/settle"] = {"Status": "recorded"}
+    gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    row["next_attempt_at"] = "2020-01-01T00:00:00Z"  # due now
+    row["lease_owner"] = None
+    row["leased_until"] = None
+    parks: list[tuple[str, int]] = []
+    park = SpannerSettleOutbox.park
+
+    def recording(self: Any, *args: Any, **kwargs: Any) -> bool:
+        parks.append((kwargs["note"], kwargs["retry_after_seconds"]))
+        return park(self, *args, **kwargs)
+
+    monkeypatch.setattr(SpannerSettleOutbox, "park", recording)
+    monkeypatch.setattr(settle_outbox_drain, "_row_age_seconds", lambda _row: age_seconds)
+    settle_outbox_drain.drain_settle_outbox(10)
+    assert parks == [("fast path undecided", parked_seconds)]
+    row = _pending_intents(database, authorized["authorization_id"])[0]
+    assert row["status"] == "pending" and row["last_error"] == "fast path undecided"
+    assert row["next_attempt_at"] > "2020-01-01T00:00:00Z"
+
+
+def test_an_undecided_leased_intents_wait_reads_the_rows_creation_time() -> None:
+    from trusted_router.services import settle_outbox_drain
+
+    def wait(created_at: str) -> int:
+        row = SettleOutboxRow(
+            authorization_id="a", intent_kind="settle", settle_origin="typed", reservation_id=None,
+            actual_cost_micro=0, selected_endpoint_id=None, model_id=None, selected_usage_type=None,
+            settle_body=None, created_at=created_at,
+        )
+        return settle_outbox_drain._leased_undecided_park_seconds(row)
+
+    def ago(seconds: int) -> str:
+        return (dt.datetime.now(dt.UTC) - dt.timedelta(seconds=seconds)).isoformat()
+
+    # No readable creation time waits the longest.
+    assert wait("") == wait("not a time") == 300
+    # A creation time ahead of this clock is a row just written.
+    assert wait(ago(-30)) == 1
+    # Read with this clock, so within a minute's stall of the age given.
+    assert 100 <= wait(ago(100).replace("+00:00", "Z")) <= 160
+    assert wait(ago(7200)) == 300
 
 
 def test_a_failed_insert_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
