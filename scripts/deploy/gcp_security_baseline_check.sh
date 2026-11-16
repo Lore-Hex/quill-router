@@ -304,13 +304,24 @@ fi
 # CI, on the workstation, and in Azure — so deleting them from here breaks the
 # holder. That makes this a reporting-only control by construction.
 sec "service-account user-managed keys"
+# Epoch seconds of an RFC 3339 UTC time with GNU date (CI) or BSD date
+# (macOS); empty when neither reads it. Never "now": that made every key read
+# 0 days old on GNU systems, where the BSD-only form always failed.
+epoch_of() {
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || true
+}
 for sa in tr-deploy tr-ops-local tr-azure-acme-cache tr-clickhouse quill-workload enclave-dns-reconciler; do
   email="$sa@$PROJECT.iam.gserviceaccount.com"
   keys="$(g iam service-accounts keys list --iam-account="$email" --managed-by=user --format='value(name,validAfterTime)')"
   [ -z "$keys" ] && continue
   while read -r _ after; do
     [ -z "$after" ] && continue
-    age=$(( ( $(date -u +%s) - $(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$after" +%s 2>/dev/null || echo "$(date -u +%s)") ) / 86400 ))
+    created="$(epoch_of "$after")"
+    if [ -z "$created" ]; then
+      note "$sa user-managed key has an unreadable creation time ($after), so its age is unknown"
+      continue
+    fi
+    age=$(( ( $(date -u +%s) - created ) / 86400 ))
     if [ "$age" -gt 90 ]; then
       note "$sa user-managed key is ${age}d old (CIS wants <90d; key is held outside GCP so rotation is a coordinated change)"
     else
