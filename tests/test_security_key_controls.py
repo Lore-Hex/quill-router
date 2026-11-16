@@ -46,12 +46,44 @@ def test_the_alert_matches_only_key_authenticated_calls_of_the_two_laptop_accoun
     assert "protoPayload.requestMetadata.callerIp:*" in code
     assert 'NOT ip_in_net(protoPayload.requestMetadata.callerIp, \\"${cidr}\\")' in code
     assert "filter = local.laptop_key_used_elsewhere_filter" in code
+    # Every clause must hold at once: joined any other way, one known address
+    # would be enough to match everything.
+    assert 'laptop_key_used_elsewhere_filter = join(" AND ", concat(' in code
+
+
+def test_cloud_schedulers_copy_of_a_call_does_not_page() -> None:
+    # Cloud Scheduler writes a second entry for a call it receives, with the
+    # literal address "private". It is not an address, so it is in no range
+    # on the list, and without this clause the operator's own Scheduler
+    # commands from the known address would page. A call from a VM (the
+    # literal "gce-internal-ip") must still page.
+    code = _code(ALERT)
+    assert 'NOT protoPayload.requestMetadata.callerIp=\\"private\\"' in code
+    assert "gce-internal-ip" not in code
 
 
 def test_an_empty_address_list_cannot_be_applied() -> None:
     # With no known address the policy would page on every call made with a
     # laptop key, hundreds a day.
     assert re.search(r"precondition \{\s*condition\s*= length\(local\.laptop_key_known_addresses\) > 0", _code(ALERT))
+
+
+def test_a_malformed_or_too_wide_entry_stops_the_plan_with_a_fixed_message() -> None:
+    # The alerting API refuses a bad range at apply and quotes it, and the
+    # apply log is public; a range as wide as everything would switch the
+    # alert off without an error. Both stop at plan, and the message must not
+    # interpolate anything.
+    code = _code(ALERT)
+    check = re.search(
+        r"precondition \{\s*condition = alltrue\(\[\s*for cidr in local\.laptop_key_known_addresses :\s*"
+        r'can\(cidrhost\(cidr, 0\)\) && try\(tonumber\(split\("/", cidr\)\[1\]\), 0\) >= 16\s*\]\)\s*'
+        r'error_message = "([^"]*)"',
+        code,
+    )
+    assert check
+    assert "${" not in check.group(1)
+    for message in re.findall(r'error_message\s*= "([^"]*)"', code):
+        assert "${" not in message
 
 
 def test_the_known_addresses_are_read_from_a_secret_and_never_written_here() -> None:
@@ -61,8 +93,14 @@ def test_the_known_addresses_are_read_from_a_secret_and_never_written_here() -> 
         assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", text), "an address is written in the repository"
 
 
-def test_the_policy_is_rate_limited_and_notifies_the_alert_channels() -> None:
+def test_the_policy_is_rate_limited_and_notifies_the_security_channel() -> None:
     code = _code(ALERT)
     assert re.search(r'notification_rate_limit \{\s*period = "3600s"\s*\}', code)
-    assert "notification_channels = local.fastpath_alert_channels" in code
+    assert 'auto_close = "86400s"' in code
+    assert re.search(
+        r'data "google_monitoring_notification_channel" "security_alerts" \{\s*project\s*= local\.gcp_project_id\s*'
+        r'display_name = "TrustedRouter security alerts"',
+        code,
+    )
+    assert "notification_channels = [data.google_monitoring_notification_channel.security_alerts.name]" in code
     assert 'severity     = "CRITICAL"' in code
