@@ -22,7 +22,11 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import canonicalize_native_model_id
 from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m
-from trusted_router.provider_contracts import MAKORA_NON_CHAT_MODEL_IDS
+from trusted_router.provider_contracts import (
+    MAKORA_MUSE_SPARK_OPEN_816B_HOLD_REASON,
+    MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID,
+    MAKORA_NON_CHAT_MODEL_IDS,
+)
 
 SLUG = "makora"
 URL = "https://www.makora.com/"
@@ -204,5 +208,8 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         operator_hold_reasons={
             "deepseek/deepseek-v4-flash": "provider-billing-unavailable",
             "google/gemma-4-26b-a4b-it": "provider-billing-unavailable",
+            # Listed but answers 404 "Model not available."; see
+            # provider_contracts.OPERATOR_HELD_PROVIDER_MODELS.
+            MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID: MAKORA_MUSE_SPARK_OPEN_816B_HOLD_REASON,
         },
     )

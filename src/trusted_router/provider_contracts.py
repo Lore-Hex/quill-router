@@ -50,6 +50,8 @@ STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
 STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
 PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
 PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
+MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID = "meta-models/muse-spark-open-816b-a42b-nvfp4"
+MAKORA_MUSE_SPARK_OPEN_816B_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -107,6 +109,24 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # routing until a reviewed adapter release, not an attestation bypass.
         ("phala", "z-ai/glm-5.3"),
         ("phala", "z-ai/glm-5.3-flash"),
+        # November 11: Phala retired its confidential phala/glm-5.1 alias. It
+        # is absent from Phala's public /v1/models, and every configured-route
+        # probe since 01:00 UTC gets HTTP 404 "no route available for model
+        # phala/glm-5.1" (Sentry QUILL-ROUTER-G5) while Phala serves its other
+        # routes. Phala now lists only the upstream-author z-ai/glm-5.1
+        # pass-through to Chutes. The gateway maps z-ai/glm-5.1 to the retired
+        # alias, and an upstream-author Phala route needs a direct account
+        # canary and a Standard privacy override before admission (see
+        # quill-cloud-proxy phalaModelMap). Chutes serves GLM 5.1 directly.
+        ("phala", "z-ai/glm-5.1"),
+        # November 10: Makora still lists Muse Spark Open 816B NVFP4 in its
+        # authenticated /v1/models feed, but every configured-route probe
+        # since 18:00 UTC gets HTTP 404 "Model not available." for the exact
+        # native ID while Makora serves its other models (Sentry
+        # QUILL-ROUTER-G7). The 24-hour unserved-route hold expired on
+        # November 14 and the route failed again. Discovery alone cannot
+        # restore it; require a reviewed live recovery before re-enabling.
+        ("makora", MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID),
         # NEAR AI GLM 5.3 Flash was held October 15 to November 9, and again
         # November 12, while the gateway sidecar refused its drifted
         # attestation. Released November 12, 2026: quill-cloud-proxy #755

@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import random
+import re
 import secrets
 import socket
 import ssl
@@ -2657,10 +2658,14 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
     model_l = model.lower()
     if "/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l:
         return 512
-    if "gemini-2.5" in model_l or "gemini-3" in model_l:
-        # Gemini thinks before visible content; hidden thinking consumes the
-        # budget but is absent from usage, so 16 yields empty_stream. Live
-        # verification on 2026-07-19 showed 2048 works; keep generous headroom.
+    gemini = re.search(r"(?:^|/)gemini-(\d+)(?:\.(\d+))?(?:-|$)", model_l)
+    if gemini and (int(gemini.group(1)), int(gemini.group(2) or 0)) >= (2, 5):
+        # Every Gemini release since 2.5 thinks before visible content; hidden
+        # thinking consumes the budget but is absent from usage, so 16 yields
+        # empty_stream or finish_reason=length. Live verification on
+        # 2026-07-19 showed 2048 works; keep generous headroom. Match by
+        # version, not by a list of releases: a list silently left Gemini 4
+        # (thinking cannot be disabled on AI Studio) at 16 tokens.
         return 2048
     # Publisher/model capability is independent of the hosting provider.
     # These families exhausted 16 tokens with finish_reason=length in real

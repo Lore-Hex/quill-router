@@ -776,7 +776,9 @@
         "repetition_penalty",
         "stop",
         "max_tokens"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-model-not-found"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
