@@ -172,10 +172,11 @@ def adverse_event_latches(event: AdverseTrustEvent) -> bool:
     arrives in a non-latching stage latches when a later transition makes it
     evidence, and nothing here ever clears a latch.
 
-    * A refund latches only once it has succeeded and its reason is
-      ``fraudulent``. A refund with another reason or none (a courtesy refund)
-      does not, and neither does one that is pending, failed, cancelled or
-      reversed.
+    * A refund latches when its reason is ``fraudulent``, at whatever status
+      it is applied (pending, succeeded, failed, cancelled, reversed): the
+      operator's fraud call is the evidence whether or not the money moved,
+      and a refund to a stolen card often fails. A refund with another reason
+      or none (a courtesy refund) never latches.
     * A dispute latches once it is a chargeback: the funds were withdrawn
       (``succeeded``) or the chargeback was decided (``won`` or ``lost``).
       ``won`` latches too, so the result does not depend on whether the
@@ -188,10 +189,7 @@ def adverse_event_latches(event: AdverseTrustEvent) -> bool:
     """
 
     if event.kind == "refund":
-        return (
-            event.lifecycle_status == "succeeded"
-            and event.refund_reason.strip().lower() == FRAUD_REFUND_REASON
-        )
+        return event.refund_reason.strip().lower() == FRAUD_REFUND_REASON
     if event.kind != "dispute":
         return False
     if event.provider == "adyen":

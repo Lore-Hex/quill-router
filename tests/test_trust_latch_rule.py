@@ -102,7 +102,7 @@ def _only(events: tuple[AdverseTrustEvent, ...]) -> AdverseTrustEvent:
 @pytest.mark.parametrize("event_type", REFUND_EVENT_TYPES)
 @pytest.mark.parametrize("status", REFUND_STATUSES)
 @pytest.mark.parametrize("reason", REFUND_REASONS)
-def test_live_stripe_refund_latches_only_when_succeeded_as_fraudulent(
+def test_live_stripe_refund_latches_only_when_given_as_fraudulent(
     x402: bool, event_type: str, status: str | None, reason: str | None,
 ) -> None:
     event = _only(_stripe_adverse_events(
@@ -111,9 +111,9 @@ def test_live_stripe_refund_latches_only_when_succeeded_as_fraudulent(
 
     assert (event.provider, event.kind) == ("x402" if x402 else "stripe", "refund")
     assert event.refund_reason == (reason or "")
-    # Literal over the raw Stripe fields, so a status mapping that drifted
-    # would show up here and not only in a rule derived from the mapping.
-    assert adverse_event_latches(event) is (status in {"succeeded", None} and reason == "fraudulent")
+    # The operator's fraud call is the evidence whatever the refund's status:
+    # a pending, failed, cancelled or reversed fraudulent refund latches too.
+    assert adverse_event_latches(event) is (reason == "fraudulent")
 
 
 @pytest.mark.parametrize("x402", [False, True], ids=["stripe", "x402"])
@@ -209,10 +209,10 @@ def _event(**changes: Any) -> AdverseTrustEvent:
 @pytest.mark.parametrize("provider", ["stripe", "x402", "paypal", "adyen"])
 @pytest.mark.parametrize("status", sorted(TRUST_EVENT_LIFECYCLE_STATUSES))
 @pytest.mark.parametrize("reason", ["", "duplicate", "requested_by_customer", "expired_uncaptured_charge", "fraudulent"])
-def test_refund_domain_latches_only_succeeded_and_fraudulent(provider: str, status: str, reason: str) -> None:
+def test_refund_domain_latches_on_a_fraudulent_reason_at_any_status(provider: str, status: str, reason: str) -> None:
     event = _event(provider=provider, lifecycle_status=status, refund_reason=reason)
 
-    assert adverse_event_latches(event) is (status == "succeeded" and reason == "fraudulent")
+    assert adverse_event_latches(event) is (reason == "fraudulent")
 
 
 @pytest.mark.parametrize("reason", ["FRAUDULENT", " fraudulent "])

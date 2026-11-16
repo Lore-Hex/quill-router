@@ -174,20 +174,39 @@ def test_fraudulent_refund_recovers_principal_and_latches(backend: Backend, even
     assert latched and all(latched)
 
 
-@pytest.mark.parametrize("status", ["failed", "canceled"])
-def test_failed_or_cancelled_fraudulent_refund_does_not_latch(backend: Backend, status: str) -> None:
+@pytest.mark.parametrize("status", ["pending", "failed", "canceled", "reversed"])
+def test_fraudulent_refund_that_moves_no_money_still_latches(backend: Backend, status: str) -> None:
+    # A refund to a stolen card often fails: the fraud call is the evidence,
+    # whether or not the money moved. Nothing is recovered either way.
     assert _money(backend, _refund(status=status, reason="fraudulent")) == ("applied", 0, 0, 0, CREDITED)
+    latched = backend.latched()
+    assert latched and all(latched)
+
+
+@pytest.mark.parametrize("status", ["pending", "failed", "canceled", "reversed"])
+@pytest.mark.parametrize("reason", [None, "requested_by_customer"])
+def test_courtesy_refund_that_moves_no_money_does_not_latch(backend: Backend, status: str, reason: str | None) -> None:
+    assert _money(backend, _refund(status=status, reason=reason)) == ("applied", 0, 0, 0, CREDITED)
     latched = backend.latched()
     assert latched and not any(latched)
 
 
-def test_pending_fraudulent_refund_latches_when_it_succeeds(backend: Backend) -> None:
+def test_pending_fraudulent_refund_latches_at_once_and_recovers_when_it_succeeds(backend: Backend) -> None:
     assert _money(backend, _refund(status="pending", reason="fraudulent", at=1)) == ("applied", 0, 0, 0, CREDITED)
-    assert not any(backend.latched())
+    assert all(backend.latched())
 
     assert _money(backend, _refund(status="succeeded", reason="fraudulent", at=2)) == (
         "applied", REFUND_TARGET, REFUND_TARGET, 0, CREDITED - REFUND_TARGET,
     )
+    latched = backend.latched()
+    assert latched and all(latched)
+
+
+def test_pending_fraudulent_refund_that_then_fails_stays_latched(backend: Backend) -> None:
+    assert _money(backend, _refund(status="pending", reason="fraudulent", at=1)) == ("applied", 0, 0, 0, CREDITED)
+    assert all(backend.latched())
+
+    assert _money(backend, _refund(status="failed", reason="fraudulent", at=2)) == ("applied", 0, 0, 0, CREDITED)
     latched = backend.latched()
     assert latched and all(latched)
 
