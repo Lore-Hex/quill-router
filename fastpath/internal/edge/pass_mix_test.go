@@ -550,8 +550,9 @@ func TestTheDecideAnswersAreTheSameWithoutThePassMix(t *testing.T) {
 	base := authorizeCaseNamed(t, "answer:app_categories_empty")
 	signer := newBootSigner(t)
 	on, off := setUp(base, true), setUp(base, false)
-	// Every body in the corpus names one key; each is sent under the
-	// base case's key instead, so read the corpus's from the bodies.
+	// Every body in the corpus that names a key names the same one; each is
+	// sent under the base case's key instead, so read the corpus's from the
+	// bodies.
 	corpusKeys := map[string]bool{}
 	for _, v := range corpus.Cases {
 		var body struct {
