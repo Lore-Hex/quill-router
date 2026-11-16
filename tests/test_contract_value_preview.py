@@ -58,6 +58,26 @@ from trusted_router.services.contract_value_preview import safe_value_preview
     ("chat_template_kwargs", {"enable_thinking": False, "prompt": "private-content"},
      {"enable_thinking": False, "_redacted": True}),
     ("chat_template_kwargs.enable_thinking", {"secret": "private-content"}, "[redacted:object]"),
+    ("thinking", {"type": "auto"}, {"type": "auto"}),
+    ("thinking.type", "auto", "auto"),
+    ("thinking", {"type": {"secret": "private-content"}, "budget_tokens": "private-content", "display": "x"},
+     {"budget_tokens": "[redacted:string]", "type": "[redacted:object]", "_redacted": True}),
+    ("chat_template_kwargs", {"enable_thinking": False, "thinking": True}, {"enable_thinking": False, "thinking": True}),
+    ("chat_template_kwargs", {"thinking": True, "documents": ["private-content"]}, {"thinking": True, "_redacted": True}),
+    ("chat_template_kwargs", {"enable_thinking": {"secret": "private-content"}, "thinking": "private-content", "prompt": "x"},
+     {"enable_thinking": "[redacted:object]", "thinking": "[redacted:string]", "_redacted": True}),
+    ("chat_template_kwargs.thinking", True, True),
+    ("chat_template_kwargs.thinking", {"type": "private-content"}, "[redacted:object]"),
+    ("chat_template_kwargs.add_generation_prompt", True, "[redacted:boolean]"),
+    # client_metadata holds client and installation identifiers: no member of
+    # it is configuration, whatever a key is called.
+    ("client_metadata", "private-content", "[redacted:string]"),
+    ("client_metadata", ["private-content"], "[redacted:array]"),
+    ("client_metadata", {"x-codex-installation-id": "private-content", "type": "enabled", "enable_thinking": True},
+     "[redacted:object]"),
+    ("client_metadata.type", "enabled", "[redacted:string]"),
+    ("client_metadata.enable_thinking", True, "[redacted:boolean]"),
+    ("client_metadata.temperature", 0.7, "[redacted:number]"),
 ])
 def test_sink_revalidates_configuration_only(path: str, value: object, expected: object) -> None:
     preview, truncated = safe_value_preview(path, json.dumps(value))
