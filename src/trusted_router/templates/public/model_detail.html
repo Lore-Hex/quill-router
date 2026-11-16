@@ -28,6 +28,10 @@
   {% else %}
   <p class="md-lead">{{ page.sentence }}</p>
   {% endif %}
+  {% if model.id == 'abliteration/abliterated-model-large-flash' %}
+  <p class="md-note"><strong>What is Abliterated Large Flash?</strong> Abliteration's chat model is available through the OpenAI-compatible API with the exact ID <code>abliteration/abliterated-model-large-flash</code>. Evaluate it for document analysis, drafting and analyst-assisted security reviews using your own representative tasks; the model name alone does not establish accuracy or a DeepSeek base model.</p>
+  <p class="md-note">Check the current context limit, supported features and provider retention policy below, then compare <a href="/models/abliteration/abliterated-model-large-flash/performance">measured Large Flash latency and availability</a>. Looking for the separate dealignai checkpoint served by Maple? See <a href="/abliterated-deepseek">abliterated DeepSeek for cyberdefense</a>.</p>
+  {% endif %}
   {% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' %}
   <p class="md-note"><strong>Abliterated DeepSeek.</strong> A separate checkpoint by dealignai, not stock DeepSeek or a system-prompt wrapper. <a href="/abliterated-deepseek">Explore uncensored DeepSeek cyberdefense prompts and the Confidential API</a>.</p>
   {% endif %}
