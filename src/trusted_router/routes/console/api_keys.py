@@ -106,6 +106,7 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/api-keys")
     def console_create_api_key(
+        request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form("API key", min_length=1, max_length=120),
@@ -116,6 +117,7 @@ def register(app: FastAPI) -> None:
         budget_alert_only: str = Form(""),
         budget_strict: str = Form(""),
     ) -> Response:
+        _same_origin(request, settings)
         # A member who could mint a key with no budget would make every cap a
         # manager sets meaningless; POST /v1/keys needs the same role.
         _require_manager(ctx)
@@ -174,7 +176,9 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/api-keys/{key_hash}/limit")
     def console_update_api_key_limit(
+        request: Request,
         ctx: ConsoleDep,
+        settings: SettingsDep,
         key_hash: str,
         limit: str = Form(""),
         limit_daily: str = Form(""),
@@ -182,6 +186,7 @@ def register(app: FastAPI) -> None:
         limit_monthly: str = Form(""),
         budget_alert_only: str = Form(""),
     ) -> Response:
+        _same_origin(request, settings)
         _require_key(ctx, key_hash, manage=True)
         try:
             patch: dict[str, Any] = {
@@ -205,19 +210,28 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/api-keys?saved=limit", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/disable")
-    def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_disable_api_key(
+        request: Request, ctx: ConsoleDep, settings: SettingsDep, key_hash: str,
+    ) -> Response:
+        _same_origin(request, settings)
         _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": True})
         return RedirectResponse(url="/console/api-keys?saved=disabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/enable")
-    def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_enable_api_key(
+        request: Request, ctx: ConsoleDep, settings: SettingsDep, key_hash: str,
+    ) -> Response:
+        _same_origin(request, settings)
         _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": False})
         return RedirectResponse(url="/console/api-keys?saved=enabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/delete")
-    def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
+    def console_delete_api_key(
+        request: Request, ctx: ConsoleDep, settings: SettingsDep, key_hash: str,
+    ) -> Response:
+        _same_origin(request, settings)
         key = _require_key(ctx, key_hash, manage=True)
         # Disable-first, then delete: an ACTIVE key may have in-flight typed
         # holds; deleting it mid-flight strands them (issue #29). Disabling
@@ -231,7 +245,7 @@ def register(app: FastAPI) -> None:
 
 def _require_key(ctx: Any, key_hash: str, *, manage: bool = False) -> ApiKey:
     """Ownership check for every mutating route; `manage=True` additionally
-    requires owner/manager role. Every mutating route passes it: a plain
+    requires the owner or admin role. Every mutating route passes it: a plain
     member must not disable or delete another member's keys (codex #94), nor
     clear, raise or switch to alert-only a budget a manager set to contain
     them. The /v1/keys routes require the same role."""

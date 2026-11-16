@@ -124,7 +124,7 @@ test('management creation is usable without JavaScript', async ({browser}) => {
 test('workspace members do not see the management creation form', async ({page}) => {
   await load(page,false,false,false,true);
   await expect(page.locator('form[action="/console/api-keys/management"]')).toHaveCount(0);
-  await expect(page.getByText('Only workspace owners and managers can create management keys', {exact:false})).toBeVisible();
+  await expect(page.getByText('Only workspace owners and admins can create management keys', {exact:false})).toBeVisible();
 });
 
 test('workspace members see budgets but no key or budget controls', async ({page}) => {
@@ -134,7 +134,9 @@ test('workspace members see budgets but no key or budget controls', async ({page
   await expect(page.locator('form[action="/console/api-keys"]')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Disable',exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'New key',exact:true})).toHaveCount(0);
-  await expect(page.getByText('Only workspace owners and managers can create keys or change budgets', {exact:false})).toBeVisible();
+  await expect(page.locator('#new-api-key')).toHaveCount(0);
+  await expect(page.getByText('Create a new API key')).toHaveCount(0);
+  await expect(page.getByText('Only workspace owners and admins can create keys or change budgets', {exact:false})).toBeVisible();
 });
 
 test('management form sends the origin and explicit confirmation', async ({page}) => {

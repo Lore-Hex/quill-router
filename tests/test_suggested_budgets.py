@@ -46,7 +46,11 @@ def test_suggestions_are_not_applied_by_default(console: dict) -> None:
     """The whole point: creating a key with blank window fields sets NO limits,
     even though the console suggests values."""
     client, ws = console["client"], console["workspace"]
-    resp = client.post("/console/api-keys", data={"name": "no-limits", "limit": ""})
+    resp = client.post(
+        "/console/api-keys",
+        data={"name": "no-limits", "limit": ""},
+        headers={"Origin": "http://testserver"},
+    )
     assert resp.status_code == 200
     key = next(k for k in STORE.list_keys(ws.id) if k.name == "no-limits")
     assert key.limit_daily_microdollars is None

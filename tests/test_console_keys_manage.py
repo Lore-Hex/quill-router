@@ -19,6 +19,8 @@ def console(client: TestClient) -> dict:
         workspace_id=workspace.id, state="active",
     )
     client.cookies.set("tr_session", raw_session)
+    # Every mutating key route requires a same-origin POST, as a browser sends.
+    client.headers["Origin"] = "http://testserver"
     _raw, key = STORE.create_api_key(
         workspace_id=workspace.id, name="prod key", creator_user_id=user.id
     )
@@ -113,8 +115,8 @@ def test_cross_workspace_key_is_404(console: dict, client: TestClient) -> None:
 
 def test_member_cannot_disable_enable_or_delete(console: dict, client: TestClient) -> None:
     """codex #94: disable/enable/delete are manager-only; a plain workspace
-    member gets 403. Budget edits and key creation are manager-only too (see
-    the spend-cap tests below)."""
+    member gets 403. Budget edits and console key creation are manager-only
+    too (see the spend-cap tests below)."""
     workspace, key = console["workspace"], console["key"]
     member = STORE.add_members(workspace.id, ["member@example.com"], role="member")[0]
     raw_session, _ = STORE.create_auth_session(
@@ -191,7 +193,9 @@ def test_member_cannot_lift_a_capped_key_budget(
 
 
 def test_member_cannot_bypass_caps_with_a_new_key(console: dict, client: TestClient) -> None:
-    """Creating a fresh uncapped key is the same escape, so it is manager-only."""
+    """Creating a fresh uncapped key in the console is the same escape, so it
+    is manager-only. The chat playground's browser-key route is covered by its
+    own tests."""
     workspace = console["workspace"]
     member = STORE.add_members(workspace.id, ["new-key@example.com"], role="member")[0]
     _sign_in(client, workspace.id, member.user_id)
@@ -220,7 +224,95 @@ def test_member_page_shows_budgets_without_edit_or_create_forms(
     assert f'action="/console/api-keys/{key.hash}/limit"' not in page.text
     assert f'action="/console/api-keys/{key.hash}/disable"' not in page.text
     assert 'data-action="open-new-key"' not in page.text
-    assert "Only workspace owners and managers can create keys or change budgets" in page.text
+    assert 'id="new-api-key"' not in page.text
+    assert "Create a new API key" not in page.text
+    assert "Only workspace owners and admins can create keys or change budgets" in page.text
+
+
+def test_member_cannot_zero_another_members_key(console: dict, client: TestClient) -> None:
+    """A $0 hard cap on someone else's key would stop it as surely as disable."""
+    workspace = console["workspace"]
+    other = STORE.add_members(workspace.id, ["key-holder@example.com"], role="member")[0]
+    member = STORE.add_members(workspace.id, ["zeroing@example.com"], role="member")[0]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id, name="theirs", creator_user_id=other.user_id,
+    )
+    _sign_in(client, workspace.id, member.user_id)
+
+    resp = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "0", "limit_daily": "0"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 403
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed.limit_microdollars is None
+    assert refreshed.limit_daily_microdollars is None
+
+
+@pytest.mark.parametrize(
+    ("alert_only", "strict", "mode"),
+    [
+        (False, False, "Over budget: requests are blocked (429)"),
+        (True, False, "Over budget: email alert only, requests are not blocked"),
+        (False, True, "Over budget: requests are blocked (429) · strict admission"),
+    ],
+)
+def test_member_sees_each_capped_keys_budget_mode(
+    console: dict, client: TestClient, alert_only: bool, strict: bool, mode: str
+) -> None:
+    """Without the edit form, the read-only budget line still says whether a
+    cap blocks requests or only alerts. The uncapped fixture key gets no line."""
+    workspace = console["workspace"]
+    STORE.create_api_key(
+        workspace_id=workspace.id, name="moded", creator_user_id=workspace.owner_user_id,
+        limit_monthly_microdollars=5_000_000, budget_alert_only=alert_only, budget_strict=strict,
+    )
+    member = STORE.add_members(workspace.id, ["mode-viewer@example.com"], role="member")[0]
+    _sign_in(client, workspace.id, member.user_id)
+
+    page = client.get("/console/api-keys").text
+
+    assert mode in page
+    assert page.count("Over budget:") == 1
+    assert ("· strict admission" in page) is strict
+
+
+_CROSS_ORIGINS = ["http://evil.test", "null", None]
+
+
+@pytest.mark.parametrize("origin", _CROSS_ORIGINS)
+@pytest.mark.parametrize("action", ["create", "limit", "disable", "enable", "delete"])
+def test_key_mutations_require_same_origin(
+    console: dict, client: TestClient, action: str, origin: str | None
+) -> None:
+    """A cross-site or origin-less POST changes nothing, even from an owner."""
+    workspace = console["workspace"]
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id, name="target", creator_user_id=workspace.owner_user_id,
+        **_CAPPED,
+    )
+    if action in {"enable", "delete"}:
+        STORE.update_key(key.hash, {"disabled": True})
+
+    def snapshot() -> dict:
+        return {k.hash: (k.disabled, _caps(k.hash)) for k in STORE.list_keys(workspace.id)}
+
+    before = snapshot()
+    headers = {} if origin is None else {"Origin": origin}
+    if origin is None:
+        del client.headers["Origin"]
+    if action == "create":
+        path, data = "/console/api-keys", {"name": "cross-site"}
+    else:
+        path = f"/console/api-keys/{key.hash}/{action}"
+        data = _ESCAPES["clear"] if action == "limit" else {}
+
+    resp = client.post(path, data=data, headers=headers, follow_redirects=False)
+
+    assert resp.status_code == 403
+    assert snapshot() == before
 
 
 @pytest.mark.parametrize("role", ["owner", "admin"])
@@ -239,6 +331,7 @@ def test_managers_can_still_change_budgets_and_create_keys(
     page = client.get("/console/api-keys")
     assert f'action="/console/api-keys/{key.hash}/limit"' in page.text
     assert 'action="/console/api-keys"' in page.text
+    assert 'id="new-api-key"' in page.text
 
     resp = client.post(
         f"/console/api-keys/{key.hash}/limit", data=_ESCAPES["clear"], follow_redirects=False,
