@@ -617,6 +617,40 @@ only (widening §8.1): a node up since before the step carries keys from
 before it, so while every line is excluded `distinct_keys` is 0 and the
 bar cannot be read until a node's shadow restarts after the step's start
 (the next node cycle, or a deploy).
+The decide line ends with its pass mix, counted beside `passed`, each pass
+once, and changing nothing the edge answers or passes. `float_at={...}`
+counts the `body.float` passes by where the first float is
+(`gwauth/float_at.go`): `provider.max_price`,
+`provider.preferred_max_latency`, `provider.preferred_min_throughput`,
+`provider.sort`, `provider.options`, `provider.other`, `trace`, `metadata`,
+`tags`, `extra` (a member the schema does not declare, its name never
+recorded), `declared.<field>` (a declared field such as `max_tokens`
+written `64.0`) or `non_finite`. `passed_enabled={...}` counts the passes,
+by reason, whose key belongs to a workspace the node's copy of the switch
+enables, and `passed_unknown={...}` those whose workspace the node could
+not tell (`enabled_unknown=N` is its sum); a pass in neither is of a
+workspace the copy leaves off. The workspace is the pipeline's when it read
+the key's facts, else what the key cache already holds for the body's
+lookup hash, read with no fill and no use (`decider.attribute`). One
+worker per node does that reading, handed each pass once its forward to
+Python has returned, so no request or connection waits on it and a pass's
+reason and its mix can fall in consecutive lines; with its queue (256)
+full a mix is dropped and counted in `mix_dropped=N`. A pass Python
+refuses (401, 402, 403, its pause 503) has its key read before the edge
+evicts it. Its blind spot: the cache holds a key only once one of its
+requests reached the key's facts on that node, so a workspace whose every
+request fails a body or boot gate counts unknown, and so does a body the
+edge did not read, cannot decode, or (when the strict parse did not read
+the lookup hash) of 64 KiB or more, and a refused pass whose lookup hash
+only a lenient read of the body finds, when the decide shadow evicts its
+key before the worker reads it. Two more
+skew it the other way: a lookup hash the cache last found naming no key is
+counted not enabled even past the 5 s the cache trusts that answer, and a
+switch copy older than three of its intervals enables no workspace, which
+the edge cannot tell apart, so while the switch cannot be read
+`passed_enabled` falls to 0 without `passed_unknown` rising.
+`fastpathwatch edge` sums the three maps under `decide.by_name`, and
+`enabled_unknown` and `mix_dropped` under `decide.counts`.
 A row is per cloud and region: another region's row waits on `rollout.sh`
 rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves

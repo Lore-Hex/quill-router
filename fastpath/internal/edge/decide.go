@@ -387,6 +387,15 @@ type Decided struct {
 	// decision: without the policy's fastpath_edge_streams every stream
 	// still passes.
 	StreamStageD string
+	// FloatAt is where the first float is of a request passed as body.float
+	// (gwauth.Pass.FloatAt), "" for any other: the decide line's float_at.
+	// It changes no decision.
+	FloatAt string
+	// parsedLookupHash is the lookup hash the strict parse read, set even
+	// when a cohort reason passes the request before LookupHash is: the
+	// decide line's pass mix reads it (pendingMixOf), and nothing evicts by
+	// it, so the eviction LookupHash drives is unchanged.
+	parsedLookupHash string
 }
 
 // The async-v1 populations (Decided.AsyncPop).
@@ -463,7 +472,10 @@ func Decide(in DecideInputs) Decided {
 			out.AsyncPop = AsyncAffinity
 		}
 	}
+	// The parse's own (zero for a reason before the cohort's).
+	out.parsedLookupHash = r.APIKeyLookupHash
 	if p.Passed() {
+		out.FloatAt = p.FloatAt
 		return pass(p.Reason)
 	}
 	at := in.Request.At

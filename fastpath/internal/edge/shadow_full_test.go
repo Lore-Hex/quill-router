@@ -59,6 +59,14 @@ func (c *recordingCache) Lookup(lookupHash string, now time.Time) gwstate.Read {
 	return c.KeyCache.Lookup(lookupHash, now)
 }
 
+// Peek is the inner cache's (KeyPeeker), not held when it has none.
+func (c *recordingCache) Peek(lookupHash string) (string, bool) {
+	if inner, ok := c.KeyCache.(KeyPeeker); ok {
+		return inner.Peek(lookupHash)
+	}
+	return "", false
+}
+
 func (c *recordingCache) Counters() gwstate.Counters {
 	var n gwstate.Counters
 	if inner, ok := c.KeyCache.(cacheCounters); ok {

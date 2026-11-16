@@ -496,6 +496,11 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ctx = context.WithValue(ctx, decidePassedKey{}, passed)
+		// The pass mix is handed to the decide path's mix worker once the
+		// forward has returned (or broken off), never before it: a send that
+		// never waits, so the attribution's reads hold neither this
+		// goroutine nor the connection it serves.
+		defer e.decider.handOff(passed.mix)
 	}
 	out := r.Clone(ctx)
 	out.Body = io.NopCloser(bytes.NewReader(body))
