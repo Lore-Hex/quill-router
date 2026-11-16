@@ -179,6 +179,87 @@ def test_reviewed_maple_refresh_publishes_only_exact_text_workload(monkeypatch, 
     assert row["cached_input_token_price_per_m"] == 130_000
 
 
+EXPANDED_MODELS = [
+    ("glm-5-3-flash", "z-ai/glm-5.3-flash", "GLM-5.3 Flash", "1,048,576", "0.34", "0.08", "1.09"),
+    ("glm-5-3", "z-ai/glm-5.3", "GLM 5.3", "262,144", "2.61", "0.25", "9.66"),
+    ("kimi-k3-1-pro", "moonshotai/kimi-k3.1-pro", "Kimi K3.1 Pro", "262,144", "6.00", "0.60", "25.00"),
+    ("deepseek-v4-1-flash", "deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "1,048,576", "0.65", "0.13", "1.45"),
+    ("gpt-oss-120b", "openai/gpt-oss-120b", "OpenAI GPT-OSS 120B", "131,072", "0.23", None, "0.90"),
+    ("gemma4-31b", "google/gemma-4-31b-it", "Gemma 4 31B", "262,144", "0.60", None, "1.50"),
+    ("llama3-3-70b", "meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B", "131,072", "2.63", None, "4.13"),
+    ("gpt-oss-safeguard-120b", "openai/gpt-oss-safeguard-120b", "OpenAI GPT-OSS Safeguard 120B API only", "131,072", "0.23", None, "0.90"),
+    (maple.NATIVE_ID, maple.MODEL_ID, maple.DISPLAY_NAME, "1,048,576", "0.65", "0.13", "1.45"),
+]
+
+
+def expanded_pages():
+    prices = '<p>USD per 1 million tokens.</p><table><thead><tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr></thead><tbody>'
+    capabilities = '<table><thead><tr><th>Model</th><th>Context tokens</th><th>Thinking</th><th>Image input</th><th>Tool calls</th></tr></thead><tbody>'
+    for native, _, name, context, prompt, cached, output in EXPANDED_MODELS:
+        cache = "$" + cached if cached is not None else "\u2013Standard input price applies"
+        prices += f'<tr><th>{name}</th><td><s>$99</s>${prompt}</td><td>{cache}</td><td>${output}</td></tr>'
+        thinking = "No" if native == "llama3-3-70b" else "Yes"
+        image = "Yes" if native in {"glm-5-3-flash", "kimi-k3-1-pro", "deepseek-v4-1-flash", maple.NATIVE_ID, "gemma4-31b"} else "No"
+        tools = "No" if native == "gpt-oss-safeguard-120b" else "Yes"
+        capabilities += f'<tr><td>{name}<code>{native}</code></td><td>{context}</td><td>{thinking}</td><td>{image}</td><td>{tools}</td></tr>'
+    return {
+        maple.PRICING_URL: prices + "</tbody></table>",
+        maple.MODEL_DOCS_URL: capabilities + "</tbody></table><p>Embeddings: <code>nomic-embed-text</code></p>",
+    }
+
+
+def test_all_published_models_discovered_without_promoting_unqualified_routes(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    monkeypatch.setattr(maple, "fetch_html", expanded_pages().__getitem__)
+    result = maple.fetch()
+    assert len(result.prices) == 9
+    maple.write_provider_manifest(result)
+    rows = {row["id"]: row for row in json.loads(maple.MANIFEST_PATH.read_text())["models"]}
+    assert len(rows) == 10
+    assert {key for key, row in rows.items() if row["routable"]} == {maple.MODEL_ID}
+    for native, canonical, _, context, prompt, cached, output in EXPANDED_MODELS:
+        row = rows[canonical]
+        assert row["upstream_id"] == native
+        assert row["context_length"] == int(context.replace(",", ""))
+        assert row["input_token_price_per_m"] == int(Decimal(prompt) * 1_000_000)
+        assert row["cached_input_token_price_per_m"] == int(Decimal(cached or prompt) * 1_000_000)
+        assert row["output_token_price_per_m"] == int(Decimal(output) * 1_000_000)
+        if canonical != maple.MODEL_ID:
+            assert row["routable_reason"] == "attested-enclave-qualification-pending"
+    assert rows["moonshotai/kimi-k3.1-pro"]["input_modalities"] == ["text", "image"]
+    assert rows["moonshotai/kimi-k3.1-pro"]["supports_reasoning"] is True
+    assert rows["openai/gpt-oss-safeguard-120b"]["supports_tools"] is False
+    assert rows["meta-llama/llama-3.3-70b-instruct"]["supports_reasoning"] is False
+    embedding = rows["maple/nomic-embed-text"]
+    assert embedding["model_type"] == "embedding" and embedding["endpoints"] == ["embeddings"]
+    assert "input_token_price_per_m" not in embedding
+    assert embedding["routable_reason"] == "price-and-encrypted-embedding-qualification-pending"
+
+
+@pytest.mark.parametrize("before,after", [
+    ("kimi-k3-1-pro", "kimi-k3-2-pro"),
+    ("kimi-k3-1-pro", "auto:powerful"),
+    ("<td>Yes</td>", "<td>Maybe</td>"),
+    ("262,144", "2,097,152"),
+])
+def test_new_identity_or_ambiguous_capabilities_fail_closed(before, after):
+    html = expanded_pages()[maple.MODEL_DOCS_URL]
+    with pytest.raises(RuntimeError):
+        maple.parse_catalog(html.replace(before, after, 1))
+
+
+def test_expanded_discovery_does_not_reuse_state_after_a_price_failure(monkeypatch):
+    pages = expanded_pages()
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
+    maple.fetch()
+    pages[maple.PRICING_URL] = pages[maple.PRICING_URL].replace("Kimi K3.1 Pro", "Kimi K3")
+    with pytest.raises(RuntimeError):
+        maple.fetch()
+    assert maple._DISCOVERED == {}
+
+
 @pytest.mark.parametrize("uncached,cached,output", [(36, 0, 4), (81, 12_288, 19), (0, 1_000_000, 100_000)])
 def test_published_maple_route_uses_standard_retail_markup_without_request_minimum(uncached, cached, output):
     from trusted_router.authorize_candidates import endpoint_cost_microdollars

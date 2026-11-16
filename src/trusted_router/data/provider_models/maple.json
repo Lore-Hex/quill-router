@@ -24,11 +24,234 @@
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 1450000,
       "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "DeepSeek V4.1 Flash",
+      "title": "deepseek-v4-1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-v4-1-flash",
+      "context_length": 1048576,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 650000,
+      "output_token_price_per_m": 1450000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "Gemma 4 31B",
+      "title": "gemma4-31b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "gemma4-31b",
+      "context_length": 262144,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 600000
+    },
+    {
+      "display_name": "Nomic Embed Text (Maple)",
+      "title": "nomic-embed-text",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "maple/nomic-embed-text",
+      "upstream_id": "nomic-embed-text",
+      "routable": false,
+      "routable_reason": "price-and-encrypted-embedding-qualification-pending"
+    },
+    {
+      "display_name": "Llama 3.3 70B",
+      "title": "llama3-3-70b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "llama3-3-70b",
+      "context_length": 131072,
+      "supports_tools": true,
+      "supports_reasoning": false,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 2630000,
+      "output_token_price_per_m": 4130000,
+      "cached_input_token_price_per_m": 2630000
+    },
+    {
+      "display_name": "Kimi K3.1 Pro",
+      "title": "kimi-k3-1-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "kimi-k3-1-pro",
+      "context_length": 262144,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 6000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 600000
+    },
+    {
+      "display_name": "OpenAI GPT-OSS 120B",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "context_length": 131072,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 230000,
+      "output_token_price_per_m": 900000,
+      "cached_input_token_price_per_m": 230000
+    },
+    {
+      "display_name": "OpenAI GPT-OSS Safeguard 120B API only",
+      "title": "gpt-oss-safeguard-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-safeguard-120b",
+      "upstream_id": "gpt-oss-safeguard-120b",
+      "context_length": 131072,
+      "supports_tools": false,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 230000,
+      "output_token_price_per_m": 900000,
+      "cached_input_token_price_per_m": 230000
+    },
+    {
+      "display_name": "GLM 5.3",
+      "title": "glm-5-3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "glm-5-3",
+      "context_length": 262144,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 2610000,
+      "output_token_price_per_m": 9660000,
+      "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "GLM-5.3 Flash",
+      "title": "glm-5-3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "glm-5-3-flash",
+      "context_length": 1048576,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 340000,
+      "output_token_price_per_m": 1090000,
+      "cached_input_token_price_per_m": 80000
     }
   ],
   "source": "https://maple.ai/docs/proxy/models",
   "pricing_source": "https://maple.ai/pricing",
-  "generated_at": "2026-11-15T23:11:44Z",
+  "generated_at": "2026-11-16T00:24:34Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 1
+  "model_count": 10
 }

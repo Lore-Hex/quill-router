@@ -17,6 +17,12 @@ def test_web_search_docs_publish_contract_and_privacy_boundary(client: TestClien
     assert "openrouter:web_search" in response.text
     assert '"max_tool_calls": 1' in response.text
     assert "not implemented and return explicit errors" in response.text
+    assert '"engine": "context"' in response.text
+    assert "$0.006 per provider credit" in response.text
+    assert "not the provider's actual dollar cost" in response.text
+    assert "unused reservation is released" in response.text
+    assert "conservative_credit_tariff" in response.text
+    assert "retention and use for model training" in response.text
 
 
 def test_web_search_docs_are_discoverable(client: TestClient) -> None:
@@ -37,3 +43,15 @@ def test_exa_is_disclosed_as_a_system_subprocessor(client: TestClient) -> None:
     assert "model-generated search query" in exa["data_access"]
     assert "blocked on ZDR, E2E/confidential, and EU" in exa["data_access"]
     assert exa["policy_url"] == "https://exa.ai/privacy"
+
+
+def test_context_is_disclosed_without_claiming_zdr(client: TestClient) -> None:
+    response = client.get("/legal/subprocessors.json")
+    assert response.status_code == 200
+    context = next(item for item in response.json()["system_subprocessors"] if item["name"] == "context.dev")
+    assert "explicitly select" in context["purpose"]
+    assert "model-generated search query" in context["data_access"]
+    assert "retention and use for model training" in context["data_access"]
+    assert "does not claim ZDR" in context["data_access"]
+    assert "blocked on ZDR, E2E/confidential, and EU" in context["data_access"]
+    assert context["policy_url"] == "https://www.context.dev/privacy"

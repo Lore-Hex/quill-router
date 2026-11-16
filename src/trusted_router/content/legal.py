@@ -62,6 +62,12 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
         "policy_url": "https://exa.ai/privacy",
     },
     {
+        "name": "context.dev",
+        "purpose": "Optional hosted web search for Chat Completions and Responses requests that explicitly select the context engine.",
+        "data_access": "A model-generated search query, requested domain and country filters, and search metadata. Queries are sent from inside the attested gateway and can reflect prompt content. The standard provider policy permits retention and use for model training; this integration does not claim ZDR. Web search is blocked on ZDR, E2E/confidential, and EU privacy routes until a compatible contractual posture is approved.",
+        "policy_url": "https://www.context.dev/privacy",
+    },
+    {
         "name": "GitHub",
         "purpose": "Source control, CI, release workflows, and public open-source repositories.",
         "data_access": "Source code, CI metadata, and release artifacts. No production prompt/output content.",
