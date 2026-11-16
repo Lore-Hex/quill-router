@@ -1177,12 +1177,19 @@ PROVIDERS: dict[str, Provider] = {
         name="Cloudflare Workers AI",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Workers AI documents no input/output retention after ordinary "
-            "stateless inference and no model training. Stateful features, "
-            "customer-enabled logging/caching, and safety, security or legal "
-            "exceptions may retain content. No exception-free commitment is "
-            "verified for this account; these routes remain outside strict ZDR."
+            "Marked ZDR via TrustedRouter's arrangement: TrustedRouter has "
+            "enabled the zero-data-retention setting on the Cloudflare account "
+            "these routes use. Cloudflare documents that Workers AI retains no "
+            "inputs or outputs after ordinary stateless inference and does not "
+            "train on customer content; TrustedRouter uses no stateful features "
+            "and sends AI Gateway's no-log, no-payload-log and skip-cache "
+            "headers on every request. Only Workers AI-hosted models route here; "
+            "third-party passthrough stays disabled. Cloudflare's documented "
+            "legal, safety and security exceptions still apply. Prepaid only "
+            "(no BYOK), so every request uses TrustedRouter's account."
         ),
         provider_policy_url="https://developers.cloudflare.com/workers-ai/platform/data-usage/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
