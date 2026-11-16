@@ -52,6 +52,20 @@ class StoreUnavailable(StoreError):
     """
 
 
+class CreditRebalanceBusy(StoreUnavailable):
+    """The workspace's credit covers the hold but sits on several shards, and
+    the per-process rebalance cooldown is held by its other requests.
+
+    A designed, retryable answer of the typed authorize, not a storage
+    failure: the backend is healthy and the funds exist, so a 402 would be
+    wrong and the caller is asked to retry. A subclass, so every handler of
+    `StoreUnavailable` answers it as before (the same 503, message and
+    Retry-After). The type exists so the authorize route can write the one
+    line that tells this 503 apart from a storage outage
+    (billing.credit_rebalance_busy, routes/internal/gateway.py).
+    """
+
+
 class LeasedOutcomeUnknown(StoreError):
     """A leased authorization's insert answered with a transient error and
     no read-back proved the row landed: it may have, or may still land. The
