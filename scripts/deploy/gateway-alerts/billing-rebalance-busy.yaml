@@ -19,6 +19,9 @@ documentation:
     and the ten-minute bound pages there. Two or fewer in ten minutes are
     requests made to wait and then answered on a later attempt; the hourly
     bound limits how long that can go on, at more than five in an hour.
+    When the hourly bound is what was crossed, the incident stays open
+    until the hour's count is back to five or fewer, which can be up to an
+    hour after the last line, and cannot be closed by hand before that.
     Either means requests of one or more workspaces cannot consolidate
     their credit, the convoy of
     docs/incidents/2026-09-25-credit-rebalance-convoy.md. "TR Gateway:

@@ -956,8 +956,9 @@ def test_the_rebalance_busy_policy_has_a_fast_and_a_slow_bound() -> None:
     assert policy["enabled"] is True
     assert policy["combiner"] == "OR"
     # As the directory's other metric policies: one incident, no
-    # renotification, closed after thirty quiet minutes. The channel is the
-    # script's.
+    # renotification. A PromQL policy does not follow autoClose: Cloud
+    # Monitoring closes it about four and a half minutes after its condition
+    # was last met. The channel is the script's.
     pressure = yaml.safe_load((DEPLOY / "gateway-alerts" / "billing-pressure.yaml").read_text(encoding="utf-8"))
     assert policy["alertStrategy"] == pressure["alertStrategy"] == {
         "autoClose": "1800s", "notificationPrompts": ["OPENED", "CLOSED"],

@@ -336,8 +336,9 @@ request at most three passes, and three more if a key-limit repair sends it
 round again. A pass whose snapshot finds a funded shard retries on it. A
 pass that needs a rebalance and finds the cooldown held sleeps 0.25 seconds
 and goes round again when it is the first or second pass, and answers the
-503 at once when it is the third. So a request waits twice at most, half a
-second in all, and less when its earlier passes went to funded-shard
+503 at once when it is the third. So one entry into the recovery waits
+twice at most, half a second in all (a request sent round again after a
+key-limit repair can enter it twice), and less when its earlier passes went to funded-shard
 retries or to the one forced reload of the shard count: it can meet the
 cooldown for the first time on its last pass and be answered 503 without
 waiting. The request of 2026-11-16 took 467 ms in all with `attempts=3`,
