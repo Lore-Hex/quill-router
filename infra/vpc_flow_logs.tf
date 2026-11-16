@@ -43,8 +43,9 @@
 # argument the subnet does not already have can force the same replacement,
 # and scripts/deploy/_private_run_ingress.sh owns private_ip_google_access.
 # To stop managing all of them, use a `removed` block (destroy = false). A
-# `removed` block cannot name one region of the map: to drop one, an operator
-# runs `terraform state rm` for that instance and then deletes its map entry.
+# `removed` block cannot name one region of the map: to stop managing one, an
+# operator runs `terraform state rm` for that instance and then deletes its
+# map entry.
 # Deleting an entry alone plans a destroy, which prevent_destroy fails.
 # deletion_policy ABANDON keeps a mistaken removal from deleting the subnet
 # itself, once an apply has written it to state: if the first apply fails,
