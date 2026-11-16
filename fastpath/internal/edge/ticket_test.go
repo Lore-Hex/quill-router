@@ -307,6 +307,51 @@ func TestEdgeTicketLateCancels(t *testing.T) {
 	}
 }
 
+// TestATicketTheAnswerCannotCarryIsNotSpliced: Python's sign-only route
+// returns an eligible ticket for a request whose body sent no nonce (it
+// signs none such; the edge does not rely on that). The answer goes out as
+// composed, byte for byte the snapshot answer with no ticket member, and
+// the ticket is counted unspliced, never spliced. The same ticket for a
+// body with a nonce is spliced.
+func TestATicketTheAnswerCannotCarryIsNotSpliced(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	for _, v := range []struct {
+		name    string
+		spliced bool
+	}{
+		{"answer:async.B:route_type:responses", false},
+		{"answer:async.B:invocation_nonce", true},
+	} {
+		base := asyncCaseNamed(t, v.name)
+		var body map[string]any
+		if err := json.Unmarshal(base.body(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if _, sent := body["invocation_nonce"]; sent != v.spliced {
+			t.Fatalf("%s: the golden's nonce", v.name)
+		}
+		c := enableTickets(t, f, base)
+		eligible := strings.Replace(ticketAnswerOf(t, string(ticketed(t, base.Expect.Response))),
+			`"async_eligible":false`, `"async_eligible":true`, 1)
+		h := ticketEdge(t, f, c, ticketTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != ticketPath {
+				return ticketResponse(418, `{"python":true}`), nil
+			}
+			return ticketResponse(200, eligible), nil
+		}))
+		rec := h.send(t, c)
+		counts := h.edge.DecideCounts().Tickets
+		ticketed := strings.Contains(rec.Body.String(), "settlement_ticket")
+		if rec.Code != 200 || ticketed != v.spliced || counts["asked"] != 1 ||
+			(counts["spliced"] == 1) != v.spliced || (counts["unspliced"] == 1) == v.spliced {
+			t.Fatalf("%s: %d ticketed %v counts %v", v.name, rec.Code, ticketed, counts)
+		}
+		if !v.spliced && withGoldenTiming(rec.Body.Bytes()) != base.Expect.Response {
+			t.Fatalf("%s: the answer without the ticket is not the snapshot answer: %s", v.name, rec.Body.String())
+		}
+	}
+}
+
 func TestEdgeTicketDiscardedWithoutDurability(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
 	base := asyncCaseNamed(t, "answer:async.B:invocation_nonce")
