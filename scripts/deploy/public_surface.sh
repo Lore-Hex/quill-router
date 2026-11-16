@@ -617,6 +617,13 @@ if [ "$STAGE" = "routed" ]; then
       echo "ERROR: cannot capture the serving public revision in ${target}" >&2
       exit 1
     fi
+    active_public_source="$(revision_env "$active_json" TR_PUBLIC_SOURCE_COMMIT "")"
+    if [ -n "$active_public_source" ] && [ "$active_public_source" != "$PUBLIC_SOURCE" ]; then
+      # This lives in the script, not just its workflow: manual companion
+      # deploys must not overwrite docs that intentionally lead the API image.
+      python3 -m scripts.deploy.public_docs guard-source \
+        --source "$active_public_source" --target "$PUBLIC_SOURCE"
+    fi
     if ! active_revision="$(python3 -c '
 import json
 import sys

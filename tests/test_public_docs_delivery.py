@@ -47,6 +47,9 @@ def test_docs_and_tests_use_docs_lane(repo):
     assert docs.proposed_docs_only()
     assert docs.docs_delta(head, head)
     assert not docs.docs_delta(head, base)
+    docs.guard_source(base, head)
+    with pytest.raises(Refused, match="downgrade"):
+        docs.guard_source(head, base)
 
 
 @pytest.mark.parametrize("path", ["src/app.py", "Dockerfile", "uv.lock", "pyproject.toml",
@@ -241,10 +244,11 @@ def test_postflight_requires_unchanged_api_and_exact_public_image(monkeypatch, d
 
 
 def test_newer_public_source_blocks_full_companion(monkeypatch):
-    monkeypatch.setattr(docs, "serving", lambda region, service: {"commit": A if service == docs.SERVICES[0] else B})
+    monkeypatch.setattr(docs, "commit", lambda value: value)
     monkeypatch.setattr(docs, "git", lambda *_: A)
     with pytest.raises(Refused, match="downgrade"):
-        docs.guard_companion()
+        docs.guard_source(B, A)
+    docs.guard_source(A, B)
 
 
 def serving_documents(service=docs.SERVICES[1]):
@@ -348,4 +352,4 @@ def test_workflow_retains_ci_immutable_build_and_exclusive_ordering():
     assert any(s.get("run") == "python3 -m scripts.deploy.public_docs publish" for s in steps)
     assert steps[-1]["with"]["name"] == "public-release-${{ github.run_attempt }}"
     full_steps = full["jobs"]["public-surface-companion"]["steps"]
-    assert any(s.get("run") == "python3 -m scripts.deploy.public_docs guard-companion" for s in full_steps)
+    assert full_steps[0]["with"]["fetch-depth"] == 0

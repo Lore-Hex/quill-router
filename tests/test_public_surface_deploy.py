@@ -389,6 +389,19 @@ def test_unqualified_docs_input_cannot_mutate_public_revisions(tmp_path: Path) -
     assert not _deploy_calls(run)
 
 
+def test_manual_routed_deploy_checks_public_source_before_any_mutation(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "manual-docs-floor")
+    isolated.write_script("scripts/deploy/public_docs.py",
+                          "import sys\n"
+                          f"assert sys.argv[1:] == ['guard-source', '--source', {'b' * 40!r}, '--target', 'cb16dcc']\n"
+                          "raise SystemExit('refused newer public source')\n")
+    run = isolated.run(SCRIPT, args=("routed",), extra_env={"HARNESS_PUBLIC_SOURCE_COMMIT": "b" * 40})
+    assert run.returncode != 0
+    assert "refused newer public source" in run.stderr
+    assert not _deploy_calls(run)
+    assert not _traffic_calls(run)
+
+
 def test_routed_accepts_deliberate_companion_cloud_state(tmp_path: Path) -> None:
     isolated = DeployScriptHarness(tmp_path / "companion-to-routed-public")
 

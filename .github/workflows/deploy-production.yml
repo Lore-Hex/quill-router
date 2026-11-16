@@ -1387,10 +1387,6 @@ jobs:
             echo "public backend is not live; deploying smokeable companion only"
           fi
 
-      - name: Refuse to overwrite a newer independently published website
-        if: steps.public_stage.outputs.stage == 'routed'
-        run: python3 -m scripts.deploy.public_docs guard-companion
-
       - name: Deploy isolated T1 public service
         run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
 

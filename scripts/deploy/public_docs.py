@@ -146,13 +146,11 @@ def candidate() -> None:
     print(release.commit, release.image)
 
 
-def guard_companion() -> None:
-    """Even a failed receipt upload cannot let a later full train undo docs."""
-    target = serving(REGIONS[0], SERVICES[0])["commit"]
-    for region in REGIONS:
-        current = serving(region, SERVICES[1])["commit"]
-        require(git("merge-base", current, target) == current,
-                "full rollout would downgrade or diverge from the public website")
+def guard_source(source: str, target: str) -> None:
+    """Even a manual companion or a failed receipt upload cannot undo docs."""
+    source, target = commit(source), commit(target)
+    require(git("merge-base", source, target) == source,
+            "rollout would downgrade or diverge from the public website")
 
 
 def verify(before: list[dict[str, str]], release: Release) -> list[dict[str, str]]:
@@ -224,14 +222,16 @@ def publish() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("scope", "publish", "candidate", "guard-companion"))
+    parser.add_argument("command", choices=("scope", "publish", "candidate", "guard-source"))
+    parser.add_argument("--source", default="")
+    parser.add_argument("--target", default="")
     args = parser.parse_args()
     if args.command == "scope":
         print(str(proposed_docs_only()).lower())
     elif args.command == "candidate":
         candidate()
-    elif args.command == "guard-companion":
-        guard_companion()
+    elif args.command == "guard-source":
+        guard_source(args.source, args.target)
     else:
         publish()
 
