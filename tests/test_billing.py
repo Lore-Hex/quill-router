@@ -1324,3 +1324,114 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
     assert "2026-05-23" in details.text
     # Empty-state copy NOT shown when payments exist
     assert "No payments yet" not in details.text
+
+
+class _FakePaymentMethod:
+    def __init__(self, method_type: str) -> None:
+        self.type = method_type
+
+
+def _checkout_pm_event(workspace_id: str, payment_method: str) -> dict[str, Any]:
+    return {
+        "id": f"evt_checkout_pm_{payment_method}",
+        "type": "payment_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_checkout_pm",
+                "payment_method": payment_method,
+                "metadata": {"workspace_id": workspace_id, "payment_method": "card"},
+            }
+        },
+    }
+
+
+def _stripe_keyed_client(test_settings: Settings) -> TestClient:
+    settings = test_settings.model_copy(
+        update={"stripe_secret_key": "sk_test_pm_type", "stripe_webhook_secret": None}  # noqa: S106
+    )
+    return TestClient(create_app(settings, init_observability=False))
+
+
+@pytest.mark.parametrize("method_type", ["us_bank_account", "cashapp", "amazon_pay", "klarna"])
+def test_checkout_paid_by_non_card_method_is_not_saved_for_auto_refill(
+    monkeypatch, user_headers: dict[str, str], test_settings: Settings, method_type: str
+) -> None:
+    # An "auto" Checkout paid by bank debit used to save the bank account as
+    # the auto-refill method, so a later auto-refill would start an ACH debit.
+    retrieved: list[str] = []
+
+    def fake_retrieve(payment_method_id: str, **kwargs: Any) -> _FakePaymentMethod:
+        assert kwargs.get("api_key") == "sk_test_pm_type"
+        retrieved.append(payment_method_id)
+        return _FakePaymentMethod(method_type)
+
+    monkeypatch.setattr("stripe.PaymentMethod.retrieve", fake_retrieve)
+    client = _stripe_keyed_client(test_settings)
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+
+    resp = client.post(
+        "/v1/internal/stripe/webhook", json=_checkout_pm_event(workspace_id, "pm_bank_debit")
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["payment_method_saved"] is False
+    assert data["payment_method_type"] == method_type
+    assert retrieved == ["pm_bank_debit"]
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.stripe_payment_method_id is None
+
+
+@pytest.mark.parametrize("method_type", ["card", "link"])
+def test_checkout_paid_by_card_or_link_is_saved_for_auto_refill(
+    monkeypatch, user_headers: dict[str, str], test_settings: Settings, method_type: str
+) -> None:
+    monkeypatch.setattr(
+        "stripe.PaymentMethod.retrieve",
+        lambda payment_method_id, **_kwargs: _FakePaymentMethod(method_type),
+    )
+    client = _stripe_keyed_client(test_settings)
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+
+    resp = client.post(
+        "/v1/internal/stripe/webhook", json=_checkout_pm_event(workspace_id, "pm_card_ok")
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["payment_method_saved"] is True
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.stripe_customer_id == "cus_checkout_pm"
+    assert account.stripe_payment_method_id == "pm_card_ok"
+
+
+def test_payment_method_lookup_failure_is_retried_not_saved(
+    monkeypatch, user_headers: dict[str, str], test_settings: Settings
+) -> None:
+    import stripe
+
+    def boom(payment_method_id: str, **_kwargs: Any) -> _FakePaymentMethod:
+        raise stripe.APIConnectionError("stripe unreachable")
+
+    monkeypatch.setattr("stripe.PaymentMethod.retrieve", boom)
+    client = TestClient(
+        create_app(
+            test_settings.model_copy(
+                update={"stripe_secret_key": "sk_test_pm_type", "stripe_webhook_secret": None}  # noqa: S106
+            ),
+            init_observability=False,
+        ),
+        raise_server_exceptions=False,
+    )
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+
+    resp = client.post(
+        "/v1/internal/stripe/webhook", json=_checkout_pm_event(workspace_id, "pm_unknown")
+    )
+
+    # A 5xx makes Stripe redeliver; a method of unknown type is never saved.
+    assert resp.status_code >= 500
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.stripe_payment_method_id is None

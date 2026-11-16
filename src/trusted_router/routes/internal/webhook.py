@@ -358,6 +358,21 @@ def _handle_stripe_event(
             payment_method = obj.get("payment_method")
             customer_id = obj.get("customer")
             if isinstance(payment_method, str) and isinstance(customer_id, str):
+                method_type = _auto_refill_ineligible_method_type(payment_method, settings)
+                if method_type is not None:
+                    log.info(
+                        "stripe_webhook.payment_method_not_saved workspace=%s type=%s",
+                        workspace_id,
+                        method_type,
+                    )
+                    return {
+                        "data": {
+                            "payment_method_saved": False,
+                            "payment_method_type": method_type,
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": 0,
+                        }
+                    }
                 STORE.set_stripe_customer(
                     workspace_id,
                     customer_id=customer_id,
@@ -429,6 +444,31 @@ def _handle_stripe_event(
             }
 
     return {"data": {"ignored": True, "event_id": event_id}}
+
+
+# Auto-refill charges the saved method off-session and books the result like
+# an immediate card payment. Dynamic ("auto") Checkout can also be paid by
+# bank debit, Cash App or Amazon Pay, and Checkout's setup_future_usage saves
+# those too. Saving one would let a later auto-refill start an ACH debit (or a
+# wallet charge) that the customer never chose for automatic top-ups.
+AUTO_REFILL_PAYMENT_METHOD_TYPES = frozenset({"card", "link"})
+
+
+def _auto_refill_ineligible_method_type(payment_method_id: str, settings: Settings) -> str | None:
+    """Return the method's type when it must not back auto-refill, else None.
+
+    Without a Stripe secret key (local and test) there is no Stripe account to
+    charge and the event is synthetic, so the method is accepted unverified.
+    A Stripe lookup failure propagates: the webhook answers 5xx and Stripe
+    redelivers, rather than saving a method of unknown type.
+    """
+    if not settings.stripe_secret_key:
+        return None
+    method = stripe.PaymentMethod.retrieve(payment_method_id, api_key=settings.stripe_secret_key)
+    method_type = str(getattr(method, "type", "") or "")
+    if method_type in AUTO_REFILL_PAYMENT_METHOD_TYPES:
+        return None
+    return method_type or "unknown"
 
 
 def _object_id(value: Any) -> str:
