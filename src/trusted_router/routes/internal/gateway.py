@@ -777,7 +777,9 @@ def _forward_leased_heartbeat(
     """The owner's answer to a leased heartbeat today's transaction accepted:
     its deadline in epoch milliseconds, else today's rejection, else 503 with
     Retry-After as the heartbeat kill switch answers, which the enclave
-    retries within its budget and then stops the stream."""
+    retries within its budget and then stops the stream. A front door's
+    `retry` is sent once more within the same front door budget before it
+    is a 503 (FrontDoorClient.heartbeat)."""
     from trusted_router.services import fastpath_heartbeat
 
     forwarded = fastpath_heartbeat.forward(

@@ -152,6 +152,7 @@ def _use(monkeypatch: pytest.MonkeyPatch, client: fd.FrontDoorClient | None) -> 
 
 
 ACCEPT = {"Status": "accepted", "Deadline": DEADLINE}
+RETRY = {"Status": "retry"}
 
 # The basis a hold's first heartbeat carries, as bytes (design section 4.5).
 EXPECTED_BASIS = (
@@ -239,16 +240,199 @@ def test_a_later_heartbeat_carries_no_basis_and_its_own_hash(monkeypatch: pytest
 
 def test_a_replay_is_forwarded_again_with_the_same_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     """The owner may not have the first attempt: a replay the transaction
-    answers read-only still goes to the front door, byte for byte."""
+    answers read-only still goes to the front door, byte for byte. The first
+    request's send and its resend are both answered retry here, so it is a
+    503 and the enclave's replay is what lands."""
     _db, private, boot = _store(leased=True)
-    door = _Door({"Status": "retry"}, ACCEPT)
+    door = _Door(RETRY, RETRY, ACCEPT)
     _use(monkeypatch, _client(door))
     raw = _raw()
     with pytest.raises(HTTPException) as first:
         _beat(private, boot, raw)
     assert first.value.status_code == 503
     assert _beat(private, boot, raw)["expires_at_ms"] == DEADLINE_MS
+    assert len(door.seen) == 3 and door.seen[0] == door.seen[1] == door.seen[2]
+
+
+# -- a front door's retry, resent once within the budget ---------------------
+#
+# 2026-11-16 (Sentry QUILL-ROUTER-EE): an owner whose Pub/Sub acknowledgements
+# ran past the front door's 500 ms owner wait answered retry, and the route
+# answered 503 though the record was acknowledged moments later. The client
+# now sends a heartbeat answered retry once more, the same bytes, within the
+# same budget; the owner answers it as a replay of the first.
+
+
+def test_a_retry_then_an_accepted_resend_answers_the_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The positive control: retry once, then accepted. Without the resend
+    this request is a 503 (the test above, before this change)."""
+    db, private, boot = _store(leased=True)
+    door = _Door(RETRY, ACCEPT)
+    _use(monkeypatch, _client(door))
+    raw = _raw()
+
+    answer = _beat(private, boot, raw)
+
+    assert answer == {"accepted": True, "seq": 1, "expires_at_ms": DEADLINE_MS, "cap_micro": 300, "running_micro": 120}
+    # The resend is the first send byte for byte (the owner's replay key is
+    # its seq and hash), and the row's transaction ran once.
     assert len(door.seen) == 2 and door.seen[0] == door.seen[1]
+    assert db.gateway_authorizations[AUTH_ID]["heartbeat_seq"] == 1
+
+
+def test_a_front_door_that_always_answers_retry_is_503_after_one_resend_within_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The negative control: every send answered retry, as an owner wait
+    would (0.3 s each): two sends, never a third, then today's 503."""
+    _db, private, boot = _store(leased=True)
+    door = _Door(RETRY, delay=0.3)
+    _use(monkeypatch, _client(door, timeout=1.5))
+    began = time.monotonic()
+    with pytest.raises(HTTPException) as raised:
+        _beat(private, boot, _raw())
+    elapsed = time.monotonic() - began
+    assert raised.value.status_code == 503 and raised.value.headers == {"Retry-After": "1"}
+    assert raised.value.detail["error"]["message"] == "Stage D heartbeat owner unavailable; retry"
+    assert len(door.seen) == 2 and door.seen[0] == door.seen[1]
+    assert elapsed < 1.5
+
+
+def test_a_resend_the_budget_cuts_short_is_503_by_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first retry answers at 0.6 s of a 1 s budget; the resend's answer
+    would come at 1.2 s. The caller waits no longer than the budget."""
+    _db, private, boot = _store(leased=True)
+    door = _Door(RETRY, ACCEPT, delay=0.6)
+    _use(monkeypatch, _client(door, timeout=1.0))
+    began = time.monotonic()
+    with pytest.raises(HTTPException) as raised:
+        _beat(private, boot, _raw())
+    elapsed = time.monotonic() - began
+    assert raised.value.status_code == 503
+    assert len(door.seen) == 2
+    assert elapsed < 1.0 + 0.15
+
+
+def test_a_resend_answered_with_a_refusal_is_that_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    _db, private, boot = _store(leased=True)
+    _use(monkeypatch, _client(_Door(RETRY, {"Status": "stale"})))
+    with pytest.raises(HTTPException) as raised:
+        _beat(private, boot, _raw())
+    assert raised.value.status_code == 409
+    assert raised.value.detail == _json("rejection_stale_seq.json")
+
+
+@pytest.mark.parametrize("status", ["accepted", "stale", "decided", "deadline_passed", "rejected", "invalid", "busy"])
+def test_only_retry_is_resent(status: str) -> None:
+    answer = ACCEPT if status == "accepted" else {"Status": status}
+    door = _Door(answer, ACCEPT)
+    got = _client(door).heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert got.status == status and not got.resent
+    assert len(door.seen) == 1
+
+
+def test_a_quick_retry_is_resent_only_after_the_resend_pause() -> None:
+    """A lease whose publishes are failing refuses a new heartbeat at once
+    and resumes them after a backoff: the resend waits until
+    HEARTBEAT_RESEND_AFTER_SECONDS after the first send, not a moment
+    longer, and within the budget."""
+    clock = [100.0]
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock[0] += seconds
+
+    door = _Door(RETRY, ACCEPT)
+    client = fd.FrontDoorClient(
+        lambda _budget: (DOOR,), timeout_seconds=1.5, clock=lambda: clock[0], transport=door.transport(), sleep=sleep,
+    )
+    got = client.heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert got.status == "accepted" and got.resent
+    assert slept == [pytest.approx(fd.HEARTBEAT_RESEND_AFTER_SECONDS)]
+    assert len(door.seen) == 2
+
+
+def test_a_slow_retry_is_resent_at_once() -> None:
+    """A retry that took the front door's owner wait is resent with no pause."""
+    clock = [0.0]
+    slept: list[float] = []
+    door = _Door(RETRY, ACCEPT)
+    inner = door.transport()
+
+    def owner_wait(request: httpx.Request) -> httpx.Response:
+        clock[0] += 0.5
+        return inner.handle_request(request)
+
+    client = fd.FrontDoorClient(
+        lambda _budget: (DOOR,), timeout_seconds=1.5, clock=lambda: clock[0],
+        transport=httpx.MockTransport(owner_wait), sleep=slept.append,
+    )
+    got = client.heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert got.status == "accepted" and got.resent
+    assert slept == []
+
+
+def test_no_resend_with_less_than_the_floor_of_the_budget_left() -> None:
+    clock = [0.0]
+    door = _Door(RETRY, ACCEPT)
+    inner = door.transport()
+
+    def late(request: httpx.Request) -> httpx.Response:
+        clock[0] = 1.5 - fd.HEARTBEAT_RESEND_FLOOR_SECONDS / 2
+        return inner.handle_request(request)
+
+    client = fd.FrontDoorClient(
+        lambda _budget: (DOOR,), timeout_seconds=1.5, clock=lambda: clock[0], transport=httpx.MockTransport(late),
+        sleep=lambda _s: pytest.fail("slept with no resend to send"),
+    )
+    got = client.heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert got == fd.HeartbeatAnswer(status="retry", deadline=None, resent=False)
+    assert len(door.seen) == 1
+
+
+def test_the_resend_goes_to_the_next_front_door() -> None:
+    """A front door that could not reach the owner is not the only way to
+    it: the resend starts at the next serving front door in turn."""
+    seen: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        address = request.url.netloc.decode()
+        seen.append(address)
+        return httpx.Response(200, json=RETRY if len(seen) == 1 else ACCEPT)
+
+    client = fd.FrontDoorClient(
+        lambda _budget: ("10.0.0.1:8080", "10.0.0.2:8080"), timeout_seconds=1.5,
+        transport=httpx.MockTransport(handle), sleep=lambda _s: None,
+    )
+    got = client.heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert got.status == "accepted" and got.resent
+    assert len(seen) == 2 and seen[0] != seen[1]
+
+
+def test_an_unanswered_resend_raises_as_any_unanswered_heartbeat() -> None:
+    calls = [0]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls[0] += 1
+        if calls[0] == 1:
+            return httpx.Response(200, json=RETRY)
+        raise httpx.ConnectError("down", request=request)
+
+    client = fd.FrontDoorClient(
+        lambda _budget: (DOOR,), timeout_seconds=1.5, transport=httpx.MockTransport(handle), sleep=lambda _s: None,
+    )
+    with pytest.raises(fd.FrontDoorUnavailable):
+        client.heartbeat(envelope="e", seq=2, digest=b"\x00" * 32, usage=1, running=1, basis=None)
+    assert calls[0] == 2
+
+
+def test_a_resend_is_logged_with_its_answer(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    _db, private, boot = _store(leased=True)
+    _use(monkeypatch, _client(_Door(RETRY, ACCEPT)))
+    with caplog.at_level("WARNING", logger="trusted_router.fastpath"):
+        _beat(private, boot, _raw())
+    assert f"fastpath heartbeat resent authorization_id={AUTH_ID} seq=1 status=accepted" in caplog.text
 
 
 @pytest.mark.parametrize(
