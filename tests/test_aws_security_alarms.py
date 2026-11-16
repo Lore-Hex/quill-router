@@ -313,7 +313,8 @@ def test_signer_patterns_fit_cloudwatch_and_alarm_as_intended() -> None:
         'comparison_operator = "GreaterThanOrEqualToThreshold"',
         "alarm_actions       = [aws_sns_topic.tr_security_alarms.arn]",
     ):
-        assert line in use
+        assert line in use, line
+    assert _setting(use, "period") == "60" and _setting(use, "threshold") == "1"
     assert "Do not mute" not in use
     burst = _block("aws_cloudwatch_metric_alarm", "enclave_bundle_release_sign_burst")
     for line in (
@@ -323,10 +324,18 @@ def test_signer_patterns_fit_cloudwatch_and_alarm_as_intended() -> None:
         'comparison_operator = "GreaterThanThreshold"',
         "alarm_actions       = [aws_sns_topic.tr_security_alarms.arn]",
     ):
-        assert line in burst
+        assert line in burst, line
+    assert _setting(burst, "period") == "3600" and _setting(burst, "threshold") == "4"
     imports = IMPORTS.read_text(encoding="utf-8")
     assert 'id = "/aws/cloudtrail/quill:quill-enclave-bundle-signer-use"' in imports
     assert 'id = "TR-EnclaveBundleSignerUse"' in imports
+
+
+def _setting(block: str, name: str) -> str:
+    """One top-level argument's exact value, so threshold = 40 is not threshold = 4."""
+    found = re.findall(rf"(?m)^\s*{name}\s*=\s*(\S+)\s*$", block)
+    assert len(found) == 1, (name, found)
+    return found[0]
 
 
 # --- unauthorized API calls ---------------------------------------------------

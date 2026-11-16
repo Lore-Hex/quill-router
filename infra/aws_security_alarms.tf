@@ -158,7 +158,10 @@ resource "aws_cloudwatch_metric_alarm" "cis_unauthorized_api_calls" {
 #     -> TR-EnclaveBundleReleaseSignBurst  signatures. Emails only above two releases'
 #                                       worth in an hour.
 #
-# Every Sign on this key lands in exactly one of the two metrics: the second filter's
+# Every Sign record KMS writes for this key lands in exactly one of the two metrics (a
+# record with an explicit null userIdentity.arn, messageType or errorCode, which KMS does
+# not write, or a denial whose message omits the key ARN lands in neither; the
+# CIS-UnauthorizedAPICalls alarm still counts every denial): the second filter's
 # conditions are the first one's exceptions, negated (tests/test_aws_security_alarms.py
 # pins that). Matching Sign on the key ARN, key id, alias, alias ARN or resources[0] covers
 # every way a caller can name the key on success; a DENIED Sign carries no
