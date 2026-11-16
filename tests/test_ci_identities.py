@@ -249,37 +249,160 @@ def test_probe_project_role_reads_configuration_only() -> None:
         assert not permission.startswith(CONTENT_PERMISSION_PREFIXES), f"{permission} reads content"
 
 
-# Each project-level gcloud read in scripts/deploy/gcp_security_baseline_check.sh
-# and the permission tr-ci-probe needs for it. The bucket reads are left out:
-# they are granted on the bucket, not by the project role.
-BASELINE_PROJECT_READS = {
-    "projects get-iam-policy": "resourcemanager.projects.getIamPolicy",
-    "logging metrics describe": "logging.logMetrics.get",
+# Each gcloud read that cloud-security-baseline.yml makes as tr-ci-probe,
+# keyed by its leading command words, and the project permission it needs.
+# The job runs scripts/deploy/gcp_security_baseline_check.sh, which runs
+# scripts/deploy/public_surface_edge.sh check, which sources _lib.sh and
+# _active_revision.sh.
+PROBE_JOB_READS = {
     "alpha monitoring channels list": "monitoring.notificationChannels.list",
     "alpha monitoring policies list": "monitoring.alertPolicies.list",
+    "compute backend-services describe": "compute.backendServices.get",
     "compute firewall-rules describe": "compute.firewalls.get",
     "compute firewall-rules list": "compute.firewalls.list",
     "essential-contacts compute": "essentialcontacts.contacts.list",
     "iam service-accounts keys list": "iam.serviceAccountKeys.list",
-    # Section 8, the Cloud Run ingress of every service in every region.
+    "logging metrics describe": "logging.logMetrics.get",
+    "projects describe": "resourcemanager.projects.get",
+    "projects get-iam-policy": "resourcemanager.projects.getIamPolicy",
+    "run revisions describe": "run.revisions.get",
+    "run services describe": "run.services.get",
+    # Section 8 of the baseline: every service's ingress, every region.
     "run services list": "run.services.list",
 }
+# Reads the project role does not need to cover, each with its reason.
+PROBE_JOB_EXEMPT_READS = {
+    # The ACME cache and archive buckets: tr-ci-probe's access to them is
+    # granted on each bucket, not by the project role.
+    "storage buckets describe",
+}
+_SHELL_FUNCTION = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\)\s*\{", re.MULTILINE)
+# Where a shell command can start, so that a word inside a message
+# ("gcloud returned invalid JSON", "before cutover") is not read as a call.
+_COMMAND_POSITION = r"(?:^|[;|&{`]|\$\(|\b(?:if|then|do|else|elif|while|until)\b|!)[ \t]*"
+_GCLOUD_CALL = re.compile(_COMMAND_POSITION + r"(?:gcloud|gc|g)[ \t]+([^\n]*)", re.MULTILINE)
+_READ_PROJECT_JSON_CALL = re.compile(
+    _COMMAND_POSITION + r'read_project_json[ \t]+\w+[ \t]+"[^"]*"[ \t]+([^\n]*)', re.MULTILINE
+)
+_COMMAND_WORD = re.compile(r"[a-z][a-z0-9-]*")
 
 
-def test_probe_project_role_covers_every_project_read_of_the_security_baseline() -> None:
+def _shell_code(path: Path) -> str:
+    """The script with `\\` continuations joined and comment lines dropped."""
+    joined = re.sub(r"\\\n[ \t]*", " ", path.read_text())
+    return "\n".join(line for line in joined.splitlines() if not line.lstrip().startswith("#"))
+
+
+def _shell_functions(code: str) -> tuple[dict[str, str], str]:
+    """Each top-level function's body, and the code outside every function."""
+    functions: dict[str, str] = {}
+    outside: list[str] = []
+    lines = code.splitlines()
+    index = 0
+    while index < len(lines):
+        match = _SHELL_FUNCTION.match(lines[index])
+        if not match:
+            outside.append(lines[index])
+            index += 1
+            continue
+        if lines[index].rstrip().endswith("}"):
+            functions[match.group(1)] = lines[index]
+            index += 1
+            continue
+        end = lines.index("}", index)
+        functions[match.group(1)] = "\n".join(lines[index:end + 1])
+        index = end + 1
+    return functions, "\n".join(outside)
+
+
+def _reachable_code(functions: dict[str, str], roots: str) -> str:
+    """The roots and every function they reach, by name, transitively."""
+    reached: list[str] = [roots]
+    seen: set[str] = set()
+    pending = [roots]
+    while pending:
+        text = pending.pop()
+        for name, body in functions.items():
+            if name in seen:
+                continue
+            if re.search(
+                _COMMAND_POSITION + re.escape(name) + r"(?=[\s;|&)]|$)", text, re.MULTILINE
+            ):
+                seen.add(name)
+                reached.append(body)
+                pending.append(body)
+    return "\n".join(reached)
+
+
+def _gcloud_reads(code: str) -> list[str]:
+    """The leading command words of every gcloud call in the code. A call the
+    scan cannot read is a failure, never skipped, except the wrappers that
+    pass "$@" through."""
+    reads: list[str] = []
+    rests = [m.group(1) for m in _GCLOUD_CALL.finditer(code)]
+    rests += [m.group(1) for m in _READ_PROJECT_JSON_CALL.finditer(code)]
+    for rest in rests:
+        tokens = rest.split()
+        while tokens and tokens[0].startswith("-"):
+            flag = tokens.pop(0)
+            if "=" not in flag and tokens:
+                tokens.pop(0)
+        words: list[str] = []
+        for token in tokens:
+            # `list; then` and `list)"` end the command at the punctuation.
+            word = token.rstrip(';|&)"')
+            if not _COMMAND_WORD.fullmatch(word):
+                break
+            words.append(word)
+            if word != token:
+                break
+        if words:
+            reads.append(" ".join(words))
+        else:
+            assert tokens and tokens[0].startswith('"$@"'), f"cannot read the gcloud call: {rest!r}"
+    return reads
+
+
+def _probe_job_reads() -> list[str]:
+    deploy = ROOT / "scripts/deploy"
+    baseline = _shell_code(deploy / "gcp_security_baseline_check.sh")
+    assert 'public_surface_edge.sh" check' in baseline
+    # public_surface_edge.sh check: its top level (which sources _lib.sh and,
+    # through it, _active_revision.sh) and check_client_ip_trust, never the
+    # prepare, cutover or rollback branches of its two command dispatches.
+    functions: dict[str, str] = {}
+    top_level: list[str] = []
+    for name in ("public_surface_edge.sh", "_lib.sh", "_active_revision.sh"):
+        bodies, outside = _shell_functions(_shell_code(deploy / name))
+        functions.update(bodies)
+        top_level.append(re.sub(r'case "\$COMMAND" in\n.*?\nesac', "", outside, flags=re.DOTALL))
+    edge = _reachable_code(functions, "\n".join([*top_level, "check_client_ip_trust"]))
+    return _gcloud_reads(baseline) + _gcloud_reads(edge)
+
+
+def _covering_key(read: str, keys: set[str]) -> str | None:
+    words = read.split()
+    return next((key for key in keys if words[: len(key.split())] == key.split()), None)
+
+
+def test_probe_project_role_covers_every_read_of_the_security_baseline_job() -> None:
     """cloud-security-baseline.yml runs as tr-ci-probe. A read its role lacks
     prints PERMISSION_DENIED every day: the check fails closed, but sees
-    nothing. Each read named here must still be in the script, so the table
-    cannot outlive the call it describes."""
-    baseline = "\n".join(
-        line
-        for line in (ROOT / "scripts/deploy/gcp_security_baseline_check.sh").read_text().splitlines()
-        if not line.lstrip().startswith("#")
-    )
+    nothing. Every gcloud read the job's scripts make must be in the table with
+    its permission granted, or on the exempt list, and every table entry must
+    still be read, so neither side can drift from the other."""
     permissions = set(wif_tiers.string_lists(CI_IDENTITIES)["ci_probe_project_permissions"])
-    for read, permission in BASELINE_PROJECT_READS.items():
-        assert read in baseline, f"the baseline no longer makes `{read}`"
-        assert permission in permissions, f"tr-ci-probe cannot `{read}`: add {permission}"
+    reads = _probe_job_reads()
+    used: set[str] = set()
+    for read in reads:
+        key = _covering_key(read, set(PROBE_JOB_READS) | PROBE_JOB_EXEMPT_READS)
+        assert key is not None, f"`{read}` is neither in PROBE_JOB_READS nor exempt"
+        used.add(key)
+        if key in PROBE_JOB_READS:
+            permission = PROBE_JOB_READS[key]
+            assert permission in permissions, f"tr-ci-probe cannot `{read}`: add {permission}"
+    unused = (set(PROBE_JOB_READS) | PROBE_JOB_EXEMPT_READS) - used
+    assert not unused, f"no longer read by the job: {sorted(unused)}"
 
 
 def test_only_the_audit_account_reads_the_database() -> None:
