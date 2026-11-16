@@ -33,10 +33,11 @@ def smoke(staged: bool) -> None:
     for market in load_markets():
         host = market["domain"]
         forward = market.get("forward_to")
+        canonical = market.get("canonical_domain", host)
         for path, expected in () if forward else (
             ("/", market["name"].encode()),
-            ("/robots.txt", f"https://{host}/sitemap.xml".encode()),
-            ("/sitemap.xml", f"https://{host}/".encode()),
+            ("/robots.txt", f"https://{canonical}/sitemap.xml".encode()),
+            ("/sitemap.xml", f"https://{canonical}/".encode()),
             (f"/assets/og-{market['slug']}.png", b"\x89PNG"),
         ):
             status, _, body = get(host, path, staged)
@@ -52,7 +53,7 @@ def smoke(staged: bool) -> None:
             location = next((v for k, v in headers.items() if k.lower() == "location"), "")
             target = urlparse(location)
             if (
-                status != 301
+                status != (302 if alias.removeprefix("www.") in market.get("temporary_aliases", []) else 301)
                 or target.scheme != "https"
                 or target.hostname != (forward or host)
                 or target.port not in (None, 443)

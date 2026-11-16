@@ -85,9 +85,9 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn('>Trust center</a>', self.page)
 
     def test_metadata_and_new_york_only_sitemap(self):
-        url = "https://nytokenexchange.com/providers"
+        url = "https://nytex.com/providers"
         self.assertIn(f'<link rel="canonical" href="{url}">', self.page)
-        self.assertIn(f'<meta property="og:url" content="{url}">', self.page)
+        self.assertIn('<meta property="og:url" content="https://nytokenexchange.com/providers">', self.page)
         self.assertTrue((self.root / "assets" / "archivo.woff2").is_file())
         image = re.search(r'<meta property="og:image" content="https://nytokenexchange.com/assets/([^"?]+)', self.page).group(1)
         self.assertTrue((self.root / "assets" / image).is_file())

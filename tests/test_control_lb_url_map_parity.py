@@ -228,6 +228,36 @@ def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None
     source = (ROOT / "infra/control_lb_url_map.tf").read_text()
     dynamic = _terminal_dynamic(source)
     without = source[:dynamic.start()] + source[dynamic.end():]
+
+    def uncomment(text: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
+
+    # Compare whitespace-collapsed code, so column alignment is not a change.
+    without = uncomment(without)
+    # NYTEX temporary aliases (#2622): a market may list temporary_aliases,
+    # which leave its permanent aliases matcher and get their own matcher with
+    # a 302; every other matcher keeps the 301 it had. Fold that back to the
+    # earlier shape; nothing else in the map may differ.
+    temporary_aliases = (
+        ("for market in local.exchange_markets : concat([", "for market in local.exchange_markets : ["),
+        (' redirect_code = "MOVED_PERMANENTLY_DEFAULT" }', " }"),
+        (
+            '[for alias in market.aliases : alias if !contains(try(market.temporary_aliases, []), alias)], '
+            '[for alias in market.aliases : "www.${alias}" if !contains(try(market.temporary_aliases, []), alias)]',
+            'market.aliases, [for alias in market.aliases : "www.${alias}"]',
+        ),
+        (
+            '], length(try(market.temporary_aliases, [])) == 0 ? [] : [{ name = "exchange-${market.slug}-temporary-aliases" '
+            'hosts = flatten([for alias in market.temporary_aliases : [alias, "www.${alias}"]]) slug = market.slug '
+            'redirect = market.domain redirect_code = "FOUND" }]) ])',
+            "] ])",
+        ),
+        ("redirect_response_code = path_matcher.value.redirect_code", 'redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"'),
+    )
+    for added, earlier in temporary_aliases:
+        expected = 2 if "MOVED_PERMANENTLY_DEFAULT\" }" in added else 1
+        assert without.count(added) == expected, added
+        without = without.replace(added, earlier)
     # Creator retirement adds only these two earnings aliases; all prior
     # routing, including disabled terminal behavior, must stay identical.
     assert without.count('"/earnings", "/earnings/*", ') == 1
@@ -242,8 +272,6 @@ def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None
     ):
         assert without.count(forwarded) == 1
         without = without.replace(forwarded, base)
-    def uncomment(text: str) -> str:
-        return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
     assert uncomment(without) == uncomment(_base_source("infra/control_lb_url_map.tf"))
 
 

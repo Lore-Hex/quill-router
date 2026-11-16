@@ -101,7 +101,11 @@ def routed_map(without: Collection[str] = ()) -> dict[str, Any]:
     rules = []
     for market in load_markets():
         name = "exchange-" + market["slug"]
-        aliases = ["www." + market["domain"], *market["aliases"], *["www." + a for a in market["aliases"]]]
+        permanent = [a for a in market["aliases"] if a not in market.get("temporary_aliases", [])]
+        aliases = ["www." + market["domain"], *permanent, *["www." + a for a in permanent]]
+        temporary = [h for a in market.get("temporary_aliases", []) for h in (a, "www." + a)]
+        if temporary:
+            rules.append({"hosts": [h for h in temporary if h not in without], "pathMatcher": name + "-temporary-aliases"})
         rules.append({"hosts": [h for h in [market["domain"]] if h not in without], "pathMatcher": name})
         rules.append({"hosts": [h for h in aliases if h not in without], "pathMatcher": name + "-aliases"})
     return {
@@ -190,9 +194,12 @@ class ExchangeTests(unittest.TestCase):
         self.assertNotIn("forward_to", market)
         hosts = {host: rule["pathMatcher"] for rule in routed_map()["hostRules"] for host in rule["hosts"]}
         for host in ("nytex.com", "www.nytex.com"):
-            self.assertEqual(hosts[host], "exchange-new-york-aliases")
+            self.assertEqual(hosts[host], "exchange-new-york-temporary-aliases")
+        self.assertEqual(market["canonical_domain"], "nytex.com")
+        self.assertEqual(market["temporary_aliases"], ["nytex.com"])
         source = (Path(__file__).parents[2] / "infra" / "control_lb_url_map.tf").read_text()
-        self.assertIn('redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"', source)
+        self.assertIn('redirect_code = "FOUND"', source)
+        self.assertIn('redirect_response_code = path_matcher.value.redirect_code', source)
         self.assertIn("https_redirect         = true", source)
         self.assertIn("strip_query            = false", source)
         self.assertNotIn("path_redirect", source)
@@ -233,8 +240,8 @@ class ExchangeTests(unittest.TestCase):
             self.assertEqual(market["forward_to"], "nytokenexchange.com")
             self.assertEqual([d for d in [market["domain"], *market["aliases"]] if d not in listed], [])
         source = (Path(__file__).parents[2] / "infra" / "control_lb_url_map.tf").read_text()
-        self.assertIn("redirect = try(market.forward_to, null)", source)
-        self.assertIn("redirect = try(market.forward_to, market.domain)", source)
+        self.assertRegex(source, r"redirect\s*= try\(market.forward_to, null\)")
+        self.assertRegex(source, r"redirect\s*= try\(market.forward_to, market.domain\)")
 
     def test_every_market_domain_may_request_the_brochure(self) -> None:
         # Rule: the app allowlists exactly the canonical market domains for the brochure form.
@@ -327,7 +334,7 @@ class ExchangeTests(unittest.TestCase):
             if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, "test")
-            self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
+            self.assertIn(f'<link rel="canonical" href="https://{market.get("canonical_domain", market["domain"])}/">', page)
             self.assertIn('id="buyers"', page)
             self.assertIn('id="sellers"', page)
             self.assertIn("regional name identifies", page)
@@ -642,10 +649,10 @@ class ExchangeTests(unittest.TestCase):
                               if key != "home" and entry.get("builder") != "anchor"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
-                    [f'https://{market["domain"]}{path}' for path in paths],
+                    [f'https://{market.get("canonical_domain", market["domain"])}{path}' for path in paths],
                 )
                 self.assertIn(
-                    f'Sitemap: https://{market["domain"]}/sitemap.xml',
+                    f'Sitemap: https://{market.get("canonical_domain", market["domain"])}/sitemap.xml',
                     (output / market["slug"] / "robots.txt").read_text(),
                 )
             # Every copied asset is referenced by the built pages, styles or scripts, and nothing

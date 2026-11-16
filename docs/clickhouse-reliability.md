@@ -1049,8 +1049,8 @@ they ship the node code) creates:
 
 `infra/clickhouse_node_role.tf` gives the node service account
 `roles/spanner.fineGrainedAccessUser` and `roles/spanner.databaseRoleUser`,
-the latter conditioned on this one role. Neither narrows anything while the
-account also holds `roles/spanner.databaseUser`.
+the latter conditioned on this one role. Since step 4 (2026-11-15) these are
+the account's only Spanner bindings.
 
 **The units (step 3).** The five units whose programs open Spanner
 (`tr-clickhouse-ingest`, `-operational-ingest`, `-overrun-rollup`,
@@ -1067,15 +1067,17 @@ The live deploy updates the publisher only. A standby keeps the unit files from
 its own install (`install_standby.sh`), and a takeover starts those, so a
 standby installed before this change runs its programs without the role.
 
-Remaining, in order: run the live deploy; confirm the dedicated heartbeat row
-is fresh and every node job succeeds as the role; reinstall each standby
-(`clickhouse_worker_role.sh standby --node <standby> --apply`) and confirm its
-five installed units carry `TR_SPANNER_DATABASE_ROLE`, since after the next
-step a takeover onto a standby without it would fail every Spanner call; then
-remove the account's
-`roles/spanner.databaseUser` binding (and the grant in
-`scripts/deploy/clickhouse_cluster.sh`), and retire the legacy heartbeat write
-and read.
+**Step 4 (2026-11-15).** The account's `roles/spanner.databaseUser` binding is
+removed (Terraform), and `scripts/deploy/clickhouse_cluster.sh` no longer
+grants it. Checked first, on 2026-11-15: on the publisher (`tr-clickhouse-1`)
+all five units carry `TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node`. The
+standbys (`tr-clickhouse-2`, `-3`) have no worker units installed, and no node
+carries `tr-clickhouse-role` metadata yet, so the takeover fence is not
+installed and a takeover cannot run today with or without this binding. When
+the fence and the standby installs are done, they install units from the
+bundle, which all carry the role (`tests/test_clickhouse_node_units_role.py`).
+
+Remaining: retire the legacy heartbeat write and read.
 
 ## Alerts and capacity
 
