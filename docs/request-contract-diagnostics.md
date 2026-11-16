@@ -52,6 +52,14 @@ even when they are short. A character cap alone is not a privacy filter.
 The control plane independently revalidates previews before export to Sentry;
 raw bodies and unredacted values never cross the diagnostic boundary.
 
+A refused thinking switch keeps its shape. A `thinking` preview retains `type`
+and `budget_tokens`, and a `chat_template_kwargs` preview retains its two
+boolean switches, `enable_thinking` and `thinking`. `chat_template_kwargs` and
+`client_metadata` are parameter categories of their own, so their refusals do
+not group under `other`. `client_metadata` holds client and installation
+identifiers: none of its members is configuration, and a refusal reports only
+its JSON type.
+
 The control plane validates paths again before adding them to Sentry context.
 Sentry uses the bounded category, not the unknown path, for grouping and flood
 control. Sentry is sampled; use enclave logs joined by request ID to inspect all

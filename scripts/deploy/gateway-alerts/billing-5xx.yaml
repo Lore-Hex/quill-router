@@ -9,9 +9,12 @@ documentation:
     compatibility rejections are excluded because they happen before a billing
     hold and do not indicate storage or settlement failure. Authorize 503s are
     excluded here only because "TR Gateway: authorize 503 not lease headroom"
-    pages on every one the app did not mark as lease headroom (the retryable
-    503 TR_FASTPATH_LEASE_HEADROOM_503 answers when a workspace's credits are
-    held by fast-path leases); that policy must exist before this filter is
+    pages on every one the app did not mark as designed and retryable: lease
+    headroom (the 503 TR_FASTPATH_LEASE_HEADROOM_503 answers when a
+    workspace's credits are held by fast-path leases) or rebalance busy (the
+    503 for credit spread across shards while the workspace's rebalance
+    cooldown is held, which "TR Gateway: credit rebalance busy" bounds);
+    that policy must exist before this filter is
     applied. Inspect Cloud Run request logs, Spanner transaction contention,
     and billing invariants. Do not silence the alert merely because Spanner is
     otherwise healthy. Runbook: docs/spanner-reliability.md.

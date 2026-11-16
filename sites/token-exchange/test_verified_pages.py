@@ -29,7 +29,7 @@ class VerifiedPageTests(unittest.TestCase):
         for provider in VERIFIED_PROVIDERS:
             page = (self.root / "verified" / provider).read_text()
             self.assertEqual(page, (self.root / "verified" / f"{provider}.html").read_text())
-            url = f"https://nytokenexchange.com/verified/{provider}"
+            url = f"https://nytex.com/verified/{provider}"
             self.assertIn(f'rel="canonical" href="{url}"', page)
             self.assertIn(f"<loc>{url}</loc>", sitemap)
 
@@ -160,9 +160,11 @@ class VerifiedPageTests(unittest.TestCase):
         rollback = nyte_v2.BRAND_V3_PAGES - {"maple"}
         with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", rollback), \
                 tempfile.TemporaryDirectory() as directory:
-            self.assertEqual(nyte_v2.render_nyte("maple"), (HERE / "verified-maple.html").read_text())
+            market = next(m for m in nyte_v2.load_markets() if m["slug"] == "new-york")
+            expected = nyte_v2.search_canonical((HERE / "verified-maple.html").read_text(), market)
+            self.assertEqual(nyte_v2.render_nyte("maple"), expected)
             build(Path(directory))
-            self.assertEqual((Path(directory) / "verified" / "maple").read_text(), (HERE / "verified-maple.html").read_text())
+            self.assertEqual((Path(directory) / "verified" / "maple").read_text(), expected)
             for name in ("badge.css", "verified.css", "verified.js", "og-new-york.png"):
                 self.assertTrue((Path(directory) / "assets" / name).exists(), name)
 

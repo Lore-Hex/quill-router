@@ -91,3 +91,15 @@ import {
   to = aws_cloudwatch_log_metric_filter.unauthorized_api_calls
   id = "/aws/cloudtrail/quill:UnauthorizedAPICalls"
 }
+
+# Created outside Terraform on 2026-08-02 and 2026-08-20; adopted to pin their
+# GitHub OIDC trust (infra/aws_github_oidc_roles.tf).
+import {
+  to = aws_iam_role.trustedrouter_github_route53_sync
+  id = "trustedrouter-github-route53-sync"
+}
+
+import {
+  to = aws_iam_role.trustedrouter_github_trust_publisher
+  id = "trustedrouter-github-trust-publisher"
+}

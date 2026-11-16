@@ -199,31 +199,166 @@ def test_nvidia_stalled_vision_route_requires_successful_recovery_canary(
     assert (f"{model}@nvidia-nim/prepaid" in endpoints) is healthy
 
 
-def test_nvidia_nim_rechecks_each_routable_model_once_per_day(monkeypatch, tmp_path) -> None:
-    model_id = "vendor/model-0"
+def _write_manifest(manifest: Path, rows: list[dict[str, object]]) -> None:
+    manifest.write_text(json.dumps({"provider": "nvidia-nim", "models": rows}))
+
+
+def test_nvidia_nim_recanaries_every_live_route_on_every_refresh(monkeypatch, tmp_path) -> None:
+    live = {f"vendor/model-{index}" for index in range(6)}
     manifest = tmp_path / "nvidia-nim.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "provider": "nvidia-nim",
-                "models": [{"id": model_id, "model_type": "chat"}],
-            }
-        )
+    _write_manifest(
+        manifest,
+        [{"id": model_id, "model_type": "chat"} for model_id in sorted(live)]
+        + [{"id": "vendor/held", "routable": False, "routable_reason": "provider-canary-failed"}],
     )
     monkeypatch.setattr(nvidia_nim, "MANIFEST_PATH", manifest)
-    bucket = nvidia_nim._scheduled_canary_bucket(model_id)
 
-    scheduled = nvidia_nim._models_to_canary(
-        {model_id},
-        now=datetime(2026, 8, 24, bucket, tzinfo=UTC),
-    )
-    unscheduled = nvidia_nim._models_to_canary(
-        {model_id},
-        now=datetime(2026, 8, 24, (bucket + 1) % 24, tzinfo=UTC),
-    )
+    for hour in range(24):
+        checked = nvidia_nim._models_to_canary(
+            live | {"vendor/held"}, now=datetime(2026, 11, 15, hour, tzinfo=UTC)
+        )
+        assert checked == live | {"vendor/held"}
 
-    assert scheduled == {model_id}
-    assert unscheduled == frozenset()
+
+def test_nvidia_nim_live_route_failing_recanary_is_held_and_passing_stays_live(
+    monkeypatch, tmp_path
+) -> None:
+    rows = [{"id": f"vendor/model-{index}", "object": "model"} for index in range(12)]
+    _install_catalog(monkeypatch, rows)
+    manifest = tmp_path / "nvidia-nim.json"
+    _write_manifest(
+        manifest,
+        [{"id": row["id"], "upstream_id": row["id"], "model_type": "chat"} for row in rows[:11]]
+        + [{
+            "id": "vendor/model-11", "upstream_id": "vendor/model-11", "model_type": "chat",
+            "routable": False, "routable_reason": "provider-canary-failed",
+        }],
+    )
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "nim-test-key")
+    monkeypatch.setattr(nvidia_nim, "MANIFEST_PATH", manifest)
+    probed: list[str] = []
+
+    def probe(**kwargs) -> bool:
+        probed.append(kwargs["model"])
+        return kwargs["model"] != "vendor/model-0"
+
+    monkeypatch.setattr(nvidia_nim, "probe_openai_chat", probe)
+
+    nvidia_nim.write_provider_manifest(nvidia_nim.fetch())
+
+    assert sorted(probed) == sorted(row["id"] for row in rows)
+    by_id = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert by_id["vendor/model-0"]["routable"] is False
+    assert by_id["vendor/model-0"]["routable_reason"] == "provider-canary-failed"
+    for index in range(1, 11):
+        assert by_id[f"vendor/model-{index}"].get("routable", True) is True
+        assert "routable_reason" not in by_id[f"vendor/model-{index}"]
+    # The held route passed, so the ordinary canary-failed lift applies.
+    assert by_id["vendor/model-11"].get("routable", True) is True
+    assert "routable_reason" not in by_id["vendor/model-11"]
+
+    # The newly held route is re-canaried next refresh and lifts on a pass.
+    probed.clear()
+    def passing_probe(**kwargs) -> bool:
+        probed.append(kwargs["model"])
+        return True
+
+    monkeypatch.setattr(nvidia_nim, "probe_openai_chat", passing_probe)
+    nvidia_nim.write_provider_manifest(nvidia_nim.fetch())
+    assert "vendor/model-0" in probed
+    by_id = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert by_id["vendor/model-0"].get("routable", True) is True
+    assert "routable_reason" not in by_id["vendor/model-0"]
+
+
+def test_live_route_recanary_is_an_explicit_nvidia_only_opt_in(tmp_path) -> None:
+    from scripts.pricing.manifest import models_requiring_canary
+
+    manifest = tmp_path / "other.json"
+    _write_manifest(manifest, [{"id": "vendor/live", "model_type": "chat"}])
+    # The shared selector every other provider uses still skips live routes.
+    assert models_requiring_canary(manifest, {"vendor/live"}) == frozenset()
+
+    providers_dir = Path(nvidia_nim.__file__).resolve().parent
+    opted_in = {
+        path.name
+        for path in providers_dir.glob("*.py")
+        if "routable_models_to_recheck" in path.read_text(encoding="utf-8")
+    }
+    assert opted_in == {"nvidia_nim.py"}
+
+
+def test_nvidia_nim_live_recanary_cap_rotates_over_every_live_route(monkeypatch, tmp_path) -> None:
+    # The shipped cap keeps one refresh's live probes bounded.
+    assert 0 < nvidia_nim.MAX_LIVE_RECHECKS_PER_RUN <= 24
+    live = {f"vendor/model-{index}" for index in range(23)}
+    manifest = tmp_path / "nvidia-nim.json"
+    _write_manifest(manifest, [{"id": model_id, "model_type": "chat"} for model_id in sorted(live)])
+    monkeypatch.setattr(nvidia_nim, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(nvidia_nim, "MAX_LIVE_RECHECKS_PER_RUN", 5)
+
+    covered: set[str] = set()
+    for hour in range(5):  # ceil(23 / 5) hourly refreshes
+        checked = nvidia_nim._models_to_canary(live, now=datetime(2026, 11, 15, hour, tzinfo=UTC))
+        assert len(checked) == 5
+        covered |= checked
+    assert covered == live
+
+
+def test_bad_nvidia_hour_holds_live_routes_through_both_mass_prune_guards(
+    monkeypatch, tmp_path
+) -> None:
+    from scripts.pricing.base import guard_manifest_prune
+
+    rows = [{"id": f"vendor/model-{index}", "object": "model"} for index in range(12)]
+    _install_catalog(monkeypatch, rows)
+    manifest = tmp_path / "nvidia-nim.json"
+    _write_manifest(
+        manifest,
+        [{"id": row["id"], "upstream_id": row["id"], "model_type": "chat"} for row in rows],
+    )
+    before_rows = json.loads(manifest.read_text())["models"]
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "nim-test-key")
+    monkeypatch.setattr(nvidia_nim, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(nvidia_nim, "probe_openai_chat", lambda **_kwargs: False)
+
+    result = nvidia_nim.fetch()
+    notes = nvidia_nim.write_provider_manifest(result)
+
+    assert not any("mass-prune" in note for note in notes)
+    after_rows = json.loads(manifest.read_text())["models"]
+    assert all(row["routable"] is False for row in after_rows)
+    assert {row["routable_reason"] for row in after_rows} == {"provider-canary-failed"}
+    # Without this run's canary evidence the guard would veto every hold.
+    assert guard_manifest_prune(before_rows, after_rows, provider_slug="nvidia-nim") is before_rows
+    confirmed = nvidia_nim.confirmed_manifest_quarantines(result, before_rows, after_rows)
+    assert confirmed == {row["id"] for row in rows}
+    guarded = guard_manifest_prune(
+        before_rows, after_rows, provider_slug="nvidia-nim", confirmed_disabled_ids=confirmed,
+    )
+    assert guarded is after_rows
+
+
+def test_nvidia_mass_prune_evidence_covers_only_routes_that_failed_this_run(
+    monkeypatch, tmp_path
+) -> None:
+    result = nvidia_nim.ProviderPricingResult(
+        slug="nvidia-nim", prices={}, source="api", fetched_url=nvidia_nim.URL,
+    )
+    monkeypatch.setattr(nvidia_nim, "_DISCOVERED_ROWS", {
+        "vendor/failed": {"routable": False, "routable_reason": "provider-canary-failed"},
+        "vendor/passed": {"routable": True},
+    })
+    after_rows = [
+        {"id": "vendor/failed", "routable": False, "routable_reason": "provider-canary-failed"},
+        {"id": "vendor/passed", "routable": False, "routable_reason": "provider-canary-failed"},
+        {"id": "vendor/missing", "routable": False, "routable_reason": "delisted-upstream"},
+    ]
+    assert nvidia_nim.confirmed_manifest_quarantines(result, [], after_rows) == {"vendor/failed"}
+    stale = nvidia_nim.ProviderPricingResult(
+        slug="nvidia-nim", prices={}, source="manifest", fetched_url=nvidia_nim.URL,
+    )
+    assert nvidia_nim.confirmed_manifest_quarantines(stale, [], after_rows) == frozenset()
 
 
 def test_nvidia_nim_scheduled_failure_quarantines_only_that_route(monkeypatch, tmp_path) -> None:

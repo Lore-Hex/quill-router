@@ -173,7 +173,9 @@ lines, summed, are its counts. It prints JSON:
   `passed.inflight.key`, Python's per-key in-flight 429 to a request the
   decide path passed at its own in-flight limit, and
   `inflight_unchecked.*`, the same 429 to a request it passed at any other
-  step, or did not decide). Then
+  step, or did not decide, and `funding_unchecked.*`, Python's credit 402
+  to a workspace whose credit rows, read by the shadow, are unmarked and
+  short of the request's hold). Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
   `differ_affinity_warm` (the differs whose Python 200 is Go's decision
   re-ranked for an endpoint a Python process remembered for the request's

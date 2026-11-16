@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"maps"
 	"net/http"
@@ -39,15 +40,11 @@ func leasedOn(overlap []string, workspaces ...string) func(*routingsnapshot.Asyn
 
 // withoutTicket is a shape C golden as Python answers the same request
 // leased in a workspace off the overlap list: the ticket and its status URL
-// gone, async_eligible false (shape B).
+// gone, async_eligible false and, for an eligible ticket, invocation_nonce
+// gone with them (shape B; unticketed).
 func withoutTicket(t *testing.T, golden authorizeCase) authorizeCase {
 	t.Helper()
-	golden.Expect.Response = string(mutated(t, golden.Expect.Response, func(d pyjson.Object) pyjson.Object {
-		d = slices.DeleteFunc(d, func(m pyjson.Member) bool {
-			return m.Key == "settlement_ticket" || m.Key == "settlement_status_url"
-		})
-		return setMember(d, "async_eligible", false)
-	}))
+	golden.Expect.Response = string(mutated(t, golden.Expect.Response, unticketed))
 	return golden
 }
 
@@ -135,8 +132,8 @@ func TestTheLeasedAnswerGate(t *testing.T) {
 	}
 	t.Logf("%d leased answers, %d overlap passes, %d outside admission, %d without the header", leased, overlap,
 		outside, plain)
-	// 60 answered async-v1 goldens and the one without the header.
-	if leased != 4*60 || overlap != 2*60 || outside != 2*60 || plain != 8 {
+	// 63 answered async-v1 goldens and the one without the header.
+	if leased != 4*63 || overlap != 2*63 || outside != 2*63 || plain != 8 {
 		t.Fatalf("leased %d, overlap %d, outside %d, plain %d: not the goldens' counts", leased, overlap, outside, plain)
 	}
 }
@@ -476,8 +473,14 @@ func TestTheShadowComparesALeasedAnswerWithPythonsAnswerLessItsTicket(t *testing
 		t.Fatalf("passed %q (decision %v)", d.Pass, d.ForShadow() != nil)
 	}
 	sh := &fullShadow{}
-	// Python's shape C, async_eligible true as admission answers it.
+	// Python's shape C, async_eligible true as admission answers it: the
+	// 200 then carries invocation_nonce after idempotent_replay.
 	eligible := string(mutated(t, string(ticketed(t, c.Expect.Response)), func(o pyjson.Object) pyjson.Object {
+		at := slices.IndexFunc(o, func(m pyjson.Member) bool { return m.Key == "idempotent_replay" })
+		if at < 0 || memberOf(o, "invocation_nonce") != nil {
+			t.Fatal("not a fresh 200 without the nonce member")
+		}
+		o = slices.Insert(o, at+1, pyjson.Member{Key: "invocation_nonce", Value: "nonce-of-the-request"})
 		return setMember(o, "async_eligible", true)
 	}))
 	for _, pass := range []string{PassWorkspaceNotEnabled, ""} {
@@ -529,14 +532,99 @@ func TestTheShadowComparesALeasedAnswerWithPythonsAnswerLessItsTicket(t *testing
 	}
 }
 
+// TestTheShadowComparesATicketWantedAnswerWithPythonsAnswerLessItsTicket
+// (leasedUnleased, edge tickets): a decision that wants a ticket is, in the
+// shadow, the answer before the splice, since the shadow asks for none. It
+// is compared with Python's own ticketed 200, the goldens' bytes, less the
+// ticket, the status URL, async_eligible's value and, for an eligible
+// ticket, invocation_nonce: agree_full for Python's eligible ticket and for
+// one that is not, fresh and for a stream, counted async_python_admitted
+// with its async members not compared. Python's estimate or snapshot hash
+// otherwise is a differ naming it, never the async shape, eligibility or
+// nonce.
+func TestTheShadowComparesATicketWantedAnswerWithPythonsAnswerLessItsTicket(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	sh := &fullShadow{}
+	compared := 0
+	for _, c := range f.Cases {
+		if c.Expect.AsyncShape != "C" || c.Expect.Outcome != "answer" || c.Insert != "inserted" {
+			continue
+		}
+		in, _ := caseInputs(t, f, c)
+		d := Decide(in)
+		dec := d.ForShadow()
+		if dec == nil || dec.LeasedAnswer || !dec.Staged.Async().WantTicket {
+			t.Fatalf("%s: passed %q, not a decision that wants a ticket", c.Name, d.Pass)
+		}
+		eligible := strings.Contains(c.Expect.Response, `"async_eligible":true`)
+		if eligible != strings.Contains(c.Name, ":eligible") ||
+			eligible != strings.Contains(c.Expect.Response, `"invocation_nonce":`) {
+			t.Fatalf("%s: eligible %v, and the nonce member with it", c.Name, eligible)
+		}
+		r := sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: []byte(c.Expect.Response)}, nil, "")
+		if r.class != ClassAgreeFull || len(r.fields) != 0 || !r.async.pythonAdmitted || r.async.compared != "" {
+			t.Errorf("%s: Python's ticketed 200: %s %v %+v", c.Name, r.class, r.fields, r.async)
+		}
+		for _, v := range []struct {
+			name   string
+			change func(pyjson.Object) pyjson.Object
+		}{
+			{"estimate", func(o pyjson.Object) pyjson.Object {
+				est, _ := memberOf(o, "estimated_cost_microdollars").(int64)
+				return setMember(o, "estimated_cost_microdollars", est+1)
+			}},
+			{"snapshot hash", func(o pyjson.Object) pyjson.Object {
+				return setMember(o, "billing_snapshot_hash", strings.Repeat("0", 64))
+			}},
+		} {
+			changed := mutated(t, c.Expect.Response, v.change)
+			r := sh.safeCompare(d, pyAnswer{status: http.StatusOK, body: changed}, nil, "")
+			if r.class != ClassDifferAny || len(r.fields) == 0 || slices.Contains(r.fields, FieldAsyncShape) ||
+				slices.Contains(r.fields, FieldAsyncEligible) || slices.Contains(r.fields, "differ.invocation_nonce") {
+				t.Errorf("%s with Python's %s changed: %s %v", c.Name, v.name, r.class, r.fields)
+			}
+		}
+		compared++
+	}
+	// The ticketed goldens answered from a fresh insert: four that are not
+	// eligible (plain, a stream, one with a request-log id, one leased on
+	// the overlap list) and the two eligible ones (plain and a stream).
+	if compared != 6 {
+		t.Fatalf("%d ticketed goldens compared", compared)
+	}
+}
+
 // TestLeasedBytesIsTheOnlyChange: the ticket members out and async_eligible
-// false is all leasedBytes changes, and a body that is not its own encoding
-// is refused, so a re-encoding can never be what the comparison sees.
+// false, and invocation_nonce out with an eligible ticket's, is all
+// leasedBytes changes, and a body that is not its own encoding is refused,
+// so a re-encoding can never be what the comparison sees.
 func TestLeasedBytesIsTheOnlyChange(t *testing.T) {
 	c := asyncCaseNamed(t, "answer:async.B:leased")
 	got, ok := leasedBytes(ticketed(t, c.Expect.Response))
 	if !ok || string(got) != c.Expect.Response {
 		t.Fatalf("leased bytes %v:\n got %s\nwant %s", ok, got, c.Expect.Response)
+	}
+	// Python's own eligible ticket: the nonce goes with the ticket. One that
+	// is not eligible has no nonce member to take, and a nonce beside
+	// async_eligible false (a replay's) is kept.
+	for name, nonce := range map[string]bool{"answer:async.C:edge_tickets:eligible": true, "answer:async.C:edge_tickets": false} {
+		golden := asyncCaseNamed(t, name)
+		if strings.Contains(golden.Expect.Response, `"invocation_nonce":`) != nonce {
+			t.Fatalf("%s: the golden's nonce member", name)
+		}
+		got, ok := leasedBytes([]byte(golden.Expect.Response))
+		want := mutated(t, golden.Expect.Response, unticketed)
+		if !ok || !bytes.Equal(got, want) || bytes.Contains(got, []byte(`"invocation_nonce"`)) ||
+			bytes.Contains(got, []byte(`"settlement_ticket"`)) || !bytes.Contains(got, []byte(`"async_eligible":false`)) {
+			t.Fatalf("%s: leased bytes %v: %s", name, ok, got)
+		}
+	}
+	replayed := mutated(t, string(ticketed(t, c.Expect.Response)), func(o pyjson.Object) pyjson.Object {
+		at := slices.IndexFunc(o, func(m pyjson.Member) bool { return m.Key == "idempotent_replay" })
+		return slices.Insert(o, at+1, pyjson.Member{Key: "invocation_nonce", Value: "kept"})
+	})
+	if got, ok := leasedBytes(replayed); !ok || !bytes.Contains(got, []byte(`"invocation_nonce":"kept"`)) {
+		t.Fatalf("a nonce beside async_eligible false: %v %s", ok, got)
 	}
 	spaced := strings.Replace(string(ticketed(t, c.Expect.Response)), `{"data":{`, `{"data": {`, 1)
 	if _, ok := leasedBytes([]byte(spaced)); ok {

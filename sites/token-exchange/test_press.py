@@ -48,7 +48,7 @@ class PressTests(unittest.TestCase):
 
     def test_public_page_metadata_and_alias(self):
         self.assertEqual(self.page, (self.root / "media-kit.html").read_text())
-        self.assertIn('<link rel="canonical" href="https://nytokenexchange.com/media-kit">', self.page)
+        self.assertIn('<link rel="canonical" href="https://nytex.com/media-kit">', self.page)
         self.assertIn('<meta property="og:url" content="https://nytokenexchange.com/media-kit">', self.page)
         self.assertNotIn("<form", self.page)
         self.assertNotIn("analytics.js", self.page)
@@ -200,7 +200,7 @@ class PressTests(unittest.TestCase):
         for market in load_markets():
             sitemap = (self.root / market["slug"] / "sitemap.xml").read_text()
             homepage = (self.root / market["slug"] / "index.html").read_text()
-            self.assertEqual("https://nytokenexchange.com/media-kit" in sitemap, market["slug"] == "new-york")
+            self.assertEqual("https://nytex.com/media-kit" in sitemap, market["slug"] == "new-york")
             if market["slug"] != "new-york":
                 self.assertNotIn('href="https://nytokenexchange.com/media-kit"', homepage)
 

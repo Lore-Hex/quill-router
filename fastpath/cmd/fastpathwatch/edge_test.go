@@ -452,6 +452,38 @@ func TestTheEdgeReportCountsInFlightUncheckedInTheCohortAlone(t *testing.T) {
 	}
 }
 
+// TestTheEdgeReportCountsFundingUncheckedInTheCohortAlone (docs/design/
+// fast-admission-e2-decide.md §11): Python's credit 402 to a workspace whose
+// rows the shadow read unmarked and short of the hold
+// (funding_unchecked.402.insufficient_credits) is counted in cohort_by_class
+// and followed, never in would_admit_python_refused or its classes, beside
+// the same 402 the read left a would-admit, which is.
+func TestTheEdgeReportCountsFundingUncheckedInTheCohortAlone(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=5 ` +
+			`differ=0 would_admit_python_refused=1 read_back=0 classes={"agree_full":5,` +
+			`"funding_unchecked.402.insufficient_credits":3,"would_admit_python_refused.402.insufficient_credits":1} ` +
+			`fields={} rows={} decide={"on":9} cohort={"agree_full":5,"funding_unchecked.402.insufficient_credits":3,` +
+			`"would_admit_python_refused.402.insufficient_credits":1}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"},
+		&out, d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	g := r.I2
+	if g.WouldAdmitPythonRefused != 1 || len(g.WouldAdmitByClass) != 1 ||
+		g.WouldAdmitByClass["402.insufficient_credits"] != 1 ||
+		g.CohortByClass["funding_unchecked.402.insufficient_credits"] != 3 || g.Followed != 9 || g.CohortEligible != 9 {
+		t.Errorf("the funding unchecked figures: %s", out.Bytes())
+	}
+}
+
 func TestTicketTimerMaximumAcrossPeriods(t *testing.T) {
 	sums := newEdgeSums()
 	for _, message := range []string{

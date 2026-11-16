@@ -44,6 +44,9 @@ def load_markets() -> list[dict]:
             assert re.fullmatch(r"[a-z0-9-]+\.[a-z]+", domain)
             assert domain not in domains
             domains.add(domain)
+        assert set(market.get("temporary_aliases", [])) <= set(market["aliases"])
+        assert market.get("canonical_domain", market["domain"]) in [market["domain"], *market["aliases"]]
+        assert not (market.get("temporary_aliases") and market.get("forward_to"))
         assert len(market["sectors"]) == 3
     # A forwarded market 301s to another market's canonical domain, never to
     # one that is itself forwarded.
@@ -219,17 +222,18 @@ def build(output: Path) -> None:
         folder = output / market["slug"]
         folder.mkdir(exist_ok=True)
         (folder / "index.html").write_text(render(market, markets, version))
+        canonical_domain = market.get("canonical_domain", market["domain"])
         (folder / "robots.txt").write_text(
-            f"User-agent: *\nAllow: /\nSitemap: https://{market['domain']}/sitemap.xml\n"
+            f"User-agent: *\nAllow: /\nSitemap: https://{canonical_domain}/sitemap.xml\n"
         )
         provider_page = ""
         if market["slug"] == "new-york":
             provider_page = "".join(
-                f'<url><loc>https://nytokenexchange.com{entry["route"]}</loc></url>'
+                f'<url><loc>https://{canonical_domain}{entry["route"]}</loc></url>'
                 for key, entry in PAGES.items() if key != "home" and entry.get("builder") != "anchor"
             )
         (folder / "sitemap.xml").write_text(
-            f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{market["domain"]}/</loc></url>{provider_page}</urlset>'
+            f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{canonical_domain}/</loc></url>{provider_page}</urlset>'
         )
     print(
         f"Built {len(markets)} markets / {sum(1 + len(m['aliases']) for m in markets)} domains into {output}"

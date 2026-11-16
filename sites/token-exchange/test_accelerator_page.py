@@ -67,7 +67,7 @@ class AcceleratorPageTests(unittest.TestCase):
         self.assertEqual(self.page, render_nyte('accelerator'))
         self.assertIn('data-nyte-page="accelerator"', self.page)
         self.assertIn('<title>Neocloud accelerator | New York Token Exchange</title>', self.page)
-        self.assertIn(f'<link rel="canonical" href="https://nytokenexchange.com{ROUTE}">', self.page)
+        self.assertIn(f'<link rel="canonical" href="https://nytex.com{ROUTE}">', self.page)
         self.assertIn(f'<meta property="og:url" content="https://nytokenexchange.com{ROUTE}">', self.page)
         self.assertIn('/assets/nyte-v2/styles.css?', self.page)
         self.assertIn('/assets/nyte-v2/sell-v3.css?', self.page)

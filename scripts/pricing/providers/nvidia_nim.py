@@ -9,11 +9,10 @@ provider's OpenAI-compatible chat endpoint before it becomes routable.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +28,7 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import (
     apply_canary_results,
     models_requiring_canary,
+    routable_models_to_recheck,
     write_discovered_chat_manifest,
 )
 from scripts.pricing.model_ids import canonicalize_native_model_id
@@ -89,6 +89,17 @@ _VISION_MARKERS = (
     "-vl",
 )
 
+# NVIDIA's free hosted trial endpoint times out often (Sentry
+# QUILL-ROUTER-GF). Held routes are already re-canaried every refresh, but a
+# route that passed once stayed live until its daily slot came round, so a
+# flaky route kept serving failures. Every refresh therefore also re-canaries
+# live routes: a failure holds the route as provider-canary-failed, and the
+# next passing canary lifts it again. The cap bounds the probes one hourly
+# refresh adds (at most this many, 3 at a time, each within the provider fetch
+# timeout); past it the window rotates so each live route is still rechecked.
+MAX_LIVE_RECHECKS_PER_RUN = 24
+_CANARY_FAILED_REASON = "provider-canary-failed"
+
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 INCLUDE_IN_PRICE_INDEX = False
 MANIFEST_STALE_FALLBACK = True
@@ -148,44 +159,12 @@ def _input_modalities(model_id: str) -> list[str]:
     return ["text"]
 
 
-def _scheduled_canary_bucket(model_id: str) -> int:
-    """Spread healthy-route rechecks evenly across 24 hourly refreshes."""
-
-    return hashlib.sha256(model_id.encode("utf-8")).digest()[0] % 24
-
-
-def _scheduled_routable_rechecks(
-    candidates: set[str],
-    *,
-    now: datetime | None = None,
-) -> frozenset[str]:
-    if not MANIFEST_PATH.exists():
-        return frozenset()
-    try:
-        raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError):
-        return frozenset()
-    rows = raw.get("models") if isinstance(raw, dict) else None
-    if not isinstance(rows, list):
-        return frozenset()
-    hour = (now or datetime.now(UTC)).astimezone(UTC).hour
-    return frozenset(
-        model_id
-        for row in rows
-        if isinstance(row, dict)
-        and isinstance((model_id := row.get("id")), str)
-        and model_id in candidates
-        and row.get("routable", True) is not False
-        and _scheduled_canary_bucket(model_id) == hour
-    )
-
-
 def _models_to_canary(
     candidates: set[str],
     *,
     now: datetime | None = None,
 ) -> frozenset[str]:
-    """Canary new/held routes and a bounded daily slice of healthy routes."""
+    """Canary new and held routes, and re-canary live routes every refresh."""
 
     checked: set[str] = set()
     for reason in _CANARY_FAILURE_REASONS:
@@ -196,7 +175,14 @@ def _models_to_canary(
                 failure_reason=reason,
             )
         )
-    checked.update(_scheduled_routable_rechecks(candidates, now=now))
+    checked.update(
+        routable_models_to_recheck(
+            MANIFEST_PATH,
+            candidates,
+            limit=MAX_LIVE_RECHECKS_PER_RUN,
+            now=now,
+        )
+    )
     return frozenset(checked)
 
 
@@ -325,7 +311,7 @@ def fetch() -> ProviderPricingResult:
         notes=[
             f"discovered {len(discovered)} live models, {len(documented)} documented LLMs, "
             f"and {len(candidates)} chat candidates",
-            f"canaried {len(checked)} new or held routes; {len(healthy)} passed",
+            f"canaried {len(checked)} new, held or live routes; {len(healthy)} passed",
         ],
     )
 
@@ -372,4 +358,34 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         discovered_rows=_DISCOVERED_ROWS,
         source_url=CATALOG_URL,
         pricing_source_url=URL,
+        # A failed canary in this run is direct evidence for that route, so
+        # the mass-prune guard must not veto the hold when a bad hour fails
+        # many live routes at once. Unexplained losses stay guarded.
+        confirmed_disabled_ids=_failed_canary_ids(),
+    )
+
+
+def _failed_canary_ids() -> frozenset[str]:
+    return frozenset(
+        model_id
+        for model_id, row in _DISCOVERED_ROWS.items()
+        if row.get("routable") is False and row.get("routable_reason") == _CANARY_FAILED_REASON
+    )
+
+
+def confirmed_manifest_quarantines(
+    result: ProviderPricingResult, before_rows: list[Any], after_rows: list[Any],
+) -> frozenset[str]:
+    """Evidence for this run's canary holds at the outer publication gate."""
+
+    if result.source != "api":
+        return frozenset()
+    failed = _failed_canary_ids()
+    return frozenset(
+        model_id
+        for row in after_rows
+        if isinstance(row, dict)
+        and (model_id := row.get("id")) in failed
+        and row.get("routable") is False
+        and row.get("routable_reason") == _CANARY_FAILED_REASON
     )

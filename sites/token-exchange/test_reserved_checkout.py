@@ -28,7 +28,7 @@ class ReservedCheckoutTests(unittest.TestCase):
                 self.assertIn(text, terms)
             self.assertIn('first-listed, first-sold', terms)
             self.assertIn('/assets/nyte-v2/styles.css', terms)
-            self.assertIn('href="https://nytokenexchange.com/reserved-tokens-terms"', terms)
+            self.assertIn('rel="canonical" href="https://nytex.com/reserved-tokens-terms"', terms)
             for market in load_markets():
                 sitemap = (root / market['slug'] / 'sitemap.xml').read_text()
                 self.assertEqual('/reserved-tokens-terms' in sitemap, market['slug'] == 'new-york')

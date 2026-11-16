@@ -36,7 +36,9 @@ import (
 // most 5 a second, the two rows Python wrote against Go's would-be rows.
 // Python decides; nothing computed here reaches the bytes the enclave
 // receives, and the proxy never waits for it. The logs carry counts, class
-// and field names and digests: never a body, an id, a key or a message.
+// and field names and digests, and a credit read's amounts with no
+// identifier beside them (the funding line): never a body, an id, a key or
+// a message.
 
 // The comparison's classes (§11). A class with a dot is counted by its
 // suffix too: a reason, a status and type, or a cache.
@@ -189,6 +191,11 @@ type DecideShadowConfig struct {
 	// read timestamp to settle a race, within ReadsPerSecond of its own; nil
 	// checks none.
 	Windows ShadowWindowReader
+	// Credit reads a workspace's credit rows after Python refused a request
+	// Go would have answered for credit, to tell a balance that ran out from
+	// a debt mark Go's gate missed (confirmFunding), within ReadsPerSecond
+	// of its own; nil reads none, and every such refusal pages.
+	Credit ShadowCreditReader
 	// Jobs bounds the requests followed at once; SampleEvery and
 	// ReadsPerSecond the row read-backs; DecideEvery the decide copy's
 	// refresh; Wait how long a request waits for Python's answer.
@@ -238,6 +245,12 @@ type fullShadow struct {
 		tokens float64
 		at     time.Time
 	}
+	// fundingLimiter bounds the credit reads (confirmFunding) the same way.
+	fundingLimiter struct {
+		sync.Mutex
+		tokens float64
+		at     time.Time
+	}
 
 	mu       sync.Mutex
 	tallies  map[string]*fullTally
@@ -247,7 +260,9 @@ type fullShadow struct {
 	// raceLogs bounds the race lines a period logs; races is the rolling
 	// hour AlertWindowRace reads.
 	raceLogs int
-	races    raceWatch
+	// fundingLogs bounds the credit read lines a period logs.
+	fundingLogs int
+	races       raceWatch
 	// cacheAt is the cache's counts at the last line, which logs the
 	// period's: the cache keeps running totals.
 	cacheAt gwstate.Counters
@@ -365,6 +380,7 @@ func newFullShadow(cfg DecideShadowConfig, logf func(string, ...any), clock func
 	}
 	sh.limiter.tokens = cfg.ReadsPerSecond
 	sh.windowLimiter.tokens = cfg.ReadsPerSecond
+	sh.fundingLimiter.tokens = cfg.ReadsPerSecond
 	return sh, nil
 }
 
@@ -580,7 +596,13 @@ func (sh *fullShadow) follow(job *fullJob) {
 	if r.race != nil {
 		sh.confirmRace(decided.ForShadow(), windows, &r)
 	}
+	// The eviction first: it shares its cache with the decide path and
+	// waits on no read.
 	sh.evict(decided, a, job.in.Request.Body)
+	// Python's credit refusal of a request Go would have answered: the
+	// workspace's rows say whether its balance ran out or a debt mark was
+	// missed.
+	sh.confirmFunding(decided.ForShadow(), &r)
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
 		if r.warm != nil {
@@ -618,23 +640,36 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
 }
 
-// leasedUnleased is Python's answer as Python would have given it leased,
-// and true, when Go's decision is a leased answer (Decision.LeasedAnswer)
-// and Python answered the request with a ticket (shape C): Python's pilot
-// did not lease it, so its answer is to an unleased authorization, while
-// Go's members are the answer to a leased one, which the edge gives only
-// under its own lease. The two answers differ only there: Python's leased
-// answer is its unleased one with the ticket and the status URL taken out
-// and async_eligible false (async_settle.snapshot_projection builds both
-// from the same snapshot), so the rest of the 200, the reservation, the
-// estimate, the candidates and the snapshot among them, is still compared
-// byte for byte. Any other answer is a, false; so is a ticketed answer
-// whose bytes are not their own pydantic encoding (leasedBytes), which is
-// then compared as it came and differs on its shape.
+// leasedUnleased is Python's answer as Python would have given it without
+// its ticket, and true, when Go's decision is one the edge answers without
+// a ticket of its own making and Python answered the request with a ticket
+// (shape C). Two decisions are so:
+//
+//   - a leased answer (Decision.LeasedAnswer): Python's pilot did not lease
+//     the request, so its answer is to an unleased authorization, while Go's
+//     members are the answer to a leased one, which the edge gives only
+//     under its own lease;
+//   - a decision that wants a ticket (Async.WantTicket, edge tickets): the
+//     edge composes the snapshot answer and splices in the ticket Python's
+//     sign-only route returns, after the insert (Composed.WithTicket). The
+//     shadow inserts nothing and asks for no ticket, so what it holds is the
+//     answer before the splice.
+//
+// Either way the two answers differ only by the ticket: Python's answer
+// without one is its ticketed answer with the ticket and the status URL
+// taken out, async_eligible false and, when the ticket was an eligible one,
+// invocation_nonce taken out too, which Python writes only beside
+// async_eligible true (async_settle.snapshot_projection builds both from
+// the same snapshot; gateway.py writes the nonce). So the rest of the 200,
+// the reservation, the estimate, the candidates and the snapshot among
+// them, is still compared byte for byte. Any other answer is a, false; so
+// is a ticketed answer whose bytes are not their own pydantic encoding
+// (leasedBytes), which is then compared as it came and differs on its
+// shape.
 func leasedUnleased(d Decided, a pyAnswer) (pyAnswer, bool) {
 	dec := d.ForShadow()
-	if dec == nil || !dec.LeasedAnswer || a.status != http.StatusOK || a.why != "" ||
-		pythonAsyncMembers(a.body).shape() != asyncShapeTicket {
+	if dec == nil || !(dec.LeasedAnswer || dec.Staged.Async().WantTicket) || a.status != http.StatusOK ||
+		a.why != "" || pythonAsyncMembers(a.body).shape() != asyncShapeTicket {
 		return a, false
 	}
 	body, ok := leasedBytes(a.body)
@@ -646,10 +681,12 @@ func leasedUnleased(d Decided, a pyAnswer) (pyAnswer, bool) {
 }
 
 // leasedBytes is a ticketed 200 with settlement_ticket and
-// settlement_status_url removed and async_eligible false, re-encoded as the
-// 200 is (pyjson.DumpsPydantic); false when the body does not decode to an
-// object whose data is one, or is not already its own encoding, so that the
-// removal is the only change.
+// settlement_status_url removed, async_eligible false and, when
+// async_eligible was true, invocation_nonce removed (Python's 200 carries
+// it only beside async_eligible true, or on a replay, which carries no
+// ticket), re-encoded as the 200 is (pyjson.DumpsPydantic); false when the
+// body does not decode to an object whose data is one, or is not already
+// its own encoding, so that the removal is the only change.
 func leasedBytes(raw []byte) ([]byte, bool) {
 	tree, err := pyjson.Decode(raw)
 	if err != nil {
@@ -666,11 +703,16 @@ func leasedBytes(raw []byte) ([]byte, bool) {
 	if same, err := pyjson.DumpsPydantic(top); err != nil || !bytes.Equal(same, raw) {
 		return nil, false
 	}
+	eligible, _ := memberOf(data, "async_eligible").(bool)
 	kept := make(pyjson.Object, 0, len(data))
 	for _, m := range data {
 		switch m.Key {
 		case "settlement_ticket", "settlement_status_url":
 			continue
+		case "invocation_nonce":
+			if eligible {
+				continue
+			}
 		case "async_eligible":
 			m.Value = false
 		}
@@ -742,6 +784,9 @@ type fullResult struct {
 	windows  []string
 	stream   string
 	race     *raceCandidate
+	// funding is the credit read that settled, or failed to settle,
+	// Python's credit refusal (confirmFunding); nil for any other answer.
+	funding *fundingRead
 	// key is the request's lookup hash (Decided.LookupHash), for
 	// distinct_keys; never logged.
 	key string
@@ -1621,14 +1666,18 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		sh.logf("fastpath edge decide shadow window race: class=%s key=%s window=%s go=%d reread=%d python=%d gap=%d %s",
 			r.class, c.keyHashPrefix, c.window, c.first, c.reread, c.python, c.first-c.python, digest)
 	}
+	if f := r.funding; f != nil && sh.fundingLogs < maxDifferLogs {
+		sh.fundingLogs++
+		sh.logf("fastpath edge decide shadow funding: class=%s %s %s", r.class, f.line(), digest)
+	}
 	pages := strings.HasPrefix(r.class, ClassWouldAdmit+".") || strings.HasPrefix(r.class, ClassWindowRaceUnconfirmed+".")
 	if pages && sh.critical < maxCriticalLogs {
 		sh.critical++
+		note := windowNote(r.windows) + r.funding.note()
 		if sh.cfg.Alert != nil {
-			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+
-				windowNote(r.windows))
+			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+note)
 		} else {
-			sh.logf("fastpath edge decide shadow CRITICAL: class=%s%s %s", r.class, windowNote(r.windows), digest)
+			sh.logf("fastpath edge decide shadow CRITICAL: class=%s%s %s", r.class, note, digest)
 		}
 	}
 	if len(r.fields) > 0 && sh.differs < maxDifferLogs {
@@ -1713,7 +1762,7 @@ func (sh *fullShadow) flush() {
 	}
 	sh.logf(line, args...)
 	sh.raceAlerts(time.Now())
-	sh.tallies, sh.critical, sh.differs, sh.raceLogs = map[string]*fullTally{}, 0, 0, 0
+	sh.tallies, sh.critical, sh.differs, sh.raceLogs, sh.fundingLogs = map[string]*fullTally{}, 0, 0, 0, 0
 }
 
 // DecideShadowCounts are the full-response shadow's counts since the edge

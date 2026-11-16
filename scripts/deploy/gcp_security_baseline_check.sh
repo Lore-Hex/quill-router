@@ -100,9 +100,39 @@ else
     "") drift "no auditConfigs on allServices — administrative activity is not being audited" ;;
     *)  drift "auditConfigs = $TYPES (want ADMIN_READ)" ;;
   esac
-  jq -e '[.auditConfigs[]?.auditLogConfigs[]?.exemptedMembers // empty] | flatten | length > 0' <<<"$POLICY" >/dev/null 2>&1 \
-    && drift "an auditLogConfig has exemptedMembers — some principal is exempt from audit logging" \
-    || ok "no audit exemptions"
+  # Spanner DATA_READ (infra/spanner_audit.tf, INC-2026-003 corrective action
+  # 6) is one of the two service-level configs (Secret Manager's is below),
+  # and its serving-fleet exemption list is the one allowed exemption. allServices DATA_READ above stays a regression:
+  # this config records operators, CI, the vendor and tr-clickhouse, not the
+  # metering reads that made the allServices version cost ~$236/month.
+  # Keep this list identical to spanner_serving_readers in infra/spanner_audit.tf
+  # (tests/test_spanner_data_read_audit.py compares them).
+  SPANNER_READ_EXEMPT_WANT="serviceAccount:44325983244-compute@developer.gserviceaccount.com,serviceAccount:tr-aws-cross-cloud@quill-cloud-proxy.iam.gserviceaccount.com,serviceAccount:tr-fastpath-node@quill-cloud-proxy.iam.gserviceaccount.com,serviceAccount:tr-google-data-manager@quill-cloud-proxy.iam.gserviceaccount.com,serviceAccount:tr-internal@quill-cloud-proxy.iam.gserviceaccount.com,serviceAccount:tr-multicloud@quill-cloud-proxy.iam.gserviceaccount.com,serviceAccount:tr-public@quill-cloud-proxy.iam.gserviceaccount.com,serviceAccount:trusted-router-control-run@quill-cloud-proxy.iam.gserviceaccount.com"
+  SPANNER_TYPES="$(jq -r '[.auditConfigs[]? | select(.service=="spanner.googleapis.com") | .auditLogConfigs[].logType] | sort | join(",")' <<<"$POLICY")"
+  SPANNER_EXEMPT="$(jq -r '[.auditConfigs[]? | select(.service=="spanner.googleapis.com") | .auditLogConfigs[]? | select(.logType=="DATA_READ") | .exemptedMembers[]?] | sort | join(",")' <<<"$POLICY")"
+  if [ "$SPANNER_TYPES" != "DATA_READ" ]; then
+    drift "spanner.googleapis.com auditConfigs = '${SPANNER_TYPES}' (want DATA_READ; INC-2026-003 CA6, infra/spanner_audit.tf)"
+  elif [ "$SPANNER_EXEMPT" != "$SPANNER_READ_EXEMPT_WANT" ]; then
+    drift "spanner DATA_READ exemptions differ from infra/spanner_audit.tf (got: ${SPANNER_EXEMPT})"
+  else
+    ok "spanner DATA_READ recorded; exemptions = serving fleet only"
+  fi
+  # Secret Manager DATA_READ (infra/secret_manager_audit.tf) records every
+  # read of a secret's value, for every caller. Secret reads are few (about
+  # 65,000 a day), so unlike Spanner's config there is no exemption to allow:
+  # the check below this one covers it.
+  SECRET_TYPES="$(jq -r '[.auditConfigs[]? | select(.service=="secretmanager.googleapis.com") | .auditLogConfigs[].logType] | sort | join(",")' <<<"$POLICY")"
+  if [ "$SECRET_TYPES" != "DATA_READ" ]; then
+    drift "secretmanager.googleapis.com auditConfigs = '${SECRET_TYPES}' (want DATA_READ; infra/secret_manager_audit.tf)"
+  else
+    ok "secret reads recorded (secretmanager DATA_READ)"
+  fi
+  OTHER_EXEMPT="$(jq -r '[.auditConfigs[]? | select(.service!="spanner.googleapis.com") | .auditLogConfigs[]?.exemptedMembers[]?] | length' <<<"$POLICY")"
+  OTHER_SERVICES="$(jq -r '[.auditConfigs[]? | .service | select(.!="allServices" and .!="spanner.googleapis.com" and .!="secretmanager.googleapis.com")] | join(",")' <<<"$POLICY")"
+  [ "$OTHER_EXEMPT" = "0" ] \
+    && ok "no audit exemptions outside spanner DATA_READ" \
+    || drift "an auditLogConfig outside spanner DATA_READ has exemptedMembers — some principal is exempt from audit logging"
+  [ -z "$OTHER_SERVICES" ] || drift "unexpected service-level auditConfigs: ${OTHER_SERVICES}"
 fi
 
 # ---------------------------------------------------------------------------

@@ -193,6 +193,7 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 		async:    s.async,
 		inserted: s.inserted,
 		readBack: s.readBack,
+		nonce:    in.InvocationNonce,
 	}, nil
 }
 
