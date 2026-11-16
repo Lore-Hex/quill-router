@@ -47,7 +47,7 @@ def test_the_alert_policy_matches_the_lines_the_nodes_write() -> None:
     # and decide path name their own kinds through the same line.
     assert "writeAlertOf(w, subject, what, auditor.AlertKind(what))" in service
     assert "edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }" in service
-    assert "decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}" in service
+    assert "decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Debts: s, Alert: edgeAlert}" in service
     assert "decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}" in service
     assert '"logging.googleapis.com/labels": map[string]string{"fastpath_alert": kind}' in service
     assert 'fmt.Fprintln(w, "<3>"+string(line))' in service

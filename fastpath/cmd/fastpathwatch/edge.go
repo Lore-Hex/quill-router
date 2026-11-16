@@ -79,7 +79,10 @@ func (s *edgeSums) add(l edge.CountsLine) {
 // which could hide either: non-zero, those two are not known to be zero),
 // would_admit_python_refused by class, the stale passes against every
 // request the shadow followed, and the decide path's unavailable answers by
-// the insert's gRPC code.
+// the insert's gRPC code. The shadow's debt triage takes Python's 402
+// insufficient_credits out of would_admit_python_refused unless the
+// workspace was marked in debt at both of its instants: debt_unmarked,
+// debt_lag, debt_unmarked_earlier and debt_unconfirmed count the rest.
 //
 // DistinctKeys is the widening's count of distinct API keys among the
 // comparable requests (docs/design/fast-admission-widening.md section 8.1
@@ -128,6 +131,22 @@ type i2 struct {
 	WindowRace            int64    `json:"window_race"`
 	WindowRaceUnconfirmed int64    `json:"window_race_unconfirmed"`
 	WindowRaceRatio       *float64 `json:"window_race_ratio"`
+	// DebtUnmarked, DebtLag and DebtUnmarkedEarlier are Python's 402
+	// insufficient_credits to requests Go would have answered whose
+	// workspace the shadow's debt triage read unmarked at the earlier of its
+	// two instants, so that no debt stop was owed (debt_unmarked.*: unmarked
+	// at the later too, a balance short of the hold; debt_lag.*: marked at
+	// the later, decision 17's lag; debt_unmarked_earlier.*: the later read
+	// not had, so which of the two is not known), none counted in
+	// would_admit_python_refused and none paged; DebtUnconfirmed those the
+	// earlier read did not clear (debt_unconfirmed.*), which page. A 402 of
+	// a workspace marked at both instants is
+	// would_admit_python_refused.402.insufficient_credits still
+	// (docs/runbooks/fastpath-alerts.md).
+	DebtUnmarked        int64 `json:"debt_unmarked"`
+	DebtLag             int64 `json:"debt_lag"`
+	DebtUnmarkedEarlier int64 `json:"debt_unmarked_earlier"`
+	DebtUnconfirmed     int64 `json:"debt_unconfirmed"`
 	// DistinctKeys and DistinctKeysExcludedLines: above.
 	DistinctKeys              int64 `json:"distinct_keys"`
 	DistinctKeysExcludedLines int64 `json:"distinct_keys_excluded_lines"`
@@ -269,6 +288,14 @@ func (r *edgeReport) gates() {
 			g.WindowRace += n
 		case strings.HasPrefix(class, edge.ClassWindowRaceUnconfirmed+"."):
 			g.WindowRaceUnconfirmed += n
+		case strings.HasPrefix(class, edge.ClassDebtUnmarked+"."):
+			g.DebtUnmarked += n
+		case strings.HasPrefix(class, edge.ClassDebtLag+"."):
+			g.DebtLag += n
+		case strings.HasPrefix(class, edge.ClassDebtUnmarkedEarlier+"."):
+			g.DebtUnmarkedEarlier += n
+		case strings.HasPrefix(class, edge.ClassDebtUnconfirmed+"."):
+			g.DebtUnconfirmed += n
 		}
 	}
 	for code, n := range r.Decide.ByName["unavailable_by_code"] {

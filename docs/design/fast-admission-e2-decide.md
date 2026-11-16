@@ -1695,6 +1695,43 @@ counts, per snapshot and policy digest:
   difference of its own.
 - `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
   line at once): Go would answer, Python answered a 4xx or its pause 503.
+- `debt_unmarked.402.insufficient_credits`, `debt_lag.402.insufficient_credits`,
+  `debt_unmarked_earlier.402.insufficient_credits` and
+  `debt_unconfirmed.402.insufficient_credits`: Python's 402
+  `insufficient_credits` to a request Go would answer, by the workspace's
+  debt mark (`fastpath/internal/edge/shadow_debt.go`). Python answers a
+  workspace marked in debt and one whose balance does not cover the hold
+  with that same 402, and Go's decision gates on the mark alone
+  (`workspace.in_debt`, decision 17) and makes no balance check: the hold is
+  the reservation's, taken under a lease or refused by Python. So after
+  Python's answer, and after its 402 has evicted the key and its workspace,
+  the shadow reads the mark as of two instants (`store.ReadDebtMarkAt`: the
+  workspace's `tr_credit_balance` rows by their primary-key prefix at an
+  exact timestamp, at low priority, within `WindowReadBudget`, never asked
+  again, both reads from a bucket of the triage's own, apart from the
+  window checks', or neither; a workspace is marked when any row is): the
+  request's instant less the facts' maximum age plus a second for the two
+  clocks (14 s before it), the earliest a fact the gate may decide on can
+  have been read, and the end of Python's answer. The earlier read alone
+  decides the page, since a stop the gate owes stands there; the later
+  names the class. Unmarked at the earlier instant never pages: unmarked at
+  the later too is `debt_unmarked` (the balance was short), marked at the
+  later `debt_lag` (the mark is newer than the oldest usable fact, decision
+  17's lag), and a later read that failed, ran late or found no credit rows
+  `debt_unmarked_earlier` (no stop was owed; which of the two is not
+  known). Marked at both stays
+  `would_admit_python_refused.402.insufficient_credits` (the gate missed a
+  mark older than any fact it may use: critical). A candidate the earlier
+  read does not clear is `debt_unconfirmed`, critical too, since it cannot
+  be told from a miss: an earlier read not made (no reader, the bucket
+  short of two reads), failed, late or of no credit rows, or a mark there
+  that the later read did not find again or was not had for (the shadow's
+  `windows` counts say which, `debt.unconfirmed.<why>`, beside
+  `debt.unmarked`, `debt.lag`, `debt.unmarked_earlier.<why>` and
+  `debt.marked`). What the two reads prove and do not, the gaps left, and
+  the manual read that settles a page: `docs/runbooks/fastpath-alerts.md`,
+  "The debt triage". Any other 402 (another type, a body not read through)
+  is the would-admit as before.
 - `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,
   Python answered 200; an idempotent replay is
   `python_answered_go_passed.insert.scope_taken` (Go's insert would have
@@ -1717,7 +1754,8 @@ counts, per snapshot and policy digest:
   `us-central1` logged `billing.authorize_admission_limited`). Only that
   refusal: any other refusal of an `inflight.key` pass (401, 402, 403, a
   window, the ingress limiter's 429 "Rate limit exceeded", a 429 not read
-  through) stays `would_admit_python_refused` and pages, since the pipeline
+  through) stays `would_admit_python_refused` and pages (a 402
+  `insufficient_credits` after its debt triage, above), since the pipeline
   decides the key's next request the same with a slot free. Python's
   in-flight 429 to any other request is `inflight_unchecked.<pass>`, below.
   The pipeline's comparison of an
@@ -1787,7 +1825,11 @@ whether the cache held it or not (read leniently from a body the strict
 parse passed), and the key's workspace when the cache said which. Each
 `would_admit_python_refused` raises an alert line of kind
 `edge_would_admit_python_refused` (the service's `<3>` JSON line, label
-`fastpath_alert`; its alert policy is I1's or G12's). An INFO line per
+`fastpath_alert`; its alert policy is I1's or G12's), and so does each
+`window_race_unconfirmed` and `debt_unconfirmed`: the policy matches the
+label alone, so the classes that page are the ones that raise it, one line
+a comparison as it is counted, and a class that does not page raises none
+and takes none of a period's bound on them. An INFO line per
 snapshot and policy each minute carries the counts, and one more the
 requests dropped, the evictions and the cache's unrefreshed, dropped and
 failed reads; no line carries a body, an id, a key or a message.
@@ -1852,7 +1894,8 @@ read through, `passed.inflight.key` or `inflight_unchecked.*`); zero
 `differ.estimate*` and zero
 `row.idempotency_fingerprint`, with no field counted `other` (a period's
 fields past the line's bound, which could hide either); zero
-`would_admit_python_refused` beyond key-revocation lag; the stale-pass rate
+`would_admit_python_refused` beyond key-revocation lag, and no
+`debt_unconfirmed` left unexplained; the stale-pass rate
 (`stale` over `followed`: every request the shadow compared) recorded. `fastpathwatch
 edge` prints each figure. Requests carrying `X-TR-Settlement-Mode` pass with
 `header.settlement_async` and are not comparable until G15c is pinned;
@@ -1883,7 +1926,8 @@ so these are not sync-only figures. `agree_full` at least 99.5%, every
 difference explained (so a sync difference fails the gate on its own and
 cannot hide in the ratio), zero `differ.estimate*`, zero
 `row.idempotency_fingerprint`, no field counted `other`, zero
-`would_admit_python_refused` beyond key-revocation lag, `cohort_by_class`
+`would_admit_python_refused` beyond key-revocation lag, no
+`debt_unconfirmed` left unexplained, `cohort_by_class`
 accounted for and the stale-pass rate recorded.
 Once the gate is green the switches go in §6.2's step 4 order: the async
 setting first (it changes nothing while no decide row is on), then

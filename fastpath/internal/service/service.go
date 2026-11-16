@@ -544,7 +544,7 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 	// (docs/runbooks/fastpath-alerts.md).
 	edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
 	if cfg.Edge.DecideShadow {
-		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Debts: s, Alert: edgeAlert}
 	}
 	if cfg.Edge.Decide {
 		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}

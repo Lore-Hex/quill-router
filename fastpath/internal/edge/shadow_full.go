@@ -103,6 +103,31 @@ const (
 	// failed or late re-read, a window reset since). It pages as a
 	// would-admit does, since it cannot be told from a defect of Go's read.
 	ClassWindowRaceUnconfirmed = "window_race_unconfirmed"
+	// ClassDebtUnmarked: Go would have admitted, Python refused with its 402
+	// insufficient_credits, and no credit row of the workspace was marked in
+	// debt at either of the triage's two instants (shadow_debt.go): the
+	// balance did not cover the request's hold, which Go's decision does not
+	// check (the hold is taken under a lease, or the request passes to
+	// Python). Counted, never paged.
+	ClassDebtUnmarked = "debt_unmarked"
+	// ClassDebtLag: the same refusal of a workspace marked at the later
+	// instant alone: the mark is newer than the oldest fact the gate may
+	// decide on, the lag decision 17 allows. Counted, never paged. A mark at
+	// both instants stays ClassWouldAdmit: the debt gate missed it.
+	ClassDebtLag = "debt_lag"
+	// ClassDebtUnmarkedEarlier: the same refusal of a workspace unmarked at
+	// the earlier instant whose later read was not had (it failed or ran
+	// late, or found no credit rows): no stop was owed, since a stop the
+	// gate owes stands at the earlier instant, but whether the 402 was the
+	// balance (ClassDebtUnmarked) or a newer mark (ClassDebtLag) is not
+	// known. Counted, never paged.
+	ClassDebtUnmarkedEarlier = "debt_unmarked_earlier"
+	// ClassDebtUnconfirmed: the same refusal, which the earlier read did not
+	// clear: it was not made (no reader, the limiter), failed or ran late,
+	// or found no credit rows, or it found a mark that the later read did
+	// not find again or was not had. It pages as a would-admit does, since
+	// it cannot be told from a missed debt stop.
+	ClassDebtUnconfirmed = "debt_unconfirmed"
 )
 
 // WindowReadTimestampHeader is the header of Python's internal authorize
@@ -152,7 +177,10 @@ const (
 
 // AlertWouldAdmit is the alert kind (the fastpath_alert label) of a
 // would_admit_python_refused comparison: the edge would have answered an
-// authorize Python refused. Its alert policy is I1's or G12's.
+// authorize Python refused. Its alert policy is I1's or G12's. The policy
+// matches the label alone, so which comparisons page is decided here, by
+// which of them raise it (pages): a would-admit, and a candidate no read
+// settled (ClassWindowRaceUnconfirmed, ClassDebtUnconfirmed).
 const AlertWouldAdmit = "edge_would_admit_python_refused"
 
 // The 503 bodies' messages (errors.py assert_workspace_billing_active;
@@ -189,6 +217,12 @@ type DecideShadowConfig struct {
 	// read timestamp to settle a race, within ReadsPerSecond of its own; nil
 	// checks none.
 	Windows ShadowWindowReader
+	// Debts reads a workspace's debt mark at an instant, for the triage of
+	// a Python 402 insufficient_credits Go would have admitted
+	// (shadow_debt.go), within ReadsPerSecond of its own, apart from the
+	// window reads'; nil reads none, and every such 402 then pages
+	// unconfirmed.
+	Debts DebtMarkReaderAt
 	// Jobs bounds the requests followed at once; SampleEvery and
 	// ReadsPerSecond the row read-backs; DecideEvery the decide copy's
 	// refresh; Wait how long a request waits for Python's answer.
@@ -238,6 +272,14 @@ type fullShadow struct {
 		tokens float64
 		at     time.Time
 	}
+	// debtLimiter bounds the debt triage's reads the same way, in a bucket
+	// of its own (takeDebtReads): however many 402s are triaged, the window
+	// checks and the race re-reads keep their tokens.
+	debtLimiter struct {
+		sync.Mutex
+		tokens float64
+		at     time.Time
+	}
 
 	mu       sync.Mutex
 	tallies  map[string]*fullTally
@@ -274,7 +316,8 @@ const maxDistinctKeys = 1000
 type fullTally struct {
 	classes, fields, rows, decide, cohort map[string]int
 	readBack                              int
-	// windows are the window checks' counts (compareWindowed).
+	// windows are the window checks' counts (compareWindowed) and, under
+	// debt., the debt triage's (triageDebt).
 	windows map[string]int
 	// streams are the requests passed as body.stream, by the Stage D
 	// reason the edge reads for them (Decided.StreamStageD).
@@ -365,6 +408,7 @@ func newFullShadow(cfg DecideShadowConfig, logf func(string, ...any), clock func
 	}
 	sh.limiter.tokens = cfg.ReadsPerSecond
 	sh.windowLimiter.tokens = cfg.ReadsPerSecond
+	sh.debtLimiter.tokens = max(cfg.ReadsPerSecond, debtReads)
 	return sh, nil
 }
 
@@ -550,8 +594,9 @@ func (sh *fullShadow) decode(encoding string, raw []byte) (out []byte, held int6
 }
 
 // follow decides the request, waits for Python's answer, compares, evicts
-// what Python's refusal says is behind, and reads back the rows when
-// sampled; then gives back its job and its bytes.
+// what Python's refusal says is behind, settles a window race or a debt
+// candidate with its reads, and reads back the rows when sampled; then
+// gives back its job and its bytes.
 func (sh *fullShadow) follow(job *fullJob) {
 	defer sh.wg.Done()
 	defer func() { <-sh.jobs }()
@@ -577,10 +622,18 @@ func (sh *fullShadow) follow(job *fullJob) {
 		}
 	}
 	r := sh.safeCompare(decided, a, windows, job.decidePass)
+	// Before any read below: the decide path decides on the same cache, and
+	// what Python's refusal says is behind must not stay there for it while
+	// the shadow's own reads run (two of up to WindowReadBudget each for a
+	// debt candidate).
+	sh.evict(decided, a, job.in.Request.Body)
 	if r.race != nil {
 		sh.confirmRace(decided.ForShadow(), windows, &r)
 	}
-	sh.evict(decided, a, job.in.Request.Body)
+	if r.class == debtCandidate {
+		// Python's answer ended latency after the request's arrival here.
+		sh.triageDebt(decided.Workspace, job.in.Request.At, job.arrived.Add(a.latency), &r)
+	}
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
 		if r.warm != nil {
@@ -727,7 +780,7 @@ func inFlightAgreed(r fullResult, a pyAnswer, decidePass string) fullResult {
 // decide), whether the rows are worth reading back, Python's ids for that
 // read, and, for a differ.affinity_warm, Go's decision in Python's warm
 // order, whose rows that read compares; windows are the window check's
-// counts (compareWindowed).
+// counts (compareWindowed) and the debt triage's (triageDebt).
 type fullResult struct {
 	class    string
 	fields   []string
@@ -1621,8 +1674,12 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		sh.logf("fastpath edge decide shadow window race: class=%s key=%s window=%s go=%d reread=%d python=%d gap=%d %s",
 			r.class, c.keyHashPrefix, c.window, c.first, c.reread, c.python, c.first-c.python, digest)
 	}
-	pages := strings.HasPrefix(r.class, ClassWouldAdmit+".") || strings.HasPrefix(r.class, ClassWindowRaceUnconfirmed+".")
-	if pages && sh.critical < maxCriticalLogs {
+	// One alert a paging comparison, raised as it is counted and bounded by
+	// the period's paging comparisons alone: a class that does not page
+	// (ClassDebtUnmarked, ClassDebtLag and ClassDebtUnmarkedEarlier among
+	// them) takes none of the bound, so it cannot keep a paging one of the
+	// same period from its alert.
+	if pages(r.class) && sh.critical < maxCriticalLogs {
 		sh.critical++
 		if sh.cfg.Alert != nil {
 			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+
@@ -1723,7 +1780,7 @@ func (sh *fullShadow) flush() {
 // (dropped) and the cache evictions Python's refusals made. Async are the
 // async-v1 counts by the line's map name (async_seen, async_compared,
 // async_fields, async_shape, async_python_admitted), Windows the window
-// checks' (compareWindowed).
+// checks' (compareWindowed) and the debt triage's (debt.*, triageDebt).
 type DecideShadowCounts struct {
 	Classes, Fields, Rows, Decide, Cohort, Windows map[string]int
 	// Streams are the requests passed as body.stream by the Stage D reason
@@ -1905,7 +1962,8 @@ func windowFields(v keywindow.Verdict, a pyAnswer) []string {
 	return out
 }
 
-// windowNote is the window counts a critical line adds, "" for none.
+// windowNote is the window counts a critical line adds, the debt triage's
+// among them, "" for none.
 func windowNote(windows []string) string {
 	if len(windows) == 0 {
 		return ""

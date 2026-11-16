@@ -86,7 +86,7 @@ page names does not change.
 | `pending_work_overdue` | A pack's pending work was not done in time. | The pending worker logs a failed Spanner call by its class alone (`auditor: spanner write records failed: Unavailable`, see [The auditor's own lines](#the-auditors-own-lines)), not the error's text; a pack waiting on a record not yet staged logs nothing. The alerts above, on the same subject or lease, name the causes it knows. `status` shows the workspace's pending packs and staged records; a winner whose full record is not staged waits for it. |
 | `fleet_audit_fault` | The fleet audit found a workspace whose rows do not keep one of `fastpathctl audit`'s checks: the subject is the workspace, the message the check (`identity`, `winners`, `booked_usage` or `sums`) and its first three problems. See [The fleet audit](#the-fleet-audit). | Money may be wrong: turn the workspace off (`fastpath-turn-off.md`) and run `fastpathctl audit` on it for every problem. `identity` is a credit shard's reservation that its live leases and synchronous holds do not sum to, a lease its donors do not sum to, or debt marks that disagree; `winners` an authorization decided twice, or a lease's packs charging other than it booked; `booked_usage` a shard's usage below what its retained leases booked on it; `sums` sums past int64. Credit rows that are not shards 0 to n-1 fail the `identity` and `booked_usage` checks. |
 | `fleet_audit_stale` | A workspace with a lease open or draining that the fleet audit has not audited for three hours: each pass its checks failed (read the owner's `auditor: fleet audit:` lines) or the pass ran out of its hour before reaching it (its summary's `leased_audited` below `leased_due`). The policy of the same name with "no summary" is the audit itself silent: no line at all, neither a pass's start, its progress every 30 minutes nor its summary, for 90 minutes. | Read the summaries and the failure lines on the node that owns the key. A Spanner failure class repeated points at Spanner from that node; passes that never reach every leased workspace mean the fleet outgrew five workspaces a second. Until it is audited, run `fastpathctl audit` on the workspace by hand. |
-| `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`). Nothing was answered: the shadow only observes. `would_admit_python_refused.402.insufficient_credits` has two causes the body cannot tell apart, since Python answers both with the same 402: a workspace whose available credit no longer covers the request's hold (Go has no balance check of its own: the front door's reservation under a lease holds what Go answers, and with no lease room the owner is Busy and the request passes), or a workspace marked in debt, which Go's `workspace.in_debt` gate should have refused within the facts' 15 s age (decision 17). Triage: find Python's `billing.insufficient_credits` line at the alert's second (Cloud Run logs, `trusted_router.routes.internal.gateway`): its `workspace_id`, and its `reserved_microdollars`, the request's own credit hold (not a balance; the line logs none). Then read the workspace's credit rows by key as they were at that second and 15 s before it, stale reads within the 7-day version retention: `gcloud spanner databases execute-sql ... --read-timestamp=T --sql="SELECT shard, total_credits - total_usage - reserved AS available, COALESCE(in_debt, FALSE) FROM tr_credit_balance WHERE workspace_id='WS' ORDER BY shard"`. A read taken now can miss a mark repaid since. No shard marked at either instant, and no shard's `available` nor their sum at or above the hold: the balance ran out between two enabler passes (every 15 minutes), and nothing needs doing (2026-11-15 05:21:41Z: 109,773 available against a 110,640 hold, unmarked). A shard marked at the alert's second only: the expected 15 s lag of decision 17. Marked at both instants: Go's in-debt gate missed it; `fastpathctl decide off` the workspace and find why. Unmarked at both, but a shard's `available` or their sum covering the hold at the alert's second: a hold or settle within the read's second, or a Python-side refusal to investigate there; not Go's gate. Python's per-key in-flight 429 (`rate_limited`, "Too many concurrent requests for this API key": one Python process's count of one key's authorizes at the policy's `gateway_authorize_max_in_flight_per_key`), read through, is never this alert (one whose body the shadow did not read is `would_admit_python_refused.429.unread`, and pages): to a request the decide path passed at its own in-flight limit it is `passed.inflight.key`, and to any other (passed at another step: after the gate, such as `owner.*`, `budget.spent`, a window or `insert.*`; before it, such as `decide.off`, or `workspace.not_enabled` when the node's copy of the switch turns the workspace off; or not decided) it is `inflight_unchecked.<pass>`, both counted and never paged, since Go answered nothing and holds a slot only while it decides a request, so the key's requests it passed were in Python's count and never in Go's (`docs/design/fast-admission-e2-decide.md` decision 14, §11). Many of them are one hot key against busy Python instances, decision 14's per-process count; Python's `billing.authorize_admission_limited` lines by Cloud Run instance show which. A spend-window 429 (`key_window_limit_exceeded`) of a key whose rows the shadow read and would admit is a race candidate when the 429 names a window whose limit Go holds, with that limit, and a `RateLimit-Remaining` below what Go's rows leave there. That alone proves nothing, so the shadow re-reads the rows after Python's answer. If Go's fresh remaining in that window is at or below Python's, a settle landed between the reads: `window_race.429.key_window_limit_exceeded`, counted and never paged here (`edge_window_race` watches its rate). If it is still above Python's, Go's read misses what Python sees: this alert. If no re-read settles it (the limiter, a failed or late re-read, rows that are not the key's shards, the window reset since), it is `window_race_unconfirmed.429.key_window_limit_exceeded`, and it pages here too, since it cannot be told from a defect. Each candidate is traced on its own line (`fastpath edge decide shadow window race: class=... key=<first 8 of the key hash> window=... go=<first remaining> reread=<re-read remaining, -1 for none> python=... gap=...`). The message carries the window counts (`windows=`, `race.confirmed`, `race.refuted`, `race.unconfirmed.<why>`). | Before I2 this blocks turning decide on. A window refusal that pages, with `race.refuted` or the same inputs as Go, more remaining, another limit or a window Go holds none for, is a parity bug in the window check (`docs/design/fast-admission-e2-key-windows.md` §4.4, §8.3); set `fastpath_pilot_key_windows` back to off if it is `enforce`. With `race.unconfirmed.<why>`, read the race line and the window counts: `limiter` or `unread` repeated means the shadow's reads are starved or failing, and `reset` is a window boundary between the reads, which explains itself. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
+| `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`, or a candidate no read settled, `window_race_unconfirmed.*` or `debt_unconfirmed.*`). Nothing was answered: the shadow only observes. Python's 402 `insufficient_credits` to a request Go would answer has two causes its body cannot tell apart, since Python answers both with the same 402: a workspace whose available credit no longer covers the request's hold (Go has no balance check of its own: the front door's reservation under a lease holds what Go answers, and with no lease room the owner is Busy and the request passes), or a workspace marked in debt, which Go's `workspace.in_debt` gate should have refused within the facts' 15 s age (decision 17). The shadow tells them apart itself ([The debt triage](#the-debt-triage)): it reads the workspace's debt mark as it stood 14 s before the request arrived (the facts' 15 s, less a second for the two clocks) and at the end of Python's answer, and names the comparison by the two. `debt_unmarked.402.insufficient_credits`, no credit row marked at either instant: the balance was short of the hold; counted, never paged (2026-11-15 05:21:41Z: 109,773 available against a 110,640 hold, unmarked; 2026-11-16 00:42Z was the same; both paged before the triage). `debt_lag.402.insufficient_credits`, marked at the later instant only: the expected 15 s lag of decision 17; counted, never paged. `debt_unmarked_earlier.402.insufficient_credits`, unmarked at the earlier instant with the later read failed, late or of no rows: no stop was owed, though which of those two it was is not known; counted, never paged. `would_admit_python_refused.402.insufficient_credits`, marked at both: Go's in-debt gate missed a mark older than any fact it may decide on; it pages: `fastpathctl decide off` the workspace and find why. `debt_unconfirmed.402.insufficient_credits`: the earlier read did not clear it (the message's `windows=debt.unconfirmed.<why>`: `limiter`, `unread`, `rows`, `cleared` or `none`), and it pages here too, since it cannot be told from a miss; the manual read of that section settles it. Python's per-key in-flight 429 (`rate_limited`, "Too many concurrent requests for this API key": one Python process's count of one key's authorizes at the policy's `gateway_authorize_max_in_flight_per_key`), read through, is never this alert (one whose body the shadow did not read is `would_admit_python_refused.429.unread`, and pages): to a request the decide path passed at its own in-flight limit it is `passed.inflight.key`, and to any other (passed at another step: after the gate, such as `owner.*`, `budget.spent`, a window or `insert.*`; before it, such as `decide.off`, or `workspace.not_enabled` when the node's copy of the switch turns the workspace off; or not decided) it is `inflight_unchecked.<pass>`, both counted and never paged, since Go answered nothing and holds a slot only while it decides a request, so the key's requests it passed were in Python's count and never in Go's (`docs/design/fast-admission-e2-decide.md` decision 14, §11). Many of them are one hot key against busy Python instances, decision 14's per-process count; Python's `billing.authorize_admission_limited` lines by Cloud Run instance show which. A spend-window 429 (`key_window_limit_exceeded`) of a key whose rows the shadow read and would admit is a race candidate when the 429 names a window whose limit Go holds, with that limit, and a `RateLimit-Remaining` below what Go's rows leave there. That alone proves nothing, so the shadow re-reads the rows after Python's answer. If Go's fresh remaining in that window is at or below Python's, a settle landed between the reads: `window_race.429.key_window_limit_exceeded`, counted and never paged here (`edge_window_race` watches its rate). If it is still above Python's, Go's read misses what Python sees: this alert. If no re-read settles it (the limiter, a failed or late re-read, rows that are not the key's shards, the window reset since), it is `window_race_unconfirmed.429.key_window_limit_exceeded`, and it pages here too, since it cannot be told from a defect. Each candidate is traced on its own line (`fastpath edge decide shadow window race: class=... key=<first 8 of the key hash> window=... go=<first remaining> reread=<re-read remaining, -1 for none> python=... gap=...`). The message carries the window counts (`windows=`, `race.confirmed`, `race.refuted`, `race.unconfirmed.<why>`). | Before I2 this blocks turning decide on. A window refusal that pages, with `race.refuted` or the same inputs as Go, more remaining, another limit or a window Go holds none for, is a parity bug in the window check (`docs/design/fast-admission-e2-key-windows.md` §4.4, §8.3); set `fastpath_pilot_key_windows` back to off if it is `enforce`. With `race.unconfirmed.<why>`, read the race line and the window counts: `limiter` or `unread` repeated means the shadow's reads are starved or failing, and `reset` is a window boundary between the reads, which explains itself. With `debt.unconfirmed.<why>`, read the workspace's credit rows by hand ([The debt triage](#the-debt-triage)): `limiter` repeated is more of these 402s than the triage's own bucket lets it read (five reads a second, two for each), `unread` its reads failing or running past 300 ms, `cleared` a mark repaid while the request was with Python, `rows` a workspace with no credit rows at one of the instants, and `none` a node whose shadow has no reader, which no release should have. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
 | `edge_decide_unavailable` | In the last period (a minute) the edge's decide path (`-edge-decide`) answered an authorize with decision 1's 503: its insert's outcome not known, its hold kept. The message counts them by the insert's gRPC code. | Read the codes as the transaction's errors, not causes (`fastpath/internal/store/gatewayauth.go`, `ClassifyInsert`): an unavailable answer is one whose read-back did not find our row, and the commit may or may not have applied; the enclave's retry finds the row through Python's replay if it did. `failed_precondition` can follow a re-sent commit Spanner no longer remembers, one that applied included, and does not establish clock skew: the reservation's `created_at` is the commit's timestamp, so a node clock ahead does not by itself fail the insert (`docs/design/fast-admission-e2-decide.md` §8.4). `deadline_exceeded` can be the local 1.5 s deadline or a deadline error the transaction returned; failures the client retries can exhaust the local deadline. Several nodes at once point at what they share, Spanner among it, without proving it. For sustained answers (`edge_decide_unavailable_sustained`), `fastpathctl decide off` the deciding workspaces, then find the cause. |
 | `edge_decide_unavailable_sustained` | Unavailable answers in three periods with no 200 between them (a period that answered nothing neither adds to the run nor ends it, so a fault under sparse traffic is seen): a cause that persists, not one lost commit. | `fastpathctl decide off` the workspaces deciding (or `decide-off-all`, `fastpath-turn-off.md`) at once, then find the cause by code as for `edge_decide_unavailable`. Their requests pass to Python while it lasts. |
 | `edge_decide_pass_slow` | A request the decide path passed spent over 1 s at the edge before it was forwarded (`at_edge`), or Python's answer to it, or the edge's failure to reach Python, came over 25 s after it arrived (`in_all`); decision 12's budgets. A pass slow at the edge only by its body's read (that read its longest phase, and what followed it no more than 1 s) raises it only beside another `at_edge.body` pass on the same node within ten minutes (`SlowBodyPeriods`: the period and the nine before); one alone is counted in the decide line and pages nothing. Lone ones ten minutes or more apart never page, however often they recur (up to six an hour on a node); they show only in the decide lines and `fastpathwatch edge`. | `at_edge` is the total; each such pass is counted again under the phase of its time at the edge it spent the most time in (the longest phase, not the one in which it crossed 1 s; `slowPhase` in `fastpath/internal/edge/decide_path.go`), so the phase counts add up to `at_edge`. `at_edge.body`: reading the request's body from the balancer, which waits on the caller and the path from it; a slow caller, a path that stalls, or a congested node, and on one node only, that node. It pages only when another `at_edge.body` came within ten minutes on the node. To place one, find the call in the balancer's request log (`resource.type="http_load_balancer"`, backend service `tr-fastpath-edge-backend`): `latency`, `remoteIp` and its region, and `serverIp`, the node. That `latency` includes the edge's own time, so it places nothing by itself. The stall was outside the edge either when the node's CPU was low that minute and the log shows the node answering its other calls of the same seconds at their usual latency, or when the same caller stalled through the other node too; when neither can be shown, take it for the node's. A lone one pages nothing and needs no response; at a rollout gate it is placed this way, or counts against the gate. 2026-11-05, outside the edge: a 4.2 s authorize from a europe-west4 enclave, while the node (CPU about 2%) answered a us-central1 caller in 0.18 s two seconds into it, and another europe-west4 enclave's call through the node that started with it took 0.59 s. `at_edge.boot`: the boot check's read of the boot, from Spanner (request tag `fastpath-read-boot`, `store/boot.go`) on a cache miss, bounded by `BootWait` (`-edge-boot-wait`, 2 s) and kept `BootTTL` (10 min; a boot not found a tenth of that), so each boot is read again every ten minutes on each node. One isolated `at_edge.boot` is a single slow Spanner read and needs no action. Repeated ones, on several nodes or in several minutes, point at Spanner's read latency: read the latency of request tag `fastpath-read-boot` (Spanner's query statistics and the `SPANNER_SYS` tables by request tag), and look for a Spanner incident; a read that runs out its 2 s also makes the verdict `unread`, so `boot.unread` in the decide line's `passed` sits beside the `at_edge.boot` count. `at_edge.decide`: the decide pipeline, which reads only what the node holds in memory; one is CPU starvation or a GC pause, and several mean the node is overloaded (read its CPU). `at_edge.admit`: the admission after the decision, where the owner's admit or the insert ran to its budget (or an enforcing windowed key's window read); the decide line's `passed` counts of the same minute (`budget.spent`, `insert.failed`, `owner.*`, `key_window.unread`) say which. A pass with none of those reasons beside it is slow in its body, its boot or the pipeline, which the phase names. Lines from before the phase counts carry `at_edge` alone. `in_all`: the enclave had already given up the attempt; with `at_edge` beside it, `fastpathctl decide off` until the edge's time is found; alone, Python was slow. The shadow alone gives no baseline for this kind: only the decide path (`-edge-decide`) counts passes, so it first fires at I2. |
@@ -152,6 +152,142 @@ arguments) or one whose start failed; a repeated `reading the workspaces due
 failed` is Spanner from that node. Meanwhile run `fastpathctl audit` by hand
 on each workspace with a lease (`fastpathctl status` shows its leases).
 
+## The debt triage
+
+Python answers a workspace marked in debt and a workspace whose balance does
+not cover the request's hold with the same 402 `insufficient_credits`. Go's
+decision gates on the mark alone (`workspace.in_debt`, from a credit fact at
+most 15 s old when the request arrives, decision 17) and has no balance
+check: under the decide path the hold is taken by the front door's admit
+under a lease, a lease holds only credit reserved for it on a credit row
+with the headroom and no mark, and with no room left the owner is Busy and
+the request passes to Python, which answers the same 402. So that 402 to a
+request Go would answer is a defect only when the refusal was the mark.
+
+For each one, the decide shadow reads the mark itself
+(`fastpath/internal/edge/shadow_debt.go`, `store.ReadDebtMarkAt`, request tag
+`fastpath-read-debt-mark-at`): two reads of the workspace's
+`tr_credit_balance` rows by their primary-key prefix, each as of an exact
+timestamp, at low priority, within 300 ms, and never asked again. A
+workspace is marked when any of its credit rows is, as the edge's own fact
+and Python read it.
+
+- The earlier read is as of 14 s before the request arrived: the earliest
+  instant a fact the gate may decide on can have been read (15 s before),
+  moved a second later for the difference between the node's clock and
+  Spanner's.
+- The later read is as of the end of Python's answer as the edge saw it.
+
+The reads come out of a bucket of the triage's own: five reads a second,
+apart from the bucket of the shadow's window checks, so a burst of these
+402s takes no read from a window check or a race's re-read. A triage takes
+both its reads from the bucket at once, or makes none and pages
+(`debt.unconfirmed.limiter`). Python's 402 has already evicted the key and
+its workspace from the node's cache when the first read begins, as before
+the triage, so the decide path is not left the old fact while it reads.
+
+Whether it pages is the earlier read's alone to say: a stop the gate owes
+stands at the earlier instant, so a workspace with credit rows and no mark
+there was owed none, whatever the later read says or fails to say. The
+later read names the class.
+
+| The earlier read | The later read | Class | Pages |
+|---|---|---|---|
+| unmarked | unmarked | `debt_unmarked.402.insufficient_credits` | no |
+| unmarked | marked | `debt_lag.402.insufficient_credits` | no |
+| unmarked | failed or past 300 ms (`debt.unmarked_earlier.unread`), or no credit rows (`.rows`) | `debt_unmarked_earlier.402.insufficient_credits` | no |
+| marked | marked | `would_admit_python_refused.402.insufficient_credits` | yes |
+| marked | unmarked (`debt.unconfirmed.cleared`), failed or past 300 ms (`.unread`), or no credit rows (`.rows`) | `debt_unconfirmed.402.insufficient_credits` | yes |
+| not made: the bucket short of two reads (`debt.unconfirmed.limiter`), no reader or workspace to read (`.none`); failed or past 300 ms (`.unread`); no credit rows (`.rows`) | not made | `debt_unconfirmed.402.insufficient_credits` | yes |
+
+The shadow's line counts each under `classes` and `cohort`, and what the
+reads said under `windows` (`debt.unmarked`, `debt.lag`,
+`debt.unmarked_earlier.<why>`, `debt.marked`, `debt.unconfirmed.<why>`); the
+alert's message carries the same. Only the would-admit counts in the line's
+`would_admit_python_refused=`. `fastpathwatch edge` prints the others as
+`i2.debt_unmarked`, `i2.debt_lag`, `i2.debt_unmarked_earlier` and
+`i2.debt_unconfirmed`. Every other would-admit class pages as before, and so
+does a 402 of another type or one whose body the shadow did not read.
+
+What the two reads prove, and what they do not:
+
+- **Unmarked at the earlier instant is not a missed debt stop.** The gate's
+  only input is the mark. A stop the gate owes is a mark older than every
+  fact it may decide on, so one standing since before the earlier instant;
+  it would show there. With none there, the 402 was the balance (or a mark
+  newer than the fact, below), which is the reservation's to refuse. That
+  holds without the later read, so a later read that fails does not page:
+  `debt_unmarked_earlier` says no stop was owed and claims no more.
+- **A mark set and cleared between the two instants** reads as unmarked at
+  both. It began after the earliest usable fact, so it is lag at most, and
+  it is counted under the other class that does not page.
+- **A mark at the earlier instant cleared by the later** (a repayment while
+  the request was with Python) cannot be told from one cleared before the
+  gate's fact was read. It pages (`debt.unconfirmed.cleared`).
+- **A mark cleared and set again between them** is read as standing
+  throughout. It pages.
+- **A mark set just after the later instant** is not what Python refused
+  for, unless the node's clock is behind Spanner's; either way it is newer
+  than any fact the gate may use, so no page is owed. Python's 402 evicts
+  the key and its workspace, so the next request reads the rows again.
+- **A gate that misreads a mark younger than 15 s** cannot be told from lag
+  by any read of the rows. It pages at the first refusal after the mark is
+  older than that, which is when the gate owes the stop.
+- **The clocks.** The instants are the node's clock's and the marks carry
+  Spanner's commit timestamps. The earlier read stays inside the span of
+  usable facts while the node's clock is at most a second behind Spanner's.
+  A clock ahead moves the earlier read later, which pages more, and can put
+  the later read in Spanner's future; Spanner holds such a read until that
+  instant, and one that runs out its 300 ms is unread. That pages only when
+  the earlier read found a mark (`debt.unconfirmed.unread`); after an
+  unmarked earlier read it is `debt.unmarked_earlier.unread`, so a node
+  whose clock runs ahead does not page on every balance shortfall.
+- **An earlier read that cannot be made, or fails, pages.** So does one that
+  finds no credit rows: an empty read never passes for an unmarked
+  workspace.
+
+Known gaps, left for later:
+
+- **A node clock more than a second behind Spanner's.** The earlier read
+  then falls before the span of usable facts by the excess, and a stop set
+  in that band is counted as lag and not paged. Nothing monitors the offset
+  between a node's clock and Spanner's.
+- **A mark younger than 14 s is always lag**, even when the gate's own fact
+  was read after the mark was set, which is a miss. Using the fact's own
+  read time (`Decided.Read.CreditReadAt`) for the earlier instant would
+  tell the two apart, and a rate alert on the `debt_lag` class would show a
+  gate that misses young marks often.
+
+What still needs the manual read: every page of `debt_unconfirmed`; a page
+of the would-admit, to see the mark and the balance before turning the
+workspace's decide off; a `debt_unmarked_earlier`, only to learn whether it
+was the balance or a new mark; and the balance itself, which the triage
+never reads. A `debt_unmarked` whose `available` covered the hold is not
+Go's gate and is not paged: a hold or settle within the read's second, or a
+Python-side refusal to investigate there.
+
+The manual read. Find Python's `billing.insufficient_credits` line at the
+alert's second (Cloud Run logs, `trusted_router.routes.internal.gateway`):
+its `workspace_id`, and its `reserved_microdollars`, the request's own
+credit hold (not a balance; the line logs none). Then read the workspace's
+credit rows by key as they were at that second and 15 s before it, stale
+reads within the 7-day version retention (a read taken now can miss a mark
+repaid since), each a seek on the table's primary key (`workspace_id`,
+`shard`), at low priority:
+
+```bash
+gcloud spanner databases execute-sql trusted-router --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --read-timestamp=T --priority=low --timeout=10s \
+  --sql="SELECT shard, total_credits - total_usage - reserved AS available, COALESCE(in_debt, FALSE) FROM tr_credit_balance WHERE workspace_id='WS' ORDER BY shard"
+```
+
+No shard marked at either instant, and no shard's `available` nor their sum
+at or above the hold: the balance ran out between two enabler passes (every
+15 minutes), and nothing needs doing. A shard marked at the alert's second
+only: the expected 15 s lag of decision 17. Marked at both instants: Go's
+in-debt gate missed it; `fastpathctl decide off` the workspace and find
+why.
+
 ## The control plane's lines
 
 Three policies page on lines the control plane writes for streams on the lease
@@ -195,7 +331,8 @@ insert's gRPC code (`unavailable_by_code`), its passes by reason and its
 slow passes, and its window checks (`windows`: reads made, `unread`, latency
 buckets, verdicts); the shadow's line adds its own `windows`, with how
 Python's `RateLimit-*` headers compared (`window.agree`,
-`window.differ.*`, `window.same_inputs.*`); the alerts above are raised from the same minute's counts.
+`window.differ.*`, `window.same_inputs.*`) and what its debt triage's reads
+said (`debt.*`, [The debt triage](#the-debt-triage)); the alerts above are raised from the same minute's counts.
 `fastpathwatch edge` sums a span's lines (`fastpath-watch.md`), for the I2
 gates or for an incident's minutes.
 

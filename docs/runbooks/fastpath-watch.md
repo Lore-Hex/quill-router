@@ -173,7 +173,9 @@ lines, summed, are its counts. It prints JSON:
   `passed.inflight.key`, Python's per-key in-flight 429 to a request the
   decide path passed at its own in-flight limit, and
   `inflight_unchecked.*`, the same 429 to a request it passed at any other
-  step, or did not decide). Then
+  step, or did not decide, and the debt triage's `debt_unmarked.*`,
+  `debt_lag.*`, `debt_unmarked_earlier.*` and `debt_unconfirmed.*`, below).
+  Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
   `differ_affinity_warm` (the differs whose Python 200 is Go's decision
   re-ranked for an endpoint a Python process remembered for the request's
@@ -183,7 +185,17 @@ lines, summed, are its counts. It prints JSON:
   `row_idempotency_fingerprint` and `fields_other`: a period's fields past
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
-  `would_admit_python_refused` and its classes; `stale` by cache,
+  `would_admit_python_refused` and its classes; `debt_unmarked`,
+  `debt_lag`, `debt_unmarked_earlier` and `debt_unconfirmed`, Python's 402
+  `insufficient_credits` to requests Go would answer by what the shadow's
+  two reads of the workspace's debt mark made of each (`fastpath-alerts.md`,
+  "The debt triage"): unmarked at both instants (a balance short of the
+  hold), marked at the later only (decision 17's lag) and unmarked at the
+  earlier with the later read not had (one of those two, not known which),
+  none a would-admit nor paged, and those the earlier read did not clear,
+  which page and which a gate must explain as it does a would-admit (one
+  marked at both instants is
+  `would_admit_python_refused.402.insufficient_credits` still); `stale` by cache,
   `followed` (every request the shadow compared) and `stale_rate`; the
   decide path's `unavailable` answers by the insert's gRPC code; and
   `settlement_header_passes` and `settlement_header_pass_share`, the

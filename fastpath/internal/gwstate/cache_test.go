@@ -264,6 +264,32 @@ func TestAnEntryIsStalePastItsMaximumAge(t *testing.T) {
 	}
 }
 
+// TestMaxAgeIsTheAgeLookupJudgesBy: MaxAge is the configured maximum age,
+// the default when none is given, and it is the bound Lookup holds an entry
+// fresh within: fresh at exactly that age, stale a nanosecond past it. The
+// decide shadow places its debt triage's earlier read by it.
+func TestMaxAgeIsTheAgeLookupJudgesBy(t *testing.T) {
+	if got := newTestCache(t, newFakeReader(), start()).MaxAge(); got != DefaultMaxAge {
+		t.Fatalf("the default maximum age: %s", got)
+	}
+	r, c := newFakeReader(), start()
+	r.keys["lh"] = keyContext("lh", "ws", "")
+	r.credits["ws"] = funded
+	cache := newTestCache(t, r, c, func(cfg *CacheConfig) { cfg.MaxAge = 40 * time.Second })
+	if got := cache.MaxAge(); got != 40*time.Second {
+		t.Fatalf("the configured maximum age: %s", got)
+	}
+	cache.Lookup("lh", c.Now())
+	cache.settle()
+	read := c.Now()
+	if got := cache.Lookup("lh", read.Add(cache.MaxAge())); got.Credit != Fresh {
+		t.Fatalf("at the maximum age: %+v", got)
+	}
+	if got := cache.Lookup("lh", read.Add(cache.MaxAge()+time.Nanosecond)); got.Credit != Stale {
+		t.Fatalf("past the maximum age: %+v", got)
+	}
+}
+
 // TestRefreshReadsEntriesInUseAndHonoursAChange: a refresh reads again
 // every entry used in the last minute, so a key disabled or a workspace
 // paused in the store is seen at the next refresh; an entry not used for a

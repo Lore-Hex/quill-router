@@ -722,6 +722,12 @@ func (c *Cache) Counters() Counters {
 	}
 }
 
+// MaxAge is how long after its read an entry is fresh (CacheConfig.MaxAge):
+// the bound decision 17 puts on a fact a request is decided on, a debt mark
+// among them. The decide shadow reads it to place its debt triage's earlier
+// read (edge/shadow_debt.go), so the two cannot drift apart.
+func (c *Cache) MaxAge() time.Duration { return c.cfg.MaxAge }
+
 // Len is how many keys and credit entries the cache holds.
 func (c *Cache) Len() (keys, credits int) {
 	c.mu.Lock()

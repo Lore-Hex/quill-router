@@ -895,9 +895,10 @@ counts from before it do not count.
    directly. Then `agree_full` at least 99.5% with every difference
    explained, zero `differ.estimate*`, zero `row.idempotency_fingerprint`,
    no field counted `other`, and zero `would_admit_python_refused` beyond
-   key-revocation lag. Under all mode the shadow keeps comparing every
-   covered workspace that is not enabled (§6.1), so this sample keeps
-   growing at every step.
+   key-revocation lag, with no `debt_unconfirmed` left unexplained
+   (`docs/runbooks/fastpath-alerts.md`, "The debt triage"). Under all mode
+   the shadow keeps comparing every covered workspace that is not enabled
+   (§6.1), so this sample keeps growing at every step.
 4. Front door answers: `owner.busy`, `owner.unreachable` and
    `owner.failed` together under 1% of the front door's calls, from Python
    and the edge each.

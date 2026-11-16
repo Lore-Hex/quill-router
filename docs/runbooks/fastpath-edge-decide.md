@@ -69,7 +69,9 @@ ssh tr-fastpath-15 --zone=us-central1-a --project=quill-cloud-proxy
    what holds the sync requests to the bar) with every `i2.differ_by_field`
    explained; `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
    `i2.fields_other` zero; `i2.would_admit_python_refused` zero beyond
-   key-revocation lag (decision 17); `i2.cohort_by_class` accounted for;
+   key-revocation lag (decision 17) and `i2.debt_unconfirmed` zero or each
+   one explained (`fastpath-alerts.md`, "The debt triage");
+   `i2.cohort_by_class` accounted for;
    `i2.stale_rate` recorded. The span's distinct digests, at least three
    `policy=` and two `snapshot=` among the lines with comparable requests,
    are counted from the shadow's lines themselves (`fastpath-watch.md`
@@ -549,7 +551,7 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   `decide=`, or `cache.decide` with the copy stale),
   `i2.agree_full_ratio` holds its gate (`i2.differ_affinity_warm` of its
   differs being Python's warm re-ranks, counted against it), and `i2.would_admit_python_refused`
-  (beyond revocation lag), `i2.differ_estimate`,
+  (beyond revocation lag), `i2.debt_unconfirmed` (unless explained), `i2.differ_estimate`,
   `i2.row_idempotency_fingerprint` and `i2.fields_other` are 0.
 - `periods.NODE.decide`: one line a minute from each node; fewer is a node
   that was not running the path, or a minute lost.

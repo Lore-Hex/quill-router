@@ -365,6 +365,63 @@ func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
 	}
 }
 
+// TestTheEdgeReportPrintsTheDebtTriageFigures (docs/runbooks/
+// fastpath-alerts.md, edge_would_admit_python_refused): Python's 402
+// insufficient_credits to requests Go would have answered, summed over the
+// span's lines by what the shadow's debt triage made of each. Those whose
+// workspace was unmarked at the earlier instant (debt_unmarked, debt_lag,
+// and debt_unmarked_earlier, which is not folded into debt_unmarked) and
+// those the earlier read did not clear (debt_unconfirmed) are figures of
+// their own, in the cohort and followed, and none is a would-admit; the one
+// whose workspace was marked at both instants still is, by its class.
+func TestTheEdgeReportPrintsTheDebtTriageFigures(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=20 ` +
+			`differ=0 would_admit_python_refused=1 read_back=0 classes={"agree_full":20,` +
+			`"debt_lag.402.insufficient_credits":1,"debt_unconfirmed.402.insufficient_credits":2,` +
+			`"debt_unmarked.402.insufficient_credits":3,"debt_unmarked_earlier.402.insufficient_credits":4,` +
+			`"would_admit_python_refused.402.insufficient_credits":1} ` +
+			`fields={} rows={} decide={"decide.off":31} cohort={"agree_full":20,"debt_lag.402.insufficient_credits":1,` +
+			`"debt_unconfirmed.402.insufficient_credits":2,"debt_unmarked.402.insufficient_credits":3,` +
+			`"debt_unmarked_earlier.402.insufficient_credits":4,` +
+			`"would_admit_python_refused.402.insufficient_credits":1} windows={"debt.lag":1,"debt.marked":1,` +
+			`"debt.unconfirmed.limiter":1,"debt.unconfirmed.unread":1,"debt.unmarked":3,` +
+			`"debt.unmarked_earlier.unread":4}`},
+		{"2", "tr-fastpath-15", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=7 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":7,` +
+			`"debt_unmarked.402.insufficient_credits":2} fields={} rows={} decide={"decide.off":9} ` +
+			`cohort={"agree_full":7,"debt_unmarked.402.insufficient_credits":2} windows={"debt.unmarked":2}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"},
+		&out, d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	g := r.I2
+	if g.DebtUnmarked != 5 || g.DebtLag != 1 || g.DebtUnmarkedEarlier != 4 || g.DebtUnconfirmed != 2 ||
+		g.WouldAdmitPythonRefused != 1 ||
+		len(g.WouldAdmitByClass) != 1 || g.WouldAdmitByClass["402.insufficient_credits"] != 1 ||
+		g.CohortByClass["debt_unmarked.402.insufficient_credits"] != 5 ||
+		g.CohortByClass["debt_unmarked_earlier.402.insufficient_credits"] != 4 || g.Followed != 40 ||
+		g.CohortEligible != 40 || g.WindowReads != 0 || g.WindowRaceUnconfirmed != 0 ||
+		r.DecideShadow.ByName["windows"]["debt.unmarked"] != 5 ||
+		r.DecideShadow.ByName["windows"]["debt.unmarked_earlier.unread"] != 4 ||
+		r.DecideShadow.ByName["windows"]["debt.unconfirmed.limiter"] != 1 {
+		t.Errorf("the debt triage figures: %s", out.Bytes())
+	}
+	for _, name := range []string{`"debt_unmarked": 5`, `"debt_lag": 1`, `"debt_unmarked_earlier": 4`,
+		`"debt_unconfirmed": 2`} {
+		if !strings.Contains(out.String(), name) {
+			t.Errorf("the report does not print %s: %s", name, out.Bytes())
+		}
+	}
+}
+
 // TestTheEdgeReportTakesTheLargestDistinctKeys: distinct_keys is a node's
 // figure since its set began (distinct_keys_since), not a period's, so the
 // report's is the largest any line carries, never a sum over periods or
