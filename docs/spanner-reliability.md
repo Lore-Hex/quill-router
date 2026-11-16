@@ -44,7 +44,8 @@ These policies deliberately trigger before the broad Spanner contention
 policy:
 
 - Any `5xx` from `/internal/gateway/authorize`, `settle`, or `refund` opens an
-  incident immediately. A single `500` with zero latency, no instance id and
+  incident immediately, except an authorize `503`, which the next policy
+  counts. A single `500` with zero latency, no instance id and
   no container output, logged against the revision being retired at the
   second its instances print "Shutting down", is the rollout race: stock
   uvicorn closed its listener the instant SIGTERM arrived and refused a
@@ -58,6 +59,33 @@ policy:
   A second SIGTERM or any SIGINT starts ordinary graceful shutdown without
   waiting for the drain window. If one recurs, check the serving revision's
   entry point before anything else.
+- An authorize `503` is counted rather than paged at once. "TR Gateway:
+  authorize 503 not lease headroom" compares the authorize 503s in Cloud
+  Run's request log (`trustedrouter_gateway_authorize_503`) with the lines
+  the app writes for the two 503s it answers by design, and opens an
+  incident when the two counts differ for three minutes. Both are retryable,
+  carry `Retry-After: 1` and are retried by the enclave:
+  - lease headroom, `billing.lease_headroom_unavailable`
+    (`trustedrouter_gateway_lease_headroom_503`): the workspace's shortfall
+    is held in fast-path leases (`TR_FASTPATH_LEASE_HEADROOM_503`);
+  - rebalance busy, `billing.credit_rebalance_busy`
+    (`trustedrouter_gateway_rebalance_busy_503`): the workspace's credit
+    covers the hold but is spread across credit shards, and the per-process
+    rebalance cooldown is held by a rebalance another of its requests just
+    ran. Until this line existed the 503 had no mark and paged as storage
+    impact (one false page on 2026-11-16).
+
+  Every other authorize 503 writes neither line and pages: a Spanner outage
+  or deadline, no instance, a crash, a paused workspace, and the two
+  retryable answers that have no mark, `credit headroom changed
+  concurrently` and a strict key's busy admission. More lines than 503s
+  pages too, because a line written without its 503 could hide a real one.
+  The deploy gate (`scripts/deploy/assert_no_billing_5xx.sh`) draws the same
+  line per request, by trace.
+- "TR Gateway: credit rebalance busy" opens an incident when more than two
+  rebalance-busy 503s land in ten minutes, or more than five in an hour. The
+  policy above no longer pages on them, so this one bounds them. See "Credit
+  rebalance busy" below.
 - A run of `503`s from one instance id, each with tens of seconds of latency
   and "connection to the instance had an error", while that instance's own
   output stops and its CPU stays flat, is a process whose event loop stopped
@@ -291,6 +319,88 @@ logs `billing.authorize_workspace_paused` with only workspace ID and request ID
 so the incident is attributable. Schedule proactive legacy-account splits
 serially in low-traffic windows; GitHub concurrency keeps at most one pending
 run and cancels older pending runs even when `cancel-in-progress` is false.
+
+### Credit rebalance busy
+
+"TR Gateway: credit rebalance busy" means authorize answered more than two
+rebalance-busy 503s in ten minutes (its fast bound) or more than five in an
+hour (its slow bound). The two are the sides of one condition, because a
+policy may hold only one PromQL condition; the window's lines show which
+was crossed. Storage is healthy and no credit is lost. For each of those requests the workspace's aggregate credit covered
+the hold, no single credit shard did, and the per-process rebalance cooldown
+(`REBALANCE_COOLDOWN_SECONDS`, half a second) was held by a rebalance that
+another request of the workspace had just been allowed to run.
+
+The typed authorize's credit recovery (`storage_gcp.py`) gives a refused
+request at most three passes, and three more if a key-limit repair sends it
+round again. A pass whose snapshot finds a funded shard retries on it. A
+pass that needs a rebalance and finds the cooldown held sleeps 0.25 seconds
+and goes round again when it is the first or second pass, and answers the
+503 at once when it is the third. So one entry into the recovery waits
+twice at most, half a second in all (a request sent round again after a
+key-limit repair can enter it twice), and less when its earlier passes went to funded-shard
+retries or to the one forced reload of the shard count: it can meet the
+cooldown for the first time on its last pass and be answered 503 without
+waiting. The request of 2026-11-16 took 467 ms in all with `attempts=3`,
+which leaves room for one wait.
+
+The answer is the storage 503 with `Retry-After: 1`, and the enclave retries
+it, three attempts in all, seconds apart, so one request writes at most
+three lines. Three lines in ten minutes is therefore the least at which a
+customer's request can have failed on this 503 alone, and the fast bound
+pages there. Fewer are requests made to wait and answered on a later
+attempt; the slow bound limits how long that can go on. One
+line now and then is expected: three in the thirty days to 2026-11-16, one
+line each, on three different days. More is the convoy of
+[September 25](incidents/2026-09-25-credit-rebalance-convoy.md): requests of
+one or more workspaces cannot consolidate their credit, and their customers
+wait on retries or fail.
+
+1. Read the window's `billing.credit_rebalance_busy` lines. Each carries the
+   workspace id, the request id and the trace of its 503, and nothing else.
+2. For each workspace, read what its requests logged on
+   `trusted_router.storage_gcp` around them: `credit rebalance workspace=...
+   outcome=... moved_micro=...` for every rebalance that ran, and `credit
+   rebalance cooldown exhausted` for each 503. `outcome=insufficient
+   moved_micro=0` beside a 503 is a rebalance that moved nothing and still
+   held the cooldown.
+3. Read the workspace's credit shard count and its `tr_credit_balance` rows
+   by primary key (the workspace id and each shard), never by a scan, and
+   compare each shard's share with the workspace's estimates. A balance cut
+   into shares smaller than its estimates needs a rebalance for every
+   request.
+4. One workspace points at its shard spread. Its repair is a shard count
+   that follows the balance, which is the operator's to run. Many workspaces
+   at once point at a recent deploy or at the cooldown itself.
+
+Do not lengthen the wait, shorten the cooldown or answer these requests 402
+to quiet the alert: the cooldown keeps a fragmented workspace from running
+one all-shard transaction per request, and the funds exist.
+
+Known and left for later:
+
+- A rebalance that moves nothing still arms the cooldown. The cooldown is
+  stamped when a request is allowed to rebalance, before its transaction
+  runs, and stays stamped when the locked read finds the aggregate short
+  (`outcome=insufficient moved_micro=0`, an honest 402 for that request). On
+  2026-11-16 that held the cooldown against a smaller request the balance
+  could cover. It was answered 503 after one wait at most and served on the
+  enclave's retry about a second later: an avoidable 503. The preferred
+  repair gives the waits a budget of their own, so a pass spent on a
+  funded-shard retry does not take a wait away and a request outlasts one
+  stamp. That is money code and needs its own change, with a regression for
+  that schedule.
+- Two other authorize 503s are deliberate and retryable and have no mark:
+  `credit headroom changed concurrently` (a funded shard lost to peers on
+  every bounded retry) and a strict key's busy answer
+  (`billing.authorize_strict_budget_busy`). Both still count as unmarked and
+  page as core failures. Three of the four 503s in the burst of 2026-11-04
+  16:08Z were the first kind.
+- A line can be written without its 503. The route writes the line and the
+  app answers afterwards, so a caller that disconnects mid-authorize leaves
+  the line and no 503 in the request log. That is more lines than 503s and
+  pages in the other direction. The lease-headroom line has the same
+  exposure.
 
 ### One instance loses Spanner
 

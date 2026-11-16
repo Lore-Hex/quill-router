@@ -21,7 +21,7 @@ class MemberBadgeTests(unittest.TestCase):
 
     def test_clean_alias_metadata_and_membership_scope(self):
         self.assertEqual(self.page, (self.root / "badge.html").read_text())
-        self.assertIn('rel="canonical" href="https://nytokenexchange.com/badge"', self.page)
+        self.assertIn('rel="canonical" href="https://nytex.com/badge"', self.page)
         for copy in ("NYTE requires every AI route", "not a live verification result", "provider-side E2EE", "fail closed", "client TLS terminates inside the attested gateway", "route-specific evidence"):
             self.assertIn(copy, self.page)
         # The shell tags trustedrouter.com links with campaign parameters; targets are unchanged.
@@ -85,7 +85,7 @@ class MemberBadgeTests(unittest.TestCase):
             self.assertIn('href="/badge"', buyers)
             self.assertNotIn('href="/badge"', sellers)
             sitemap = (self.root / market["slug"] / "sitemap.xml").read_text()
-            self.assertEqual("https://nytokenexchange.com/badge" in sitemap, market["slug"] == "new-york")
+            self.assertEqual("https://nytex.com/badge" in sitemap, market["slug"] == "new-york")
 
     def test_default_embed_works_without_javascript(self):
         self.assertIn('id="embed-code"', self.page)

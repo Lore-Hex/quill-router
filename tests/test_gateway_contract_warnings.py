@@ -35,6 +35,11 @@ def test_reasoning_has_a_stable_diagnostic_category(parameter: str) -> None:
     assert parameter in PARAMETER_CATEGORIES
 
 
+@pytest.mark.parametrize("parameter", ["repetition_penalty", "repeat_penalty"])
+def test_repetition_penalty_spellings_have_their_own_category(parameter: str) -> None:
+    assert parameter in PARAMETER_CATEGORIES
+
+
 @pytest.fixture
 def warnings(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
     events: list[dict[str, Any]] = []
@@ -238,6 +243,9 @@ def test_output_config_has_named_warning_category(
     ("client_metadata", "client_metadata", '"[redacted:string]"', '"[redacted:string]"'),
     ("client_metadata", "client_metadata", '{"x-codex-installation-id":"private customer content","type":"enabled"}',
      '"[redacted:object]"'),
+    ("repeat_penalty", "repeat_penalty", "-1", "-1"),
+    ("repeat_penalty", "repeat_penalty", '"private customer content"', '"[redacted:string]"'),
+    ("repetition_penalty", "repetition_penalty", "1.1", "1.1"),
 ])
 def test_compatibility_fields_warn_under_their_own_name(
     warnings: list[dict[str, Any]], parameter: str, path: str, raw: str, expected: str,

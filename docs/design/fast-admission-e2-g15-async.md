@@ -971,6 +971,23 @@ The edge places async members between `stage_d` and `tags`, in this order:
 - Shape C: `async_eligible`, `billing_snapshot`, `billing_snapshot_hash`,
   `settlement_ticket`, `settlement_status_url`.
 
+An eligible ticket changes one member outside them. Python's 200 carries
+`invocation_nonce`, the authorization's own, right after `idempotent_replay`
+whenever `async_eligible` is true (`gateway.py`, the authorize response; a
+replay carries it too, and no ticket), and the enclave binds async
+settlement only when that member equals the ticket's `invocation_nonce`
+claim (`async_settlement.go`, `bindAsyncAuthorization`). So when the ticket
+is eligible the edge writes the same member in the same place
+(`Composed.WithTicket`); a ticket that is not eligible leaves it out, as
+Python does, and an eligible ticket for a body that sent no nonce is not
+spliced (Python signs none). Before this change the edge left the member out:
+the enclave then bound nothing to an eligible edge ticket and settled the
+request synchronously, the safe direction, so no edge ticket had led to an
+async settlement. No vector had an eligible ticket (every shape C golden
+was signed with `async_eligible` false, the fixture's admission admitting
+nothing); `answer:async.C:edge_tickets:eligible`, its read-back and its
+stream now record Python's answer with the admission admitting.
+
 For the same facts, shape C is byte-for-byte Python's own authorize answer.
 The durability rule above applies even when signing succeeds before the
 commit finishes. Earlier descriptions of covered workspaces passing to
@@ -1078,8 +1095,17 @@ byte, `agree_full` or a `differ` naming the field. It counts the request
 `async_python_admitted` as before and does not count its async members in
 `async_compared`. The removal is checked to be the only change: a body
 that is not its own pydantic encoding is compared as it came (and differs
-on its shape). A decision that is not a leased answer still differs on a
-Python ticket.
+on its shape). An eligible ticket's 200 also carries `invocation_nonce`
+(Edge tickets, above), which goes with the ticket.
+
+A decision that wants a ticket (edge tickets cover the workspace) is
+compared the same way. In the decide path the edge splices in the ticket
+Python's sign-only route returns; the shadow inserts nothing and asks for
+none, so what it holds is the answer before the splice, and Python's own
+ticketed answer differs from it only by the ticket. Before this, every
+such request was a `differ` on `async_eligible`, `async_shape` and, for an
+eligible ticket, `invocation_nonce`. A decision that is neither a leased
+answer nor one that wants a ticket still differs on a Python ticket.
 
 **The money path.** Unchanged, and the same as for an authorize the edge
 answers today:

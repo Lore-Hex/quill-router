@@ -2,13 +2,16 @@
 # Fail a rollout when its candidate revision emitted a billing-path 5xx after
 # the supplied timestamp. Cloud Run readiness cannot detect exhausted retries.
 #
-# One 5xx is excused, and only one: the authorize 503 that
+# Two 5xx are excused, and only these, both authorize 503s the app answers
+# by design and the enclave retries after Retry-After: the one
 # TR_FASTPATH_LEASE_HEADROOM_503 answers when a workspace's shortfall is held
-# in fast-path leases (the enclave retries it after Retry-After). The request
+# in fast-path leases, and the one answered when a workspace's credit is
+# spread across shards while its rebalance cooldown is held. The request
 # log records only status and URL, so each such 503 must be paired, by trace,
-# with the app's billing.lease_headroom_unavailable line
-# (billing_5xx_lease_headroom.py). Every other 5xx fails at once, and an
-# authorize 503 with no line fails after the line has had time to arrive.
+# with the line the app writes for it, billing.lease_headroom_unavailable or
+# billing.credit_rebalance_busy (billing_5xx_lease_headroom.py). Every other
+# 5xx fails at once, and an authorize 503 with no line fails after the line
+# has had time to arrive.
 set -euo pipefail
 
 REGION="${1:?usage: assert_no_billing_5xx.sh REGION SINCE_TIMESTAMP REVISION}"
@@ -36,8 +39,8 @@ resource.labels.service_name=\"${SERVICE}\"
 resource.labels.location=\"${REGION}\"
 resource.labels.revision_name=\"${REVISION}\"
 timestamp>=\"${SINCE}\""
-# The lease-headroom 503's request-log shape. It alone is set aside below; the
-# alert (gateway-alerts/billing-5xx.yaml) sets aside the same shape.
+# The request-log shape of the two designed 503s. It alone is set aside
+# below; the alert (gateway-alerts/billing-5xx.yaml) sets aside the same shape.
 lease_503_shape='httpRequest.status=503
 httpRequest.requestUrl=~"/internal/gateway/authorize([?].*)?$"'
 
@@ -77,8 +80,9 @@ if [ "${count}" -ge "${LEASE_503_LIMIT}" ]; then
   exit 1
 fi
 
+# Either line of the app. The parentheses keep the OR inside this one term.
 line_query="${revision_scope}
-textPayload:\"INFO trusted_router.routes.internal.gateway billing.lease_headroom_unavailable \""
+(textPayload:\"INFO trusted_router.routes.internal.gateway billing.lease_headroom_unavailable \" OR textPayload:\"INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy \")"
 
 attempt=0
 while :; do
@@ -93,12 +97,12 @@ while :; do
   set -e
   if [ "${status}" -eq 0 ]; then
     echo "${report}"
-    echo "billing-path 5xx gate passed for ${REGION} revision ${REVISION} (authorize 503s all lease headroom)"
+    echo "billing-path 5xx gate passed for ${REGION} revision ${REVISION} (authorize 503s all lease headroom or rebalance busy)"
     exit 0
   fi
   if [ "${status}" -ne 1 ] || [ "${attempt}" -ge "${LINE_RETRIES}" ]; then
     echo "${report}"
-    echo "billing-path 5xx detected in ${REGION} revision ${REVISION} after ${SINCE}: authorize 503 not paired with a lease-headroom line"
+    echo "billing-path 5xx detected in ${REGION} revision ${REVISION} after ${SINCE}: authorize 503 not paired with a lease-headroom or rebalance-busy line"
     exit 1
   fi
   attempt=$((attempt + 1))

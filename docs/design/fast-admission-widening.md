@@ -1547,7 +1547,13 @@ step.
    headroom", which pages when the log counters
    `trustedrouter_gateway_authorize_503` and
    `trustedrouter_gateway_lease_headroom_503` differ for three minutes;
-   the second is the 503's rate. Tests:
+   the second is the 503's rate. Since 2026-11-16 the gate and the policy
+   also accept the app's second mark, `billing.credit_rebalance_busy`
+   (`trustedrouter_gateway_rebalance_busy_503`), for the 503 answered when
+   a workspace's credit is spread across shards while its rebalance
+   cooldown is held; the policy compares the authorize 503s with the sum
+   of both lines, and "TR Gateway: credit rebalance busy" bounds the
+   second (docs/spanner-reliability.md). Tests:
    `tests/test_billing_5xx_lease_headroom.py`.
 8. **Activation, WS0 to WS6.** One `rollout.sh`, `fastpath_lists.sh`, job
    setting or node-attribute change per step of §8.2, each opened with the

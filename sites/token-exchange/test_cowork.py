@@ -14,7 +14,7 @@ class CoworkTests(unittest.TestCase):
             build(root)
             page = (root / "trusted-cowork").read_text()
             self.assertEqual(page, (root / "trusted-cowork.html").read_text())
-            self.assertIn('rel="canonical" href="https://nytokenexchange.com/trusted-cowork"', page)
+            self.assertIn('rel="canonical" href="https://nytex.com/trusted-cowork"', page)
             for arch in ("arm64", "x64"):
                 self.assertIn(f"v0.4.0-alpha.5/Trusted-Cowork-0.4.0-alpha.5-mac-{arch}.dmg", page)
             self.assertIn("v0.4.0-alpha.5", page)
@@ -25,7 +25,7 @@ class CoworkTests(unittest.TestCase):
             self.assertNotIn("nyte/auto", page)
             self.assertTrue((root / "assets/nyte-v2/cowork.css").is_file())
             self.assertTrue((root / "assets/nyte-v2/cowork-v3.css").is_file())
-            self.assertIn("https://nytokenexchange.com/trusted-cowork", (root / "new-york/sitemap.xml").read_text())
+            self.assertIn("https://nytex.com/trusted-cowork", (root / "new-york/sitemap.xml").read_text())
             self.assertNotIn("/trusted-cowork", (root / "london/sitemap.xml").read_text())
 
             self.assertTrue((root / "assets/nyte-v2/photos/cowork-clouds-2400.webp").is_file())

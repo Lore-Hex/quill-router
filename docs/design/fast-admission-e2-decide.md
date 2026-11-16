@@ -1751,6 +1751,35 @@ counts, per snapshot and policy digest:
   workspace's requests pass at `workspace.not_enabled`, before the
   in-flight gate, and the same 429 is
   `inflight_unchecked.workspace.not_enabled`.
+- `funding_unchecked.402.insufficient_credits`: Python's credit refusal
+  (402 `insufficient_credits`, read through) of a request the pipeline
+  would admit, when the workspace's credit rows, read once by the shadow
+  after the refusal, carry no debt mark and neither a row's headroom nor
+  their sum reaches the hold the decision takes (`confirmFunding`). Go's
+  decision holds no verdict on the balance: what the edge answers is held
+  by the front door's reservation under a lease (decision 14), and with
+  no lease room the owner is Busy and the request passes to Python, which
+  answers this 402. Neither an agreement nor a would-admit: counted,
+  never paged. Python answers a workspace marked in debt with the same
+  402, and that one Go's `workspace.in_debt` gate should have stopped
+  (decision 17), so the mark is what the read is for: a marked row, rows
+  that cover the hold, or no read (a failure, the limiter of five reads
+  a second, no reader) leave the refusal
+  `would_admit_python_refused.402.insufficient_credits`, which pages
+  with the reason (`funding=marked`, `covered`, `unread`, `limiter`,
+  `no_reader`). The read is strong and follows Python's answer, so what
+  changes between the two is read as it stands afterwards. Credit freed
+  or added, or a mark set since, pages. A mark cleared since, with the
+  rows still short of the hold, is counted as the balance and not paged:
+  Python itself clears a stale mark (rows marked whose signed sum is no
+  longer negative) inside the refusing request, and its refusal is then
+  for the balance, while a mark that stands is still there at the read.
+  Python's first refusal of a workspace with several rows goes by their
+  signed sum alone, so it can refuse while one row covers the hold beside
+  one that owes; that reads as `covered` and pages. Before the
+  read, each such refusal paged: on 2026-11-15 at 05:21Z and 2026-11-16
+  at 00:42Z, one request each of a workspace nearly out of credit, with
+  no row marked.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
   `python_error.<status>` (any other 5xx): not refusals on the facts.
@@ -1847,8 +1876,10 @@ by its name and still counts against the 99.5%, `differ_affinity_warm`
 saying how many of the differs it is); every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class
 (`cohort_by_class`: Python's errors, unavailable answers and unread
-answers, the scope taken, replays, and Python's per-key in-flight 429
-read through, `passed.inflight.key` or `inflight_unchecked.*`); zero
+answers, the scope taken, replays, Python's per-key in-flight 429
+read through, `passed.inflight.key` or `inflight_unchecked.*`, and its
+credit refusal of a workspace whose rows cannot take the hold,
+`funding_unchecked.*`); zero
 `differ.estimate*` and zero
 `row.idempotency_fingerprint`, with no field counted `other` (a period's
 fields past the line's bound, which could hide either); zero

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -109,12 +111,38 @@ func goldenTicketTransport(t *testing.T, c authorizeCase) http.RoundTripper {
 
 func TestEdgeTicketRequestAndConcurrentCommit(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
-	for _, name := range []string{"answer:async.B:invocation_nonce", "answer:async.B:stream:route_type:responses"} {
-		base := asyncCaseNamed(t, name)
+	// A ticket that is not eligible, an eligible one (its 200 carries the
+	// body's invocation_nonce after idempotent_replay, as Python's does),
+	// and a stream's.
+	for _, v := range []struct {
+		name     string
+		eligible bool
+	}{
+		{"answer:async.B:invocation_nonce", false},
+		{"answer:async.B:invocation_nonce", true},
+		{"answer:async.B:stream:route_type:responses", false},
+	} {
+		name := v.name
+		if v.eligible {
+			name += "/eligible"
+		}
+		base := asyncCaseNamed(t, v.name)
 		c := enableTickets(t, f, base)
 		expected := string(ticketed(t, base.Expect.Response))
-		if strings.Contains(name, ":stream:") {
-			expected = strings.Replace(expected, `"async_eligible":false`, `"async_eligible":true`, 1)
+		if v.eligible {
+			expected = string(mutated(t, expected, func(d pyjson.Object) pyjson.Object {
+				nonce, _ := memberOf(d, "invocation_nonce").(string)
+				at := slices.IndexFunc(d, func(m pyjson.Member) bool { return m.Key == "idempotent_replay" })
+				if nonce != "" || at < 0 {
+					t.Fatal("not a fresh 200 without the nonce member")
+				}
+				var body map[string]any
+				if err := json.Unmarshal(c.body(), &body); err != nil {
+					t.Fatal(err)
+				}
+				d = slices.Insert(d, at+1, pyjson.Member{Key: "invocation_nonce", Value: body["invocation_nonce"]})
+				return setMember(d, "async_eligible", true)
+			}))
 		}
 		var data struct {
 			Data map[string]any `json:"data"`

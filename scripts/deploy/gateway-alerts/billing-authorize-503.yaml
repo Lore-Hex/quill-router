@@ -4,16 +4,22 @@ enabled: true
 documentation:
   mimeType: text/markdown
   content: |
-    Authorize returned more 503s than the app marked as lease headroom, or
-    the app marked more than authorize returned. A lease-headroom 503 is the
-    retryable answer TR_FASTPATH_LEASE_HEADROOM_503 gives when a workspace's
-    credits are held by fast-path leases; the app writes
-    billing.lease_headroom_unavailable for each (counted by
-    trustedrouter_gateway_lease_headroom_503). Cloud Run's request log has
+    Authorize returned more 503s than the app marked as designed and
+    retryable, or the app marked more than authorize returned. The app marks
+    two kinds, one line each. A lease-headroom 503 is the answer
+    TR_FASTPATH_LEASE_HEADROOM_503 gives when a workspace's credits are held
+    by fast-path leases: billing.lease_headroom_unavailable, counted by
+    trustedrouter_gateway_lease_headroom_503. A rebalance-busy 503 is the
+    answer when a workspace's credit covers the hold but is spread across
+    credit shards and the rebalance cooldown is held by its other requests:
+    billing.credit_rebalance_busy, counted by
+    trustedrouter_gateway_rebalance_busy_503 ("TR Gateway: credit rebalance
+    busy" pages on more than two of those in ten minutes or more than five
+    in an hour). Cloud Run's request log has
     only status and URL, so every authorize 503 (trustedrouter_gateway_authorize_503)
     without a line is router-core impact: Spanner unavailable, no instance,
     a crash. Treat it as "TR Gateway: billing path 5xx", which sets authorize
-    503s aside for this policy. More lines than 503s means the line is being
+    503s aside for this policy. More lines than 503s means a line is being
     written without the 503 and could hide real ones; that is a defect too.
     The pairing per request, by trace, is scripts/deploy/assert_no_billing_5xx.sh;
     run its query for the incident's window. Runbook: docs/spanner-reliability.md.
@@ -22,16 +28,19 @@ conditions:
   # one-minute points (the request log is stamped at request start, the line
   # later) or are ingested apart differ for at most about a minute; held for
   # three minutes, that never pages, while a real unpaired 503 differs for
-  # the whole ten. "or vector(0)" keeps either side present when it has no
-  # series: without it, no lease-headroom lines at all would make the
-  # difference empty and silence every authorize 503.
-  - displayName: "Authorize 503s and lease-headroom lines differ for three minutes"
+  # the whole ten. The 503s are compared with the sum of the two kinds of
+  # line. "or vector(0)" keeps each of the three present when it has no
+  # series: without it, a counter with no lines at all (either kind is rare)
+  # would make the difference empty and silence every authorize 503.
+  - displayName: "Authorize 503s and the app's marked lines differ for three minutes"
     conditionPrometheusQueryLanguage:
       query: |
         abs(
           (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_authorize_503{monitored_resource="cloud_run_revision"}[10m])) or vector(0))
           -
           (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_lease_headroom_503{monitored_resource="cloud_run_revision"}[10m])) or vector(0))
+          -
+          (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_rebalance_busy_503{monitored_resource="cloud_run_revision"}[10m])) or vector(0))
         ) > 0.5
       duration: 180s
       evaluationInterval: 60s

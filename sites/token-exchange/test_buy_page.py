@@ -62,13 +62,13 @@ class BuyPageTests(unittest.TestCase):
         self.assertIn('Reserve your next<br><em>billion tokens.</em>', self.page)
         self.assertIn('Card checkout purchases a reservation for 2027 delivery.', self.page)
         self.assertNotIn('capacity request', self.page)
-        self.assertIn('<link rel="canonical" href="https://nytokenexchange.com/buy">', self.page)
+        self.assertIn('<link rel="canonical" href="https://nytex.com/buy">', self.page)
         self.assertIn('/assets/nyte-v2/styles.css?', self.page)
         self.assertIn('/assets/nyte-v2/buy.css?', self.page)
         self.assertIn('/assets/nyte-v2/buy.js?', self.page)
         for market in load_markets():
             sitemap = (self.root / market['slug'] / 'sitemap.xml').read_text()
-            self.assertEqual('https://nytokenexchange.com/buy' in sitemap, market['slug'] == 'new-york')
+            self.assertEqual('https://nytex.com/buy' in sitemap, market['slug'] == 'new-york')
         for name in ['buy.css', 'buy.js']:
             self.assertTrue((self.root / 'assets/nyte-v2' / name).is_file())
 

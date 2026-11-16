@@ -33,7 +33,7 @@ class TokenIndexPageTests(unittest.TestCase):
                 (SOURCE / "static/token-index" / name).read_bytes(),
             )
         self.assertIn("Provisional. Not for trading.", page)
-        self.assertIn('rel="canonical" href="https://nytokenexchange.com/index"', page)
+        self.assertIn('rel="canonical" href="https://nytex.com/index"', page)
         self.assertFalse((self.output / "index.html").exists())
 
     def test_index_reuses_nyte_chrome(self):
@@ -56,11 +56,11 @@ class TokenIndexPageTests(unittest.TestCase):
         self.assertIn("token-exchange-neocloud-in-a-box", suppliers)
         self.assertIn('href="/suppliers"', page)
         self.assertIn('href="/confidential"', page)
-        self.assertIn("https://nytokenexchange.com/index", (self.output / "new-york/sitemap.xml").read_text())
+        self.assertIn("https://nytex.com/index", (self.output / "new-york/sitemap.xml").read_text())
         for other in self.output.glob("*/index.html"):
             if other.parent.name != "new-york":
                 self.assertNotIn('id="open-stack"', other.read_text())
-                self.assertNotIn("https://nytokenexchange.com/index", (other.parent / "sitemap.xml").read_text())
+                self.assertNotIn("https://nytex.com/index", (other.parent / "sitemap.xml").read_text())
 
     def test_v3_grade_columns_keep_reserve_links(self):
         import os
