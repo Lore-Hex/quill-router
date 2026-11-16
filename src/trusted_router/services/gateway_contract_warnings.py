@@ -63,6 +63,8 @@ PARAMETER_CATEGORIES = frozenset(
         "input_file",
         "allow_fallbacks",
         "cache_control",
+        "chat_template_kwargs",
+        "client_metadata",
         "debug",
         "depth",
         "frequency_penalty",
