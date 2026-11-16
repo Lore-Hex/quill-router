@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -207,12 +206,16 @@ type decider struct {
 	// worker (countMixes), started on the first; mixPending counts those
 	// handed off and not yet counted, which a test and WaitDecide wait for;
 	// mixQuit ends the worker, once mixStopped turns hand-offs away.
+	// mixMu holds mixStopped, and a hand-off's check of it with its count
+	// in mixPending and its send, so no mix is queued once the stop has
+	// begun waiting.
 	mixes      chan *pendingMix
 	mixPending sync.WaitGroup
 	mixStart   sync.Once
 	mixStop    sync.Once
 	mixQuit    chan struct{}
-	mixStopped atomic.Bool
+	mixMu      sync.Mutex
+	mixStopped bool
 
 	mu sync.Mutex
 	// total is the counts since the edge started, period the period's;
@@ -577,17 +580,23 @@ func (dp *decider) handOff(m *pendingMix) {
 	if m == nil {
 		return
 	}
-	if !dp.mixStopped.Load() {
+	queued := false
+	// The lock is held over a send that never waits.
+	dp.mixMu.Lock()
+	if !dp.mixStopped {
 		dp.mixStart.Do(func() { go dp.countMixes() })
 		dp.mixPending.Add(1)
 		select {
 		case dp.mixes <- m:
-			return
+			queued = true
 		default:
 			dp.mixPending.Done()
 		}
 	}
-	dp.count(func(t *decideTally) { t.mixDropped++ })
+	dp.mixMu.Unlock()
+	if !queued {
+		dp.count(func(t *decideTally) { t.mixDropped++ })
+	}
 }
 
 // countMixes is the mix worker: it counts each mix handed off, in turn,
@@ -604,21 +613,23 @@ func (dp *decider) countMixes() {
 	}
 }
 
-// stopMixes turns hand-offs away and ends the worker, once every mix handed
-// off is counted (at shutdown, once the edge's handlers have returned).
+// stopMixes turns hand-offs away, waits until every mix handed off before
+// is counted, then ends the worker (at shutdown, once the edge's handlers
+// have returned). A hand-off after the stop is dropped and counted.
 func (dp *decider) stopMixes() {
+	dp.mixMu.Lock()
+	dp.mixStopped = true
+	dp.mixMu.Unlock()
 	dp.mixPending.Wait()
-	dp.mixStop.Do(func() {
-		dp.mixStopped.Store(true)
-		close(dp.mixQuit)
-	})
+	dp.mixStop.Do(func() { close(dp.mixQuit) })
 }
 
 // resolveBeforeEvict reads, for a pass Python refused, what the cache holds
 // of the key the eviction is about to remove, into the pass's mix when the
 // pipeline did not learn its workspace: the worker, later, would find it
-// gone and count the pass unknown. It is the refusal's path, already rare,
-// and takes the lock Evict takes; the mix has not been handed off yet.
+// gone and count the pass unknown. It is the refusal's path, already rare:
+// it takes the cache's lock once for its Peek, and Evict takes it again
+// just after, in a hold of its own. The mix has not been handed off yet.
 func (dp *decider) resolveBeforeEvict(p decidePassed) {
 	m := p.mix
 	if m == nil || m.known {

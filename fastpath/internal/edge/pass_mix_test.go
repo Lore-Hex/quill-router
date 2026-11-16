@@ -885,3 +885,126 @@ func TestAFullMixQueueDropsAndCounts(t *testing.T) {
 		t.Fatalf("after the stop: counted %d, dropped %d", got.PassedEnabled["r"], got.MixDropped)
 	}
 }
+
+// TestAHandOffNeverStrandsAMixAtTheStop: hand-offs racing the stop, over
+// many rounds, each end counted or dropped; none is queued after the worker
+// has ended, where nothing would count it and every later wait for the mix
+// worker would hang.
+func TestAHandOffNeverStrandsAMixAtTheStop(t *testing.T) {
+	const rounds, senders, each = 300, 8, 20
+	for round := range rounds {
+		dp := newDecider(DecideConfig{}, func(string, ...any) {}, time.Now, time.Minute)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range senders {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				for range each {
+					dp.handOff(&pendingMix{reason: "r"})
+				}
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			dp.stopMixes()
+		}()
+		done := make(chan struct{})
+		go func() {
+			close(start)
+			wg.Wait()
+			dp.stopMixes()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("round %d: the stop still waits on a mix no worker will count", round)
+		}
+		dp.mu.Lock()
+		counted, dropped := sum(dp.total.passedUnknown), dp.total.mixDropped
+		dp.mu.Unlock()
+		if counted+dropped != senders*each {
+			t.Fatalf("round %d: %d counted and %d dropped of %d", round, counted, dropped, senders*each)
+		}
+	}
+}
+
+// TestAQueuedMixHoldsABodyOnlyWhenItNeedsIt: a pass's mix keeps its body
+// for the worker only while neither its workspace nor a lookup hash is
+// known and the body is under lenientMaxBody.
+func TestAQueuedMixHoldsABodyOnlyWhenItNeedsIt(t *testing.T) {
+	small, large := make([]byte, lenientMaxBody-1), make([]byte, lenientMaxBody)
+	stale := gwstate.Read{Key: gwstate.Stale, Found: true}
+	stale.Facts.Key.WorkspaceID = "ws"
+	for _, tc := range []struct {
+		name    string
+		decided Decided
+		body    []byte
+		kept    bool
+	}{
+		{"nothing known, under the bound", Decided{}, small, true},
+		{"nothing known, at the bound", Decided{}, large, false},
+		{"the workspace known", Decided{Workspace: "ws", LookupHash: "lh"}, small, false},
+		{"the pipeline's lookup hash", Decided{LookupHash: "lh"}, small, false},
+		{"the parse's lookup hash", Decided{parsedLookupHash: "lh"}, small, false},
+		{"a stale entry held", Decided{Read: stale}, small, false},
+		{"a key that names no workspace", Decided{Read: gwstate.Read{Key: gwstate.Fresh}}, small, false},
+	} {
+		m := pendingMixOf(gwauth.ReasonLaxType, tc.decided, tc.body, func(string) bool { return true })
+		if (m.body != nil) != tc.kept {
+			t.Errorf("%s: body held %v, want %v", tc.name, m.body != nil, tc.kept)
+		}
+	}
+}
+
+// TestWaitDecideCountsTheMixesStillQueued: mixes still queued when the
+// decide path stops (the worker held in a read) are counted before the last
+// line is logged, and WaitDecide returns only once they are.
+func TestWaitDecideCountsTheMixesStillQueued(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "pass:body.float")
+	h := newDecideEdge(t, f, c, nil)
+	cache := &blockingPeekCache{KeyCache: h.cache, held: map[string]string{"lh": "ws"},
+		entered: make(chan struct{}), release: make(chan struct{})}
+	h.edge.decider.cfg.Cache = cache
+	released := sync.OnceFunc(func() { close(cache.release) })
+	t.Cleanup(released)
+	enabled := func(string) bool { return true }
+	for range 5 {
+		h.edge.decider.handOff(&pendingMix{reason: "r", lookupHash: "lh", enabled: enabled})
+	}
+	select {
+	case <-cache.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker never read")
+	}
+	done := make(chan struct{})
+	go func() {
+		h.edge.WaitDecide()
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("WaitDecide returned with mixes still queued")
+	case <-time.After(100 * time.Millisecond):
+	}
+	released()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WaitDecide did not return once the mixes were counted")
+	}
+	var last string
+	for _, l := range strings.Split(h.logs.all(), "\n") {
+		if strings.Contains(l, "fastpath edge decide: ") {
+			last = l
+		}
+	}
+	if !strings.Contains(last, ` passed_enabled={"r":5} `) {
+		t.Fatalf("the last line: %s", last)
+	}
+}
