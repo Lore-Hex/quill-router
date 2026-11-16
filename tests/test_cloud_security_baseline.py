@@ -22,6 +22,7 @@ and report; they never converge. These tests keep them that way.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import shutil
@@ -181,6 +182,12 @@ case " $* " in
     cat "$STUB_RUN_LIST_JSON"
     exit 0
     ;;
+  *" iam service-accounts keys list "*"--iam-account=tr-deploy@"*)
+    if [ -n "${STUB_KEYS_FILE:-}" ]; then
+      cat "$STUB_KEYS_FILE"
+      exit 0
+    fi
+    ;;
 esac
 echo "stub: not modelled" >&2
 exit 1
@@ -216,8 +223,37 @@ def _restricted_fleet() -> list[dict[str, Any]]:
     return fleet
 
 
+# `date` as GNU coreutils (CI) or BSD (macOS) answers the two forms the
+# baseline uses, so both of its paths run on any machine.
+_DATE_STUB = """#!/usr/bin/env python3
+import datetime, sys
+args = sys.argv[1:]
+utc = datetime.timezone.utc
+def out(when):
+    print(int(when.timestamp()))
+    sys.exit(0)
+if args == ["-u", "+%s"]:
+    out(datetime.datetime.now(utc))
+try:
+    if FLAVOR == "gnu" and len(args) == 4 and args[:2] == ["-u", "-d"] and args[3] == "+%s":
+        out(datetime.datetime.fromisoformat(args[2].replace("Z", "+00:00")))
+    if FLAVOR == "bsd" and len(args) == 6 and args[:3] == ["-u", "-j", "-f"] and args[5] == "+%s":
+        out(datetime.datetime.strptime(args[4], args[3]).replace(tzinfo=utc))
+except ValueError:
+    print("date: invalid date", file=sys.stderr)
+    sys.exit(1)
+print("date: illegal option", file=sys.stderr)
+sys.exit(1)
+"""
+
+
 def _run_ingress_check(
-    tmp_path: Path, listing: str | None, warning: str = ""
+    tmp_path: Path,
+    listing: str | None,
+    warning: str = "",
+    *,
+    keys: str | None = None,
+    date_flavor: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
     """Run the whole GCP baseline against a stub gcloud; return the ingress lines."""
     jq = shutil.which("jq")
@@ -226,6 +262,11 @@ def _run_ingress_check(
     stub_bin.mkdir()
     (stub_bin / "gcloud").write_text(_GCLOUD_STUB)
     (stub_bin / "curl").write_text("#!/usr/bin/env bash\nexit 7\n")
+    if date_flavor is not None:
+        (stub_bin / "date").write_text(_DATE_STUB.replace("FLAVOR", repr(date_flavor), 2))
+    keys_file = tmp_path / "keys.txt"
+    if keys is not None:
+        keys_file.write_text(keys)
     for stub in stub_bin.iterdir():
         stub.chmod(0o755)
     listing_file = tmp_path / "run-services.json"
@@ -243,6 +284,7 @@ def _run_ingress_check(
         "STUB_RUN_LIST_JSON": str(listing_file),
         "STUB_RUN_LIST_MODE": "fail" if listing is None else "answer",
         "STUB_RUN_LIST_WARNING": warning,
+        **({"STUB_KEYS_FILE": str(keys_file)} if keys is not None else {}),
     }
     proc = subprocess.run(  # noqa: S603 - fixed script path, stub PATH
         ["bash", str(GCP)],  # noqa: S607
@@ -388,6 +430,43 @@ def test_gcp_ingress_check_requires_every_control_plane_region_in_the_listing(
         "DRIFT no Cloud Run service listed in control-plane region southamerica-east1:"
         " the listing does not cover every region"
     ], lines
+
+
+KEYS_SECTION = "=== service-account user-managed keys"
+
+
+def _key_lines(proc: subprocess.CompletedProcess[str]) -> list[str]:
+    assert KEYS_SECTION in proc.stdout, proc.stdout + proc.stderr
+    section = proc.stdout.split(KEYS_SECTION, 1)[1].split("\n=== ", 1)[0]
+    return [line.strip() for line in section.splitlines() if line.strip()]
+
+
+@pytest.mark.parametrize("flavor", ["gnu", "bsd"])
+def test_gcp_key_age_is_read_with_either_date(tmp_path: Path, flavor: str) -> None:
+    """GNU date (CI) once read every key as 0 days old: the BSD-only parse
+    failed and the fallback was "now"."""
+    now = dt.datetime.now(dt.UTC)
+    old = (now - dt.timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    proc, _, _ = _run_ingress_check(
+        tmp_path, json.dumps(_restricted_fleet()),
+        keys=f"projects/p/serviceAccounts/sa/keys/k1\t{old}\n", date_flavor=flavor,
+    )
+    lines = _key_lines(proc)
+    assert any(
+        line.startswith("note  tr-deploy user-managed key is ") and line.split(" is ", 1)[1].startswith(("399d", "400d"))
+        for line in lines
+    ), lines
+
+
+@pytest.mark.parametrize("flavor", ["gnu", "bsd"])
+def test_gcp_key_age_reports_an_unreadable_time_instead_of_zero(tmp_path: Path, flavor: str) -> None:
+    proc, _, _ = _run_ingress_check(
+        tmp_path, json.dumps(_restricted_fleet()),
+        keys="projects/p/serviceAccounts/sa/keys/k1\tnot-a-time\n", date_flavor=flavor,
+    )
+    lines = _key_lines(proc)
+    assert "note  tr-deploy user-managed key has an unreadable creation time (not-a-time), so its age is unknown" in lines, lines
+    assert not [line for line in lines if "0d old" in line], lines
 
 
 def test_gcp_workflow_does_not_require_optional_security_label() -> None:
