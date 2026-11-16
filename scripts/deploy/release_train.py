@@ -124,9 +124,36 @@ class GitHub:
         return rows[0]["databaseId"]
 
     def jobs(self, run_id: int) -> list[dict]:
-        raw = self.json("run", "view", str(run_id), "--repo", REPO, "--json", "jobs")
-        require(isinstance(raw, dict) and isinstance(raw.get("jobs"), list), "missing release jobs")
-        return raw["jobs"]
+        require(type(run_id) is int and run_id > 0, "invalid run ID")
+        # Match `gh run view`'s latest-job listing, without its extra run and
+        # workflow metadata reads for every historical release. Retained jobs
+        # from an earlier attempt remain part of this listing after a rerun.
+        pages = self.json("api", "--paginate", "--slurp",
+                          f"repos/{REPO}/actions/runs/{run_id}/jobs?filter=latest&per_page=100")
+        require(isinstance(pages, list) and bool(pages), "missing release jobs")
+        rows: list[dict] = []
+        total = None
+        ids: set[int] = set()
+        for page in pages:
+            require(isinstance(page, dict) and type(page.get("total_count")) is int
+                    and page["total_count"] >= 0 and isinstance(page.get("jobs"), list),
+                    "invalid release jobs page")
+            if total is None:
+                total = page["total_count"]
+            require(page["total_count"] == total, "release job count changed during pagination")
+            for row in page["jobs"]:
+                require(isinstance(row, dict) and type(row.get("run_id")) is int
+                        and row["run_id"] == run_id and type(row.get("id")) is int
+                        and row["id"] > 0 and row["id"] not in ids
+                        and isinstance(row.get("name"), str) and bool(row["name"])
+                        and isinstance(row.get("status"), str) and bool(row["status"])
+                        and "conclusion" in row
+                        and (row["conclusion"] is None or isinstance(row["conclusion"], str)),
+                        "invalid release job identity or result")
+                ids.add(row["id"])
+                rows.append(row)
+        require(len(rows) == total, "incomplete release jobs")
+        return rows
 
     def compatible(self, base: str, candidate: str) -> bool:
         for path in COMPATIBILITY_PATHS:
