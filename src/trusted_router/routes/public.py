@@ -1458,6 +1458,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def seo_deepseek_api_privacy() -> str:
         return public_page_html(settings, "deepseek-api-privacy")
 
+    @public_html_route("/uncensored-ai-models")
+    def seo_uncensored_ai_models() -> str:
+        return public_page_html(settings, "uncensored-ai-models")
+
+    @public_html_route("/uncensored-deepseek-api")
+    def seo_uncensored_deepseek_api() -> str:
+        return public_page_html(settings, "uncensored-deepseek-api")
+
     @public_html_route("/abliterated-deepseek")
     def seo_abliterated_deepseek() -> str:
         return public_page_html(settings, "abliterated-deepseek")
