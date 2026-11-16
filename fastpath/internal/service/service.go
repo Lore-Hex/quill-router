@@ -73,6 +73,10 @@ type Config struct {
 	// subscriptions to each.
 	SettleTopic, RecordTopic               string
 	SettleSubscription, RecordSubscription string
+	// SettleHedge is how long a settle log publish call may go unanswered
+	// before its batch is sent again beside it (settlelog.Settings.Hedge);
+	// zero sends each batch once.
+	SettleHedge time.Duration
 	// MaxOutstanding bounds the messages a subscription holds at once.
 	MaxOutstanding int
 
@@ -154,6 +158,11 @@ func Defaults() Config {
 	return Config{
 		Shards:         1,
 		MaxOutstanding: 1000,
+		// Half the front door's owner wait (500 ms), so a hedge's answer can
+		// still reach a heartbeat inside it; a call held past it is the
+		// tail, not the norm (2026-11-16: most settle log calls took under
+		// 30 ms while a few were held to the 5 s deadline).
+		SettleHedge: 250 * time.Millisecond,
 		Store: store.Config{LiveFor: 3 * time.Second, Window: 30 * time.Second, Skew: 2 * time.Second,
 			PublishDeadline: 5 * time.Second, MaxLife: maxLife, Grace: time.Minute, Allowance: 1 << 50,
 			// Tiers 2 and 1 have no allowance, so take no lease, until a
@@ -396,6 +405,14 @@ func (c Config) publish() settlelog.Settings {
 	return settlelog.Settings{Deadline: c.Store.PublishDeadline}
 }
 
+// settle is the settle log's: the owner's deadline, and its hedge, which
+// sends a batch again only within that deadline.
+func (c Config) settle() settlelog.Settings {
+	s := c.publish()
+	s.Hedge = c.SettleHedge
+	return s
+}
+
 // PubSubOptions are the Pub/Sub client's options for a region: its
 // locational endpoint, so that every publisher of a lease's records orders
 // them as one (settlelog.Endpoint), unless PUBSUB_EMULATOR_HOST names an
@@ -435,7 +452,7 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if err != nil {
 		return err
 	}
-	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.publish())
+	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.settle())
 	if err != nil {
 		return err
 	}
@@ -1013,10 +1030,10 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			case <-ctx.Done():
 				// The period's last part: a stopping node's answers are
 				// what a hand-off's slow ones would be.
-				log.Print(ownerTallyLine(o.TakeTally()))
+				log.Print(ownerTallyLine(o.TakeTally(), settle.TakeHedges()))
 				return nil
 			case <-t.C:
-				log.Print(ownerTallyLine(o.TakeTally()))
+				log.Print(ownerTallyLine(o.TakeTally(), settle.TakeHedges()))
 			}
 		}
 	})
@@ -1439,15 +1456,17 @@ func writeAlertOf(w io.Writer, subject, what, kind string) {
 // ownerTallyLine is the owner's period line: what its records waited from
 // hand-over to acknowledgement, the most a lease awaited at once, the
 // publishes that failed, and how long heartbeats and terminals took to
-// answer, each slow count past a second, the front door's wait for an owner.
-func ownerTallyLine(t owner.Tally) string {
+// answer, each slow count past a second, the front door's wait for an owner;
+// then the settle log's hedged calls, and the batches a hedge acknowledged.
+func ownerTallyLine(t owner.Tally, h settlelog.Hedges) string {
 	var avg time.Duration
 	if t.Acks > 0 {
 		avg = t.AckTotal / time.Duration(t.Acks)
 	}
 	return fmt.Sprintf("fastpath owner: acks=%d ack_avg_ms=%d ack_max_ms=%d acks_slow=%d depth_max=%d "+
 		"publish_failures=%d heartbeats=%d heartbeat_max_ms=%d heartbeats_slow=%d terminals=%d "+
-		"terminal_max_ms=%d terminals_slow=%d", t.Acks, avg.Milliseconds(), t.AckMax.Milliseconds(), t.AcksSlow,
-		t.DepthMax, t.PublishFailures, t.Heartbeats, t.HeartbeatMax.Milliseconds(), t.HeartbeatsSlow, t.Terminals,
-		t.TerminalMax.Milliseconds(), t.TerminalsSlow)
+		"terminal_max_ms=%d terminals_slow=%d publish_hedges=%d hedges_won=%d", t.Acks, avg.Milliseconds(),
+		t.AckMax.Milliseconds(), t.AcksSlow, t.DepthMax, t.PublishFailures, t.Heartbeats,
+		t.HeartbeatMax.Milliseconds(), t.HeartbeatsSlow, t.Terminals, t.TerminalMax.Milliseconds(), t.TerminalsSlow,
+		h.Calls, h.Won)
 }

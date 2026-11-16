@@ -70,6 +70,9 @@ func run() error {
 	flag.DurationVar(&cfg.Store.Skew, "skew", cfg.Store.Skew, "the skew allowance for nodes' clocks")
 	flag.DurationVar(&cfg.Store.PublishDeadline, "publish-deadline", cfg.Store.PublishDeadline,
 		"the owner's deadline for a publish")
+	flag.DurationVar(&cfg.SettleHedge, "settle-hedge", cfg.SettleHedge,
+		"how long a settle log publish call may go unanswered before its batch is sent again beside it, "+
+			"within the publish deadline; 0 sends each batch once")
 	flag.DurationVar(&cfg.Store.MaxLife, "max-life", cfg.Store.MaxLife, "a hold's longest life")
 	flag.DurationVar(&cfg.Store.Grace, "grace", cfg.Store.Grace, "the reaper's grace")
 	moneyFlags(flag.CommandLine, &cfg.Store)
