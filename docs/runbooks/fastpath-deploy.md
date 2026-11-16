@@ -422,8 +422,8 @@ fails the plan (the precondition on the nodes and the load generator) and
 
 The nodes and the load generator take the digests as the instance
 attributes `fastpath-release-sha256` and `fastpath-release-sums-sha256`,
-metadata applied in place like the pin. A startup script from the change
-that added them on downloads the release into a staging directory, checks
+metadata applied in place like the pin. Since the change that added them,
+the startup script downloads the release into a staging directory, checks
 `SHA256SUMS` against `fastpath-release-sums-sha256`, each file against
 `SHA256SUMS` and the node binary against `fastpath-release-sha256`, and
 installs only when every check passes. On any difference, a `SHA256SUMS`
