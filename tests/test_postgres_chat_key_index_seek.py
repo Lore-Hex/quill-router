@@ -28,6 +28,10 @@ from trusted_router.storage_key_usage import (
 )
 from trusted_router.storage_postgres import _CHAT_BROWSER_KEY_INDEX_SQL, PostgresStore
 
+# Both parametrized cases share the databases fixture, which creates databases;
+# one xdist group keeps them on one worker so two CREATE DATABASE cannot race.
+pytestmark = pytest.mark.xdist_group("postgres-chat-key-index-seek")
+
 DSN = os.environ.get("TR_CONFORMANCE_POSTGRES_DSN")
 needs_server = pytest.mark.skipif(not DSN, reason="set TR_CONFORMANCE_POSTGRES_DSN")
 C_DATABASE = "tr_chat_index_seek_c"

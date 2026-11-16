@@ -140,6 +140,34 @@ def test_chat_browser_key_index_and_freeze(store, unique, user_id, workspace_id)
     assert store.chat_browser_key_hashes(workspace_id, other_user) == [key_c.hash]
 
 
+def test_forget_expired_chat_browser_keys_prunes_only_expired_rows(store, unique, user_id, workspace_id):
+    """Each backend stores a row's expiry with the index row itself, so the
+    owner-side prune removes only rows that expired before the cutoff and keeps
+    unexpired rows and rows with no recorded expiry."""
+
+    other_user = f"other-user-{unique}"
+    hashes = {}
+    for name in ("past", "future", "unknown", "other-past"):
+        _raw, key = store.create_api_key(
+            workspace_id=workspace_id, name=f"chat-browser-{name}",
+            creator_user_id=other_user if name == "other-past" else user_id,
+            limit_microdollars=5_000_000,
+        )
+        hashes[name] = key.hash
+    store.record_chat_browser_key(workspace_id, user_id, hashes["past"], expires_at="2026-01-01T00:00:00Z")
+    store.record_chat_browser_key(workspace_id, user_id, hashes["future"], expires_at="2099-01-01T00:00:00Z")
+    store.record_chat_browser_key(workspace_id, user_id, hashes["unknown"])
+    store.record_chat_browser_key(workspace_id, other_user, hashes["other-past"], expires_at="2026-01-01T00:00:00Z")
+
+    store.forget_expired_chat_browser_keys(workspace_id, user_id, expired_before="2026-06-01T00:00:00Z")
+
+    assert sorted(store.chat_browser_key_hashes(workspace_id, user_id)) == sorted(
+        [hashes["future"], hashes["unknown"]]
+    )
+    # Another user's rows are never touched by this user's prune.
+    assert store.chat_browser_key_hashes(workspace_id, other_user) == [hashes["other-past"]]
+
+
 def test_limit_at_most_lowers_and_never_raises(store, unique, user_id, workspace_id):
     """``limit_microdollars_at_most`` is a conditional lower applied to the key
     read inside each backend's write transaction: it cuts a higher limit,
