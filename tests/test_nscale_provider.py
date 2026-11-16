@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -14,7 +14,7 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, read_stale_provider_manifest
 from scripts.pricing.manifest import apply_canary_results
 from scripts.pricing.providers import nscale
-from trusted_router import catalog_ingest, provider_lifecycle
+from trusted_router import catalog_ingest, provider_lifecycle, provider_manifest_policy
 from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.services.inference_errors import default_provider_secret_ref
@@ -107,6 +107,92 @@ def test_nscale_post_cutover_catalog_publishes_its_four_chat_models() -> None:
             "nscale", model_id, row["upstream_id"],
             at=provider_lifecycle.NSCALE_NOVEMBER_2026_RETIREMENT_AT,
         )
+
+
+_RETIRED_AT = "2026-11-02T00:00:00Z"
+# generated_at froze at 2026-11-07T19:38:02Z; fail-closed routing drops every
+# Nscale route 14 days later unless a refresh renews it.
+_FROZEN_MANIFEST_EXPIRES_AT = datetime(2026, 11, 21, 19, 38, 2, tzinfo=UTC)
+
+
+def _manifest_with_retired_rows_still_routable(committed: str) -> str:
+    """Undo the delisting tombstones: the manifest as every refresh since 11-07 saw it."""
+
+    raw = json.loads(committed)
+    for row in raw["models"]:
+        if row.get("retirement_at") == _RETIRED_AT and row.get("routable_reason") == "delisted-upstream":
+            row["routable"] = True
+            del row["routable_reason"]
+    return json.dumps(raw, indent=2, ensure_ascii=False) + "\n"
+
+
+def _refresh_from_post_cutover_catalog(
+    monkeypatch: pytest.MonkeyPatch, manifest: Path,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    payload = json.loads(_POST_CUTOVER_FIXTURE.read_text(encoding="utf-8"))
+    monkeypatch.setenv("NSCALE_API_KEY", "test-only-key")
+    monkeypatch.setattr(nscale, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(nscale, "_DISCOVERED_ROWS", {})
+    monkeypatch.setattr(nscale, "fetch_json", lambda url, *, extra_headers: payload)
+    monkeypatch.setattr(nscale, "_probe", lambda api_key, model_id: True)
+    # The refresh's own manifest stage: the provider writer, then the outer
+    # mass-prune gate that rolls the file back when it trips.
+    return refresh._write_provider_manifests({nscale.SLUG: nscale.fetch()})
+
+
+def test_nscale_retired_routes_keep_tombstones_and_manifest_renews(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    committed = nscale.MANIFEST_PATH.read_text(encoding="utf-8")
+    manifest = tmp_path / "nscale.json"
+    manifest.write_text(committed, encoding="utf-8")
+
+    notes, failures = _refresh_from_post_cutover_catalog(monkeypatch, manifest)
+
+    assert failures == []
+    assert not any("mass-prune" in note for note in notes)
+    assert any(note.startswith("nscale: refreshed provider_models/nscale.json") for note in notes)
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    valid_until = provider_manifest_policy.provider_manifest_valid_until(nscale.SLUG, raw)
+    assert valid_until is not None
+    assert valid_until > _FROZEN_MANIFEST_EXPIRES_AT
+    rows = {row["id"]: row for row in raw["models"]}
+    # Everything Nscale still lists keeps routing.
+    for model_id in (
+        "z-ai/glm-5.3",
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.8-flash-next-fp8",
+        nscale.EMBEDDING_MODEL_ID,
+    ):
+        assert rows[model_id].get("routable") is not False, model_id
+    # Every route the November cutover retired stays a dark tombstone.
+    retired = {model_id for model_id, row in rows.items() if row.get("retirement_at") == _RETIRED_AT}
+    assert len(retired) == 22
+    for model_id in retired:
+        assert provider_lifecycle.provider_model_retired(
+            nscale.SLUG, model_id, at=provider_lifecycle.NSCALE_NOVEMBER_2026_RETIREMENT_AT,
+        )
+        assert rows[model_id]["routable"] is False
+        assert rows[model_id]["routable_reason"] == "delisted-upstream"
+        assert rows[model_id]["missing_since"] == "2026-11-07"
+
+
+def test_nscale_manifest_with_retired_rows_routable_stays_frozen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Positive control for the test above: the manifest as committed on 11-07
+    # trips the mass-prune guard on the same catalog and is never renewed.
+    frozen = _manifest_with_retired_rows_still_routable(
+        nscale.MANIFEST_PATH.read_text(encoding="utf-8")
+    )
+    manifest = tmp_path / "nscale.json"
+    manifest.write_text(frozen, encoding="utf-8")
+
+    notes, failures = _refresh_from_post_cutover_catalog(monkeypatch, manifest)
+
+    assert failures == []
+    assert "nscale: kept old manifest (mass-prune guard)" in notes
+    assert manifest.read_text(encoding="utf-8") == frozen
 
 
 def test_nscale_catalog_below_the_floor_still_fails_closed() -> None:
