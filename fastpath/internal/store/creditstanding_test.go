@@ -66,8 +66,11 @@ func TestReadCreditStandingRefusesRowsItCannotJudge(t *testing.T) {
 		t.Errorf("shards 0 and 2: %v", err)
 	}
 	// Usage at the top of int64 beside a reservation: the row's headroom is
-	// past int64, which the read's own subtraction refuses.
+	// past int64, which the read's own subtraction refuses. The row is
+	// deleted when the test ends: the emulator evaluates another test's
+	// condition on every row it scans (bounds_test.go).
 	past := seedWorkspace(t, 0)
+	dropWorkspace(t, past)
 	setRow(t, past, 0, map[string]any{"total_usage": int64(math.MaxInt64), "reserved": int64(2)})
 	if got, err := s.ReadCreditStanding(ctx, past); err == nil {
 		t.Errorf("a headroom past int64 read as %+v", got)
