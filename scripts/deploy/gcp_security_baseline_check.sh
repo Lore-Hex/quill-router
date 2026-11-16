@@ -101,8 +101,8 @@ else
     *)  drift "auditConfigs = $TYPES (want ADMIN_READ)" ;;
   esac
   # Spanner DATA_READ (infra/spanner_audit.tf, INC-2026-003 corrective action
-  # 6) is the one service-level config, and its serving-fleet exemption list is
-  # the one allowed exemption. allServices DATA_READ above stays a regression:
+  # 6) is one of the two service-level configs (Secret Manager's is below),
+  # and its serving-fleet exemption list is the one allowed exemption. allServices DATA_READ above stays a regression:
   # this config records operators, CI, the vendor and tr-clickhouse, not the
   # metering reads that made the allServices version cost ~$236/month.
   # Keep this list identical to spanner_serving_readers in infra/spanner_audit.tf
@@ -117,8 +117,18 @@ else
   else
     ok "spanner DATA_READ recorded; exemptions = serving fleet only"
   fi
+  # Secret Manager DATA_READ (infra/secret_manager_audit.tf) records every
+  # read of a secret's value, for every caller. Secret reads are few (about
+  # 65,000 a day), so unlike Spanner's config there is no exemption to allow:
+  # the check below this one covers it.
+  SECRET_TYPES="$(jq -r '[.auditConfigs[]? | select(.service=="secretmanager.googleapis.com") | .auditLogConfigs[].logType] | sort | join(",")' <<<"$POLICY")"
+  if [ "$SECRET_TYPES" != "DATA_READ" ]; then
+    drift "secretmanager.googleapis.com auditConfigs = '${SECRET_TYPES}' (want DATA_READ; infra/secret_manager_audit.tf)"
+  else
+    ok "secret reads recorded (secretmanager DATA_READ)"
+  fi
   OTHER_EXEMPT="$(jq -r '[.auditConfigs[]? | select(.service!="spanner.googleapis.com") | .auditLogConfigs[]?.exemptedMembers[]?] | length' <<<"$POLICY")"
-  OTHER_SERVICES="$(jq -r '[.auditConfigs[]? | .service | select(.!="allServices" and .!="spanner.googleapis.com")] | join(",")' <<<"$POLICY")"
+  OTHER_SERVICES="$(jq -r '[.auditConfigs[]? | .service | select(.!="allServices" and .!="spanner.googleapis.com" and .!="secretmanager.googleapis.com")] | join(",")' <<<"$POLICY")"
   [ "$OTHER_EXEMPT" = "0" ] \
     && ok "no audit exemptions outside spanner DATA_READ" \
     || drift "an auditLogConfig outside spanner DATA_READ has exemptedMembers — some principal is exempt from audit logging"
