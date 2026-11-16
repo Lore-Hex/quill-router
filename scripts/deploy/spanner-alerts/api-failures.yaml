@@ -9,8 +9,17 @@ documentation:
     status and method labels before changing capacity. Runbook:
     docs/spanner-reliability.md.
 conditions:
-  - displayName: "Unexpected API failures exceed one per minute for 5 minutes"
+  - displayName: "Unexpected API failures exceed one per minute for 10 minutes"
     conditionThreshold:
+      # Ten minutes, not five: a Cloud Run revision replacement cancels the old
+      # instances' in-flight transactions. On 2026-11-10 the settle-drain and
+      # public services rolled at 07:01:37-07:01:56 and Commit/Rollback/stream
+      # failures ran 07:02-07:04 (8, 31, 3 a minute), which opened this policy
+      # at 07:11. A burst of three minutes keeps a 300-second rate above the
+      # threshold for at most seven, so it no longer pages. A sustained failure
+      # still does: the 2026-11-11 table scans failed reads at 40-101 a minute
+      # from 03:27 to 03:37, above threshold for about fifteen minutes. The
+      # threshold itself is unchanged.
       # Spanner currently emits both title-case and lowercase retry statuses.
       # Exclude every observed spelling so expected transaction retries do not
       # page as API failures.
@@ -21,7 +30,7 @@ conditions:
           crossSeriesReducer: REDUCE_SUM
       comparison: COMPARISON_GT
       thresholdValue: 0.016666667
-      duration: 300s
+      duration: 600s
       trigger:
         count: 1
 alertStrategy:
