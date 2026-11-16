@@ -73,9 +73,12 @@ type Request struct {
 	inferenceReceipt bool
 }
 
-// Pass is why a request goes to Python; "" is none.
+// Pass is why a request goes to Python; "" is none. FloatAt is where the
+// first float is of a request passed as body.float (float_at.go), "" for
+// any other reason: the decide line counts it, and nothing decides on it.
 type Pass struct {
-	Reason string
+	Reason  string
+	FloatAt string
 }
 
 // Passed reports whether the request goes to Python.
@@ -146,7 +149,7 @@ func parseBody(body []byte, h Headers) (Request, pyjson.Object, Pass) {
 	case errors.Is(err, pyjson.ErrDuplicateKey):
 		return Request{}, nil, passFor(ReasonDuplicateKey)
 	case errors.Is(err, pyjson.ErrNonFinite):
-		return Request{}, nil, passFor(ReasonFloat)
+		return Request{}, nil, Pass{Reason: ReasonFloat, FloatAt: FloatAtNonFinite}
 	case err != nil:
 		return Request{}, nil, passFor(ReasonUnparseable)
 	}
@@ -155,7 +158,9 @@ func parseBody(body []byte, h Headers) (Request, pyjson.Object, Pass) {
 		return Request{}, nil, passFor(ReasonUnparseable)
 	}
 	if hasFloat(object) {
-		return Request{}, nil, passFor(ReasonFloat)
+		// Located only once the request passes: the requests that do not
+		// pass here pay nothing for it.
+		return Request{}, nil, Pass{Reason: ReasonFloat, FloatAt: floatAt(object)}
 	}
 	r, p := parseSchema(object)
 	r.Async.V1 = exactlyAsyncV1(h.SettlementMode)

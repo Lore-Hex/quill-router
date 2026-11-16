@@ -535,6 +535,64 @@ func TestTheSizeBoundDropsTheLeastRecentlyUsed(t *testing.T) {
 	}
 }
 
+// TestAPeekIsNeitherAReadNorAUse: Peek says which workspace a held key
+// names, "" for a lookup hash that names none, and not held for one the
+// cache lacks; and it starts no read, counts nothing, and is no use of the
+// entry: a key only peeked at is not refreshed past its last use, and the
+// size bound drops it as if it had not been peeked at.
+func TestAPeekIsNeitherAReadNorAUse(t *testing.T) {
+	r, c := newFakeReader(), start()
+	for i := range 3 {
+		hash, ws := fmt.Sprint("k", i), fmt.Sprint("ws", i)
+		r.keys[hash], r.credits[ws] = keyContext(hash, ws, ""), funded
+	}
+	cache := newTestCache(t, r, c, func(cfg *CacheConfig) { cfg.Size = 2 })
+	if ws, held := cache.Peek("k0"); ws != "" || held {
+		t.Fatalf("a cold key: %q %v", ws, held)
+	}
+	cache.settle()
+	if r.reads("k0") != 0 || cache.Counters() != (Counters{}) {
+		t.Fatalf("a peek read %d times, %+v", r.reads("k0"), cache.Counters())
+	}
+	for _, hash := range []string{"k0", "nobody"} {
+		cache.Lookup(hash, c.Now())
+		cache.settle()
+	}
+	before := cache.Counters()
+	for hash, want := range map[string]struct {
+		ws   string
+		held bool
+	}{"k0": {"ws0", true}, "nobody": {"", true}, "k1": {"", false}} {
+		if ws, held := cache.Peek(hash); ws != want.ws || held != want.held {
+			t.Errorf("%s: %q %v, want %q %v", hash, ws, held, want.ws, want.held)
+		}
+	}
+	cache.settle()
+	if got := cache.Counters(); got != before || r.reads("k1") != 0 || r.reads("k0") != 1 {
+		t.Fatalf("the peeks read or counted: %+v, was %+v; k1 read %d times", got, before, r.reads("k1"))
+	}
+	// Past a minute after its last use, a refresh leaves an entry only
+	// peeked at to age.
+	c.advance(DefaultUsedWithin + time.Second)
+	cache.Peek("k0")
+	cache.Refresh(context.Background())
+	cache.settle()
+	if n := r.reads("k0"); n != 1 {
+		t.Fatalf("a peek kept the entry in use: read %d times", n)
+	}
+	// k0 is the least recently used, peeked at last; the size bound drops
+	// it, not nobody, for k2.
+	cache.Peek("k0")
+	cache.Lookup("k2", c.Now())
+	cache.settle()
+	if _, held := cache.Peek("k0"); held {
+		t.Fatal("a peek moved the entry up the size bound's order")
+	}
+	if _, held := cache.Peek("k2"); !held {
+		t.Fatal("k2 was not filled")
+	}
+}
+
 // TestAMissWithEveryReadBusyIsNotFilled: reads are bounded; a miss that
 // finds none free passes without one, and is counted.
 func TestAMissWithEveryReadBusyIsNotFilled(t *testing.T) {

@@ -344,6 +344,23 @@ func (c *Cache) Lookup(lookupHash string, now time.Time) Read {
 	return r
 }
 
+// Peek is the workspace the key held for a lookup hash names ("" when the
+// lookup hash names no key), and whether an entry is held at all, of any
+// age. It is for the edge's count of who its passes belong to
+// (edge.KeyPeeker), never for a decision: it starts no read and is not a
+// use, so the entry's last use, its place in the size bound's order and
+// the counters stay as they were, and a key that is only peeked at is
+// neither refreshed nor kept.
+func (c *Cache) Peek(lookupHash string) (workspace string, held bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.keys[lookupHash]
+	if e == nil {
+		return "", false
+	}
+	return e.workspace(), true
+}
+
 // Evict drops what the cache holds for a lookup hash, with its workspace
 // (EvictWorkspace) when the facts held name one: Python answered the key a
 // 401, 402 or 403, or its workspace a pause 503. A read of the key running
