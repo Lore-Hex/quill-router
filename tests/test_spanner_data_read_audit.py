@@ -28,15 +28,29 @@ def test_data_read_is_recorded_for_spanner() -> None:
     assert 'log_type         = "DATA_READ"' in text
 
 
-def test_the_clickhouse_and_compute_default_accounts_are_not_exempt() -> None:
+def test_the_clickhouse_account_is_not_exempt() -> None:
     exempt = _exempted()
     assert exempt, "the exemption list should name the serving fleet"
     for member in exempt:
         assert "tr-clickhouse@" not in member, member
-        assert "-compute@developer.gserviceaccount.com" not in member, member
 
 
 def test_operators_and_ci_are_not_exempt() -> None:
     for member in _exempted():
         for recorded in ("tr-ops-local@", "tr-deploy@", "kertos-discovery@", "user:"):
             assert recorded not in member, member
+
+
+def test_the_baseline_checker_allows_exactly_these_exemptions() -> None:
+    # The daily cloud-security-baseline check must accept the applied config
+    # and nothing wider; its expected list must match Terraform's.
+    check = (ROOT / "scripts/deploy/gcp_security_baseline_check.sh").read_text()
+    m = re.search(r'SPANNER_READ_EXEMPT_WANT="([^"]*)"', check)
+    assert m, "SPANNER_READ_EXEMPT_WANT not found in the baseline checker"
+    want = sorted(
+        member.replace("${local.gcp_project_id}", "quill-cloud-proxy").replace(
+            "${local.gcp_project_number}", "44325983244"
+        )
+        for member in _exempted()
+    )
+    assert m.group(1).split(",") == want

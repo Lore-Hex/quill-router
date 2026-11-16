@@ -13,11 +13,15 @@
 #
 # Deliberately NOT exempt (INC-2026-003 corrective action 6): tr-clickhouse,
 # whose metadata token the intruder stole on 2026-11-09 and used against this
-# database, and the Compute Engine default account, which any VM without its
-# own account carries. A stolen workload token is exactly the caller these
-# records exist to name, so those two accounts are recorded even though the
-# ClickHouse drains read steadily.
+# database. A stolen workload token is exactly the caller these records exist
+# to name, so it is recorded even though the ClickHouse drains read steadily.
 #
+# The Compute Engine default account was recorded for about 15 minutes on
+# 2026-11-15 and is exempt again: it carries serving traffic (~450 reads a
+# second, ~90 GB/day of records, the same cost that ended the 2026-08-15
+# allServices attempt). Moving that serving workload to its own account would
+# let it be exempted by name instead.
+
 # Ad hoc SQL text appears in these records. SPANNER_SYS already keeps the same
 # text for 30 days.
 #
@@ -28,6 +32,10 @@
 
 locals {
   spanner_serving_readers = [
+    # Serves the inference path: ~450 ExecuteStreamingSql a second, measured
+    # 2026-11-15 23:56Z with it recorded (~90 GB/day of audit records). See
+    # the header for why it is exempt and tr-clickhouse is not.
+    "serviceAccount:${local.gcp_project_number}-compute@developer.gserviceaccount.com",
     "serviceAccount:tr-aws-cross-cloud@${local.gcp_project_id}.iam.gserviceaccount.com",
     "serviceAccount:tr-fastpath-node@${local.gcp_project_id}.iam.gserviceaccount.com",
     "serviceAccount:tr-google-data-manager@${local.gcp_project_id}.iam.gserviceaccount.com",
