@@ -600,5 +600,4 @@ def test_a_passing_tests_temporary_directory_is_not_kept() -> None:
     # several sessions running the suite on one machine fill the disk.
     options = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
     assert options["tmp_path_retention_policy"] == "failed"
-    assert options["tmp_path_retention_count"] == 1
-
+    assert options["tmp_path_retention_count"] == 3

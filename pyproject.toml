@@ -82,9 +82,12 @@ asyncio_mode = "auto"
 # run writes about 40 GB, and pytest's default keeps every directory of the
 # last three runs. With several sessions running the suite on one machine
 # that filled the disk on 2026-11-15. A passing test's directory is now
-# removed when the test ends; a failing test's is kept for the last run.
+# removed when the test ends. A test that fails in its call phase keeps its
+# directory (one that errors only in a fixture or in teardown does not), and
+# the last three runs' kept directories stay: with one, a second session
+# that fails and exits later would remove the first session's.
 tmp_path_retention_policy = "failed"
-tmp_path_retention_count = 1
+tmp_path_retention_count = 3
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
