@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests import wif_tiers
+
 ROOT = Path(__file__).resolve().parents[1]
 WIF_PROVIDER = "projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github"
 KNOWN_WIF_ALLOWLIST_EXCEPTIONS: dict[str, str] = {}
@@ -64,10 +66,11 @@ def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator()
     steps = job["steps"]
     auth = next(step for step in steps if _uses(step, "gcp-auth"))
     typed_auth = next(step for step in workflow["jobs"]["typed-billing-invariant-audit"]["steps"] if _uses(step, "gcp-auth"))
-    assert auth["with"] == typed_auth["with"] == {
-        "workload_identity_provider": WIF_PROVIDER,
-        "service_account": "tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com",
-    }
+    # Both jobs authenticate alike. Which account they name is held to the
+    # workflow's tier, with every other workflow's, by tests/test_ci_identities.py.
+    assert auth["with"] == typed_auth["with"]
+    assert set(auth["with"]) == {"workload_identity_provider", "service_account"}
+    assert auth["with"]["workload_identity_provider"] == WIF_PROVIDER
     assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", steps[0]["uses"])
     assert any(_uses(step, "setup-gcloud") for step in steps)
     assert any(_uses(step, "setup-uv") and "with" not in step for step in steps)
@@ -151,13 +154,19 @@ def _env_context(context, overrides):
     return context | {"env": context["env"] | resolved}
 
 
-def _gcp_wif_consumers(root: Path) -> set[str]:
+def _gcp_wif_identities(root: Path) -> dict[str, set[str | None]]:
+    """{workflow: the service accounts it names when it authenticates to this provider}.
+
+    A workflow that authenticates through a local reusable workflow or
+    composite action is charged with the accounts named there. None stands
+    for an account that is absent or cannot be resolved statically.
+    """
     workflows = {
         path.relative_to(root).as_posix(): yaml.safe_load(path.read_text())
         for path in sorted((root / ".github/workflows").iterdir())
         if path.suffix in {".yml", ".yaml"}
     }
-    consumers: set[str] = set()
+    consumers: dict[str, set[str | None]] = {}
     visited: set[str] = set()
 
     def local_composite(uses, stack, unresolved):
@@ -226,7 +235,8 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
                        if step_context.get("runtime_env_writes") else "")
                 )
                 if provider.strip() == WIF_PROVIDER.strip():
-                    consumers.add(caller)
+                    account = _resolve_static(step.get("with", {}).get("service_account"), step_context)
+                    consumers.setdefault(caller, set()).add(account.strip() if isinstance(account, str) else None)
             else:
                 assert action_name in KNOWN_NON_GCP_AUTH_ACTIONS, (
                     f"{unresolved}; add it to KNOWN_NON_GCP_AUTH_ACTIONS with a reason if it cannot authenticate to GCP"
@@ -278,6 +288,10 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
     return consumers
 
 
+def _gcp_wif_consumers(root: Path) -> set[str]:
+    return set(_gcp_wif_identities(root))
+
+
 def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None:
     """Check every google-github-actions/auth step using this provider.
 
@@ -290,11 +304,11 @@ def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None
     expression in run scripts, action inputs, or step-level env values (including nested composites)
     conservatively counts as a runtime env write.
     Values assembled outside workflow YAML are out of scope.
+
+    A workflow is admitted when a tier list of infra/gcp_wif.tf names it: the
+    attribute condition is the union of those lists (tests/wif_tiers.py).
     """
-    terraform = (root / "infra/gcp_wif.tf").read_text()
-    match = re.search(r"\bquill_router_workflow_refs\s*=\s*\[(.*?)\]", terraform, re.DOTALL)
-    assert match is not None, "Missing quill_router_workflow_refs in infra/gcp_wif.tf"
-    allowed_refs = set(re.findall(r'^\s*"([^"\n]+)"\s*,?\s*(?:#.*)?$', match[1], re.MULTILINE))
+    allowed_refs = set(wif_tiers.admitted_refs(root, "quill-router"))
     consumers = _gcp_wif_consumers(root)
 
     def admitted(path):
@@ -312,7 +326,7 @@ def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None
     missing = sorted(path for path in consumers if not admitted(path) and path not in KNOWN_WIF_ALLOWLIST_EXCEPTIONS)
     assert not missing, (
         "Workflows using the GCP WIF provider are missing from "
-        f"infra/gcp_wif.tf quill_router_workflow_refs: {missing}"
+        f"the quill-router tier lists of infra/gcp_wif.tf: {missing}"
     )
 
 

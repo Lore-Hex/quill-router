@@ -610,7 +610,11 @@ Touchpoints, in order:
 4. `scripts/deploy/secrets.sh` — add `ensure_secret_from_env_file` for
    the new API key.
 5. `.github/workflows/refresh-prices.yml` — add the new
-   `<PROVIDER>_API_KEY` to the per-secret pull loop.
+   `<PROVIDER>_API_KEY` to the per-secret pull loop, and the secret's name to
+   `ci_prices_secret_ids` in `infra/ci_identities.tf` in the same pull request
+   (a test fails when the two differ). The refresh reads only the secrets
+   listed there. Run step 11 before merging: the post-merge Terraform apply
+   fails on a grant to a secret that does not exist yet.
 6. `enclave-go/internal/llm/byok.go`:
    - `directBaseURL(provider)` case for the upstream host
    - `providerNativeModelMaps` registration if native ids ≠ OR canonical
