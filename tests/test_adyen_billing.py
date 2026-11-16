@@ -530,7 +530,7 @@ def test_adyen_console_is_hidden_until_ready_and_embeds_pinned_dropin(
         )
         enabled_client.cookies.set("tr_session", raw_token)
         page = enabled_client.get("/console/credits")
-        assert '<option value="adyen">Adyen</option>' in page.text
+        assert '<option value="adyen">Adyen, usually within minutes</option>' in page.text
         checkout = enabled_client.post(
             "/console/credits/checkout",
             data={"amount": "25", "payment_method": "adyen"},
