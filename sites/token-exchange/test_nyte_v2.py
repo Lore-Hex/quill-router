@@ -73,7 +73,12 @@ class NyteV2Tests(unittest.TestCase):
         self.assertNotIn('Illustrative', panel)
         self.assertEqual(panel.count('class="idx-change '), 5)
         for quote in data['QUOTES'].values():
-            self.assertIn(f'{quote["change_7d"]:+.1f}% 7d', panel)
+            change = quote["change_7d"]
+            # A move within +/-0.05 renders unsigned, as "0.0%", with class "flat".
+            label = f'{change:+.1f}%' if abs(change) > 0.05 else '0.0%'
+            self.assertIn(f'{label} 7d', panel)
+            if abs(change) <= 0.05:
+                self.assertIn('idx-change flat', panel)
         self.assertIn('idx-change up', panel)
         self.assertIn('idx-change down', panel)
         page = render_nyte('sup')
