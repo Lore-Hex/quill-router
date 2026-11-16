@@ -87,7 +87,9 @@ def test_refund_recovers_principal_pro_rata_not_fee_inclusive_charge() -> None:
         for (owner, _), row in database.typed["tr_credit_balance"].items()
         if owner == workspace_id
     ]
-    assert all(row["trust_latched_at"] is not None for row in shards)
+    # A refund with no reason is a courtesy refund: it recovers principal but
+    # is not evidence of fraud, so it does not set the trust latch.
+    assert shards and all(row["trust_latched_at"] is None for row in shards)
     assert all(row["billing_pause_causes"] == [] for row in shards)
 
 

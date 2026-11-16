@@ -16,6 +16,7 @@ from trusted_router.services.adyen_trust import ADYEN_ADVERSE_CODES, adyen_adver
 from trusted_router.services.paypal_trust import PAYPAL_ADVERSE_EVENTS, paypal_adverse_events
 from trusted_router.storage_models import CreditProvenance
 from trusted_router.trust_reconciliation import BackfillMarker
+from trusted_router.trust_tiers import adverse_event_latches
 
 NOW = datetime(2026, 9, 5, 12, tzinfo=UTC)
 ROOT = Path(__file__).parents[1]
@@ -81,6 +82,15 @@ def test_every_paypal_handler_recovers_once_and_drains_inbox(code: str, payment_
     assert payment["recovery_target"] == payment["recovered_micro"] + payment["unrecovered_micro"] == expected
 
 
+# Literal, not derived from adverse_event_latches: only chargebacks, the
+# provider's own capture reversal and the issuer fraud report are fraud
+# evidence. Refunds, cancellations, failed captures, reversed refunds and the
+# notification that precedes a chargeback recover principal without latching.
+ADYEN_LATCHING_CODES = frozenset({
+    "CAPTURE_REVERSED", "NOTIFICATION_OF_FRAUD", "CHARGEBACK", "CHARGEBACK_REVERSED", "SECOND_CHARGEBACK",
+})
+
+
 @pytest.mark.parametrize("code", sorted(ADYEN_ADVERSE_CODES))
 @pytest.mark.parametrize("payment_first", [True, False])
 def test_every_adyen_handler_recovers_once_and_drains_inbox(code: str, payment_first: bool) -> None:
@@ -96,7 +106,8 @@ def test_every_adyen_handler_recovers_once_and_drains_inbox(code: str, payment_f
     assert store.record_adverse_trust_event(event).outcome == "replay"
     payment = database.typed["tr_trust_event"][(workspace, "payment")]
     assert payment["recovery_target"] == payment["recovered_micro"] + payment["unrecovered_micro"] == expected
-    assert all(row["trust_latched_at"] is not None for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace)
+    shards = [row for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace]
+    assert shards and all((row["trust_latched_at"] is not None) == (code in ADYEN_LATCHING_CODES) for row in shards)
 
 
 @pytest.mark.parametrize("provider", ["paypal", "adyen"])
@@ -411,6 +422,55 @@ def test_provider_event_contract(provider: str, code: str, kind: str, subtype: s
     assert {row[1] for row in PROVIDER_EVENT_CONTRACT if row[0] == "adyen"} == set(ADYEN_ADVERSE_CODES)
 
 
+#: Which provider observations set the trust latch. Refunds carry no fraud
+#: reason on either provider, so none latches. Disputes latch as chargebacks
+#: (PayPal disputes are modelled as funds withdrawn while open), as provider
+#: capture reversals, and as Adyen's issuer fraud report; Adyen's
+#: cancellations, failed captures, reversed refunds and the notification that
+#: precedes a chargeback do not.
+PROVIDER_LATCH_CONTRACT = {
+    ("paypal", "PAYMENT.CAPTURE.REFUNDED"): False,
+    ("paypal", "PAYMENT.CAPTURE.REVERSED"): True,
+    ("paypal", "PAYMENT.REFUND.PENDING"): False,
+    ("paypal", "PAYMENT.REFUND.COMPLETED"): False,
+    ("paypal", "PAYMENT.REFUND.FAILED"): False,
+    ("paypal", "CUSTOMER.DISPUTE.CREATED"): True,
+    ("paypal", "CUSTOMER.DISPUTE.UPDATED"): True,
+    ("paypal", "CUSTOMER.DISPUTE.RESOLVED"): True,
+    **{("adyen", code): code in ADYEN_LATCHING_CODES for code in ADYEN_ADVERSE_CODES},
+}
+
+
+@pytest.mark.parametrize("provider,code,kind,subtype,status", PROVIDER_EVENT_CONTRACT)
+def test_provider_latch_contract(provider: str, code: str, kind: str, subtype: str, status: str) -> None:
+    event, = paypal_adverse_events(paypal_event(code)) if provider == "paypal" else adyen_adverse_events(adyen_item(code))
+    assert event.refund_reason == ""
+    assert adverse_event_latches(event) is PROVIDER_LATCH_CONTRACT[(provider, code)]
+    assert set(PROVIDER_LATCH_CONTRACT) == {(row[0], row[1]) for row in PROVIDER_EVENT_CONTRACT}
+
+
+@pytest.mark.parametrize("outcome", [
+    "RESOLVED_SELLER_FAVOUR", "RESOLVED_BUYER_FAVOUR", "RESOLVED_WITH_PAYOUT", "CANCELED_BY_BUYER", "ACCEPTED", "DENIED",
+])
+def test_every_resolved_paypal_dispute_latches(outcome: str) -> None:
+    payload = paypal_event("CUSTOMER.DISPUTE.RESOLVED")
+    payload["resource"]["dispute_outcome"] = {"outcome_code": outcome}
+    event, = paypal_adverse_events(payload)
+    assert event.lifecycle_status in {"won", "lost"}
+    assert adverse_event_latches(event) is True
+
+
+@pytest.mark.parametrize("code", sorted(ADYEN_ADVERSE_CODES))
+def test_unsuccessful_adyen_notification_never_latches(code: str) -> None:
+    item = adyen_item(code)
+    item["success"] = "false"
+    # An unsuccessful refund is a failed refund; an unsuccessful capture
+    # failure or technical cancel is still a claim; the rest emit nothing.
+    assert [adverse_event_latches(event) for event in adyen_adverse_events(item)] == (
+        [False] if code in {"REFUND", "CAPTURE_FAILED", "TECHNICAL_CANCEL"} else []
+    )
+
+
 @pytest.mark.parametrize("code,status,target", [
     ("CHARGEBACK", "succeeded", 1_000_000),
     ("CHARGEBACK_REVERSED", "won", 0),
@@ -428,8 +488,8 @@ def test_adyen_chargeback_status_controls_applied_recovery(code: str, status: st
     assert balance(database, workspace) == 1_000_000 - target
     payment = database.typed["tr_trust_event"][(workspace, "payment")]
     assert (payment["recovery_target"], payment["recovered_micro"], payment["unrecovered_micro"]) == (target, target, 0)
-    # The trust latch is sticky for every adverse fact, including a won claim;
-    # it is independent of whether that fact claims any principal.
+    # A chargeback latches whether it is active or already won; the latch is
+    # independent of whether that fact still claims any principal.
     shards = [row for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace]
     assert shards and all(row["trust_latched_at"] is not None for row in shards)
 
@@ -505,8 +565,10 @@ def test_provider_inbox_replays_refund_debit_before_reversal(
     adverse = database.typed["tr_trust_event"][(workspace, refund.event_id)]
     assert adverse["lifecycle_status"] == "reversed"
     assert adverse["provider_ordering_watermark"] == reversal.provider_ordering_watermark
+    # PayPal and Adyen refunds carry no fraud reason: neither the refund nor
+    # its reversal latches.
     shards = [row for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace]
-    assert shards and all(row["trust_latched_at"] is not None for row in shards)
+    assert shards and all(row["trust_latched_at"] is None for row in shards)
 
 
 @pytest.mark.parametrize("provider", ["paypal", "adyen"])

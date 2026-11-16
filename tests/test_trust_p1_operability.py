@@ -164,6 +164,7 @@ def _refund_event(
     amount: int = 200,
     created: datetime = PI_CREATED + timedelta(days=2),
     event_id: str = "evt_refund_1",
+    reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": event_id,
@@ -177,6 +178,7 @@ def _refund_event(
                 "payment_intent": payment_intent_id,
                 "amount": amount,
                 "status": "succeeded",
+                "reason": reason,
                 "created": int(created.timestamp()),
             }
         },
@@ -836,13 +838,19 @@ def test_converter_resolves_the_checkout_session_and_events_through_the_client()
 # --------------------------------------------------------------------------- D
 
 
+@pytest.mark.parametrize(
+    "reason,latch_implied",
+    [(None, False), ("requested_by_customer", False), ("fraudulent", True)],
+)
 def test_plan_mode_lists_credit_status_and_every_adverse_consequence_without_writing(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], reason: str | None, latch_implied: bool,
 ) -> None:
     store, database, workspace_id = _spanner_workspace()
     store._write_entity("stripe_event", "evt_checkout_1", {"created_at": "2026-09-05T00:00:00Z"})
     other = store.create_workspace("owner", "p1-other", trial_credit_microdollars=0).id
-    refund = _refund_event(refund_id="re_plan", payment_intent_id="pi_1", amount=250)
+    refund = _refund_event(
+        refund_id="re_plan", payment_intent_id="pi_1", amount=250, reason=reason
+    )
     scan = scan_stripe_responses(
         payment_intents=(
             _payment_intent(workspace_id),
@@ -867,7 +875,8 @@ def test_plan_mode_lists_credit_status_and_every_adverse_consequence_without_wri
     (adverse,) = plan.adverse
     assert adverse.adverse_ref == "re_plan"
     assert adverse.action == "apply"
-    assert adverse.latch_implied is True
+    # Only a refund given as fraudulent implies the latch.
+    assert adverse.latch_implied is latch_implied
     # 250 of 500 cents refunded recovers half of the 5,000,000 credited.
     assert adverse.recovery_target_micro == 2_500_000
     assert adverse.recovery_debit_micro == 2_500_000
@@ -883,7 +892,7 @@ def test_plan_mode_lists_credit_status_and_every_adverse_consequence_without_wri
     assert lines[-1]["writes"] == 0
     assert lines[-1]["payments_uncredited"] == 1
     assert lines[-1]["recovery_debit_micro"] == 2_500_000
-    assert lines[-1]["latches_implied"] == 1
+    assert lines[-1]["latches_implied"] == int(latch_implied)
     assert (dict(database.typed.get("tr_trust_event", {})), dict(database.typed.get("tr_trust_backfill", {}))) == before
 
 

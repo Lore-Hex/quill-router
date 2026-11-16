@@ -26,6 +26,7 @@ from trusted_router.storage_models import (
 from trusted_router.trust_tiers import (
     TRUST_PAUSE_CAUSES,
     adverse_event_from_payload,
+    adverse_event_latches,
     adverse_event_payload,
     adverse_restamp_wins,
     adverse_transition_outcome,
@@ -425,7 +426,11 @@ def apply_adverse_trust_event_tx(
     read_entity_tx: Callable[..., Any],
     write_entity_tx: Callable[..., Any],
 ) -> AdverseTrustResult | None:
-    """Apply fact, latch, recovery, and pause in one local transaction."""
+    """Apply fact, fraud latch, recovery, and pause in one local transaction.
+
+    The latch is set only when ``adverse_event_latches`` says the applied
+    observation is evidence of fraud; recovery and pause apply to every one.
+    """
 
     validate_adverse_event(event)
     payment = _read_payment_tx(
@@ -576,18 +581,19 @@ def apply_adverse_trust_event_tx(
     if account is None:
         raise RuntimeError("payment fact has no credit account")
     shard_count = credit_shard_count(account)
-    latched = transaction.execute_update(
-        "UPDATE tr_credit_balance SET trust_latched_at=COALESCE(trust_latched_at,@now), "
-        "updated_at=@now WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count",
-        params={"now": now, "pk": workspace_id, "shard_count": shard_count},
-        param_types={
-            "now": param_types.TIMESTAMP,
-            "pk": param_types.STRING,
-            "shard_count": param_types.INT64,
-        },
-    )
-    if int(latched) != shard_count:
-        raise RuntimeError("adverse latch did not cover every active shard")
+    if adverse_event_latches(event):
+        latched = transaction.execute_update(
+            "UPDATE tr_credit_balance SET trust_latched_at=COALESCE(trust_latched_at,@now), "
+            "updated_at=@now WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count",
+            params={"now": now, "pk": workspace_id, "shard_count": shard_count},
+            param_types={
+                "now": param_types.TIMESTAMP,
+                "pk": param_types.STRING,
+                "shard_count": param_types.INT64,
+            },
+        )
+        if int(latched) != shard_count:
+            raise RuntimeError("adverse latch did not cover every active shard")
     adverse_rows = list(
         transaction.execute_sql(
             "SELECT " + ", ".join(TRUST_EVENT_COLUMNS) + " FROM tr_trust_event "  # noqa: S608 - fixed column tuple.
