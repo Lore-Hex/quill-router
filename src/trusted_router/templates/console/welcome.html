@@ -8,6 +8,7 @@
   data-first-call-flow
   data-endpoint="/chat-proxy/v1/chat/completions"
   data-key-source="welcome-api-key"
+  data-can-create-keys="{{ 'true' if can_manage else 'false' }}"
 >
   <ol class="activation-progress" aria-label="Account setup progress">
     <li class="complete"><span>1</span><strong>Account</strong></li>
@@ -161,8 +162,12 @@ console.log(response.choices[0].message.content);</pre>
 <section class="panel activation-expired-panel">
   <div class="panel-head"><h2>This key has already been displayed</h2></div>
   <div class="panel-body">
+    {% if can_manage %}
     <p>For security, a raw key can only be shown once. Create a new key to continue setup.</p>
     <a class="btn primary" href="/console/api-keys#new-api-key">Create a new API key</a>
+    {% else %}
+    <p data-welcome-member-note>For security, a raw key can only be shown once. Only workspace owners and admins can create keys here, so ask one of them for a new key.</p>
+    {% endif %}
   </div>
 </section>
 {% endif %}

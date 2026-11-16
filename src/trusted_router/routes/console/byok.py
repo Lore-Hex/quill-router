@@ -18,7 +18,7 @@ from trusted_router.billing_policy import (
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.provider_compat import canonical_byok_provider
-from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console._shared import ConsoleDep, render, require_manager
 from trusted_router.storage import STORE
 
 
@@ -31,7 +31,10 @@ def register(app: FastAPI) -> None:
                 "provider_name": (
                     PROVIDERS[p.provider].name if p.provider in PROVIDERS else p.provider
                 ),
-                "key_hint": p.key_hint,
+                # The hint (first 6 and last 4 characters) is for owners and
+                # admins, who alone may list keys through the API; a member
+                # sees only that a key is set.
+                "key_hint": p.key_hint if ctx.can_manage else None,
             }
             for p in STORE.list_byok_providers(ctx.workspace.id)
         ]
@@ -43,6 +46,7 @@ def register(app: FastAPI) -> None:
             page_title="BYOK",
             page_subtitle="Bring your own provider keys.",
             providers=providers,
+            can_manage=ctx.can_manage,
             wallet_only_message=(
                 WALLET_ONLY_BYOK_MESSAGE if is_wallet_only_user(ctx.user) else None
             ),
@@ -62,6 +66,8 @@ def register(app: FastAPI) -> None:
         secret_ref: str = Form("", max_length=512),
         key_hint: str = Form("", max_length=80),
     ) -> Response:
+        # Same gate as PUT /v1/byok/providers/... (ManagementPrincipal).
+        require_manager(ctx)
         # The new console UI sends `api_key` (raw); legacy callers + API tests
         # may send `secret_ref` + `key_hint`. Mirror PUT /v1/byok/providers/...
         # so both paths land on the same storage shape.

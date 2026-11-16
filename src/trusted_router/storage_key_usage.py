@@ -65,3 +65,40 @@ def api_key_usage_snapshot(
             "monthly": current_window_usage(8, 9, "monthly"),
         },
     )
+
+
+# ── Per-user chat-browser key index ──────────────────────────────────────
+# One small row per chat-browser key, keyed <workspace>#<user>#<key hash>, so
+# issuance reads only that user's keys in that workspace (a key-range read on
+# the primary key) instead of every key in the workspace.
+CHAT_BROWSER_KEY_INDEX_KIND = "chat_browser_key_by_member"
+
+
+def chat_browser_key_index_prefix(workspace_id: str, user_id: str) -> str:
+    return f"{workspace_id}#{user_id}#"
+
+
+def chat_browser_key_index_id(workspace_id: str, user_id: str, key_hash: str) -> str:
+    return f"{chat_browser_key_index_prefix(workspace_id, user_id)}{key_hash}"
+
+
+def is_users_chat_browser_key(api_key: ApiKey, workspace_id: str, user_id: str) -> bool:
+    """Index rows are hints; the key record itself must agree."""
+    return api_key.workspace_id == workspace_id and api_key.creator_user_id == user_id
+
+
+def api_key_usage_from_typed(
+    api_key: ApiKey,
+    typed: dict[str, Any] | None,
+) -> ApiKeyUsageSnapshot:
+    """A snapshot from a typed point-read (or the JSON copy when there is no
+    typed row yet, as ``api_key_usage_snapshot`` does)."""
+    if typed is None:
+        return api_key_usage_snapshot(api_key, ())
+    return ApiKeyUsageSnapshot(
+        api_key=api_key,
+        usage_microdollars=int(typed["usage"]),
+        byok_usage_microdollars=int(typed["byok_usage"]),
+        reserved_microdollars=int(typed["reserved"]),
+        windows=dict(typed["windows"]),
+    )

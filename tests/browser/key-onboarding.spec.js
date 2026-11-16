@@ -3,14 +3,14 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const key = 'sk-tr-demo-not-a-real-key';
-function welcome() {
+function welcome(canManage = true) {
   return execFileSync(process.env.TEST_PYTHON || path.join(root, '.venv/bin/python'), ['-c', `
 from jinja2 import Environment, FileSystemLoader
 env = Environment(loader=FileSystemLoader('src/trusted_router/templates'))
-print(env.get_template('console/welcome.html').render(revealed_key='${key}', api_base_url='https://api.example.test/v1', credits_available='$0.15', can_run_first_call=True, onboarding_cell='run_request', user={'id': 'test-user'}))
+print(env.get_template('console/welcome.html').render(revealed_key='${key}', api_base_url='https://api.example.test/v1', credits_available='$0.15', can_run_first_call=True, onboarding_cell='run_request', user={'id': 'test-user'}, can_manage=${canManage ? 'True' : 'False'}))
 `], { cwd: root, encoding: 'utf8' });
 }
-async function load(page, reply = {status: 200, json: {choices: [{message: {content: '<b>Safe text</b>'}}]}}) {
+async function load(page, reply = {status: 200, json: {choices: [{message: {content: '<b>Safe text</b>'}}]}}, canManage = true) {
   const inference = [], analytics = [];
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {writeText: async value => {window.copied = value;}} }));
   await page.route('https://api.example.test/**', async route => {
@@ -23,7 +23,7 @@ async function load(page, reply = {status: 200, json: {choices: [{message: {cont
     if (url.pathname === '/console/social-rewards') return route.fulfill({json: {enabled: false, eligible: false, actions: []}});
     if (url.pathname === '/chat-proxy/v1/chat/completions') { inference.push(route.request()); return route.fulfill(reply); }
     if (url.pathname === '/analytics/events') { analytics.push(route.request().postDataJSON()); return route.fulfill({status: 204}); }
-    return route.fulfill({contentType: 'text/html', body: welcome()});
+    return route.fulfill({contentType: 'text/html', body: welcome(canManage)});
   });
   await page.goto('https://onboarding.test/console/welcome');
   return {inference, analytics};
@@ -85,4 +85,19 @@ test('clipboard failure shows a manual-copy recovery', async ({page}) => {
   await page.getByRole('button', {name: 'Copy API key', exact: true}).click();
   await expect(page.locator('#welcome-api-key-copy-status')).toBeVisible();
   await expect(page.locator('#welcome-api-key-copy-status')).toContainText('copy it manually');
+});
+
+for (const [role, canManage] of [['owner', true], ['member', false]]) test(`a rejected key tells a ${role} the right next step`, async ({page}) => {
+  await load(page, {status: 401, json: {error: {message: 'Invalid API key'}}}, canManage);
+  await page.getByRole('button', {name: 'Run my first API request'}).click();
+  const error = page.locator('[data-call-error]');
+  await expect(error).toContainText('This key was not accepted');
+  const action = error.locator('[data-call-error-action]');
+  if (canManage) {
+    await expect(action).toBeVisible();
+    await expect(action).toHaveAttribute('href', '/console/api-keys#new-api-key');
+  } else {
+    await expect(error).toContainText('Ask a workspace owner or admin for a new API key');
+    await expect(action).toBeHidden();
+  }
 });

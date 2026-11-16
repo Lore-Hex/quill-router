@@ -140,7 +140,14 @@
       openSigninModal();
       throw new Error("Sign in to run Synth.");
     }
-    if (!resp.ok) throw new Error("Could not issue a browser API key.");
+    if (!resp.ok) {
+      // A refusal (a member's $5 chat allowance for the last 24 hours used
+      // up, too many keys today, a key issued at the same moment) carries a
+      // message meant for the user.
+      let message = "";
+      try { message = (await resp.json())?.error?.message || ""; } catch (_) {}
+      throw new Error(message || "Could not issue a browser API key.");
+    }
     const json = await resp.json();
     const raw = json?.data?.raw_key;
     if (!raw) throw new Error("Browser API key response was missing raw_key.");

@@ -15,7 +15,7 @@ from trusted_router.money import (
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
     format_money_display,
 )
-from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console._shared import ConsoleDep, render, require_manager
 from trusted_router.routes.identity_verify import start_identity_session
 from trusted_router.storage import STORE
 from trusted_router.verification_gates import missing_identity_verification_requirements
@@ -96,7 +96,9 @@ def register(app: FastAPI) -> None:
                     not missing
                     and not user.identity_verified
                     and _veriff_available(settings)
+                    and ctx.can_manage
                 ),
+                identity_fee_needs_manager=not ctx.can_manage,
                 veriff_available=_veriff_available(settings),
             )
         )
@@ -106,6 +108,9 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
+        # The fee is debited from the selected workspace, so starting a
+        # session is a manager action there, as /auth/identity/session is.
+        require_manager(ctx)
         user = STORE.get_user(ctx.user.id) or ctx.user
         try:
             result = start_identity_session(

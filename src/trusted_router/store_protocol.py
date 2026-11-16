@@ -544,6 +544,28 @@ class Store(Protocol):
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         """Delete only owned keys, in batches of at most 100; deduplicate input."""
         ...
+    def record_chat_browser_key(self, workspace_id: str, user_id: str, key_hash: str) -> None:
+        """Index a chat-browser key under its user and workspace."""
+        ...
+    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
+        """The key hashes indexed for that user in that workspace: one
+        key-range read of the index, no key records."""
+        ...
+    def list_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, key_hashes: list[str] | None = ...,
+    ) -> list[ApiKeyUsageSnapshot]:
+        """That user's indexed chat-browser keys in that workspace (or just
+        ``key_hashes`` of them), disabled ones included, with live usage and
+        holds. Reads only that user's index rows and those keys, never the
+        rest of the workspace; a damaged usage shard set on one of those keys
+        fails closed. Keys that are gone or belong to someone else are
+        skipped."""
+        ...
+    def forget_chat_browser_keys(
+        self, workspace_id: str, user_id: str, key_hashes: list[str],
+    ) -> None:
+        """Remove the index rows of keys that can no longer matter."""
+        ...
     def delete_key(self, key_hash: str) -> bool: ...
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None: ...
     def reserve_key_limit(
