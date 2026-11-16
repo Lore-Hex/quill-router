@@ -1357,6 +1357,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.select-release.outputs.commit }}
+          fetch-depth: 0
 
       - name: Authenticate to GCP via WIF
         uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -1385,6 +1386,10 @@ jobs:
             echo "stage=companion" >> "$GITHUB_OUTPUT"
             echo "public backend is not live; deploying smokeable companion only"
           fi
+
+      - name: Refuse to overwrite a newer independently published website
+        if: steps.public_stage.outputs.stage == 'routed'
+        run: python3 -m scripts.deploy.public_docs guard-companion
 
       - name: Deploy isolated T1 public service
         run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"

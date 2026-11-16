@@ -420,6 +420,19 @@ if len(containers) != 1 or not containers[0].get("image"):
 print(containers[0]["image"])
 ' <<<"$LEGACY_REVISION_JSON")"
 
+PUBLIC_RELEASE="$(legacy_env_required TR_RELEASE)"
+PUBLIC_SOURCE="$PUBLIC_RELEASE"
+if [ -n "${TR_PUBLIC_DOCS_MANIFEST:-}" ]; then
+  [ "$STAGE" = routed ] || { echo 'ERROR: docs publication requires routed mode' >&2; exit 1; }
+  # The normal companion still follows the API image. The docs lane must prove
+  # identical runtime inputs against every serving API/public revision first.
+  if ! docs_candidate="$(python3 -m scripts.deploy.public_docs candidate)"; then
+    echo 'ERROR: docs-only source/image qualification failed' >&2
+    exit 1
+  fi
+  read -r PUBLIC_SOURCE LEGACY_IMAGE <<<"$docs_candidate"
+fi
+
 GOOGLE_OAUTH_AVAILABLE=false
 if legacy_has_secret_binding TR_GOOGLE_CLIENT_ID && \
    legacy_has_secret_binding TR_GOOGLE_CLIENT_SECRET; then
@@ -457,7 +470,10 @@ fi
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=public"
-  "TR_RELEASE=$(legacy_env_required TR_RELEASE)"
+  "TR_RELEASE=${PUBLIC_RELEASE}"
+  # The public trust document still identifies the unchanged API release.
+  # This separate deployment metadata identifies the website's own image.
+  "TR_PUBLIC_SOURCE_COMMIT=${PUBLIC_SOURCE}"
   "TR_TRUSTED_DOMAIN=$(legacy_env_required TR_TRUSTED_DOMAIN)"
   "TR_TRUSTED_DOMAIN_ALIASES=$(legacy_env_required TR_TRUSTED_DOMAIN_ALIASES)"
   "TR_API_BASE_URL=$(legacy_env_required TR_API_BASE_URL)"
@@ -848,7 +864,11 @@ for index in "${!TARGET_REGIONS[@]}"; do
   fi
 
   body_file="$(mktemp "${TMPDIR:-/tmp}/tr-public-probe-${target}-XXXXXX")"
-  for path in / /status.json /robots.txt; do
+  public_paths=(/ /status.json /robots.txt)
+  if [ -n "${TR_PUBLIC_DOCS_MANIFEST:-}" ]; then
+    public_paths+=(/docs /health /ready)
+  fi
+  for path in "${public_paths[@]}"; do
     probe_status=0
     probe_public_path "$probe_base_url" "$path" "$body_file" || probe_status=$?
     if [ "$probe_status" -eq 0 ]; then

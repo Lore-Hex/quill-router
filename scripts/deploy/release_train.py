@@ -27,6 +27,8 @@ COMPATIBILITY_PATHS = (
     ".github/workflows/deploy.yml", ".github/workflows/deploy-production.yml",
     "scripts/deploy/cloud_rollout.py", "scripts/deploy/deploy_mutex.sh",
     "scripts/deploy/release_train.py", "scripts/deploy/superseded_deploy.py",
+    ".github/workflows/deploy-public-docs.yml", "scripts/deploy/public_docs.py",
+    "scripts/deploy/public_surface.sh",
 )
 FULL_SHA = re.compile(r"[a-f0-9]{40}")
 MAX_ARTIFACT_BYTES = 1024 * 1024
@@ -165,7 +167,7 @@ class GitHub:
         return True
 
     def artifact(self, run: dict, kind: str) -> dict:
-        require(kind in {"prepared", "selected"}, "unknown release artifact")
+        require(kind in {"prepared", "selected", "public"}, "unknown release artifact")
         rows = self.json("api", f"repos/{REPO}/actions/runs/{run['id']}/artifacts?per_page=100")
         require(isinstance(rows, dict) and isinstance(rows.get("artifacts"), list)
                 and rows.get("total_count", 101) <= 100, "incomplete release artifact listing")
@@ -203,6 +205,11 @@ class GitHub:
             require(raw.get("controller_run") == run["id"] and raw.get("controller_attempt") == attempt
                     and raw.get("controller_commit") == run["head_sha"], "train receipt identity mismatch")
             Release.parse(raw.get("release"))
+            if kind == "public":
+                release = Release.parse(raw["release"])
+                require(raw.get("surface") == "public-docs" and release.commit == run["head_sha"]
+                        and release.build_run == run["id"] and release.build_attempt <= attempt,
+                        "invalid public-only receipt")
         return raw
 
 
@@ -223,6 +230,17 @@ def delivered_commit(api: GitHub, run: dict, jobs: list[dict]) -> str:
     return run["head_sha"]
 
 
+def public_delivered(jobs: list[dict]) -> bool:
+    public_jobs = [j for j in jobs if j.get("name") == "public-docs / deploy-public-docs"]
+    require(len(public_jobs) <= 1, "ambiguous public delivery job")
+    if not public_jobs or public_jobs[0].get("conclusion") != "success":
+        return False
+    markers = [s for s in public_jobs[0].get("steps", []) if s.get("name") == "Record public-only delivery"]
+    require(len(markers) == 1 and markers[0].get("conclusion") in {"success", "skipped"},
+            "public delivery outcome is unavailable")
+    return markers[0]["conclusion"] == "success"
+
+
 def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False) -> dict:
     require(base.commit == controller["head_sha"] and base.build_run == controller["id"],
             "base release does not belong to this workflow")
@@ -237,6 +255,7 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
                         "databaseId,status,conclusion,headSha,headBranch,event,displayTitle")
         require(isinstance(runs, list), "release train queue unavailable")
         delivered = []
+        public_deliveries: list[Release] = []
         for listed in runs:
             if listed.get("databaseId") == controller["id"]:
                 continue
@@ -253,6 +272,12 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
                     require(api.relation(shipped, head) in {"ahead", "identical"},
                             "a delivered release is no longer on main")
                     delivered.append(shipped)
+                elif public_delivered(jobs):
+                    run = api.run(listed["databaseId"])
+                    public = Release.parse(api.artifact(run, "public")["release"])
+                    require(api.relation(public.commit, head) in {"ahead", "identical"},
+                            "a public release is no longer on main")
+                    public_deliveries.append(public)
                 continue
             try:
                 if not superseded.tracks_main(listed) or listed.get("status") == "completed":
@@ -275,6 +300,16 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
             except (Refused, KeyError, TypeError, ValueError):
                 # Unknown successors never displace the verified base release.
                 continue
+        # A docs publication is NOT API delivery, but it is a no-downgrade
+        # floor for the companion website. Reuse its prepared image only after
+        # the same compatibility and CI checks as any other train candidate.
+        for public in public_deliveries:
+            relation = api.relation(chosen.commit, public.commit)
+            require(relation in {"ahead", "identical", "behind"}, "public release history diverged")
+            if relation == "ahead":
+                require(api.compatible(base.commit, public.commit), "newer public release needs its own controller")
+                ci_run = api.ci(public.commit)
+                chosen = public
         for sha in delivered:
             relation = api.relation(chosen.commit, sha)
             require(relation in {"ahead", "identical", "behind"}, "delivered release history diverged")
