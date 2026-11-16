@@ -65,12 +65,12 @@ print(response.output_text)</code></pre>
 </section>
 
 <section style="margin-top:48px" aria-label="context.dev search pricing">
-  <h2>Choose context.dev</h2>
+  <h2 id="context-dev" style="scroll-margin-top:16px">Choose context.dev</h2>
   <p>Use the GCP gateway at <code>https://api.trustedrouter.com/v1</code>. Other gateways return an unavailable error until configured and qualified for this engine.</p>
-  <p>Set <code>"engine": "context"</code> on the <code>web_search</code> tool in Chat Completions or Responses. For <code>openrouter:web_search</code>, place it inside <code>parameters</code>. The alias <code>context.dev</code> also works. Omitting the engine or selecting <code>auto</code> keeps Exa. An unavailable engine returns an error; it does not silently fall back to another engine or retry the search.</p>
-  <pre><code>{"type": "web_search", "engine": "context", "search_context_size": "medium"}</code></pre>
+  <p>Set <code>"engine": "context.dev"</code> on the <code>web_search</code> tool in Chat Completions or Responses. For <code>openrouter:web_search</code>, place it inside <code>parameters</code>. The name <code>context</code> is not accepted. Omitting the engine or selecting <code>auto</code> keeps Exa. An unavailable engine returns an error; it does not silently fall back to another engine or retry the search.</p>
+  <pre><code>{"type": "web_search", "engine": "context.dev", "search_context_size": "medium"}</code></pre>
   <p>context.dev search costs <strong>$0.006 per provider credit</strong>, plus the selected model's token charges. This is a conservative TrustedRouter tariff, not the provider's actual dollar cost. The search requests highlights without separately billed full-page Markdown. A call requesting up to ten results reserves at most two credits ($0.012); only the provider's validated credit usage is charged and unused reservation is released.</p>
-  <p>Usage reports <code>web_search_engine</code>, <code>web_search_credits</code>, <code>web_search_credit_microdollars</code> (6,000), and <code>web_search_pricing_basis</code> (<code>conservative_credit_tariff</code>). Model and search charges remain separate. context.dev supports <code>auto</code> mode, up to 25 results, and up to 20,000 highlight characters; Exa-only modes are rejected.</p>
+  <p>Usage reports <code>web_search_engine</code> (<code>context.dev</code>), <code>web_search_credits</code>, <code>web_search_credit_microdollars</code> (6,000), and <code>web_search_pricing_basis</code> (<code>conservative_credit_tariff</code>). Model and search charges remain separate. context.dev supports <code>auto</code> mode, up to 25 results, and up to 20,000 highlight characters; Exa-only modes are rejected.</p>
 </section>
 
 <section style="margin-top:48px">
@@ -128,4 +128,25 @@ print(response.output_text)</code></pre>
   </div>
 </section>
 
+{% endblock %}
+
+{% block body_scripts %}
+<script nonce="{{ csp_nonce() }}">
+(() => {
+  if (location.hash !== "#context-dev") return;
+  let interrupted = false;
+  const stop = () => { interrupted = true; };
+  const events = ["wheel", "pointerdown", "keydown", "touchstart"];
+  events.forEach(name => window.addEventListener(name, stop, { once: true, passive: true }));
+  // Fonts and the responsive hero settle after the browser's initial fragment jump.
+  window.addEventListener("load", () => {
+    document.fonts.ready.then(() => requestAnimationFrame(() => {
+      events.forEach(name => window.removeEventListener(name, stop));
+      if (!interrupted && location.hash === "#context-dev") {
+        document.getElementById("context-dev").scrollIntoView({ block: "start", behavior: "instant" });
+      }
+    }));
+  }, { once: true });
+})();
+</script>
 {% endblock %}
