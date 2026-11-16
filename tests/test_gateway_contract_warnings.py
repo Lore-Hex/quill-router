@@ -24,6 +24,7 @@ from trusted_router.services.gateway_contract_warnings import (
     report_gateway_contract_rejection,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_operational_analytics import analytics_surrogate
 
 REQUEST_ID = "rlog_" + "a" * 32
 
@@ -118,7 +119,8 @@ def test_rejection_warns_with_verified_identity_without_billing(
     assert event["tags"]["workspace_id"] == key["workspace_id"]
     assert event["tags"]["credential_id"] == key["hash"]
     # Sentry counts distinct users per issue: here, distinct workspaces.
-    assert event["user"] == {"id": key["workspace_id"]}
+    assert event["user"] == {"id": analytics_surrogate("workspace", key["workspace_id"])}
+    assert key["workspace_id"] not in event["user"]["id"]
     assert event["contexts"]["gateway_rejection"]["request_id"] == REQUEST_ID
     assert "private-key-label" not in json.dumps(event)
     assert "alice@example.com" not in json.dumps(event)
@@ -213,7 +215,10 @@ def test_each_workspace_is_its_own_sentry_user(warnings: list[dict[str, Any]]) -
             GatewayContractRejection(status=400, parameter="thinking", request_id=REQUEST_ID),
             route="/v1/chat/completions", workspace_id=workspace, credential_id="key_verified",
         )
-    assert [event["user"] for event in warnings] == [{"id": "ws_first"}, {"id": "ws_second"}]
+    assert [event["user"] for event in warnings] == [
+        {"id": analytics_surrogate("workspace", "ws_first")},
+        {"id": analytics_surrogate("workspace", "ws_second")},
+    ]
     # Only the opaque id: no email, address or name rides along.
     assert all(set(event["user"]) == {"id"} for event in warnings)
     assert warnings[0]["fingerprint"] == warnings[1]["fingerprint"]

@@ -10,6 +10,7 @@ from trusted_router.schemas import (
 )
 from trusted_router.sentry_config import capture_gateway_contract_warning
 from trusted_router.services.contract_value_preview import safe_value_preview
+from trusted_router.storage_operational_analytics import analytics_surrogate
 
 # Public parameter categories, not a request allowlist. Unknown names might
 # themselves contain customer content, so only bounded identifier paths are
@@ -196,11 +197,13 @@ def report_gateway_contract_rejection(
             "level": "warning",
             "message": "Authenticated gateway request rejected by the API contract",
             "fingerprint": ["gateway-contract-rejection", route, str(rejection.status), parameter],
-            # The verified workspace as Sentry's user, so an issue's user count
-            # is how many workspaces hit it, fleet-wide. One workspace sending
-            # a field no contract defines is that client's mistake; many
-            # workspaces refused the same way is a gap or regression of ours.
-            "user": {"id": workspace_id},
+            # The verified workspace as Sentry's user, as the analytics
+            # surrogate (sha256, resolvable through tr.workspace_directory),
+            # so an issue's user count is how many workspaces hit it without
+            # adding a raw identifier. One workspace sending a field no
+            # contract defines is that client's mistake; many workspaces
+            # refused the same way is a gap or regression of ours.
+            "user": {"id": analytics_surrogate("workspace", workspace_id)},
             "tags": tags,
             "contexts": {"gateway_rejection": context},
         }
