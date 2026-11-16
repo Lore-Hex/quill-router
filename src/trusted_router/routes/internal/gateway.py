@@ -227,6 +227,7 @@ from trusted_router.storage_custom_models import (
     normalize_user_provided_model_id,
 )
 from trusted_router.storage_errors import (
+    CreditRebalanceBusy,
     DeferredSettlementCapReached,
     LeasedOutcomeUnknown,
     StoreConflict,
@@ -1913,6 +1914,15 @@ def _authorize_gateway_sync_impl(
                     "error_class": type(exc).__name__,
                 },
             )
+            if isinstance(exc, CreditRebalanceBusy):
+                # The designed 503 for credit that is spread across shards
+                # while the rebalance cooldown is held. The app's handler
+                # answers it as any StoreUnavailable; this line is its mark.
+                _log_credit_rebalance_busy(
+                    workspace.id,
+                    request_id=getattr(request.state, "request_id", None),
+                    trace_id=_cloud_trace_id(request),
+                )
             raise
         except BaseException:
             release_after_error()
@@ -3291,6 +3301,30 @@ def _lease_headroom_error(
         LEASE_HEADROOM_MESSAGE,
         ErrorType.SERVICE_UNAVAILABLE,
         headers={"Retry-After": LEASE_HEADROOM_RETRY_AFTER},
+    )
+
+
+def _log_credit_rebalance_busy(
+    workspace_id: str, *, request_id: str | None, trace_id: str = "-",
+) -> None:
+    """The mark of the rebalance-busy 503: the workspace's credit covers the
+    hold but is spread across shards, and the per-process rebalance cooldown
+    is held by its other requests (storage_errors.CreditRebalanceBusy,
+    raised by the typed authorize's credit recovery). The backend is healthy
+    and the caller is asked to retry.
+
+    The answer itself is the app's storage 503, unchanged, and the request
+    log records only status and URL, so this line is what tells it from a
+    storage outage: the billing 5xx deploy gate pairs it with the request
+    log by trace_id, and the log-based counter
+    trustedrouter_gateway_rebalance_busy_503 counts it for the authorize-503
+    alert and for the rate alert (scripts/deploy/gateway_reliability.sh).
+    Its prefix, "INFO <logger> billing.credit_rebalance_busy ", and
+    "trace=<id>" are read by both, so a change to either is a change to
+    them. It carries no key, amount or model."""
+    logger.info(
+        "billing.credit_rebalance_busy workspace_id=%s request_id=%s trace=%s",
+        _log_value(workspace_id), _log_value(request_id), _log_value(trace_id),
     )
 
 

@@ -104,6 +104,7 @@ from trusted_router.storage import (
 )
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_errors import (
+    CreditRebalanceBusy,
     LeasedOutcomeUnknown,
     StoreConflict,
     StoreUnavailable,
@@ -6148,12 +6149,15 @@ class SpannerStore(OperationalAnalyticsReads):
                         # Aggregate funds exist but are genuinely fragmented.
                         # The cooldown protects Spanner from a rebalance
                         # stampede; reporting 402 here would be an accounting
-                        # lie, so ask the caller to retry instead.
+                        # lie, so ask the caller to retry instead. Its own
+                        # type, a StoreUnavailable to every handler: the route
+                        # marks this 503 so the authorize-503 alert and the
+                        # deploy gate can tell it from a storage outage.
                         log.warning(
                             "credit rebalance cooldown exhausted workspace=%s attempts=%d",
                             workspace_id, _attempt + 1,
                         )
-                        raise StoreUnavailable("credit escrow rebalance is busy; retry")
+                        raise CreditRebalanceBusy("credit escrow rebalance is busy; retry")
                     cooldown_passed = True
                 rebalance_result = rebalance(credit_shard_candidates)
                 log.info(

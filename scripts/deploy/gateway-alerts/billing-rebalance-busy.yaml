@@ -1,0 +1,68 @@
+displayName: "TR Gateway: credit rebalance busy"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Authorize answered more than two rebalance-busy 503s in ten minutes, or
+    more than five in an hour. Each is the retryable 503 the typed authorize
+    gives when a workspace's credit covers the hold but no single credit
+    shard does, and the per-process rebalance cooldown
+    (REBALANCE_COOLDOWN_SECONDS, half a second) is held by a rebalance that
+    another of the workspace's requests just ran. Storage is healthy and no
+    credit is lost; the app writes billing.credit_rebalance_busy for each
+    one (trustedrouter_gateway_rebalance_busy_503) and the enclave retries
+    it. One now and then is expected: three in the thirty days to
+    2026-11-16, one line each, on three different days. The enclave makes
+    three attempts, seconds apart, so three lines in ten minutes is the
+    least at which a customer's request can have failed on this 503 alone,
+    and the ten-minute bound pages there. Two or fewer in ten minutes are
+    requests made to wait and then answered on a later attempt; the hourly
+    bound limits how long that can go on, at more than five in an hour.
+    Either means requests of one or more workspaces cannot consolidate
+    their credit, the convoy of
+    docs/incidents/2026-09-25-credit-rebalance-convoy.md. "TR Gateway:
+    authorize 503 not lease headroom" sets these 503s aside, so this is the
+    only page for them. Read the billing.credit_rebalance_busy lines for the
+    workspace ids. For each workspace read its lines from
+    trusted_router.storage_gcp, "credit rebalance workspace=... outcome=...
+    moved_micro=..." and "credit rebalance cooldown exhausted", then its
+    credit shard count and how its balance is spread over its
+    tr_credit_balance rows (read by the workspace's primary key, never a
+    scan), against the size of its estimates. One workspace points at its
+    shard spread: a balance cut into shares smaller than its estimates
+    needs a rebalance for every request. Many workspaces at once point at
+    the cooldown or a recent deploy. Runbook: docs/spanner-reliability.md.
+conditions:
+  # One condition with two bounds. Cloud Monitoring allows a policy one
+  # PromQL condition and no other beside it, so the fast and the slow bound
+  # are the two sides of one "or" here, not two conditions as in
+  # spanner-alerts/contention.yaml.
+  #
+  # Counts over a window, not rates per minute: the 503s of a convoy come in
+  # bursts minutes apart. The first side: one request writes at most three
+  # lines, within seconds (the enclave makes three attempts), so three in
+  # ten minutes is the least at which a customer's request can have failed
+  # on this 503 alone. That pages today, as three unmarked 503s, and it
+  # pages here. The second side: up to two every ten minutes pass the first,
+  # twelve an hour, against a baseline of about one a week. More than five
+  # in an hour takes at least three separate occurrences within the hour,
+  # where the history has three in a month.
+  #
+  # Each side returns its sample only when its count is over its bound, and
+  # "or" returns the first side's sample, else the second's: one series at
+  # most, so one incident. No "or vector(0)": with no lines neither side has
+  # a series and there is nothing to page.
+  - displayName: "More than two rebalance-busy 503s in ten minutes, or more than five in an hour"
+    conditionPrometheusQueryLanguage:
+      query: |
+        (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_rebalance_busy_503{monitored_resource="cloud_run_revision"}[10m])) > 2.5)
+        or
+        (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_rebalance_busy_503{monitored_resource="cloud_run_revision"}[1h])) > 5.5)
+      duration: 0s
+      evaluationInterval: 60s
+alertStrategy:
+  autoClose: 1800s
+  notificationPrompts:
+    - OPENED
+    - CLOSED
