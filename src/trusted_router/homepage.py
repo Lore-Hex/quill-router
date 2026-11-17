@@ -69,6 +69,16 @@ def live_model_count() -> int:
     return count
 
 
+@lru_cache(maxsize=1)
+def homepage_assets_version() -> str:
+    """Fingerprint of static/homepage/*.css|js, the homepage's ?v= token."""
+    digest = hashlib.sha256()
+    for asset in sorted((_ROOT / "static/homepage").glob("*")):
+        if asset.suffix in {".css", ".js"}:
+            digest.update(asset.read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def homepage_context(api_base_url: str) -> dict[str, Any]:
     # Lazy imports avoid the dashboard renderer's import cycle. Reuse its exact
     # Credits-only pricing/provider aggregation instead of duplicating it here.
@@ -126,13 +136,8 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
     migration["agent_prompt"] = migration["agent_prompt"].replace(
         content["migration"]["base_url"], api_base_url,
     )
-    assets = _ROOT / "static/homepage"
-    digest = hashlib.sha256()
-    for asset in sorted(assets.glob("*")):
-        if asset.suffix in {".css", ".js"}:
-            digest.update(asset.read_bytes())
     return {
-        "homepage_version": digest.hexdigest()[:12],
+        "homepage_version": homepage_assets_version(),
         "homepage_pricing": _pricing_comparison(public_ids),
         "homepage_catalog": {
             "total": len(public_ids),

@@ -718,6 +718,115 @@ def test_static_assets_are_memory_served_with_resilient_cdn_headers(
     assert unchanged.content == b""
 
 
+def _static_cache_control(release: str | None, query: bytes) -> str:
+    from trusted_router.routes.public import STATIC_DIR, _CachedStaticFiles
+
+    static = _CachedStaticFiles(directory=STATIC_DIR, release=release)
+    return static._cache_control({"query_string": query})
+
+
+def test_only_this_release_s_versioned_assets_are_immutable() -> None:
+    # During a deploy the control service renders /console pages with its
+    # release in ?v= while the public service, still on the previous release,
+    # serves /static. An immutable answer for a foreign ?v= would let Cloud CDN
+    # keep the previous release's bytes under the new release's URL for a year.
+    immutable = "public, max-age=31536000, immutable"
+    assert _static_cache_control("9ce6d79", b"v=9ce6d79&flow=console-navigation-v2") == immutable
+    assert _static_cache_control("9ce6d79", b"flow=x&v=9ce6d79") == immutable
+    assert _static_cache_control("6ab1d93", b"v=9ce6d79&flow=console-navigation-v2") == "no-store"
+    assert _static_cache_control("6ab1d93", b"v=6ab1d93&v=9ce6d79") == "no-store"
+    assert _static_cache_control("9ce6d79", b"v=%39ce6d79") == immutable
+    assert _static_cache_control("9ce6d79", b"v=") == "no-store"
+    # A local build's pages use a file-mtime version, so there is nothing to
+    # compare against and every ?v= stays immutable.
+    assert _static_cache_control("local", b"v=local-1700000000") == immutable
+    assert _static_cache_control(None, b"v=anything") == immutable
+    assert _static_cache_control("9ce6d79", b"").startswith("public, max-age=86400")
+
+
+def test_this_process_s_fingerprints_are_immutable_and_foreign_ones_are_not() -> None:
+    from trusted_router.homepage import homepage_assets_version
+    from trusted_router.views import _auth_styles_version
+
+    immutable = "public, max-age=31536000, immutable"
+    auth, home = _auth_styles_version(), homepage_assets_version()
+    assert len(auth) == 16 and len(home) == 12
+    assert _static_cache_control("9ce6d79", f"v={auth}".encode()) == immutable
+    assert _static_cache_control("9ce6d79", f"v={home}".encode()) == immutable
+    # The same shapes from another release (control renders /auth pages with
+    # its own fingerprint while public, still older, serves /static).
+    assert _static_cache_control("9ce6d79", b"v=0123456789abcdef") == "no-store"
+    assert _static_cache_control("9ce6d79", b"v=0123456789ab") == "no-store"
+    # A hand-written version in a static page keeps its immutable answer.
+    assert _static_cache_control("9ce6d79", b"v=2") == immutable
+    assert _static_cache_control("9ce6d79", b"v=5") == immutable
+    # AWS and Azure releases are `git rev-parse --short` (9 hex here): another
+    # release of the running release's own length is foreign too.
+    assert _static_cache_control("e2fdd0bcb", b"v=e2fdd0bcb") == immutable
+    assert _static_cache_control("e2fdd0bcb", b"v=3195bc529") == "no-store"
+
+
+def test_the_auth_fingerprint_covers_every_asset_it_versions() -> None:
+    import hashlib
+    import re
+
+    from trusted_router.brand_theme import brand_theme
+    from trusted_router.routes.public import STATIC_DIR
+    from trusted_router.views import TEMPLATES_DIR, _auth_styles_version
+
+    template = (TEMPLATES_DIR / "auth" / "_base.html").read_text(encoding="utf-8")
+    versioned = re.findall(r"/static/([^\"'?]+)\?v=\{\{ auth_styles_version\(\) \}\}", template)
+    assert {"content-layout.css", "content-layout.js", "auth.css"} <= set(versioned)
+    sheets = ["tokens.css", "brand.css", "auth.css", "charter.css", "content-layout.css", "content-layout.js"]
+    if brand_theme() == "nyte":
+        sheets += ["nyte-page.js", "nyte-theme.css"]
+    assert set(versioned) <= set(sheets)
+    _auth_styles_version.cache_clear()
+    expected = hashlib.sha256(b"".join((STATIC_DIR / name).read_bytes() for name in sheets)).hexdigest()[:16]
+    assert _auth_styles_version() == expected
+
+
+def test_every_versioned_asset_a_page_emits_is_immutable(test_settings: Settings) -> None:
+    import re
+
+    from trusted_router.main import create_app
+    from trusted_router.views import render_template
+
+    client = TestClient(
+        create_app(test_settings.model_copy(update={"release": "9ce6d79"}), init_observability=False)
+    )
+    pages = [
+        client.get("/").text,
+        render_template("auth/account_closed.html", page_title="Account closed"),
+        client.get("/static/choose-app.html").text,
+    ]
+    urls = {
+        url.replace("&amp;", "&")
+        for page in pages
+        for url in re.findall(r"(/static/[^\"'\s>]+\?v=[^\"'\s>]+)", page)
+    }
+    assert len(urls) >= 15, sorted(urls)
+    for url in sorted(urls):
+        response = client.get(url)
+        assert response.status_code == 200, url
+        assert response.headers["cache-control"] == "public, max-age=31536000, immutable", url
+
+
+def test_static_mount_compares_against_the_running_release(test_settings: Settings) -> None:
+    from starlette.routing import Mount
+
+    from trusted_router.main import create_app
+
+    app = create_app(test_settings.model_copy(update={"release": "9ce6d79"}), init_observability=False)
+    static = next(route.app for route in app.routes if isinstance(route, Mount) and route.path == "/static")
+    assert static._release == "9ce6d79"
+    client = TestClient(app)
+    assert client.get("/static/dashboard.js?v=9ce6d79").headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+    assert client.get("/static/dashboard.js?v=6ab1d93").headers["cache-control"] == "no-store"
+
+
 def test_read_only_blocks_writes_but_lets_reads_through() -> None:
     """Operational read-only flag (Stage 1 Spanner cutover prerequisite):
     POST/PUT/PATCH/DELETE return 503 with `Retry-After`; GET/HEAD/OPTIONS

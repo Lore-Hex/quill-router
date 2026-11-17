@@ -32,7 +32,15 @@ def _auth_styles_version() -> str:
     from trusted_router.brand_theme import brand_theme
 
     static_dir = Path(__file__).parent / "static"
-    sheets = ["tokens.css", "brand.css", "auth.css", "charter.css"]
+    # Every asset auth/_base.html versions with this fingerprint.
+    sheets = [
+        "tokens.css",
+        "brand.css",
+        "auth.css",
+        "charter.css",
+        "content-layout.css",
+        "content-layout.js",
+    ]
     if brand_theme() == "nyte":
         sheets += ["nyte-page.js", "nyte-theme.css"]
     content = b"".join((static_dir / name).read_bytes() for name in sheets)
