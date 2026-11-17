@@ -1820,27 +1820,62 @@
   }
 }
 
-/* Phones: the hero fills the first screen and its Band sits at the bottom
-   of it, whatever the phone's height. nyte-page.js measures where the hero
-   starts (--nyte-above-hero). Heroes taller than a screen just grow. The
-   blog index is left out: its hero is too short to fill a screen. */
-@media (max-width: 760px) {
+/* Every screen size: the hero fills the first screen and its Band sits at
+   the bottom of it, like the homepage. nyte-page.js measures where the hero
+   starts (--nyte-above-hero). The copy is centred in the space above the
+   Band; heroes taller than a screen just grow. The blog index is left out:
+   its hero is too short to fill a screen. */
+:root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+  position: relative;
+  box-sizing: border-box;
+  min-height: calc(var(--hero-vh, 1svh) * 100 - var(--nyte-above-hero, 64px));
+  padding-bottom: 152px;
+  align-content: center;
+}
+
+/* One headline size for every page hero on laptops and desktops, so a
+   screen-filling hero never reads as small. */
+@media (min-width: 761px) {
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) h1 {
+    font-size: clamp(44px, 4.2vw, 64px);
+    line-height: 1.06;
+  }
+}
+
+/* Column heroes centre along their main axis instead. */
+:root[data-brand="nyte"] main > .md-hero {
+  justify-content: center;
+}
+
+/* The vibe-coders hero already centres its copy; its own padding would
+   push the Band below a laptop's first screen. */
+:root[data-brand="nyte"] main > .cc-hero {
+  padding-top: 0;
+}
+
+:root[data-brand="nyte"] main > .cc-hero .cc-hero-inner {
+  padding-top: 32px;
+  padding-bottom: 0;
+}
+
+:root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 100vw;
+  height: 96px;
+  margin: 0;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 760px), (max-height: 760px) {
   :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
-    position: relative;
-    box-sizing: border-box;
-    min-height: calc(var(--hero-vh, 1svh) * 100 - var(--nyte-above-hero, 64px));
     padding-bottom: 96px;
   }
 
   :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)::after {
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    width: 100vw;
     height: 64px;
-    margin: 0;
     background-size: 100% 80px;
-    transform: translateX(-50%);
   }
 }
 
