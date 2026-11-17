@@ -144,7 +144,7 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
   severity     = "CRITICAL"
 
   conditions {
-    display_name = "A secret's value was read by an account that is not on the readers list, or by a user login from an unknown address"
+    display_name = "A secret was read by an account off the readers list, or by a user login from an unknown address"
     condition_matched_log {
       filter = local.unexpected_secret_reader_filter
     }
