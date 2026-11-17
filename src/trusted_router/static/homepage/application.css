@@ -13,7 +13,9 @@
  :root{--exchange-banner-height:48px}
  .exchange-banner{justify-content:space-between;gap:12px;padding:5px 16px;font-size:14px;line-height:1.25}
  .exchange-banner-copy>span{display:none}
+ .exchange-banner-copy>.exchange-banner-short{display:inline}
 }
+.exchange-banner-short{display:none;font-style:normal}
 .signin-modal{max-width:380px;box-shadow:0 24px 60px var(--tr-legacy-000000-99, #0009)}
 .signin-modal h2{margin:0 0 6px;font-size:24px}.signin-sub,.signin-foot{color:var(--muted);font-size:13px}
 .signin-close{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--cream);font-size:22px;min-width:44px;min-height:44px}

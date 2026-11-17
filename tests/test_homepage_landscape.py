@@ -83,9 +83,23 @@ def test_catalog_prices_and_privacy_follow_application_view(
     assert result["homepage_data"]["migration"]["base_url"] == "https://example.test/v1"
 
 
-def test_exchange_banner_links_to_tagged_new_york_site() -> None:
+def test_homepage_banner_shows_the_live_glm_offer() -> None:
     settings = Settings(environment="test", storage_backend="memory")
     page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
+    banner = page.select_one("main > a[data-glm-offer-banner]")
+    assert banner is not None
+    assert page.select_one("[data-token-exchange-banner]") is None
+    assert banner["href"] == "/models/fortanix/glm-5.3-flash"
+    assert "GLM 5.3 Flash" in banner.get_text()
+    assert "Basically free, at 1¢ per million tokens." in banner.get_text()
+    assert banner.find_next_sibling("section")["id"] == "top"
+
+
+def test_exchange_banner_returns_when_the_offer_ends(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(dashboard._env().globals, "launch_offer_facts", lambda: None)
+    settings = Settings(environment="test", storage_backend="memory")
+    page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
+    assert page.select_one("[data-glm-offer-banner]") is None
     banner = page.select_one("main > a[data-token-exchange-banner]")
     assert banner is not None
     assert "New York Token Exchange" in banner.get_text()
