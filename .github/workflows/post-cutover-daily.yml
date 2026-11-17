@@ -1,26 +1,20 @@
-name: Post-cutover suites and model checks (daily)
+name: Post-cutover suites and model checks (on demand)
 
 # The Python suite and the proof oracle with the provider-lifecycle clock
-# pinned past every scheduled cutover, and the TLA+ model checks, on main once
-# a day. ci.yml runs all three on pull requests and dispatches, but not on a
-# push to main (its test-post-cutover and proofs jobs say why). A red here
-# means main will break on a scheduled date, a spec merged beside another no
-# longer holds, or code or tests a spec names were moved or deleted; none is
-# a reason to hold today's deploy. For the model checks this is the one run
-# on main scheduled to check them: a price refresh's dispatch runs them only
-# when its commit changes more than catalog data or its base has no green CI
-# run. A schedule is not a guarantee: since October, this repository's daily
-# schedules have started three to seven hours late (this workflow's first, due
-# 04:47 UTC on 2026-11-07, started at 11:21); GitHub may skip one under load.
-# deploy.yml's gate-on-ci and the fast path release read ci.yml's runs only,
-# so this workflow gates nothing. tests/test_ci_workflow.py keeps these jobs
+# pinned past every scheduled cutover, and the TLA+ model checks, on the
+# dispatched ref, run by hand. It has no schedule: ci.yml runs the suite and
+# the model checks on every pull request, push and dispatch whose changes
+# reach them (commit_scope.py's path-scoped flags), and runs the oracle at the
+# default clock only, since none of the oracle's fixture endpoints changes
+# between the clocks (tests/test_async_settle_proof_oracle.py holds that).
+# This is the one place the oracle still runs at the post-cutover clock. A
+# red here means the ref will break on a scheduled date, a spec no longer
+# holds, or code or tests a spec names were moved or deleted. deploy.yml's
+# gate-on-ci and the fast path release read ci.yml's runs only, so this
+# workflow gates nothing. tests/test_ci_workflow.py keeps these jobs
 # identical to ci.yml's.
 
 on:
-  schedule:
-    # 04:47 UTC: clear of the 06:00-07:30 daily checks and of US working
-    # hours, when the organization's runners are busiest.
-    - cron: "47 4 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -41,6 +35,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "8"
+      # The whole suite: ci.yml's job may limit it to the tests a change
+      # reaches (post_cutover_tests); this one never does.
+      POST_CUTOVER_TESTS: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -85,6 +82,7 @@ jobs:
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+          ${POST_CUTOVER_TESTS}
       - name: Upload this shard's durations
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

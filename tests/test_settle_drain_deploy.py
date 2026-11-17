@@ -74,7 +74,7 @@ def test_worker_plan_rejects_ambiguous_or_unreleased_router(mutation):
 @pytest.mark.parametrize("hotfix", [None, "false", "true"])
 @pytest.mark.parametrize("failure,network,subnet", [
     ("", None, None), ("", "worker-network", "worker-subnet"), ("", "", ""),
-    *((failure, None, None) for failure in ("ci", "ci_pending", "bake", "mutex", "held", "public", "enabled_worker", "idle", "missing_mutex", "wrong_cloud", "held_region", "other_region")),
+    *((failure, None, None) for failure in ("ci", "ci_pending", "ci_pull_request", "bake", "mutex", "held", "public", "enabled_worker", "idle", "missing_mutex", "wrong_cloud", "held_region", "other_region")),
 ])
 def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, failure, network, subnet, hotfix):
     harness = DeployScriptHarness(tmp_path)
@@ -107,8 +107,15 @@ def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, f
         (r"run services describe trusted-router-settle-drain ", service("drain-active")),
         (r"run revisions describe drain-active ", json.dumps(actual)),
         (r"run services list ", json.dumps([{"metadata": {"name": "trusted-router-settle-drain"}}]) if failure == "enabled_worker" else "[]"),
-        (r"gh run list ", json.dumps([{"headSha": "a" * 40, "status": "in_progress" if failure == "ci_pending" else "completed",
-                                      "conclusion": None if failure == "ci_pending" else ("failure" if failure == "ci" else "success")}])),
+        # ci_pull_request: the newest run for the commit is a green pull_request
+        # run, and the push run below it failed; only the push run counts.
+        (r"gh run list ", json.dumps(
+            ([{"headSha": "a" * 40, "status": "completed", "conclusion": "success", "event": "pull_request"}]
+             if failure == "ci_pull_request" else [])
+            + [{"headSha": "a" * 40, "status": "in_progress" if failure == "ci_pending" else "completed",
+                "conclusion": None if failure == "ci_pending" else (
+                    "failure" if failure in {"ci", "ci_pull_request"} else "success"),
+                "event": "push"}])),
         (r"run services get-iam-policy ", json.dumps({"bindings": [{"members": ["allUsers"]}]}) if failure == "public" else "{}"),
     )
     failures = (f"worker-test-{failure}",) if failure in {"bake", "mutex"} else ()
@@ -129,7 +136,7 @@ def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, f
         assert not run.calls, summarise(run)
         return
     if failure in {"bake", "mutex", "public", "missing_mutex", "wrong_cloud"} or (
-        failure in {"ci", "ci_pending"} and hotfix != "true"
+        failure in {"ci", "ci_pending", "ci_pull_request"} and hotfix != "true"
     ):
         assert run.returncode != 0, summarise(run)
         assert len(deploys) == (1 if failure == "public" else 0)

@@ -225,6 +225,82 @@ def test_each_excluded_case_is_settled_on_the_real_path_by_name():
     assert 'def test_a_resold_claude_fixture_case_settles_on_the_real_path(' in source
 
 
+def lifecycle_changes(instants, provider_lifecycle=None):
+    """(provider, model, upstream id, instant, what) for every endpoint an
+    oracle case settles that provider_lifecycle (the live module, or the one
+    passed: the frozen leg's) prices or retires at one of `instants`."""
+    if provider_lifecycle is None:
+        from trusted_router import provider_lifecycle
+
+    endpoints = {(candidate['provider'], candidate['model_id'], candidate.get('upstream_id'))
+                 for case in ORACLE_CASES for candidate in case['snapshot']['candidates']}
+    assert endpoints
+    found = []
+    for provider, model, upstream in sorted(endpoints, key=str):
+        for at in instants:
+            if provider_lifecycle.provider_price_microdollars(provider, model, at=at) is not None:
+                found.append((provider, model, upstream, at.isoformat(), 'price'))
+            if provider_lifecycle.provider_model_retired(provider, model, upstream, at=at):
+                found.append((provider, model, upstream, at.isoformat(), 'retired'))
+    return found
+
+
+def ci_lifecycle_instants():
+    """The instants the oracle's legs can read: now (the session clock ci.yml
+    runs the oracle at), the post-cutover clock (test-post-cutover's
+    computation) and the oracle's own fixed settlement clock."""
+    from trusted_router.provider_lifecycle import latest_scheduled_cutover
+
+    now = dt.datetime.now(dt.UTC)
+    return (now, max(latest_scheduled_cutover(), now) + dt.timedelta(days=1),
+            dt.datetime(2026, 10, 6, tzinfo=dt.UTC))
+
+
+def test_no_oracle_endpoint_changes_with_the_lifecycle_clock():
+    """ci.yml runs this oracle at the default lifecycle clock only. Both legs
+    read the same clock and settle only the fixture endpoints the cases name
+    (frozen_environment and tests/test_async_settle_proof.py `catalog`), so
+    the post-cutover clock compares the same values while none of those
+    endpoints has an effective-dated price or retirement. When this fails,
+    give ci.yml's proof-oracle its post-cutover clock back."""
+    assert lifecycle_changes(ci_lifecycle_instants()) == []
+
+
+def test_no_oracle_endpoint_changes_with_the_frozen_legs_lifecycle_clock():
+    """The frozen leg reads the same clock through its own copy of
+    provider_lifecycle, inside tests/fakes/frozen_main/package.tar.gz, and
+    its catalog_registry resolves retirements through that copy. The same
+    check holds for it, so a re-pin of the reference that brings a price or
+    retirement onto a case's endpoint fails here too."""
+    frozen = module('provider_lifecycle')
+    assert frozen.__name__ == 'frozen_main.provider_lifecycle'
+    assert module('catalog_registry').provider_model_retired is frozen.provider_model_retired
+    assert module('catalog').provider_price_microdollars is frozen.provider_price_microdollars
+    assert lifecycle_changes(ci_lifecycle_instants(), frozen) == []
+
+
+def test_a_lifecycle_change_to_an_oracle_endpoint_is_found(monkeypatch):
+    """The check above can fail: a retirement or a price on a case's endpoint
+    is reported."""
+    from trusted_router import provider_lifecycle
+
+    instants = ci_lifecycle_instants()
+    monkeypatch.setattr(provider_lifecycle, 'provider_model_retired', lambda *args, **kwargs: True)
+    assert {what for *_, what in lifecycle_changes(instants)} == {'retired'}
+    monkeypatch.undo()
+    first = ORACLE_CASES[0]['snapshot']['candidates'][0]
+    price = provider_lifecycle.ProviderPrice(1, 2)
+    monkeypatch.setattr(provider_lifecycle, 'provider_price_microdollars',
+                        lambda provider, model, *, at=None: price if model == first['model_id'] else None)
+    found = lifecycle_changes(instants)
+    assert found and {(row[1], row[4]) for row in found} == {(first['model_id'], 'price')}
+    # The frozen copy is checked through the same function.
+    monkeypatch.undo()
+    frozen = module('provider_lifecycle')
+    monkeypatch.setattr(frozen, 'provider_model_retired', lambda *args, **kwargs: True)
+    assert {what for *_, what in lifecycle_changes(instants, frozen)} == {'retired'}
+
+
 @pytest.mark.proof_oracle
 @pytest.mark.parametrize('case', ORACLE_CASES, ids=lambda c: c['name'])
 @pytest.mark.parametrize('kind', ['settle', 'refund'])

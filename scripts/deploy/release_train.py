@@ -84,6 +84,10 @@ def manifest_from_zip(content: bytes) -> dict:
     return raw
 
 
+# The ci.yml runs that can pass a release: a pull_request run checks a merge commit.
+CI_GATE_EVENTS = ("push", "workflow_dispatch")
+
+
 class GitHub:
     def __init__(self, deadline: float | None = None):
         self.deadline = deadline or time.monotonic() + 240
@@ -119,8 +123,12 @@ class GitHub:
         return str(raw.get("status", "unknown"))
 
     def ci(self, commit: str) -> int:
-        rows = self.json("run", "list", "--repo", REPO, "--workflow", "ci.yml", "--commit", commit,
-                         "--limit", "1", "--json", "databaseId,status,conclusion")
+        # The newest push or dispatch run: a pull_request run checks a merge
+        # commit and skips the jobs its pull request did not change.
+        listed = self.json("run", "list", "--repo", REPO, "--workflow", "ci.yml", "--commit", commit,
+                           "--json", "databaseId,status,conclusion,event")
+        require(isinstance(listed, list), "invalid CI runs")
+        rows = [row for row in listed if isinstance(row, dict) and row.get("event") in CI_GATE_EVENTS]
         require(superseded.ci_green(rows), "selected commit does not have green CI")
         require(type(rows[0].get("databaseId")) is int, "missing CI run identity")
         return rows[0]["databaseId"]

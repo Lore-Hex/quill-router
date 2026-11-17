@@ -36,12 +36,14 @@ SOURCE_REVISION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["env"
 if [ "$HOTFIX" = true ]; then
   echo "::warning::HOTFIX MODE — skipping the CI-green gate."
 else
+  # The newest push or dispatch run: a pull_request run checks a merge
+  # commit and skips the jobs its pull request did not change.
   CI_RUNS="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml \
-    --commit "$SOURCE_REVISION" --limit 1 --json headSha,status,conclusion)"
+    --commit "$SOURCE_REVISION" --json headSha,status,conclusion,event)"
   python3 -c '
 import json,sys
-runs=json.load(sys.stdin)
-assert len(runs)==1 and runs[0]["headSha"]==sys.argv[1]
+runs=[run for run in json.load(sys.stdin) if run.get("event") in ("push", "workflow_dispatch")]
+assert runs and runs[0]["headSha"]==sys.argv[1]
 assert runs[0]["status"]=="completed" and runs[0]["conclusion"]=="success"
 ' "$SOURCE_REVISION" <<<"$CI_RUNS"
 fi

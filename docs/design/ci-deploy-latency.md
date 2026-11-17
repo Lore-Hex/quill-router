@@ -53,9 +53,10 @@ all three successful runs. Of 42,436 observed tests, 41,577 had three samples,
 Use the median for three or more samples and the maximum for sparse new cases.
 Preserve previously known weights for tests not observed in these runs.
 
-Refresh with at least three independent successful runs per profile. A push to
-main runs no post-cutover shard, so take post-cutover runs from pull requests or
-from post-cutover-daily.yml:
+Refresh with at least three independent successful runs per profile. A run
+whose changes do not reach the post-cutover suite runs no post-cutover shard,
+so take post-cutover runs from runs that ran it, or dispatch
+post-cutover-daily.yml:
 
 ```sh
 gh run download RUN_ID -p 'durations-*' -D /tmp/ci-durations/RUN_ID
@@ -210,6 +211,53 @@ GitHub may skip one. With coverage cheaper, the default suite runs in eight
 shards instead of twelve. On #2377's run they took 8 to 14 minutes each, still
 inside that longest shard, with four fewer jobs in the queue and 91
 runner-minutes against 110 to 126.
+
+### Heavy jobs run when what they read changes (2026-11-16)
+
+This replaces the push skip and the daily run above. The TLA+ model checks,
+the proof oracle, the post-cutover suite and the three fast path jobs carry a
+flag each, which ci.yml's scope job computes with scripts/ci/commit_scope.py
+from the changed paths, on pull requests, pushes and dispatches alike. Each
+job runs only when a file its flag names changed: for a pull request since its
+base, for a push or dispatch since the newest ancestor-or-self of its base
+whose ci.yml run passed. The docstring of commit_scope.py lists each flag's
+files and why. When only Python outside src/ (tests, helpers, scripts)
+changed otherwise, the post-cutover suite runs in one shard on the test files
+that change can reach: each changed test, the tests that import a changed
+module directly or through others, and the tests that name it. A test is
+code that can depend on the catalog without naming anything scheduled. A
+changed Python file that reaches no test, a Python line naming the lifecycle,
+and a changed data file a test could load expectations from (JSON, YAML,
+TOML, CSV, text and the like) run the whole suite; other code and
+configuration run it when a changed line names the lifecycle. The
+post-cutover suite runs on pull requests and dispatches, not on a push to
+main: its red means a future date will break, and the pull request already
+ran it.
+post-cutover-daily.yml has no schedule any more; it runs by hand and is the
+one place the oracle runs at the post-cutover clock, since no endpoint the
+oracle settles changes between the clocks in either leg
+(tests/test_async_settle_proof_oracle.py holds that for the live and the
+frozen provider_lifecycle, and 666 pairs of default and post-cutover shards
+over 31 hours never disagreed). The deploy gates count only a push or
+dispatch run of ci.yml for their commit, never a pull_request run. A dispatch without
+scope=paths and a pull request labeled ci:full run the complete matrix. The
+scope job reads the label through the API when it runs, and adding a label
+starts no run (a `labeled` trigger would cancel the pull request's run on any
+label): add it, then push or re-run every job of the latest run with
+`gh run rerun <run-id>`.
+
+Measured over 31 hours before the change, CI used about 56,600 job-minutes a
+day. Replaying the rules over the last 100 merged pull requests, the oracle
+would have run for 40, the post-cutover suite for 65 whole and 22 more in one
+shard, the fast path jobs for 34 and the model checks for 4; over 147 push
+runs, with the comparison widened past bases that had not yet passed (98 of
+them), the oracle for 77%, the fast path jobs for 47% and the model checks
+for 13% (a push runs no post-cutover suite). With the measured per-job
+minutes that is about 22,000 job-minutes a day fewer (39%): 8,600 from the
+oracle's post-cutover clock on pull requests, 5,100 from its default clock on
+pull requests, 2,800 from the post-cutover suite, and 1,300 and 1,600 from
+the model checks and the fast path jobs on pull requests. These are estimates
+from one window's cadence, not a measurement of the new workflow.
 
 ## Validation and measurement
 

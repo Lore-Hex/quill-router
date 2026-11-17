@@ -22,16 +22,44 @@ def test_postgres_service_uses_digest_pinned_official_public_mirror() -> None:
     assert "continue-on-error" not in jobs["test"]
 
 
+# test-post-cutover's shards and their count: eight for the whole suite, one
+# when the scope job selected the test files a change reaches.
+POST_CUTOVER_SHARDS = ("${{ fromJSON(needs.scope.outputs.post_cutover_tests == '' "
+                       "&& '[1, 2, 3, 4, 5, 6, 7, 8]' || '[1]') }}")
+POST_CUTOVER_SHARD_COUNT = "${{ needs.scope.outputs.post_cutover_tests == '' && '8' || '1' }}"
+
+
 def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
+    import re
+
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-    for name in ("test", "test-post-cutover"):
-        job = jobs[name]
-        count = int(job["env"]["TEST_SHARDS"])
-        assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+    job = jobs["test"]
+    count = int(job["env"]["TEST_SHARDS"])
+    assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+    post = jobs["test-post-cutover"]
+    assert post["strategy"]["matrix"]["shard"] == POST_CUTOVER_SHARDS
+    assert post["env"]["TEST_SHARDS"] == POST_CUTOVER_SHARD_COUNT
+    # Each branch of the two expressions agrees: every partition, either way.
+    for shards, count_text in zip(re.findall(r"'(\[[^']*\])'", POST_CUTOVER_SHARDS),
+                                  re.findall(r"'(\d+)'", POST_CUTOVER_SHARD_COUNT), strict=True):
+        assert json.loads(shards) == list(range(1, int(count_text) + 1))
+    for job in (jobs["test"], post):
         assert job["timeout-minutes"] == 35
         assert job["strategy"]["fail-fast"] is False
         assert "continue-on-error" not in job
     assert jobs["coverage"]["needs"] == ["test", "scope"]
+
+
+def test_the_post_cutover_suite_runs_the_selected_tests_from_the_environment() -> None:
+    # The list reaches the command through the environment, never through an
+    # expression in the script, and commit_scope.py lists only safe paths.
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    post = jobs["test-post-cutover"]
+    assert post["env"]["POST_CUTOVER_TESTS"] == "${{ needs.scope.outputs.post_cutover_tests }}"
+    step = next(step for step in post["steps"] if "uv run pytest" in step.get("run", ""))
+    assert step["run"].endswith("--clean-durations ${POST_CUTOVER_TESTS}")
+    assert "outputs.post_cutover_tests" not in json.dumps(post["steps"])
+    assert jobs["scope"]["outputs"]["post_cutover_tests"] == "${{ steps.scope.outputs.post_cutover_tests }}"
 
 
 def test_ci_runs_python_suite_once_with_coverage() -> None:
@@ -232,70 +260,75 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     assert "--workflow ci.yml" in deploy
 
 
-# proof-oracle's clocks: both, except on a push to main, which runs the
-# default clock only (post-cutover-daily.yml runs the other on main).
-ORACLE_CLOCKS = ("${{ fromJSON(github.event_name == 'push' && '[\"default\"]' "
-                 "|| '[\"default\", \"post-cutover\"]') }}")
+# proof-oracle's clock in ci.yml: the default one only. The on-demand
+# workflow runs the post-cutover clock (tests/test_async_settle_proof_oracle.py
+# holds that no endpoint the oracle settles changes between the two).
+ORACLE_CLOCKS = ["default"]
 
 
-def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
-    # A post-cutover red means main will break on a scheduled date, not that
-    # the commit is broken, so a push to main runs neither post-cutover suite:
-    # deploy.yml's gate-on-ci waits for that run, and every deploy waited in
-    # the queue its 14 extra jobs joined. Pull requests and dispatches (the
-    # price refresh's publication gate) still run both, and so does main, once
-    # a day, in a workflow that gates nothing.
+def test_heavy_jobs_have_no_schedule_and_the_post_cutover_clock_runs_on_demand() -> None:
+    # No scheduled run: ci.yml runs each heavy job on every event whose
+    # changes reach it, pushes to main included, so no job skips because of
+    # the event. post-cutover-daily.yml keeps the post-cutover suite, the
+    # proof oracle's post-cutover clock and the model checks available by hand.
     import copy
-    import re
 
     from scripts.ci.commit_scope import PUSH_SKIP_CONDITION, SKIPPED_ON_PUSH
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     ci = workflow["jobs"]
-    # The literal, not only the constant: summarize() excuses the skip on a
-    # push alone, so a condition that also skipped the refresh's dispatches
-    # would fail every publication.
+    # Only the post-cutover suite skips by event: on a push to main.
     assert PUSH_SKIP_CONDITION == "github.event_name != 'push'"
-    assert {name for name, job in ci.items()
-            if str(job.get("if", "")).startswith(PUSH_SKIP_CONDITION)} == SKIPPED_ON_PUSH
+    assert {name for name, job in ci.items() if "github.event_name" in str(job.get("if", ""))} == SKIPPED_ON_PUSH
+    assert all(str(ci[name]["if"]).startswith(f"{PUSH_SKIP_CONDITION} && ") for name in SKIPPED_ON_PUSH)
     assert ci["proof-oracle"]["strategy"]["matrix"]["clock"] == ORACLE_CLOCKS
     # The daily jobs inherit nothing from ci.yml's top level.
     assert "env" not in workflow and "defaults" not in workflow
     daily = yaml.safe_load((ROOT / ".github/workflows/post-cutover-daily.yml").read_text())
     # PyYAML reads the key `on` as True.
     triggers = daily.get("on", daily.get(True))
-    # No push or pull_request trigger, and not named CI: deploy.yml's gate
-    # (`gh run list --workflow ci.yml`), the fast path release (a
-    # workflow_run of "CI") and the price refresh read ci.yml's runs only.
-    assert set(triggers) == {"schedule", "workflow_dispatch"}
-    assert len(triggers["schedule"]) == 1
-    # Daily: a fixed minute and hour, every day.
-    assert re.fullmatch(r"\d{1,2} \d{1,2} \* \* \*", triggers["schedule"][0]["cron"])
+    # Dispatch only: no schedule, and no push or pull_request trigger. Not
+    # named CI: deploy.yml's gate (`gh run list --workflow ci.yml`), the fast
+    # path release (a workflow_run of "CI") and the price refresh read
+    # ci.yml's runs only.
+    assert set(triggers) == {"workflow_dispatch"}
     assert daily["name"] != "CI"
     assert daily["permissions"] == {"contents": "read"}
     jobs = daily["jobs"]
     assert set(jobs) == {"test-post-cutover", "proof-oracle", "proofs"}
     def comparable(job: dict) -> dict:
-        # Everything but when the job runs and the oracle's clocks.
+        # Everything but when the job runs and the oracle's clocks. ci.yml's
+        # post-cutover job takes the whole suite's values when the scope job
+        # selected no test files, and the on-demand job always has them.
         job = copy.deepcopy(job)
         job.pop("if", None)
         job.pop("needs", None)
         job.get("strategy", {}).get("matrix", {}).pop("clock", None)
+        whole = {POST_CUTOVER_SHARDS: [1, 2, 3, 4, 5, 6, 7, 8], POST_CUTOVER_SHARD_COUNT: "8",
+                 "${{ needs.scope.outputs.post_cutover_tests }}": ""}
+        matrix = job.get("strategy", {}).get("matrix", {})
+        if isinstance(matrix.get("shard"), str):
+            matrix["shard"] = whole.get(matrix["shard"], matrix["shard"])
+        for key, value in job.get("env", {}).items():
+            if isinstance(value, str):
+                job["env"][key] = whole.get(value, value)
         return job
 
     for name in jobs:
         # The same jobs (steps, env, services, runner, timeout, permissions,
-        # matrix), so the daily run checks what a pull request's run checks,
-        # and nothing can let it pass without running.
+        # matrix), so the on-demand run checks what a pull request's run
+        # checks, and nothing can let it pass without running.
         assert comparable(jobs[name]) == comparable(ci[name]), name
         assert jobs[name]["if"] == "github.repository == 'Lore-Hex/quill-router'", name
         assert "needs" not in jobs[name], name
-        # No needs context exists in the daily run, so nothing may read one.
+        # No needs context exists in the on-demand run, so nothing may read one.
         assert "needs." not in json.dumps(jobs[name]), name
         assert "continue-on-error" not in jobs[name], name
         assert all("continue-on-error" not in step for step in jobs[name]["steps"]), name
         assert "strategy" not in jobs[name] or jobs[name]["strategy"]["fail-fast"] is False, name
     assert jobs["proof-oracle"]["strategy"]["matrix"]["clock"] == ["post-cutover"]
+    assert jobs["test-post-cutover"]["env"] == {"TEST_SHARDS": "8", "POST_CUTOVER_TESTS": ""}
+    assert jobs["test-post-cutover"]["strategy"]["matrix"]["shard"] == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_the_model_checks_run_check_sh_as_it_is() -> None:
@@ -338,6 +371,10 @@ def test_proof_oracle_ci_split(request, tmp_path):
     assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
     assert job['strategy']['matrix'] == {'clock': ORACLE_CLOCKS, 'shard': [1, 2, 3, 4, 5, 6]}
+    # The test files on its command are the roots commit_scope.py reads the
+    # oracle's imports from.
+    from scripts.ci.commit_scope import ORACLE_TESTS
+    assert [arg for arg in command if arg.startswith('tests/')] == list(ORACLE_TESTS)
     assert job['strategy']['fail-fast'] is False
     assert job['permissions'] == {'contents': 'read'}
     assert 'continue-on-error' not in job
@@ -407,7 +444,7 @@ def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
     assert "--fail-under=70" in command
 
 
-ALWAYS_RUN_JOBS = {"scope", "lint", "production-import", "test", "test-post-cutover", "browser", "ci"}
+ALWAYS_RUN_JOBS = {"scope", "lint", "production-import", "test", "browser", "ci"}
 
 
 def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
@@ -418,34 +455,33 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     # `if` is the data-only condition, and every job that reads the data runs.
     from scripts.ci.commit_scope import (
         DATA_ONLY_CONDITION,
+        PATH_SCOPED_JOBS,
         PUSH_SKIP_CONDITION,
         SKIPPED_FOR_DATA_ONLY,
-        SKIPPED_ON_PUSH,
+        path_condition,
     )
 
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     skipped = {name for name, job in jobs.items() if DATA_ONLY_CONDITION in str(job.get("if", ""))}
     assert skipped == SKIPPED_FOR_DATA_ONLY
-    assert set(jobs) - skipped == ALWAYS_RUN_JOBS
+    # The post-cutover suite reads the data: it is path-scoped, never skipped
+    # for a data-only commit, and every data path sets its flag
+    # (tests/test_commit_scope.py).
+    assert set(jobs) - skipped == ALWAYS_RUN_JOBS | {"test-post-cutover"}
     for name in skipped:
         needs = jobs[name]["needs"]
         assert "scope" in ([needs] if isinstance(needs, str) else needs), name
         # `!cancelled()` would let a job run after a failed scope; coverage
         # keeps it (it reports beside a red shard) and guards with the
         # condition, every other job must skip when scope fails.
-        if name in SKIPPED_ON_PUSH:
-            # proofs: skipped on a push to main too (commit_scope.SKIPPED_ON_PUSH).
-            assert jobs[name]["if"] == f"{PUSH_SKIP_CONDITION} && {DATA_ONLY_CONDITION}", name
+        if name in PATH_SCOPED_JOBS:
+            assert jobs[name]["if"] == f"{DATA_ONLY_CONDITION} && {path_condition(PATH_SCOPED_JOBS[name])}", name
         elif name != "coverage":
             assert jobs[name]["if"] == DATA_ONLY_CONDITION, name
     for name in ALWAYS_RUN_JOBS:
-        # The post-cutover suite reads the data too. It runs on every commit
-        # of every event but a push to main, the price refresh's dispatches
-        # included (test_the_post_cutover_clock_leaves_main_pushes...).
-        if name in SKIPPED_ON_PUSH:
-            assert jobs[name]["if"] == PUSH_SKIP_CONDITION, name
-        else:
-            assert "if" not in jobs[name] or name == "ci", name
+        assert "if" not in jobs[name] or name == "ci", name
+    assert jobs["test-post-cutover"]["needs"] == "scope"
+    assert jobs["test-post-cutover"]["if"] == f"{PUSH_SKIP_CONDITION} && {path_condition('run_post_cutover')}"
     # The jobs that read the published catalog: the suite under both clocks,
     # lint's catalog history check, the production import and the browser
     # smoke (which starts the app on the committed snapshot).
@@ -458,11 +494,77 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     assert "npm run test:browser" in commands["browser"]
 
 
+def test_path_scoped_jobs_skip_only_on_their_own_flag():
+    # Each heavy job that reads a known part of the tree carries one flag,
+    # set by the scope job, in its `if`, and nothing else in ci.yml reads a
+    # flag. summarize() accepts a job's skip only when that flag is `false`,
+    # so a job and its condition must name the same flag.
+    import re
+
+    from scripts.ci.commit_scope import PATH_FLAGS, PATH_SCOPED_JOBS
+
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    jobs = yaml.safe_load(workflow)["jobs"]
+    readers = {name: re.findall(r"needs\.scope\.outputs\.(run_\w+)", str(job.get("if", "")))
+               for name, job in jobs.items()}
+    assert {name: flags for name, flags in readers.items() if flags} == {
+        name: [flag] for name, flag in PATH_SCOPED_JOBS.items()}
+    # Read only in an `if` (the summary reads the flags from NEEDS).
+    assert set(re.findall(r"needs\.scope\.outputs\.(run_\w+)", workflow)) == set(PATH_FLAGS)
+    assert workflow.count("needs.scope.outputs.run_") == len(PATH_SCOPED_JOBS)
+    assert jobs["scope"]["outputs"] == {
+        "data_only": "${{ steps.scope.outputs.data_only }}",
+        "post_cutover_tests": "${{ steps.scope.outputs.post_cutover_tests }}",
+        **{flag: f"${{{{ steps.scope.outputs.{flag} }}}}" for flag in PATH_FLAGS}}
+    # Run unless the flag is exactly false: a missing output runs the job.
+    for name, flag in PATH_SCOPED_JOBS.items():
+        assert f"needs.scope.outputs.{flag} != 'false'" in jobs[name]["if"], name
+
+
+def test_the_complete_matrix_is_one_dispatch_or_one_label_away():
+    # A dispatch runs every job unless it asks for scope=paths, which only
+    # the price refresh's publication gate does; a pull request labeled
+    # ci:full runs every job. Adding a label starts no run: with
+    # cancel-in-progress, a `labeled` trigger would cancel the pull
+    # request's run on any label. The scope job reads the labels through the
+    # API when it runs, so a push or a re-run after labeling honours it.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers["workflow_dispatch"] == {"inputs": {"scope": {
+        "description": "full runs every job; paths skips a path-scoped job none of whose inputs changed",
+        "type": "choice", "options": ["full", "paths"], "default": "full"}}}
+    # GitHub's default activity types: opened, synchronize, reopened.
+    assert triggers["pull_request"] == {"branches": ["main"]}
+    assert "labeled" not in json.dumps(triggers)
+    scope = workflow["jobs"]["scope"]
+    assert scope["env"]["DISPATCH_SCOPE"] == "${{ inputs.scope }}"
+    assert scope["env"]["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    # Not the event payload's labels, which a re-run would repeat.
+    assert "github.event.pull_request.labels" not in json.dumps(scope)
+    script = next(step for step in scope["steps"] if step.get("id") == "scope")["run"]
+    flat = " ".join(script.split())
+    assert ('if [ "${EVENT_NAME}" = workflow_dispatch ] && [ "${DISPATCH_SCOPE}" != paths ]; then'
+            in script)
+    assert ('elif [ "${EVENT_NAME}" = pull_request ]; then '
+            "# The labels as they are now") in flat
+    assert ('if ! labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels?per_page=100" '
+            "\\ --jq '.[].name'); then full=\"the pull request's labels could not be read\"") in flat
+    assert "elif grep -qxF 'ci:full' <<< \"${labels}\"; then" in script
+    refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
+    assert refresh.count("gh workflow run ci.yml") == 1
+    dispatch = refresh[refresh.index("gh workflow run ci.yml"):]
+    assert dispatch[:dispatch.index("echo")].split() == [
+        "gh", "workflow", "run", "ci.yml", "\\", "--ref", '"${BRANCH}"', "\\",
+        "--repo", '"${GITHUB_REPOSITORY}"', "\\", "-f", "scope=paths"]
+
+
 def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
+    from scripts.ci.commit_scope import PATH_FLAGS
+
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     scope = jobs["scope"]
-    assert scope["outputs"] == {"data_only": "${{ steps.scope.outputs.data_only }}"}
-    assert scope["permissions"] == {"contents": "read", "actions": "read"}
+    assert set(scope["outputs"]) == {"data_only", "post_cutover_tests", *PATH_FLAGS}
+    assert scope["permissions"] == {"contents": "read", "actions": "read", "pull-requests": "read"}
     assert "needs" not in scope
     step = next(step for step in scope["steps"] if step.get("id") == "scope")
     script = step["run"]
@@ -484,8 +586,9 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     # merge commit). The summary job makes that conclusion mean every job
     # that ran passed and every skip was legitimate.
     assert '"repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${base}&per_page=100"' in script
-    assert ('select(.status == "completed" and .conclusion == "success" and '
-            '(.event == "push" or .event == "workflow_dispatch"))') in script
+    validated = ('select(.status == "completed" and .conclusion == "success" and '
+                 '(.event == "push" or .event == "workflow_dispatch"))')
+    assert script.count(validated) == 2
     assert 'if [ "${validated:-0}" -gt 0 ]; then' in script
     assert script.count("data_only=true") == 1
     assert script.index("classify < changed-paths.txt") < script.index("data_only=true")
@@ -495,6 +598,28 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     for guard in ('[ -z "${base}" ]', '"0000000000000000000000000000000000000000"',
                   '[ "${base}" = "${head}" ]', "! git fetch"):
         assert guard in script, guard
+    # The path-scoped jobs compare with REF: a pull request's base, or the
+    # base when its own run passed, otherwise the newest of the latest
+    # validated commits that is an ancestor of the base; none found, or REF
+    # unfetchable, runs them all.
+    assert 'if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ]; then' in script
+    assert '"repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?status=success&per_page=50"' in script
+    assert '| .head_sha] | .[:10] | .[]' in script
+    assert 'relation=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${candidate}...${base}" --jq \'.status\' || true)' in script
+    assert 'if [ "${relation}" = ahead ] || [ "${relation}" = identical ]; then' in script
+    assert 'elif ! git fetch -q --depth=1 origin "${ref}"; then' in script
+    assert 'python3 scripts/ci/commit_scope.py jobs --full < /dev/null | tee -a "$GITHUB_OUTPUT"' in script
+    assert 'git -c core.quotePath=true diff --no-renames --raw "${ref}" "${head}" > scoped-paths.txt' in script
+    # Two commands continue over a line: compare them with single spaces.
+    flat = " ".join(script.split())
+    # --text: a file .gitattributes marks binary still shows its lines;
+    # no external diff driver or textconv rewrites them. Outside src/, all
+    # of which runs the post-cutover suite whole.
+    assert ("git -c core.quotePath=true diff --no-renames --no-color --text --no-ext-diff --no-textconv \\ "
+            "-U0 \"${ref}\" \"${head}\" -- . ':(exclude)src' > scoped-lines.patch") in flat
+    assert ('python3 scripts/ci/commit_scope.py jobs --event "${EVENT_NAME}" --lines scoped-lines.patch \\ '
+            '< scoped-paths.txt | tee -a "$GITHUB_OUTPUT"') in flat
+    assert "set -euo pipefail" in script
 
 
 def test_summary_job_derives_the_run_conclusion_from_every_job():
@@ -503,6 +628,8 @@ def test_summary_job_derives_the_run_conclusion_from_every_job():
     assert summary["name"] == "CI"
     assert set(summary["needs"]) == set(jobs) - {"ci"}
     assert summary["if"] == "${{ !cancelled() }}"
+    # NEEDS carries every job's result and the scope job's outputs (its
+    # path-scoped flags among them).
     assert summary["env"] == {"NEEDS": "${{ toJSON(needs) }}",
                               "DATA_ONLY": "${{ needs.scope.outputs.data_only }}",
                               "EVENT_NAME": "${{ github.event_name }}"}

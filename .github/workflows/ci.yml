@@ -3,12 +3,25 @@ name: CI
 on:
   push:
     branches: [main]
+  # No `labeled` trigger: with cancel-in-progress below, adding any label
+  # would cancel the pull request's run and start another. The scope job
+  # reads the ci:full label when it runs; to force the complete matrix on an
+  # open pull request, add the label, then push or re-run every job of its
+  # latest run (`gh run rerun <run-id>`, without --failed, so the scope job
+  # runs again and reads the labels afresh).
   pull_request:
     branches: [main]
   # Bot-authored pricing branches use GITHUB_TOKEN, so GitHub suppresses their
   # normal push-triggered workflows. refresh-prices.yml dispatches CI for the
-  # generated branch before advancing protected main with the checked SHA.
-  workflow_dispatch: {}
+  # generated branch before advancing protected main with the checked SHA,
+  # with scope=paths. A dispatch without it runs the complete matrix.
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "full runs every job; paths skips a path-scoped job none of whose inputs changed"
+        type: choice
+        options: [full, paths]
+        default: full
 
 # One CI run per branch or pull request: a newer push cancels the run of the
 # commit it supersedes. Without this, 2026-10-20's push cadence left 60 queued
@@ -27,7 +40,7 @@ concurrency:
 # publication gate poll this WORKFLOW RUN's conclusion for the SHA. GitHub
 # concludes a run success when every job succeeded OR was skipped, so the
 # `ci` summary job at the end re-derives the conclusion from each job's
-# result and accepts a skipped job only in the one case below.
+# result and accepts a skipped job only in the two cases below.
 #
 # Path-aware selection. The hourly price refresh commits catalog data files
 # only (scripts/ci/commit_scope.py lists them) and gates publication on this
@@ -38,8 +51,7 @@ concurrency:
 # commit by its changed paths against the commit before it. Jobs that read
 # the catalog data run on every commit: lint's history check, the production
 # import, the default-clock suite and the browser smoke, with the post-cutover
-# suite on every event but a push to main (see test-post-cutover). The others
-# carry (proofs with a push skip before it)
+# suite whenever data changes (see below). The others carry
 #   if: needs.scope.outputs.data_only != 'true'
 # and skip only when EVERY changed path is catalog data AND the base commit
 # has a completed ci.yml run that concluded success. That second condition is
@@ -49,27 +61,50 @@ concurrency:
 # unchanged here. Without that check a data-only commit on top of an
 # unvalidated base (a base whose run is still running or failed, or a force
 # push whose old tip differs from the new one only in data) would inherit
-# code no run checked. A base validated by a push run was validated on the
-# default clock alone and without the model checks, since a push runs
-# neither post-cutover suite nor proofs.
-# An empty comparison, a missing base commit or an unvalidated base runs the
-# complete matrix; a failed classification fails `scope`, which the summary
-# job turns into a failed run. tests/test_ci_workflow.py holds the two job
-# lists to the workflow text and tests/test_ci_scope_step.py drives this step
-# against local repositories and a fake gh.
+# code no run checked.
+# An empty comparison, a missing base commit or an unvalidated base takes no
+# data-only skip; a failed classification fails `scope`, which the summary
+# job turns into a failed run.
+#
+# Path-scoped jobs. The heavy jobs that read a known part of the tree (the
+# TLA+ model checks, the proof oracle, the post-cutover suite and the three
+# fast path jobs) also carry
+#   needs.scope.outputs.<flag> != 'false'
+# and run, on every event, only when a file their flag names changed
+# (commit_scope.py's docstring lists each flag's files and why): for a pull
+# request, since its base; for a push or a dispatch, since the newest
+# ancestor-or-self of the base whose own ci.yml run concluded success. There
+# is no scheduled run: a push to main applies the same rules as a pull
+# request (except the post-cutover suite, which runs on pull requests and
+# dispatches only), so a combination of two green pull requests that breaks a job is
+# caught by the push that makes it, and because a push compares with the
+# newest passing commit, a job a red commit failed runs again on every later
+# push until it passes. A dispatch without scope=paths, a pull request
+# labeled ci:full, a change to this file or scripts/ci/, and anything the
+# scope job cannot classify run the complete matrix. tests/test_ci_workflow.py
+# holds the job lists to the workflow text and tests/test_ci_scope_step.py
+# drives this step against local repositories and a fake gh.
 jobs:
   scope:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      actions: read   # the base commit's ci.yml runs
+      actions: read         # the ci.yml runs of the base and of its ancestors
+      pull-requests: read   # the pull request's labels, read when the job runs
     outputs:
       data_only: ${{ steps.scope.outputs.data_only }}
+      run_fastpath: ${{ steps.scope.outputs.run_fastpath }}
+      run_post_cutover: ${{ steps.scope.outputs.run_post_cutover }}
+      post_cutover_tests: ${{ steps.scope.outputs.post_cutover_tests }}
+      run_proof_oracle: ${{ steps.scope.outputs.run_proof_oracle }}
+      run_proofs: ${{ steps.scope.outputs.run_proofs }}
     env:
       GH_TOKEN: ${{ github.token }}
       EVENT_NAME: ${{ github.event_name }}
       PUSH_BEFORE: ${{ github.event.before }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      DISPATCH_SCOPE: ${{ inputs.scope }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Classify the commit by its changed paths
@@ -87,10 +122,28 @@ jobs:
         # full matrix.
         # --raw: the classifier sees modes and status, so a symlink, a
         # submodule or an executable at a data path is not data either.
-        # The base counts as validated only through a completed, successful
+        # A commit counts as validated only through a completed, successful
         # run of this workflow on exactly that commit, from a push or a
         # dispatch (a pull_request run checks a merge commit, not the base's
         # own tree).
+        #
+        # The path-scoped jobs compare the head with REF. A pull request's
+        # REF is its base: what it skips, it did not change, and nothing
+        # ships from its run. A push or dispatch (whose run deploy.yml's gate,
+        # the fast path release and the price refresh act on) takes the
+        # newest commit whose own tree was validated: the base when it was,
+        # otherwise the newest of the ten latest validated commits that is an
+        # ancestor of the base. Its validation says every job that its run
+        # ran passed and every job it skipped had inputs equal to a commit
+        # validated before it, so a job whose inputs are equal at REF and here
+        # would pass here. A base still running, or red, widens the comparison
+        # to REF: a job a red commit failed runs on every later push until a
+        # run passes it, and its red holds every later deploy. The -U0 patch
+        # outside src/ gives the post-cutover rule the changed lines to read
+        # (it runs for any change under src/): --text shows a file a
+        # .gitattributes marks binary, and --no-ext-diff and --no-textconv
+        # keep a configured driver from rewriting what it shows. A file the
+        # patch still shows no lines for runs the suite.
         run: |
           set -euo pipefail
           head="${GITHUB_SHA}"
@@ -101,31 +154,92 @@ jobs:
               base=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${head}" \
                 --jq '.merge_base_commit.sha // empty' || true) ;;
           esac
+          # Why every path-scoped job runs; empty while the paths decide.
+          full=""
+          if [ "${EVENT_NAME}" = workflow_dispatch ] && [ "${DISPATCH_SCOPE}" != paths ]; then
+            full="a dispatch runs the complete matrix unless it asks for scope=paths"
+          elif [ "${EVENT_NAME}" = pull_request ]; then
+            # The labels as they are now, not as the event recorded them: a
+            # re-run keeps the original event, and the label is often added
+            # after it. Labels that cannot be read run the complete matrix.
+            if ! labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels?per_page=100" \
+                --jq '.[].name'); then
+              full="the pull request's labels could not be read"
+            elif grep -qxF 'ci:full' <<< "${labels}"; then
+              full="the pull request is labeled ci:full"
+            fi
+          fi
           data_only=false
-          if [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ]; then
+          base_validated=false
+          if [ -n "${full}" ]; then
+            echo "::notice title=CI scope::${full}; running the complete matrix"
+          elif [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ]; then
             echo "::notice title=CI scope::no base commit to compare against; running the complete matrix"
+            full="no base commit"
           elif [ "${base}" = "${head}" ]; then
             echo "::notice title=CI scope::${head} is its own base; running the complete matrix"
+            full="the head is its own base"
           elif ! git fetch -q --depth=1 origin "${base}"; then
             echo "::notice title=CI scope::base ${base} is not fetchable; running the complete matrix"
+            full="the base is not fetchable"
           else
             git -c core.quotePath=true diff --no-renames --raw "${base}" "${head}" > changed-paths.txt
             echo "changed paths (${base}..${head}):"
             sed 's/^/  /' changed-paths.txt
+            validated=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${base}&per_page=100" \
+              --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch"))] | length' \
+              || echo 0)
+            if [ "${validated:-0}" -gt 0 ]; then
+              base_validated=true
+            fi
             if [ "$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)" = "true" ]; then
-              validated=$(gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${base}&per_page=100" \
-                --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch"))] | length' \
-                || echo 0)
-              if [ "${validated:-0}" -gt 0 ]; then
+              if [ "${base_validated}" = true ]; then
                 data_only=true
               else
-                echo "::notice title=CI scope::only catalog data changed, but base ${base} has no successful ci.yml run; running the complete matrix"
+                echo "::notice title=CI scope::only catalog data changed, but base ${base} has no successful ci.yml run; the data-only skips do not apply"
               fi
             fi
           fi
           echo "data_only=${data_only}"
           echo "data_only=${data_only}" >> "$GITHUB_OUTPUT"
+          ref=""
+          if [ -z "${full}" ]; then
+            if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ]; then
+              ref="${base}"
+            else
+              candidates=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?status=success&per_page=50" \
+                --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch")) | .head_sha] | .[:10] | .[]' \
+                || true)
+              while read -r candidate; do
+                [ -n "${candidate}" ] || continue
+                relation=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${candidate}...${base}" --jq '.status' || true)
+                if [ "${relation}" = ahead ] || [ "${relation}" = identical ]; then
+                  ref="${candidate}"
+                  break
+                fi
+              done <<< "${candidates}"
+              if [ -z "${ref}" ]; then
+                full="no recent successful ci.yml run is on an ancestor of base ${base}"
+              elif ! git fetch -q --depth=1 origin "${ref}"; then
+                full="${ref} is not fetchable"
+              else
+                echo "::notice title=CI scope::base ${base} has no successful ci.yml run; the path-scoped jobs compare with ${ref}, its newest ancestor that has one"
+              fi
+            fi
+          fi
+          if [ -n "${full}" ]; then
+            echo "::notice title=CI scope::${full}; every path-scoped job runs"
+            python3 scripts/ci/commit_scope.py jobs --full < /dev/null | tee -a "$GITHUB_OUTPUT"
+          else
+            git -c core.quotePath=true diff --no-renames --raw "${ref}" "${head}" > scoped-paths.txt
+            git -c core.quotePath=true diff --no-renames --no-color --text --no-ext-diff --no-textconv \
+              -U0 "${ref}" "${head}" -- . ':(exclude)src' > scoped-lines.patch
+            echo "paths that decide the path-scoped jobs (${ref}..${head}):"
+            sed 's/^/  /' scoped-paths.txt
+            python3 scripts/ci/commit_scope.py jobs --event "${EVENT_NAME}" --lines scoped-lines.patch \
+              < scoped-paths.txt | tee -a "$GITHUB_OUTPUT"
+          fi
 
   lint:
     runs-on: ubuntu-24.04
@@ -290,9 +404,9 @@ jobs:
         # are four to five times the estimates. These are estimates, not
         # timeout bounds, and exclude queue delay.
         # Oct 27: 6,271 IDs were missing weights. Profile at least three green
-        # runs, keeping coverage and post-cutover timings separate (a push to
-        # main runs no post-cutover shard: take those from pull request runs
-        # or post-cutover-daily.yml's):
+        # runs, keeping coverage and post-cutover timings separate (take
+        # post-cutover timings from a run that ran its shards, or from
+        # post-cutover-daily.yml's, run by hand):
         #   gh run download <run> -p 'durations-*' -D /tmp/ci-durations/<run>
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/default.json --profile default
         # Repeat with --profile post-cutover; review both profiles before commit.
@@ -484,15 +598,23 @@ jobs:
   # than a second step in `test` so the two clocks report separately -- a red
   # here means "this will break on <date>", not "this is broken".
   #
-  # So it runs on pull requests and on dispatches (the price refresh gates
-  # publication on its run), but not on a push to main: a date main will
-  # break on is no reason to hold the deploy that deploy.yml's gate-on-ci
-  # holds for that run, and on main it was about 90 runner-minutes a commit
-  # in a queue that every deploy waited in. post-cutover-daily.yml runs it on
-  # main once a day, with the proof oracle's post-cutover clock, and
-  # commit_scope.py's summary accepts its skip on a push only.
+  # It can fail only where `test` passes through something that differs
+  # between the two clocks, so it is path-scoped (run_post_cutover): it runs,
+  # on every event, for any change to application code or data, to the
+  # harness every test runs under, to a test fixture, the pricing scripts or
+  # the Python toolchain, for a changed line elsewhere that names a lifecycle
+  # identifier or an entity with a scheduled change, and on every dispatch
+  # (the price refresh gates publication on its run). commit_scope.py's
+  # docstring has the rule and what it leaves out. It does not run on a push
+  # to main (commit_scope.py's SKIPPED_ON_PUSH): a red here means something
+  # breaks on a future scheduled date, not that the commit is broken, the
+  # pull request already ran it under the same rule, and a combination of
+  # pull requests that fails only past a cutover reddens the next pull
+  # request that runs it, weeks before the cutover. post-cutover-daily.yml,
+  # run by hand, runs it on demand.
   test-post-cutover:
-    if: github.event_name != 'push'
+    needs: scope
+    if: github.event_name != 'push' && needs.scope.outputs.run_post_cutover != 'false'
     # Sharded for the same reason as `test`: gate-on-ci waits for the whole
     # run, so the slowest job sets deploy latency. Leaving this one unsharded
     # would just move the bottleneck here.
@@ -513,14 +635,21 @@ jobs:
     # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
     # finishing shard alone; main's slowest shard on twelve shards took
     # 20.1 minutes (38808849971).
+    #
+    # When the only Python that changed is outside src/, the scope job lists
+    # the test files that can reach it (post_cutover_tests) and the suite runs
+    # on those, in one shard; an empty list is the whole suite, in eight.
+    # commit_scope.py only lists paths of [A-Za-z0-9_./-], and the step reads
+    # the list from the environment, not from an expression in the script.
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJSON(needs.scope.outputs.post_cutover_tests == '' && '[1, 2, 3, 4, 5, 6, 7, 8]' || '[1]') }}
     runs-on: ubuntu-24.04
     env:
-      TEST_SHARDS: "8"
+      TEST_SHARDS: ${{ needs.scope.outputs.post_cutover_tests == '' && '8' || '1' }}
+      POST_CUTOVER_TESTS: ${{ needs.scope.outputs.post_cutover_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -565,6 +694,7 @@ jobs:
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+          ${POST_CUTOVER_TESTS}
       - name: Upload this shard's durations
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -573,15 +703,16 @@ jobs:
           path: durations-${{ matrix.shard }}.json
           retention-days: 7
 
-  # Frozen reference tracing is intentionally separate from coverage tracing.
-  # Both lifecycle clocks run the complete matrix wherever both run (a push
-  # to main runs the default clock only); no cloud identity needed.
+  # Frozen reference tracing is intentionally separate from coverage tracing;
+  # no cloud identity needed.
   # The oracle builds its catalog from each case's fixture body
   # (tests/test_async_settle_proof.py `catalog`), not from the published
   # snapshot, so a data-only commit cannot change its result and skips it.
+  # It is path-scoped too (run_proof_oracle): the application and the test
+  # modules and fixtures it loads, listed in commit_scope.py.
   proof-oracle:
     needs: scope
-    if: needs.scope.outputs.data_only != 'true'
+    if: needs.scope.outputs.data_only != 'true' && needs.scope.outputs.run_proof_oracle != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -589,10 +720,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The post-cutover clock runs where test-post-cutover runs: not on a
-        # push to main (see that job), and daily on main in
-        # post-cutover-daily.yml.
-        clock: ${{ fromJSON(github.event_name == 'push' && '["default"]' || '["default", "post-cutover"]') }}
+        # The default lifecycle clock only. The two legs share the clock and
+        # every endpoint they settle is a fixture without an effective-dated
+        # price or retirement, which
+        # tests/test_async_settle_proof_oracle.py holds; 666 pairs of
+        # default and post-cutover shards in 31 hours of runs before this
+        # change never disagreed. post-cutover-daily.yml, run by hand, runs
+        # the post-cutover clock.
+        clock: [default]
         # Four-group runs 38924732345 took 43 to 45+ minutes with 1,252 cases.
         # Six groups per clock bound estimated single-worker work per group
         # to about two thirds of the four-group work; keep the 45-minute cap.
@@ -701,12 +836,16 @@ jobs:
   # spike.md). Its shadows are held to their TLA+ specs here: each test runs
   # the pinned TLC from proofs/ on a small instance and compares every step,
   # so this job needs Java as well as Go.
+  # This job, fastpath-spanner and fastpath-walks are path-scoped
+  # (run_fastpath): the module and the files its tests read outside it
+  # (proofs/, scripts/deploy/*.sh, tests/fixtures/usage_cost_vectors.json),
+  # listed in commit_scope.py's FASTPATH_INPUTS.
   fastpath:
     # Reads fastpath/testdata/model_alias_vectors_v1.json, which the refresh
     # regenerates; that file is deliberately NOT a data-only path, so a
     # refresh commit that changes it runs this job.
     needs: scope
-    if: needs.scope.outputs.data_only != 'true'
+    if: needs.scope.outputs.data_only != 'true' && needs.scope.outputs.run_fastpath != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     # The module stays on the patched Go 1.26 toolchain: a dependency that needs a
@@ -752,7 +891,7 @@ jobs:
   # the tests; the fastpath job, without it, skips them.
   fastpath-spanner:
     needs: scope
-    if: needs.scope.outputs.data_only != 'true'
+    if: needs.scope.outputs.data_only != 'true' && needs.scope.outputs.run_fastpath != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -802,7 +941,7 @@ jobs:
   # without the race detector, against an emulator of its own.
   fastpath-walks:
     needs: scope
-    if: needs.scope.outputs.data_only != 'true'
+    if: needs.scope.outputs.data_only != 'true' && needs.scope.outputs.run_fastpath != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 260
     strategy:
@@ -857,17 +996,20 @@ jobs:
   #
   # Outside proofs/, check.sh reads only whether the code and tests the
   # manifest names for each spec exist (and that a planned spec's code does
-  # not). None of it says whether deployed code works. Pull requests and
-  # dispatches run it, and so does post-cutover-daily.yml on main once a day.
-  # A push to main skips it (commit_scope.py's SKIPPED_ON_PUSH), which frees a
-  # runner for 15 to 26 minutes a push in the organization's capped queue.
+  # not). None of it says whether deployed code works. So it is path-scoped
+  # (run_proofs): it runs, on every event, when proofs/ or a path the
+  # manifest names changed, and skips otherwise, which frees a runner for 15
+  # to 26 minutes a run in the organization's capped queue. A push to main
+  # runs it under the same rule, so two pull requests that combine into a
+  # spec that no longer holds redden the push that combines them.
+  # post-cutover-daily.yml, run by hand, runs it on demand.
   # Branch protection requires the CI summary below, which needs this job, so
   # a pull request cannot merge with it red (say, after a file the manifest
   # names moves). A run that reaches the limit fails the summary and holds the
   # merge until a rerun, so the limit is about twice the slowest green run.
   proofs:
     needs: scope
-    if: github.event_name != 'push' && needs.scope.outputs.data_only != 'true'
+    if: needs.scope.outputs.data_only != 'true' && needs.scope.outputs.run_proofs != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
@@ -884,10 +1026,12 @@ jobs:
   # The run's conclusion, derived from every job's result. GitHub concludes a
   # run success when its jobs succeeded or were skipped; this job accepts a
   # skipped job only when it is one of the jobs above that carry the data-only
-  # condition AND `scope` classified the commit as data-only, or one of
-  # commit_scope.py's SKIPPED_ON_PUSH (the post-cutover suite and proofs) on
-  # a push to main, and fails on a failed `scope`, a failed job, or a skip
-  # for any other reason. The deploy
+  # condition AND `scope` classified the commit as data-only, or one of the
+  # path-scoped jobs (commit_scope.py's PATH_SCOPED_JOBS) AND `scope` set its
+  # flag to exactly `false`, or the post-cutover suite on a push to main
+  # (commit_scope.py's SKIPPED_ON_PUSH), and fails on a failed `scope`, a
+  # failed job, or a skip for any other reason. NEEDS carries the scope
+  # job's outputs. The deploy
   # gate and the price-refresh gate read the run's conclusion, which this job
   # now determines, and branch protection requires the `CI` check.
   # !cancelled() rather than always(): a cancelled run releases its slot.
@@ -917,5 +1061,5 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Every job succeeded, or was skipped for a data-only commit or a push
+      - name: Every job succeeded, or was skipped for a data-only commit, unchanged inputs or a push
         run: python3 scripts/ci/commit_scope.py summarize

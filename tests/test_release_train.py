@@ -317,6 +317,38 @@ def test_job_evidence_refuses_incomplete_or_invalid_pages(monkeypatch, pages):
         api.jobs(4)
 
 
+@pytest.mark.parametrize(("rows", "green"), [
+    ([{"databaseId": 7, "status": "completed", "conclusion": "success", "event": "push"}], True),
+    ([{"databaseId": 7, "status": "completed", "conclusion": "success", "event": "workflow_dispatch"}], True),
+    # A newer green pull_request run beside a red push run: refused.
+    ([{"databaseId": 9, "status": "completed", "conclusion": "success", "event": "pull_request"},
+      {"databaseId": 7, "status": "completed", "conclusion": "failure", "event": "push"}], False),
+    # A lone pull_request run is no CI evidence for a release.
+    ([{"databaseId": 9, "status": "completed", "conclusion": "success", "event": "pull_request"}], False),
+    # A newer red pull_request run does not refuse a green push run.
+    ([{"databaseId": 9, "status": "completed", "conclusion": "failure", "event": "pull_request"},
+      {"databaseId": 7, "status": "completed", "conclusion": "success", "event": "push"}], True),
+    (None, False), ([], False),
+])
+def test_ci_evidence_counts_push_and_dispatch_runs_only(monkeypatch, rows, green):
+    api = train.GitHub()
+    calls = []
+
+    def lookup(*args):
+        calls.append(args)
+        return copy.deepcopy(rows)
+
+    monkeypatch.setattr(api, "json", lookup)
+    if green:
+        assert api.ci("a" * 40) == 7
+    else:
+        with pytest.raises(train.Refused):
+            api.ci("a" * 40)
+    [args] = calls
+    assert "--limit" not in args
+    assert "event" in args[args.index("--json") + 1].split(",")
+
+
 @pytest.mark.parametrize("run_id", [True, 0, -1, "4", None])
 def test_job_evidence_refuses_invalid_run_identity_before_lookup(monkeypatch, run_id):
     api = train.GitHub()
