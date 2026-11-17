@@ -26,7 +26,7 @@ permissions:
 jobs:
   release:
     # Only a run of this repository's own main: a push, or a dispatch on main
-    # (the price refresh's publication gate). `branches: [main]` matches the
+    # by a maintainer. `branches: [main]` matches the
     # triggering run's head branch by name only, and a fork's pull request
     # from a branch it calls main runs the fork's own ci.yml. Without these
     # two conditions such a run, once green, would have this workflow build

@@ -21,7 +21,13 @@ permissions:
 
 jobs:
   report:
-    if: github.repository == 'Lore-Hex/quill-router'
+    # workflow_run matches the triggering workflow by name, and a fork pull
+    # request can add a workflow with any name, so a workflow_run trigger
+    # counts only when it came from this repository's own scheduled or
+    # dispatched price refresh (tests/test_workflow_run_guard.py).
+    if: >-
+      github.repository == 'Lore-Hex/quill-router'
+      && (github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
