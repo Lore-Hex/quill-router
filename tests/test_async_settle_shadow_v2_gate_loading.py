@@ -1192,6 +1192,86 @@ def test_round13_valid_documents() -> None:
         retained_json(b'[' + raw + b']', max_depth=64)
 
 
+def test_round13_decoder_call_inventory() -> None:
+    import ast
+    from collections import Counter
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    paths = sorted((root / 'src/trusted_router').glob('async_settle_shadow_v2_gate*.py'))
+    paths += [root / ('scripts/async_settle/' + name + '.py') for name in
+        ('async_settle_shadow_v2_gate_tools', 'shadow_report', 'pilot_enablement')]
+    found: Any = Counter()
+    names = {'loads', 'JSONDecoder', 'raw_decode', '_local_values', 'tokens', 'scalar', 'decode_original', 'transport_values'}
+    aliases: dict[str, str] = {}
+    def decoder_name(node: Any) -> str:
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return aliases.get(node.id, node.id) if isinstance(node, ast.Name) else ''
+    def scan(source: str, path: Any) -> None:
+        tree = ast.parse(source)
+        aliases.clear()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                aliases.update({item.asname or item.name: item.name for item in node.names if item.name in names})
+        # Include ordinary callable aliases as well as renamed imports.
+        for _ in range(len(list(ast.walk(tree)))):
+            before = dict(aliases)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and decoder_name(node.value) in names:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            aliases[target.id] = decoder_name(node.value)
+            if aliases == before:
+                break
+        visit(tree, path)
+    def visit(node: Any, path: Any, context: str = '') -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            context = context + '.' + node.name if context else node.name
+        if isinstance(node, ast.Call):
+            name = decoder_name(node.func)
+            if name in names:
+                found[(path.name, context, name)] += 1
+        for child in ast.iter_child_nodes(node):
+            visit(child, path, context)
+    for path in paths:
+        scan(path.read_text(), path)
+    loading = 'async_settle_shadow_v2_gate_loading.py'
+    # Each exception names its reason; the local scanner is reachable only from
+    # decode_original. Frozen schema parsers remain the contract's own boundary.
+    allowed = {
+        (loading, 'decode_original', 'loads'): (1, 'strict standard decoder in choke point'),
+        (loading, 'decode_original', '_local_values'): (1, 'local decoder in choke point'),
+        (loading, 'retained_json', 'decode_original'): (1, 'retained original bytes use agreement'),
+        (loading, 'transport_values', 'decode_original'): (1, 'transport original bytes use agreement'),
+        (loading, 'transport_children', 'transport_values'): (1, 'cleaner uses the agreement wrapper'),
+        (loading, '_local_values.scalar', 'loads'): (1, 'isolated scalar inside local decoder'),
+        (loading, '_local_values', 'JSONDecoder'): (1, 'string scanner inside local decoder'),
+        (loading, '_local_values.tokens', 'raw_decode'): (1, 'isolated string inside local decoder'),
+        (loading, '_local_values.tokens', 'scalar'): (1, 'scalar tokenizer inside local decoder'),
+        (loading, '_local_values', 'tokens'): (1, 'tokenizer inside local decoder'),
+        ('pilot_enablement.py', 'point_evidence', 'loads'): (1, 'unchanged retained v1 row reader'),
+        ('pilot_enablement.py', 'fleet_budgets_pre', 'loads'): (3, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'shadow_serving', 'loads'): (1, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'fleet_budgets', 'loads'): (1, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'pre_flip', 'loads'): (2, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'post_flip', 'loads'): (1, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'main', 'loads'): (1, 'no-policy branch after v2 dispatch returns'),
+    }
+    assert all(reason for _, reason in allowed.values())
+    assert found == Counter({key: count for key, (count, _) in allowed.items()})
+    for source, name in (
+        ('from json import loads as decode\ndef outside(raw): return decode(raw)', 'loads'),
+        ('import json\ndecode = json.loads\nread = decode\ndef outside(raw): return read(raw)', 'loads'),
+        ('from json import JSONDecoder as Decoder\ndef outside(raw): return Decoder().decode(raw)', 'JSONDecoder'),
+        ('from trusted_router.async_settle_shadow_v2_gate_loading import _local_values as decode\n'
+         'def outside(raw): return decode(raw, allow_float=False, max_depth=16, bounded_integers=True)', '_local_values'),
+    ):
+        found.clear()
+        scan(source, Path('alias-control.py'))
+        assert found[('alias-control.py', 'outside', name)] == 1
+
+
 def test_round13_inventory_cache_key_and_copy() -> None:
     from dataclasses import replace
     from types import SimpleNamespace

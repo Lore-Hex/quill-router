@@ -1,6 +1,7 @@
 """A3 corrections through original bytes, the library, and both public tools."""
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,84 @@ def test_unknown_control_is_scoped_to_its_original_row(originals: Any, tmp_path:
     own = [i for i in bundle.a2_streams['loading_validation'] if i['gap'] == 'evidence_schema_gap']
     assert own == [dict(gap='evidence_schema_gap', detail='evidence_schema_gap', subject=a2.O(unknown['kind'], unknown['id']))]
     assert through_all(canonical(value), ports, tmp_path)['verdict'] == 'BLOCKED'
+
+
+def control_readers(source: str) -> dict[str, int]:
+    """Resolve imported and assigned aliases before enumerating row decoders."""
+    tree = ast.parse(source)
+    aliases: dict[str, str] = {}
+    def resolve(node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            return resolve(node.value) + '.' + node.attr
+        if isinstance(node, ast.Subscript):
+            return resolve(node.value) + '[' + resolve(node.slice) + ']'
+        if isinstance(node, ast.Constant):
+            return str(node.value)
+        return ast.unparse(node)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = (node.module or '') + '.' + alias.name
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    aliases[target.id] = resolve(node.value)
+    imported = dict(aliases)
+    readers: dict[str, int] = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        aliases = dict(imported)
+        for node in ast.walk(function):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and node.value is not None:
+                        aliases[target.id] = resolve(node.value)
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call):
+                call = resolve(node.func)
+                if call.endswith(('.MANIFEST', '.MANIFEST.parse', '.validate_row')):
+                    readers[function.name] = readers.get(function.name, 0) + 1
+                if call.endswith('.kind') and any(resolve(arg).endswith('KINDS[5]') or resolve(arg) == p1.KINDS[5] for arg in node.args):
+                    readers[function.name] = readers.get(function.name, 0) + 1
+            if isinstance(node, ast.Compare):
+                if any(resolve(child).endswith('KINDS[5]') or resolve(child) == p1.KINDS[5]
+                       for child in ast.walk(node)):
+                    readers[function.name] = readers.get(function.name, 0) + 1
+    return readers
+
+
+def test_every_control_population_reader_uses_shared_selector() -> None:
+    root = Path(__file__).parents[1] / 'src/trusted_router'
+    actual = {path.stem.removeprefix('async_settle_shadow_v2_gate_'): control_readers(path.read_text())
+              for path in root.glob('async_settle_shadow_v2_gate*.py')}
+    # Generic row decoders are enumerated too, even when they currently only
+    # decode counters or receipts. A new reader must be reviewed explicitly.
+    assert {path: readers for path, readers in actual.items() if readers} == {
+        'controls': {'manifests': 3, 'traffic_regions': 1}, 'bundle': {'decode_bundle': 1},
+        'prior': {'_resolve': 1}, 'views': {'budget_view': 1, 'signature_views': 1}}
+
+
+@pytest.mark.parametrize('reader', [
+    'return [a1.validate_row(r.key.kind, r.key.id, r.raw) for r in rows if r.key.kind == "async_settle_shadow_control_v2"]',
+    'kind = p1.KINDS[5]; return [r for r in rows if r.key.kind == kind]',
+    'parser = a1.MANIFEST; return parser.parse(rows[0].raw)',
+    'parser = a1.MANIFEST; return parser(rows[0])',
+    'return ctx.kind("async_settle_shadow_control_v2")',
+    'return [r for r in rows if r.key.kind in {"async_settle_shadow_control_v2"}]',
+    'from trusted_router.async_settle_shadow_v2_a1_evidence import MANIFEST as parser; return parser.parse(rows[0].raw)',
+    'parser = a1.validate_row; return parser(rows[0].key.kind, rows[0].key.id, rows[0].raw)',
+])
+def test_added_control_reader_is_noticed(tmp_path: Path, reader: str) -> None:
+    source = Path(__file__).parents[1] / 'src/trusted_router/async_settle_shadow_v2_gate_expected.py'
+    copy = tmp_path / source.name
+    copy.write_text(source.read_text() + '\n\ndef added_reader(rows):\n    ' + reader + '\n')
+    assert control_readers(source.read_text()) == {}
+    assert set(control_readers(copy.read_text())) == {'added_reader'}
 
 
 ROOT_DEPENDENCIES = tuple(name for name in __import__(
