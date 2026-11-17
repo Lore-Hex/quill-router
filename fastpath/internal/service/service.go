@@ -1030,10 +1030,10 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			case <-ctx.Done():
 				// The period's last part: a stopping node's answers are
 				// what a hand-off's slow ones would be.
-				log.Print(ownerTallyLine(o.TakeTally(), settle.TakeHedges()))
+				log.Print(ownerTallyLine(o.TakeTally(), settle.TakeCalls()))
 				return nil
 			case <-t.C:
-				log.Print(ownerTallyLine(o.TakeTally(), settle.TakeHedges()))
+				log.Print(ownerTallyLine(o.TakeTally(), settle.TakeCalls()))
 			}
 		}
 	})
@@ -1457,16 +1457,18 @@ func writeAlertOf(w io.Writer, subject, what, kind string) {
 // hand-over to acknowledgement, the most a lease awaited at once, the
 // publishes that failed, and how long heartbeats and terminals took to
 // answer, each slow count past a second, the front door's wait for an owner;
-// then the settle log's hedged calls, and the batches a hedge acknowledged.
-func ownerTallyLine(t owner.Tally, h settlelog.Hedges) string {
+// then the settle log's calls: the batches sent, so the hedges read as a
+// share of them, the hedges sent, the batches a hedge acknowledged, and
+// those a hedge was withheld from by its size or budget.
+func ownerTallyLine(t owner.Tally, c settlelog.Calls) string {
 	var avg time.Duration
 	if t.Acks > 0 {
 		avg = t.AckTotal / time.Duration(t.Acks)
 	}
 	return fmt.Sprintf("fastpath owner: acks=%d ack_avg_ms=%d ack_max_ms=%d acks_slow=%d depth_max=%d "+
 		"publish_failures=%d heartbeats=%d heartbeat_max_ms=%d heartbeats_slow=%d terminals=%d "+
-		"terminal_max_ms=%d terminals_slow=%d publish_hedges=%d hedges_won=%d", t.Acks, avg.Milliseconds(),
-		t.AckMax.Milliseconds(), t.AcksSlow, t.DepthMax, t.PublishFailures, t.Heartbeats,
+		"terminal_max_ms=%d terminals_slow=%d publish_calls=%d publish_hedges=%d hedges_won=%d hedges_withheld=%d",
+		t.Acks, avg.Milliseconds(), t.AckMax.Milliseconds(), t.AcksSlow, t.DepthMax, t.PublishFailures, t.Heartbeats,
 		t.HeartbeatMax.Milliseconds(), t.HeartbeatsSlow, t.Terminals, t.TerminalMax.Milliseconds(), t.TerminalsSlow,
-		h.Calls, h.Won)
+		c.Batches, c.Hedges, c.Won, c.Withheld)
 }

@@ -67,6 +67,31 @@ type Settings struct {
 // times Hedge and seven times Hedge, each within its deadline.
 const maxHedges = 3
 
+// A hedge's bounds, so a broad slowdown, when every call is slow, does not
+// send every batch four times over:
+//
+//   - maxHedgeBytes: a batch whose request is larger is never hedged.
+//     Pub/Sub takes about 1 MB/s on one ordering key, and a batch hedged to
+//     the limit is sent four times, so 64 KiB keeps its copies to a quarter
+//     of a second's allowance on its lease's key, and its copies' memory
+//     small. A heartbeat's or a terminal's record is a few hundred bytes to
+//     a few KiB (a first heartbeat's basis and boot binding included), so
+//     the records whose answers wait on a call, a stream's heartbeats among
+//     them, stay hedged; a batch past it is a large backlog or a hand-off's
+//     records, which no heartbeat answer waits on alone.
+//   - a budget: every batch's first call earns a tenth of a hedge
+//     (hedgeShare), up to hedgeBurst hedges banked, and each hedge spends
+//     one, so hedges stay within about a tenth of calls beyond a burst. A
+//     log starts with the burst banked.
+//
+// A hedge either bound withholds is counted (Calls.Withheld), and that
+// batch is sent no more copies.
+const (
+	maxHedgeBytes = 64 << 10
+	hedgeShare    = 10
+	hedgeBurst    = 10
+)
+
 // Pub/Sub's limits on one Publish call: its messages, and its request's
 // size, 10 MB, which a batch keeps under with room for the topic's name.
 const (
@@ -140,39 +165,67 @@ type Log struct {
 	stopped bool
 	senders sync.WaitGroup
 
-	hedges hedgeCount
+	calls hedgeBudget
 }
 
-// Hedges are a Log's hedged calls over a period: the calls a batch was sent
-// again in, and the batches a hedge's answer acknowledged.
-type Hedges struct {
-	Calls, Won int64
+// Calls are a Log's Publish calls over a period: the batches sent (each
+// batch's first call), the calls a batch was sent again in, the batches a
+// hedge's answer acknowledged, and the batches a hedge was withheld from by
+// its size or the budget.
+type Calls struct {
+	Batches, Hedges, Won, Withheld int64
 }
 
-type hedgeCount struct {
-	mu sync.Mutex
-	h  Hedges
+// hedgeBudget is the Log's hedge budget, in tenths of a hedge, and its
+// period's calls, under one lock.
+type hedgeBudget struct {
+	mu     sync.Mutex
+	tenths int64
+	c      Calls
 }
 
-func (c *hedgeCount) add(calls int64, won bool) {
-	if calls == 0 {
-		return
+func newHedgeBudget() hedgeBudget { return hedgeBudget{tenths: hedgeBurst * hedgeShare} }
+
+// sent counts a batch's first call, which earns a tenth of a hedge.
+func (b *hedgeBudget) sent() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.c.Batches++
+	b.tenths = min(b.tenths+1, hedgeBurst*hedgeShare)
+}
+
+// take spends a hedge if one is banked, and reports whether it was.
+func (b *hedgeBudget) take() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.tenths < hedgeShare {
+		b.c.Withheld++
+		return false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.h.Calls += calls
-	if won {
-		c.h.Won++
-	}
+	b.tenths -= hedgeShare
+	b.c.Hedges++
+	return true
 }
 
-// TakeHedges returns the hedges since the last taken, and starts the next.
-func (l *Log) TakeHedges() Hedges {
-	l.hedges.mu.Lock()
-	defer l.hedges.mu.Unlock()
-	h := l.hedges.h
-	l.hedges.h = Hedges{}
-	return h
+func (b *hedgeBudget) withheld() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.c.Withheld++
+}
+
+func (b *hedgeBudget) won() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.c.Won++
+}
+
+// TakeCalls returns the calls since the last taken, and starts the next.
+func (l *Log) TakeCalls() Calls {
+	l.calls.mu.Lock()
+	defer l.calls.mu.Unlock()
+	c := l.calls.c
+	l.calls.c = Calls{}
+	return c
 }
 
 // key is a lease's ordering key: the records handed over and not yet sent,
@@ -197,7 +250,7 @@ func openLog(publish publishFunc, topic string, s Settings, clock func() time.Ti
 		return nil, fmt.Errorf("settlelog: a hedge of %v", s.Hedge)
 	}
 	return &Log{publish: publish, topic: topic, deadline: s.Deadline, hedge: s.Hedge, clock: clock,
-		keys: map[string]*key{}}, nil
+		keys: map[string]*key{}, calls: newHedgeBudget()}, nil
 }
 
 // Publish hands a record to its lease's key without waiting. Records handed
@@ -321,7 +374,8 @@ func takeBatch(queue *[]*Pending) []*Pending {
 //
 // With Hedge, a call not answered by then is joined by another sending the
 // same batch, and again at three and seven times Hedge (maxHedges), each
-// only before the deadline; the first call answered with the batch's
+// only before the deadline and within the hedge's bounds (maxHedgeBytes,
+// the budget); the first call answered with the batch's
 // message IDs is the batch's answer, and the rest are cancelled. Every call
 // carries the same records with the same owner sequence numbers, so a copy
 // stored beside another, or later, after a batch behind this one, is a
@@ -337,8 +391,10 @@ func (l *Log) sendBatch(batch []*Pending) ([]string, error) {
 		return nil, ErrDeadline
 	}
 	msgs := make([]*pubsubpb.PubsubMessage, len(batch))
+	size := 0
 	for i, p := range batch {
 		msgs[i] = p.msg
+		size += p.size
 	}
 	req := &pubsubpb.PublishRequest{Topic: l.topic, Messages: msgs}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -364,8 +420,9 @@ func (l *Log) sendBatch(batch []*Pending) ([]string, error) {
 		}
 		answers <- answer{ids: resp.GetMessageIds(), err: err, hedge: hedge}
 	}
+	l.calls.sent()
 	go call(false)
-	under, hedged := 1, int64(0)
+	under, hedged := 1, 0
 	var next <-chan time.Time
 	wait := l.hedge
 	var timer *time.Timer
@@ -380,18 +437,28 @@ func (l *Log) sendBatch(batch []*Pending) ([]string, error) {
 		case a := <-answers:
 			under--
 			if a.err == nil {
-				l.hedges.add(hedged, a.hedge)
+				if a.hedge {
+					l.calls.won()
+				}
 				return a.ids, nil
 			}
 			if failed == nil {
 				failed = a.err
 			}
 			if under == 0 {
-				l.hedges.add(hedged, false)
 				return nil, failed
 			}
 		case <-next:
 			if !l.clock().Before(deadline) {
+				next = nil
+				continue
+			}
+			if size > maxHedgeBytes {
+				l.calls.withheld()
+				next = nil
+				continue
+			}
+			if !l.calls.take() {
 				next = nil
 				continue
 			}

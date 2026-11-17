@@ -90,6 +90,25 @@ case "$fleet_audit" in
     echo "fastpath: fastpath-fleet-audit is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
     exit 1 ;;
 esac
+# The settle log's hedge (settlelog.Settings.Hedge): how long a Publish call
+# may go unanswered before its batch is sent again beside it, as a Go
+# duration in milliseconds, or 0 to send each batch once. Absent, the node
+# runs the release's default (250ms). It is the hedge's off switch: set the
+# attribute to "0" (local.fastpath_settle_hedge) and take each node by the
+# runbook's unit rewrite (docs/runbooks/fastpath-deploy.md, "The settle
+# log's hedge"). The pinned release must take -settle-hedge before the
+# attribute is set; a value the release would refuse stops the script.
+settle_hedge="$(attribute fastpath-settle-hedge)" || exit 1
+hedge_flags=""
+if [ -n "$settle_hedge" ]; then
+  # The whole value, newlines included: a pattern a line of it matched
+  # could write more than the flag into the unit.
+  if ! [[ "$settle_hedge" =~ ^(0|[1-9][0-9]{0,3}ms)$ ]]; then
+    echo "fastpath: fastpath-settle-hedge is 0, 1ms to 9999ms, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  hedge_flags="-settle-hedge $settle_hedge"
+fi
 # The money settings (docs/design/fast-admission-widening.md, (b)): the
 # trust tier a lease needs, a workspace's allowance and the floor a grant
 # leaves, in microdollars, from fastpath-required-tier, fastpath-allowance
@@ -296,7 +315,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags
+  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags $hedge_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30
