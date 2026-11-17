@@ -644,9 +644,11 @@ jobs:
     # measured on the eight alone. That is a lower bound of the suite's
     # coverage (the lane only adds lines), so a pass is a true pass and the
     # floor cannot pass on lines nobody ran; it fails spuriously only if the
-    # eight alone fall under 70% while the lane would lift them over, a
-    # margin of about 20 points today (91% combined). A pull request that
-    # lands there is labeled ci:full, which runs the lane and counts it.
+    # eight alone fall under 70% while the lane would lift them over. On
+    # 2026-11-17 the eight alone covered 89% (run 44174820655) and all eleven
+    # 91% (run 44179448721), as main's eight did before the lane. A pull
+    # request that lands there is labeled ci:full, which runs the lane and
+    # counts it.
     needs: [test, test-heavy, scope]
     if: ${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}
     runs-on: *short-runner
