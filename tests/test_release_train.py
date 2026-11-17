@@ -188,6 +188,54 @@ def test_partial_rollout_is_not_delivery():
     assert train.select(api, api.runs[1], release())["deploy"] is True
 
 
+def public_delivery(api, sha=C):
+    api.runs[4] = run(sha, 4, status="completed", conclusion="success")
+    api.job_rows[4] = [{"name": "public-docs / deploy-public-docs", "conclusion": "success",
+                        "steps": [{"name": "Record public-only delivery", "conclusion": "success"}]}]
+    api.artifacts[4, "public"] = {"release": asdict(release(sha, 4))}
+
+
+def test_public_delivery_is_floor_not_api_delivery():
+    api = Evidence()
+    api.runs.pop(3)
+    public_delivery(api)
+    result = train.select(api, api.runs[1], release())
+    assert result["release"] == asdict(release(C, 4))
+    assert result["deploy"] is True
+
+
+def test_public_floor_cannot_bypass_workflow_compatibility():
+    api = Evidence()
+    api.incompatible.add(C)
+    public_delivery(api)
+    with pytest.raises(train.Refused, match="own controller"):
+        train.select(api, api.runs[1], release())
+
+
+def test_public_receipt_missing_fails_closed():
+    api = Evidence()
+    public_delivery(api)
+    api.artifacts[4, "public"] = train.Refused("receipt missing")
+    with pytest.raises(train.Refused, match="receipt missing"):
+        train.select(api, api.runs[1], release())
+
+
+def test_public_fallback_is_not_a_delivery():
+    api = Evidence()
+    public_delivery(api)
+    api.job_rows[4][0]["steps"][0]["conclusion"] = "skipped"
+    api.artifacts[4, "public"] = train.Refused("must not read fallback receipt")
+    assert train.select(api, api.runs[1], release())["deploy"] is True
+
+
+def test_unknown_public_outcome_is_not_ignored():
+    api = Evidence()
+    public_delivery(api)
+    api.job_rows[4][0]["steps"] = []
+    with pytest.raises(train.Refused, match="outcome is unavailable"):
+        train.select(api, api.runs[1], release())
+
+
 def test_missing_completed_train_receipt_refuses_instead_of_downgrading():
     api = Evidence()
     delivered(api)
@@ -444,4 +492,4 @@ def test_prepare_artifact_is_uploaded_after_build_before_admission():
     assert steps[-1]["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
     assert steps[-1]["with"]["if-no-files-found"] == "error"
     assert steps[-1]["with"]["name"] == "prepared-release-${{ github.run_attempt }}"
-    assert set(workflow["jobs"]["rollout"]["needs"]) == {"gate-on-ci", "build-image"}
+    assert set(workflow["jobs"]["rollout"]["needs"]) == {"gate-on-ci", "build-image", "scope", "public-docs"}

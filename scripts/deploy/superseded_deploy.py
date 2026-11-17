@@ -106,6 +106,7 @@ DEPLOY_PATHS = (
     "uv.lock",
     ".github/workflows/deploy.yml",
     ".github/workflows/deploy-production.yml",
+    ".github/workflows/deploy-public-docs.yml",
 )
 
 # GitHub's compare API returns at most 300 files.
@@ -128,7 +129,7 @@ _DELIVERY_JOBS = frozenset({"deploy", "rollout-secondaries", "public-surface-com
 # deploy.yml's jobs outside the rollout: a run whose every job is one of these
 # is neither in the production queue nor rolling out. Every push run has its
 # own cancel-superseded job.
-_PREPARATION_JOBS = frozenset({"cancel-superseded", "gate-on-ci", "build-image"})
+_PREPARATION_JOBS = frozenset({"cancel-superseded", "gate-on-ci", "build-image", "scope"})
 # ci.yml's test matrix job is named "test (N)" for shard N.
 _TEST_SHARD_PREFIX = "test ("
 # After the last delivered rollout, cancel-older may cancel for this long

@@ -31,6 +31,7 @@ BASE_ENV = {
     "TR_ENVIRONMENT": "production",
     "TR_SERVICE_SURFACE": "public",
     "TR_RELEASE": "cb16dcc",
+    "TR_PUBLIC_SOURCE_COMMIT": "cb16dcc",
     "TR_TRUSTED_DOMAIN": "trustedrouter.com",
     "TR_TRUSTED_DOMAIN_ALIASES": "allyrouter.com,uptimerouter.com",
     "TR_API_BASE_URL": "https://api.trustedrouter.com/v1",
@@ -346,6 +347,59 @@ def test_routed_healthy_smoke_promotes_each_region(tmp_path: Path) -> None:
     assert run.public_ingress_state == {
         region: "internal-and-cloud-load-balancing" for region in REGIONS
     }
+
+
+@pytest.mark.parametrize("fail_docs_smoke", [False, True])
+def test_qualified_docs_image_uses_existing_smoke_and_rollback(tmp_path: Path, fail_docs_smoke: bool) -> None:
+    isolated = DeployScriptHarness(tmp_path / "qualified-docs")
+    docs_image = IMAGE.replace("1" * 64, "3" * 64)
+    # Mock only external source/build qualification, tested independently in
+    # test_public_docs_delivery. Execute the real deployment and rollback shell.
+    isolated.write_script("scripts/deploy/public_docs.py",
+                          "import sys\nassert sys.argv[1:] == ['candidate']\n"
+                          f"print({'b' * 40!r}, {docs_image!r})\n")
+    extra = {"TR_PUBLIC_DOCS_MANIFEST": "public-docs-input.json"}
+    if fail_docs_smoke:
+        extra.update(HARNESS_PUBLIC_SMOKE_FAIL_REGION="us-east4", HARNESS_PUBLIC_SMOKE_FAIL_PATH="/docs")
+    run = isolated.run(SCRIPT, args=("routed",), extra_env=extra)
+    calls = _deploy_calls(run)
+    assert calls, summarise(run)
+    for call in calls:
+        assert call[call.index("--image") + 1] == docs_image
+        env = _serialized_mapping(call, "--set-env-vars", "|")
+        assert env["TR_RELEASE"] == BASE_ENV["TR_RELEASE"]
+        assert env["TR_PUBLIC_SOURCE_COMMIT"] == "b" * 40
+        assert "--no-traffic" in call
+    assert any(call[0] == "curl" and any(arg.endswith("/docs") for arg in call) for call in run.calls)
+    if fail_docs_smoke:
+        assert run.returncode != 0
+        assert "rolled back current and all previously promoted regions" in run.stderr
+        assert any("--to-revisions=trusted-router-public-active=100" in call for call in _traffic_calls(run))
+    else:
+        assert run.returncode == 0, summarise(run)
+        assert len(calls) == 4
+    assert not any("deploy" in call and "trusted-router" in call for call in run.calls)
+
+
+def test_unqualified_docs_input_cannot_mutate_public_revisions(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "unqualified-docs")
+    run = isolated.run(SCRIPT, args=("routed",), extra_env={"TR_PUBLIC_DOCS_MANIFEST": "untrusted.json"})
+    assert run.returncode != 0
+    assert "docs-only source/image qualification failed" in run.stderr
+    assert not _deploy_calls(run)
+
+
+def test_manual_routed_deploy_checks_public_source_before_any_mutation(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "manual-docs-floor")
+    isolated.write_script("scripts/deploy/public_docs.py",
+                          "import sys\n"
+                          f"assert sys.argv[1:] == ['guard-source', '--source', {'b' * 40!r}, '--target', 'cb16dcc']\n"
+                          "raise SystemExit('refused newer public source')\n")
+    run = isolated.run(SCRIPT, args=("routed",), extra_env={"HARNESS_PUBLIC_SOURCE_COMMIT": "b" * 40})
+    assert run.returncode != 0
+    assert "refused newer public source" in run.stderr
+    assert not _deploy_calls(run)
+    assert not _traffic_calls(run)
 
 
 def test_routed_accepts_deliberate_companion_cloud_state(tmp_path: Path) -> None:
