@@ -957,13 +957,20 @@ def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -
     (["tool", "-Dfoo=Zq4"], "tool -Dfoo=<value>"),
     (["node", "--eval=code('Zq5')"], "node --eval=<program>"),
     (["sh", "--command=echo Zq6"], "sh --command=<program>"),
+    # Only the recorder's own placeholders and real repository paths survive in an option's value.
+    (["tool", "--opt=<Zq7"], "tool --opt=<value>"),
+    (["tool", "--opt=.Zq8"], "tool --opt=<value>"),
+    (["tool", ".Zq9"], "tool <value>"),
+    # A secret glued to -a or -k shows none of its characters.
+    (["redis-cli", "-ahunter2Zq"], "redis-cli -a<value>"),
+    (["openssl", "-khunter2Zq"], "openssl -k<value>"),
 ])
 def test_command_words_hide_secrets_and_program_text(tmp_path: Path, argv: list[str], recorded: str) -> None:
     from scripts.ci import testmap_recorder
 
     words = " ".join(testmap_recorder.Recorder(str(tmp_path)).words(argv))
     assert words == recorded
-    for secret in ("MyPassw0rd", "monkey_key1", "TokenAbc9", "api_key_user", "Zq", "prog text"):
+    for secret in ("MyPassw0rd", "monkey_key1", "TokenAbc9", "api_key_user", "Zq", "prog text", "hunter2"):
         assert secret not in words
 
 

@@ -138,7 +138,7 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "6"
+RECORDER_VERSION = "7"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
@@ -1306,8 +1306,9 @@ def recorded_failures(records: list[dict], test_result: str | None) -> tuple[set
         return set(), None
 
     def ran_everything(r: dict) -> bool:  # what the record says, checked again
-        return bool(r.get("complete")) and r.get("exitstatus") in (0, 1) and r.get("collected") in (
-            None, r.get("reported"))
+        collected = r.get("collected")
+        return (r.get("complete") is True and r.get("exitstatus") in (0, 1) and isinstance(collected, int)
+                and not isinstance(collected, bool) and collected == r.get("reported"))
 
     complete = [r for r in records if ran_everything(r)]
     failed = {t for r in complete for t in r.get("failed", ())}
@@ -1356,6 +1357,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         known_files = {t.split("::")[0] for t in known}
 
         def files_under(path: str) -> set[str]:
+            path = path.split("::", 1)[0]  # a class that failed to collect (tests/x.py::TestK): its file
             if path.endswith(".py"):
                 return {path} & known_files
             prefix = path.rstrip("/") + "/"
@@ -1371,8 +1373,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
             # Never a zero that measured nothing.
             lines.append(f"comparison unavailable: {unavailable}")
             if failed:
-                lines.append(f"failures recorded all the same: {counts}; {len(outside)} outside the selection"
-                             + (f" ({', '.join(outside[:50])})" if outside else ""))
+                # No count of what is outside: the missing shards' failures are unknown.
+                lines.append(f"failures recorded all the same: {counts}"
+                             + (f"; at least {len(outside)} outside the selection ({', '.join(outside[:50])})"
+                                if outside else ""))
         else:
             lines.append(f"failures outside selection: {len(outside)}"
                          + (f" ({', '.join(outside[:50])})" if outside else ""))

@@ -172,11 +172,19 @@ def test_complete_means_every_collected_test_reported(tmp_path: Path) -> None:
      + "".join(f"def test_c{i}():\n    import time; time.sleep(0.2); assert False\n\n" for i in range(20)), ("-n", "1")),
     # The session dies outright: the record stays as the start wrote it.
     ("import os\n\ndef test_dies():\n    os._exit(3)\n", ()),
-], ids=["keyboard-interrupt", "worker-restart-limit", "sigint-to-controller", "process-dies"])
+    # Every test reported, then a KeyboardInterrupt in a session fixture's
+    # teardown: exit 2, so not complete although reported == collected.
+    ("import pytest\n\n@pytest.fixture(scope='session')\ndef held():\n    yield 1\n    raise KeyboardInterrupt\n\n"
+     "def test_a(held):\n    assert False\n\ndef test_b(held):\n    assert held == 1\n", ()),
+], ids=["keyboard-interrupt", "worker-restart-limit", "sigint-to-controller", "process-dies",
+        "interrupt-in-session-teardown"])
 def test_a_shard_that_did_not_run_its_tests_is_incomplete(tmp_path: Path, tests: str, args: tuple[str, ...]) -> None:
     root = _project(tmp_path, tests)
     _run(root, tmp_path / "runner-temp", *args)
-    assert _record(tmp_path / "runner-temp")["complete"] is False
+    record = _record(tmp_path / "runner-temp")
+    assert record["complete"] is False
+    if "session" in tests:
+        assert record["exitstatus"] == 2 and record["reported"] == record["collected"] == 2
 
 
 GREEN = "def test_ok():\n    assert True\n"

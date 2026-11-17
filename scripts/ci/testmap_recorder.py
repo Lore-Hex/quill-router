@@ -175,7 +175,7 @@ from typing import Any
 
 import pytest
 
-RECORDER_VERSION = "6"  # scripts/ci/testmap.py holds the same value; its tests compare the two
+RECORDER_VERSION = "7"  # scripts/ci/testmap.py holds the same value; its tests compare the two
 
 TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
@@ -198,7 +198,8 @@ LONG_VALUE_FLAG = re.compile(r"--header|--user|--pw|--?[\w.-]*(?:pass|token|secr
 # After a secret's flag, the next word is that secret unless it looks like an
 # option (-c, --format): a secret may start with "-" (redis-cli -a -Zk3y).
 OPTION_LIKE = re.compile(r"-[A-Za-z]|--[a-z][a-z0-9-]*(?:=.*)?", re.DOTALL)
-GLUED_VALUE = re.compile(r"-([A-Za-z]*?[upH]).+", re.DOTALL)  # -phunter2, -uroot, -vpX: glued to its flag
+GLUED_VALUE = re.compile(r"-([A-Za-z]*?[upHak]).+", re.DOTALL)  # -phunter2, -uroot, -ahunter2, -vpX: glued to its flag
+PLACEHOLDERS = frozenset({"<value>", "<program>", "<outside>"})  # the recorder's own; any other "<..." is data
 OPTION_VALUE = re.compile(r"(--?[A-Za-z0-9][\w.-]*)=.*", re.DOTALL)  # --password=x, -Dname=x
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*=.*", re.DOTALL)  # env NAME=value, helm --set db.password=x
 # A URL's user and password run to its last "@" before any "?" or "#": a
@@ -256,6 +257,13 @@ class Window:
 
 
 Miss = tuple[Any, Window, dict[int, int]]  # (code, window, cache hits when it opened)
+
+
+def _exists(path: str) -> bool:
+    try:
+        return os.path.lexists(os.path.join(os.getcwd(), path))
+    except OSError:
+        return False
 
 
 def cached_code(cache: Any) -> Any:
@@ -806,7 +814,7 @@ class Recorder:
                 value = value.split("=", 1)[0] + "=<value>"
             else:  # a repository path stays (S8 reads it); any other value may be a secret (-Dfoo=x)
                 shown = self.word(value, 1)
-                value = shown if shown.startswith(("./", "<")) or shown == "." else "<value>"
+                value = shown if shown.startswith("./") or shown == "." or shown in PLACEHOLDERS else "<value>"
             return name + "=" + value, ""
         if ASSIGNMENT.fullmatch(word):
             return word.split("=", 1)[0] + "=<value>", ""
@@ -827,6 +835,8 @@ class Recorder:
             rel = self.rel(word)
             if rel is None and index:
                 rel = self.under_root(word)  # <repo>/.git, <repo>/.venv: the repository's all the same
+            if rel is not None and index and word.startswith(".") and not _exists(word):
+                return "<value>"  # ".secret" is not a repository path unless one is there
             if rel is not None:
                 return rel if rel == "." else "./" + rel
             return os.path.basename(word) if index == 0 else "<outside>"

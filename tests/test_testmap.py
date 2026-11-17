@@ -478,7 +478,8 @@ def _records(root: Path, *records: dict) -> Path:
 
 def _shard(group: int, *failed: str, complete: bool = True, exitstatus: int = 1, collection: tuple = ()) -> dict:
     return {"group": group, "splits": 3, "complete": complete, "exitstatus": exitstatus if complete else None,
-            "failed": list(failed), "collection_errors": list(collection)}
+            "collected": 10, "reported": 10 if complete else 3, "failed": list(failed),
+            "collection_errors": list(collection)}
 
 
 def test_recorded_failures_are_compared_only_when_every_shard_recorded_them(tmp_path: Path) -> None:
@@ -497,7 +498,10 @@ def test_recorded_failures_are_compared_only_when_every_shard_recorded_them(tmp_
     # fewer tests reported than collected) is not taken at its word.
     interrupted = {**_shard(2, "tests/test_n.py::test_c"), "exitstatus": 2}
     short = {**_shard(2, "tests/test_n.py::test_c"), "collected": 10, "reported": 1}
-    for record in (interrupted, short):
+    # Nor is one without its test count, or whose "complete" is anything but true.
+    uncounted = {k: v for k, v in _shard(2, "tests/test_n.py::test_c").items() if k != "collected"}
+    truthy = [{**_shard(2, "tests/test_n.py::test_c"), "complete": value} for value in ("true", 1, [1])]
+    for record in (interrupted, short, uncounted, *truthy):
         assert "shards 2 " in str(tm.recorded_failures([every[0], record, every[2]], "failure")[1])
     assert "no shard left a failure record" in str(tm.recorded_failures([], "failure")[1])
     # Every shard finished without a failing test, yet the job is red: a step outside pytest failed.
@@ -556,6 +560,34 @@ def test_a_directory_that_fails_to_collect_covers_every_test_file_under_it(tmp_p
 
     assert outside(["tests/test_s.py::test_a"]) == "failures outside selection: 1 (module:tests/sub)"
     assert outside(["tests/test_s.py::test_a", "tests/sub/deep/test_y.py::test_c"]) == "failures outside selection: 0"
+
+
+def test_a_class_that_fails_to_collect_counts_for_its_file(tmp_path: Path) -> None:
+    # A bad parametrize on a method: pytest reports tests/test_n.py::TestK.
+    selection = {"full": False, "whole_files": [], "selected": ["tests/test_s.py::test_a"],
+                 "not_selected": ["tests/test_n.py::TestK::test_k", "tests/test_n.py::test_d"]}
+    tm.write_gz(selection, tmp_path / "selection.json.gz")
+    records = _records(tmp_path / "records", _shard(1, "tests/test_s.py::test_a"),
+                       _shard(2, collection=("tests/test_n.py::TestK",)), _shard(3, exitstatus=0))
+    summary = tmp_path / "summary.md"
+    tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(records),
+             "--test-result", "failure", "--summary", str(summary)])
+    assert "failures outside selection: 1 (module:tests/test_n.py::TestK)" in summary.read_text()
+
+
+def test_an_unavailable_comparison_gives_no_outside_count(tmp_path: Path) -> None:
+    selection = {"full": False, "whole_files": [], "selected": ["tests/test_s.py::test_a"],
+                 "not_selected": ["tests/test_n.py::test_c"]}
+    tm.write_gz(selection, tmp_path / "selection.json.gz")
+    summary = tmp_path / "summary.md"
+    for name, failed in (("inside", "tests/test_s.py::test_a"), ("outside", "tests/test_n.py::test_c")):
+        records = _records(tmp_path / name, _shard(1, failed), _shard(2, complete=False))
+        summary.write_text("")
+        tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(records),
+                 "--test-result", "failure", "--summary", str(summary)])
+        text = summary.read_text()
+        assert "comparison unavailable" in text and "0 outside" not in text
+        assert ("at least 1 outside the selection (tests/test_n.py::test_c)" in text) == (name == "outside")
 
 
 def test_failed_ids_reads_only_the_runs_own_summary() -> None:
