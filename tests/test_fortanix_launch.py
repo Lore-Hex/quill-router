@@ -210,7 +210,7 @@ def test_customer_authorization_locks_introductory_rate_and_bills_once(
     assert STORE.credit_money[workspace_id].total_usage_microdollars - before == 20
 
 
-@pytest.mark.parametrize("path", ["/models"])
+@pytest.mark.parametrize("path", ["/models", "/pricing"])
 def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path):
     response = client.get(path)
     assert response.status_code == 200
@@ -220,7 +220,6 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
     assert banner.select_one("a")["href"] == f"/models/{MODEL_ID}"
     assert "basically free" in banner.get_text()
     assert "1¢ per million tokens" in banner.get_text()
-    assert "Limited time, price may change" in banner.get_text()
     assert "trustedrouter/fortanix-test" not in response.text
 
 

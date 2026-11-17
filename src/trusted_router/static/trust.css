@@ -548,3 +548,11 @@
   }
 
 }
+
+/* Phones get a shorter hero: one short lead, no panel subline. */
+.trust-page .trust-lead-short { display: none; }
+@media (max-width: 760px) {
+  .trust-page .trust-lead-full,
+  .trust-page .agent-verify-text p { display: none; }
+  .trust-page .trust-lead-short { display: block; }
+}
