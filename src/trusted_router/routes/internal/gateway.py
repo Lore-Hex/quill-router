@@ -3360,8 +3360,11 @@ def _log_strict_budget_busy(
     strict authorize per key and 16 strict keys per process at once). This
     one waited STRICT_ADMISSION_WAIT_SECONDS for the slot, or found the
     key's or the process's waiters full (strict_budget.StrictBudgetBusy).
-    The backend is healthy, nothing is held, and the caller is asked to
-    retry.
+    Nothing is held, and the caller is asked to retry. On the Postgres
+    store (AWS and Azure) the same exception also ends a strict reserve
+    whose five-second budget ran out across serialization retries
+    (storage_postgres.py), which is database slowness rather than a busy
+    slot; the GCP counters this line feeds never see that store.
 
     The answer is the app's strict-busy 503 (main.py, Retry-After: 1), and
     the request log records only status and URL, so this line is what tells

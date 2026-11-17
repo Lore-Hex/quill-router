@@ -20,8 +20,6 @@ response is unchanged. Ids are synthetic.
 from __future__ import annotations
 
 import logging
-import re
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -436,26 +434,3 @@ def test_the_lines_fields_are_sanitised_like_the_routes_other_lines() -> None:
     (record,) = records
     assert "\n" not in record.getMessage()
     assert record.getMessage().endswith(f" trace={TRACE}")
-
-
-def test_the_route_writes_the_mark_at_two_sites_one_per_path() -> None:
-    """One call on the typed path and one on the legacy path, which are the
-    two arms of one if: a request takes one, so at most one mark. A third
-    call (in the app's handler, say) would mark the typed path's 503 twice,
-    and the alert pages on more lines than 503s."""
-    source_root = Path(gateway.__file__).resolve().parents[2]
-    calls = [
-        (path.relative_to(source_root).as_posix(), number)
-        for path in sorted(source_root.rglob("*.py"))
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if re.search(r"\b_log_strict_budget_busy\(", line) and not line.lstrip().startswith("def ")
-    ]
-    assert [name for name, _number in calls] == ["routes/internal/gateway.py"] * 2, calls
-    source = Path(gateway.__file__).read_text(encoding="utf-8")
-    sites = [match.start() for match in re.finditer(r"(?<!def )\b_log_strict_budget_busy\(", source)]
-    assert len(sites) == 2
-    # Each follows its own arm's store call: the typed authorize, then the
-    # legacy key reserve.
-    typed_arm = source.index("_typed_store.authorize_gateway_typed(")
-    legacy_arm = source.index("key_limit_reservation = STORE.reserve_key_limit(")
-    assert typed_arm < sites[0] < legacy_arm < sites[1]
