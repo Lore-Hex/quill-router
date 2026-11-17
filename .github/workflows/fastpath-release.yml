@@ -25,7 +25,17 @@ permissions:
 
 jobs:
   release:
-    if: ${{ github.repository == 'Lore-Hex/quill-router' && github.event.workflow_run.conclusion == 'success' }}
+    # Only a run of this repository's own main: a push, or a dispatch on main
+    # by a maintainer. `branches: [main]` matches the
+    # triggering run's head branch by name only, and a fork's pull request
+    # from a branch it calls main runs the fork's own ci.yml. Without these
+    # two conditions such a run, once green, would have this workflow build
+    # the fork's commit and upload it with the deploy identity.
+    if: >-
+      ${{ github.repository == 'Lore-Hex/quill-router'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     env:
       COMMIT: ${{ github.event.workflow_run.head_sha }}

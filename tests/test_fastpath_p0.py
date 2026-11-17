@@ -37,6 +37,24 @@ def test_release_workflow_uploads_only_ci_passed_main_commits() -> None:
     assert "workflows/fastpath-release.yml@refs/heads/main" in wif
 
 
+def test_release_ignores_runs_from_forks_and_pull_requests() -> None:
+    # `branches: [main]` matches the triggering run's head branch by name, so
+    # a fork's pull request from a branch named main would match it; the job
+    # condition must also require this repository and a push or dispatch run.
+    import yaml
+
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "fastpath-release.yml").read_text(encoding="utf-8")
+    )
+    condition = " ".join(workflow["jobs"]["release"]["if"].split())
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in condition
+    assert "github.event.workflow_run.event == 'push'" in condition
+    assert "github.event.workflow_run.event == 'workflow_dispatch'" in condition
+    assert "pull_request" not in condition
+    for clause in condition.removeprefix("${{").removesuffix("}}").split("&&"):
+        assert "||" not in clause or clause.strip().startswith("("), clause
+
+
 def test_deploy_identity_edits_no_project_iam_for_the_nodes() -> None:
     """The node's project roles are granted by hand; Terraform binds the
     deploy identity's own roles only through import blocks, never creating a
