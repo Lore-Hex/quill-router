@@ -121,6 +121,56 @@ test('PayPal disables $5, bumps to $25 and names the minimum', async ({ page }) 
   expect(posts[0].body).toContain('payment_method=paypal');
 });
 
+for (const width of [320, 1280]) test(`time to credit follows the method under the picker and in the summary at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await load(page);
+  const method = page.getByLabel('Payment method');
+  const line = page.locator('[data-credit-timing-line]');
+  const available = page.locator('[data-summary-timing]');
+  const cardLine = 'Credit is available as soon as your card payment goes through.';
+  await expect(method.locator('option')).toHaveText([
+    'Card, instant', 'Bank account (ACH), up to 4 business days', 'USDC, usually within minutes', 'PayPal, usually instant',
+  ]);
+  await expect(line).toBeVisible();
+  await expect(line).toHaveText(cardLine);
+  await expect(line).toHaveAttribute('aria-live', 'polite');
+  await expect(method).toHaveAttribute('aria-describedby', 'credits-timing');
+  await expect(line).not.toHaveClass(/is-slow/);
+  await expect(page.locator('.credits-summary dt').nth(2)).toHaveText('Credit available');
+  await expect(available).toHaveText('Instant');
+
+  await method.selectOption('ach');
+  await expect(line).toHaveText('Credit is added once the bank payment settles, which can take up to 4 business days. Pay by card if you need it sooner.');
+  await expect(line).toHaveClass(/is-slow/);
+  await expect(available).toHaveText('Up to 4 business days');
+  // The line sits between the picker and the summary, and fits the card.
+  const [select, box, summaryBox, cardBox] = await Promise.all([
+    method.boundingBox(), line.boundingBox(), page.locator('.credits-summary').boundingBox(), page.locator('.credits-add').boundingBox(),
+  ]);
+  expect(box.y).toBeGreaterThanOrEqual(select.y + select.height - 1);
+  expect(box.y + box.height).toBeLessThanOrEqual(summaryBox.y + 1);
+  expect(box.x + box.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  // An unfinished amount blanks the money, not the timing.
+  await preset(page, 'Other').check();
+  expect(await summary(page)).toEqual(['—', '—', '—']);
+  await expect(available).toHaveText('Up to 4 business days');
+  await page.getByLabel('Amount in US dollars').fill('40');
+  await expect(line).toHaveClass(/is-slow/);
+
+  await method.selectOption('auto');
+  await expect(line).toHaveText(cardLine);
+  await expect(line).not.toHaveClass(/is-slow/);
+  await expect(available).toHaveText('Instant');
+  await method.selectOption('stablecoin');
+  await expect(line).toHaveText('Credit is added once the USDC transfer confirms, usually within minutes.');
+  await expect(available).toHaveText('Usually within minutes');
+  await method.selectOption('paypal');
+  await expect(line).toHaveText('Credit is added when you return from PayPal, unless PayPal holds the payment for review.');
+  await expect(available).toHaveText('Usually instant');
+  await expect(line).not.toHaveClass(/is-slow/);
+});
+
 test('verification entry preselects the remaining amount and keeps the purpose', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   // $12 still owed: the middle preset becomes $12 and is selected.
@@ -154,13 +204,21 @@ for (const width of [390, 1280]) test(`returning customer: saved card, Change, s
   await expect(chip).toContainText('Visa ····4242');
   await expect(page.locator('.credits-row-methods')).toContainText('Visa ····4242');
   await expect(page.getByLabel('Payment method')).toBeHidden();
+  // The timing line stays visible while the chip stands in for the select.
+  await expect(page.locator('[data-credit-timing-line]')).toBeVisible();
+  await expect(page.locator('[data-credit-timing-line]')).toHaveText('Credit is available as soon as your card payment goes through.');
   await page.getByRole('button', { name: 'Change', exact: true }).click();
   await expect(chip).toBeHidden();
   const select = page.getByLabel('Payment method');
   await expect(select).toBeVisible();
   await expect(select).toBeFocused();
-  await expect(select.locator('option').first()).toHaveText('Visa ····4242');
-  await expect(select.locator('option').nth(1)).toHaveText('Another card');
+  // Stripe's relabel keeps the saved card's time to credit.
+  await expect(select.locator('option').first()).toHaveText('Visa ····4242, instant');
+  await expect(select.locator('option').nth(1)).toHaveText('Another card, instant');
+  await select.selectOption('ach');
+  await expect(page.locator('[data-summary-timing]')).toHaveText('Up to 4 business days');
+  await select.selectOption('auto');
+  await expect(page.locator('[data-summary-timing]')).toHaveText('Instant');
 
   await expect(page.getByRole('button', { name: 'Manage in Stripe' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Remove', exact: true })).toBeVisible();
@@ -312,6 +370,8 @@ test('wallet-only checkout derives the stablecoin ceiling', async ({ page }) => 
   await load(page, { wallet_only_billing: true });
   expect(await summary(page)).toEqual(['$25.00', '$0.59', '$25.59']);
   await expect(page.getByLabel('Payment method')).toHaveCount(0);
+  await expect(page.locator('[data-credit-timing-line]')).toHaveText('Credit is added once the USDC transfer confirms, usually within minutes.');
+  await expect(page.locator('[data-summary-timing]')).toHaveText('Usually within minutes');
   await preset(page, 'Other').check();
   const amount = page.getByLabel('Amount in US dollars');
   await expect(amount).toHaveAttribute('max', '9776.66');

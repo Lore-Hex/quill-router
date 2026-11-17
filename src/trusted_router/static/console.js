@@ -331,6 +331,16 @@ function initCreditsCheckout() {
   } catch {
     schedule = { rails: {}, rates: {} };
   }
+  // {method: {summary, line, slow}}: each method's time to credit, from the template.
+  let timings = {};
+  try {
+    timings = JSON.parse(form.dataset.creditTiming || "{}") || {};
+  } catch {
+    timings = {};
+  }
+  const timingLine = form.querySelector("[data-credit-timing-line]");
+  const timingText = form.querySelector("[data-credit-timing-text]");
+  const timingCell = form.querySelector("[data-summary-timing]");
   const paypalMinimum = Number(form.dataset.paypalMinimum) || 0;
   const presets = Array.from(form.querySelectorAll("[data-checkout-preset]"));
   const otherInput = form.querySelector("[data-checkout-amount]");
@@ -390,8 +400,10 @@ function initCreditsCheckout() {
     }
     return Number(checked.value) * 100;
   };
+  // Unchanged text is left alone so the polite live line is not re-announced
+  // on every keystroke in the amount field.
   const setText = (element, text) => {
-    if (element)
+    if (element && element.textContent !== text)
       element.textContent = text;
   };
 
@@ -429,6 +441,12 @@ function initCreditsCheckout() {
         (span) => (span.dataset.methods || "").split(" ").includes(selectedMethod()),
       );
       methodWrap.dataset.method = icon ? icon.dataset.methodIcon : "card";
+    }
+    const timing = timings[selectedMethod()];
+    if (timing) {
+      setText(timingText, timing.line);
+      setText(timingCell, timing.summary);
+      timingLine?.classList.toggle("is-slow", Boolean(timing.slow));
     }
     const cents = amountCents();
     const tooLow = paypal && Number.isFinite(cents) && cents < minimumCents;
@@ -515,6 +533,9 @@ function replaceCreditsStripeFragment(documentFragment, sourceSelector, targetSe
     target.replaceChildren(
       ...Array.from(source.childNodes, (node) => node.cloneNode(true)),
     );
+    // The saved-card <option> also names its time to credit.
+    if (target.dataset.creditsLabelSuffix)
+      target.append(target.dataset.creditsLabelSuffix);
   });
 }
 

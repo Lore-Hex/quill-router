@@ -68,6 +68,12 @@ def _fee_schedule_from_page(page: str) -> dict[str, Any]:
     return json.loads(html.unescape(match.group(1)))
 
 
+def _credit_timing_from_page(page: str) -> dict[str, Any]:
+    match = re.search(r'data-credit-timing="([^"]+)"', page)
+    assert match is not None
+    return json.loads(html.unescape(match.group(1)))
+
+
 def test_fee_table_matches_processing_fee_for_every_preset_and_rail() -> None:
     settings = Settings(environment="local")
     for rail, expected in EXPECTED_FEE_CENTS.items():
@@ -134,7 +140,7 @@ def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
         "auto": 957076, "card": 957076, "ach": 999250,
         "stablecoin": 977666, "paypal": 1000000, "adyen": 1000000,
     }
-    assert '<option value="ach">Bank account (ACH)</option>' in page
+    assert '<option value="ach">Bank account (ACH), up to 4 business days</option>' in page
     assert 'data-method-icon="bank" data-methods="ach"' in page
     # $25 on a card: $1.59 fee, $26.59 at checkout.
     assert ">$25.00</dd>" in page
@@ -143,6 +149,65 @@ def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
     assert "Top up to keep prepaid routes flowing" not in page
     assert "Lifetime usage" not in page
     assert "Migration credits" not in page
+
+
+def test_each_payment_method_names_its_time_to_credit_before_checkout() -> None:
+    """Time to credit is on the picker, under it and in the summary, not only
+    inside the collapsed Fees note after the button."""
+    client, _, _ = _console_client()
+    page = client.get("/console/credits").text
+
+    for option in (
+        '<option value="auto">Card, instant</option>',
+        '<option value="ach">Bank account (ACH), up to 4 business days</option>',
+        '<option value="stablecoin">USDC, usually within minutes</option>',
+        '<option value="paypal">PayPal, usually instant</option>',
+    ):
+        assert option in page, option
+    # The default method's line is server-rendered so it reads without script,
+    # and the select points at it.
+    assert (
+        '<p class="credits-timing" id="credits-timing" aria-live="polite" '
+        "data-credit-timing-line>"
+    ) in page
+    assert (
+        "<span data-credit-timing-text>Credit is available as soon as your "
+        "card payment goes through.</span>"
+    ) in page
+    assert 'aria-label="Payment method" aria-describedby="credits-timing"' in page
+    assert "<dt>Credit available</dt>\n        <dd data-summary-timing>Instant</dd>" in page
+    assert "credits-timing is-slow" not in page
+    submit = page.index("data-checkout-submit")
+    assert page.index("data-credit-timing-line") < submit
+    assert page.index("data-summary-timing") < submit
+    assert page.index("data-summary-timing") > page.index("data-summary-fee")
+    # The Fees note keeps its settlement detail.
+    fees = page[page.index('<details class="credits-fees">'):]
+    assert "ACH can take up to four business days" in fees
+
+    # console.js swaps the line and the summary from this table: one entry per
+    # method the page can post, with only the bank path marked slower.
+    timing = _credit_timing_from_page(page)
+    assert set(timing) == set(CHECKOUT_METHOD_RAILS)
+    assert {method for method, entry in timing.items() if entry.get("slow")} == {"ach"}
+    assert timing["ach"] == {
+        "label": "up to 4 business days",
+        "summary": "Up to 4 business days",
+        "line": (
+            "Credit is added once the bank payment settles, which can take up to "
+            "4 business days. Pay by card if you need it sooner."
+        ),
+        "slow": True,
+    }
+    assert timing["auto"] == timing["card"]
+    assert timing["auto"]["summary"] == "Instant"
+    assert timing["stablecoin"]["summary"] == "Usually within minutes"
+    assert timing["paypal"]["summary"] == "Usually instant"
+    assert timing["adyen"]["summary"] == "Usually within minutes"
+    for method, entry in timing.items():
+        assert entry["summary"] == entry["label"][:1].upper() + entry["label"][1:], method
+        for text in (entry["label"], entry["summary"], entry["line"]):
+            assert "!" not in text and "—" not in text, (method, text)
 
 
 @pytest.mark.parametrize("amount", ["1e1000000", "NaN", "Infinity", "10000"])
@@ -247,8 +312,13 @@ def test_saved_card_state_offers_change_manage_remove_and_the_switch() -> None:
 
     assert page.count("Saved card") >= 3  # chip, select option, row title, refill block
     assert "data-checkout-change" in page
-    assert '<option value="auto" data-credits-saved-card-label>' in page
-    assert '<option value="card">Another card</option>' in page
+    # The saved card keeps its time to credit when /stripe-details relabels it.
+    assert (
+        '<option value="auto" data-credits-saved-card-label '
+        'data-credits-label-suffix=", instant">Saved card, instant</option>'
+    ) in page
+    assert '<option value="card">Another card, instant</option>' in page
+    assert "<dd data-summary-timing>Instant</dd>" in page
     assert 'action="/console/credits/payment-methods/manage"' in page
     assert 'action="/console/credits/payment-methods/remove"' in page
     assert 'action="/console/credits/payment-methods/add"' not in page

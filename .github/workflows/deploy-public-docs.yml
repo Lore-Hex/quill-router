@@ -1,0 +1,65 @@
+# Docs use the same CI-built image, but do not roll unchanged API processes.
+name: Publish prepared public docs
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      image:
+        required: true
+        type: string
+    outputs:
+      full_rollout:
+        value: ${{ jobs.deploy-public-docs.outputs.full_rollout }}
+
+# Share ordering with full releases. Never cancel a serving mutation.
+concurrency:
+  group: deploy-trusted-router
+  queue: max
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  deploy-public-docs:
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 290
+    outputs:
+      full_rollout: ${{ steps.publish.outputs.full_rollout }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREPARED_TAG: ${{ inputs.sha }}
+      PREPARED_IMAGE: ${{ inputs.image }}
+      TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TR_DEPLOY_WAIT_SECONDS: "14400"
+      TR_DEPLOY_MUTEX_TTL_SECONDS: "21600"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+      - name: Install completion-check runtime
+        run: uv sync --frozen
+      - name: Qualify, publish and verify docs under an exclusive public lease
+        id: publish
+        run: python3 -m scripts.deploy.public_docs publish
+      - name: Record public-only delivery
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.publish.outputs.delivered == 'true'
+        with:
+          name: public-release-${{ github.run_attempt }}
+          path: release.json
+          if-no-files-found: error
+          retention-days: 90

@@ -1,8 +1,10 @@
 #!/bin/bash
 # The fast path's node: installs the release the instance's metadata names
 # (fastpath-release, a commit on main whose CI passed, built and uploaded by
-# .github/workflows/fastpath-release.yml) and runs it as the systemd unit
-# `fastpath`, which docs/runbooks/fastpath-deploy.md marks leaving and stops.
+# .github/workflows/fastpath-release.yml), each file verified first against
+# the release's SHA256SUMS and the digests infra/fastpath.tf pins beside it,
+# and runs it as the systemd unit `fastpath`, which
+# docs/runbooks/fastpath-deploy.md marks leaving and stops.
 set -euo pipefail
 # The node's journal reaches Cloud Logging through the Ops Agent, set up
 # before anything else so a node with no release, or one whose release
@@ -284,20 +286,69 @@ elif [ -n "$policy_url" ] || { [ -n "$decide_shadow" ] && [ "$decide_shadow" != 
   exit 1
 fi
 install -d /opt/fastpath
+# The release is verified before any of it is installed. The release
+# workflow publishes SHA256SUMS beside the binaries, and infra/fastpath.tf
+# pins two digests beside the release (local.fastpath_release_digests):
+# fastpath-release-sums-sha256, SHA256SUMS's own, and
+# fastpath-release-sha256, the node binary's. So a release prefix
+# overwritten after its pin changes nothing a node runs: its SHA256SUMS no
+# longer matches the pin, or its files no longer match its SHA256SUMS.
+# Every file is downloaded into a staging directory and checked there;
+# only when every check passes is any of them moved into place. Any
+# failure, a digest that differs, a SHA256SUMS that is missing or
+# unreadable, a pin that is absent or malformed, stops the script before it
+# installs a file, writes the unit or starts it: a new node stays stopped,
+# a rebooted one keeps the binaries and the unit it had.
+release_sha256="$(attribute fastpath-release-sha256)" || exit 1
+release_sums_sha256="$(attribute fastpath-release-sums-sha256)" || exit 1
+refuse_release() {
+  echo "fastpath: release $release failed verification: $1; nothing installed, the unit not written or started" | systemd-cat -t fastpath -p err
+  exit 1
+}
+is_sha256() { [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
+[[ $release =~ ^[0-9a-f]{40}$ ]] || refuse_release "fastpath-release is not a 40-character commit"
+is_sha256 "$release_sha256" || refuse_release "fastpath-release-sha256 is not a pinned sha256 digest"
+is_sha256 "$release_sums_sha256" || refuse_release "fastpath-release-sums-sha256 is not a pinned sha256 digest"
+rm -rf /opt/fastpath/.stage.*
+stage="$(mktemp -d /opt/fastpath/.stage.XXXXXX)"
+trap 'rm -rf "$stage"' EXIT
+gcloud storage cp "gs://${release_bucket}/fastpath/$release/SHA256SUMS" "$stage/SHA256SUMS" \
+  || refuse_release "its SHA256SUMS could not be read"
+sums_got="$(sha256sum < "$stage/SHA256SUMS" | cut -d' ' -f1)"
+[ "$sums_got" = "$release_sums_sha256" ] \
+  || refuse_release "its SHA256SUMS has sha256 $sums_got, not the pinned $release_sums_sha256"
+# stage_verified FILE downloads FILE into the staging directory and checks
+# it against SHA256SUMS. It returns 1 when SHA256SUMS does not list FILE;
+# a listing that is not one well-formed digest, a download that fails, or a
+# download whose digest differs stops the script.
+staged=""
+stage_verified() {
+  local file="$1" want got
+  want="$(awk -v name="$file" '$2 == name { print $1 }' "$stage/SHA256SUMS")"
+  [ -n "$want" ] || return 1
+  is_sha256 "$want" || refuse_release "its SHA256SUMS does not list one sha256 digest for $file"
+  gcloud storage cp "gs://${release_bucket}/fastpath/$release/$file" "$stage/$file" \
+    || refuse_release "its SHA256SUMS lists $file but $file could not be read"
+  got="$(sha256sum < "$stage/$file" | cut -d' ' -f1)"
+  [ "$got" = "$want" ] || refuse_release "$file has sha256 $got, not SHA256SUMS's $want"
+  staged="$staged $file"
+}
 for binary in fastpath fastpathctl; do
-  gcloud storage cp "gs://${release_bucket}/fastpath/$release/$binary" "/opt/fastpath/$binary.new"
-  chmod 0755 "/opt/fastpath/$binary.new"
-  mv "/opt/fastpath/$binary.new" "/opt/fastpath/$binary"
+  stage_verified "$binary" || refuse_release "its SHA256SUMS does not list $binary"
 done
+fastpath_got="$(sha256sum < "$stage/fastpath" | cut -d' ' -f1)"
+[ "$fastpath_got" = "$release_sha256" ] \
+  || refuse_release "fastpath has sha256 $fastpath_got, not the pinned $release_sha256"
 # The load generator, its mix and the watch (rollout P1) ride with releases
 # from P1 on; a release without them still runs the node.
 for tool in loadgen fastpathwatch load-mix.json; do
-  if gcloud storage cp "gs://${release_bucket}/fastpath/$release/$tool" "/opt/fastpath/$tool.new"; then
-    chmod 0755 "/opt/fastpath/$tool.new"
-    mv "/opt/fastpath/$tool.new" "/opt/fastpath/$tool"
-  else
+  if ! stage_verified "$tool"; then
     echo "fastpath: release $release carries no $tool; P1's tools are not installed" | systemd-cat -t fastpath -p warning
   fi
+done
+for file in $staged; do
+  chmod 0755 "$stage/$file"
+  mv "$stage/$file" "/opt/fastpath/$file"
 done
 echo "$release" > /opt/fastpath/release
 cat > /etc/systemd/system/fastpath.service <<UNIT

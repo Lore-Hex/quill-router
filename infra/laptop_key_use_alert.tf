@@ -26,7 +26,9 @@
 #     tr-laptop-key-known-addresses --project=quill-cloud-proxy --data-file=-
 #
 # followed by an infra-apply run. The value is sensitive to Terraform, so a
-# plan in the public CI log shows the filter as hidden. Every infra-apply
+# plan in the public CI log shows the filter as hidden. The same list decides
+# which user-login secret reads page in infra/secret_reader_alert.tf, so an
+# address added here quiets both. Every infra-apply
 # reads the newest version: add the replacement before disabling an old one,
 # or every plan fails until a readable version exists.
 #

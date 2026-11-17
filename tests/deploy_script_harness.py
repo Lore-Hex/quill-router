@@ -598,7 +598,11 @@ import pathlib
 import sys
 ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[sys.argv[2]]
 mode = "untrusted" if ingress == "all" else "edge_header"
-print(json.dumps({"metadata": {"name": "trusted-router-public-active"}, "spec": {"containers": [{"env": [{"name": "TR_RATE_LIMIT_CLIENT_IP_MODE", "value": mode}]}]}}, separators=(",", ":")))
+import os
+env = [{"name": "TR_RATE_LIMIT_CLIENT_IP_MODE", "value": mode}]
+if os.environ.get("HARNESS_PUBLIC_SOURCE_COMMIT"):
+    env.append({"name": "TR_PUBLIC_SOURCE_COMMIT", "value": os.environ["HARNESS_PUBLIC_SOURCE_COMMIT"]})
+print(json.dumps({"metadata": {"name": "trusted-router-public-active"}, "spec": {"containers": [{"env": env}]}}, separators=(",", ":")))
 PY
     exit 0
   fi

@@ -173,6 +173,8 @@ def test_auto_refill_fires_below_threshold(
     assert kwargs["payment_method"] == "pm_test_456"
     assert kwargs["off_session"] is True
     assert kwargs["confirm"] is True
+    # Stripe refuses a saved bank account or wallet instead of debiting it.
+    assert kwargs["payment_method_types"] == ["card", "link"]
     assert kwargs["metadata"]["workspace_id"] == configured_workspace
     workspace = STORE.get_workspace(configured_workspace)
     assert workspace is not None

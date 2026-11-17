@@ -24,7 +24,8 @@
       "fixed_output_price_microdollars": {
         "1k": 1364
       },
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 0,
       "output_token_price_per_m": 0,
       "missing_since": "2026-11-07"
@@ -71,7 +72,8 @@
       "upstream_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 200000,
       "missing_since": "2026-11-07"
@@ -119,7 +121,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 60000,
       "missing_since": "2026-11-07"
@@ -167,7 +170,8 @@
       "upstream_id": "mistralai/Devstral-Small-2505",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 128000,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 300000,
       "missing_since": "2026-11-07"
@@ -214,7 +218,8 @@
       "upstream_id": "moonshotai/Kimi-K2.5",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 2200000,
       "missing_since": "2026-11-07"
@@ -237,7 +242,8 @@
       "upstream_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 256000,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 200000,
       "missing_since": "2026-11-07"
@@ -261,7 +267,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
       "missing_since": "2026-11-07"
@@ -285,7 +292,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 200000,
       "missing_since": "2026-11-07"
@@ -309,7 +317,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 200000,
       "missing_since": "2026-11-07"
@@ -332,7 +341,8 @@
       "upstream_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 32768,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 30000,
       "missing_since": "2026-11-07"
@@ -355,7 +365,8 @@
       "upstream_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 30000,
       "missing_since": "2026-11-07"
@@ -379,7 +390,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 40960,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 70000,
       "output_token_price_per_m": 200000,
       "missing_since": "2026-11-07"
@@ -402,7 +414,8 @@
       "upstream_id": "Qwen/Qwen3-235B-A22B",
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 32000,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 600000,
       "missing_since": "2026-11-07"
@@ -426,7 +439,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-flash-next",
       "context_length": 32768,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 600000,
       "missing_since": "2026-11-07"
@@ -450,7 +464,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 40960,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 250000,
       "missing_since": "2026-11-07"
@@ -474,7 +489,8 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 30000,
       "missing_since": "2026-11-07"

@@ -42,6 +42,51 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Zro's public price table https://zro.moonmath.ai/docs/models and
+        # https://zro.moonmath.ai/docs/models/abyss1, verified 2026-11-16:
+        # Abyss 1 (the uncensored DeepSeek V4.1 Flash) is now billed at V4.1
+        # Flash's $0.30 input / $1.10 output / $0.01 cache read per M, double
+        # its $0.15 / $0.55 / $0.005 launch rates. Exactly 2x on every axis.
+        (
+            "zro/abyss1 [zro:zro:abyss1]",
+            "prompt", Decimal("0.00000015"), Decimal("0.0000003"),
+        ),
+        (
+            "zro/abyss1 [zro:zro:abyss1]",
+            "completion", Decimal("0.00000055"), Decimal("0.0000011"),
+        ),
+        (
+            "zro/abyss1 [zro:zro:abyss1] cached-input",
+            "prompt", Decimal("0.000000005"), Decimal("0.00000001"),
+        ),
+        # IO's GET https://api.intelligence.io.solutions/api/v1/models, the
+        # tariff source named by https://io.net/docs/guides/payment/io-intelligence-payments,
+        # verified 2026-11-16 22:51Z and 23:03Z: DeepSeek-V4.1-Flash is
+        # input=8.202e-7, output=3.3534e-6, cache_read=4.101e-7 USD/token, up
+        # from 3.6e-7 / 1.44e-6 / 1.8e-7 (x2.28 / x2.33 / x2.28). IO reprices
+        # often, so these are the exact observed values; the other 41 rows were
+        # unchanged or moved under 2x. The snapshot uses the lowercase native ID.
+        (
+            "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek/deepseek-v4.1-flash]",
+            "prompt", Decimal("0.00000036"), Decimal("0.0000008202"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek/deepseek-v4.1-flash]",
+            "completion", Decimal("0.00000144"), Decimal("0.0000033534"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek-ai/DeepSeek-V4.1-Flash]",
+            "prompt", Decimal("0.00000036"), Decimal("0.0000008202"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek-ai/DeepSeek-V4.1-Flash]",
+            "completion", Decimal("0.00000144"), Decimal("0.0000033534"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash "
+            "[io-net:io-net:deepseek-ai/DeepSeek-V4.1-Flash] cached-input",
+            "prompt", Decimal("0.00000018"), Decimal("0.0000004101"),
+        ),
         # Regolo's public price list https://regolo.ai/pricing, verified
         # 2026-11-14: apertus-70b is EUR 1.00 input / EUR 3.40 output per M
         # (was EUR 0.40 / EUR 2.10). Only input reaches the 2x gate. The

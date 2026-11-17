@@ -92,6 +92,18 @@ import {
   id = "/aws/cloudtrail/quill:UnauthorizedAPICalls"
 }
 
+# Created with the AWS CLI on 2026-11-16 for the enclave bundle signer; adopted so the
+# release exception in aws_security_alarms.tf is reviewed code.
+import {
+  to = aws_cloudwatch_log_metric_filter.enclave_bundle_signer_use
+  id = "/aws/cloudtrail/quill:quill-enclave-bundle-signer-use"
+}
+
+import {
+  to = aws_cloudwatch_metric_alarm.enclave_bundle_signer_use
+  id = "TR-EnclaveBundleSignerUse"
+}
+
 # Created outside Terraform on 2026-08-02 and 2026-08-20; adopted to pin their
 # GitHub OIDC trust (infra/aws_github_oidc_roles.tf).
 import {

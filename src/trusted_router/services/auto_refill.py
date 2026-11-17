@@ -28,6 +28,14 @@ from trusted_router.typed_balance import live_credit_summary
 
 log = logging.getLogger(__name__)
 
+# Auto-refill charges the saved method off-session and books the result like
+# an immediate card payment (Link wraps a card). Dynamic ("auto") Checkout can
+# also be paid by bank debit, Cash App or Amazon Pay, and Checkout's
+# setup_future_usage saves those too. The webhook saves only these types, and
+# the off-session charge is restricted to them, so a bank account or wallet is
+# never debited by an automatic top-up the customer did not choose.
+AUTO_REFILL_PAYMENT_METHOD_TYPES: tuple[str, ...] = ("card", "link")
+
 # Minimum interval between failed attempts so a single bad card can't generate
 # an infinite stream of declines. 5 minutes is a balance between "user expects
 # refill within seconds" and "Stripe's per-customer rate limit".
@@ -143,6 +151,9 @@ def maybe_charge_after_settle(
             currency="usd",
             customer=account.stripe_customer_id,
             payment_method=account.stripe_payment_method_id,
+            # A bank account or wallet saved before the webhook allowlist is
+            # refused by Stripe here instead of debited off-session.
+            payment_method_types=list(AUTO_REFILL_PAYMENT_METHOD_TYPES),
             off_session=True,
             confirm=True,
             description="TrustedRouter auto-refill",

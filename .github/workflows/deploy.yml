@@ -13,6 +13,8 @@
 #
 # Trigger: deploys ONLY when files that affect the running service change.
 # Docs / README / unrelated config edits do not trigger a rollout.
+# The deployed /docs template has a separate, fully gated website-only lane;
+# mismatched serving application inputs fall back to the full rollout.
 #
 # CI gate: the first step blocks until ci.yml concludes SUCCESS for the
 # same SHA. Push-to-main fires ci.yml and deploy.yml in parallel; without
@@ -37,6 +39,7 @@ on:
       - "uv.lock"
       - ".github/workflows/deploy.yml"
       - ".github/workflows/deploy-production.yml"
+      - ".github/workflows/deploy-public-docs.yml"
   workflow_dispatch:
     inputs:
       track_main:
@@ -56,6 +59,27 @@ permissions:
   actions: read     # for the CI-green gate (gh run list)
 
 jobs:
+  scope:
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    outputs:
+      public_docs: ${{ steps.scope.outputs.public_docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Classify only the docs page and non-image test/documentation changes
+        id: scope
+        env:
+          AUTOMATIC: ${{ github.event_name == 'push' && inputs.hotfix != true }}
+        run: |
+          set -euo pipefail
+          public_docs=false
+          if [ "$AUTOMATIC" = true ]; then
+            public_docs="$(python3 -m scripts.deploy.public_docs scope)"
+          fi
+          echo "public_docs=${public_docs}" >> "$GITHUB_OUTPUT"
+
   # A push that deploys supersedes the deploys of older pushes that are still
   # preparing: each would ship a subset of this commit, one rollout before this
   # one ships it all. While such a deploy's CI run has not started a test
@@ -289,8 +313,22 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  public-docs:
+    needs: [gate-on-ci, build-image, scope]
+    if: needs.scope.outputs.public_docs == 'true'
+    uses: ./.github/workflows/deploy-public-docs.yml
+    with:
+      sha: ${{ needs.build-image.outputs.sha }}
+      image: ${{ needs.build-image.outputs.image }}
+    secrets: inherit
+
   rollout:
-    needs: [gate-on-ci, build-image]
+    needs: [gate-on-ci, build-image, scope, public-docs]
+    if: >-
+      ${{ always() && !cancelled() && needs.gate-on-ci.result == 'success' &&
+          needs.build-image.result == 'success' && needs.scope.result == 'success' &&
+          ((needs.scope.outputs.public_docs == 'false' && needs.public-docs.result == 'skipped') ||
+           (needs.public-docs.result == 'success' && needs.public-docs.outputs.full_rollout == 'true')) }}
     uses: ./.github/workflows/deploy-production.yml
     with:
       sha: ${{ needs.build-image.outputs.sha }}

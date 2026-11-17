@@ -3671,6 +3671,24 @@ def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
         _rotation_max_tokens("google-ai-studio", "google/gemini-3-flash-preview")
         == 2048
     )
+    # Every Gemini release since 2.5 thinks before visible content. Gemini 4
+    # (Sentry QUILL-ROUTER-GY/GX) exhausted 16 tokens with finish=length on
+    # AI Studio because the rule listed releases instead of matching versions.
+    for provider in ("google-ai-studio", "google-vertex"):
+        for model in (
+            "google/gemini-4-carbon",
+            "google/gemini-4-hydrogen",
+            "google/gemini-4-argon",
+            "google/gemini-3.8-flash",
+            "google/gemini-5-pro",
+            "gemini-4-carbon",
+        ):
+            assert _rotation_max_tokens(provider, model) == 2048, (provider, model)
+    # Pre-thinking Gemini releases and non-Gemini names keep their budgets.
+    assert _rotation_max_tokens("google-vertex", "google/gemini-2.0-flash") == 16
+    assert _rotation_max_tokens("google-ai-studio", "google/gemini-flash-latest") == 16
+    assert _rotation_max_tokens("google-ai-studio", "google/gemini-omni-1.2-flash") == 16
+    assert _rotation_max_tokens("together", "google/gemma-4-31b-it") == 512
     assert _rotation_max_tokens("cerebras", "cerebras/gpt-oss-120b") == 512
     assert _rotation_max_tokens("cerebras", "z-ai/glm-4.7") == 512
     assert _rotation_max_tokens("zai", "z-ai/glm-4.6") == 512

@@ -62,6 +62,19 @@ WORKERS = 64
 # a burst of authorizes must not take its permits
 # (docs/design/fast-admission-streams.md section 4.7).
 HEARTBEAT_WORKERS = 256
+# A heartbeat the front door answered `retry` is sent once more, the same
+# bytes, within the same budget: the owner answers a resend of a heartbeat it
+# took as a replay of it, by the record it already handed over, and takes one
+# it refused as the first (owner Lease.Heartbeat), so the resend never adds a
+# record. An acknowledgement that came after the front door's owner wait then
+# lands on the resend instead of stopping the stream with a 503
+# (docs/design/fast-admission-streams.md section 8.3). A `retry` answered
+# sooner than HEARTBEAT_RESEND_AFTER_SECONDS after the first send (a lease
+# whose publishes are failing refuses a new heartbeat at once, and resumes
+# them after a backoff) is resent only then; none is sent with less than
+# HEARTBEAT_RESEND_FLOOR_SECONDS of the budget left.
+HEARTBEAT_RESEND_AFTER_SECONDS = 0.25
+HEARTBEAT_RESEND_FLOOR_SECONDS = 0.1
 
 ADMITTED = "admitted"
 BUSY = "busy"
@@ -112,10 +125,12 @@ class Terminal:
 @dataclass(frozen=True)
 class HeartbeatAnswer:
     """A heartbeat's answer: its status, and for `accepted` the deadline the
-    owner granted (None for any other status)."""
+    owner granted (None for any other status); `resent` when it is the answer
+    to the resend of a first send answered `retry`."""
 
     status: str
     deadline: datetime | None
+    resent: bool = False
 
 
 @dataclass(frozen=True)
@@ -310,10 +325,12 @@ class FrontDoorClient:
         timeout_seconds: float,
         clock: Callable[[], float] = time.monotonic,
         transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._front_doors = front_doors
         self._budget = float(timeout_seconds)
         self._clock = clock
+        self._sleep = sleep
         self._client = httpx.Client(timeout=timeout_seconds, transport=transport, follow_redirects=False)
         self._breakers: dict[str, _Breaker] = {}
         self._turn = 0
@@ -422,9 +439,13 @@ class FrontDoorClient:
         take the deadline it last granted as the echo (section 4.6 item 1). A
         front door or owner from before increment 2 refuses the field, so the
         setting that admits streams moves only once increment 2b is pinned on
-        every owner and front door (docs/runbooks/fastpath-streams.md). Raises
-        FrontDoorUnavailable when no front door answered, or the answer does
-        not parse."""
+        every owner and front door (docs/runbooks/fastpath-streams.md).
+
+        A first send answered `retry` is sent once more, the same body, within
+        what remains of the same budget (HEARTBEAT_RESEND_AFTER_SECONDS), so
+        the whole call, both sends and the wait between them, never takes
+        longer than one call did. Raises FrontDoorUnavailable when no front
+        door answered, or the answer does not parse."""
         body: dict[str, Any] = {
             "Envelope": envelope,
             "GatewaySeq": int(seq),
@@ -436,18 +457,29 @@ class FrontDoorClient:
             body["Basis"] = _bytes(basis)
         if seq > 1:
             body["EchoGranted"] = True
-        answer = self._call("/v1/heartbeat", body, permits=self._heartbeat_permits)
+        began = self._clock()
+        deadline = began + self._budget
+        answer = self._call("/v1/heartbeat", body, permits=self._heartbeat_permits, deadline=deadline)
+        resent = False
+        if answer is not None and answer.get("Status") == RETRY:
+            resend_at = max(began + HEARTBEAT_RESEND_AFTER_SECONDS, self._clock())
+            if deadline - resend_at >= HEARTBEAT_RESEND_FLOOR_SECONDS:
+                pause = resend_at - self._clock()
+                if pause > 0:
+                    self._sleep(pause)
+                answer = self._call("/v1/heartbeat", body, permits=self._heartbeat_permits, deadline=deadline)
+                resent = True
         if answer is None:
-            raise FrontDoorUnavailable("/v1/heartbeat")
+            raise FrontDoorUnavailable("/v1/heartbeat: resent" if resent else "/v1/heartbeat")
         status = answer.get("Status")
         if not isinstance(status, str) or not status:
             raise FrontDoorUnavailable("/v1/heartbeat: malformed answer")
         if status != ACCEPTED:
-            return HeartbeatAnswer(status=status, deadline=None)
-        deadline = _parse_time(answer.get("Deadline"))
-        if deadline is None:
+            return HeartbeatAnswer(status=status, deadline=None, resent=resent)
+        granted = _parse_time(answer.get("Deadline"))
+        if granted is None:
             raise FrontDoorUnavailable("/v1/heartbeat: accepted without a deadline")
-        return HeartbeatAnswer(status=status, deadline=deadline)
+        return HeartbeatAnswer(status=status, deadline=granted, resent=resent)
 
     # -- disposition ------------------------------------------------------
 
@@ -483,17 +515,25 @@ class FrontDoorClient:
         *,
         permits: threading.BoundedSemaphore | None = None,
         unserved_ok: bool = False,
+        deadline: float | None = None,
     ) -> dict[str, Any] | None:
         """One JSON call within one budget for the whole call, the membership
-        read included: the caller waits at most the budget. None when no
-        front door answered 200 with a JSON object in time. `permits` is the
-        pool the call's worker takes from: the authorize and terminal one
-        unless named."""
+        read included: the caller waits at most the budget, or until
+        `deadline` (on the client's clock) when one is given, a budget the
+        caller has begun to spend. None when no front door answered 200 with
+        a JSON object in time. `permits` is the pool the call's worker takes
+        from: the authorize and terminal one unless named."""
         pool = permits if permits is not None else self._permits
         if not pool.acquire(blocking=False):
             logger.warning("fastpath %s: every worker busy", path)
             return None
-        deadline = self._clock() + self._budget
+        if deadline is None:
+            deadline = self._clock() + self._budget
+        wait = min(deadline - self._clock(), self._budget)
+        if wait <= 0:
+            pool.release()
+            logger.warning("fastpath %s: budget spent", path)
+            return None
         done = threading.Event()
         answer: list[dict[str, Any] | None] = [None]
 
@@ -503,8 +543,11 @@ class FrontDoorClient:
             except Exception:  # noqa: BLE001 - a front door call must not fail the request
                 logger.exception("fastpath %s failed", path)
             finally:
-                done.set()
+                # The permit comes back before the caller is woken: a
+                # caller that calls again at once (a heartbeat's resend) must
+                # find it free, not race this thread for it.
                 pool.release()
+                done.set()
 
         worker = threading.Thread(target=run, name="fastpath-front-door", daemon=True)
         try:
@@ -514,7 +557,7 @@ class FrontDoorClient:
             pool.release()
             logger.warning("fastpath %s: no thread", path)
             return None
-        if not done.wait(self._budget):
+        if not done.wait(wait):
             logger.warning("fastpath %s: budget spent", path)
             return None
         return answer[0]
