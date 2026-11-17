@@ -552,6 +552,13 @@ jobs:
     needs: [test, scope]
     if: ${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}
     runs-on: ubuntu-24.04
+    # The shadow test selection reads the per-test footprint map (an artifact
+    # of the "Test map" workflow), the pull request's labels and this run's
+    # failed shard logs.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -562,6 +569,41 @@ jobs:
         with:
           pattern: coverage-*
           path: shards
+      # Shadow test selection (scripts/ci/testmap.py): which tests this pull
+      # request's diff can reach, from the newest per-test footprint map at or
+      # before its base, and which of this run's failures it would have
+      # missed. Report only: nothing reads it to decide what runs, the test
+      # job ran every shard, and neither step can fail the job. Here rather
+      # than in the scope job, which every path-scoped job waits on. Before
+      # the floor, which exits on a failed shard.
+      - name: Shadow test selection (report only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          python3 scripts/ci/testmap.py shadow --base "${PR_BASE_SHA}" --head "${GITHUB_SHA}"
+          --pr "${PR_NUMBER}" --out selection.json.gz
+      - name: Failures outside the shadow selection (report only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/testmap.py compare --selection selection.json.gz
+      - name: Upload the shadow test selection
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-selection
+          path: selection.json.gz
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Combine and enforce the floor
         run: |
           set -euo pipefail
