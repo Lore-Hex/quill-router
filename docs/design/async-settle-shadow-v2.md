@@ -1,3 +1,4 @@
+<!-- heavy lane path-scope demonstration on #2693, reverted -->
 # Async settle shadow evidence policy v2: certifiable on a real fleet
 
 Status: **design amendment, 2026-10-11; not implemented or enabled by this document**.
