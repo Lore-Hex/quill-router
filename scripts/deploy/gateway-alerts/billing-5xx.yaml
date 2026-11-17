@@ -11,10 +11,12 @@ documentation:
     excluded here only because "TR Gateway: authorize 503 not lease headroom"
     pages on every one the app did not mark as designed and retryable: lease
     headroom (the 503 TR_FASTPATH_LEASE_HEADROOM_503 answers when a
-    workspace's credits are held by fast-path leases) or rebalance busy (the
+    workspace's credits are held by fast-path leases), rebalance busy (the
     503 for credit spread across shards while the workspace's rebalance
-    cooldown is held, which "TR Gateway: credit rebalance busy" bounds);
-    that policy must exist before this filter is
+    cooldown is held, which "TR Gateway: credit rebalance busy" bounds) or
+    strict budget busy (the 503 for a strict-budget key that cannot get its
+    per-process admission slot, which "TR Gateway: strict budget busy"
+    bounds); the authorize-503 policy must exist before this filter is
     applied. Inspect Cloud Run request logs, Spanner transaction contention,
     and billing invariants. Do not silence the alert merely because Spanner is
     otherwise healthy. Runbook: docs/spanner-reliability.md.

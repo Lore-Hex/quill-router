@@ -1,24 +1,27 @@
-"""The billing 5xx alert and deploy gate set aside the two authorize 503s the
-app answers by design, and nothing else.
+"""The billing 5xx alert and deploy gate set aside the three authorize 503s
+the app answers by design, and nothing else.
 
 With TR_FASTPATH_LEASE_HEADROOM_503 on, authorize answers 503 (Retry-After: 1)
 when a workspace's shortfall is held in fast-path leases. It answers the
 storage 503 (Retry-After: 1) when a workspace's credit covers the hold but is
 spread across credit shards and the rebalance cooldown is held by its other
-requests. Cloud Run's request log records only status and URL, so each 503 is
-told apart by the line the app writes for it,
-billing.lease_headroom_unavailable or billing.credit_rebalance_busy:
+requests. It answers the strict-busy 503 (Retry-After: 1) when a key with a
+strict budget cannot get its per-process admission slot. Cloud Run's request
+log records only status and URL, so each 503 is told apart by the line the
+app writes for it, billing.lease_headroom_unavailable,
+billing.credit_rebalance_busy or billing.strict_budget_busy:
 
 * the deploy gate (scripts/deploy/assert_no_billing_5xx.sh) pairs each
   authorize 503 with a line by trace, and fails on any 503 left over;
 * "TR Gateway: billing path 5xx" (gateway-alerts/billing-5xx.yaml) sets
   authorize 503s aside, and "TR Gateway: authorize 503 not lease headroom"
   (gateway-alerts/billing-authorize-503.yaml) pages when the authorize 503
-  count and the count of both lines differ;
+  count and the count of all three lines differ;
 * "TR Gateway: credit rebalance busy"
-  (gateway-alerts/billing-rebalance-busy.yaml) pages on more than two of
-  the second line in ten minutes or more than five in an hour, which the
-  policy above no longer pages on.
+  (gateway-alerts/billing-rebalance-busy.yaml) and "TR Gateway: strict
+  budget busy" (gateway-alerts/billing-strict-budget-busy.yaml) each page
+  on more than two of their line in ten minutes or more than five in an
+  hour, which the policy above no longer pages on.
 
 The filters are EVALUATED here against log entries, not grepped: a small
 evaluator for the Logging query constructs the filters use, and the gate is
@@ -53,8 +56,22 @@ RELIABILITY = DEPLOY / "gateway_reliability.sh"
 ALERT_5XX = DEPLOY / "gateway-alerts" / "billing-5xx.yaml"
 ALERT_503 = DEPLOY / "gateway-alerts" / "billing-authorize-503.yaml"
 ALERT_BUSY = DEPLOY / "gateway-alerts" / "billing-rebalance-busy.yaml"
+ALERT_STRICT = DEPLOY / "gateway-alerts" / "billing-strict-budget-busy.yaml"
 HEADROOM_COUNTER = "trustedrouter_gateway_lease_headroom_503"
 BUSY_COUNTER = "trustedrouter_gateway_rebalance_busy_503"
+STRICT_COUNTER = "trustedrouter_gateway_strict_budget_busy_503"
+# The WARNING the app's handler writes for every strict-busy 503 (main.py,
+# _log_storage_503), as Cloud Run keeps it: the same event name as the mark,
+# another level and logger, and no trace. It must never count as the mark.
+STRICT_HANDLER_WARNING = (
+    "WARNING trusted_router.main billing.strict_budget_busy method=POST "
+    "route=/internal/gateway/authorize request_id=req-1 error_class=StrictBudgetBusy "
+    "workspace_id=ws-1"
+)
+STRICT_ROUTE_WARNING = (
+    "WARNING trusted_router.routes.internal.gateway billing.authorize_strict_budget_busy "
+    "request_id=req-1 workspace_id=ws-1 error_class=StrictBudgetBusy"
+)
 
 # The billing 5xx alert's filter before lease-headroom 503s existed
 # (2026-07-28 to 2026-11-13; the live policy matched it on 2026-11-13).
@@ -240,6 +257,7 @@ def _metric_filters() -> dict[str, str]:
         "trustedrouter_gateway_authorize_503",
         HEADROOM_COUNTER,
         BUSY_COUNTER,
+        STRICT_COUNTER,
     }, filters
     return filters
 
@@ -311,6 +329,32 @@ def _rendered_busy_line(trace_header: dict[str, str] | None) -> tuple[str, str]:
     gateway.logger.setLevel(logging.INFO)
     try:
         gateway._log_credit_rebalance_busy("ws-1", request_id="req-1", trace_id=trace_id)
+    finally:
+        gateway.logger.removeHandler(handler)
+        gateway.logger.setLevel(previous)
+    (record,) = records
+    formatter = _ApplicationConsoleFormatter("%(levelname)s %(name)s %(message)s")
+    return formatter.format(record), trace_id
+
+
+def _rendered_strict_line(trace_header: dict[str, str] | None) -> tuple[str, str]:
+    """The line _log_strict_budget_busy writes for a request, as Cloud Run
+    keeps it, and the trace it was given."""
+    headers = [(name.lower().encode(), value.encode()) for name, value in (trace_header or {}).items()]
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": headers})
+    trace_id = gateway._cloud_trace_id(request)
+    records: list[logging.LogRecord] = []
+
+    class _Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Keep(logging.INFO)
+    previous = gateway.logger.level
+    gateway.logger.addHandler(handler)
+    gateway.logger.setLevel(logging.INFO)
+    try:
+        gateway._log_strict_budget_busy("ws-1", request_id="req-1", trace_id=trace_id)
     finally:
         gateway.logger.removeHandler(handler)
         gateway.logger.setLevel(previous)
@@ -412,22 +456,68 @@ def test_lines_that_are_not_rebalance_busy_are_not_counted() -> None:
     assert not matches(counter, app_line(line, service="trusted-router-public"))
 
 
-def test_each_line_is_counted_by_its_own_counter_alone() -> None:
-    """The policy adds the two counters: a line counted by both would be
-    subtracted twice and page, a line counted by neither would leave its
-    503 unmarked."""
-    filters = _metric_filters()
-    headroom, _ = _rendered_headroom_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
-    busy, _ = _rendered_busy_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
-    assert matches(filters[HEADROOM_COUNTER], app_line(headroom))
-    assert not matches(filters[BUSY_COUNTER], app_line(headroom))
-    assert matches(filters[BUSY_COUNTER], app_line(busy))
-    assert not matches(filters[HEADROOM_COUNTER], app_line(busy))
-    # Neither line is a request log entry, and no request log entry is a line.
+def test_the_strict_line_is_what_its_counter_and_the_gate_read() -> None:
+    from scripts.deploy import billing_5xx_lease_headroom as pairing
+
+    line, trace_id = _rendered_strict_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
+    assert trace_id == TRACE
+    assert line == (
+        "INFO trusted_router.routes.internal.gateway billing.strict_budget_busy "
+        f"workspace_id=ws-1 request_id=req-1 trace={TRACE}"
+    )
+    assert line.startswith(pairing.STRICT_BUDGET_BUSY_LINE_PREFIX)
+    assert matches(_metric_filters()[STRICT_COUNTER], app_line(line))
+    # The gate pairs it with the 503's request log entry.
     request = request_log(503, "/internal/gateway/authorize")
-    for line in (headroom, busy):
+    assert pairing.line_kind(app_line(line)) == "strict budget busy"
+    assert pairing.line_trace(app_line(line)) == pairing.request_trace(request) == TRACE
+    assert pairing.unpaired([request], [app_line(line)]) == []
+
+
+def test_lines_that_are_not_the_strict_mark_are_not_counted() -> None:
+    """The handler's WARNING for the same 503 shares the mark's event name.
+    Counted too, every strict-busy 503 would be subtracted twice and page as
+    more lines than 503s."""
+    counter = _metric_filters()[STRICT_COUNTER]
+    line, _trace = _rendered_strict_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
+    for text in (
+        # The two warnings every strict-busy 503 of authorize also leaves.
+        STRICT_HANDLER_WARNING,
+        STRICT_ROUTE_WARNING,
+        # The handler's warning with a trace on it is still not the mark.
+        f"{STRICT_HANDLER_WARNING} trace={TRACE}",
+        line.replace("INFO ", "WARNING ", 1),
+        line.replace("trusted_router.routes.internal.gateway", "trusted_router.main", 1),
+        line.replace("billing.strict_budget_busy ", "billing.strict_budget_busy_v2 "),
+        line.replace("billing.strict_budget_busy ", "billing.authorize_strict_budget_busy "),
+        "INFO trusted_router.routes.internal.gateway gateway.idempotency_key_source source=gateway",
+    ):
+        assert not matches(counter, app_line(text)), text
+    assert not matches(counter, app_line(line, service="trusted-router-public"))
+
+
+def test_each_line_is_counted_by_its_own_counter_alone() -> None:
+    """The policy adds the three counters: a line counted by two would be
+    subtracted twice and page, a line counted by none would leave its 503
+    unmarked."""
+    filters = _metric_filters()
+    trace = {"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"}
+    lines = {
+        HEADROOM_COUNTER: _rendered_headroom_line(trace)[0],
+        BUSY_COUNTER: _rendered_busy_line(trace)[0],
+        STRICT_COUNTER: _rendered_strict_line(trace)[0],
+    }
+    for owner, line in lines.items():
+        counted = {name for name in lines if matches(filters[name], app_line(line))}
+        assert counted == {owner}, (line, counted)
+    # The other lines of a strict-busy 503 are counted by none of them.
+    for text in (STRICT_HANDLER_WARNING, STRICT_ROUTE_WARNING):
+        assert not any(matches(filters[name], app_line(text)) for name in lines), text
+    # No line is a request log entry, and no request log entry is a line.
+    request = request_log(503, "/internal/gateway/authorize")
+    for line in lines.values():
         assert not matches(filters["trustedrouter_gateway_authorize_503"], app_line(line))
-    for name in (HEADROOM_COUNTER, BUSY_COUNTER):
+    for name in lines:
         assert not matches(filters[name], request)
 
 
@@ -640,11 +730,13 @@ def _evaluate(
     authorize_503s: float | None,
     headroom_lines: float | None,
     busy_lines: float | None,
+    strict_lines: float | None = None,
 ) -> tuple[float | None, list[tuple[str, str, str]]]:
     promql = Promql({
         AUTHORIZE_503_COUNTER: authorize_503s,
         HEADROOM_COUNTER: headroom_lines,
         BUSY_COUNTER: busy_lines,
+        STRICT_COUNTER: strict_lines,
     })
     return promql.evaluate(query), promql.read
 
@@ -653,28 +745,32 @@ def _fires(
     authorize_503s: float | None,
     headroom_lines: float | None,
     busy_lines: float | None = None,
+    strict_lines: float | None = None,
     *,
     query: str | None = None,
 ) -> bool:
     """Whether the authorize-503 policy's condition returns a series."""
     text = _promql(ALERT_503)["query"] if query is None else query
-    return _evaluate(text, authorize_503s, headroom_lines, busy_lines)[0] is not None
+    return _evaluate(text, authorize_503s, headroom_lines, busy_lines, strict_lines)[0] is not None
 
 
-def test_the_authorize_503_policy_compares_the_503s_with_both_kinds_of_line() -> None:
+def test_the_authorize_503_policy_compares_the_503s_with_every_kind_of_line() -> None:
     promql = _promql(ALERT_503)
-    _value, read = _evaluate(promql["query"], 1, 1, 1)
+    _value, read = _evaluate(promql["query"], 1, 1, 1, 1)
     # Each counter once, the same series and the same window.
     assert read == [
         (AUTHORIZE_503_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
         (HEADROOM_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
         (BUSY_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
+        (STRICT_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
     ]
-    # The 503s less both kinds of line, to the half that tells 0 from 1.
+    # The 503s less every kind of line, to the half that tells 0 from 1.
     assert _evaluate(promql["query"], 7, 2, 4)[0] == 1.0
     assert _evaluate(promql["query"], 6, 2, 4)[0] is None
     assert _evaluate(promql["query"], 6.4, 2, 4)[0] is None
     assert _evaluate(promql["query"], 6.6, 2, 4)[0] == pytest.approx(0.6)
+    assert _evaluate(promql["query"], 10, 2, 4, 3)[0] == 1.0
+    assert _evaluate(promql["query"], 9, 2, 4, 3)[0] is None
     assert promql["duration"] == "180s"
     assert promql["evaluationInterval"] == "60s"
     policy = yaml.safe_load(ALERT_503.read_text(encoding="utf-8"))
@@ -685,9 +781,11 @@ def test_the_authorize_503_policy_compares_the_503s_with_both_kinds_of_line() ->
     assert "TR Gateway: authorize 503 not lease headroom" in _alert_5xx_doc()
     for document in (str(policy["documentation"]["content"]), _alert_5xx_doc()):
         assert "TR Gateway: credit rebalance busy" in " ".join(document.split())
+        assert "TR Gateway: strict budget busy" in " ".join(document.split())
     for token in (
         "billing.lease_headroom_unavailable", HEADROOM_COUNTER,
         "billing.credit_rebalance_busy", BUSY_COUNTER,
+        "billing.strict_budget_busy", STRICT_COUNTER,
         "scripts/deploy/assert_no_billing_5xx.sh", "docs/spanner-reliability.md",
     ):
         assert token in policy["documentation"]["content"], token
@@ -737,8 +835,26 @@ def test_an_unmarked_503_pages_among_marked_ones() -> None:
     assert _fires(6, 2, 3)
     assert _fires(101, 60, 40)
     # The store's other retryable 503 (credit headroom changed concurrently)
-    # and a strict key's busy 503 write no line of these two: they page.
+    # writes no line of these three: it pages.
     assert _fires(4, 1, 2)
+    assert _fires(5, 1, 2, 1)
+    assert _fires(2, None, None, 1)
+
+
+def test_a_strict_budget_busy_503_with_its_line_does_not_page() -> None:
+    # The 2026-11-17 page: one authorize 503, and now its line.
+    assert not _fires(1, None, None, 1)
+    assert not _fires(1, 0, 0, 1)
+    # The same 503 before the app wrote the line: it paged, and still would.
+    assert _fires(1, None, None, None)
+    # One request's three attempts, all answered busy.
+    assert not _fires(3, None, None, 3)
+    # Every kind in one window, each 503 with its line.
+    assert not _fires(6, 2, 3, 1)
+    assert not _fires(100, 50, 30, 20)
+    # A strict line with no 503 behind it pages, as any other line.
+    assert _fires(None, None, None, 1)
+    assert _fires(1, 1, None, 1)
 
 
 def test_lines_without_503s_page() -> None:
@@ -751,15 +867,18 @@ def test_lines_without_503s_page() -> None:
     assert _fires(5, 3, 3)
 
 
+AUTHORIZE_503_TERMS = 4  # the 503s, and the three kinds of line
+
+
 def _without_or_zero(query: str, term: int) -> str:
     """The query with one counter's "or vector(0)" taken out."""
-    assert query.count(" or vector(0))") == 3
+    assert query.count(" or vector(0))") == AUTHORIZE_503_TERMS
     pieces = query.split(" or vector(0))")
     mutant = "".join(
-        piece + (")" if index == term else " or vector(0))") if index < 3 else piece
+        piece + (")" if index == term else " or vector(0))") if index < AUTHORIZE_503_TERMS else piece
         for index, piece in enumerate(pieces)
     )
-    assert mutant.count(" or vector(0))") == 2
+    assert mutant.count(" or vector(0))") == AUTHORIZE_503_TERMS - 1
     return mutant
 
 
@@ -815,7 +934,9 @@ def test_the_evaluator_gives_what_cloud_monitoring_gave() -> None:
     assert _promql_and(re.sub(r"\n(\s*)or(\s*)\n", r"\n\1and\2\n", lowered_slow), None, 1) is None
 
 
-@pytest.mark.parametrize("term", [0, 1, 2], ids=["authorize-503s", "lease-headroom", "rebalance-busy"])
+@pytest.mark.parametrize(
+    "term", [0, 1, 2, 3], ids=["authorize-503s", "lease-headroom", "rebalance-busy", "strict-budget-busy"]
+)
 def test_without_or_vector_zero_a_counter_with_no_series_would_silence_the_policy(term: int) -> None:
     """The mutants each "or vector(0)" kills, made in the query's own text:
     a counter with no log line in the window has no series, and a
@@ -823,27 +944,40 @@ def test_without_or_vector_zero_a_counter_with_no_series_would_silence_the_polic
     query = _promql(ALERT_503)["query"]
     mutant = _without_or_zero(query, term)
     # Cases that must page, each with the mutated term's counter absent.
-    absent: list[tuple[float | None, float | None, float | None]] = [
-        (None, 1, 1),   # lines and no 503s
-        (3, None, 1),   # unmarked 503s, no lease-headroom line (the usual state)
-        (3, 1, None),   # unmarked 503s, no rebalance-busy line (the usual state)
+    absent: list[tuple[float | None, float | None, float | None, float | None]] = [
+        (None, 1, 1, 1),   # lines and no 503s
+        (3, None, 1, 1),   # unmarked 503s, no lease-headroom line (the usual state)
+        (3, 1, None, 1),   # unmarked 503s, no rebalance-busy line (the usual state)
+        (3, 1, 1, None),   # unmarked 503s, no strict-budget-busy line (the usual state)
     ]
     counters = absent[term]
     assert _fires(*counters)
     assert not _fires(*counters, query=mutant)
 
 
+def _with_plus_for_minus(query: str, which: int) -> str:
+    """The query with the sign before one kind of line flipped."""
+    lines = query.splitlines()
+    minus = [index for index, line in enumerate(lines) if line.strip() == "-"]
+    assert len(minus) == AUTHORIZE_503_TERMS - 1
+    lines[minus[which]] = lines[minus[which]].replace("-", "+")
+    return "\n".join(lines)
+
+
 def test_the_query_takes_the_rebalance_busy_lines_off_the_503s() -> None:
     """The mutant with the wrong sign on the third counter, made in the
     query's own text: a marked 503 would page."""
-    query = _promql(ALERT_503)["query"]
-    lines = query.splitlines()
-    minus = [index for index, line in enumerate(lines) if line.strip() == "-"]
-    assert len(minus) == 2
-    lines[minus[1]] = lines[minus[1]].replace("-", "+")
-    mutant = "\n".join(lines)
+    mutant = _with_plus_for_minus(_promql(ALERT_503)["query"], 1)
     assert not _fires(1, None, 1)
     assert _fires(1, None, 1, query=mutant)
+
+
+def test_the_query_takes_the_strict_budget_busy_lines_off_the_503s() -> None:
+    """The mutant with the wrong sign on the fourth counter: a marked
+    strict-budget-busy 503 would page, as on 2026-11-17."""
+    mutant = _with_plus_for_minus(_promql(ALERT_503)["query"], 2)
+    assert not _fires(1, None, None, 1)
+    assert _fires(1, None, None, 1, query=mutant)
 
 
 # ---------------------------------------------------------------------------
@@ -928,7 +1062,9 @@ def test_a_promql_condition_is_the_only_condition_of_its_policy() -> None:
         if "conditionPrometheusQueryLanguage" in kinds:
             with_promql.append(path.name)
             assert kinds == ["conditionPrometheusQueryLanguage"], path.name
-    assert with_promql == ["billing-authorize-503.yaml", "billing-rebalance-busy.yaml"]
+    assert with_promql == [
+        "billing-authorize-503.yaml", "billing-rebalance-busy.yaml", "billing-strict-budget-busy.yaml",
+    ]
     contention = yaml.safe_load((DEPLOY / "spanner-alerts" / "contention.yaml").read_text(encoding="utf-8"))
     assert len(contention["conditions"]) > 1
     assert all("conditionThreshold" in condition for condition in contention["conditions"])
@@ -1090,6 +1226,121 @@ def test_marked_503s_page_as_a_burst_and_an_unmarked_one_always() -> None:
         assert not marked_only
         assert bool(_busy_fires(busy or None, busy or None)) == (busy > 2)
         assert _fires(busy + 1, None, busy or None)
+    for strict in range(0, 12):
+        assert not _fires(strict or None, None, None, strict or None)
+        assert _strict_fires(strict or None, strict or None) == (strict > 2)
+        assert _fires(strict + 1, None, None, strict or None)
+
+
+# ---------------------------------------------------------------------------
+# The strict-budget-busy rate policy: the rebalance-busy policy's shape, on
+# its own counter. A burst of these is a customer's strict key throttled.
+
+
+STRICT_CONDITION = "More than two strict-budget-busy 503s in ten minutes, or more than five in an hour"
+
+
+def _strict_condition() -> dict[str, Any]:
+    policy = yaml.safe_load(ALERT_STRICT.read_text(encoding="utf-8"))
+    (condition,) = policy["conditions"]
+    assert condition["displayName"] == STRICT_CONDITION
+    return dict(condition["conditionPrometheusQueryLanguage"])
+
+
+def _strict_fires(ten_minutes: float | None, hour: float | None, *, query: str | None = None) -> bool:
+    """Whether the strict-budget-busy policy's condition returns a series,
+    given the lines of the last ten minutes and of the last hour."""
+    assert (hour or 0) >= (ten_minutes or 0), (ten_minutes, hour)
+    counters = {(STRICT_COUNTER, "10m"): ten_minutes, (STRICT_COUNTER, "1h"): hour}
+    text = _strict_condition()["query"] if query is None else query
+    return Promql(counters).evaluate(text) is not None
+
+
+def test_the_strict_policy_is_the_rebalance_policy_on_its_own_counter() -> None:
+    """The bounds tested above for the rebalance-busy policy hold here: the
+    query is that query with the counter swapped, and nothing else."""
+    strict = _strict_condition()
+    busy = _busy_condition()
+    assert strict["query"] == busy["query"].replace(BUSY_COUNTER, STRICT_COUNTER)
+    assert BUSY_COUNTER not in strict["query"]
+    assert {k: v for k, v in strict.items() if k != "query"} == {
+        k: v for k, v in busy.items() if k != "query"
+    }
+    evaluation = Promql({(STRICT_COUNTER, "10m"): 9, (STRICT_COUNTER, "1h"): 9})
+    assert evaluation.evaluate(strict["query"]) == 9.0
+    assert evaluation.read == [(STRICT_COUNTER, BUSY_SERIES, "10m"), (STRICT_COUNTER, BUSY_SERIES, "1h")]
+    # It reads its own counter alone: rebalance-busy lines do not page it.
+    assert Promql({
+        (STRICT_COUNTER, "10m"): None, (STRICT_COUNTER, "1h"): None,
+        (BUSY_COUNTER, "10m"): 9, (BUSY_COUNTER, "1h"): 9,
+    }).evaluate(strict["query"]) is None
+
+
+def test_the_strict_policy_pages_on_more_than_two_in_ten_minutes_or_five_in_an_hour() -> None:
+    for lines in (None, 0, 1, 2):
+        assert not _strict_fires(lines, lines), lines
+    for lines in (3, 4, 24, 1000):
+        assert _strict_fires(lines, lines), lines
+    for lines in (None, 0, 1, 2, 3, 4, 5):
+        assert not _strict_fires(None, lines), lines
+    for lines in (6, 7, 12, 1000):
+        assert _strict_fires(None, lines), lines
+    assert _strict_fires(2, 6)
+    assert not _strict_fires(2, 5)
+    # The 2026-11-17 event alone, one line: no page from either policy.
+    assert not _strict_fires(1, 1)
+    assert not _fires(1, None, None, 1)
+    # One request failing all three attempts on this 503 pages here, and
+    # only here.
+    assert not _fires(3, None, None, 3)
+    assert _strict_fires(3, 3)
+    # Either bound alone opens the incident ("and" for "or" would not).
+    mutant = re.sub(r"\n(\s*)or(\s*)\n", r"\n\1and\2\n", _strict_condition()["query"])
+    assert mutant != _strict_condition()["query"]
+    left, right = re.split(r"\n\s*and\s*\n", mutant.strip())
+    for ten_minutes, hour in ((3, 3), (None, 6), (2, 12)):
+        assert _strict_fires(ten_minutes, hour)
+        assert not (_strict_fires(ten_minutes, hour, query=left) and _strict_fires(ten_minutes, hour, query=right))
+
+
+def test_the_strict_policy_names_its_line_its_counter_and_its_runbook() -> None:
+    policy = yaml.safe_load(ALERT_STRICT.read_text(encoding="utf-8"))
+    assert policy["displayName"] == "TR Gateway: strict budget busy"
+    assert policy["enabled"] is True
+    assert policy["combiner"] == "OR"
+    busy = yaml.safe_load(ALERT_BUSY.read_text(encoding="utf-8"))
+    assert policy["alertStrategy"] == busy["alertStrategy"]
+    assert "notificationChannels" not in policy
+    document = " ".join(str(policy["documentation"]["content"]).split())
+    for token in (
+        "more than two strict-budget-busy 503s in ten minutes", "more than five in an hour",
+        "billing.strict_budget_busy", "trusted_router.routes.internal.gateway", STRICT_COUNTER,
+        "billing.authorize_strict_budget_busy", "STRICT_ADMISSION_WAIT_SECONDS",
+        "trusted_router/strict_budget.py", "TR Gateway: authorize 503 not lease headroom",
+        "docs/spanner-reliability.md",
+    ):
+        assert token in document, token
+    runbook_text = (ROOT / "docs" / "spanner-reliability.md").read_text(encoding="utf-8")
+    assert "### Strict budget busy" in runbook_text
+    runbook = " ".join(runbook_text.split())
+    for text in (runbook, document, STRICT_CONDITION[0].lower() + STRICT_CONDITION[1:]):
+        assert "more than two strict-budget-busy 503s in ten minutes" in text
+        assert "more than five in an hour" in text
+    # The wait the documents name is the code's.
+    from trusted_router.strict_budget import STRICT_ADMISSION_WAIT_SECONDS
+
+    assert STRICT_ADMISSION_WAIT_SECONDS == 1.0
+    assert "(one second)" in document
+
+
+def test_every_gateway_alert_display_name_fits_gcps_limit() -> None:
+    """Cloud Monitoring refuses a policy or condition display name over 100
+    characters when the script applies it (tests/test_terraform_display_name_length.py
+    checks infra/ only)."""
+    for path in sorted(DEPLOY.glob("*-alerts/*.yaml")):
+        policy = yaml.safe_load(path.read_text(encoding="utf-8"))
+        names = [policy["displayName"], *(c.get("displayName", "") for c in policy["conditions"])]
+        assert all(len(name) <= 100 for name in names), (path.name, names)
 
 
 # ---------------------------------------------------------------------------
@@ -1101,7 +1352,7 @@ printf '%s\n' "$*" | tr '\n' ' ' >>"$STUB_LOG"; printf '\n' >>"$STUB_LOG"
 query="$3"
 case "$query" in
   *"NOT (httpRequest.status=503"*) cat "$STUB_DIR/other.txt" ;;
-  *"billing.lease_headroom_unavailable"*"billing.credit_rebalance_busy"*)
+  *"billing.lease_headroom_unavailable"*"billing.credit_rebalance_busy"*"billing.strict_budget_busy"*)
     printf '%s' "$query" >"$STUB_DIR/line_query.txt"
     n="$(cat "$STUB_DIR/line_calls" 2>/dev/null || echo 0)"
     echo $((n + 1)) >"$STUB_DIR/line_calls"
@@ -1127,6 +1378,16 @@ def _busy_line_entry(trace: str) -> dict[str, Any]:
         "timestamp": "2026-11-13T13:04:15.233651Z",
         "textPayload": (
             "INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy "
+            f"workspace_id=ws-1 request_id=r trace={trace}"
+        ),
+    }
+
+
+def _strict_line_entry(trace: str) -> dict[str, Any]:
+    return {
+        "timestamp": "2026-11-13T13:04:15.233651Z",
+        "textPayload": (
+            "INFO trusted_router.routes.internal.gateway billing.strict_budget_busy "
             f"workspace_id=ws-1 request_id=r trace={trace}"
         ),
     }
@@ -1222,7 +1483,7 @@ def test_gate_fails_on_a_non_lease_authorize_503(tmp_path: Path) -> None:
     )
     assert result.returncode == 1
     assert f"traces/{OTHER_TRACE}" in result.stdout
-    assert "not paired with a lease-headroom or rebalance-busy line" in result.stdout
+    assert "not paired with a lease-headroom, rebalance-busy or strict-budget-busy line" in result.stdout
     # It waited for the line, three reads, before failing.
     assert sum("billing.lease_headroom_unavailable" in call for call in calls) == 3
 
@@ -1236,36 +1497,97 @@ def test_gate_passes_when_an_authorize_503_is_rebalance_busy(tmp_path: Path) -> 
         lines=[_busy_line_entry(TRACE)],
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 1), unpaired: 0" in result.stdout
+    assert (
+        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 1, strict budget busy: 0), "
+        "unpaired: 0"
+    ) in result.stdout
     assert "gate passed" in result.stdout
     # One read of the lines was enough.
     assert sum("billing.credit_rebalance_busy" in call for call in calls) == 1
 
 
-def test_gate_passes_with_a_503_of_each_kind(tmp_path: Path) -> None:
-    result, _calls = _run_gate(
+def test_gate_passes_when_an_authorize_503_is_strict_budget_busy(tmp_path: Path) -> None:
+    """The 2026-11-17 page, had it come during a rollout: one authorize 503,
+    answered after a strict key's admission wait."""
+    result, calls = _run_gate(
         tmp_path,
-        requests=[_authorize_503(TRACE), _authorize_503(OTHER_TRACE)],
-        lines=[_busy_line_entry(OTHER_TRACE), _line_entry(TRACE)],
+        requests=[_authorize_503(TRACE)],
+        lines=[_strict_line_entry(TRACE)],
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "authorize 503s: 2, paired with a line of the app: 2 (lease headroom: 1, rebalance busy: 1), unpaired: 0" in result.stdout
+    assert (
+        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 0, strict budget busy: 1), "
+        "unpaired: 0"
+    ) in result.stdout
+    assert "gate passed" in result.stdout
+    assert sum("billing.strict_budget_busy" in call for call in calls) == 1
 
 
-def test_gate_fails_on_an_unmarked_503_beside_one_of_each_kind(tmp_path: Path) -> None:
-    """A storage outage during a rollout that also saw both designed 503s:
-    the unmarked one is left over and fails the gate."""
+def test_gate_fails_on_an_unpaired_strict_budget_busy_503(tmp_path: Path) -> None:
+    """The same 503 before the app wrote the line: the handler's warning and
+    the route's are all it left, and neither excuses it."""
+    result, calls = _run_gate(
+        tmp_path,
+        requests=[_authorize_503(TRACE)],
+        lines=[
+            {"timestamp": "2026-11-13T13:04:15.233651Z", "textPayload": STRICT_HANDLER_WARNING},
+            {"timestamp": "2026-11-13T13:04:15.233651Z", "textPayload": f"{STRICT_HANDLER_WARNING} trace={TRACE}"},
+            {"timestamp": "2026-11-13T13:04:15.233651Z", "textPayload": f"{STRICT_ROUTE_WARNING} trace={TRACE}"},
+        ],
+        env={"TR_BILLING_5XX_LINE_RETRIES": "1"},
+    )
+    assert result.returncode == 1
+    assert "strict budget busy: 0), unpaired: 1" in result.stdout
+    assert f"traces/{TRACE}" in result.stdout
+    assert "not paired with a lease-headroom, rebalance-busy or strict-budget-busy line" in result.stdout
+    # It waited for the line before failing.
+    assert sum("billing.strict_budget_busy" in call for call in calls) == 2
+
+
+def test_gate_does_not_let_one_strict_line_excuse_two_503s(tmp_path: Path) -> None:
+    """An enclave's retry under one trace: two 503s, one strict line."""
     result, _calls = _run_gate(
         tmp_path,
-        requests=[_authorize_503(TRACE), _authorize_503(THIRD_TRACE), _authorize_503(OTHER_TRACE)],
-        lines=[_line_entry(TRACE), _busy_line_entry(OTHER_TRACE)],
+        requests=[_authorize_503(TRACE), _authorize_503(TRACE)],
+        lines=[_strict_line_entry(TRACE)],
         env={"TR_BILLING_5XX_LINE_RETRIES": "0"},
     )
     assert result.returncode == 1
-    assert "(lease headroom: 1, rebalance busy: 1), unpaired: 1" in result.stdout
+    assert "unpaired: 1" in result.stdout
+
+
+def test_gate_passes_with_a_503_of_each_kind(tmp_path: Path) -> None:
+    result, _calls = _run_gate(
+        tmp_path,
+        requests=[_authorize_503(TRACE), _authorize_503(OTHER_TRACE), _authorize_503(THIRD_TRACE)],
+        lines=[_busy_line_entry(OTHER_TRACE), _line_entry(TRACE), _strict_line_entry(THIRD_TRACE)],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "authorize 503s: 3, paired with a line of the app: 3 "
+        "(lease headroom: 1, rebalance busy: 1, strict budget busy: 1), unpaired: 0"
+    ) in result.stdout
+
+
+def test_gate_fails_on_an_unmarked_503_beside_one_of_each_kind(tmp_path: Path) -> None:
+    """A storage outage during a rollout that also saw the designed 503s:
+    the unmarked one is left over and fails the gate."""
+    fourth_trace = "8e3f0c1d2b4a59687766554433221100"
+    result, _calls = _run_gate(
+        tmp_path,
+        requests=[
+            _authorize_503(TRACE), _authorize_503(THIRD_TRACE), _authorize_503(OTHER_TRACE),
+            _authorize_503(fourth_trace),
+        ],
+        lines=[_line_entry(TRACE), _busy_line_entry(OTHER_TRACE), _strict_line_entry(fourth_trace)],
+        env={"TR_BILLING_5XX_LINE_RETRIES": "0"},
+    )
+    assert result.returncode == 1
+    assert "(lease headroom: 1, rebalance busy: 1, strict budget busy: 1), unpaired: 1" in result.stdout
     assert "unpaired 503: 2026-11-13T13:04:15.208934Z" in result.stdout
     assert f"traces/{THIRD_TRACE}" in result.stdout
-    assert f"traces/{TRACE}" not in result.stdout and f"traces/{OTHER_TRACE}" not in result.stdout
+    for paired in (TRACE, OTHER_TRACE, fourth_trace):
+        assert f"traces/{paired}" not in result.stdout
     assert "billing-path 5xx detected" in result.stdout
 
 
@@ -1289,7 +1611,7 @@ def test_gate_pairs_a_retried_request_with_a_line_of_each_kind(tmp_path: Path) -
         lines=[_busy_line_entry(TRACE), _line_entry(TRACE)],
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "(lease headroom: 1, rebalance busy: 1), unpaired: 0" in result.stdout
+    assert "(lease headroom: 1, rebalance busy: 1, strict budget busy: 0), unpaired: 0" in result.stdout
 
 
 def test_gate_is_not_excused_by_the_warnings_of_a_storage_503(tmp_path: Path) -> None:
@@ -1333,7 +1655,7 @@ def test_gate_passes_on_lines_without_503s_and_does_not_read_them(tmp_path: Path
     assert not (tmp_path / "line_query.txt").exists()
 
 
-def test_the_gates_line_read_is_both_lines_of_the_candidate_revision_alone(tmp_path: Path) -> None:
+def test_the_gates_line_read_is_every_line_of_the_candidate_revision_alone(tmp_path: Path) -> None:
     """The read the gate sends, evaluated against log entries."""
     result, _calls = _run_gate(
         tmp_path,
@@ -1344,6 +1666,7 @@ def test_the_gates_line_read_is_both_lines_of_the_candidate_revision_alone(tmp_p
     query = (tmp_path / "line_query.txt").read_text(encoding="utf-8")
     headroom, _ = _rendered_headroom_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
     busy, _ = _rendered_busy_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
+    strict, _ = _rendered_strict_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
 
     def entry(text: str, **changes: str) -> dict[str, Any]:
         log = request_log(503, "/internal/gateway/authorize")
@@ -1353,7 +1676,7 @@ def test_the_gates_line_read_is_both_lines_of_the_candidate_revision_alone(tmp_p
         )
         return {**log, "timestamp": changes.get("timestamp", log["timestamp"]), "textPayload": text}
 
-    for line in (headroom, busy):
+    for line in (headroom, busy, strict):
         assert matches(query, entry(line), allow_or=True), line
         # Another revision's, another region's, another service's or an
         # earlier line is not this rollout's.
@@ -1367,6 +1690,9 @@ def test_the_gates_line_read_is_both_lines_of_the_candidate_revision_alone(tmp_p
         "WARNING trusted_router.main storage.unavailable method=POST route=/internal/gateway/authorize "
         "request_id=r error_class=CreditRebalanceBusy workspace_id=ws-1",
         "INFO trusted_router.routes.internal.gateway billing.insufficient_credits workspace_id=ws-1",
+        strict.replace("INFO ", "WARNING ", 1),
+        STRICT_HANDLER_WARNING,
+        STRICT_ROUTE_WARNING,
     ):
         assert not matches(query, entry(text), allow_or=True), text
 
@@ -1484,15 +1810,18 @@ def test_reliability_applies_counters_then_the_policies_that_take_over_first(tmp
         "trustedrouter_gateway_authorize_503",
         HEADROOM_COUNTER,
         BUSY_COUNTER,
+        STRICT_COUNTER,
         "trustedrouter_gateway_billing_slow",
     ]
-    # The policy that bounds rebalance-busy 503s, then the one that stops
-    # counting them as unmarked, then the 5xx filter that sets authorize
-    # 503s aside for it. Each exists before the next gives its 503s up.
+    # The policies that bound rebalance-busy and strict-budget-busy 503s,
+    # then the one that stops counting them as unmarked, then the 5xx
+    # filter that sets authorize 503s aside for it. Each exists before the
+    # next gives its 503s up.
     assert "billing-rebalance-busy.yaml" in updates[0]
-    assert "billing-authorize-503.yaml" in updates[1]
+    assert "billing-strict-budget-busy.yaml" in updates[1]
+    assert "billing-authorize-503.yaml" in updates[2]
     narrowed = next(index for index, call in enumerate(updates) if "billing-5xx.yaml" in call)
-    assert narrowed > 1
+    assert narrowed > 2
     files = [call.split("--policy-from-file=")[1].split()[0].rsplit("/", 1)[1] for call in updates]
     assert sorted(files) == sorted(path.name for path in (DEPLOY / "gateway-alerts").glob("*.yaml"))
     assert len(updates) == len(list((DEPLOY / "gateway-alerts").glob("*.yaml")))
@@ -1510,8 +1839,44 @@ def test_reliability_creates_the_rebalance_busy_policy_before_the_other_changes(
     assert "billing-rebalance-busy.yaml" in policies[0]
     assert "--notification-channels=projects/p/notificationChannels/1" in policies[0]
     assert "monitoring policies update" in policies[1]
-    assert "billing-authorize-503.yaml" in policies[1]
+    assert "billing-strict-budget-busy.yaml" in policies[1]
+    assert "monitoring policies update" in policies[2]
+    assert "billing-authorize-503.yaml" in policies[2]
     assert sum("monitoring policies create" in call for call in policies) == 1
+
+
+def test_reliability_creates_the_strict_budget_busy_policy_before_the_authorize_503_policy(
+    tmp_path: Path,
+) -> None:
+    """The first apply after this change: the strict policy does not exist
+    yet, and is created before the authorize-503 policy stops paging on
+    strict-budget-busy 503s."""
+    status, calls = _run_reliability(tmp_path, missing_policy="TR Gateway: strict budget busy")
+    assert status == 0, calls
+    policies = [call for call in calls if "monitoring policies create" in call or "monitoring policies update" in call]
+    assert "monitoring policies update" in policies[0]
+    assert "billing-rebalance-busy.yaml" in policies[0]
+    assert "monitoring policies create" in policies[1]
+    assert "billing-strict-budget-busy.yaml" in policies[1]
+    assert "--notification-channels=projects/p/notificationChannels/1" in policies[1]
+    assert "billing-authorize-503.yaml" in policies[2]
+    assert sum("monitoring policies create" in call for call in policies) == 1
+
+
+def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_strict_budget_busy_policy(
+    tmp_path: Path,
+) -> None:
+    """Were the authorize-503 policy changed and the strict rate policy not
+    there, no policy would page on a storm of strict-budget-busy 503s."""
+    status, calls = _run_reliability(
+        tmp_path,
+        missing_policy="TR Gateway: strict budget busy",
+        fail_policy="billing-strict-budget-busy.yaml",
+    )
+    assert status != 0
+    assert any("monitoring policies create" in call and "billing-strict-budget-busy.yaml" in call for call in calls)
+    assert not any("billing-authorize-503.yaml" in call for call in calls)
+    assert not any("billing-5xx.yaml" in call for call in calls)
 
 
 def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_rebalance_busy_policy(
@@ -1531,7 +1896,7 @@ def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_rebala
 
 
 @pytest.mark.parametrize(
-    "metric", ["trustedrouter_gateway_authorize_503", HEADROOM_COUNTER, BUSY_COUNTER]
+    "metric", ["trustedrouter_gateway_authorize_503", HEADROOM_COUNTER, BUSY_COUNTER, STRICT_COUNTER]
 )
 def test_reliability_stops_before_any_policy_without_a_counter(tmp_path: Path, metric: str) -> None:
     status, calls = _run_reliability(tmp_path, fail_metric=metric)
