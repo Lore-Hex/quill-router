@@ -15,7 +15,12 @@ func TestFloatAtNamesWhereTheFirstFloatIs(t *testing.T) {
 		name, want string
 		body       []byte
 	}{
-		{"max_price", FloatAtProviderMaxPrice, bodyOf(`"provider":{"order":["a"],"max_price":{"prompt":0.5}}`)},
+		// provider.max_price counts a float inside a limit: a limit itself
+		// is the evaluator's (TestMaxPriceLimitsAreNotBodyFloats).
+		{"inside a max_price limit", FloatAtProviderMaxPrice,
+			bodyOf(`"provider":{"order":["a"],"max_price":{"prompt":[0.5]}}`)},
+		{"inside a max_price member's object", FloatAtProviderMaxPrice,
+			bodyOf(`"provider":{"max_price":{"image":{"per":0.5}}}`)},
 		{"max latency", FloatAtProviderPreferredMaxLatency, bodyOf(`"provider":{"preferred_max_latency":1.5}`)},
 		{"min throughput", FloatAtProviderPreferredMinThroughput,
 			bodyOf(`"provider":{"preferred_min_throughput":{"p90":{"value":12.5}}}`)},
@@ -62,8 +67,14 @@ func TestFloatAtIsTheFirstFloat(t *testing.T) {
 		body       []byte
 	}{
 		{"metadata first", FloatAtMetadata, bodyOf(`"metadata":{"a":1.5}`, `"provider":{"max_price":{"prompt":0.5}}`)},
-		{"provider first", FloatAtProviderMaxPrice,
+		// A max_price limit is not a float here: the first that passes is
+		// metadata's.
+		{"a max_price limit first", FloatAtMetadata,
 			bodyOf(`"provider":{"max_price":{"prompt":0.5}}`, `"metadata":{"a":1.5}`)},
+		{"provider first", FloatAtProviderMaxPrice,
+			bodyOf(`"provider":{"max_price":{"prompt":[0.5]}}`, `"metadata":{"a":1.5}`)},
+		{"a limit before the latency preference", FloatAtProviderPreferredMaxLatency,
+			bodyOf(`"provider":{"max_price":{"prompt":0.5,"completion":2.5},"preferred_max_latency":2.5}`)},
 		{"declared first", FloatAtDeclared + "max_tokens", bodyOf(`"max_tokens":8.0`, `"tags":{"a":1.5}`)},
 		{"extra first", FloatAtExtra, bodyOf(`"zz":0.5`, `"max_tokens":8.0`)},
 		// Within provider: sort is a string here, so the first member that

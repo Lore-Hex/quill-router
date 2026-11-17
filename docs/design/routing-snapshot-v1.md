@@ -696,9 +696,8 @@ are pinned, so the hourly price refresh cannot make it stale.
 
 ## Not yet
 
-- Request parsing as data for `provider.max_price` and the performance
-  thresholds: the routing cases exercise it through Python, but the snapshot
-  does not carry its rules yet.
+- Request parsing as data for the performance thresholds: the routing cases
+  exercise it through Python, but the snapshot does not carry its rules yet.
 - In the routing cases: meta models, decision chains and the full fee
   stack (receipt fee, custom-model markup, additional cost, app markup), and
   `candidate_cost_reporting`, which authorize derives from the stored row.
@@ -780,11 +779,44 @@ refusals), `sort` (string or object, with `partition`),
 `jurisdiction` (`us`), `zdr`, `min_privacy` (every spelling in
 `privacy_tiers`, and the refusal for any other value), `require_parameters`
 (a boolean; anything else present, `null` included, is Python's 400),
-`requested_parameters` with the capability rules and `_no_route_error`'s
+`max_price` (see **max_price**), `requested_parameters` with the capability rules and `_no_route_error`'s
 refusals (see **parameters**), input modalities, the context window, the
 gateway-region rule, BYOK presence, the `default` service tier and the
 refusals these make. The provider refusals come in Python's order: a router
-name, then `allow_fallbacks`, then `min_privacy`, then `require_parameters`.
+name, then `allow_fallbacks`, then `min_privacy`, then `require_parameters`;
+`max_price` is read after them, as Python reads it.
+
+*max_price.* `routing._max_token_prices`: an object whose members are
+`prompt` and `completion`, each `null` or a limit in USD per million tokens,
+which `_price_limit_microdollars` holds as integer microdollars (at most six
+decimal places, a 400 past them, never rounded). A route whose headline
+prompt or completion price at the instant (the epoch's `headline`, the
+effective endpoint's `prompt_price_microdollars_per_million_tokens` and
+`completion_price_microdollars_per_million_tokens`, which `sort=price` sums)
+is above its limit is dropped by the endpoint filter, with the soft `deny`,
+`_no_route_error` and the window after it as for any filter; equal is kept.
+Python reads a limit as `Decimal(str(value))` of what `json.loads` made of
+the literal: an int exactly, a float as repr. Go reads a limit only when its
+literal has no sign and no exponent, at most nine digits before the point
+and six after it (`plainLimit`): at most 15 significant digits, so the
+double reads back as the literal's own value (DBL_DIG) and repr's shortest
+digits are the literal's. Go takes that exact decimal from the digits, with
+no float, so the decision is Python's; the edge hands the evaluator each
+literal as the body spelled it (`pyjson`'s `NumbersAsWritten`). Any other
+spelling passes with a fixed reason: not an object, a member other than
+`prompt` and `completion`, a limit that is not a number (a string, which
+Python reads, or a boolean, list or object), a negative limit, an exponent,
+more digits. `tests/test_fastpath_max_price_limits.py` holds the grammar,
+read from the Go source, to Python's own `_price_limit_microdollars` over two
+million literals, and shows Python's value leaving the literal's just past
+it. The routing cases carry 48 `max_price:*` cases besides the four
+`*+max_price`: limits at a route's price and a microdollar below it, prompt
+and completion apart and together, `null` and empty limits, limits that
+exclude every route, zero, the largest Go reads, the price at the instant
+(DeepSeek V4 Flash at and off peak), a fallback list, no fallbacks,
+`sort=price`, `order`, `min_privacy`, the soft `deny` relaxed and not,
+Gemini's tiered price, a capability parameter after the filter, the window
+after it, the refusals Python makes before it, and each spelling Go passes.
 
 *The context window.* Authorize calls `resolve_candidates` with
 `prompt_tokens` = `estimated_input_tokens` (plus a custom model's hidden
@@ -831,8 +863,9 @@ It passes to Python, with the reason, and never guesses:
   (`canonical_router_model_id` rewrites these to `decisionmodelsio`, which
   `router_prefix_rewrites` does not carry); an empty or non-printable-ASCII
   model string.
-- `provider` fields and spellings outside the list above: `max_price`,
-  `preferred_max_latency`, `preferred_min_throughput` when not null, a
+- `provider` fields and spellings outside the list above: a `max_price`
+  spelling **max_price** names, `preferred_max_latency`,
+  `preferred_min_throughput` when not null, a
   `min_privacy` string outside printable ASCII (Python's `strip` and `lower`
   act on Unicode) or a non-string one when a `privacy_tiers` spelling could
   be its `str` (`true`, a number; none can today), `usage_type`, `billing`,
@@ -848,16 +881,16 @@ It passes to Python, with the reason, and never guesses:
   to the extent that a 1,000-token priority request is refused as unavailable.
 - An estimate, or a `sort=price` headline sum, outside int64.
 
-Against `routing_cases_v1.json` (270 cases), Go answers 180 and refuses 71
+Against `routing_cases_v1.json` (318 cases), Go answers 204 and refuses 84
 exactly as Python (candidates and order, estimate, service tier and Stage D
-reason; or status, type, message and param), and passes 19 to Python. The test
+reason; or status, type, message and param), and passes 30 to Python. The test
 lists each passed case with its reason and fails if Go answers one of them or
 passes any other:
 
 | Passed | Cases | Reason |
 |---|---|---|
-| 4 | `*+max_price` | `provider.max_price`: decimal parsing |
-| 4 | `*+perf` | `provider.preferred_max_latency`: thresholds, and stays on Python |
+| 14 | `max_price:*` | a `max_price` spelling Go does not read: a seventh place, ten integer digits, three exponents (5e-07, 1e-06 and 1e+300 as repr writes them), a string, a boolean, a list, two negatives, another member, and three of `max_price` not an object |
+| 5 | `*+perf`, `max_price:before_perf` | `provider.preferred_max_latency`: thresholds, and stays on Python |
 | 1 | `route:images` | the image resolver |
 | 2 | `router_name_then_blank_item`, `router_name_then_null_item` | a malformed provider list |
 | 4 | `*+group_alias` | `google` names `google-vertex`, which the fixture omits |
