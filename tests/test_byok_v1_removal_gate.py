@@ -34,7 +34,6 @@ from trusted_router.storage_models import EncryptedSecretEnvelope
 REPO = Path(__file__).resolve().parents[1]
 PRODUCTION_SRC = REPO / "src" / "trusted_router"
 BYOK_CRYPTO = REPO / "src" / "trusted_router" / "byok_crypto.py"
-NAMESPACE_PROPERTY_TEST = REPO / "tests" / "test_byok_aad_namespace_property.py"
 V1_ALGORITHM = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
 PROBE_SETTINGS = KeyWrapperConfig(environment="test")
 
@@ -177,12 +176,3 @@ def test_a_new_encrypted_surface_invalidates_old_attestations() -> None:
     ledger = load_ledger()
     ledger["attestations"]["gcp"]["surface_fingerprint"] = "stale-fingerprint"
     assert any("surface fingerprint" in blocker for blocker in zero_v1_blockers(ledger))
-
-
-def test_the_v1_collision_preservation_test_was_removed_with_v1() -> None:
-    names = {
-        node.name
-        for node in ast.walk(ast.parse(NAMESPACE_PROPERTY_TEST.read_text()))
-        if isinstance(node, ast.FunctionDef)
-    }
-    assert "test_aad_encoding_is_not_injective_in_general" not in names

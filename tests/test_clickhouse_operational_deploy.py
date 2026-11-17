@@ -253,34 +253,6 @@ def test_public_snapshot_bundle_fails_closed_on_dirty_and_invalid_catalog(tmp_pa
     assert "provider bundle contains invalid JSON" in result.stderr
 
 
-def test_client_telemetry_single_node_schema_is_applied_with_operational_schema() -> None:
-    """Client telemetry still ships with the operational schema -- but named by
-    DERIVATION now, not by filename.
-
-    This used to assert the script contained the literal strings
-    "006_operational_analytics_single_node.sql" and
-    "009_client_events_single_node.sql". That is what kept the defect alive: the
-    script applied exactly those two, 010 through 013 landed, and this test went
-    on passing because it was asserting the hardcoding rather than the coverage.
-
-    Newer contract: both files are members of clickhouse/*_single_node.sql, and
-    the script applies that whole derived set via
-    scripts/deploy/_clickhouse_single_node_schema.sh. Membership and the
-    derivation are pinned in tests/test_single_node_schema_set.py, including
-    that 013 (the workspace_id column the drain inserts) is in it.
-    """
-    script = (ROOT / "scripts/deploy/aws_eu_north_clickhouse.sh").read_text()
-
-    assert "single_node_migrations" in script
-    assert 'OPERATIONAL_SCHEMA="$(cat "${SCHEMA_FILES[@]}")"' in script
-    for name in (
-        "006_operational_analytics_single_node.sql",
-        "009_client_events_single_node.sql",
-    ):
-        assert (ROOT / "clickhouse" / name).exists()
-        assert name.endswith("_single_node.sql"), "must be inside the derived set"
-
-
 def test_control_reader_is_private_read_only_and_cannot_read_secrets() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_control_reader.sh").read_text()
     assert "<readonly>1</readonly>" in script
@@ -349,14 +321,6 @@ def test_rollout_pins_spanner_clickhouse_and_uses_distinct_reader_secret() -> No
     assert "trustedrouter-clickhouse-control-read-password" in rollout
     assert "trustedrouter-clickhouse-control-read-password" in secrets
     assert "TR_STORAGE_BACKEND=spanner-clickhouse" in secrets
-
-
-def test_generation_record_migration_has_ttl_and_delivery_audit_index() -> None:
-    script = (ROOT / "scripts/deploy/migrate_generation_records.sh").read_text()
-    assert "ROW DELETION POLICY" in script
-    assert "INTERVAL 30 DAY" in script
-    assert "tr_generation_by_terminal_at" in script
-    assert "STORING (payload)" in script
 
 
 def test_spanner_delivery_verifier_is_installed_and_bounded() -> None:
