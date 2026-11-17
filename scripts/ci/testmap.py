@@ -19,6 +19,11 @@ Stdlib only, like commit_scope.py, so a job can run it before `uv sync`.
             runs.
   compare   after the test shards: this run's failed tests against the shadow
             selection, "failures outside selection: N (IDs)".
+  heavy     the map workflow, after merging a map: every repository file a
+            test of commit_scope.HEAVY_TESTS ran or opened in it must be a
+            change that runs the heavy lane (run_heavy); exit 1 naming each
+            one that is not. --write also records the paths in
+            HEAVY_SNAPSHOT, which the default suite holds the scope to.
 
 What a footprint holds (the recorder's docstring has how it is recorded):
   f  functions that started or resumed ("path:qualname"), and calls of a
@@ -1292,6 +1297,82 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- heavy lane
+
+# The heavy lane's check against reality (commit_scope.py's run_heavy): every
+# repository file a heavy test ran a function of or opened, in a map, must be
+# a change that runs the lane. A new map is checked by the map workflow; the
+# default suite holds the scope to HEAVY_SNAPSHOT, written from a map.
+HEAVY_SNAPSHOT = "scripts/ci/heavy_footprint.json"
+# Files a map records in heavy tests' windows that cannot run in the lane:
+# what another module leaves behind in the shards' shared processes.
+HEAVY_LEAKS: dict[str, str] = {
+    "tests/conformance/test_shadow_observation_native.py": (
+        "its native_liveness fixture registers a pytest plugin (Reports.pytest_runtest_makereport) that stays "
+        "registered for every later test in the same worker; test-heavy does not run that module"),
+    "tests/shadow_observation_diagnostics.py": (
+        "NativeLiveness.report, called only by that leaked plugin in heavy tests' windows"),
+}
+
+
+def heavy_footprint(tmap: TestMap, test_files: Iterable[str]) -> set[str]:
+    """The repository paths the map's tests in `test_files` ran a function of
+    or opened: each test's own window, the setup of the fixtures it requests
+    and its module's collection. Not a memoized function's misses (`cached`:
+    every miss of the function in the process, whichever test's window it
+    was) and not `global` (imports and session hooks every test shares)."""
+    wanted = set(test_files)
+    paths: set[str] = set()
+    for nodeid, own, fixtures in tmap.tests:
+        module = nodeid.split("::")[0]
+        if module not in wanted:
+            continue
+        for index in [own, *fixtures, *([tmap.collect[module]] if module in tmap.collect else [])]:
+            funcs, opened = tmap.fps[index][0], tmap.fps[index][1]
+            paths.update(tmap.keys[key].split(":", 1)[0] for key in funcs)
+            paths.update(tmap.keys[key] for key in opened)
+    return paths
+
+
+def heavy_outside(root: Path, paths: Iterable[str]) -> list[str]:
+    """The paths, of files that exist, whose change would not run the lane."""
+    closure = cs.heavy_closure(root)
+    return sorted(path for path in set(paths) if (root / path).is_file() and path not in HEAVY_LEAKS
+                  and not cs.heavy_covers(path, closure) and not cs.matches_any(path, cs.FULL_MATRIX_PATHS))
+
+
+def cmd_heavy(args: argparse.Namespace) -> int:
+    root = Path.cwd()
+    data = read_gz(Path(args.map))
+    problem = validate_map(data)
+    if problem:
+        print(f"::error title=Heavy lane scope::{problem}")
+        return 1
+    tmap = TestMap(data)
+    mapped = {nodeid.split("::")[0] for nodeid, _, _ in tmap.tests}
+    absent = sorted(set(cs.HEAVY_TESTS) - mapped)
+    paths = heavy_footprint(tmap, cs.HEAVY_TESTS)
+    if args.write:
+        if absent:
+            print(f"::error title=Heavy lane scope::the map has no tests of {', '.join(absent)}")
+            return 1
+        # Repository files only: a map also records names opened relative to
+        # another directory (a temporary one).
+        snapshot = {"map": {key: data.get(key) for key in ("commit", "run_id", "created")},
+                    "tests": sorted(cs.HEAVY_TESTS), "files": sorted(p for p in paths if (root / p).is_file())}
+        Path(args.write).write_text(json.dumps(snapshot, indent=1) + "\n", encoding="utf-8")
+    outside = heavy_outside(root, paths)
+    lines = [f"### Heavy lane scope against map {str(data.get('commit'))[:12]}", "",
+             f"{len(paths)} paths the lane's tests ran or opened; outside the lane's scope: {len(outside)}"]
+    lines += [f"- {path}" for path in outside]
+    if absent:
+        lines.append(f"not in the map (newer than it): {', '.join(absent)}")
+    _write_summary(args.summary, lines)
+    for path in outside:
+        print(f"::error title=Heavy lane scope::{path} is in a heavy test's footprint but outside run_heavy")
+    return 1 if outside else 0
+
+
 def cmd_needed(args: argparse.Namespace) -> int:
     try:
         head = args.head or git(Path.cwd(), "rev-parse", "HEAD").strip()
@@ -1338,7 +1419,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--selection", required=True)
     p.add_argument("--failed", help="a pytest log to read failures from instead of the run's shard logs")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
+    p = sub.add_parser("heavy", help="the heavy lane's footprint in a map against its scope (exit 1 outside)")
+    p.add_argument("--map", required=True, help="a map file (testmap.json.gz)")
+    p.add_argument("--write", help=f"also write the footprint snapshot ({HEAVY_SNAPSHOT})")
+    p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     args = parser.parse_args(argv)
+    if args.command == "heavy":
+        return cmd_heavy(args)
     if args.command == "compact":
         fragment = compact(args.raw, args.shard)
         write_gz(fragment, args.out)

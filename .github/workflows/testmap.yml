@@ -171,3 +171,10 @@ jobs:
           name: testmap
           path: testmap.json.gz
           retention-days: 14
+      # After the upload, so a red check still leaves the map. Every file the
+      # heavy lane's tests ran or opened in this map must be a change that
+      # runs ci.yml's test-heavy (commit_scope.py's run_heavy); a red run
+      # names each one that is not.
+      - name: The heavy lane's scope covers what its tests ran
+        timeout-minutes: 5
+        run: python3 scripts/ci/testmap.py heavy --map testmap.json.gz

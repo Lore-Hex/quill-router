@@ -852,3 +852,72 @@ def test_needed_prints_only_github_output_lines_on_stdout(tmp_path: Path, monkey
     assert out.splitlines() == ["record=true"]  # GITHUB_OUTPUT takes stdout whole
     assert "Test map: recording" in summary.read_text() and "no usable map" in summary.read_text()
 
+
+
+# ---------------------------------------------------------------- the heavy lane's footprint check
+
+HEAVY_FILE = "tests/test_heavy_lane.py"
+
+
+def test_heavy_footprint_is_the_tests_windows_fixtures_and_collection_not_shared_misses() -> None:
+    tmap = tm.TestMap(build_map(
+        {f"{HEAVY_FILE}::test_a": {"f": ["src/app/a.py:run", "tests/helper.py:make@memo"], "o": ["tests/data.json"]},
+         f"{HEAVY_FILE}::test_b": {"f": ["src/app/b.py:run"]},
+         "tests/test_other.py::test_c": {"f": ["src/app/c.py:run"], "o": ["docs/c.md"]}},
+        fixtures={f"{HEAVY_FILE}::test_b": [{"f": ["tests/conftest.py:client"]}]},
+        collect={HEAVY_FILE: {"o": ["tests/collected.json"]}, "tests/test_other.py": {"o": ["docs/other.md"]}},
+        # Every miss of a cached function, whichever test's window it was in,
+        # and what runs outside every window, are not a heavy test's own.
+        cached={"tests/helper.py:make": {"f": ["tests/test_other.py:fake_source"]}},
+        glob={"f": ["src/app/boot.py:boot"], "o": ["docs/global.md"]}))
+    assert tm.heavy_footprint(tmap, [HEAVY_FILE]) == {
+        "src/app/a.py", "tests/helper.py", "tests/data.json", "src/app/b.py", "tests/conftest.py",
+        "tests/collected.json"}
+
+
+def test_the_heavy_check_names_each_file_outside_the_lane(tmp_path: Path, monkeypatch, capsys) -> None:
+    for path, text in {"tests/__init__.py": "", "tests/conftest.py": "", HEAVY_FILE: "import tests.helper\n",
+                       "tests/helper.py": "", "tests/unrelated.py": "", "src/app/a.py": "", "docs/c.md": "x\n",
+                       "tests/conformance/test_shadow_observation_native.py": ""}.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE,))
+    monkeypatch.chdir(tmp_path)
+    footprint = {"f": ["src/app/a.py:run", "tests/helper.py:make", "tests/unrelated.py:leak",
+                       "tests/conformance/test_shadow_observation_native.py:native_liveness.<locals>.Reports.x"],
+                 "o": ["docs/c.md", "relative-name-in-a-temporary-directory"]}
+    tm.write_gz({**build_map({f"{HEAVY_FILE}::test_a": footprint}), "incomplete_memo": [], "unattributed_memo": []},
+                tmp_path / "map.json.gz")
+    assert tm.main(["heavy", "--map", "map.json.gz", "--write", "snapshot.json"]) == 1
+    out = capsys.readouterr().out
+    # A file no rule reaches, and a document nothing names, are each named;
+    # the lane's own files, src/ and a known leak are not.
+    assert "tests/unrelated.py is in a heavy test's footprint but outside run_heavy" in out
+    assert "docs/c.md is in a heavy test's footprint" in out
+    assert "helper" not in out and "src/app" not in out and "native" not in out
+    snapshot = json.loads((tmp_path / "snapshot.json").read_text())
+    assert snapshot["tests"] == [HEAVY_FILE] and snapshot["map"]["commit"] == "a" * 40
+    assert "relative-name-in-a-temporary-directory" not in snapshot["files"] and "docs/c.md" in snapshot["files"]
+    # Once the lane names the document and imports the module, it passes.
+    (tmp_path / HEAVY_FILE).write_text("import tests.helper\nimport tests.unrelated\nDOC = 'docs/c.md'\n")
+    assert tm.main(["heavy", "--map", "map.json.gz"]) == 0
+    # A map without the lane's tests cannot be its snapshot.
+    monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE, "tests/test_newer.py"))
+    assert tm.main(["heavy", "--map", "map.json.gz", "--write", "snapshot.json"]) == 1
+    assert "the map has no tests of tests/test_newer.py" in capsys.readouterr().out
+
+
+def test_the_heavy_scope_covers_everything_the_map_saw_the_lane_use(monkeypatch) -> None:
+    # scripts/ci/heavy_footprint.json: every file the heavy tests ran or
+    # opened in a map (testmap.py heavy --write). Regenerate it from a newer
+    # map when HEAVY_TESTS gains a file. The map workflow checks each new map.
+    root = Path(__file__).resolve().parents[1]
+    snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+    assert set(cs.HEAVY_TESTS) <= set(snapshot["tests"])
+    assert len(snapshot["files"]) > 1000
+    assert tm.heavy_outside(root, snapshot["files"]) == []
+    # The check can fail: a scope read from one of the lane's files misses
+    # the helpers the others ran.
+    monkeypatch.setattr(cs, "HEAVY_TESTS", ("tests/test_async_settle_shadow_cohort_http.py",))
+    missed = tm.heavy_outside(root, snapshot["files"])
+    assert {"tests/shadow_v2_gate_totality.py", "tests/shadow_health_cold_start_simulation.py"} <= set(missed)

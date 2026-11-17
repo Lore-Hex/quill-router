@@ -139,19 +139,51 @@ later push until a run passes it again, and its red holds every deploy.
   data format that names nothing scheduled runs nothing; and a push to main
   never runs the suite. A test such a change breaks past the cutovers goes
   red on the next change that runs it, or at the cutover.
+
+  run_heavy (test-heavy). The test files in HEAVY_TESTS (the slowest of the
+  async settle family, 28% of the default suite's recorded weight) left the
+  eight `test` shards, which pass each as --ignore (`heavy-tests --ignore`);
+  test-heavy runs them, with coverage, in HEAVY_SHARDS shards, whenever a
+  change can reach them:
+    - all of src/ (HEAVY_INPUTS), catalog data included: their imports alone
+      reach most of the application (the evidence file starts
+      trusted_router.main in a subprocess), one of them parses every .py
+      file under src/, and others start `python -c` and `python -m pytest`
+      and read src/ files from git history;
+    - heavy_closure(): from HEAVY_TESTS and tests/conftest.py (every test
+      runs under it, and its fixtures run inside theirs), every module
+      imported anywhere in a file, named as a string or imported by code in
+      a string, and every file named by a path (a string, a path built from
+      __file__, a variable or constants, a glob or a listing of a directory
+      the file names, an f-string or concatenation whose constant start is a
+      directory or a module), followed through every Python file reached,
+      application code included. A test module the heavy tests only import
+      helpers or fixtures from does not run its own tests there, so the
+      bodies of its test functions count only when something in the
+      closure names one;
+    - every non-Python file under tests/ (fixtures, fakes), .test_durations
+      (their split weights) and the Python toolchain.
+  A glob or listing of a directory the file computes some other way (a
+  parameter, an attribute) is taken to list one the file names, or one
+  outside the repository; that is the gap testmap.py's `heavy` check closes
+  against what the tests actually ran and opened: on every new per-test
+  footprint map, and in the default suite through the snapshot
+  scripts/ci/heavy_footprint.json.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import bisect
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import sys
 import tomllib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -203,6 +235,7 @@ PATH_SCOPED_JOBS: dict[str, str] = {
     "proofs": "run_proofs",
     "proof-oracle": "run_proof_oracle",
     "test-post-cutover": "run_post_cutover",
+    "test-heavy": "run_heavy",
     "fastpath": "run_fastpath",
     "fastpath-spanner": "run_fastpath",
     "fastpath-walks": "run_fastpath",
@@ -397,7 +430,17 @@ def imported_modules(path: str, source: str) -> set[str]:
     """Modules a file imports, and repository module names it writes as strings
     (for importlib calls and lists of modules to load)."""
     tree = ast.parse(source, filename=path)
-    package = path.removesuffix(".py").split("/")[:-1]
+    names = statement_imports(path, tree)
+    names.update(node.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and REPO_MODULE.fullmatch(node.value))
+    return names
+
+
+def statement_imports(path: str, tree: ast.AST) -> set[str]:
+    """The modules a parsed file's import statements name, wherever they are,
+    each `from M import N` as both M and M.N (N may be a submodule). A file
+    under src/ is a module of the package it is in there."""
+    package = (path[4:] if path.startswith("src/") else path).removesuffix(".py").split("/")[:-1]
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -410,8 +453,6 @@ def imported_modules(path: str, source: str) -> set[str]:
                 module = node.module or ""
             names.add(module)
             names.update(f"{module}.{alias.name}" for alias in node.names)
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and REPO_MODULE.fullmatch(node.value):
-            names.add(node.value)
     return names
 
 
@@ -641,6 +682,567 @@ def oracle_reason(changes: list[Change], root: Path) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# The heavy lane (test-heavy): test files moved out of the eight `test`
+# shards, which pass each as --ignore; test-heavy runs them with coverage
+# when run_heavy is set.
+
+HEAVY_TESTS: tuple[str, ...] = (
+    "tests/test_async_settle_proof_oracle.py",
+    "tests/test_async_settle_shadow_cohort_differential.py",
+    "tests/test_async_settle_shadow_cohort_http.py",
+    "tests/test_async_settle_shadow_health_claim_contention.py",
+    "tests/test_async_settle_shadow_http.py",
+    "tests/test_async_settle_shadow_v2_a1_boundaries.py",
+    "tests/test_async_settle_shadow_v2_evidence.py",
+    "tests/test_async_settle_shadow_v2_gate_a2.py",
+    "tests/test_async_settle_shadow_v2_gate_a3.py",
+    "tests/test_async_settle_shadow_v2_gate_complete.py",
+    "tests/test_async_settle_shadow_v2_gate_loading.py",
+    "tests/test_async_settle_shadow_v2_gate_window.py",
+    "tests/test_async_settle_shadow_v2_gates.py",
+    "tests/test_async_settle_shadow_v2_pack_round3_composition.py",
+    "tests/test_async_settle_shadow_v2_pack_round4.py",
+    "tests/test_async_settle_shadow_v2_pack_round5.py",
+    "tests/test_async_settle_shadow_v2_pack_round6.py",
+    "tests/test_async_settle_shadow_v2_pack_round7_chain.py",
+)
+# The heavy lane's shards (ci.yml's test-heavy matrix; test_ci_workflow
+# holds the two together).
+HEAVY_SHARDS = 3
+# All of src/, catalog data included (the docstring says why), and the
+# lane's split weights.
+HEAVY_INPUTS: tuple[str, ...] = ("src/**", ".test_durations")
+# Directories a repository walk skips: not repository files.
+WALK_SKIP: frozenset[str] = frozenset({
+    ".git", ".venv", "node_modules", "__pycache__", ".hypothesis", ".ruff_cache", ".mypy_cache",
+    ".pytest_cache", ".security",
+})
+MODULE_ROOTS: tuple[str, ...] = ("src", "tests", "scripts")
+PATH_TEXT = re.compile(r"[A-Za-z0-9_@+=-][A-Za-z0-9_.@+=/-]*|\.{1,2}/[A-Za-z0-9_.@+=/-]+")
+GLOB_TEXT = re.compile(r"[A-Za-z0-9_.@+=/!*?\[\]-]*[*?\[][A-Za-z0-9_.@+=/!*?\[\]-]*")
+FILE_SUFFIX = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,7}$")
+MODULE_TEXT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
+CODE_TEXT = re.compile(r"^[ \t]*(?:from[ \t]+\S+[ \t]+)?import[ \t]", re.MULTILINE)
+GLOB_CALLS = frozenset({"glob", "rglob", "iglob"})
+LIST_CALLS = frozenset({"iterdir", "listdir", "scandir", "walk", "copytree"})
+JOIN_CALLS = frozenset({"Path", "PurePath", "PosixPath", "PurePosixPath", "joinpath", "join"})
+SAME_PATH_CALLS = frozenset({"resolve", "absolute", "expanduser", "realpath", "abspath", "normpath"})
+
+
+class Tree:
+    """The repository's files, read once: each file, each directory, and the
+    module each Python file under src/, tests/ or scripts/ is."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        files: list[str] = []
+        for directory, subdirs, names in os.walk(root):
+            subdirs[:] = sorted(name for name in subdirs if name not in WALK_SKIP)
+            relative = os.path.relpath(directory, root)
+            prefix = "" if relative == "." else relative.replace(os.sep, "/") + "/"
+            files.extend(prefix + name for name in names)
+        self.files = sorted(files)
+        self.file_set = frozenset(files)
+        self.dirs = frozenset({"/".join(path.split("/")[:depth]) for path in files
+                               for depth in range(1, path.count("/") + 1)})
+        self.modules: dict[str, str] = {}
+        for path in files:
+            top = path.split("/", 1)[0]
+            if path.endswith(".py") and top in MODULE_ROOTS:
+                name = (path[4:] if top == "src" else path).removesuffix(".py").removesuffix("/__init__")
+                if all(part.isidentifier() for part in name.split("/")):
+                    self.modules[name.replace("/", ".")] = path
+
+    def under(self, directory: str) -> list[str]:
+        if not directory:
+            return self.files
+        # Sorted, and "/" sorts just before "0": the paths under the
+        # directory are one slice.
+        prefix = directory.rstrip("/") + "/"
+        return self.files[bisect.bisect_left(self.files, prefix):bisect.bisect_left(self.files, prefix[:-1] + "0")]
+
+    def module_files(self, name: str) -> set[str]:
+        """The files importing `name` executes: each package's __init__.py and
+        the module, or for a name under tests or scripts that resolves to no
+        file, both candidate paths (a deleted module is still a change)."""
+        parts = name.split(".")
+        found = {self.modules[".".join(parts[:depth])] for depth in range(1, len(parts) + 1)
+                 if ".".join(parts[:depth]) in self.modules}
+        if parts[0] in ("tests", "scripts") and name not in self.modules:
+            base = "/".join(parts)
+            found |= {f"{base}.py", f"{base}/__init__.py"}
+        return found
+
+
+@dataclass(frozen=True)
+class Place:
+    """Where a path expression points: a repository path, and whether an
+    unknown part follows it (everything under it, then)."""
+    path: str
+    wild: bool = False
+
+
+def _parent(path: str) -> str:
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def _join(places: list[Place], text: str) -> list[Place]:
+    out = []
+    for place in places:
+        if place.wild:
+            out.append(place)
+            continue
+        joined = posixpath.normpath(f"{place.path}/{text}" if place.path else text)
+        if joined == ".":
+            joined = ""
+        if not joined.startswith(".."):
+            out.append(Place(joined))
+    return out
+
+
+class Names:
+    """What one Python file names by a string: repository files and
+    directories (expanded to the files under them), modules, and globs."""
+
+    def __init__(self, tree: Tree, path: str) -> None:
+        self.tree = tree
+        self.path = path
+        own = _parent(path)
+        self.ancestors = [own]
+        while own:
+            own = _parent(own)
+            self.ancestors.append(own)
+        self.variables: dict[str, list[Place]] = {}
+        self.choices: dict[str, list[str]] = {}
+        self.found: set[str] = set()  # files named as paths (read, or run as scripts)
+        self.modules_found: set[str] = set()  # files of modules named as strings
+        self.consumed: set[int] = set()
+        self.named_dirs: set[str] = set()
+        self.unplaced: list[str] = []
+
+    # Places an expression points at; None when it is not a path the file
+    # builds from __file__, a variable or constants.
+    def places(self, node: ast.AST) -> list[Place] | None:
+        if isinstance(node, ast.Name):
+            if node.id == "__file__":
+                return [Place(self.path)]
+            return self.variables.get(node.id)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            self.consumed.add(id(node))
+            if not PATH_TEXT.fullmatch(node.value):
+                return None
+            return _join([Place(base) for base in self.ancestors], node.value)
+        if isinstance(node, ast.Attribute):
+            if node.attr == "parent":
+                inner = self.places(node.value)
+                return None if inner is None else [p if p.wild else Place(_parent(p.path)) for p in inner]
+            return None
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
+            inner = self.places(node.value.value)
+            index = node.slice
+            if inner is None or not (isinstance(index, ast.Constant) and type(index.value) is int):
+                return None
+            out = []
+            for place in inner:
+                path = place.path
+                for _ in range(index.value + 1):
+                    path = _parent(path)
+                out.append(place if place.wild else Place(path))
+            return out
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left = self.places(node.left)
+            if left is None:
+                # An unplaced base: constants after it are a path relative to
+                # the root or a directory above the file; anything else is
+                # not a path this can follow.
+                if isinstance(node.left, ast.BinOp) or not (
+                        isinstance(node.right, ast.Constant) and isinstance(node.right.value, str)):
+                    return None
+                left = [Place(base) for base in self.ancestors]
+            return self.extend(left, [node.right])
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+            if name in SAME_PATH_CALLS and isinstance(func, ast.Attribute) and not node.args:
+                return self.places(func.value)
+            if name in SAME_PATH_CALLS and node.args:
+                return self.places(node.args[0])
+            if name == "dirname" and node.args:
+                inner = self.places(node.args[0])
+                return None if inner is None else [p if p.wild else Place(_parent(p.path)) for p in inner]
+            if name in JOIN_CALLS and node.args:
+                if name == "joinpath" and isinstance(func, ast.Attribute):
+                    start = self.places(func.value)
+                    return None if start is None else self.extend(start, node.args)
+                if name == "join" and not (isinstance(func, ast.Attribute) and (
+                        isinstance(func.value, ast.Attribute) and func.value.attr == "path"
+                        or isinstance(func.value, ast.Name) and func.value.id in ("posixpath", "ntpath"))):
+                    return None  # str.join and the like
+                first = self.places(node.args[0])
+                return None if first is None else self.extend(first, node.args[1:])
+        return None
+
+    def extend(self, start: list[Place], parts: list[ast.expr]) -> list[Place]:
+        places = start
+        for part in parts:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                self.consumed.add(id(part))
+                if GLOB_TEXT.fullmatch(part.value):
+                    for place in places:
+                        self.glob(part.value, [place.path], recursive=False)
+                    return []
+                places = _join(places, part.value) if PATH_TEXT.fullmatch(part.value) else []
+            else:
+                places = [Place(place.path, wild=True) for place in places]
+        return places
+
+    def take(self, places: list[Place]) -> None:
+        for place in places:
+            if place.wild:
+                # An unknown part under the repository root, or under a
+                # directory holding all of src/, tests/ or scripts/, is left to
+                # the string rules (each name the file builds it from is a
+                # string somewhere); under any narrower directory it is
+                # everything under it.
+                if place.path and place.path not in MODULE_ROOTS:
+                    self.found.update(self.tree.under(place.path))
+                    self.named_dirs.add(place.path)
+            elif place.path in self.tree.file_set:
+                self.found.add(place.path)
+            elif place.path in self.tree.dirs:
+                # A directory is a base for other paths; its files count
+                # when something lists or globs it.
+                self.named_dirs.add(place.path)
+            elif place.path.split("/", 1)[0] in ("tests", "scripts") and FILE_SUFFIX.search(place.path):
+                self.found.add(place.path)  # a file the tests name that does not exist yet
+
+    def glob(self, pattern: str, directories: list[str] | None, *, recursive: bool) -> None:
+        """Files a glob (or a listing: pattern "*") can match under each
+        directory it is called on; on a directory this cannot place, see
+        finish()."""
+        del recursive  # Path.glob and rglob alike: matching anywhere under is a superset.
+        if directories is None:
+            self.unplaced.append(pattern)
+            return
+        for base in directories:
+            for path in self.tree.under(base):
+                relative = path[len(base) + 1:] if base else path
+                name = relative.rsplit("/", 1)[-1]
+                if fnmatch.fnmatchcase(name, pattern) or fnmatch.fnmatchcase(relative, pattern) \
+                        or fnmatch.fnmatchcase(relative, f"*/{pattern}"):
+                    self.found.add(path)
+
+    def finish(self) -> None:
+        """Globs and listings of a directory this cannot place. A pattern
+        with a "/" places itself (relative to the root or a directory above
+        the file); any other is taken to list one of the directories the file
+        names (narrower than src/, tests/ or scripts/) or one outside the
+        repository (a temporary directory). A listing of a directory the file
+        computes some other way is the documented gap the footprint check
+        covers."""
+        dirs = sorted(d for d in self.named_dirs if d and d not in MODULE_ROOTS)
+        for pattern in self.unplaced:
+            if "/" in pattern:
+                for base in self.ancestors:
+                    for path in self.tree.under(base):
+                        if fnmatch.fnmatchcase(path[len(base) + 1:] if base else path, pattern):
+                            self.found.add(path)
+            else:
+                self.glob(pattern, dirs, recursive=True)
+
+    def pattern(self, node: ast.JoinedStr | ast.BinOp) -> None:
+        """An f-string or a concatenation of strings: the files and modules
+        whose names it can spell, when its constant parts name a module of
+        the repository or a path."""
+        # (text, dynamic): a constant, or a regex for a part only known at run
+        # time (a loop variable over literal strings: exactly those).
+        parts: list[tuple[str, bool]] = []
+
+        def flatten(sub: ast.AST) -> None:
+            if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.Add):
+                flatten(sub.left)
+                flatten(sub.right)
+            elif isinstance(sub, ast.JoinedStr):
+                for value in sub.values:
+                    flatten(value)
+            elif isinstance(sub, ast.FormattedValue) and sub.format_spec is None and sub.conversion == -1:
+                flatten(sub.value)
+            elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                self.consumed.add(id(sub))
+                parts.append((sub.value, False))
+            elif isinstance(sub, ast.Name) and sub.id in self.choices:
+                parts.append(("(?:" + "|".join(map(re.escape, self.choices[sub.id])) + ")", True))
+            else:
+                parts.append((".*", True))
+
+        flatten(node)
+        if not parts or parts[0][1] or not any(is_dynamic for _, is_dynamic in parts):
+            return
+        regex = re.compile("".join(text if is_dynamic else re.escape(text) for text, is_dynamic in parts), re.DOTALL)
+        lead = parts[0][0]
+        if lead.split(".", 1)[0] in ("trusted_router", "tests", "scripts") and "." in lead:
+            for name in self.tree.modules:
+                if regex.fullmatch(name):
+                    self.modules_found |= self.tree.module_files(name)
+        # A path: its constant start names a directory (and perhaps the start
+        # of a file name in it), relative to the root or a directory above.
+        directory = lead.rsplit("/", 1)[0] if "/" in lead else ""
+        if directory and PATH_TEXT.fullmatch(directory):
+            for base in self.ancestors:
+                start = posixpath.normpath(f"{base}/{directory}" if base else directory)
+                if start in self.tree.dirs:
+                    for path in self.tree.under(start):
+                        if regex.fullmatch(path[len(base) + 1:] if base else path):
+                            self.found.add(path)
+
+    @staticmethod
+    def own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
+        """The nodes of one scope: everything under it but the bodies of the
+        functions defined in it (yielded themselves, to be scanned in turn)."""
+        pending = list(ast.iter_child_nodes(scope))
+        while pending:
+            node = pending.pop()
+            yield node
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                pending.extend(ast.iter_child_nodes(node))
+
+    def literal_strings(self, node: ast.AST) -> list[str] | None:
+        if isinstance(node, ast.Name):
+            return self.choices.get(node.id)
+        if isinstance(node, ast.Tuple | ast.List | ast.Set) and node.elts and all(
+                isinstance(element, ast.Constant) and isinstance(element.value, str) for element in node.elts):
+            return [element.value for element in node.elts]  # type: ignore[attr-defined]
+        return None
+
+    def scope(self, scope: ast.AST, outer: tuple[dict[str, list[Place]], dict[str, list[str]]]) -> None:
+        """One module or function: its variables bound to paths and its loop
+        variables over literal strings (a parameter shadows the enclosing
+        binding: unknown), then the paths, globs and patterns it builds, then
+        the functions defined in it."""
+        self.variables, self.choices = dict(outer[0]), dict(outer[1])
+        if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            arguments = scope.args
+            for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                        *filter(None, [arguments.vararg, arguments.kwarg])]:
+                self.variables.pop(arg.arg, None)
+                self.choices.pop(arg.arg, None)
+        nodes = list(self.own_nodes(scope))
+        consumed = set(self.consumed)
+        for _ in range(2):  # twice, so one binding can build on another
+            for node in nodes:
+                if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None \
+                        and not isinstance(node.value, ast.Constant):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    places = self.places(node.value)
+                    strings = self.literal_strings(node.value)
+                    for target in targets:
+                        if isinstance(target, ast.Name) and places is not None:
+                            self.variables[target.id] = places
+                        if isinstance(target, ast.Name) and strings is not None:
+                            self.choices[target.id] = strings
+                elif isinstance(node, ast.comprehension | ast.For) and isinstance(node.target, ast.Name):
+                    strings = self.literal_strings(node.iter)
+                    if strings is not None:
+                        self.choices[node.target.id] = strings
+        self.consumed = consumed
+        for node in nodes:
+            if id(node) in self.consumed:
+                continue
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute | ast.Name):
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else func.id
+                if name in GLOB_CALLS and node.args and isinstance(node.args[0], ast.Constant) \
+                        and isinstance(node.args[0].value, str):
+                    self.consumed.add(id(node.args[0]))
+                    receiver = self.places(func.value) if isinstance(func, ast.Attribute) else None
+                    known = None if receiver is None else [p.path for p in receiver]
+                    self.glob(node.args[0].value, known, recursive=name == "rglob")
+                    continue
+                if name in LIST_CALLS:
+                    target = func.value if name == "iterdir" and isinstance(func, ast.Attribute) else \
+                        node.args[0] if node.args else None
+                    receiver = None if target is None else self.places(target)
+                    self.glob("*", None if receiver is None else [p.path for p in receiver], recursive=True)
+                    if target is not None:
+                        self.consumed.update(id(sub) for sub in ast.walk(target))
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) or isinstance(node, ast.Call):
+                places = self.places(node)
+                if places is not None:
+                    self.take(places)
+                    self.consumed.update(id(sub) for sub in ast.walk(node) if isinstance(sub, ast.BinOp | ast.Call))
+                    continue
+            if isinstance(node, ast.JoinedStr) or isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                self.pattern(node)
+                self.consumed.update(id(sub) for sub in ast.walk(node))
+        bindings = (self.variables, self.choices)
+        for node in nodes:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                self.scope(node, bindings)
+
+    def scan(self, tree: ast.AST) -> set[str]:
+        """Everything the parsed file names; its import statements are the
+        caller's (heavy_closure follows them)."""
+        self.scope(tree, ({}, {}))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or id(node) in self.consumed:
+                continue
+            text = node.value
+            if MODULE_TEXT.fullmatch(text) and text.split(".", 1)[0] in ("trusted_router", "tests", "scripts"):
+                self.modules_found |= self.tree.module_files(text)
+            if "\n" in text and CODE_TEXT.search(text):
+                # Code in a string (a subprocess's program): what it imports
+                # and names. Code that does not parse names nothing.
+                program = _parse(text, self.path)
+                if program is not None:
+                    inner = Names(self.tree, self.path)
+                    inner.scan(program)
+                    self.found |= inner.found
+                    self.modules_found |= inner.modules_found
+                    for module in statement_imports(self.path, program):
+                        self.modules_found |= self.tree.module_files(module)
+            elif GLOB_TEXT.fullmatch(text) and len(re.findall(r"[A-Za-z0-9]", re.sub(r"\[[^\]]*\]", "", text))) >= 2:
+                self.glob(text, None, recursive=True)
+            elif PATH_TEXT.fullmatch(text) and ("/" in text or FILE_SUFFIX.search(text)):
+                self.take(_join([Place(base) for base in self.ancestors], text))
+        self.finish()
+        return self.found | self.modules_found
+
+
+def _parse(source: str, path: str) -> ast.AST | None:
+    try:
+        return ast.parse(source, filename=path)
+    except (SyntaxError, ValueError):
+        return None
+
+
+_CLOSURES: dict[tuple[str, int], frozenset[str]] = {}  # (root, what the closure reads) -> closure
+
+
+def heavy_closure(root: Path, tree: Tree | None = None) -> frozenset[str]:
+    """Every repository file the heavy tests can load or read, by these rules,
+    from HEAD's sources: start at HEAVY_TESTS and tests/conftest.py; from each
+    Python file, follow the modules it imports and the package __init__.py of
+    each (imports anywhere, module names written as strings, code written in
+    a string), and take the files it names by a string: a path or a directory
+    (everything under it) relative to the repository root or any directory
+    above the file, a path it builds from __file__, a variable or constants
+    (an unknown part under a directory narrower than tests/ or scripts/ is
+    everything under it), a glob (under the directory it is called on, or
+    anywhere), and an f-string or concatenation whose constant parts name a
+    module or a path. Every Python file reached is read in turn, src/
+    included, so a path application code names (a script it runs, a fixture
+    it hashes) counts as well."""
+    tree = tree or Tree(root)
+    # The same tree (every name, every Python file's size and time) gives the
+    # same closure: the test suite asks about this repository many times.
+    key = (str(root.resolve()), hash((HEAVY_TESTS, TEST_HARNESS, tuple(tree.files), tuple(
+        (lambda stat: (stat.st_size, stat.st_mtime_ns))((root / path).stat())
+        for path in tree.files if path.endswith(".py")))))
+    if key in _CLOSURES:
+        return _CLOSURES[key]
+    heavy = frozenset(HEAVY_TESTS)
+    seen: set[str] = set()
+    emptied: dict[str, set[str]] = {}  # test module -> the tests whose bodies were left out
+    kept: dict[str, frozenset[str]] = {}  # test module -> the tests something calls
+    identifiers: dict[str, set[str]] = {}
+    named_as_paths: set[str] = set()
+
+    def read(path: str, keep: frozenset[str] | None) -> set[str]:
+        """What loading `path` loads and names. keep=None reads it whole;
+        otherwise the bodies of its tests other than `keep` are left out."""
+        targets: set[str] = set()
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            init = "/".join(parts[:depth]) + "/__init__.py"
+            if init in tree.file_set:
+                targets.add(init)
+        parsed = _parse((root / path).read_text(encoding="utf-8", errors="replace"), path)
+        if parsed is None:
+            # What it imports is unknown: scope_jobs runs the lane.
+            raise ValueError(f"{path} does not parse")
+        if keep is not None:
+            emptied[path] = empty_test_bodies(parsed, keep)
+        else:
+            emptied.pop(path, None)
+        for module in statement_imports(path, parsed):
+            targets |= tree.module_files(module)
+        names = Names(tree, path)
+        targets |= names.scan(parsed)
+        named_as_paths.update(names.found)
+        identifiers[path] = referenced_identifiers(parsed)
+        return targets
+
+    pending = [*HEAVY_TESTS, *TEST_HARNESS]
+    while pending:
+        while pending:
+            path = pending.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.endswith(".py") and path in tree.file_set:
+                # A test module the heavy tests import (for a helper or a
+                # fixture), not one they run: its tests do not run, unless
+                # something calls one by name or reads the file as a path.
+                partial = is_test_file(path) and path not in heavy and path not in named_as_paths
+                pending.extend(read(path, frozenset() if partial else None) - seen)
+        called = set().union(*identifiers.values()) if identifiers else set()
+        for path, names in list(emptied.items()):
+            if path in named_as_paths:
+                pending.extend(read(path, None) - seen)
+            elif names & called:
+                kept[path] = kept.get(path, frozenset()) | (names & called)
+                pending.extend(read(path, kept[path]) - seen)
+    _CLOSURES[key] = frozenset(seen)
+    return _CLOSURES[key]
+
+
+def empty_test_bodies(tree: ast.Module, keep: frozenset[str]) -> set[str]:
+    """Leave out the bodies of the tests a parsed module defines (top-level
+    test* functions, Test* classes' test* methods), except those named in
+    keep, and return the names left out. Decorators, default values and class
+    bodies run when the module is imported and stay."""
+    left_out: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test"):
+            if node.name not in keep:
+                node.body = [ast.Pass()]
+                left_out.add(node.name)
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test") and node.name not in keep:
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef) and item.name.startswith("test"):
+                    item.body = [ast.Pass()]
+            left_out.add(node.name)
+    return left_out
+
+
+def referenced_identifiers(tree: ast.AST) -> set[str]:
+    """Every name a parsed file can call something by: names, attributes,
+    imported names and identifier strings (getattr, monkeypatch targets)."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            found.add(node.attr)
+        elif isinstance(node, ast.alias):
+            found.add(node.name.rsplit(".", 1)[-1])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", node.value) if len(node.value) < 200 else ())
+    return found
+
+
+def heavy_covers(path: str, closure: frozenset[str]) -> bool:
+    """Whether a change to `path` runs the heavy lane, given heavy_closure()."""
+    return (matches_any(path, (*PYTHON_TOOLCHAIN_PATHS, *HEAVY_INPUTS)) or is_test_fixture(path)
+            or path in closure)
+
+
+def heavy_reason(changes: list[Change], root: Path) -> str | None:
+    closure = heavy_closure(root)
+    return next((change.path for change in changes if heavy_covers(change.path, closure)), None)
+
+
 def post_cutover_plan(
     changes: list[Change], root: Path, event: str, lines: str | None, now: datetime,
 ) -> tuple[str | None, tuple[str, ...]]:
@@ -721,6 +1323,7 @@ def scope_jobs(
 
     rules: dict[str, Callable[[], str | None]] = {
         "run_fastpath": lambda: fastpath_reason(changes),
+        "run_heavy": lambda: heavy_reason(changes, root),
         "run_post_cutover": post_cutover,
         "run_proof_oracle": lambda: oracle_reason(changes, root),
         "run_proofs": lambda: proofs_reason(changes, root),
@@ -773,7 +1376,24 @@ def main(argv: list[str] | None = None) -> int:
     jobs.add_argument("--lines", type=Path, help="git diff -U0 REF HEAD outside src/")
     jobs.add_argument("--full", action="store_true", help="every flag true; stdin is not read")
     sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY, EVENT_NAME; exit 1 on any failure")
+    heavy = sub.add_parser("heavy-tests", help="the heavy lane's test files, as one line of pytest arguments")
+    mode = heavy.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--ignore", action="store_true", help="--ignore=<file> for each (the test job)")
+    mode.add_argument("--files", action="store_true", help="each file that exists (the test-heavy job)")
     args = parser.parse_args(argv)
+    if args.command == "heavy-tests":
+        # The line is word-split into arguments, so every path must be safe.
+        assert all(SAFE_PATH.fullmatch(path) for path in HEAVY_TESTS), HEAVY_TESTS
+        if args.ignore:
+            print(" ".join(f"--ignore={path}" for path in HEAVY_TESTS))
+            return 0
+        present = [path for path in HEAVY_TESTS if Path(path).is_file()]
+        if not present:
+            # pytest with no file arguments would run the whole suite.
+            print("::error title=Heavy lane::none of commit_scope.HEAVY_TESTS exists", file=sys.stderr)
+            return 1
+        print(" ".join(present))
+        return 0
     if args.command == "classify":
         # Records are split on "\n" alone: str.splitlines also splits on
         # U+0085, U+2028 and U+2029, which git prints literally in a path

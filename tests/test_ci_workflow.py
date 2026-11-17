@@ -29,6 +29,10 @@ POST_CUTOVER_SHARDS = ("${{ fromJSON(needs.scope.outputs.post_cutover_tests == '
 POST_CUTOVER_SHARD_COUNT = "${{ needs.scope.outputs.post_cutover_tests == '' && '8' || '1' }}"
 
 
+def job_env(job: dict) -> str:
+    return str(job["env"]["TEST_SHARDS"])
+
+
 def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
     import re
 
@@ -43,11 +47,18 @@ def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
     for shards, count_text in zip(re.findall(r"'(\[[^']*\])'", POST_CUTOVER_SHARDS),
                                   re.findall(r"'(\d+)'", POST_CUTOVER_SHARD_COUNT), strict=True):
         assert json.loads(shards) == list(range(1, int(count_text) + 1))
-    for job in (jobs["test"], post):
+    from scripts.ci.commit_scope import HEAVY_SHARDS
+
+    heavy = jobs["test-heavy"]
+    assert heavy["strategy"]["matrix"]["shard"] == list(range(1, HEAVY_SHARDS + 1))
+    assert heavy["env"]["TEST_SHARDS"] == str(HEAVY_SHARDS)
+    for job in (jobs["test"], post, heavy):
         assert job["timeout-minutes"] == 35
         assert job["strategy"]["fail-fast"] is False
         assert "continue-on-error" not in job
-    assert jobs["coverage"]["needs"] == ["test", "scope"]
+    assert jobs["coverage"]["needs"] == ["test", "test-heavy", "scope"]
+    # The floor counts exactly the shards each matrix makes.
+    assert jobs["coverage"]["env"] == {"TEST_SHARDS": job_env(jobs["test"]), "HEAVY_SHARDS": str(HEAVY_SHARDS)}
 
 
 def test_the_post_cutover_suite_runs_the_selected_tests_from_the_environment() -> None:
@@ -65,15 +76,19 @@ def test_the_post_cutover_suite_runs_the_selected_tests_from_the_environment() -
 def test_ci_runs_python_suite_once_with_coverage() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    # Still one full coverage pass, now sharded. The focused P5 pass checks
-    # live-object budgets that cannot safely collect in a mixed-suite worker.
+    # Still one full coverage pass, sharded, and split between the eight
+    # shards and the heavy lane, which run disjoint files (each test once:
+    # test_the_heavy_lane_and_the_shards_partition_the_suite). The focused P5
+    # pass checks live-object budgets that cannot safely collect in a
+    # mixed-suite worker.
     assert "-n 4 --dist loadgroup" in workflow
     assert "--cov=trusted_router" in workflow
     jobs = yaml.safe_load(workflow)["jobs"]
-    full_commands = "\n".join(step.get("run", "") for name, job in jobs.items()
-                              if name != "spanner-emulator" for step in job.get("steps", []))
-    assert full_commands.count("--cov=trusted_router") == 1
-    assert workflow.count("--cov=trusted_router") == 2
+    full_commands = {name: "\n".join(step.get("run", "") for step in job.get("steps", []))
+                     for name, job in jobs.items() if name != "spanner-emulator"}
+    assert {name for name, text in full_commands.items() if "--cov=trusted_router" in text} == {"test", "test-heavy"}
+    assert all(text.count("--cov=trusted_router") <= 1 for text in full_commands.values())
+    assert workflow.count("--cov=trusted_router") == 3
 
     # The shards collect coverage with NO threshold: each sees only its own
     # slice, so a per-shard floor would fail on a suite that covers far more.
@@ -148,7 +163,11 @@ def test_coverage_from_the_repository_root_resolves_to_sys_monitoring(monkeypatc
 def test_ci_shards_record_durations_using_existing_split_weights() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     path = "durations-${{ matrix.shard }}.json"
-    for job_name, clock in (("test", "default"), ("test-post-cutover", "post-cutover")):
+    # The heavy lane splits by the same weights as the shards and uploads
+    # under durations-default-*, the default profile merge_shard_durations.py
+    # reads (its shards and the eight run disjoint tests).
+    for job_name, clock, artifact in (("test", "default", "default"), ("test-post-cutover", "post-cutover", "post-cutover"),
+                                      ("test-heavy", "default", "default-heavy")):
         steps = jobs[job_name]["steps"]
         test_index = next(i for i, step in enumerate(steps)
                           if "uv run pytest" in step.get("run", ""))
@@ -160,12 +179,82 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
         assert "--splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}" in command
         upload = next(step for step in steps
                       if step.get("with", {}).get("name")
-                      == f"durations-{clock}-${{{{ matrix.shard }}}}")
+                      == f"durations-{artifact}-${{{{ matrix.shard }}}}")
         assert steps.index(upload) > test_index
         assert upload["if"] == "always()"
         assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         assert upload["with"]["path"] == path
         assert upload["with"]["retention-days"] == 7
+
+
+def test_the_heavy_lane_and_the_shards_partition_the_suite() -> None:
+    # Every test of the default suite runs once at the default clock: the
+    # eight shards ignore exactly the files the heavy lane runs, both lists
+    # read from commit_scope.HEAVY_TESTS when the job runs, with the same
+    # markers, workers, grouping, split weights and coverage.
+    import shlex
+
+    from scripts.ci.commit_scope import HEAVY_SHARDS, PATH_SCOPED_JOBS, path_condition
+
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    test, heavy = jobs["test"], jobs["test-heavy"]
+
+    def suite(job: dict) -> list[str]:
+        return shlex.split(next(step["run"] for step in job["steps"] if "uv run pytest" in step.get("run", "")))
+
+    def env_step(job: dict, variable: str) -> str:
+        return next(step["run"] for step in job["steps"] if f"{variable}=" in step.get("run", ""))
+
+    assert "--ignore" in env_step(test, "HEAVY_IGNORE")
+    assert 'echo "HEAVY_IGNORE=${ignored}" >> "$GITHUB_ENV"' in env_step(test, "HEAVY_IGNORE")
+    assert "ignored=$(python3 scripts/ci/commit_scope.py heavy-tests --ignore)" in env_step(test, "HEAVY_IGNORE")
+    assert "files=$(python3 scripts/ci/commit_scope.py heavy-tests --files)" in env_step(heavy, "HEAVY_FILES")
+    assert 'echo "HEAVY_FILES=${files}" >> "$GITHUB_ENV"' in env_step(heavy, "HEAVY_FILES")
+    for job in (test, heavy):
+        # set -e: a failed listing fails the step instead of passing nothing.
+        assert next(step["run"] for step in job["steps"] if "heavy-tests" in step.get("run", "")).startswith(
+            "set -euo pipefail\n")
+    shards, lane = suite(test), suite(heavy)
+    assert "${HEAVY_IGNORE}" in shards and shards.count("${HEAVY_IGNORE}") == 1
+    assert lane[-1] == "${HEAVY_FILES}" and not any(arg.startswith("tests/") for arg in lane)
+    common = ["uv", "run", "pytest", "-q", "-n", "4", "--dist", "loadgroup",
+              "-m", "not provider_health and not proof_oracle"]
+    assert shards[:len(common)] == common and lane[:len(common)] == common
+    for args in (shards, lane):
+        assert "--splitting-algorithm" in args and args[args.index("--splitting-algorithm") + 1] == "least_duration"
+        assert "--cov=trusted_router" in args and "--cov-report=" in args
+        assert not any(arg.startswith("--cov-fail-under") for arg in args)
+    assert heavy["needs"] == "scope" and heavy["if"] == path_condition(PATH_SCOPED_JOBS["test-heavy"])
+    assert heavy["env"] == {"TEST_SHARDS": str(HEAVY_SHARDS)}
+    # No databases or enclave source: none of the lane's files reads them.
+    assert "services" not in heavy
+    assert not any("quill-cloud-proxy" in json.dumps(step) for step in heavy["steps"])
+    # The same checkout as the shards (a test that needs history skips alike).
+    assert next(s for s in heavy["steps"] if "checkout" in s.get("uses", "")) == next(
+        s for s in test["steps"] if "checkout" in s.get("uses", ""))
+    uploads = {step["with"]["name"]: step for step in heavy["steps"] if "upload-artifact" in step.get("uses", "")}
+    assert set(uploads) == {"durations-default-heavy-${{ matrix.shard }}", "coverage-heavy-${{ matrix.shard }}"}
+    assert uploads["coverage-heavy-${{ matrix.shard }}"]["with"]["path"] == "coverage-heavy-${{ matrix.shard }}.dat"
+    assert any(step.get("run") == "mv .coverage coverage-heavy-${{ matrix.shard }}.dat" for step in heavy["steps"])
+    # The coverage job downloads every coverage-* artifact, the lane's among them.
+    download = next(s for s in jobs["coverage"]["steps"] if "download-artifact" in s.get("uses", ""))
+    assert download["with"] == {"pattern": "coverage-*", "path": "shards"}
+
+
+def test_the_heavy_tests_command_lists_the_lane(monkeypatch, capsys, tmp_path) -> None:
+    from scripts.ci.commit_scope import HEAVY_TESTS, is_test_file, main
+
+    assert list(HEAVY_TESTS) == sorted(set(HEAVY_TESTS))
+    assert all(is_test_file(path) and (ROOT / path).is_file() for path in HEAVY_TESTS)
+    monkeypatch.chdir(ROOT)
+    assert main(["heavy-tests", "--ignore"]) == 0
+    assert capsys.readouterr().out == " ".join(f"--ignore={path}" for path in HEAVY_TESTS) + "\n"
+    assert main(["heavy-tests", "--files"]) == 0
+    assert capsys.readouterr().out == " ".join(HEAVY_TESTS) + "\n"
+    # Nothing to run is an error: no file arguments would run the whole suite.
+    monkeypatch.chdir(tmp_path)
+    assert main(["heavy-tests", "--files"]) == 1
+    assert "none of commit_scope.HEAVY_TESTS exists" in capsys.readouterr().err
 
 
 def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
@@ -189,8 +278,10 @@ def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
         for step in job.get("steps", [])
     )
 
-    assert commands.count("uv run pytest") == 2
-    for name in ("test", "test-post-cutover"):
+    # The default clock in two jobs that partition the suite (the eight
+    # shards and the heavy lane), the post-cutover clock in one.
+    assert commands.count("uv run pytest") == 3
+    for name in ("test", "test-heavy", "test-post-cutover"):
         assert sum(step.get("run", "").count("uv run pytest") for step in jobs[name]["steps"]) == 1
     cutover = "\n".join(step.get("run", "") for step in jobs["test-post-cutover"]["steps"])
     assert "TR_LIFECYCLE_CLOCK_OVERRIDE=" in cutover
@@ -244,7 +335,7 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     )
     deploy = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
-    assert ci.count('-m "not provider_health and not proof_oracle"') == 2
+    assert ci.count('-m "not provider_health and not proof_oracle"') == 3
     # The price refresh runs no local suite: it publishes only after the exact
     # generated SHA passes ci.yml, whose shards exclude provider_health, so one
     # provider delisting a model cannot stop every other provider's prices.
@@ -434,7 +525,7 @@ def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     coverage = jobs["coverage"]
     assert coverage["if"] == "${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}"
-    assert coverage["needs"] == ["test", "scope"]
+    assert coverage["needs"] == ["test", "test-heavy", "scope"]
     assert "continue-on-error" not in coverage
     command = next(step["run"] for step in coverage["steps"]
                    if step.get("name") == "Combine and enforce the floor")
@@ -442,6 +533,13 @@ def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
     assert '!= "success"' in command
     assert "exit 1" in command
     assert "--fail-under=70" in command
+    # The heavy lane's coverage counts when it ran; a skip (which the CI
+    # summary accepts only with run_heavy=false) measures the eight alone,
+    # and any other result fails the floor, as a failed shard does.
+    flat = " ".join(command.split())
+    assert 'case "${{ needs.test-heavy.result }}" in success) heavy="${HEAVY_SHARDS}" ;; skipped) heavy=0 ;; *)' in flat
+    assert 'test "${shards}" -eq "${TEST_SHARDS}"' in command and 'test "${lane}" -eq "${heavy}"' in command
+    assert "coverage-heavy-*) lane=$((lane + 1)) ;;" in command
 
 
 ALWAYS_RUN_JOBS = {"scope", "lint", "production-import", "test", "browser", "ci"}
@@ -467,7 +565,7 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     # The post-cutover suite reads the data: it is path-scoped, never skipped
     # for a data-only commit, and every data path sets its flag
     # (tests/test_commit_scope.py).
-    assert set(jobs) - skipped == ALWAYS_RUN_JOBS | {"test-post-cutover"}
+    assert set(jobs) - skipped == ALWAYS_RUN_JOBS | {"test-post-cutover", "test-heavy"}
     for name in skipped:
         needs = jobs[name]["needs"]
         assert "scope" in ([needs] if isinstance(needs, str) else needs), name
@@ -482,13 +580,16 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
         assert "if" not in jobs[name] or name == "ci", name
     assert jobs["test-post-cutover"]["needs"] == "scope"
     assert jobs["test-post-cutover"]["if"] == f"{PUSH_SKIP_CONDITION} && {path_condition('run_post_cutover')}"
+    # The heavy lane reads the data too (all of src/): path-scoped only.
+    assert jobs["test-heavy"]["needs"] == "scope"
+    assert jobs["test-heavy"]["if"] == path_condition("run_heavy")
     # The jobs that read the published catalog: the suite under both clocks,
     # lint's catalog history check, the production import and the browser
     # smoke (which starts the app on the committed snapshot).
     commands = {name: "\n".join(step.get("run", "") for step in job.get("steps", []))
                 for name, job in jobs.items()}
     assert {name for name, text in commands.items()
-            if "not provider_health and not proof_oracle" in text} == {"test", "test-post-cutover"}
+            if "not provider_health and not proof_oracle" in text} == {"test", "test-post-cutover", "test-heavy"}
     assert "update_model_changes.py --check" in commands["lint"]
     assert "import trusted_router.main" in commands["production-import"]
     assert "npm run test:browser" in commands["browser"]
