@@ -138,7 +138,7 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "5"
+RECORDER_VERSION = "6"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
@@ -1294,26 +1294,33 @@ def load_failure_records(directory: Path) -> list[dict]:
 
 
 def recorded_failures(records: list[dict], test_result: str | None) -> tuple[set[str], str | None]:
-    """The tests this run failed ("module:<file>" for a module that did not
-    collect), and why they cannot be compared, if they cannot. A green test
-    job failed nothing. A red one is comparable only when every shard left a
-    complete record and the records hold a failure: otherwise the shards that
-    stopped early (cancelled, timed out, crashed) or a step outside pytest
-    failed, and nothing measured which tests failed."""
+    """The tests this run failed ("module:<path>" for a module or directory
+    that did not collect), and why they cannot be compared, if they cannot.
+    A green test job failed nothing. A red one is comparable only when every
+    shard left a complete record (it ran every test it collected: see
+    scripts/ci/failure_record.py) and the records hold a failure: otherwise a
+    shard stopped early (cancelled, timed out, interrupted, crashed, out of
+    xdist worker restarts) or a step outside pytest failed, and nothing
+    measured which tests failed."""
     if test_result == "success":
         return set(), None
-    complete = [r for r in records if r.get("complete")]
+
+    def ran_everything(r: dict) -> bool:  # what the record says, checked again
+        return bool(r.get("complete")) and r.get("exitstatus") in (0, 1) and r.get("collected") in (
+            None, r.get("reported"))
+
+    complete = [r for r in records if ran_everything(r)]
     failed = {t for r in complete for t in r.get("failed", ())}
     failed |= {MODULE + path for r in complete for path in r.get("collection_errors", ())}
     if not records:
         return failed, f"the test job's result is {test_result or 'unknown'} and no shard left a failure record"
     splits = next((r["splits"] for r in records if isinstance(r.get("splits"), int)), None)
     groups = {r.get("group") for r in complete}
-    stopped = sorted({str(r.get("group") or r.get("unreadable") or "?") for r in records if not r.get("complete")}
+    stopped = sorted({str(r.get("group") or r.get("unreadable") or "?") for r in records if not ran_everything(r)}
                      | ({str(g) for g in range(1, splits + 1) if g not in groups} if splits else set()))
     if stopped:
         return failed, (f"shards {', '.join(stopped)} left no complete failure record (cancelled, timed out,"
-                        " or stopped before pytest finished)")
+                        " interrupted, or stopped before every test it collected ran)")
     if not failed:
         statuses = sorted({str(r.get("exitstatus")) for r in complete})
         return failed, (f"the test job's result is {test_result or 'unknown'} but no shard recorded a failing"
@@ -1342,12 +1349,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
         modules = sorted(t for t in failed if t.startswith(MODULE))
         outside = sorted(t for t in failed if not t.startswith((UNKNOWN, MODULE)) and not runs(t))
         # A collection error is outside the selection when the selection runs
-        # no test of that file (pytest would not collect it). A file the map
-        # does not know runs (S11).
+        # no test of that file, or of any file under that directory (a failing
+        # conftest.py: pytest reports the directory), so pytest would not
+        # collect it. A file the map does not know runs (S11).
         runs_file = {t.split("::")[0] for t in known if runs(t)} | set(selection.get("whole_files", ()))
         known_files = {t.split("::")[0] for t in known}
+
+        def files_under(path: str) -> set[str]:
+            if path.endswith(".py"):
+                return {path} & known_files
+            prefix = path.rstrip("/") + "/"
+            return {f for f in known_files if f.startswith(prefix)}
+
         outside += [m for m in modules if not selection.get("full")
-                    and m[len(MODULE):] in known_files and m[len(MODULE):] not in runs_file]
+                    and files_under(m[len(MODULE):]) and files_under(m[len(MODULE):]).isdisjoint(runs_file)]
         if selection.get("full"):
             lines.append(f"The shadow selection ran the full suite ({'; '.join(selection.get('reasons', [])[:1])}).")
         counts = (f"{len(failed)}, of which {len(modules)} are collection errors and {len(unknown)} are"

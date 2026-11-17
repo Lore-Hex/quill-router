@@ -386,7 +386,7 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert "true --password=<value> --token <value> @cwd=." in spawns
     assert "true -H <value> https://example.com/p @cwd=." in spawns
     assert "true -e <program> @cwd=." in spawns
-    assert "true --work-tree=./src --format=%H @cwd=." in spawns
+    assert "true --work-tree=./src --format=<value> @cwd=." in spawns
     assert "true -u<value> -p<value> db @cwd=." in spawns
     assert "true -u<value> https://example.com/x @cwd=." in spawns
     assert "true login -p <value> @cwd=." in spawns
@@ -870,6 +870,22 @@ def or_none_singleton():
     return _CLIENT
 
 
+def counter_as_once_flag():
+    global _ACTIVE
+    if _ACTIVE:
+        return
+    _load()
+    _ACTIVE += 1
+
+
+def none_as_done_flag():
+    global _CLIENT
+    if _CLIENT is None:
+        return
+    _load()
+    _CLIENT = None
+
+
 def reset():
     global _CLIENT
     _CLIENT = None
@@ -895,12 +911,13 @@ def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -
 
     module = compile(KEEPS, "keeps.py", "exec")
     functions = {c.co_name: c for c in module.co_consts if hasattr(c, "co_code")}
-    # A "done once" flag serves what ran before it was set (lazy_init); a
-    # store a jump reaches is no constant (`compute() if FLAG else None`,
+    # A "done once" flag serves what ran before it was set (lazy_init), and
+    # so does a counter or a None the function also reads (`if _n: return`);
+    # a store a jump reaches is no constant (`compute() if FLAG else None`,
     # `build() or None`). A reset to None and a counter serve nothing.
     assert {name for name, code in functions.items() if keeps_cache(code)} == {
         "monitor_hash", "resolve", "ensure", "client", "log_once", "lazy_init", "ternary_singleton",
-        "or_none_singleton"}
+        "or_none_singleton", "counter_as_once_flag", "none_as_done_flag"}
 
 
 @pytest.mark.parametrize(("argv", "recorded"), [
@@ -927,6 +944,19 @@ def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -
     (["openssl", "-k", "Zq12v"], "openssl -k <value>"),
     (["tool", "--pw", "Zq16v"], "tool --pw <value>"),
     (["tool", "--bearer", "Zq15v"], "tool --bearer <value>"),
+    # A secret that starts with "-" after its flag: an option only if it looks like one.
+    (["redis-cli", "-a", "-Zk3yQ"], "redis-cli -a <value>"),
+    (["sshpass", "-p", "-x9Zq", "ssh"], "sshpass -p <value> ssh"),
+    (["curl", "-H", "-QZq", "https://h.example/x"], "curl -H <value> https://h.example/x"),
+    (["openssl", "-k", "-QZq"], "openssl -k <value>"),
+    (["git", "log", "-p", "--stat"], "git log -p --stat"),
+    # Dotted keys, any option's non-path value, program text after "=".
+    (["tool", "-Ddb.password=Zq1"], "tool -Ddb.password=<value>"),
+    (["tool", "--db.password=Zq2"], "tool --db.password=<value>"),
+    (["helm", "--set", "db.password=Zq3"], "helm --set db.password=<value>"),
+    (["tool", "-Dfoo=Zq4"], "tool -Dfoo=<value>"),
+    (["node", "--eval=code('Zq5')"], "node --eval=<program>"),
+    (["sh", "--command=echo Zq6"], "sh --command=<program>"),
 ])
 def test_command_words_hide_secrets_and_program_text(tmp_path: Path, argv: list[str], recorded: str) -> None:
     from scripts.ci import testmap_recorder

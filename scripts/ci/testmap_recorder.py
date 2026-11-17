@@ -175,7 +175,7 @@ from typing import Any
 
 import pytest
 
-RECORDER_VERSION = "5"  # scripts/ci/testmap.py holds the same value; its tests compare the two
+RECORDER_VERSION = "6"  # scripts/ci/testmap.py holds the same value; its tests compare the two
 
 TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
@@ -193,11 +193,14 @@ PROGRAM_FLAG = re.compile(r"-[A-Za-z]{0,3}[ce]|--(?:eval|exec|execute|command|pr
 # password (-p, redis-cli -a, openssl -k), or any option named like one.
 # Single letters match case-sensitively (python -P, pip -U are not these).
 VALUE_CLUSTER = re.compile(r"-[A-Za-z]*[Hupak]")  # -p, -a; a cluster ending in one (-vp, -up)
-LONG_VALUE_FLAG = re.compile(r"--header|--user|--pw|--?[\w-]*(?:pass|token|secret|key|auth|cred|cookie|bearer)[\w-]*",
-                             re.IGNORECASE)
+LONG_VALUE_FLAG = re.compile(r"--header|--user|--pw|--?[\w.-]*(?:pass|token|secret|key|auth|cred|cookie|bearer)[\w.-]*",
+                             re.IGNORECASE)  # dotted keys too: -Ddb.password, --db.password
+# After a secret's flag, the next word is that secret unless it looks like an
+# option (-c, --format): a secret may start with "-" (redis-cli -a -Zk3y).
+OPTION_LIKE = re.compile(r"-[A-Za-z]|--[a-z][a-z0-9-]*(?:=.*)?", re.DOTALL)
 GLUED_VALUE = re.compile(r"-([A-Za-z]*?[upH]).+", re.DOTALL)  # -phunter2, -uroot, -vpX: glued to its flag
 OPTION_VALUE = re.compile(r"(--?[A-Za-z0-9][\w.-]*)=.*", re.DOTALL)  # --password=x, -Dname=x
-ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)  # env NAME=value
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*=.*", re.DOTALL)  # env NAME=value, helm --set db.password=x
 # A URL's user and password run to its last "@" before any "?" or "#": a
 # password may hold "@" or "/", a query may hold "@".
 URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^?#\s]*@)?([^/?#\s]*)([^?#\s]*)[?#]?.*", re.DOTALL)
@@ -275,29 +278,50 @@ def _private_global(ins: dis.Instruction) -> bool:
     return ins.opname == "LOAD_GLOBAL" and name.startswith("_") and not name.startswith("__")
 
 
-def _reset_or_counter(instructions: list[dis.Instruction], index: int) -> bool:
-    """Is the global store at `index` a reset to None, or `+= <constant>` /
-    `-= <constant>` (a counter)? Neither hands a later caller a value an
-    earlier call computed. A store some jump reaches is neither (`_v =
+def _reset_or_counter(instructions: list[dis.Instruction], index: int) -> int | None:
+    """If the global store at `index` is a reset to None or `+= <constant>`
+    / `-= <constant>` (a counter), the index of the counter's own load (-1
+    for a reset); else None. A store some jump reaches is neither (`_v =
     compute() if FLAG else None`, `_c = build() or None`), and a constant
-    flag is not exempt: `if _ready: return; _populate(); _ready = True`
+    flag is never exempt: `if _ready: return; _populate(); _ready = True`
     serves what _populate() did."""
     store = instructions[index]
     before = instructions[index - 1] if index else None
     if before is None or store.is_jump_target:
-        return False
+        return None
     if before.opname == "LOAD_CONST":
-        return before.argval is None and not before.is_jump_target
-    return (before.opname == "BINARY_OP" and before.argrepr in ("+=", "-=") and index >= 3
+        return -1 if before.argval is None and not before.is_jump_target else None
+    if (before.opname == "BINARY_OP" and before.argrepr in ("+=", "-=") and index >= 3
             and instructions[index - 2].opname == "LOAD_CONST"
             and instructions[index - 3].opname == "LOAD_GLOBAL"
             and instructions[index - 3].argval == store.argval
-            and not any(ins.is_jump_target for ins in instructions[index - 2:index]))
+            and not any(ins.is_jump_target for ins in instructions[index - 2:index])):
+        return index - 3
+    return None
+
+
+def _only_resets_and_counters(instructions: list[dis.Instruction]) -> bool:
+    """Is every global store a reset to None or a counter, and is no such
+    global read anywhere else in the function? A read makes it a run-once
+    flag: `if _n: return; _load(); _n += 1`, `if _pending is None: return;
+    ...; _pending = None` serve what ran before the store."""
+    names: set[str] = set()
+    own_loads: set[int] = set()
+    for index, ins in enumerate(instructions):
+        if ins.opname in ("STORE_GLOBAL", "DELETE_GLOBAL"):
+            own = _reset_or_counter(instructions, index) if ins.opname == "STORE_GLOBAL" else None
+            if own is None:
+                return False
+            names.add(ins.argval)
+            own_loads.add(own)
+    return not any(ins.opname == "LOAD_GLOBAL" and ins.argval in names and index not in own_loads
+                   for index, ins in enumerate(instructions))
 
 
 def keeps_cache(code: Any) -> bool:
     """Does a function keep state across calls that a later call serves?
-      - it assigns a module global, other than a reset to None or a counter;
+      - it assigns a module global, other than a reset to None or a counter
+        that the function reads nowhere else;
       - it stores into, or calls a mutating method of, a private module
         global (_MONITOR_HASH[key] = ..., _VERIFIED.move_to_end(...)) or a
         global or attribute named like a cache (self._cache[key] = ...);
@@ -311,8 +335,7 @@ def keeps_cache(code: Any) -> bool:
     ops = code.co_code[::2]
     if any(op in ops for op in GLOBAL_WRITES):
         instructions = list(dis.get_instructions(code))
-        if any(ins.opname in ("STORE_GLOBAL", "DELETE_GLOBAL") and not _reset_or_counter(instructions, index)
-               for index, ins in enumerate(instructions)):
+        if not _only_resets_and_counters(instructions):
             return True
     if not any(CACHE_NAME.search(name) or name.startswith("_") and not name.startswith("__") for name in code.co_names):
         return False
@@ -719,13 +742,17 @@ class Recorder:
         the repository is its name; other paths outside it are placeholders,
         and so are program text (after -c or -e), the word after a header,
         user or password option (-H, -u, -p, -a, -k, --password, --pw), a
-        value glued to -u, -p or -H (-phunter2), an option's secret =value
-        or inner NAME=value, an environment value, a URL's user, password,
-        query and fragment, and user:password@ without a scheme. The word
-        after such an option is hidden only if it is not an option itself
-        (python -u -c: the -c still hides its program). Every word is cut
-        at MAX_WORD characters. A path under the repository is the
-        repository's even where rel() skips it (.git)."""
+        value glued to -u, -p or -H (-phunter2), an option's =value unless
+        it is a repository path (--eval=CODE is program text), a NAME=value's
+        value (dotted names too), a URL's user, password, query and
+        fragment, and user:password@ without a scheme. The word after a
+        program flag is hidden unless it is an option (python -u -c: the -c
+        still hides its program); after a secret's flag, unless it looks
+        like one (-c, --verbose: a secret may start with "-"). Every word is
+        cut at MAX_WORD characters. A path under the repository is the
+        repository's even where rel() skips it (.git). Not hidden: a secret
+        given as a plain positional word (vault login X), which nothing
+        tells apart from any other argument."""
         if isinstance(argv, (str, bytes, os.PathLike)):
             raw = [os.fsdecode(argv)]
         else:
@@ -735,7 +762,11 @@ class Recorder:
         for index, word in enumerate(raw):
             if hidden:
                 held, hidden = hidden, ""
-                if not word.startswith("-"):  # an option is never taken for the value: read it as one
+                # An option is never taken for the value (python -u -c: the -c
+                # still hides its program), but after a secret's flag only a
+                # word that looks like an option is one.
+                option = word.startswith("-") and (held == "<program>" or OPTION_LIKE.fullmatch(word))
+                if not option:
                     out.append(held)
                     continue
             if index:
@@ -767,12 +798,15 @@ class Recorder:
             return ("-<value>" if hide else word), "<value>"
         if OPTION_VALUE.fullmatch(word):
             name, value = word.split("=", 1)
-            if VALUE_CLUSTER.fullmatch(name) or LONG_VALUE_FLAG.fullmatch(name):
+            if PROGRAM_FLAG.fullmatch(name):  # --eval=CODE, --command=CODE
+                value = "<program>"
+            elif VALUE_CLUSTER.fullmatch(name) or LONG_VALUE_FLAG.fullmatch(name):
                 value = "<value>"
             elif ASSIGNMENT.fullmatch(value):  # --data=token=X
                 value = value.split("=", 1)[0] + "=<value>"
-            else:
-                value = self.word(value, 1)
+            else:  # a repository path stays (S8 reads it); any other value may be a secret (-Dfoo=x)
+                shown = self.word(value, 1)
+                value = shown if shown.startswith(("./", "<")) or shown == "." else "<value>"
             return name + "=" + value, ""
         if ASSIGNMENT.fullmatch(word):
             return word.split("=", 1)[0] + "=<value>", ""

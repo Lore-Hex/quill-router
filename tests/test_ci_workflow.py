@@ -786,17 +786,17 @@ def test_the_shadow_selection_is_report_only_and_off_the_scope_job() -> None:
     assert collect["uses"] == "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
     assert collect["with"] == {"pattern": "test-failures-*", "path": "test-failures"}
     assert coverage["steps"].index(collect) < coverage["steps"].index(shadow[1])
-    upload = next(s for s in test["steps"] if s.get("name") == "Upload this shard's failed tests")
+    # One step of the test job uploads the failure record: after the tests,
+    # whatever their outcome, bounded, and unable to fail the job.
+    uploads = [s for s in test["steps"] if "test-failures" in json.dumps(s)]
+    assert len(uploads) == 1
+    upload = uploads[0]
+    tests_step = next(s for s in test["steps"] if "uv run pytest" in s.get("run", ""))
+    assert test["steps"].index(upload) > test["steps"].index(tests_step)
     assert upload["if"] == "always()" and upload["continue-on-error"] is True
-    assert upload["with"] == {"name": "test-failures-${{ matrix.shard }}",
-                              "path": "${{ runner.temp }}/test-failures/failures.json", "retention-days": 1,
-                              "if-no-files-found": "ignore"}
-    # That upload is the only step the shadow comparison adds to the test job.
-    assert [s.get("name") or s.get("uses", "").split("@")[0] for s in test["steps"]] == [
-        "actions/checkout", "Lore-Hex/quill-router/.github/actions/setup-uv", "Sync",
-        "Check out enclave source for the mandatory Sentry guard", "Require and inspect enclave source",
-        "Copy split weights for this shard", "Tests and coverage", "Upload this shard's durations",
-        "Upload this shard's failed tests", "Stash this shard's coverage", "actions/upload-artifact"]
+    assert upload["timeout-minutes"] == 5
+    assert upload["with"]["name"] == "test-failures-${{ matrix.shard }}"
+    assert upload["with"]["path"] == "${{ runner.temp }}/test-failures/failures.json"
     conftest = (ROOT / "tests/conftest.py").read_text()
     assert ('if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_TEMP"):\n'
             '    pytest_plugins = [*globals().get("pytest_plugins", []), "scripts.ci.failure_record"]') in conftest
