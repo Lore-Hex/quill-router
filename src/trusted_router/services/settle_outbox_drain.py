@@ -19,6 +19,7 @@ from trusted_router.services.settle_outbox_apply import (
 from trusted_router.services.settle_outbox_audit import row_ref as _row_ref
 from trusted_router.storage import STORE
 from trusted_router.storage_errors import is_deterministic_store_error
+from trusted_router.storage_gcp_async_admission import LEASED_WAIT_NOTE
 from trusted_router.storage_gcp_authorize import ReapPassResult
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
@@ -62,13 +63,16 @@ _DETERMINISTIC_PARK_SECONDS = 3600
 # age). The park's due time is stamped from a clock in whole seconds, so a
 # wait of n falls due between n-1 and n seconds on, a wait of one within the
 # second: a row is asked at most once in a clock second. An
-# owner that is only slow decides within a second or two, and the row is
-# unresolved until it is asked again: its age is in the drain's published
-# health, where a p95 over five seconds closes async admission for every
-# workspace (2026-11-16: one such row, parked five minutes at one second
-# old, did for those five minutes). An owner that is gone decides when its
-# lease closes, hours later: the wait doubles to the five minutes, so that
-# row is asked a few dozen times.
+# owner that is only slow decides within a second or two, so the row is
+# settled about as soon as it can be (2026-11-16: one such row, parked five
+# minutes at one second old, kept its age in the drain's published health
+# for those five minutes and closed async admission for every workspace).
+# An owner that is gone decides when its lease closes, hours later: the
+# wait doubles to the five minutes, so that row is asked a few dozen times.
+# While it is parked with this note its age is the fast path's time, and
+# the published health leaves it out of its percentiles until the park
+# falls due (storage_gcp_async_admission._ages_past_leased_waits, which
+# reads this note and these bounds).
 _LEASED_UNDECIDED_PARK_FLOOR_SECONDS = 1
 _LEASED_UNDECIDED_PARK_SECONDS = 300
 
@@ -607,7 +611,7 @@ def _resolve_row(
             row.intent_kind,
             lease_owner=lease_owner,
             retry_after_seconds=_leased_undecided_park_seconds(row),
-            note="fast path undecided",
+            note=LEASED_WAIT_NOTE,
         )
         logger.warning(
             "settle outbox parked undecided leased intent authorization_id=%s intent_kind=%s",

@@ -2961,6 +2961,25 @@ def _execute_settle_outbox_sql(
         if sql.startswith("SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"):
             values.append(rec.get("reservation_id"))
         return [values]
+    if sql.startswith("SELECT next_attempt_at, unresolved_at FROM tr_settle_outbox"
+                      "@{FORCE_INDEX=tr_settle_outbox_unresolved} "):  # rows parked for the fast path
+        for needle in ("unresolved_at IS NOT NULL", "unresolved_at >= @since", "unresolved_at < @until",
+                       "status='pending'", "last_error=@note",
+                       "ORDER BY unresolved_at LIMIT @limit"):  # ascending: the bound keeps the oldest
+            _require_pred(sql, needle, "fleet-health-leased-wait")
+        since, until = _utc_datetime(p["since"]), _utc_datetime(p["until"])
+        with sqlite3.connect(":memory:") as connection:
+            rows = []
+            for record in db.settle_outbox.values():
+                [unresolved] = connection.execute(
+                    "SELECT " + _unresolved_expression() + " FROM (SELECT ? AS status, ? AS created_at)",  # noqa: S608 - repository DDL; bound row values
+                    (record.get("status"), record.get("created_at")),
+                ).fetchone()
+                if (unresolved is not None and since <= _utc_datetime(unresolved) < until
+                        and record.get("status") == "pending" and record.get("last_error") == p["note"]):
+                    rows.append([record.get("next_attempt_at"), unresolved])
+        rows.sort(key=lambda row: _utc_datetime(row[1]))
+        return rows[:p["limit"]]
     if sql.startswith("SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox"
                       "@{FORCE_INDEX=tr_settle_outbox_unresolved} "):  # rows in their inline grace
         for needle in ("unresolved_at IS NOT NULL", "unresolved_at >= @since", "unresolved_at < @until",

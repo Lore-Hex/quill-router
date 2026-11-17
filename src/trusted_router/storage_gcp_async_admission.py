@@ -22,7 +22,7 @@ from trusted_router.storage_gcp_io import (
 READ_DEADLINE_SECONDS = 0.5
 ROW_LIMIT = 1000
 logger = logging.getLogger(__name__)
-_ReadOperation = Literal["admission", "drain_health", "drain_grace"]
+_ReadOperation = Literal["admission", "drain_health", "drain_grace", "drain_leased_wait"]
 _read_failure_lock = threading.Lock()
 _read_failure_logs: dict[tuple[_ReadOperation, str], tuple[float, int]] = {}
 
@@ -43,7 +43,7 @@ def _report_read_failure(operation: _ReadOperation, error: Exception, started: f
             break
     now = time.monotonic()
     key = (operation, reason)
-    # Bounded to three operations times eight reasons, regardless of customers.
+    # Bounded to four operations times eight reasons, regardless of customers.
     # Count repeats without letting one cause suppress another kind of failure.
     with _read_failure_lock:
         next_log, failures = _read_failure_logs.get(key, (0., 0))
@@ -163,6 +163,37 @@ def grace_statement(since: str, until: str) -> tuple[str, dict[str, Any], dict[s
     )
 
 
+# The note the settle drain parks a leased intent with while the fast path has
+# not decided its terminal (settle_outbox_drain._resolve_row). Any later
+# failure or other park of the row writes a different last_error.
+LEASED_WAIT_NOTE = "fast path undecided"
+# The drain parks such an intent only while it is at most this old
+# (settle_outbox_apply._LEASED_UNDECIDED_MAX_AGE_SECONDS), and for at most
+# this long at a time (settle_outbox_drain._LEASED_UNDECIDED_PARK_SECONDS).
+LEASED_WAIT_MAX_AGE_SECONDS = 3 * 3600
+LEASED_WAIT_PARK_SECONDS = 300
+LEASED_WAIT_ROW_LIMIT = 100
+
+
+def leased_wait_statement(since: str, until: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Unresolved rows parked for the fast path's decision, created in [since, until).
+
+    A pending row whose last_error is the drain's note for an undecided leased
+    intent. As for the grace rows, the range is on the unresolved index and
+    the other columns come from the base rows of that range only.
+    """
+    return (
+        "SELECT next_attempt_at, unresolved_at FROM tr_settle_outbox"
+        "@{FORCE_INDEX=tr_settle_outbox_unresolved} "
+        "WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until "
+        "AND status='pending' AND last_error=@note "
+        "ORDER BY unresolved_at LIMIT @limit",
+        {"since": since, "until": until, "note": LEASED_WAIT_NOTE, "limit": LEASED_WAIT_ROW_LIMIT},
+        {"since": param_types.TIMESTAMP, "until": param_types.TIMESTAMP, "note": param_types.STRING,
+         "limit": param_types.INT64},
+    )
+
+
 def _timestamp(value: Any) -> float:
     """Seconds since the epoch of a stored timestamp; a naive one is refused."""
     import datetime as dt
@@ -228,6 +259,85 @@ def _ages_from_due(reader: Any, observed: float, ages: list[float]) -> list[floa
         replacements = due.get(age)
         out.append(replacements.pop() if replacements else age)
     return out
+
+
+def _ages_past_leased_waits(reader: Any, observed: float, ages: list[float],
+                            counted: list[float]) -> list[float]:
+    """The counted ages without the rows that wait on the fast path, not on the drain.
+
+    ``ages`` are the creation ages and ``counted`` the same rows' ages after
+    the inline grace (_ages_from_due), in the same order.
+
+    A leased intent's terminal is decided by the fast path. Until it is, the
+    drain asks, parks the row with LEASED_WAIT_NOTE and asks again when the
+    park falls due: the row's age is then the fast path's time, not drain
+    lag, and after an owner crash it can be hours. So a row parked with that
+    note is left out of the percentiles until its park falls due, and from
+    then counts from that due time, which is the drain's own lag in asking
+    again. It is left out rather than counted as zero, so it cannot lower a
+    percentile the other rows set. The row still counts in the backlog, the
+    frozen amount and the oldest age, and its workspace's own admission still
+    counts its amount.
+
+    The exception is bounded three ways. Only a row the drain itself would
+    still park: created at most LEASED_WAIT_MAX_AGE_SECONDS (plus its last
+    park and a second's margin) ago, and due at most LEASED_WAIT_PARK_SECONDS
+    (plus the margin) ahead; a row parked for longer, or due before it was
+    written, keeps its creation age. Only when the backlog has at most
+    LEASED_WAIT_ROW_LIMIT rows created in that range, whatever they are: with
+    more, every age stands, so a fast path that decides nothing for many
+    requests still closes admission. And only when it could turn the gate:
+    the caller reads these rows when the p95 is over the limit without them.
+    A truncated backlog is not read, and if the read fails every age stands:
+    a record still goes out.
+    """
+    import datetime as dt
+    import time
+
+    if len(ages) > HEALTH_ROW_LIMIT:
+        return counted
+    margin = 1
+    span = LEASED_WAIT_MAX_AGE_SECONDS + LEASED_WAIT_PARK_SECONDS + margin
+    in_range = sum(HEALTH_P95_LIMIT_SECONDS < age <= span for age in ages)
+    if not 0 < in_range <= LEASED_WAIT_ROW_LIMIT:
+        return counted
+    def iso(seconds: float) -> str:
+        return dt.datetime.fromtimestamp(seconds, dt.UTC).isoformat().replace("+00:00", "Z")
+    started = time.monotonic()
+    try:
+        rows = _query(reader, leased_wait_statement(iso(observed - span), iso(observed - HEALTH_P95_LIMIT_SECONDS)))
+    except Exception as error:  # any failure: publish the ages as counted, never no record
+        _report_read_failure("drain_leased_wait", error, started)
+        return counted
+    # By creation age, exactly as the caller computed it: None leaves the row
+    # out, a number is its age from when its park fell due.
+    waits: dict[float, list[float | None]] = {}
+    for row in rows:
+        try:
+            next_attempt, created = row
+            start, due_at = _timestamp(created), _timestamp(next_attempt)
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            continue  # an unreadable row keeps its age
+        if due_at < start or due_at > observed + LEASED_WAIT_PARK_SECONDS + margin:
+            continue  # not a park the drain makes for an undecided intent
+        waits.setdefault(observed - start, []).append(None if due_at > observed else observed - due_at)
+    out = []
+    for age, count in zip(ages, counted, strict=True):
+        waiting = waits.get(age)
+        # count == age: of equal creation ages, not the one the grace recounted.
+        if waiting and count == age:
+            late = waiting.pop()
+            if late is not None:
+                out.append(late)
+        else:
+            out.append(count)
+    return out
+
+
+def _percentile(sorted_ages: list[float], p: float) -> float:
+    import math
+
+    return sorted_ages[max(0, math.ceil(len(sorted_ages) * p) - 1)] if sorted_ages else 0.0
 
 
 def _query(reader: Any, statement: tuple[str, dict[str, Any], dict[str, Any]]) -> list[Any]:
@@ -355,7 +465,10 @@ def publish_health(database: Any) -> dict[str, Any]:
     comparable maintenance on these transitions.
 
     The p50 and p95 ages count a row in its inline grace from when it falls
-    due (_ages_from_due); the oldest age is every row's creation age.
+    due (_ages_from_due), and leave out a row parked for the fast path's
+    decision until its park falls due (_ages_past_leased_waits); the oldest
+    age is every row's creation age, and the counts and the amount are every
+    row's.
     """
     import json
     import math
@@ -387,9 +500,13 @@ def publish_health(database: Any) -> dict[str, Any]:
             except (TypeError, ValueError, AttributeError, OverflowError):
                 complete, age = False, observed
             ages.append(age)
-        due_ages = sorted(_ages_from_due(snapshot, observed, ages))
+        counted = _ages_from_due(snapshot, observed, ages)
+        if _percentile(sorted(counted), .95) > HEALTH_P95_LIMIT_SECONDS:
+            # Only then can leaving a row out turn the gate: one more read.
+            counted = _ages_past_leased_waits(snapshot, observed, ages, counted)
+        due_ages = sorted(counted)
     def percentile(p: float) -> float:
-        return due_ages[max(0, math.ceil(len(due_ages) * p) - 1)] if due_ages else 0.0
+        return _percentile(due_ages, p)
     value = dict(v=1, authority="local", observed_at=observed,
                  worker_heartbeat=time.time(), complete=complete,
                  sample_count=len(ages), backlog_count=len(rows), frozen_micro=amount,
