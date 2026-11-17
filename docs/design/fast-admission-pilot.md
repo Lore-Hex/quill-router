@@ -75,8 +75,9 @@ spends its attempts as today, toward `dead` and its alert. While such a
 row is parked, its age is the fast path's time and not drain lag, so the
 drain's health (whose p95 age closes async admission for every workspace
 past five seconds) leaves it out of its percentiles until the park falls
-due and counts it from then. That holds for at most 100 rows at once; with
-more, every row's age counts and admission closes. The row stays in the
+due and counts it from then. That holds while at most 100 unresolved rows
+of any kind are between five seconds and about three hours old; with more,
+every row's age counts and admission closes. The row stays in the
 backlog count, the frozen amount and the oldest age, and its workspace's
 own admission still counts its amount. A BYOK terminal (the key's own provider
 paid) charges the lease nothing, as today's path books nothing. A hold

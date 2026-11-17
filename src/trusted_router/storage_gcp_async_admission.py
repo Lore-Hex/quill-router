@@ -164,8 +164,9 @@ def grace_statement(since: str, until: str) -> tuple[str, dict[str, Any], dict[s
 
 
 # The note the settle drain parks a leased intent with while the fast path has
-# not decided its terminal (settle_outbox_drain._resolve_row). Any later
-# failure or other park of the row writes a different last_error.
+# not decided its terminal (settle_outbox_drain._LEASED_UNDECIDED_PARK_NOTE,
+# held equal by a test). Any later failure or other park of the row writes a
+# different last_error.
 LEASED_WAIT_NOTE = "fast path undecided"
 # The drain parks such an intent only while it is at most this old
 # (settle_outbox_apply._LEASED_UNDECIDED_MAX_AGE_SECONDS), and for at most

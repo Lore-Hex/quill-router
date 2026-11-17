@@ -1064,16 +1064,16 @@ def test_leased_wait_read_failure_publishes_the_ages_as_counted(fake_store, monk
 def test_leased_wait_read_only_when_the_gate_is_closed_without_it(fake_store, monkeypatch):
     from trusted_router import storage_gcp_async_admission as adapter
     # A young row and a row in its inline grace: the gate is open, nothing more is read.
-    db = wait_rows(fake_store, (2, 0, None), (30, 30, None, 'pending', None))
+    db = wait_rows(fake_store, (2, 0, None), (30, 30, None, 'pending', None), frozen=monkeypatch)
     reads = read_spy(monkeypatch)
-    assert publish_health(db)['p95_age_seconds'] <= 5
+    assert publish_health(db)['p95_age_seconds'] == pytest.approx(2)
     assert [sql for sql, _ in reads] == [BACKLOG_READ, GRACE_READ]
     reads.clear()
     # The young row is parked for the fast path and ages: now the gate would close.
-    created = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=40)
+    now = dt.datetime.fromtimestamp(time.time(), dt.UTC)  # the frozen clock
     db.settle_outbox[('fast-0', 'settle')].update(
-        created_at=created.isoformat(), last_error=WAITING,
-        next_attempt_at=(dt.datetime.now(dt.UTC) + dt.timedelta(seconds=20)).isoformat())
+        created_at=(now - dt.timedelta(seconds=40)).isoformat(), last_error=WAITING,
+        next_attempt_at=(now + dt.timedelta(seconds=20)).isoformat())
     value = publish_health(db)
     assert [sql for sql, _ in reads] == [BACKLOG_READ, GRACE_READ, WAIT_READ]
     params = reads[2][1]
@@ -1082,14 +1082,34 @@ def test_leased_wait_read_only_when_the_gate_is_closed_without_it(fake_store, mo
     span = adapter.LEASED_WAIT_MAX_AGE_SECONDS + adapter.LEASED_WAIT_PARK_SECONDS + 1
     assert (since, until) == pytest.approx((value['observed_at'] - span, value['observed_at'] - 5), abs=1e-3)
     assert params['note'] == WAITING and params['limit'] == adapter.LEASED_WAIT_ROW_LIMIT
-    assert value['p95_age_seconds'] == 0 and value['oldest_unresolved_age_seconds'] >= 40
+    assert value['p95_age_seconds'] == 0 and value['oldest_unresolved_age_seconds'] == pytest.approx(40)
+
+
+def test_leased_wait_bound_counts_creation_ages_in_the_range_only(fake_store, monkeypatch):
+    from trusted_router import storage_gcp_async_admission as adapter
+    monkeypatch.setattr(adapter, 'LEASED_WAIT_ROW_LIMIT', 1)
+    # Rows younger than the limit are outside the range and do not count toward the bound:
+    # one parked row and two young ones are read, and the parked row is left out.
+    db = wait_rows(fake_store, (30, 200, WAITING), (1, 0, None), (2, 0, None), frozen=monkeypatch)
+    reads = read_spy(monkeypatch)
+    value = publish_health(db)
+    assert WAIT_READ in [sql for sql, _ in reads] and value['p95_age_seconds'] == pytest.approx(2)
+    # A row in its inline grace is in the range by its creation age, though it counts as zero:
+    # with the parked row that is two, over the bound of one, so every age stands.
+    db.settle_outbox[('fast-1', 'settle')].update(
+        created_at=(dt.datetime.fromtimestamp(time.time(), dt.UTC) - dt.timedelta(seconds=20)).isoformat(),
+        async_version=None,
+        next_attempt_at=(dt.datetime.fromtimestamp(time.time(), dt.UTC) + dt.timedelta(seconds=40)).isoformat())
+    reads.clear()
+    value = publish_health(db)
+    assert WAIT_READ not in [sql for sql, _ in reads] and value['p95_age_seconds'] == pytest.approx(30)
 
 
 def test_leased_wait_reads_what_the_drain_parks(fake_store, monkeypatch):
     """The note and the bounds are the drain's own, and a row parked by the real park is found."""
     from trusted_router import storage_gcp_async_admission as adapter
     from trusted_router.services import settle_outbox_apply
-    assert adapter.LEASED_WAIT_NOTE == WAITING
+    assert adapter.LEASED_WAIT_NOTE == drain._LEASED_UNDECIDED_PARK_NOTE == WAITING
     assert adapter.LEASED_WAIT_MAX_AGE_SECONDS == settle_outbox_apply._LEASED_UNDECIDED_MAX_AGE_SECONDS
     assert adapter.LEASED_WAIT_PARK_SECONDS == drain._LEASED_UNDECIDED_PARK_SECONDS
     store, db = fake_store
@@ -1098,7 +1118,7 @@ def test_leased_wait_reads_what_the_drain_parks(fake_store, monkeypatch):
     row['created_at'] = (dt.datetime.now(dt.UTC) - dt.timedelta(seconds=3600)).isoformat()
     assert publish_health(db)['p95_age_seconds'] >= 3600
     assert box.park('fast-0', 'settle', lease_owner=None,
-                    retry_after_seconds=drain._LEASED_UNDECIDED_PARK_SECONDS, note=adapter.LEASED_WAIT_NOTE)
+                    retry_after_seconds=drain._LEASED_UNDECIDED_PARK_SECONDS, note=drain._LEASED_UNDECIDED_PARK_NOTE)
     value = publish_health(db)
     assert value['p95_age_seconds'] == 0 and value['oldest_unresolved_age_seconds'] >= 3600
     assert decode_health(read_health(db), now=time.monotonic(), wall=time.time()) is not None

@@ -19,7 +19,6 @@ from trusted_router.services.settle_outbox_apply import (
 from trusted_router.services.settle_outbox_audit import row_ref as _row_ref
 from trusted_router.storage import STORE
 from trusted_router.storage_errors import is_deterministic_store_error
-from trusted_router.storage_gcp_async_admission import LEASED_WAIT_NOTE
 from trusted_router.storage_gcp_authorize import ReapPassResult
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
@@ -71,10 +70,13 @@ _DETERMINISTIC_PARK_SECONDS = 3600
 # wait doubles to the five minutes, so that row is asked a few dozen times.
 # While it is parked with this note its age is the fast path's time, and
 # the published health leaves it out of its percentiles until the park
-# falls due (storage_gcp_async_admission._ages_past_leased_waits, which
-# reads this note and these bounds).
+# falls due (storage_gcp_async_admission._ages_past_leased_waits). That
+# module keeps its own copy of this note and of the bounds, which a test
+# holds equal to these, so that this module, which the app imports
+# everywhere, does not load the Spanner SDK for a constant.
 _LEASED_UNDECIDED_PARK_FLOOR_SECONDS = 1
 _LEASED_UNDECIDED_PARK_SECONDS = 300
+_LEASED_UNDECIDED_PARK_NOTE = "fast path undecided"
 
 _monotonic = time.monotonic
 
@@ -611,7 +613,7 @@ def _resolve_row(
             row.intent_kind,
             lease_owner=lease_owner,
             retry_after_seconds=_leased_undecided_park_seconds(row),
-            note=LEASED_WAIT_NOTE,
+            note=_LEASED_UNDECIDED_PARK_NOTE,
         )
         logger.warning(
             "settle outbox parked undecided leased intent authorization_id=%s intent_kind=%s",

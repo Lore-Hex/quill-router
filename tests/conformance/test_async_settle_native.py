@@ -480,7 +480,7 @@ def test_native_leased_wait_is_left_out_until_its_park_falls_due(c1_database, mo
         batch.delete('tr_settle_outbox', KeySet(keys=[['lagging', 'settle']]))
 
     # Rows that do not wait on the fast path keep their age, each enough to close it.
-    others = [row('overdue', 30, -6), row('parked-too-long', 31, 400), row('no-due', 32, None),
+    others = [row('overdue', 30, -6), row('parked-too-long', 31, 1000), row('no-due', 32, None),
               row('other-park', 33, 200, note='typed store unavailable'), row('no-note', 34, 200, note=None),
               row('dead', 35, 200, status='dead'), row('too-old', 3 * 3600 + 302, 10)]
     for other in others:
@@ -508,7 +508,7 @@ def test_native_leased_wait_is_left_out_until_its_park_falls_due(c1_database, mo
         found = list(snapshot.execute_sql(sql, params=params, param_types=types))
     assert found == [[now + timedelta(seconds=60), now - timedelta(seconds=100)],
                      [None, now - timedelta(seconds=32)],
-                     [now + timedelta(seconds=400), now - timedelta(seconds=31)],
+                     [now + timedelta(seconds=1000), now - timedelta(seconds=31)],
                      [now - timedelta(seconds=6), now - timedelta(seconds=30)]]
     monkeypatch.setattr(admission, 'LEASED_WAIT_ROW_LIMIT', 1)
     sql, params, types = admission.leased_wait_statement(iso(now - timedelta(seconds=100)), iso(now - timedelta(seconds=5)))
