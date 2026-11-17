@@ -10,7 +10,7 @@ from trusted_router.trust import trust_html
 
 
 @pytest.mark.parametrize("url", ["/trust", "https://trust.trustedrouter.com/"])
-def test_agent_verification_prompt_is_first_on_both_trust_surfaces(url: str) -> None:
+def test_agent_verification_prompt_is_in_the_first_section_on_both_trust_surfaces(url: str) -> None:
     settings = Settings(environment="test", trust_gcp_image_digest="sha256:" + "00" * 32)
     with TestClient(create_app(settings, init_observability=False)) as client:
         response = client.get(url)
@@ -20,8 +20,12 @@ def test_agent_verification_prompt_is_first_on_both_trust_surfaces(url: str) -> 
     assert main is not None
     first = main.find("section", recursive=False)
     assert first is not None
-    assert first.get("aria-labelledby") == "agent-verify-title"
-    prompt = first.find(id="trust-agent-prompt")
+    # The hero is first in main and carries the "Ask your agent" panel and its
+    # copy button; the full prompt text sits in its own section below.
+    assert "trust-hero" in first.get("class", [])
+    panel = first.find(attrs={"aria-labelledby": "agent-verify-title"})
+    assert panel is not None
+    prompt = page.find(id="trust-agent-prompt")
     assert prompt is not None
     text = prompt.get_text()
     assert len(text.split()) <= 55
@@ -56,6 +60,7 @@ def test_prompt_keeps_release_failures_visible(status: str) -> None:
         "html.parser",
     )
     sections = page.find("main").find_all("section", recursive=False)
-    assert sections[0].find(id="trust-agent-prompt") is not None
+    assert sections[0].find(id="copy-trust-prompt") is not None
     assert "warn" in sections[1].get("class", [])
     assert "HTTP 503" in sections[1].get_text()
+    assert sections[2].find(id="trust-agent-prompt") is not None

@@ -1,6 +1,6 @@
 const { test, expect } = require("@playwright/test");
 
-test("copies exactly the visible prompt under the real page CSP", async ({ page }) => {
+test("copies exactly the prompt shown under the hero, under the real page CSP", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: async (text) => { window.copiedTrustPrompt = text; } },
@@ -42,7 +42,7 @@ test("the prompt remains readable without JavaScript", async ({ browser, baseURL
 });
 
 for (const width of [375, 1440]) {
-  test(`prompt fits the first viewport at ${width}px`, async ({ page }, testInfo) => {
+  test(`the copy prompt panel fits the first viewport at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/trust");
     const prompt = await page.locator(".agent-verify").boundingBox();
