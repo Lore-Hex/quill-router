@@ -442,3 +442,76 @@ def test_native_inline_grace_counts_from_due_time(c1_database, monkeypatch):  # 
     with database.snapshot() as snapshot:
         assert list(snapshot.execute_sql(sql, params=params, param_types=types)) == [
             [now - timedelta(seconds=66), now - timedelta(seconds=6)]]
+
+
+def test_native_leased_wait_is_left_out_until_its_park_falls_due(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Run the leased-wait read and the publisher on GoogleSQL: the fake checks predicates only as substrings."""
+    from google.cloud.spanner_v1 import KeySet
+
+    from trusted_router import storage_gcp_async_admission as admission
+
+    database = c1_database
+    now = datetime.now(UTC).replace(microsecond=0)
+    waiting = admission.LEASED_WAIT_NOTE
+    columns = ('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro', 'status',
+               'attempts', 'async_version', 'last_error', 'created_at', 'next_attempt_at')
+
+    def row(aid, age, due_in, note=waiting, status='pending'):
+        return (aid, 'settle', 'typed', 1, status, 0, 1, note, now - timedelta(seconds=age),
+                None if due_in is None else now + timedelta(seconds=due_in))
+
+    def iso(value):
+        return value.isoformat().replace('+00:00', 'Z')
+
+    # Alone, a row parked for the fast path keeps admission open; it is still counted,
+    # and its creation age is still the oldest.
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns, values=[row('waiting', 3600, 200)])
+    value = admission.publish_health(database)
+    assert value['backlog_count'] == value['sample_count'] == 1 and value['frozen_micro'] == 1
+    assert value['p95_age_seconds'] == 0 and value['oldest_unresolved_age_seconds'] >= 3600
+
+    # A lagging row beside it sets the percentiles: the parked row is left out, not counted as zero.
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns, values=[row('lagging', 20, 0, note=None)])
+    value = admission.publish_health(database)
+    assert value['p50_age_seconds'] >= 20 and value['p95_age_seconds'] >= 20
+    with database.batch() as batch:
+        batch.delete('tr_settle_outbox', KeySet(keys=[['lagging', 'settle']]))
+
+    # Rows that do not wait on the fast path keep their age, each enough to close it.
+    others = [row('overdue', 30, -6), row('parked-too-long', 31, 1000), row('no-due', 32, None),
+              row('other-park', 33, 200, note='typed store unavailable'), row('no-note', 34, 200, note=None),
+              row('dead', 35, 200, status='dead'), row('too-old', 3 * 3600 + 302, 10)]
+    for other in others:
+        with database.batch() as batch:
+            batch.insert('tr_settle_outbox', columns=columns, values=[other])
+        value = admission.publish_health(database)
+        assert value['p95_age_seconds'] > 5, other[0]
+        with database.batch() as batch:
+            batch.delete('tr_settle_outbox', KeySet(keys=[[other[0], 'settle']]))
+
+    # One whose park fell due 2 s ago counts from then, not from its creation ten minutes
+    # ago (the bounds allow for however long this test has run on the emulator).
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns, values=[row('just-due', 600, -2)])
+    value = admission.publish_health(database)
+    assert 2 <= value['p95_age_seconds'] < 300 and value['oldest_unresolved_age_seconds'] >= 3600
+
+    # The read itself: pending rows with the drain's note, created in [since, until),
+    # oldest first, bounded. Rows sit on both bounds.
+    edges = [row('at-since', 100, 60), row('at-until', 5, 60), row('young', 1, 60)]
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns, values=others + edges)
+    sql, params, types = admission.leased_wait_statement(iso(now - timedelta(seconds=100)), iso(now - timedelta(seconds=5)))
+    with database.snapshot() as snapshot:
+        found = list(snapshot.execute_sql(sql, params=params, param_types=types))
+    assert found == [[now + timedelta(seconds=60), now - timedelta(seconds=100)],
+                     [None, now - timedelta(seconds=32)],
+                     [now + timedelta(seconds=1000), now - timedelta(seconds=31)],
+                     [now - timedelta(seconds=6), now - timedelta(seconds=30)]]
+    monkeypatch.setattr(admission, 'LEASED_WAIT_ROW_LIMIT', 1)
+    sql, params, types = admission.leased_wait_statement(iso(now - timedelta(seconds=100)), iso(now - timedelta(seconds=5)))
+    with database.snapshot() as snapshot:
+        assert list(snapshot.execute_sql(sql, params=params, param_types=types)) == [
+            [now + timedelta(seconds=60), now - timedelta(seconds=100)]]

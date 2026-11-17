@@ -1251,6 +1251,41 @@ this read existed:
 SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until AND status='pending' AND async_version IS NULL AND attempts=0 AND last_error IS NULL ORDER BY unresolved_at LIMIT @limit
 ```
 
+**Rows waiting on the fast path (November 2026).** One kind of parked row is
+the exception to "parked rows keep their creation age". A leased intent's
+terminal is decided by the fast path, not by the drain: until it is decided
+the drain asks, parks the row with the note `fast path undecided` (no attempt
+spent) and asks again when the park falls due, after at most five minutes
+(docs/design/fast-admission-pilot.md). That row's age is the fast path's time.
+After an owner crash it is up to the hold's longest life and the grace, hours;
+counted, one such row closed admission fleet-wide for the whole of its park,
+as it did for five minutes at a time on 2026-11-16. So `p50_age_seconds` and
+`p95_age_seconds` leave such a row out until its park falls due, and from then
+count it from that due time, which is the drain's own lag in asking again.
+It is left out, not counted as zero, so it cannot lower a percentile the other
+rows set. `backlog_count`, `sample_count`, `frozen_micro` and
+`oldest_unresolved_age_seconds` still count it, and its workspace's own
+admission still counts its amount as exposure.
+
+The exception is bounded. It covers only a pending row whose `last_error` is
+that note exactly (any later failure or other park writes a different one),
+created at most three hours and one park ago, and due at most five minutes
+ahead: the limits within which the drain parks such a row. A row parked for
+longer, due before it was written, or with no due time keeps its creation age,
+and past three hours the drain stops parking the row and spends its attempts,
+so it counts again, toward `dead`. The publisher reads these rows only when
+the p95 is over the limit without them (so a healthy drain pays nothing), in
+the same snapshot as the covering read, and only when that read was not cut
+short and shows between 1 and 100 rows created in that range, whatever they
+are. With more, every age stands: a fast path deciding nothing for many
+requests still closes admission. If the read fails, the publisher logs
+`async admission read failed operation=drain_leased_wait` and publishes the
+ages as it had them:
+
+```sql
+SELECT next_attempt_at, unresolved_at FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until AND status='pending' AND last_error=@note ORDER BY unresolved_at LIMIT @limit
+```
+
 Before observing health, workers transactionally claim the complete control key
 `(kind='settle_drain_control', id='health-publish-v1')` using the same cadence
 primitive as housekeeping. At most one worker wins per publish interval
