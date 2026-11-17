@@ -1,0 +1,20 @@
+{
+  "_source": "Projected shape of https://inference.api.nscale.com/v1/models after Nscale's 11 December 2026 serverless changes, as announced at https://docs.nscale.com/docs/ai-services/models (read 2026-11-16): Qwen3.8-Flash-Next-FP8 and Qwen3-Embedding-8B retire and Mistral-Large-3-675B-Instruct-2512-NVFP4 moves to dedicated models, leaving GLM 5.3 and Qwen3.8-27B at the prices that page lists. Not an observed response.",
+  "object": "list",
+  "data": [
+    {
+      "id": "zai-org/GLM-5.3",
+      "object": "model",
+      "owned_by": "Z.ai",
+      "context_length": 1048576,
+      "pricing": {"input": 1.4, "output": 4.4}
+    },
+    {
+      "id": "Qwen/Qwen3.8-27B",
+      "object": "model",
+      "owned_by": "Qwen",
+      "context_length": 1048576,
+      "pricing": {"input": 0.2, "output": 2.5}
+    }
+  ]
+}

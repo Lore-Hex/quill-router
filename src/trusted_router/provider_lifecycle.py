@@ -136,6 +136,9 @@ ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
 NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
+# https://docs.nscale.com/docs/ai-services/models (read 2026-11-16): "These
+# changes take effect on 11 December 2026", date only, so 00:00 UTC as above.
+NSCALE_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
 # Enforcement starts at the public-doc observation; the exact earlier
 # Scaleway end-of-life dates are not recorded in this repository.
 SCALEWAY_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 7, 0, 0, tzinfo=UTC)
@@ -421,6 +424,26 @@ _RETIREMENTS = (
         }),
         effective_at=NSCALE_NOVEMBER_2026_RETIREMENT_AT,
         replacement_model_ids=("qwen/qwen3.8-flash-next",),
+    ),
+    # Nscale's serverless page (URL and read date at the constant): on 11
+    # December 2026 Qwen3.8-Flash-Next-FP8 and Qwen3-Embedding-8B are
+    # "Retired from serverless" and Mistral-Large-3-675B-Instruct-2512-NVFP4
+    # "Moves to dedicated models". Every Nscale route here is serverless, so
+    # all three stop. No specific replacement is named, and none is
+    # substituted; GLM 5.3 and Qwen3.8-27B remain.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({
+            "qwen/qwen3.8-flash-next-fp8",
+            "qwen/qwen3-embedding-8b",
+            "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
+        }),
+        upstream_ids=frozenset({
+            "Qwen/Qwen3.8-Flash-Next-FP8",
+            "Qwen/Qwen3-Embedding-8B",
+            "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
+        }),
+        effective_at=NSCALE_DECEMBER_2026_RETIREMENT_AT,
     ),
     _Retirement(
         provider="streamlake",

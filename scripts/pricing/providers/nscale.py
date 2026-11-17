@@ -32,6 +32,7 @@ from scripts.pricing.manifest import (
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 from scripts.pricing.openai_catalog import positive_int, probe_openai_chat
+from trusted_router import provider_lifecycle
 
 SLUG = "nscale"
 BASE_URL = "https://inference.api.nscale.com/v1"
@@ -51,13 +52,18 @@ IMAGE_DIMENSIONS = (1024, 1024)
 IMAGE_PIXELS = 1024 * 1024
 MAX_IMAGE_RESPONSE_BYTES = 16 * 1024 * 1024
 
-# Floor on priced chat models before a catalog may publish. Nscale's
-# November 2026 cutover (see provider_lifecycle) retired 21 chat models; its
-# public serverless page checked 2026-11-07 lists four (GLM 5.3, Mistral Large
-# 3, Qwen3.8-27B and Qwen3.8-Flash-Next-FP8). A broken or reshaped catalog
-# prices none, so the floor still fails closed without demanding models that
-# Nscale no longer sells.
-MIN_PRICED_CHAT_MODELS = 3
+# Floors on priced chat models before a catalog may publish. Nscale's
+# November 2026 cutover retired 21 chat models, and its 11 December 2026
+# cutover (both in provider_lifecycle) leaves two: GLM 5.3 and Qwen3.8-27B.
+# A broken or reshaped catalog prices none or one, so it never publishes.
+MIN_PRICED_CHAT_MODELS = 2
+# A listing at or above this size handles ordinary churn, such as one model
+# delisted without notice, through the shared writer's two-miss tombstones and
+# mass-prune guard. Below it, a shrink publishes only when Nscale announced
+# it: every chat route of the committed manifest that the listing no longer
+# prices must have a recorded retirement that has taken effect. A partial
+# listing or a model dropped early still fails closed.
+RETIREMENTS_MUST_EXPLAIN_BELOW = 3
 
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
@@ -326,11 +332,9 @@ def _probe(api_key: str, model_id: str) -> bool:
     )
 
 
-def _quarantine_fixed_price_changes(discovered: dict[str, dict[str, Any]]) -> int:
-    """Disable media whose provider price no longer matches the enclave."""
-
+def _committed_rows() -> dict[str, dict[str, Any]]:
     if not MANIFEST_PATH.exists():
-        return 0
+        return {}
     try:
         raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError) as exc:
@@ -338,9 +342,39 @@ def _quarantine_fixed_price_changes(discovered: dict[str, dict[str, Any]]) -> in
     rows = raw.get("models") if isinstance(raw, dict) else None
     if not isinstance(rows, list):
         raise RuntimeError("nscale: existing manifest has no models list")
-    existing = {
+    return {
         row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
+
+
+def _require_retirements_explain_shrink(chat_prices: dict[str, ModelPrice]) -> None:
+    """Fail closed when a small listing lost a chat route Nscale never retired."""
+
+    if len(chat_prices) >= RETIREMENTS_MUST_EXPLAIN_BELOW:
+        return
+    unexplained = sorted(
+        model_id
+        for model_id, row in _committed_rows().items()
+        if row.get("model_type") == "chat"
+        and row.get("routable_reason") != "delisted-upstream"
+        and model_id not in chat_prices
+        and not provider_lifecycle.provider_model_retired(
+            SLUG,
+            model_id,
+            row["upstream_id"] if isinstance(row.get("upstream_id"), str) else None,
+        )
+    )
+    if unexplained:
+        raise RuntimeError(
+            f"nscale: only {len(chat_prices)} priced chat models, and the listing no longer "
+            f"prices {unexplained}, which have no retirement in effect"
+        )
+
+
+def _quarantine_fixed_price_changes(discovered: dict[str, dict[str, Any]]) -> int:
+    """Disable media whose provider price no longer matches the enclave."""
+
+    existing = _committed_rows()
     quarantined = 0
     for model_id, row in discovered.items():
         old = existing.get(model_id)
@@ -373,6 +407,7 @@ def fetch() -> ProviderPricingResult:
     _DISCOVERED_ROWS = {}
     rows = _catalog_rows(fetch_json(URL, extra_headers={"Authorization": f"Bearer {api_key}"}))
     chat_prices, manifest_prices, discovered = _discover(rows)
+    _require_retirements_explain_shrink(chat_prices)
     canary_candidates = {
         model_id for model_id, row in discovered.items() if row.get("routable") is not False
     }

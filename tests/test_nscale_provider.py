@@ -201,7 +201,9 @@ def test_nscale_catalog_below_the_floor_still_fails_closed() -> None:
     embedding = [row for row in rows if row["id"] == nscale.EMBEDDING_UPSTREAM_ID]
     shrunk = chat[: nscale.MIN_PRICED_CHAT_MODELS - 1] + embedding
 
-    with pytest.raises(RuntimeError, match="fewer than 3 priced chat models"):
+    with pytest.raises(
+        RuntimeError, match=f"fewer than {nscale.MIN_PRICED_CHAT_MODELS} priced chat models",
+    ):
         nscale._discover(shrunk)
 
 
@@ -629,10 +631,14 @@ def test_nscale_still_lists_its_catalog() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
     # Nscale's November 2026 cutover retired its image model and all but four
-    # chat models; delisted rows may linger as unroutable history.
+    # chat models, and its December 2026 cutover retires its only embedding
+    # model; delisted rows may linger as unroutable history.
     raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
     listed = [row for row in raw["models"] if row.get("routable_reason") != "delisted-upstream"]
-    assert {"chat", "embedding"} <= {row["model_type"] for row in listed}
+    expected_types = {"chat"}
+    if not provider_lifecycle.provider_model_retired(nscale.SLUG, nscale.EMBEDDING_MODEL_ID):
+        expected_types.add("embedding")
+    assert expected_types <= {row["model_type"] for row in listed}
     assert sum(row["model_type"] == "chat" for row in listed) >= nscale.MIN_PRICED_CHAT_MODELS
     assert any(row.get("routable") is not False for row in raw["models"])
 

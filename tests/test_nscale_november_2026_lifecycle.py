@@ -116,13 +116,15 @@ def test_nscale_manifest_records_only_announced_retirements(include_new_model: b
             "routable": False,
             "routable_reason": "provider-canary-failed",
         }
+    november = "2026-11-02T00:00:00Z"
     for model_id, native_id in _RETAINED.items():
         assert rows[model_id]["upstream_id"] == native_id
-        assert "retirement_at" not in rows[model_id]
+        # Some survivors carry a later, separate cutover (test_nscale_december_2026_lifecycle).
+        assert rows[model_id].get("retirement_at") != november
     for model_id, (native_id, replacements) in _RETIRING.items():
         assert rows[model_id]["upstream_id"] == native_id
-        assert rows[model_id]["retirement_at"] == "2026-11-02T00:00:00Z"
+        assert rows[model_id]["retirement_at"] == november
         assert rows[model_id].get("replacement_model_id") == (replacements[0] if replacements else None)
-    annotated = {model_id for model_id, row in rows.items() if "retirement_at" in row}
+    annotated = {model_id for model_id, row in rows.items() if row.get("retirement_at") == november}
     # New discoveries are not part of the fixed October retirement notices.
     assert annotated == set(_RETIRING)
