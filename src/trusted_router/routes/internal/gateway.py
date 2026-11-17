@@ -1925,6 +1925,15 @@ def _authorize_gateway_sync_impl(
                     request_id=getattr(request.state, "request_id", None),
                     trace_id=_cloud_trace_id(request),
                 )
+            elif isinstance(exc, StrictBudgetBusy):
+                # The designed 503 for a strict key that could not get its
+                # per-process admission slot. The app's handler answers it
+                # with the strict-busy 503; this line is its mark.
+                _log_strict_budget_busy(
+                    workspace.id,
+                    request_id=getattr(request.state, "request_id", None),
+                    trace_id=_cloud_trace_id(request),
+                )
             raise
         except BaseException:
             release_after_error()
@@ -2023,6 +2032,7 @@ def _authorize_gateway_sync_impl(
             spend_window_limit_error_message,
         )
         from trusted_router.storage_legacy_trust import BillingPausedError, legacy_pause_epoch
+        from trusted_router.strict_budget import StrictBudgetBusy
 
         expected_pause_epoch = (
             legacy_pause_epoch(STORE, workspace.id)
@@ -2039,6 +2049,17 @@ def _authorize_gateway_sync_impl(
                 )
             window_decision = key_limit_reservation.window_decision
             remember_spend_window_decision(request, window_decision)
+        except StrictBudgetBusy:
+            # The Postgres store's strict key reserve (storage_postgres.py,
+            # reserve_key_limit) takes the same per-process admission slot
+            # as the typed authorize: the same designed 503, the same mark.
+            # Nothing is held yet, so there is nothing to give back.
+            _log_strict_budget_busy(
+                workspace.id,
+                request_id=getattr(request.state, "request_id", None),
+                trace_id=_cloud_trace_id(request),
+            )
+            raise
         except KeyWindowLimitExceeded as exc:
             remember_spend_window_decision(request, exc.decision)
             # InMemory twin of the typed window rejection (same 429 shape).
@@ -3259,7 +3280,8 @@ _TRACEPARENT = re.compile(r"^[0-9a-fA-F]{2}-([0-9a-fA-F]{32})-")
 def _cloud_trace_id(request: Request) -> str:
     """The request's Cloud Trace id, lowercase, or "-" when it has none.
 
-    The lease-headroom line carries it so the deploy gate
+    The lines that mark a designed authorize 503 (lease headroom, rebalance
+    busy, strict budget busy) carry it so the deploy gate
     (scripts/deploy/assert_no_billing_5xx.sh) can pair each authorize 503 in
     Cloud Run's request log with this line by trace: the request log records
     the status and URL only, never a response header or body.
@@ -3326,6 +3348,34 @@ def _log_credit_rebalance_busy(
     them. It carries no key, amount or model."""
     logger.info(
         "billing.credit_rebalance_busy workspace_id=%s request_id=%s trace=%s",
+        _log_value(workspace_id), _log_value(request_id), _log_value(trace_id),
+    )
+
+
+def _log_strict_budget_busy(
+    workspace_id: str, *, request_id: str | None, trace_id: str = "-",
+) -> None:
+    """The mark of the strict-budget-busy 503: a key with a strict budget
+    could not get its per-process admission slot (strict_budget.py: one
+    strict authorize per key and 16 strict keys per process at once). This
+    one waited STRICT_ADMISSION_WAIT_SECONDS for the slot, or found the
+    key's or the process's waiters full (strict_budget.StrictBudgetBusy).
+    The backend is healthy, nothing is held, and the caller is asked to
+    retry.
+
+    The answer is the app's strict-busy 503 (main.py, Retry-After: 1), and
+    the request log records only status and URL, so this line is what tells
+    it from a storage outage: the billing 5xx deploy gate pairs it with the
+    request log by trace_id, and the log-based counter
+    trustedrouter_gateway_strict_budget_busy_503 counts it for the
+    authorize-503 alert and for the rate alert
+    (scripts/deploy/gateway_reliability.sh). Its prefix,
+    "INFO <logger> billing.strict_budget_busy ", and "trace=<id>" are read
+    by both, so a change to either is a change to them. The handler's own
+    WARNING line for the 503 shares the event name but not the prefix, so
+    neither reads it. It carries no key, amount or model."""
+    logger.info(
+        "billing.strict_budget_busy workspace_id=%s request_id=%s trace=%s",
         _log_value(workspace_id), _log_value(request_id), _log_value(trace_id),
     )
 
