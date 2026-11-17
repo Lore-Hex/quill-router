@@ -43,6 +43,20 @@ from trusted_router.storage_models import (
 )
 from trusted_router.types import UsageType
 
+# The typed-DML-owned counter columns of tr_key_limit, in the order the typed
+# limit update reads them after `shard`.
+KEY_LIMIT_COUNTER_COLUMNS = (
+    "usage",
+    "byok_usage",
+    "reserved",
+    "day_usage",
+    "day_start",
+    "week_usage",
+    "week_start",
+    "month_usage",
+    "month_start",
+)
+
 _CONSOLE_API_KEYS_SQL = """
     /* console_api_keys */
     WITH key_page AS (
@@ -334,7 +348,8 @@ class SpannerApiKeys:
             shard_count = key_usage_shard_count(current)
             usage_rows = list(
                 transaction.execute_sql(
-                    "SELECT shard, usage, byok_usage, reserved "
+                    "SELECT shard, usage, byok_usage, reserved, day_usage, day_start, "
+                    "week_usage, week_start, month_usage, month_start "
                     "FROM tr_key_limit WHERE key_hash=@kh AND shard>=0 "
                     "AND shard<@shard_count ORDER BY shard",
                     params={"kh": key_hash, "shard_count": shard_count},
@@ -345,13 +360,21 @@ class SpannerApiKeys:
                 current.hash,
                 current,
                 self._io.spanner_module.COMMIT_TIMESTAMP,
-                usage_rows=usage_rows,
+                usage_rows=[row[:4] for row in usage_rows],
             )
+            # Write every shard's counters back exactly as this transaction
+            # read them. A mutation that leaves them out is not safe on this
+            # table: the Spanner emulator resets omitted DEFAULT columns when
+            # the primary key has a DEFAULT column (tr_key_limit.shard does),
+            # so a limit edit zeroed `reserved` and `usage` there, and a frozen
+            # key was left with headroom. This transaction read the rows, so no
+            # concurrent reserve can commit between that read and this write.
+            counters = {int(row[0]): tuple(row[1:]) for row in usage_rows}
             self._io.write_entity_tx(transaction, "api_key", current.hash, current)
             transaction.insert_or_update(
                 table=KEY_LIMIT_TABLE,
-                columns=KEY_LIMIT_COLUMNS,
-                values=config_rows,
+                columns=KEY_LIMIT_COLUMNS + KEY_LIMIT_COUNTER_COLUMNS,
+                values=[config + counters[int(config[1])] for config in config_rows],
             )
             return current
 

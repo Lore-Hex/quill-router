@@ -148,12 +148,34 @@ def _execute_key_release_sql(
         connection.close()
 
 
+# The Spanner emulator, CI's native backend, resets every omitted NOT NULL
+# DEFAULT column to its default when an insert_or_update writes an existing row
+# of a table whose primary key has a DEFAULT column (`shard ... DEFAULT (0)`:
+# tr_key_limit, tr_credit_balance, tr_earnings_balance); it keeps omitted
+# columns on tables without one. Documented Spanner keeps them. The fake follows
+# the emulator on tr_key_limit, so a partial upsert there that would lose
+# counters natively fails here too: a partial limit upsert once zeroed
+# `reserved` on the emulator and left a frozen chat key with headroom. The
+# emulator does the same for update mutations and on the other two tables;
+# the fake does not model those yet, because the key-escrow update and the
+# operator repair and provisioning upserts of tr_credit_balance rely on
+# documented semantics (follow-up).
+_DEFAULT_RESET_ON_PARTIAL_WRITE: dict[str, tuple[str, ...]] = {
+    "tr_key_limit": (
+        "usage", "byok_usage", "reserved", "include_byok",
+        "day_usage", "week_usage", "month_usage",
+    ),
+}
+
+
 def _apply_upsert_typed(
     typed: dict, versions: dict, table: str, columns: Any, value_tuple: tuple, version: int
 ) -> None:
-    """Model real Spanner insert_or_update on a typed counter table: on INSERT
-    fill the NOT NULL DEFAULT columns the write omitted; on UPDATE touch ONLY
-    the supplied columns and leave the rest intact. Shared by the transaction
+    """Model a mutation on a typed counter table: on INSERT fill the NOT NULL
+    DEFAULT columns the write omitted; on UPDATE touch ONLY the supplied
+    columns and leave the rest intact (an insert_or_update on the tables in
+    _DEFAULT_RESET_ON_PARTIAL_WRITE arrives here with the emulator's resets
+    already spelled out; see _with_emulator_resets). Shared by the transaction
     and batch commit paths so partial typed-row seed/update mutations behave
     identically through either writer."""
     incoming = dict(zip(columns, value_tuple, strict=True))
@@ -169,6 +191,24 @@ def _apply_upsert_typed(
     row.update(incoming)
     table_rows[pk] = row
     versions[(table, pk)] = version
+
+
+def _with_emulator_resets(
+    table: str, columns: tuple[str, ...], value_tuple: tuple, existing: dict | None,
+) -> tuple[tuple[str, ...], tuple]:
+    """An insert_or_update of an existing row on a table in
+    _DEFAULT_RESET_ON_PARTIAL_WRITE also writes each omitted DEFAULT column's
+    default, as the Spanner emulator does."""
+    omitted = [
+        column for column in _DEFAULT_RESET_ON_PARTIAL_WRITE.get(table, ())
+        if column not in columns
+    ]
+    if existing is None or not omitted:
+        return columns, value_tuple
+    return (
+        (*columns, *omitted),
+        (*value_tuple, *(_TYPED_DEFAULTS[table][column] for column in omitted)),
+    )
 
 
 @dataclass
@@ -2349,7 +2389,15 @@ class _FakeTransaction:
                 kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
                 self.pending_writes.append(("upsert", table, kind, entity_id, body))
             else:
-                self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
+                incoming = dict(zip(columns, value_tuple, strict=True))
+                key_columns = _TYPED_PRIMARY_KEYS.get(table)
+                existing = (
+                    self._typed_current(table, tuple(incoming[c] for c in key_columns))
+                    if key_columns is not None else None
+                )
+                self.pending_writes.append(
+                    ("upsert_typed", table, *_with_emulator_resets(table, columns, value_tuple, existing))
+                )
 
     def update(
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
@@ -2503,7 +2551,15 @@ class _FakeBatch:
                 kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
                 self.pending_writes.append(("upsert", table, kind, entity_id, body))
             else:
-                self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
+                incoming = dict(zip(columns, value_tuple, strict=True))
+                key_columns = _TYPED_PRIMARY_KEYS.get(table)
+                existing = (
+                    self.db.typed.get(table, {}).get(tuple(incoming[c] for c in key_columns))
+                    if key_columns is not None else None
+                )
+                self.pending_writes.append(
+                    ("upsert_typed", table, *_with_emulator_resets(table, columns, value_tuple, existing))
+                )
 
     def delete(self, table: str, keyset: _KeySet) -> None:
         for entry in keyset.keys:

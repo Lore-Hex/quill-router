@@ -186,3 +186,18 @@ def test_limit_at_most_lowers_and_never_raises(store, unique, user_id, workspace
     assert kept is not None and kept.limit_microdollars == 1_000_000 and kept.disabled
     assert not _hold(store, key.hash, 1_000_001)
     assert _hold(store, key.hash, 1_000_000)  # the typed row allows exactly the limit
+
+
+def test_a_limit_edit_keeps_the_keys_holds(store, unique, user_id, workspace_id):
+    """A typed limit write must not touch the counters: a hold taken before a
+    budget edit is still counted after it, so the new limit is enforced
+    against it. (On the Spanner emulator a partial tr_key_limit upsert reset
+    the omitted counter columns to their defaults.)"""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="edited", creator_user_id=user_id,
+        limit_microdollars=5_000_000,
+    )
+    assert _hold(store, key.hash, 1_000_000)
+    assert store.update_key(key.hash, {"limit_microdollars": 4_000_000}) is not None
+    assert _hold(store, key.hash, 3_000_000)
+    assert not _hold(store, key.hash, 1), "the edit forgot the $1 hold"
