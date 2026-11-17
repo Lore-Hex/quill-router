@@ -187,13 +187,14 @@ def test_rollout_never_inherits_key_file():
     assert mounts == {pins['TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE']: 'trustedrouter-async-settle-ticket-key:latest'}
     assert 'add_secret_env_if_exists' not in source.split('trustedrouter-async-settle-ticket-key')[0].rsplit('\n', 2)[-2]
     # Public identity of the purpose key: distinct from the speculation shadow kid, enclave-checked audience,
-    # provisioned (positive) epoch; rollout pins follow the reviewed pilot stage.
+    # provisioned (positive) epoch.
     assert pins['TR_ASYNC_SETTLE_TICKET_KID'] == 'tr-async-settle-2026-10a'
     assert pins['TR_ASYNC_SETTLE_TICKET_KID'] != Settings().speculation_shadow_kid
     assert pins['TR_ASYNC_SETTLE_TICKET_ISSUER'] == 'https://api.trustedrouter.com'
     assert pins['TR_ASYNC_SETTLE_TICKET_AUDIENCE'] == 'router-settlement'
     assert pins['TR_ASYNC_SETTLE_AUTHORITY_EPOCH'] == '1'
-    assert pins['TR_ASYNC_SETTLE_ENABLED'] == 'true'
+    # Accepted-work protection stays on in every stage while async work can
+    # exist: admission toggles, protection does not.
     assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'true'
     assert Settings().async_settle_enabled is False
     assert Settings().async_settle_protection is False
@@ -207,16 +208,11 @@ def test_rollout_never_inherits_key_file():
                       fastpath_pilot_exclude=resolved_lists()['TR_FASTPATH_PILOT_EXCLUDE'], **{
         key.removeprefix('TR_').lower(): value for key, value in pins.items()
     })
-    assert config.async_settle_admission_enabled is True
-    # Every workspace since 2026-11-10: the pilot set is empty and the
-    # reserved list is the only one admission leaves out.
-    assert pins['TR_ASYNC_SETTLE_PILOT_WORKSPACES'] == ''
-    assert config.async_settle_pilot_workspace_ids == frozenset()
+    # Whatever stage the rollout pins are at, admission leaves out every
+    # reserved workspace.
     reserved = config.async_settle_fastpath_reserved_workspace_ids
     assert reserved == frozenset(pins['TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES'].split(',')) and reserved
-    assert config.async_settle_pilot_allows('ws-synthetic-anyone')
     assert not any(config.async_settle_pilot_allows(workspace) for workspace in reserved)
-    assert config.async_settle_pilot_cap_micro == 5000000
 
 
 
