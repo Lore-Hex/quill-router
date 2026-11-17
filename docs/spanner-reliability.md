@@ -62,9 +62,9 @@ policy:
 - An authorize `503` is counted rather than paged at once. "TR Gateway:
   authorize 503 not lease headroom" compares the authorize 503s in Cloud
   Run's request log (`trustedrouter_gateway_authorize_503`) with the lines
-  the app writes for the two 503s it answers by design, and opens an
-  incident when the two counts differ for three minutes. Both are retryable,
-  carry `Retry-After: 1` and are retried by the enclave:
+  the app writes for the three 503s it answers by design, and opens an
+  incident when the two counts differ for three minutes. All three are
+  retryable, carry `Retry-After: 1` and are retried by the enclave:
   - lease headroom, `billing.lease_headroom_unavailable`
     (`trustedrouter_gateway_lease_headroom_503`): the workspace's shortfall
     is held in fast-path leases (`TR_FASTPATH_LEASE_HEADROOM_503`);
@@ -73,19 +73,31 @@ policy:
     covers the hold but is spread across credit shards, and the per-process
     rebalance cooldown is held by a rebalance another of its requests just
     ran. Until this line existed the 503 had no mark and paged as storage
-    impact (one false page on 2026-11-16).
+    impact (one false page on 2026-11-16);
+  - strict budget busy, `billing.strict_budget_busy` written by
+    `trusted_router.routes.internal.gateway`
+    (`trustedrouter_gateway_strict_budget_busy_503`): a key with a strict
+    budget could not get its per-process admission slot (one strict
+    authorize per key, 16 strict keys per instance). Until this line
+    existed the 503 had no mark and paged
+    as storage impact (one false page on 2026-11-17). The handler's own
+    `WARNING trusted_router.main billing.strict_budget_busy` line for the
+    same 503 has no trace and is not counted.
 
-  Every other authorize 503 writes neither line and pages: a Spanner outage
-  or deadline, no instance, a crash, a paused workspace, and the two
-  retryable answers that have no mark, `credit headroom changed
-  concurrently` and a strict key's busy admission. More lines than 503s
-  pages too, because a line written without its 503 could hide a real one.
-  The deploy gate (`scripts/deploy/assert_no_billing_5xx.sh`) draws the same
-  line per request, by trace.
+  Every other authorize 503 writes none of these lines and pages: a Spanner
+  outage or deadline, no instance, a crash, a paused workspace, and the
+  retryable answer that has no mark, `credit headroom changed
+  concurrently`. More lines than 503s pages too, because a line written
+  without its 503 could hide a real one. The deploy gate
+  (`scripts/deploy/assert_no_billing_5xx.sh`) draws the same line per
+  request, by trace.
 - "TR Gateway: credit rebalance busy" opens an incident when more than two
   rebalance-busy 503s land in ten minutes, or more than five in an hour. The
   policy above no longer pages on them, so this one bounds them. See "Credit
   rebalance busy" below.
+- "TR Gateway: strict budget busy" opens an incident when more than two
+  strict-budget-busy 503s land in ten minutes, or more than five in an hour,
+  for the same reason. See "Strict budget busy" below.
 - A run of `503`s from one instance id, each with tens of seconds of latency
   and "connection to the instance had an error", while that instance's own
   output stops and its CPU stays flat, is a process whose event loop stopped
@@ -390,17 +402,64 @@ Known and left for later:
   funded-shard retry does not take a wait away and a request outlasts one
   stamp. That is money code and needs its own change, with a regression for
   that schedule.
-- Two other authorize 503s are deliberate and retryable and have no mark:
+- One other authorize 503 is deliberate and retryable and has no mark:
   `credit headroom changed concurrently` (a funded shard lost to peers on
-  every bounded retry) and a strict key's busy answer
-  (`billing.authorize_strict_budget_busy`). Both still count as unmarked and
-  page as core failures. Three of the four 503s in the burst of 2026-11-04
-  16:08Z were the first kind.
+  every bounded retry). It still counts as unmarked and pages as a core
+  failure. Three of the four 503s in the burst of 2026-11-04 16:08Z were
+  this kind. (A strict key's busy answer was the other until 2026-11-17; it
+  now has its mark, see "Strict budget busy" below.)
 - A line can be written without its 503. The route writes the line and the
   app answers afterwards, so a caller that disconnects mid-authorize leaves
   the line and no 503 in the request log. That is more lines than 503s and
-  pages in the other direction. The lease-headroom line has the same
-  exposure.
+  pages in the other direction. The lease-headroom and strict-budget-busy
+  lines have the same exposure.
+
+### Strict budget busy
+
+"TR Gateway: strict budget busy" means authorize answered more than two
+strict-budget-busy 503s in ten minutes (its fast bound) or more than five in
+an hour (its slow bound), the same two bounds as "Credit rebalance busy" and
+for the same reason: the enclave makes three attempts, seconds apart, so one
+request writes at most three lines, and three in ten minutes is the least at
+which a customer's request can have failed on this 503 alone. Storage is
+healthy and nothing was held. Each of those requests was for a key created
+with `budget_strict`, and could not get the key's per-process admission slot
+(`trusted_router/strict_budget.py`, `docs/routing-controls-20260927.md`):
+
+- one strict authorize per key and at most 16 strict keys per instance at
+  once;
+- a caller that finds the key's slot taken waits up to
+  `STRICT_ADMISSION_WAIT_SECONDS` (one second), with at most two waiting per
+  key and 16 per instance;
+- a caller still without a slot at the end of the wait, or that finds the
+  waiters full, is answered the 503 ("Strict budget authorization is busy;
+  retry with backoff").
+
+The slot is held for the strict authorize's transaction, so anything that
+slows that transaction makes the key's other authorizes wait longer. Before
+2026-11-17 each of these 503s paged as an unmarked authorize 503 (one false
+page that day: two overlapping authorizes on one strict key, the second
+answered after its one-second wait).
+
+1. Read the window's `billing.strict_budget_busy` lines from
+   `trusted_router.routes.internal.gateway`. Each carries the workspace id,
+   the request id and the trace of its 503, and nothing else. The route's
+   `billing.authorize_strict_budget_busy` and the handler's
+   `billing.strict_budget_busy` warnings (Spanner store; on the Postgres
+   store only the handler's) carry the same request id.
+2. One workspace points at its own traffic: its client sends more
+   concurrent authorizes on one strict key than one in flight and two
+   waiting per instance, or each of its strict authorizes holds the slot
+   long. Compare the latency of its successful authorizes with Spanner's
+   for the window.
+3. Many workspaces at once point at Spanner latency, which holds every slot
+   longer, at more than 16 strict keys authorizing on one instance, or at a
+   recent deploy.
+
+Do not lengthen the wait, raise the limits or change a key's strict mode to
+quiet the alert: the slot bounds the harm one strict key can do to an
+instance, and the database's conditional updates, not the slot, keep the
+budget correct across the fleet.
 
 ### One instance loses Spanner
 

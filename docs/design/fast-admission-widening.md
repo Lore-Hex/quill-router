@@ -1555,7 +1555,12 @@ step.
    a workspace's credit is spread across shards while its rebalance
    cooldown is held; the policy compares the authorize 503s with the sum
    of both lines, and "TR Gateway: credit rebalance busy" bounds the
-   second (docs/spanner-reliability.md). Tests:
+   second (docs/spanner-reliability.md). Since 2026-11-17 they accept a
+   third, `billing.strict_budget_busy` from the gateway route
+   (`trustedrouter_gateway_strict_budget_busy_503`), for the 503 answered
+   when a strict-budget key cannot get its per-process admission slot;
+   the policy subtracts all three, and "TR Gateway: strict
+   budget busy" bounds the third. Tests:
    `tests/test_billing_5xx_lease_headroom.py`.
 8. **Activation, WS0 to WS6.** One `rollout.sh`, `fastpath_lists.sh`, job
    setting or node-attribute change per step of §8.2, each opened with the

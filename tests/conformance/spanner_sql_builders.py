@@ -92,6 +92,7 @@ def builder_cases() -> list[SQLCase]:
     from trusted_router.storage_gcp_async_admission import (
         control_statement,
         grace_statement,
+        leased_wait_statement,
         unresolved_statement,
     )
     from trusted_router.storage_gcp_settle_outbox import shard_due_statement
@@ -108,6 +109,22 @@ def builder_cases() -> list[SQLCase]:
     ) for i, (version, attempts, status, note) in enumerate(
         ((None, 0, "pending", None), (1, 0, "pending", None), (None, 1, "pending", None),
          (None, 0, "dead", None), (None, 0, "pending", "typed store unavailable")))]
+    # In the range, only the pending row parked with the drain's note for an undecided
+    # leased intent waits on the fast path; an unparked, an otherwise parked and a dead row do not.
+    wait_seed = [(
+        "INSERT INTO tr_settle_outbox (authorization_id, intent_kind, settle_origin, actual_cost_micro, "
+        "status, attempts, async_version, last_error, created_at, next_attempt_at) "
+        "VALUES (@id, 'settle', 'repair', 1, @status, 0, 1, @note, @created, @due)",
+        {"id": f"leased-wait-health-{i}", "status": status, "note": note,
+         "created": NOW + timedelta(seconds=i), "due": NOW + timedelta(seconds=300 + i)},
+        {"id": pt.STRING, "status": pt.STRING, "note": pt.STRING, "created": pt.TIMESTAMP, "due": pt.TIMESTAMP},
+    ) for i, (status, note) in enumerate(
+        (("pending", "fast path undecided"), ("pending", None), ("pending", "typed store unavailable"),
+         ("dead", "fast path undecided")))]
+    cases.extend([
+        SQLCase("drain-health-leased-wait", [leased_wait_statement("2026-01-01T00:00:00Z", "2026-01-01T00:00:10Z")],
+                seed=wait_seed, expected_rows=[[NOW + timedelta(seconds=300), NOW]]),
+    ])
     cases.extend([
         SQLCase("drain-health-point", [control_statement("fleet-v1")]),
         SQLCase("drain-health-cadence-point", [control_statement("health-publish-v1")]),

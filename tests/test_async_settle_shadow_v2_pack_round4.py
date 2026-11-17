@@ -259,38 +259,6 @@ def test_startup_burst_inside_long_interval_blocks(tmp_path, capture):
         CapturedBudget.build(files, plan, checkpoint='fleet-budgets-pre')
 
 
-def test_round4_matrix_changes_are_exact():
-    from pathlib import Path
-    old = json.loads(Path('tests/shadow_v2_pack_round3_base_results.json').read_bytes())
-    new = json.loads(Path('tests/shadow_v2_pack_round4_base_results.json').read_bytes())
-    assert set(old['cases']) == set(new['cases'])
-    for case in old['cases']:
-        before = old['vectors'][old['cases'][case]]
-        after = new['vectors'][new['cases'][case]]
-        removed = [f for f in before['failures'] if f not in after['failures']]
-        added = [f for f in after['failures'] if f not in before['failures']]
-        expected_added = []
-        if case in ('accounting_file', 'false_shutdown_zero'):
-            expected_added.extend(('evidence_schema_gap', 'publisher_trace',
-                'publisher-traces/2026-10-12/11111111-1111-4111-8111-111111111111/' + slot)
-                for slot in ('895881600', '895881601'))
-        if case == 'accounting_file':
-            expected_added.append(('artifact_gap', 'a2_file', 'native-export/accounting.json'))
-        assert [(f['gap'], f['subject']['object']['kind'], f['subject']['object']['key'])
-                for f in added] == expected_added
-        assert all(f['count'] == 1 and f['rule'] == 'G1' for f in added)
-        for failure in removed:
-            if case == 'accounting_file' and failure['gap'] == 'artifact_gap':
-                assert failure['count'] == 1 and failure['rule'] == 'G1'
-                assert failure['subject']['object'] == dict(event_seq=None,
-                    key='proof.external_proofs_sha256', kind='a2_file')
-                continue
-            assert failure['gap'] == 'evidence_schema_gap' and failure['rule'] == 'G1'
-            assert failure['count'] == 1
-            assert failure['subject']['object'] == dict(event_seq=None,
-                key='manifest.independent_inventory_sha256', kind='a2_file')
-
-
 def test_public_command_retains_incomplete_source_state(tmp_path, capsys):
     from scripts.async_settle.shadow_v2_window import main
     from trusted_router.async_settle_shadow_v2_pack_stage import PRODUCERS

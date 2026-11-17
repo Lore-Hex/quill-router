@@ -62,15 +62,21 @@ _DETERMINISTIC_PARK_SECONDS = 3600
 # age). The park's due time is stamped from a clock in whole seconds, so a
 # wait of n falls due between n-1 and n seconds on, a wait of one within the
 # second: a row is asked at most once in a clock second. An
-# owner that is only slow decides within a second or two, and the row is
-# unresolved until it is asked again: its age is in the drain's published
-# health, where a p95 over five seconds closes async admission for every
-# workspace (2026-11-16: one such row, parked five minutes at one second
-# old, did for those five minutes). An owner that is gone decides when its
-# lease closes, hours later: the wait doubles to the five minutes, so that
-# row is asked a few dozen times.
+# owner that is only slow decides within a second or two, so the row is
+# settled about as soon as it can be (2026-11-16: one such row, parked five
+# minutes at one second old, kept its age in the drain's published health
+# for those five minutes and closed async admission for every workspace).
+# An owner that is gone decides when its lease closes, hours later: the
+# wait doubles to the five minutes, so that row is asked a few dozen times.
+# While it is parked with this note its age is the fast path's time, and
+# the published health leaves it out of its percentiles until the park
+# falls due (storage_gcp_async_admission._ages_past_leased_waits). That
+# module keeps its own copy of this note and of the bounds, which a test
+# holds equal to these, so that this module, which the app imports
+# everywhere, does not load the Spanner SDK for a constant.
 _LEASED_UNDECIDED_PARK_FLOOR_SECONDS = 1
 _LEASED_UNDECIDED_PARK_SECONDS = 300
+_LEASED_UNDECIDED_PARK_NOTE = "fast path undecided"
 
 _monotonic = time.monotonic
 
@@ -607,7 +613,7 @@ def _resolve_row(
             row.intent_kind,
             lease_owner=lease_owner,
             retry_after_seconds=_leased_undecided_park_seconds(row),
-            note="fast path undecided",
+            note=_LEASED_UNDECIDED_PARK_NOTE,
         )
         logger.warning(
             "settle outbox parked undecided leased intent authorization_id=%s intent_kind=%s",

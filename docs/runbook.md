@@ -928,6 +928,23 @@ intent more than 5 s past due, closes admission until it is resolved.
 the read behind that recount fails (`async admission read failed
 operation=drain_grace`), the publisher publishes creation ages instead.
 
+One kind of parked row is the exception: a leased intent the fast path has
+not decided, parked with `last_error = 'fast path undecided'`
+(`async_drain.timing outcome=park_leased_undecided`). Its age is the fast
+path's time, hours after an owner crash, so the p50 and p95 leave it out until
+its park falls due (at most five minutes) and count it from then. A record
+with `p95_age_seconds` near zero, `oldest_unresolved_age_seconds` in the
+thousands and admission open is therefore expected while such a row waits; it
+is not a broken publisher. The row still counts in `backlog_count`,
+`sample_count` and `frozen_micro`. The exception ends when the row is three
+hours old (the drain then spends its attempts, toward `dead` and its alert),
+and it is not applied at all when more than 100 unresolved rows are between
+5 s and about 3 h 5 min old: every age then counts, so a fast path deciding
+nothing for many requests closes admission. To see why such a row waits, read
+the drain worker's `leased intent undecided` warnings and the fast-path
+owner's logs. If the read behind this fails (`async admission read failed
+operation=drain_leased_wait`), the publisher publishes the ages without it.
+
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once
 terminal, the NULL row has the same outcome/alert/state as an ordinary loser.
