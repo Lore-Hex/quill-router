@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.ci import commit_scope as cs
 from scripts.ci import testmap as tm
 
 REPO = Path(__file__).resolve().parents[1]
@@ -195,9 +196,9 @@ def recorded(root: Path, tmp_path: Path, *args: str, **env: str) -> tuple[dict, 
 
 
 def effective(fragment: dict) -> dict[str, dict[str, set[str]]]:
-    """Each test's footprint with its collection, fixtures and memoized
-    misses folded in, as the selector reads it."""
-    fake = tm.TestMap({**fragment, "universe_files": [], "universe_funcs": []})
+    """Each test's footprint with its collection and scoped fixtures folded
+    in, as the selector reads it."""
+    fake = tm.TestMap({**fragment, "memoized": []})
     out = {}
     for nodeid, rt, fx in fake.tests:
         ids = [rt, *fx]
@@ -208,15 +209,6 @@ def effective(fragment: dict) -> dict[str, dict[str, set[str]]]:
         for i in ids:
             for n, part in enumerate(fake.fps[i]):
                 parts[n] |= {fake.keys[k] for k in part}
-        changed = True
-        while changed:
-            changed = False
-            for key, i in fake.cached.items():
-                if key in parts[0]:
-                    before = len(parts[0])
-                    for n, part in enumerate(fake.fps[i]):
-                        parts[n] |= {fake.keys[k] for k in part}
-                    changed = changed or len(parts[0]) != before
         out[nodeid] = dict(zip(tm.PARTS, parts, strict=True))
     return out
 
@@ -254,8 +246,10 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     t = "tests/test_sample.py::"
     # A generator started in one test and resumed in the next (PY_RESUME).
     assert "src/pkg/gen.py:gen" in fp[t + "test_b_resumes_generator"]["f"]
-    # A memoized hit inherits what the miss ran.
-    assert "src/pkg/core.py:inner" in fp[t + "test_d_hits_cache"]["f"]
+    # A cache hit runs no Python code: the call is marked, the miss ran the body.
+    assert "src/pkg/core.py:cached@memo" in fp[t + "test_d_hits_cache"]["f"]
+    assert "src/pkg/core.py:inner" not in fp[t + "test_d_hits_cache"]["f"]
+    assert {"src/pkg/core.py:cached", "src/pkg/core.py:inner"} <= fp[t + "test_c_fills_cache"]["f"]
     # A module fixture set up during an earlier test.
     assert "src/pkg/core.py:setup_value" in fp[t + "test_f_fixture_second"]["f"]
     # A call made while the module was collected (its parametrization).
@@ -276,7 +270,14 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     # Positive control for the attributions above: none is in the test's own window.
     own = {nodeid: {fragment["keys"][k] for k in fragment["fps"][rt][0]} for nodeid, rt, _ in fragment["tests"]}
     assert "src/pkg/core.py:setup_value" not in own[t + "test_f_fixture_second"]
-    assert "src/pkg/core.py:inner" not in own[t + "test_d_hits_cache"]
+    # The selector lets the cache's later user inherit the miss: a change to
+    # inner() selects the test the cache served.
+    tmap = tm.TestMap({**fragment, "memoized": ["src/pkg/core.py:cached"],
+                       "universe_files": ["src/pkg/core.py"], "universe_funcs": ["src/pkg/core.py:inner"]})
+    sel = tm.select([cs.Change("M", "src/pkg/core.py")], tmap, root=root,
+                    classify=lambda c: tm.PyChange(funcs={"inner"}), index=lambda: tm.NameIndex({}, {}, {}),
+                    weights={})
+    assert {t + "test_c_fills_cache", t + "test_d_hits_cache"} <= set(sel.selected)
 
 
 def test_the_recorder_is_opt_in_and_a_nested_process_stays_off(tmp_path: Path) -> None:

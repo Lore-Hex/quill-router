@@ -17,7 +17,7 @@ from scripts.ci import testmap as tm
 # ---------------------------------------------------------------- a map, built by hand
 
 
-def build_map(tests: dict[str, dict], *, collect: dict | None = None, cached: dict | None = None,
+def build_map(tests: dict[str, dict], *, collect: dict | None = None, memoized: tuple[str, ...] = (),
               glob: dict | None = None, fixtures: dict[str, list[dict]] | None = None,
               universe_funcs: set[str] = frozenset(), universe_files: set[str] = frozenset(),
               commit: str = "a" * 40) -> dict:
@@ -35,7 +35,7 @@ def build_map(tests: dict[str, dict], *, collect: dict | None = None, cached: di
         "event": "push", "run_id": "1", "shards": tm.SHARDS, "fragments": list(range(1, tm.SHARDS + 1)),
         "created": "2026-11-17T00:00:00Z", "keys": interner.keys, "fps": interner.fps, "tests": rows,
         "collect": {m: fp(f) for m, f in (collect or {}).items()},
-        "cached": {c: fp(f) for c, f in (cached or {}).items()},
+        "memoized": sorted(memoized),
         "global": fp(glob), "universe_files": sorted(universe_files), "universe_funcs": sorted(universe_funcs),
     }
 
@@ -188,17 +188,25 @@ def test_s2_a_changed_function_selects_the_tests_that_ran_it_and_only_them() -> 
 def test_s10_fixture_collection_and_memoized_misses_are_inherited() -> None:
     tests = {"tests/test_fx.py::test_uses_fixture": {"f": ["tests/test_fx.py:test_uses_fixture"]},
              "tests/test_col.py::test_collected": {"f": []},
-             "tests/test_cache.py::test_hit": {"f": [f"{SRC}:helper"]}}
-    tmap = base_map(tests=tests,
-                    fixtures={"tests/test_fx.py::test_uses_fixture": [{"f": [f"{SRC}:work"]}]},
-                    collect={"tests/test_col.py": {"f": [f"{SRC}:work"]}},
-                    cached={f"{SRC}:helper": {"f": [f"{SRC}:work"]}})
+             # helper is memoized: the first test missed (it ran helper, and
+             # helper ran work); the second was served from the cache.
+             "tests/test_cache.py::test_miss": {"f": [f"{SRC}:helper", f"{SRC}:helper@memo", f"{SRC}:work"]},
+             "tests/test_cache.py::test_hit": {"f": [f"{SRC}:helper@memo"]}}
+    fixtures = {"tests/test_fx.py::test_uses_fixture": [{"f": [f"{SRC}:work"]}]}
+    collect = {"tests/test_col.py": {"f": [f"{SRC}:work"]}}
+    tmap = base_map(tests=tests, fixtures=fixtures, collect=collect, memoized=(f"{SRC}:helper",))
     sel = run_select(tmap, [("M", SRC)], py={SRC: changed("work")})
     assert set(sel.selected) == {"tests/test_a.py::test_work", "tests/test_fx.py::test_uses_fixture",
-                                 "tests/test_col.py::test_collected", "tests/test_cache.py::test_hit"}
-    # Positive control: without the inherited footprints none of the three is selected.
+                                 "tests/test_col.py::test_collected", "tests/test_cache.py::test_miss",
+                                 "tests/test_cache.py::test_hit"}
+    # A change to the memoized function itself selects its cache's users too.
+    sel = run_select(tmap, [("M", SRC)], py={SRC: changed("helper")})
+    assert set(sel.selected) == {"tests/test_cache.py::test_miss", "tests/test_cache.py::test_hit"}
+    # Positive control: without fixtures, collection and the memoized list,
+    # only the tests whose own windows ran `work` are selected.
     bare = base_map(tests=tests)
-    assert run_select(bare, [("M", SRC)], py={SRC: changed("work")}).selected == ["tests/test_a.py::test_work"]
+    assert set(run_select(bare, [("M", SRC)], py={SRC: changed("work")}).selected) == {
+        "tests/test_a.py::test_work", "tests/test_cache.py::test_miss"}
 
 
 def test_s4_a_module_level_name_selects_what_names_it_transitively() -> None:
@@ -412,7 +420,6 @@ def test_compact_resolves_scoped_fixtures_and_shares_footprints(tmp_path: Path) 
         {"fx": "module|tests/test_a.py||db", "f": ["src/x.py:setup"]},
         {"t": "tests/test_a.py::test_1", "x": ["module||db"], "f": ["src/x.py:f"]},
         {"t": "tests/test_a.py::test_2", "x": ["module||db"], "f": ["src/x.py:f"]},
-        {"cf": "src/x.py:cached", "f": ["src/x.py:inner"]},
         {"g": True, "f": ["src/x.py:boot"], "o": ["data.json"]},
         {"end": True},
     ])

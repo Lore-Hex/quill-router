@@ -21,10 +21,10 @@ What a footprint holds (the recorder's docstring has how it is recorded):
   d  repository directories listed
   s  commands started ("argv0 argv1 ... @cwd=<repo-relative or ->")
 A test's footprint is its own window (setup, call and teardown), its module's
-collection, the setup of every module/class/package/session fixture it
-requests, and, through `cached`, what each memoized function it called ran
-when it missed. `global` is what ran outside every window: imports, session
-hooks, collection hooks.
+collection and the setup of every module/class/package/session fixture it
+requests. A call of a memoized function is "<key>@memo" in f (a cache hit
+runs no Python code); `memoized` lists those functions. `global` is what ran
+outside every window: imports, session hooks, collection hooks.
 
 Selection rules (the full suite runs on any fail-safe; reasons are reported):
 
@@ -70,9 +70,11 @@ Selection rules (the full suite runs on any fail-safe; reasons are reported):
    S9 a changed test helper (Python under tests/ or scripts/) also selects
       what commit_scope's reverse import walk reaches (not through
       conftest.py, which every test imports: its functions select by S2).
-   S10 a memoized function's users inherit what its misses ran; module and
-      session fixture setups count for every test that requests them; a
-      module's collection counts for each of its tests.
+   S10 a test that used a memoized function inherits every footprint in which
+      that function started (missed), so a change its miss could reach
+      selects the tests its cache served; module and session fixture setups
+      count for every test that requests them; a module's collection counts
+      for each of its tests.
    S11 a test the map does not know runs (compare counts it as selected).
 """
 
@@ -109,6 +111,7 @@ MAX_DISTANCE = 40
 MAX_AGE_HOURS = 24
 FULL_SHARE = 0.7
 ARTIFACT = "testmap"
+MEMO = "@memo"  # the recorder's mark for a call of a functools cache
 # Directories the name index and the map's universe skip: not repository code.
 SKIP_DIRS = frozenset({".git", ".venv", "node_modules", "__pycache__", ".hypothesis", ".ruff_cache",
                        ".mypy_cache", ".pytest_cache"})
@@ -168,7 +171,6 @@ def compact(raw_dir: Path, shard: int) -> dict:
     tests: dict[str, dict] = {}
     fixtures: dict[str, dict[str, set[str]]] = defaultdict(_empty)
     collect: dict[str, dict[str, set[str]]] = defaultdict(_empty)
-    cached: dict[str, dict[str, set[str]]] = defaultdict(_empty)
     glob_fp = _empty()
     errors: list[str] = []
     headers: list[dict] = []
@@ -202,8 +204,6 @@ def compact(raw_dir: Path, shard: int) -> dict:
                     _union(fixtures[f"{scope}|*|{baseid}|{arg}"], record)
                 elif "c" in record:
                     _union(collect[record["c"]], record)
-                elif "cf" in record:
-                    _union(cached[record["cf"]], record)
                 elif "g" in record:
                     _union(glob_fp, record)
         if not ended:
@@ -231,7 +231,6 @@ def compact(raw_dir: Path, shard: int) -> dict:
         "valid": not errors, "errors": errors[:50],
         "keys": interner.keys, "fps": interner.fps, "tests": out_tests,
         "collect": {m: interner.fp(v[k] for k in PARTS) for m, v in sorted(collect.items())},
-        "cached": {c: interner.fp(v[k] for k in PARTS) for c, v in sorted(cached.items())},
         "global": interner.fp(glob_fp[k] for k in PARTS),
     }
 
@@ -256,7 +255,6 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
 
     tests: dict[str, list] = {}
     collect: dict[str, set[int]] = defaultdict(set)
-    cached: dict[str, set[int]] = defaultdict(set)
     globals_: set[int] = set()
     for fragment in fragments:
         for nodeid, rt, fx in fragment["tests"]:
@@ -265,8 +263,6 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
             tests[nodeid] = [nodeid, remap(fragment, rt), sorted({remap(fragment, i) for i in fx})]
         for module, i in fragment["collect"].items():
             collect[module].add(remap(fragment, i))
-        for key, i in fragment["cached"].items():
-            cached[key].add(remap(fragment, i))
         globals_.add(remap(fragment, fragment["global"]))
 
     def joined(ids: set[int]) -> int:
@@ -284,8 +280,8 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
         "keys": interner.keys, "fps": interner.fps,
         "tests": [tests[t] for t in sorted(tests)],
         "collect": {m: joined(ids) for m, ids in sorted(collect.items())},
-        "cached": {c: joined(ids) for c, ids in sorted(cached.items())},
         "global": joined(globals_),
+        "memoized": sorted({k[: -len(MEMO)] for k in interner.keys if k.endswith(MEMO)}),
         "universe_files": sorted(index.universe),
         "universe_funcs": sorted(k for keys in index.universe.values() for k in keys),
     }
@@ -582,7 +578,7 @@ class TestMap:
         self.fps: list[list[list[int]]] = data["fps"]
         self.tests: list[list] = data["tests"]
         self.collect: dict[str, int] = data["collect"]
-        self.cached: dict[str, int] = data["cached"]
+        self.memoized: list[str] = data.get("memoized", [])
         self.glob = self.fps[data["global"]]
         self.universe_files = set(data.get("universe_files", ()))
         self.universe_funcs = set(data.get("universe_funcs", ()))
@@ -610,7 +606,7 @@ def validate_map(data: dict, *, commit: str | None = None) -> str | None:
         return f"map has fragments {data.get('fragments')} of {data.get('shards')} shards, expected {SHARDS}"
     if commit is not None and data.get("commit") != commit:
         return f"map commit {data.get('commit')} is not {commit}"
-    for name in ("keys", "fps", "tests", "collect", "cached", "global"):
+    for name in ("keys", "fps", "tests", "collect", "memoized", "global"):
         if name not in data:
             return f"map has no {name}"
     return None
@@ -753,7 +749,7 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
                 return full(f"{key} is newer than the map ({commit[:12]})")
             if key in global_funcs:  # F3
                 return full(f"{key} runs at import or session time")
-            keys.add(key)
+            keys |= {key, key + MEMO}
         for cls in sorted(info.classes):  # S3
             keys |= name_index().spread({cls})
             prefix = f"{path}:{cls}."
@@ -808,9 +804,19 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
             fp_hit[i] = found
         return found
 
-    while True:  # S10: a memoized function's users inherit what its misses ran
-        new = {tmap.key_id[c] for c, i in tmap.cached.items()
-               if c in tmap.key_id and tmap.key_id[c] not in key_ids and is_hit(i)}
+    # S10: a test served by a memoized function's cache inherits every
+    # footprint in which the function started (a miss), whatever else it held.
+    memo_ids = {tmap.key_id[name]: name for name in tmap.memoized if name in tmap.key_id}
+    started: dict[int, list[int]] = defaultdict(list)
+    if memo_ids:
+        for i, fp in enumerate(tmap.fps):
+            for ident in memo_ids.keys() & set(fp[0]):
+                started[ident].append(i)
+    while True:
+        new: set[int] = set()
+        for ident, fps in started.items():
+            if ident not in key_ids and any(is_hit(i) for i in fps):
+                new |= tmap.ids({memo_ids[ident], memo_ids[ident] + MEMO})
         if not new:
             break
         key_ids |= new

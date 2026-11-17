@@ -2,10 +2,10 @@
 
 Opt-in. Nothing happens unless TR_TESTMAP_OUT names an output directory, and
 tests/conftest.py imports this module only then, before any application
-import (an import-time read or memoized function would otherwise go
-unrecorded). ci.yml sets it on pushes to main (and on a dispatch asking for
-test_map) only; pull request shards and local runs never load it.
-scripts/ci/testmap.py compacts the output and holds the selection rules.
+import (an import-time read would otherwise go unrecorded). ci.yml sets it on
+pushes to main (and on a dispatch asking for test_map) only; pull request
+shards and local runs never load it. scripts/ci/testmap.py compacts the
+output and holds the selection rules.
 
 What a test's window (setup, call and teardown) records:
   f  every function that starts or resumes under the repository: a
@@ -14,6 +14,13 @@ What a test's window (setup, call and teardown) records:
      location costs one callback per window; restart_events() re-arms every
      location when a window opens or closes. Resume events catch a generator
      or coroutine started in an earlier test.
+     A call of a functools.cache/lru_cache function is marked "<key>@memo"
+     (a CALL event, also disabled per call site per window): a hit runs no
+     Python code, so without the mark a test served from a cache would not
+     record the function at all. testmap.py's selector lets a test that used
+     a memoized function inherit every window in which that function started
+     (missed). The caches themselves are untouched: the frozen-execution
+     guard tests walk object graphs from them and recognize them by type.
   o  repository files opened (the "open" audit event). The import system's
      own reads of .py/.pyc files are not reads: executing the module is
      what the f set records.
@@ -25,9 +32,6 @@ What a test's window (setup, call and teardown) records:
 Separate windows, each written once and inherited by the tests that use it:
   c   a test module's collection (its import and parametrization);
   fx  the setup of a module, class, package or session fixture;
-  cf  a memoized function's miss (functools.cache/lru_cache are wrapped while
-      recording, so a later hit still marks the function as used and the
-      user inherits what the miss ran; the first 20 misses per function);
   g   everything outside every window: imports, session and collection hooks.
 Jinja's template cache is off while recording, so every render reads its
 template files.
@@ -43,6 +47,10 @@ in pytest_plugins, and a test that runs pytest in-process names it again;
 without the marker pytest warns that it cannot rewrite an imported module,
 and that extra warning changes the inner session's summary line, which
 tests/test_lock_order_guard.py asserts on.
+
+Nothing reachable from a test holds the recorder: hook frames keep no
+windows (the recorder keeps its own stack), and the session is held weakly.
+Tests that walk object graphs from their frames stay within their bounds.
 
 The recorder never raises into a test: an internal error writes an "err"
 record, stops recording, and makes the shard's fragment invalid, so no map
@@ -61,7 +69,8 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Callable
+import types
+import weakref
 from typing import Any
 
 import pytest
@@ -72,9 +81,9 @@ except ImportError:  # pragma: no cover - loaded by path in a synthetic project
     RECORDER_VERSION = "1"
 
 TOOL_ID = 3
-MAX_MISSES = 20
 OUT_ENV = "TR_TESTMAP_OUT"
 OWNER_ENV = "TR_TESTMAP_OWNER"
+MEMO = "@memo"
 ROOT = os.path.realpath(os.getcwd()) + os.sep
 SKIP_PARTS = ("/.venv/", "/.git/", "/__pycache__/", "/.hypothesis/", "/.pytest_cache/", "/.mypy_cache/",
               "/.ruff_cache/", "/node_modules/", "/site-packages/")
@@ -88,14 +97,21 @@ SKIP_PARTS = ("/.venv/", "/.git/", "/__pycache__/", "/.hypothesis/", "/.pytest_c
 IMPORT_FRAMES = ("<frozen importlib._bootstrap", "/_pytest/assertion/rewrite.py",
                  "/hypothesis/internal/constants_ast.py")
 DISPLAY_FRAMES = ("/warnings.py", "/traceback.py")
+AUDITED = frozenset({"open", "os.listdir", "os.scandir", "glob.glob", "subprocess.Popen", "os.posix_spawn",
+                     "os.exec", "os.system"})
+LRU = functools._lru_cache_wrapper  # type: ignore[attr-defined]
 mon = sys.monitoring
 
 
 class Window:
-    __slots__ = ("codes", "opens", "dirs", "spawns")
+    """Code objects are kept by identity (id -> code): adding one to a set
+    would hash it, and hashing a code object hashes its constants, which a
+    test can observe (test_guard_worker_admission_does_not_hash_code_constants)."""
+    __slots__ = ("codes", "memo", "opens", "dirs", "spawns")
 
     def __init__(self) -> None:
-        self.codes: set[Any] = set()
+        self.codes: dict[int, Any] = {}
+        self.memo: dict[int, Any] = {}
         self.opens: set[str] = set()
         self.dirs: set[str] = set()
         self.spawns: set[str] = set()
@@ -103,14 +119,13 @@ class Window:
 
 class Recorder:
     def __init__(self, out_dir: str) -> None:
-        self.out_dir = out_dir
         self.glob = Window()
         self.cur = self.glob
+        self.stack: list[Window] = []
         self.active = True
         self.lock = threading.Lock()
-        self.misses: dict[str, int] = {}
-        self.config: Any = None  # the session this process records; see pytest_configure
         self.paths: dict[str, str | None] = {}
+        self.config_ref: Any = None  # the session this process records, weakly; see pytest_configure
         worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
         os.makedirs(out_dir, exist_ok=True)
         self.out = open(os.path.join(out_dir, f"{worker}-{os.getpid()}.jsonl"), "w", encoding="utf-8")  # noqa: SIM115
@@ -145,23 +160,25 @@ class Recorder:
 
     def dump(self, window: Window) -> dict:
         funcs = set()
-        for code in list(window.codes):
-            path = self.code_path(code.co_filename)
-            if path is not None:
-                funcs.add(f"{path}:{code.co_qualname}")
+        for codes, suffix in ((window.codes, ""), (window.memo, MEMO)):
+            for code in list(codes.values()):
+                path = self.code_path(code.co_filename)
+                if path is not None:
+                    funcs.add(f"{path}:{code.co_qualname}{suffix}")
         return {"f": sorted(funcs), "o": sorted(window.opens), "d": sorted(window.dirs), "s": sorted(window.spawns)}
 
-    # -- windows
-    def enter(self) -> Window:
-        prev = self.cur
+    # -- windows: the recorder keeps the stack, so no hook frame holds one
+    def enter(self) -> None:
+        self.stack.append(self.cur)
         self.cur = Window()
         mon.restart_events()
-        return prev
 
-    def leave(self, prev: Window) -> Window:
+    def leave(self) -> Window:
         window = self.cur
+        prev = self.stack.pop()
         if prev is not self.glob:  # what ran in a nested window ran in the outer one too
-            prev.codes |= window.codes
+            prev.codes.update(window.codes)
+            prev.memo.update(window.memo)
             prev.opens |= window.opens
             prev.dirs |= window.dirs
             prev.spawns |= window.spawns
@@ -173,7 +190,20 @@ class Recorder:
     def on_code(self, code: Any, offset: int, _disable: Any = sys.monitoring.DISABLE) -> Any:
         # DISABLE is bound at definition: module globals are cleared at
         # interpreter shutdown, while a callback can still fire.
-        self.cur.codes.add(code)
+        self.cur.codes[id(code)] = code
+        return _disable
+
+    def on_call(self, code: Any, offset: int, func: Any, arg0: Any,
+                _disable: Any = sys.monitoring.DISABLE, _lru: Any = LRU, _method: Any = types.MethodType) -> Any:
+        kind = type(func)
+        if kind is _method:
+            func = func.__func__
+            kind = type(func)
+        if kind is _lru:
+            wrapped = getattr(func, "__wrapped__", None)
+            target = getattr(wrapped, "__code__", None)
+            if target is not None:
+                self.cur.memo[id(target)] = target
         return _disable
 
     def rel(self, path: Any) -> str | None:
@@ -198,7 +228,7 @@ class Recorder:
                 rel = self.rel(args[0])
                 if rel is None or rel.endswith(".pyc"):
                     return
-                if rel.endswith(".py") and self.importing():
+                if rel.endswith(".py") and self.not_a_read():
                     return
                 self.cur.opens.add(rel)
             elif event in ("os.listdir", "os.scandir", "glob.glob"):
@@ -215,10 +245,10 @@ class Recorder:
         except Exception as error:
             self.fail(f"audit {event}", error)
 
-    def importing(self) -> bool:
-        """Is the import system (or pytest's assertion rewriting, which reads
-        a test module to import it) the one opening this file?"""
-        frame = sys._getframe(1)
+    def not_a_read(self) -> bool:
+        """Is the import system, assertion rewriting, Hypothesis's constant
+        harvest or a warning/traceback display the one opening this file?"""
+        frame = sys._getframe(2)
         display = False
         for _ in range(16):
             if frame is None:
@@ -241,45 +271,22 @@ class Recorder:
         where = self.rel(cwd if cwd is not None else os.getcwd())
         self.cur.spawns.add(" ".join(" ".join(words).split()) + f" @cwd={where or '-'}")
 
-    # -- memoized functions
-    def cached(self, fn: Callable, make: Callable[[Callable], Callable]) -> Callable:
-        code = getattr(fn, "__code__", None)
-        path = self.code_path(code.co_filename) if code is not None else None
-        if code is None or path is None:
-            return make(fn)
-        key = f"{path}:{code.co_qualname}"
-        recorder = self
-
-        @functools.wraps(fn)
-        def miss(*args: Any, **kwargs: Any) -> Any:
-            if not recorder.active or recorder.misses.get(key, 0) >= MAX_MISSES:
-                return fn(*args, **kwargs)
-            recorder.misses[key] = recorder.misses.get(key, 0) + 1
-            prev = recorder.enter()
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                window = recorder.leave(prev)
-                try:
-                    recorder.write({"cf": key, **recorder.dump(window)})
-                except Exception as error:
-                    recorder.fail("cached", error)
-
-        wrapped = make(miss)
-
-        @functools.wraps(fn)
-        def used(*args: Any, **kwargs: Any) -> Any:
-            recorder.cur.codes.add(code)
-            return wrapped(*args, **kwargs)
-
-        used.cache_info = wrapped.cache_info  # type: ignore[attr-defined]
-        used.cache_clear = wrapped.cache_clear  # type: ignore[attr-defined]
-        if hasattr(wrapped, "cache_parameters"):
-            used.cache_parameters = wrapped.cache_parameters  # type: ignore[attr-defined]
-        return used
-
 
 RECORDER: Recorder | None = None
+
+
+def _audit_hook(recorder: Recorder) -> Any:
+    # The hook runs for every audit event in the process (gc.get_referents and
+    # sys._getframe among them, millions in the guard tests): reject the
+    # events it does not record before any attribute lookup.
+    events = AUDITED
+    handle = recorder.audit
+
+    def hook(event: str, args: tuple) -> None:
+        if event in events:
+            handle(event, args)
+
+    return hook
 
 
 def _start() -> Recorder | None:
@@ -303,20 +310,9 @@ def _start() -> Recorder | None:
         return recorder
     mon.register_callback(TOOL_ID, mon.events.PY_START, recorder.on_code)
     mon.register_callback(TOOL_ID, mon.events.PY_RESUME, recorder.on_code)
-    mon.set_events(TOOL_ID, mon.events.PY_START | mon.events.PY_RESUME)
-    sys.addaudithook(recorder.audit)
-    original_lru = functools.lru_cache
-
-    def lru_cache(maxsize: Any = 128, typed: bool = False) -> Any:
-        if callable(maxsize) and not isinstance(maxsize, bool):
-            return recorder.cached(maxsize, original_lru(128, typed))
-        return lambda fn: recorder.cached(fn, original_lru(maxsize, typed))
-
-    def cache(fn: Callable) -> Callable:
-        return recorder.cached(fn, original_lru(None))
-
-    functools.lru_cache = lru_cache  # type: ignore[assignment]
-    functools.cache = cache  # type: ignore[assignment]
+    mon.register_callback(TOOL_ID, mon.events.CALL, recorder.on_call)
+    mon.set_events(TOOL_ID, mon.events.PY_START | mon.events.PY_RESUME | mon.events.CALL)
+    sys.addaudithook(_audit_hook(recorder))
     try:
         import jinja2.environment
 
@@ -335,6 +331,17 @@ def _start() -> Recorder | None:
 RECORDER = _start()
 
 
+def _ours(config: Any) -> Recorder | None:
+    """The recorder, when `config` is the session it records. A test that runs
+    pytest in-process (pytest.main on a copy of conftest) registers this
+    module again; that inner session's tests run inside the outer test's
+    window and count for it, but write no records of their own."""
+    rec = RECORDER
+    if rec is None or not rec.active or rec.config_ref is None or rec.config_ref() is not config:
+        return None
+    return rec
+
+
 def _fixture_key(fixturedef: Any, request: Any) -> str:
     scope = fixturedef.scope
     nodeid = request.node.nodeid
@@ -349,81 +356,66 @@ def _fixture_key(fixturedef: Any, request: Any) -> str:
     return f"{scope}|{anchor}|{fixturedef.baseid}|{fixturedef.argname}"
 
 
-def _ours(config: Any) -> Recorder | None:
-    """The recorder, when `config` is the session it records. A test that runs
-    pytest in-process (pytest.main on a copy of conftest) registers this
-    module again; that inner session's tests run inside the outer test's
-    window and count for it, but write no records of their own."""
+def _close(record: dict) -> None:
+    """Leave the innermost window and write it under `record`'s key."""
     rec = RECORDER
-    if rec is None or not rec.active or config is not rec.config:
-        return None
-    return rec
+    if rec is None or not rec.active:
+        return
+    try:
+        rec.write({**record, **rec.dump(rec.leave())})
+    except Exception as error:
+        rec.fail(next(iter(record)), error)
 
 
 def pytest_configure(config: pytest.Config) -> None:
     rec = RECORDER
-    if rec is not None and rec.config is None:
-        rec.config = config
+    if rec is not None and rec.config_ref is None:
+        rec.config_ref = weakref.ref(config)
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_make_collect_report(collector: pytest.Collector) -> Any:
-    rec = _ours(collector.config)
-    if rec is None or not isinstance(collector, pytest.Module):
+    if not isinstance(collector, pytest.Module) or _ours(collector.config) is None:
         return (yield)
-    prev = rec.enter()
+    RECORDER.enter()  # type: ignore[union-attr]
     try:
         return (yield)
     finally:
-        window = rec.leave(prev)
-        try:
-            rec.write({"c": collector.nodeid, **rec.dump(window)})
-        except Exception as error:
-            rec.fail("collect", error)
+        _close({"c": collector.nodeid})
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_fixture_setup(fixturedef: Any, request: Any) -> Any:
-    rec = _ours(request.config)
-    if rec is None or fixturedef.scope == "function":
+    if fixturedef.scope == "function" or _ours(request.config) is None:
         return (yield)
-    prev = rec.enter()
+    RECORDER.enter()  # type: ignore[union-attr]
     try:
         return (yield)
     finally:
-        window = rec.leave(prev)
-        try:
-            rec.write({"fx": _fixture_key(fixturedef, request), **rec.dump(window)})
-        except Exception as error:
-            rec.fail("fixture", error)
+        _close({"fx": _fixture_key(fixturedef, request)})
 
 
 @pytest.hookimpl(wrapper=True, tryfirst=True)
 def pytest_runtest_protocol(item: pytest.Item, nextitem: Any) -> Any:
-    rec = _ours(item.config)
-    if rec is None:
+    if _ours(item.config) is None:
         return (yield)
-    prev = rec.enter()
+    RECORDER.enter()  # type: ignore[union-attr]
     try:
         return (yield)
     finally:
-        window = rec.leave(prev)
-        try:
-            scoped = []
-            info = getattr(item, "_fixtureinfo", None)
-            if info is not None:
-                for name in getattr(item, "fixturenames", ()):
-                    defs = info.name2fixturedefs.get(name) or ()
-                    if defs and defs[-1].scope != "function":
-                        scoped.append(f"{defs[-1].scope}|{defs[-1].baseid}|{defs[-1].argname}")
-            rec.write({"t": item.nodeid, "x": sorted(scoped), **rec.dump(window)})
-        except Exception as error:
-            rec.fail("test", error)
+        scoped = []
+        info = getattr(item, "_fixtureinfo", None)
+        if info is not None:
+            for name in getattr(item, "fixturenames", ()):
+                defs = info.name2fixturedefs.get(name) or ()
+                if defs and defs[-1].scope != "function":
+                    scoped.append(f"{defs[-1].scope}|{defs[-1].baseid}|{defs[-1].argname}")
+        _close({"t": item.nodeid, "x": sorted(scoped)})
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     rec = RECORDER
-    if rec is None or config is not rec.config:
+    if rec is None or rec.config_ref is None or rec.config_ref() is not config:
         return
     try:
         if rec.active:
