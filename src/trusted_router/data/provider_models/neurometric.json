@@ -180,13 +180,15 @@
       "status": 1,
       "id": "google/gemma-4-12b-it",
       "upstream_id": "google/gemma-4-12b-it",
-      "context_length": 32768,
-      "max_output_tokens": 32768,
+      "context_length": 16384,
+      "max_output_tokens": 16384,
       "supported_features": [
         "chat",
         "completion",
+        "tools",
         "json_mode",
-        "structured_outputs"
+        "structured_outputs",
+        "reasoning"
       ],
       "lifecycle_status": "active",
       "deprecation_at": null,
@@ -357,7 +359,8 @@
         "account_quota_error_codes": [
           "account_quota_exceeded"
         ]
-      }
+      },
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "Document Structured Extraction",
@@ -433,13 +436,15 @@
       "status": 1,
       "id": "neurometric/classification-router",
       "upstream_id": "neurometric/classification-router",
-      "context_length": 32768,
-      "max_output_tokens": 32768,
+      "context_length": 16384,
+      "max_output_tokens": 16384,
       "supported_features": [
         "chat",
         "completion",
+        "tools",
         "json_mode",
-        "structured_outputs"
+        "structured_outputs",
+        "reasoning"
       ],
       "lifecycle_status": "active",
       "deprecation_at": null,
@@ -713,6 +718,6 @@
       "routable_reason": "delisted-upstream"
     }
   ],
-  "generated_at": "2026-11-16T09:21:39Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "model_count": 13
 }

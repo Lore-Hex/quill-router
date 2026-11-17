@@ -91,7 +91,8 @@
       "max_output_tokens": 3072,
       "routable": true,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "MiniMax-M2.7",
@@ -167,7 +168,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-11-16T09:21:39Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

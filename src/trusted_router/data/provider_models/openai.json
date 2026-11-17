@@ -88,7 +88,8 @@
       "routable": true,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "gpt-4o",
@@ -179,7 +180,21 @@
       "routable": true,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 1200000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 1800000,
+          "cached_input_token_price_per_m": 40000
+        }
+      ]
     },
     {
       "display_name": "gpt-5.6-sol",
@@ -237,7 +252,21 @@
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 12000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 18000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
     },
     {
       "display_name": "o1",
@@ -259,7 +288,8 @@
       "routable": true,
       "input_token_price_per_m": 15000000,
       "output_token_price_per_m": 60000000,
-      "cached_input_token_price_per_m": 7500000
+      "cached_input_token_price_per_m": 7500000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "o3",
@@ -305,7 +335,8 @@
       "routable": true,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 550000
+      "cached_input_token_price_per_m": 550000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "o4-mini",
@@ -327,7 +358,8 @@
       "routable": true,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 275000
+      "cached_input_token_price_per_m": 275000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "gpt-5.4",
@@ -534,7 +566,8 @@
       "created": 1677610602,
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "gpt-3.5-turbo-0125",
@@ -556,7 +589,8 @@
       "created": 1706048358,
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "gpt-3.5-turbo-1106",
@@ -628,7 +662,8 @@
       "created": 1686588896,
       "routable": true,
       "input_token_price_per_m": 30000000,
-      "output_token_price_per_m": 60000000
+      "output_token_price_per_m": 60000000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "gpt-5",
@@ -814,7 +849,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 150000000,
-      "output_token_price_per_m": 600000000
+      "output_token_price_per_m": 600000000,
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "o3-pro",
@@ -998,7 +1034,21 @@
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 10000000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
     },
     {
       "display_name": "gpt-6.1-sol",
@@ -1123,10 +1173,68 @@
         "reasoning-effort",
         "structured-output"
       ]
+    },
+    {
+      "display_name": "gpt-5-search-api",
+      "title": "gpt-5-search-api",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-search-api",
+      "upstream_id": "gpt-5-search-api",
+      "created": 1759514629,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "gpt-6.1-terra",
+      "title": "gpt-6.1-terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.1-terra",
+      "upstream_id": "gpt-6.1-terra",
+      "created": 1791908780,
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 50000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 7500000,
+          "cached_input_token_price_per_m": 100000
+        }
+      ]
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-11-17T18:34:58Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 42
+  "model_count": 44
 }

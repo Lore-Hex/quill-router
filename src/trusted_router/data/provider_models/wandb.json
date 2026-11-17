@@ -777,14 +777,83 @@
       "id": "z-ai/glm-5.3",
       "upstream_id": "zai-org/GLM-5.3",
       "context_length": 1048576,
-      "routable": false,
-      "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-16"
+      "routable": true,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 190000
+    },
+    {
+      "display_name": "DeepSeek V4.1-Flash-1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "NVIDIA Nemotron 3.5 Super VL",
+      "title": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "Reflection Beam 1.0",
+      "title": "reflection/Beam-1.0-501B-A23B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "reflection/beam-1.0-501b-a23b",
+      "upstream_id": "reflection/Beam-1.0-501B-A23B",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1000000,
+      "cached_input_token_price_per_m": 40000
     }
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-11-16T09:21:39Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 34
+  "model_count": 37
 }
