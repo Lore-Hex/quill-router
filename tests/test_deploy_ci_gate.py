@@ -3,7 +3,9 @@
 The gate polls ci.yml for the pushed commit. A saturated runner queue has held
 CI for hours (2026-10-19), so the gate waits as long as a CI run exists and is
 queued or running, up to its run deadline, and still refuses at once on a red
-CI. A CI run that never appears keeps the original 45-minute bound.
+CI. A CI run that never appears keeps the original 45-minute bound. Only a
+push or dispatch run counts: a pull_request run checks a merge commit and
+skips the jobs its pull request did not change.
 """
 
 from __future__ import annotations
@@ -46,10 +48,11 @@ def _executable(path: Path, body: str) -> None:
 
 
 def _run(tmp_path: Path, responses: list[object], *, hotfix: str = "false") -> tuple[subprocess.CompletedProcess[str], int, int]:
-    """Run the gate; `responses` are the successive `gh run list --jq '.[0]'` answers (last one repeats).
+    """Run the gate; `responses` are the successive `gh run list --jq` answers (last one repeats).
 
     None prints `null` (jq's empty-list answer); "" prints nothing (gh's own formatter for an empty list);
-    "ERROR" exits 1 with an HTTP error on stderr, as a failed API call does.
+    "ERROR" exits 1 with an HTTP error on stderr, as a failed API call does; {"runs": [...]} is the
+    listing itself, which the gate's own --jq filter (run with the real jq) reduces.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -64,11 +67,17 @@ open(state + "/gh_calls", "w").write(str(calls + 1))
 assert sys.argv[1:3] == ["run", "list"], sys.argv
 assert "--workflow" in sys.argv and sys.argv[sys.argv.index("--workflow") + 1] == "ci.yml"
 assert sys.argv[sys.argv.index("--commit") + 1] == "abc123"
+fields = sys.argv[sys.argv.index("--json") + 1].split(",")
+assert "event" in fields, fields
 responses = json.load(open(state + "/responses.json"))
 answer = responses[min(calls, len(responses) - 1)]
 if answer == "ERROR":
     print("HTTP 503: Service Unavailable", file=sys.stderr)
     sys.exit(1)
+if isinstance(answer, dict) and "runs" in answer:
+    import subprocess
+    sys.exit(subprocess.run(["jq", "-c", sys.argv[sys.argv.index("--jq") + 1]],
+                            input=json.dumps(answer["runs"]), text=True).returncode)
 print("null" if answer is None else "" if answer == "" else json.dumps(answer))
 """)
     _executable(bin_dir / "date", f"""#!/usr/bin/env python3
@@ -167,3 +176,50 @@ def test_the_job_limit_covers_the_run_deadline() -> None:
     job = _gate_job()
     # GitHub caps a hosted job at 360 minutes; the poll's 330-minute run deadline must fit inside the job limit.
     assert 330 < job["timeout-minutes"] <= 360
+
+
+PUSH_GREEN = {**GREEN, "event": "push"}
+PUSH_RUNNING = {**RUNNING, "event": "push"}
+PR_GREEN = {"databaseId": 9, "status": "completed", "conclusion": "success", "event": "pull_request"}
+PR_RED = {"databaseId": 9, "status": "completed", "conclusion": "failure", "event": "pull_request"}
+
+
+def test_a_pull_request_run_never_serves_as_the_gate(tmp_path: Path) -> None:
+    # A green pull_request run for the commit, and no push or dispatch run:
+    # the gate keeps looking and refuses at the 45-minute bound.
+    result, _, _ = _run(tmp_path, [{"runs": [PR_GREEN]}])
+    assert result.returncode == 1
+    assert "timed out after 45 min: no CI run found for abc123" in result.stdout
+    assert "CI is green" not in result.stdout
+
+
+@pytest.mark.parametrize(("name", "answers"), [
+    # A newer green pull_request run does not end the wait for the push run.
+    ("newer pull request", [{"runs": [PR_GREEN, PUSH_RUNNING]}] * 3 + [{"runs": [PR_GREEN, PUSH_GREEN]}]),
+    # A red pull_request run does not refuse a green push run.
+    ("red pull request", [{"runs": [PR_RED, PUSH_GREEN]}]),
+    # The price refresh's commits carry only their dispatch run.
+    ("dispatch", [{"runs": [{**GREEN, "event": "workflow_dispatch"}]}]),
+])
+def test_the_push_or_dispatch_run_decides(tmp_path: Path, name: str, answers: list[object]) -> None:
+    result, _, _ = _run(tmp_path, answers)
+    assert result.returncode == 0, name + result.stdout + result.stderr
+    assert "ci run 7:" in result.stdout and "ci run 9:" not in result.stdout, name
+    assert "CI is green" in result.stdout, name
+
+
+def test_every_ci_run_lookup_in_a_workflow_counts_push_and_dispatch_runs_only() -> None:
+    import re
+
+    lookups = []
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        text = path.read_text()
+        for match in re.finditer(r"gh run list(?:[^\n]*\\\n)*[^\n]*", text):
+            command = match.group(0)
+            if "--workflow ci.yml" in command and "--commit" in command:
+                lookups.append((path.name, command))
+    assert {name for name, _ in lookups} >= {"deploy.yml", "deploy-production.yml",
+                                              "deploy-azure-control-plane.yml", "deploy-growth-sync.yml"}
+    for name, command in lookups:
+        assert ',event' in command and 'select(.event == "push" or .event == "workflow_dispatch")' in command, name
+        assert "--limit 1" not in command, name

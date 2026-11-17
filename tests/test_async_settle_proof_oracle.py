@@ -225,11 +225,12 @@ def test_each_excluded_case_is_settled_on_the_real_path_by_name():
     assert 'def test_a_resold_claude_fixture_case_settles_on_the_real_path(' in source
 
 
-def lifecycle_changes(instants):
+def lifecycle_changes(instants, provider_lifecycle=None):
     """(provider, model, upstream id, instant, what) for every endpoint an
-    oracle case settles that provider_lifecycle prices or retires at one of
-    `instants`."""
-    from trusted_router import provider_lifecycle
+    oracle case settles that provider_lifecycle (the live module, or the one
+    passed: the frozen leg's) prices or retires at one of `instants`."""
+    if provider_lifecycle is None:
+        from trusted_router import provider_lifecycle
 
     endpoints = {(candidate['provider'], candidate['model_id'], candidate.get('upstream_id'))
                  for case in ORACLE_CASES for candidate in case['snapshot']['candidates']}
@@ -265,6 +266,19 @@ def test_no_oracle_endpoint_changes_with_the_lifecycle_clock():
     assert lifecycle_changes(ci_lifecycle_instants()) == []
 
 
+def test_no_oracle_endpoint_changes_with_the_frozen_legs_lifecycle_clock():
+    """The frozen leg reads the same clock through its own copy of
+    provider_lifecycle, inside tests/fakes/frozen_main/package.tar.gz, and
+    its catalog_registry resolves retirements through that copy. The same
+    check holds for it, so a re-pin of the reference that brings a price or
+    retirement onto a case's endpoint fails here too."""
+    frozen = module('provider_lifecycle')
+    assert frozen.__name__ == 'frozen_main.provider_lifecycle'
+    assert module('catalog_registry').provider_model_retired is frozen.provider_model_retired
+    assert module('catalog').provider_price_microdollars is frozen.provider_price_microdollars
+    assert lifecycle_changes(ci_lifecycle_instants(), frozen) == []
+
+
 def test_a_lifecycle_change_to_an_oracle_endpoint_is_found(monkeypatch):
     """The check above can fail: a retirement or a price on a case's endpoint
     is reported."""
@@ -280,6 +294,11 @@ def test_a_lifecycle_change_to_an_oracle_endpoint_is_found(monkeypatch):
                         lambda provider, model, *, at=None: price if model == first['model_id'] else None)
     found = lifecycle_changes(instants)
     assert found and {(row[1], row[4]) for row in found} == {(first['model_id'], 'price')}
+    # The frozen copy is checked through the same function.
+    monkeypatch.undo()
+    frozen = module('provider_lifecycle')
+    monkeypatch.setattr(frozen, 'provider_model_retired', lambda *args, **kwargs: True)
+    assert {what for *_, what in lifecycle_changes(instants, frozen)} == {'retired'}
 
 
 @pytest.mark.proof_oracle

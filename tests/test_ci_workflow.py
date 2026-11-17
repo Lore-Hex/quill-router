@@ -22,16 +22,44 @@ def test_postgres_service_uses_digest_pinned_official_public_mirror() -> None:
     assert "continue-on-error" not in jobs["test"]
 
 
+# test-post-cutover's shards and their count: eight for the whole suite, one
+# when the scope job selected the test files a change reaches.
+POST_CUTOVER_SHARDS = ("${{ fromJSON(needs.scope.outputs.post_cutover_tests == '' "
+                       "&& '[1, 2, 3, 4, 5, 6, 7, 8]' || '[1]') }}")
+POST_CUTOVER_SHARD_COUNT = "${{ needs.scope.outputs.post_cutover_tests == '' && '8' || '1' }}"
+
+
 def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
+    import re
+
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-    for name in ("test", "test-post-cutover"):
-        job = jobs[name]
-        count = int(job["env"]["TEST_SHARDS"])
-        assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+    job = jobs["test"]
+    count = int(job["env"]["TEST_SHARDS"])
+    assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+    post = jobs["test-post-cutover"]
+    assert post["strategy"]["matrix"]["shard"] == POST_CUTOVER_SHARDS
+    assert post["env"]["TEST_SHARDS"] == POST_CUTOVER_SHARD_COUNT
+    # Each branch of the two expressions agrees: every partition, either way.
+    for shards, count_text in zip(re.findall(r"'(\[[^']*\])'", POST_CUTOVER_SHARDS),
+                                  re.findall(r"'(\d+)'", POST_CUTOVER_SHARD_COUNT), strict=True):
+        assert json.loads(shards) == list(range(1, int(count_text) + 1))
+    for job in (jobs["test"], post):
         assert job["timeout-minutes"] == 35
         assert job["strategy"]["fail-fast"] is False
         assert "continue-on-error" not in job
     assert jobs["coverage"]["needs"] == ["test", "scope"]
+
+
+def test_the_post_cutover_suite_runs_the_selected_tests_from_the_environment() -> None:
+    # The list reaches the command through the environment, never through an
+    # expression in the script, and commit_scope.py lists only safe paths.
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    post = jobs["test-post-cutover"]
+    assert post["env"]["POST_CUTOVER_TESTS"] == "${{ needs.scope.outputs.post_cutover_tests }}"
+    step = next(step for step in post["steps"] if "uv run pytest" in step.get("run", ""))
+    assert step["run"].endswith("--clean-durations ${POST_CUTOVER_TESTS}")
+    assert "outputs.post_cutover_tests" not in json.dumps(post["steps"])
+    assert jobs["scope"]["outputs"]["post_cutover_tests"] == "${{ steps.scope.outputs.post_cutover_tests }}"
 
 
 def test_ci_runs_python_suite_once_with_coverage() -> None:
@@ -264,11 +292,21 @@ def test_heavy_jobs_have_no_schedule_and_the_post_cutover_clock_runs_on_demand()
     jobs = daily["jobs"]
     assert set(jobs) == {"test-post-cutover", "proof-oracle", "proofs"}
     def comparable(job: dict) -> dict:
-        # Everything but when the job runs and the oracle's clocks.
+        # Everything but when the job runs and the oracle's clocks. ci.yml's
+        # post-cutover job takes the whole suite's values when the scope job
+        # selected no test files, and the on-demand job always has them.
         job = copy.deepcopy(job)
         job.pop("if", None)
         job.pop("needs", None)
         job.get("strategy", {}).get("matrix", {}).pop("clock", None)
+        whole = {POST_CUTOVER_SHARDS: [1, 2, 3, 4, 5, 6, 7, 8], POST_CUTOVER_SHARD_COUNT: "8",
+                 "${{ needs.scope.outputs.post_cutover_tests }}": ""}
+        matrix = job.get("strategy", {}).get("matrix", {})
+        if isinstance(matrix.get("shard"), str):
+            matrix["shard"] = whole.get(matrix["shard"], matrix["shard"])
+        for key, value in job.get("env", {}).items():
+            if isinstance(value, str):
+                job["env"][key] = whole.get(value, value)
         return job
 
     for name in jobs:
@@ -284,6 +322,8 @@ def test_heavy_jobs_have_no_schedule_and_the_post_cutover_clock_runs_on_demand()
         assert all("continue-on-error" not in step for step in jobs[name]["steps"]), name
         assert "strategy" not in jobs[name] or jobs[name]["strategy"]["fail-fast"] is False, name
     assert jobs["proof-oracle"]["strategy"]["matrix"]["clock"] == ["post-cutover"]
+    assert jobs["test-post-cutover"]["env"] == {"TEST_SHARDS": "8", "POST_CUTOVER_TESTS": ""}
+    assert jobs["test-post-cutover"]["strategy"]["matrix"]["shard"] == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_the_model_checks_run_check_sh_as_it_is() -> None:
@@ -468,6 +508,7 @@ def test_path_scoped_jobs_skip_only_on_their_own_flag():
     assert workflow.count("needs.scope.outputs.run_") == len(PATH_SCOPED_JOBS)
     assert jobs["scope"]["outputs"] == {
         "data_only": "${{ steps.scope.outputs.data_only }}",
+        "post_cutover_tests": "${{ steps.scope.outputs.post_cutover_tests }}",
         **{flag: f"${{{{ steps.scope.outputs.{flag} }}}}" for flag in PATH_FLAGS}}
     # Run unless the flag is exactly false: a missing output runs the job.
     for name, flag in PATH_SCOPED_JOBS.items():
@@ -516,7 +557,7 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
 
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     scope = jobs["scope"]
-    assert set(scope["outputs"]) == {"data_only", *PATH_FLAGS}
+    assert set(scope["outputs"]) == {"data_only", "post_cutover_tests", *PATH_FLAGS}
     assert scope["permissions"] == {"contents": "read", "actions": "read", "pull-requests": "read"}
     assert "needs" not in scope
     step = next(step for step in scope["steps"] if step.get("id") == "scope")
@@ -565,8 +606,11 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     assert 'git -c core.quotePath=true diff --no-renames --raw "${ref}" "${head}" > scoped-paths.txt' in script
     # Two commands continue over a line: compare them with single spaces.
     flat = " ".join(script.split())
-    assert ("git -c core.quotePath=true diff --no-renames --no-color -U0 \"${ref}\" \"${head}\" \\ "
-            "-- . ':(exclude)src/trusted_router' > scoped-lines.patch") in flat
+    # --text: a file .gitattributes marks binary still shows its lines;
+    # no external diff driver or textconv rewrites them. Outside src/, all
+    # of which runs the post-cutover suite whole.
+    assert ("git -c core.quotePath=true diff --no-renames --no-color --text --no-ext-diff --no-textconv \\ "
+            "-U0 \"${ref}\" \"${head}\" -- . ':(exclude)src' > scoped-lines.patch") in flat
     assert ('python3 scripts/ci/commit_scope.py jobs --event "${EVENT_NAME}" --lines scoped-lines.patch \\ '
             '< scoped-paths.txt | tee -a "$GITHUB_OUTPUT"') in flat
     assert "set -euo pipefail" in script

@@ -355,9 +355,17 @@ def tree(tmp_path: Path) -> Path:
 
 def scope(changes: list[str], root: Path, *, event: str = "pull_request", lines: str | None = "",
           now: datetime = NOW) -> dict[str, bool]:
-    flags, _ = scope_jobs(changes, root=root, event=event, lines=lines, now=now)
+    flags, _, _ = scope_jobs(changes, root=root, event=event, lines=lines, now=now)
     assert set(flags) == set(PATH_FLAGS)
     return flags
+
+
+def selected(changes: list[str], root: Path, *, lines: str | None = "") -> tuple[bool, tuple[str, ...]]:
+    """Whether the post-cutover suite runs, and the test files it is limited
+    to (empty: the whole suite)."""
+    flags, _, tests = scope_jobs(changes, root=root, event="pull_request", lines=lines, now=NOW)
+    assert not tests or flags["run_post_cutover"]
+    return flags["run_post_cutover"], tests
 
 
 def patch(path: str, *lines: str) -> str:
@@ -398,27 +406,29 @@ def test_plain_changes_are_regular_file_adds_modifies_and_deletes() -> None:
 def test_anything_but_a_plain_change_runs_every_path_scoped_job(tree: Path, record: str) -> None:
     assert plain_change(record) is None
     assert plain_changes([raw("docs/a.md"), record]) is None
-    flags, notes = scope_jobs([raw("docs/a.md"), record], root=tree, event="push", lines="", now=NOW)
-    assert flags == dict.fromkeys(PATH_FLAGS, True)
+    flags, notes, tests = scope_jobs([raw("docs/a.md"), record], root=tree, event="push", lines="", now=NOW)
+    assert flags == dict.fromkeys(PATH_FLAGS, True) and tests == ()
     assert "not an add, modify or delete of a regular file" in notes[0]
 
 
 def test_an_empty_comparison_runs_every_path_scoped_job(tree: Path) -> None:
     for records in ([], [""], ["", "  "]):
-        flags, notes = scope_jobs(records, root=tree, event="push", lines="", now=NOW)
-        assert flags == dict.fromkeys(PATH_FLAGS, True)
+        flags, notes, tests = scope_jobs(records, root=tree, event="push", lines="", now=NOW)
+        assert flags == dict.fromkeys(PATH_FLAGS, True) and tests == ()
         assert "empty" in notes[0]
 
 
 @pytest.mark.parametrize("path", [".github/workflows/ci.yml", "scripts/ci/commit_scope.py",
-                                  "scripts/ci/new_helper.py", "scripts/ci/sub/x.sh"])
+                                  "scripts/ci/new_helper.py", "scripts/ci/sub/x.sh",
+                                  ".gitattributes", "docs/.gitattributes", "fastpath/testdata/.gitattributes"])
 def test_a_change_to_how_ci_decides_runs_every_path_scoped_job(tree: Path, path: str) -> None:
     for record in (raw(path), added(path), deleted(path)):
         assert scope([raw("docs/a.md"), record], tree) == dict.fromkeys(PATH_FLAGS, True)
 
 
 @pytest.mark.parametrize("path", [".github/workflows/post-cutover-daily.yml", "scripts/cix/x.py",
-                                  "docs/ci.yml", "tests/test_ci_workflow.py"])
+                                  "docs/ci.yml", "tests/test_ci_workflow.py", "docs/gitattributes.md",
+                                  "docs/x.gitattributes"])
 def test_other_ci_files_do_not_run_everything(tree: Path, path: str) -> None:
     assert not all(scope([raw(path)], tree).values())
 
@@ -426,7 +436,9 @@ def test_other_ci_files_do_not_run_everything(tree: Path, path: str) -> None:
 def test_a_change_no_rule_names_skips_every_path_scoped_job(tree: Path) -> None:
     changes = [raw("docs/design/x.md"), raw("infra/main.tf"), added("sites/token-exchange/new.html"),
                deleted("frontend/src/old.ts"), raw(".github/workflows/deploy.yml")]
-    lines = patch("docs/design/x.md", "+A paragraph about latency.") + patch("infra/main.tf", "-a = 1", "+a = 2")
+    lines = (patch("docs/design/x.md", "+A paragraph about latency.") + patch("infra/main.tf", "-a = 1", "+a = 2")
+             + patch("sites/token-exchange/new.html", "+<p>menu</p>") + patch("frontend/src/old.ts", "-x();")
+             + patch(".github/workflows/deploy.yml", "+  timeout-minutes: 30"))
     assert scope(changes, tree, lines=lines) == dict.fromkeys(PATH_FLAGS, False)
 
 
@@ -470,6 +482,7 @@ def test_the_model_checks_skip_what_the_manifest_does_not_name(tree: Path, path:
 @pytest.mark.parametrize("path", [
     "src/trusted_router/main.py", "src/trusted_router/storage_gcp_settle_outbox.py",
     "src/trusted_router/data/model_routing_evidence.json", "src/trusted_router/templates/x.html",
+    "src/sibling_package/module.py", "src/README.md", "pytest.ini", "tox.ini", "setup.cfg",
     ORACLE_FILE, GATE_FILE, "tests/conftest.py", "tests/harness_helper.py", "tests/fakes/store.py",
     "tests/fakes/__init__.py", "tests/__init__.py", "tests/oracle_helper.py", "tests/relative_helper.py",
     "tests/string_named.py", "scripts/oracle_tool.py", "tests/removed_module.py",
@@ -506,13 +519,16 @@ def test_the_oracle_follows_imports_from_heads_sources(tree: Path) -> None:
     "src/trusted_router/provider_lifecycle.py", "src/trusted_router/catalog_registry.py",
     "scripts/pricing/parsers/fireworks.py", "scripts/pricing/refresh_inputs.py", "scripts/update_model_changes.py",
     "fastpath/testdata/model_alias_vectors_v1.json", ".test_durations-post-cutover",
-    "pyproject.toml", "uv.lock", ".python-version", "conftest.py",
+    "pyproject.toml", "uv.lock", ".python-version", "conftest.py", "pytest.ini", "tox.ini", "setup.cfg",
     "tests/conftest.py", "tests/harness_helper.py", "tests/fakes/store.py", "tests/fixtures/vehicle_routes.json",
+    "src/sibling_package/module.py", "src/README.md",
 ])
-def test_the_post_cutover_suite_runs_on_the_application_its_data_and_harness(tree: Path, path: str) -> None:
+def test_the_post_cutover_suite_runs_whole_on_the_application_its_data_and_harness(tree: Path, path: str) -> None:
     for record in (raw(path), added(path), deleted(path)):
-        # No changed lines name anything: the path alone decides.
-        assert scope([raw("docs/a.md"), record], tree, lines="")["run_post_cutover"], record
+        # No changed lines name anything: the path alone decides, and it is
+        # the whole suite, not a selection.
+        lines = patch("docs/a.md", "+notes")
+        assert selected([raw("docs/a.md"), record], tree, lines=lines) == (True, ()), record
 
 
 def test_every_catalog_data_path_runs_the_post_cutover_suite(tree: Path) -> None:
@@ -542,10 +558,10 @@ def test_every_catalog_data_path_runs_the_post_cutover_suite(tree: Path) -> None
     "+    model = 'DeepSeek/deepseek-v4'",
 ])
 def test_the_post_cutover_suite_runs_on_a_line_naming_the_lifecycle(tree: Path, line: str) -> None:
-    path = "tests/test_new_routes.py"
-    assert scope([added(path)], tree, lines=patch(path, line))["run_post_cutover"]
-    # Wherever the line is: a document or a config file too.
-    assert scope([raw("docs/models.md")], tree, lines=patch("docs/models.md", line))["run_post_cutover"]
+    # In a file that is not Python (a document, a config file, a fixture
+    # elsewhere): the whole suite, since any test may read it.
+    for path in ("docs/models.md", "infra/monitors.tf", ".github/workflows/synthetic.yml"):
+        assert selected([raw(path)], tree, lines=patch(path, line)) == (True, ()), path
 
 
 @pytest.mark.parametrize("line", [
@@ -559,39 +575,53 @@ def test_the_post_cutover_suite_runs_on_a_line_naming_the_lifecycle(tree: Path, 
     " context line naming vendor/soon-2 is not a change",
 ])
 def test_the_post_cutover_suite_skips_lines_that_name_nothing_scheduled(tree: Path, line: str) -> None:
-    path = "tests/test_new_routes.py"
-    assert not scope([added(path)], tree, lines=patch(path, line))["run_post_cutover"]
+    path = "docs/models.md"
+    assert not scope([raw(path)], tree, lines=patch(path, line))["run_post_cutover"]
 
 
-def test_the_post_cutover_suite_reads_lines_only_inside_hunks(tree: Path) -> None:
-    path = "tests/test_new_routes.py"
-    header_only = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
-    assert not scope([added(path)], tree, lines=header_only)["run_post_cutover"]
+def test_a_file_whose_lines_the_patch_does_not_show_runs_the_whole_suite(tree: Path) -> None:
+    path = "docs/models.md"
+    # A binary file, an empty file added: a header with no hunk.
+    header_only = f"diff --git a/{path} b/{path}\nindex 1..2 100644\nBinary files a/{path} and b/{path} differ\n"
+    assert selected([raw(path)], tree, lines=header_only) == (True, ())
+    empty = f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..e69de29\n"
+    assert selected([added(path)], tree, lines=empty) == (True, ())
+    # A changed file the patch leaves out entirely.
+    assert selected([raw(path)], tree, lines=patch("docs/other.md", "+x")) == (True, ())
+    _, notes, _ = scope_jobs([raw(path)], root=tree, event="push", lines=patch("docs/other.md", "+x"), now=NOW)
+    assert "run_post_cutover: runs, docs/models.md has no lines the diff shows" in notes
     # Inside a hunk, a line whose content starts with "++" is a change.
-    assert scope([added(path)], tree, lines=patch(path, "+++ retire"))["run_post_cutover"]
+    assert scope([raw(path)], tree, lines=patch(path, "+++ retire"))["run_post_cutover"]
+    assert not scope([raw(path)], tree, lines=patch(path, "+++ notes"))["run_post_cutover"]
 
 
 def test_the_post_cutover_suite_runs_without_lines_to_read_and_on_every_dispatch(tree: Path) -> None:
-    assert scope([raw("docs/a.md")], tree, lines=None)["run_post_cutover"]
-    assert scope([raw("docs/a.md")], tree, event="workflow_dispatch", lines="")["run_post_cutover"]
-    assert not scope([raw("docs/a.md")], tree, event="push", lines="")["run_post_cutover"]
+    assert selected([raw("docs/a.md")], tree, lines=None) == (True, ())
+    _, notes, _ = scope_jobs([raw("docs/a.md")], root=tree, event="push", lines=None, now=NOW)
+    assert "run_post_cutover: runs, docs/a.md (no diff text to read)" in notes
+    # A dispatch runs it whatever changed; the same change on a push does not.
+    innocuous = patch("docs/a.md", "+x")
+    flags, notes, tests = scope_jobs([raw("docs/a.md")], root=tree, event="workflow_dispatch", lines=innocuous, now=NOW)
+    assert flags["run_post_cutover"] and tests == ()
+    assert any("a dispatch (the price refresh's publication gate)" in note for note in notes)
+    assert not scope([raw("docs/a.md")], tree, event="push", lines=innocuous)["run_post_cutover"]
     # Application changes alone need no lines.
     assert not scope([raw("src/trusted_router/main.py")], tree, lines=None)["run_proofs"]
 
 
 def test_a_retirement_now_past_stops_counting(tree: Path) -> None:
-    path = "tests/test_new_routes.py"
+    path = "docs/models.md"
     lines = patch(path, "+    body = {'model': 'vendor/soon-2'}")
-    assert scope([added(path)], tree, lines=lines, now=NOW)["run_post_cutover"]
+    assert scope([raw(path)], tree, lines=lines, now=NOW)["run_post_cutover"]
     later = datetime(2026, 12, 12, tzinfo=UTC)
-    assert not scope([added(path)], tree, lines=lines, now=later)["run_post_cutover"]
+    assert not scope([raw(path)], tree, lines=lines, now=later)["run_post_cutover"]
 
 
 def test_a_rule_that_cannot_read_its_inputs_runs_its_jobs(tree: Path) -> None:
     (tree / "proofs/manifest.toml").write_text("not = [toml")
     (tree / "src/trusted_router/provider_lifecycle.py").write_text("_RETIREMENTS = load()\n")
     (tree / "tests/oracle_helper.py").write_text("def broken(:\n")
-    flags, notes = scope_jobs([raw("docs/a.md")], root=tree, event="push", lines=patch("docs/a.md", "+x"), now=NOW)
+    flags, notes, _ = scope_jobs([raw("docs/a.md")], root=tree, event="push", lines=patch("docs/a.md", "+x"), now=NOW)
     assert flags == {"run_fastpath": False, "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
     warnings = [note for note in notes if note.startswith("::warning")]
     assert len(warnings) == 3 and all("could not be derived" in note for note in warnings)
@@ -659,12 +689,20 @@ def test_the_real_lifecycle_module_yields_every_scheduled_entity() -> None:
 
 def test_the_real_tree_scopes_typical_changes() -> None:
     # The rules against this repository's own manifest, closure and lifecycle.
-    def flags(*changes: str, lines: str = "") -> dict[str, bool]:
+    def flags(*changes: str, lines: str | None = None) -> dict[str, bool]:
+        # Each changed file's patch section, a line that names nothing.
+        if lines is None:
+            lines = "".join(patch(record.split("\t", 1)[1], "+an ordinary line") for record in changes)
         return scope(list(changes), ROOT, lines=lines, now=datetime.now(UTC))
 
-    assert flags(raw("infra/fastpath.tf"), raw("tests/test_infra_fastpath.py"),
-                 lines=patch("tests/test_infra_fastpath.py", "+    assert 'machine_type' in text")) == {
-        "run_fastpath": False, "run_post_cutover": False, "run_proof_oracle": False, "run_proofs": False}
+    infra = patch("infra/fastpath.tf", "+  machine_type = \"c3-standard-8\"")
+    assert flags(raw("infra/fastpath.tf"), lines=infra) == dict.fromkeys(PATH_FLAGS, False)
+    # A test file beside it: the post-cutover suite on the tests it reaches.
+    test = "tests/test_enclave_security_guard.py"
+    flags_, _, tests = scope_jobs([raw("infra/fastpath.tf"), raw(test)], root=ROOT, event="pull_request",
+                                  lines=infra, now=datetime.now(UTC))
+    assert flags_ == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}
+    assert test in tests and 0 < len(tests) <= 10
     assert flags(raw("fastpath/internal/store/commit.go")) == {
         "run_fastpath": True, "run_post_cutover": False, "run_proof_oracle": False, "run_proofs": True}
     assert flags(raw("src/trusted_router/services/auto_refill.py")) == dict.fromkeys(PATH_FLAGS, False) | {
@@ -705,13 +743,14 @@ def test_python_closure_resolves_relative_and_string_imports(tmp_path: Path) -> 
 
 def test_changed_lines_reads_each_files_hunks() -> None:
     text = patch("a.py", "+one", "-two") + "diff --git a/b.bin b/b.bin\nBinary files a/b.bin and b/b.bin differ\n"
-    assert changed_lines(text) == {"a/a.py b/a.py": ["one", "two"], "a/b.bin b/b.bin": []}
+    # A file with no hunk has no lines to read: None, not an empty list.
+    assert changed_lines(text) == {"a/a.py b/a.py": ["one", "two"], "a/b.bin b/b.bin": None}
 
 
 def test_the_jobs_command_prints_one_line_per_flag(monkeypatch, capsys, tmp_path: Path) -> None:
     assert main(["jobs", "--full"]) == 0
     out = capsys.readouterr()
-    assert out.out == "".join(f"{flag}=true\n" for flag in PATH_FLAGS)
+    assert out.out == "".join(f"{flag}=true\n" for flag in PATH_FLAGS) + "post_cutover_tests=\n"
     assert "complete matrix" in out.err
     monkeypatch.chdir(ROOT)
     lines = tmp_path / "lines.patch"
@@ -719,7 +758,7 @@ def test_the_jobs_command_prints_one_line_per_flag(monkeypatch, capsys, tmp_path
     monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('infra/a.tf')}\n"))
     assert main(["jobs", "--event", "push", "--lines", str(lines)]) == 0
     out = capsys.readouterr()
-    assert out.out == "".join(f"{flag}=false\n" for flag in PATH_FLAGS)
+    assert out.out == "".join(f"{flag}=false\n" for flag in PATH_FLAGS) + "post_cutover_tests=\n"
     assert "run_proofs: skips" in out.err
     # Unreadable lines are not an error; the post-cutover rule runs instead.
     monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('infra/a.tf')}\n"))
@@ -787,3 +826,126 @@ def test_every_file_the_go_tests_read_outside_the_module_runs_the_fast_path_jobs
     assert {path for path in reads if not covered(path, narrowed)} == {
         "scripts/deploy/migrate_typed_counters.sh", "scripts/deploy/migrate_fastpath.sh",
         "scripts/deploy/*.sh", "scripts/deploy/<any>"}
+
+
+# ---------------------------------------------------------------------------
+# The post-cutover suite on the tests a change outside src/ reaches
+
+FILLERS = 24
+
+
+@pytest.fixture
+def suite(tree: Path) -> Path:
+    """`tree` with a small test suite: helpers, a sub-directory conftest,
+    scripts the tests import or run, and filler tests that reach none."""
+    write(tree, {
+        "tests/helper_x.py": "X = 1\n",
+        "tests/mid.py": "from tests.helper_x import X\n",
+        "tests/test_a.py": "from tests.helper_x import X\n\n\ndef test_a():\n    assert X\n",
+        "tests/test_b.py": "import tests.mid\n\n\ndef test_b():\n    pass\n",
+        "tests/test_c.py": "def test_c():\n    pass\n",
+        "tests/test_d.py": "import subprocess\n\n\ndef test_d():\n    subprocess.run(['python', 'scripts/tool.py'])\n",
+        "tests/test_e.py": "from scripts.lib import f\n\n\ndef test_e():\n    f()\n",
+        "tests/helper_y.py": "",
+        "tests/conformance/conftest.py": "from tests.helper_y import *\n",
+        "tests/conformance/test_f.py": "def test_f():\n    pass\n",
+        "tests/conformance/test_g.py": "def test_g():\n    pass\n",
+        "tests/many.py": "",
+        "scripts/tool.py": "print('tool')\n",
+        "scripts/lib.py": "def f():\n    pass\n",
+        "scripts/standalone.py": "print('alone')\n",
+        **{f"tests/filler/test_filler_{n:02d}.py": f"def test_{n}():\n    pass\n" for n in range(FILLERS)},
+        **{f"tests/test_many_{n}.py": "import tests.many\n" for n in range(10)},
+    })
+    return tree
+
+
+def test_a_new_test_that_reads_the_catalog_runs_post_cutover_on_that_file(suite: Path) -> None:
+    # The review's counterexample: today's clock gives 679 models and the
+    # post-cutover clock 659, and the test names nothing scheduled.
+    path = "tests/test_catalog_model_count.py"
+    write(suite, {path: "from trusted_router.catalog_registry import MODELS\n\n\n"
+                        "def test_catalog_has_679_models():\n    assert len(MODELS) == 679\n"})
+    assert selected([added(path)], suite) == (True, (path,))
+    # Modified, too.
+    assert selected([raw(path)], suite) == (True, (path,))
+
+
+def test_a_helper_change_selects_the_tests_that_import_it(suite: Path) -> None:
+    # Directly (test_a) and through another module (test_b, via mid).
+    assert selected([raw("tests/helper_x.py")], suite) == (True, ("tests/test_a.py", "tests/test_b.py"))
+    assert selected([raw("tests/mid.py")], suite) == (True, ("tests/test_b.py",))
+
+
+def test_an_unrelated_test_change_selects_only_itself(suite: Path) -> None:
+    assert selected([raw("tests/test_c.py")], suite) == (True, ("tests/test_c.py",))
+    assert selected([raw("tests/test_c.py"), raw("tests/test_a.py")], suite) == (
+        True, ("tests/test_a.py", "tests/test_c.py"))
+
+
+def test_a_directory_conftest_counts_as_imported_by_its_tests(suite: Path) -> None:
+    expected = (True, ("tests/conformance/test_f.py", "tests/conformance/test_g.py"))
+    assert selected([raw("tests/conformance/conftest.py")], suite) == expected
+    assert selected([raw("tests/helper_y.py")], suite) == expected
+
+
+def test_a_script_change_selects_the_tests_that_import_or_name_it(suite: Path) -> None:
+    assert selected([raw("scripts/lib.py")], suite) == (True, ("tests/test_e.py",))
+    assert selected([raw("scripts/tool.py")], suite) == (True, ("tests/test_d.py",))
+    # A script no test imports or names reaches no test.
+    assert selected([raw("scripts/standalone.py")], suite) == (False, ())
+
+
+def test_a_deleted_helper_selects_the_tests_that_imported_it(suite: Path) -> None:
+    (suite / "tests/helper_x.py").unlink()
+    assert selected([deleted("tests/helper_x.py")], suite) == (True, ("tests/test_a.py", "tests/test_b.py"))
+    # A deleted test file is no test to run.
+    (suite / "tests/test_c.py").unlink()
+    assert selected([deleted("tests/test_c.py")], suite) == (False, ())
+
+
+def test_too_many_reached_tests_run_the_whole_suite(suite: Path) -> None:
+    # Ten of 49 test files is more than an eighth: eight shards beat one.
+    assert selected([raw("tests/many.py")], suite) == (True, ())
+
+
+def test_a_path_the_job_cannot_pass_safely_runs_the_whole_suite(suite: Path) -> None:
+    path = "tests/test_we$ird.py"
+    write(suite, {path: "def test_weird():\n    pass\n"})
+    assert selected([added(path)], suite) == (True, ())
+
+
+def test_other_changes_decide_between_a_selection_and_the_whole_suite(suite: Path) -> None:
+    lines = patch("docs/a.md", "+notes")
+    assert selected([raw("tests/test_c.py"), raw("docs/a.md")], suite, lines=lines) == (True, ("tests/test_c.py",))
+    # A document naming a scheduled model, the application, a fixture or the
+    # harness: the whole suite.
+    named = patch("docs/a.md", "+vendor/soon-2 retires")
+    assert selected([raw("tests/test_c.py"), raw("docs/a.md")], suite, lines=named) == (True, ())
+    for other in ("src/trusted_router/main.py", "tests/fixtures/x.json", "tests/harness_helper.py", "uv.lock"):
+        assert selected([raw("tests/test_c.py"), raw(other)], suite, lines=lines) == (True, ()), other
+    # Python changes need no lines: the tests they reach decide.
+    assert selected([raw("tests/test_c.py")], suite, lines=None) == (True, ("tests/test_c.py",))
+
+
+def test_the_jobs_command_prints_the_selected_tests(monkeypatch, capsys, suite: Path) -> None:
+    monkeypatch.chdir(suite)
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('tests/helper_x.py')}\n"))
+    assert main(["jobs", "--event", "pull_request"]) == 0
+    out = capsys.readouterr()
+    assert out.out.splitlines()[-1] == "post_cutover_tests=tests/test_a.py tests/test_b.py"
+    assert "run_post_cutover=true" in out.out
+    assert "post-cutover test: tests/test_b.py" in out.err
+
+
+def test_tests_reaching_against_this_repository() -> None:
+    from scripts.ci.commit_scope import test_files, tests_reaching
+
+    files = test_files(ROOT)
+    assert "tests/test_commit_scope.py" in files and "tests/conformance/test_spanner_schema.py" in files
+    assert all(path.startswith("tests/") and path.rsplit("/", 1)[-1].startswith("test_") for path in files)
+    reached = tests_reaching(ROOT, ["tests/deploy_script_harness.py"])
+    assert "tests/test_aws_ecs_release.py" in reached and "tests/test_ci_scope_step.py" not in reached
+    # This file names the script too, so it is reached by name.
+    assert set(tests_reaching(ROOT, ["scripts/check_enclave_sentry.py"])) == {
+        "tests/test_enclave_security_guard.py", "tests/test_stubs_and_security.py", "tests/test_commit_scope.py"}

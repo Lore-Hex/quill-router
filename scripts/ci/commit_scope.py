@@ -13,15 +13,18 @@ before `uv sync`:
              raw record is `false`.
   jobs       reads `git diff --no-renames --raw REF HEAD` on stdin and prints
              one `<flag>=true|false` line for each of PATH_FLAGS, `true` when
-             the jobs behind the flag must run. REF is the commit ci.yml's
+             the jobs behind the flag must run, and `post_cutover_tests=`
+             with the test files the post-cutover suite is limited to (empty:
+             the whole suite). REF is the commit ci.yml's
              scope job compares with (see "Path-scoped jobs" below).
              --lines names the `git diff -U0` of the same two commits outside
-             src/trusted_router, which the post-cutover rule reads. --full
+             src/, which the post-cutover rule reads. --full
              prints every flag true. So does a record that is not an add,
              modify or delete of a regular file (a rename or copy, a type or
              mode change, a symlink or submodule, a quoted path, a line that is
-             not a raw record), an empty diff, a change to ci.yml or
-             scripts/ci/, and a rule whose inputs cannot be derived.
+             not a raw record), an empty diff, a change to ci.yml, scripts/ci/
+             or any .gitattributes (which decides what a diff shows), and a
+             rule whose inputs cannot be derived.
   summarize  reads the `needs` context of the summary job (JSON in NEEDS)
              and the scope output (DATA_ONLY) and exits non-zero unless every
              job succeeded, allowing a skipped job only when it is one of the
@@ -75,35 +78,46 @@ later push until a run passes it again, and its red holds every deploy.
   against a frozen copy of main (tests/fakes/frozen_main). Its live leg is the
   whole application: its tests import application modules by computed names,
   and execution-inventory.json records only the frozen leg at an older base,
-  not the modules the live code runs today. So every path under
-  src/trusted_router except the published catalog data (the oracle builds its
-  catalog from each case's fixture body, see ci.yml's proof-oracle). On the
+  not the modules the live code runs today. So every path under src/ (pytest
+  puts src on sys.path, so a sibling package there is application code too)
+  except the published catalog data (the oracle builds its catalog from each
+  case's fixture body, see ci.yml's proof-oracle). On the
   test side: the tests/ and scripts/ modules its two test files and
   tests/conftest.py import, transitively, read from HEAD's sources at scope
   time (imports and module names written as strings), every non-Python file
   under tests/ (fixtures, frozen_main), .test_durations (its split weights)
   and the Python toolchain. The oracle runs at the default lifecycle clock
   only: none of its fixture endpoints has an effective-dated price or
-  retirement (tests/test_async_settle_proof_oracle.py holds that), so the
+  retirement in either leg's provider_lifecycle (the live one and the frozen
+  package's; tests/test_async_settle_proof_oracle.py holds both), so the
   post-cutover clock compares the same values. post-cutover-daily.yml, run by
   hand, still runs the post-cutover clock.
 
   run_post_cutover (test-post-cutover). The same suite as `test`, which runs
   on every commit, with the lifecycle clock past every scheduled cutover. It
   can only fail where `test` passes through something that differs between
-  the two clocks: the catalog and prices provider_lifecycle.py schedules. So
-  it runs for any change to application code or data (all of
-  src/trusted_router: code behaves differently on the post-cutover catalog),
-  to the pricing scripts, the catalog-derived Go vectors, its split weights,
-  the Python toolchain, the harness every test runs under (tests/conftest.py
-  and what it imports) or a test fixture; for any other changed line that
-  names a lifecycle identifier (LIFECYCLE_IDENTIFIERS) or a scheduled entity
-  (a model, upstream id or provider with a retirement still ahead, or one
-  whose price provider_lifecycle.py switches by date, read from HEAD at scope
-  time); and on every dispatch, the price refresh's publication gate. What it
-  does not see is a new test or text that depends on the post-cutover catalog
-  without naming any of that (say, a count over every model); such a test
-  goes red on the next change that runs the suite, or at the cutover.
+  the two clocks: the catalog and prices provider_lifecycle.py schedules.
+  The whole suite runs for any change to application code or data (all of
+  src/: code behaves differently on the post-cutover catalog), to the pricing
+  scripts, the catalog-derived Go vectors, its split weights, the Python
+  toolchain, the harness every test runs under (tests/conftest.py and what it
+  imports) or a test fixture; for a changed line in any other file that is
+  not Python that names a lifecycle identifier (LIFECYCLE_IDENTIFIERS) or a
+  scheduled entity (a model, upstream id or provider with a retirement still
+  ahead, or one whose price provider_lifecycle.py switches by date, read from
+  HEAD at scope time), or whose lines the diff cannot show; and on every
+  dispatch, the price refresh's publication gate. A test is code that can
+  depend on the catalog without naming anything (a count over every model),
+  so when the only Python that changed is outside src/ (tests, helpers,
+  scripts), the suite runs, in one shard, on the tests that can reach it:
+  each changed test file, every test that imports a changed module directly
+  or through other modules (read from HEAD's sources, a directory's
+  conftest.py counted as imported by its tests), and every test whose source
+  names a changed file. More of those than an eighth of the test files runs
+  the whole suite instead. What it does not see is a change to a file that
+  is neither Python nor application code and names nothing scheduled, read
+  by a test that depends on the post-cutover catalog in aggregate; such a
+  test goes red on the next change that runs it, or at the cutover.
 """
 
 from __future__ import annotations
@@ -174,11 +188,16 @@ def path_condition(flag: str) -> str:
     return f"needs.scope.outputs.{flag} != 'false'"
 
 
-# A change to how CI itself decides what to run runs everything.
+# A change to how CI itself decides what to run runs everything, and so does
+# a .gitattributes anywhere: it decides what `git diff` shows the rules.
 FULL_MATRIX_PATHS: tuple[str, ...] = (".github/workflows/ci.yml", "scripts/ci/**")
-# What every Python job runs with. A root conftest.py would load into every
-# pytest session.
-PYTHON_TOOLCHAIN_PATHS: tuple[str, ...] = ("pyproject.toml", "uv.lock", ".python-version", "conftest.py")
+FULL_MATRIX_NAMES: tuple[str, ...] = (".gitattributes",)
+# What every Python job runs with. A root conftest.py loads into every pytest
+# session, and pytest.ini, tox.ini or setup.cfg take precedence over
+# pyproject.toml's pytest configuration.
+PYTHON_TOOLCHAIN_PATHS: tuple[str, ...] = (
+    "pyproject.toml", "uv.lock", ".python-version", "conftest.py", "pytest.ini", "tox.ini", "setup.cfg",
+)
 
 PROOFS_INPUTS: tuple[str, ...] = ("proofs/**",)
 PROOFS_MANIFEST = "proofs/manifest.toml"
@@ -198,10 +217,10 @@ ORACLE_TESTS: tuple[str, ...] = (
     "tests/test_async_settle_shadow_v2_gate_window.py",
 )
 TEST_HARNESS: tuple[str, ...] = ("tests/conftest.py",)
-ORACLE_INPUTS: tuple[str, ...] = ("src/trusted_router/**", ".test_durations")
+ORACLE_INPUTS: tuple[str, ...] = ("src/**", ".test_durations")
 
 POST_CUTOVER_INPUTS: tuple[str, ...] = (
-    "src/trusted_router/**",
+    "src/**",
     "scripts/pricing/**",
     "scripts/update_model_changes.py",
     "fastpath/testdata/**",
@@ -308,24 +327,30 @@ def plain_changes(records: Iterable[str]) -> list[Change] | None:
     return changes
 
 
-def changed_lines(patch: str) -> dict[str, list[str]]:
+def changed_lines(patch: str) -> dict[str, list[str] | None]:
     """Each file's added and removed lines in a `git diff -U0` patch, keyed by
-    its `diff --git` header."""
-    files: dict[str, list[str]] = {}
+    its `diff --git` header; None for a file with no hunk (a binary file, or
+    an empty one added or deleted), whose lines the patch does not show."""
+    files: dict[str, list[str] | None] = {}
     header: str | None = None
-    in_hunk = False
+    current: list[str] | None = None
     for line in patch.split("\n"):
         if line.startswith("diff --git "):
             header = line.removeprefix("diff --git ")
-            files[header] = []
-            in_hunk = False
+            files[header] = current = None
         elif header is None:
             continue
         elif line.startswith("@@"):
-            in_hunk = True
-        elif in_hunk and line[:1] in ("+", "-"):
-            files[header].append(line[1:])
+            if current is None:
+                files[header] = current = []
+        elif current is not None and line[:1] in ("+", "-"):
+            current.append(line[1:])
     return files
+
+
+def header_path(header: str) -> str:
+    """The new path of a `diff --git a/X b/X` header."""
+    return header.split(" b/", 1)[1] if " b/" in header else header
 
 
 REPO_MODULE = re.compile(r"(?:tests|scripts)(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
@@ -353,38 +378,83 @@ def imported_modules(path: str, source: str) -> set[str]:
     return names
 
 
+def import_edges(root: Path, starts: Iterable[str]) -> dict[str, set[str]]:
+    """Each tests/ and scripts/ file reachable from `starts`, mapped to what
+    loading it loads: the files of the repository modules it imports (both
+    candidate paths of each, so a module that resolves to no file, a deleted
+    one, still has its paths) and the __init__.py of each of its packages."""
+    edges: dict[str, set[str]] = {}
+    pending = list(starts)
+    while pending:
+        path = pending.pop()
+        if path in edges:
+            continue
+        targets: set[str] = set()
+        edges[path] = targets
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            init = "/".join(parts[:depth]) + "/__init__.py"
+            if (root / init).is_file():
+                targets.add(init)
+        file = root / path
+        if file.is_file():
+            for module in imported_modules(path, file.read_text(encoding="utf-8")):
+                if module.split(".")[0] in ("tests", "scripts"):
+                    base = module.replace(".", "/")
+                    targets.update((f"{base}.py", f"{base}/__init__.py"))
+        pending.extend(target for target in targets if target not in edges and (root / target).is_file())
+    return edges
+
+
 def python_closure(root: Path, starts: Iterable[str]) -> frozenset[str]:
     """The tests/ and scripts/ files `starts` import, transitively, with every
     package __init__.py on the way. A module that resolves to no file keeps
     its candidate paths, so deleting an imported module counts as a change to
     the closure."""
-    seen: set[str] = set()
-    pending = list(starts)
+    edges = import_edges(root, starts)
+    return frozenset(edges).union(*edges.values())
+
+
+SAFE_PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+GENERIC_NAMES = frozenset({"__init__.py", "conftest.py"})
+
+
+def test_files(root: Path) -> list[str]:
+    """The files pytest collects tests from under tests/ (test_*.py, *_test.py)."""
+    return sorted(path.relative_to(root).as_posix() for path in (root / "tests").rglob("*.py")
+                  if path.name.startswith("test_") or path.name.endswith("_test.py"))
+
+
+def tests_reaching(root: Path, changed: Iterable[str]) -> list[str]:
+    """The test files a change to the Python files `changed` can affect: each
+    changed test file, every test file that imports a changed file directly
+    or through other modules (a directory's conftest.py counts as imported by
+    the tests under it), and every test file whose source names a changed
+    file by its name."""
+    changed = set(changed)
+    tests = test_files(root)
+    conftests = {test: [f"{'/'.join(test.split('/')[:depth])}/conftest.py"
+                        for depth in range(2, test.count("/") + 1)] for test in tests}
+    edges = import_edges(root, [*tests, *{c for cs in conftests.values() for c in cs if (root / c).is_file()}])
+    for test, own in conftests.items():
+        edges[test].update(own)
+    dependents: dict[str, set[str]] = {}
+    for path, targets in edges.items():
+        for target in targets:
+            dependents.setdefault(target, set()).add(path)
+    reached = set(changed)
+    pending = list(changed)
     while pending:
-        path = pending.pop()
-        if path in seen:
-            continue
-        seen.add(path)
-        parts = path.split("/")
-        for depth in range(1, len(parts)):
-            init = "/".join(parts[:depth]) + "/__init__.py"
-            if init not in seen and (root / init).is_file():
-                pending.append(init)
-        file = root / path
-        if not file.is_file():
-            continue
-        for module in imported_modules(path, file.read_text(encoding="utf-8")):
-            if module.split(".")[0] not in ("tests", "scripts"):
-                continue
-            base = module.replace(".", "/")
-            for candidate in (f"{base}.py", f"{base}/__init__.py"):
-                if candidate in seen:
-                    continue
-                if (root / candidate).is_file():
-                    pending.append(candidate)
-                else:
-                    seen.add(candidate)
-    return frozenset(seen)
+        for dependent in dependents.get(pending.pop(), ()):
+            if dependent not in reached:
+                reached.add(dependent)
+                pending.append(dependent)
+    selected = {test for test in tests if test in reached}
+    names = {name for name in (path.rsplit("/", 1)[-1] for path in changed) if name not in GENERIC_NAMES}
+    for test in tests:
+        if test not in selected and names and any(name in (root / test).read_text(encoding="utf-8") for name in names):
+            selected.add(test)
+    return sorted(selected)
 
 
 def manifest_paths(root: Path) -> frozenset[str]:
@@ -516,51 +586,73 @@ def oracle_reason(changes: list[Change], root: Path) -> str | None:
     return None
 
 
-def post_cutover_reason(
+def post_cutover_plan(
     changes: list[Change], root: Path, event: str, lines: str | None, now: datetime,
-) -> str | None:
+) -> tuple[str | None, tuple[str, ...]]:
+    """Why the post-cutover suite runs (None: it skips) and the test files it
+    is limited to (empty: the whole suite)."""
+    whole: tuple[str, ...] = ()
     if event == "workflow_dispatch":
-        return "a dispatch (the price refresh's publication gate) always runs it"
+        return "a dispatch (the price refresh's publication gate) always runs it", whole
     harness = python_closure(root, TEST_HARNESS)
     for change in changes:
         path = change.path
-        if matches_any(path, (*PYTHON_TOOLCHAIN_PATHS, *POST_CUTOVER_INPUTS)):
-            return path
-        if is_test_fixture(path) or path in harness:
-            return path
-    outside = [change.path for change in changes if not change.path.startswith("src/trusted_router/")]
-    if not outside:
-        return None
-    if lines is None:
-        return f"{outside[0]} (no diff text to read)"
-    entities = entity_pattern(scheduled_entities((root / LIFECYCLE_MODULE).read_text(encoding="utf-8"), now))
-    for header, text in changed_lines(lines).items():
-        for line in text:
-            found = LIFECYCLE_IDENTIFIERS.search(line) or entities.search(line)
-            if found:
-                return f"{header} names {found.group(0)!r}"
-    return None
+        if matches_any(path, (*PYTHON_TOOLCHAIN_PATHS, *POST_CUTOVER_INPUTS)) or is_test_fixture(path) or path in harness:
+            return path, whole
+    # Nothing under src/ changed from here on.
+    python = [change.path for change in changes if change.path.endswith(".py")]
+    others = [change.path for change in changes if not change.path.endswith(".py")]
+    if others:
+        if lines is None:
+            return f"{others[0]} (no diff text to read)", whole
+        files = {header_path(header): text for header, text in changed_lines(lines).items()}
+        entities = entity_pattern(scheduled_entities((root / LIFECYCLE_MODULE).read_text(encoding="utf-8"), now))
+        for path in others:
+            if path not in files or files[path] is None:
+                return f"{path} has no lines the diff shows", whole
+            for line in files[path] or ():
+                found = LIFECYCLE_IDENTIFIERS.search(line) or entities.search(line)
+                if found:
+                    return f"{path} names {found.group(0)!r}", whole
+    if not python:
+        return None, whole
+    selected = tests_reaching(root, python)
+    if not selected:
+        return None, whole
+    reason = f"{len(selected)} test files reach {python[0]}"
+    if len(selected) > len(test_files(root)) // 8 or not all(SAFE_PATH.fullmatch(path) for path in selected):
+        return f"{reason}, so the whole suite", whole
+    return reason, tuple(selected)
 
 
-def everything(reason: str) -> tuple[dict[str, bool], list[str]]:
-    return dict.fromkeys(PATH_FLAGS, True), [f"every path-scoped job runs: {reason}"]
+def everything(reason: str) -> tuple[dict[str, bool], list[str], tuple[str, ...]]:
+    return dict.fromkeys(PATH_FLAGS, True), [f"every path-scoped job runs: {reason}"], ()
 
 
 def scope_jobs(
     records: Iterable[str], *, root: Path, event: str, lines: str | None, now: datetime,
-) -> tuple[dict[str, bool], list[str]]:
-    """Which path-scoped flags must run, and a line for the log per flag."""
+) -> tuple[dict[str, bool], list[str], tuple[str, ...]]:
+    """Which path-scoped flags must run, a line for the log per flag, and the
+    test files the post-cutover suite is limited to (empty: the whole suite)."""
     changes = plain_changes(records)
     if changes is None:
         return everything("a record is not an add, modify or delete of a regular file")
     if not changes:
         return everything("the comparison is empty")
-    governing = next((change.path for change in changes if matches_any(change.path, FULL_MATRIX_PATHS)), None)
+    governing = next((change.path for change in changes if matches_any(change.path, FULL_MATRIX_PATHS)
+                      or change.path.rsplit("/", 1)[-1] in FULL_MATRIX_NAMES), None)
     if governing is not None:
         return everything(f"{governing} decides what CI runs")
+    selected: tuple[str, ...] = ()
+
+    def post_cutover() -> str | None:
+        nonlocal selected
+        reason, selected = post_cutover_plan(changes, root, event, lines, now)
+        return reason
+
     rules: dict[str, Callable[[], str | None]] = {
         "run_fastpath": lambda: fastpath_reason(changes),
-        "run_post_cutover": lambda: post_cutover_reason(changes, root, event, lines, now),
+        "run_post_cutover": post_cutover,
         "run_proof_oracle": lambda: oracle_reason(changes, root),
         "run_proofs": lambda: proofs_reason(changes, root),
     }
@@ -574,7 +666,9 @@ def scope_jobs(
             notes.append(f"::warning title=CI scope::{flag}: {reason}")
         flags[flag] = reason is not None
         notes.append(f"{flag}: runs, {reason}" if reason is not None else f"{flag}: skips, none of its inputs changed")
-    return flags, notes
+    if selected:
+        notes += [f"  post-cutover test: {path}" for path in selected]
+    return flags, notes, selected
 
 
 def summarize(needs: dict[str, dict[str, object]], data_only: str) -> list[str]:
@@ -605,7 +699,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("classify", help="stdin: git diff --no-renames --raw; stdout: true|false")
     jobs = sub.add_parser("jobs", help="stdin: git diff --no-renames --raw REF HEAD; stdout: <flag>=true|false")
     jobs.add_argument("--event", default="", help="github.event_name")
-    jobs.add_argument("--lines", type=Path, help="git diff -U0 REF HEAD outside src/trusted_router")
+    jobs.add_argument("--lines", type=Path, help="git diff -U0 REF HEAD outside src/")
     jobs.add_argument("--full", action="store_true", help="every flag true; stdin is not read")
     sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY; exit 1 on any failure")
     args = parser.parse_args(argv)
@@ -618,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "jobs":
         if args.full:
-            flags, notes = everything("the scope job asked for the complete matrix")
+            flags, notes, selected = everything("the scope job asked for the complete matrix")
         else:
             lines: str | None = None
             if args.lines is not None:
@@ -626,12 +720,13 @@ def main(argv: list[str] | None = None) -> int:
                     lines = args.lines.read_text(encoding="utf-8", errors="replace")
                 except OSError as error:
                     print(f"::warning title=CI scope::{args.lines} is unreadable ({error})", file=sys.stderr)
-            flags, notes = scope_jobs(sys.stdin.read().split("\n"), root=Path.cwd(), event=args.event,
-                                      lines=lines, now=datetime.now(UTC))
+            flags, notes, selected = scope_jobs(sys.stdin.read().split("\n"), root=Path.cwd(),
+                                                event=args.event, lines=lines, now=datetime.now(UTC))
         for note in notes:
             print(note, file=sys.stderr)
         for flag in PATH_FLAGS:
             print(f"{flag}={'true' if flags[flag] else 'false'}")
+        print(f"post_cutover_tests={' '.join(selected)}")
         return 0
     needs = json.loads(os.environ["NEEDS"])
     data_only = os.environ.get("DATA_ONLY", "")

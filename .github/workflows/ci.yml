@@ -94,6 +94,7 @@ jobs:
       data_only: ${{ steps.scope.outputs.data_only }}
       run_fastpath: ${{ steps.scope.outputs.run_fastpath }}
       run_post_cutover: ${{ steps.scope.outputs.run_post_cutover }}
+      post_cutover_tests: ${{ steps.scope.outputs.post_cutover_tests }}
       run_proof_oracle: ${{ steps.scope.outputs.run_proof_oracle }}
       run_proofs: ${{ steps.scope.outputs.run_proofs }}
     env:
@@ -136,9 +137,12 @@ jobs:
         # validated before it, so a job whose inputs are equal at REF and here
         # would pass here. A base still running, or red, widens the comparison
         # to REF: a job a red commit failed runs on every later push until a
-        # run passes it, and its red holds every later deploy. -U0 outside
-        # src/trusted_router gives the post-cutover rule the changed lines to
-        # read (it runs for any change under src/trusted_router).
+        # run passes it, and its red holds every later deploy. The -U0 patch
+        # outside src/ gives the post-cutover rule the changed lines to read
+        # (it runs for any change under src/): --text shows a file a
+        # .gitattributes marks binary, and --no-ext-diff and --no-textconv
+        # keep a configured driver from rewriting what it shows. A file the
+        # patch still shows no lines for runs the suite.
         run: |
           set -euo pipefail
           head="${GITHUB_SHA}"
@@ -228,8 +232,8 @@ jobs:
             python3 scripts/ci/commit_scope.py jobs --full < /dev/null | tee -a "$GITHUB_OUTPUT"
           else
             git -c core.quotePath=true diff --no-renames --raw "${ref}" "${head}" > scoped-paths.txt
-            git -c core.quotePath=true diff --no-renames --no-color -U0 "${ref}" "${head}" \
-              -- . ':(exclude)src/trusted_router' > scoped-lines.patch
+            git -c core.quotePath=true diff --no-renames --no-color --text --no-ext-diff --no-textconv \
+              -U0 "${ref}" "${head}" -- . ':(exclude)src' > scoped-lines.patch
             echo "paths that decide the path-scoped jobs (${ref}..${head}):"
             sed 's/^/  /' scoped-paths.txt
             python3 scripts/ci/commit_scope.py jobs --event "${EVENT_NAME}" --lines scoped-lines.patch \
@@ -627,14 +631,21 @@ jobs:
     # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
     # finishing shard alone; main's slowest shard on twelve shards took
     # 20.1 minutes (38808849971).
+    #
+    # When the only Python that changed is outside src/, the scope job lists
+    # the test files that can reach it (post_cutover_tests) and the suite runs
+    # on those, in one shard; an empty list is the whole suite, in eight.
+    # commit_scope.py only lists paths of [A-Za-z0-9_./-], and the step reads
+    # the list from the environment, not from an expression in the script.
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJSON(needs.scope.outputs.post_cutover_tests == '' && '[1, 2, 3, 4, 5, 6, 7, 8]' || '[1]') }}
     runs-on: ubuntu-24.04
     env:
-      TEST_SHARDS: "8"
+      TEST_SHARDS: ${{ needs.scope.outputs.post_cutover_tests == '' && '8' || '1' }}
+      POST_CUTOVER_TESTS: ${{ needs.scope.outputs.post_cutover_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -679,6 +690,7 @@ jobs:
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+          ${POST_CUTOVER_TESTS}
       - name: Upload this shard's durations
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

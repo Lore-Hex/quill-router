@@ -117,6 +117,10 @@ class ScopeRepo:
         if mutation == "renames":
             assert script.count("git -c core.quotePath=true diff --no-renames --raw") == 2
             script = script.replace("git -c core.quotePath=true diff --no-renames --raw", "git -c core.quotePath=true diff --raw")
+        elif mutation == "no_text":
+            # The patch without --text: git shows a -diff file as binary.
+            assert script.count(" --text ") == 1
+            script = script.replace(" --text ", " ")
         elif mutation == "no_widening":
             # REF is always the base, validated or not.
             widening = 'if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ]; then\n    ref="${base}"\n  else'
@@ -142,6 +146,9 @@ class ScopeRepo:
         flags = dict(line.split("=", 1) for line in output.read_text().splitlines() if line.startswith("run_"))
         assert set(flags) == set(ALL) and set(flags.values()) <= {"true", "false"}, output.read_text()
         self.flags = {flag: value == "true" for flag, value in flags.items()}
+        tests = [line for line in output.read_text().splitlines() if line.startswith("post_cutover_tests=")]
+        assert len(tests) == 1, output.read_text()
+        self.post_cutover_tests = tests[0].removeprefix("post_cutover_tests=").split()
         self.last = result
         return lines[0].removeprefix("data_only=")
 
@@ -201,7 +208,8 @@ def scope_repo(tmp_path: Path) -> ScopeRepo:
                       GO: "package store\n", TS: "export const x = 1;\n",
                       "proofs/manifest.toml": MANIFEST_TOML, SPEC_CODE: "package spec\n",
                       "src/trusted_router/provider_lifecycle.py": LIFECYCLE, "tests/conftest.py": "",
-                      DOC: "notes\n"})
+                      DOC: "notes\n",
+                      **{f"tests/filler/test_filler_{n}.py": "def test_filler():\n    pass\n" for n in range(16)}})
     repo.push()
     repo.reset_events()
     return repo
@@ -525,3 +533,42 @@ def test_a_pull_request_compares_with_its_base_validated_or_not(scope_repo: Scop
     assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b, conclusion="failure"),
                                                                run_record(a)]) == "false"
     assert scope_repo.flags == NONE | {"run_fastpath": True}
+
+
+def test_a_test_only_change_runs_the_post_cutover_suite_on_the_tests_it_reaches(scope_repo: ScopeRepo) -> None:
+    # A new test that depends on the post-cutover catalog and names nothing
+    # scheduled (the review's model count): the suite runs on that file.
+    a = scope_repo.shas["A"]
+    path = "tests/test_catalog_model_count.py"
+    c = scope_repo.commit("C", {path: "from trusted_router.catalog_registry import MODELS\n\n\n"
+                                      "def test_count():\n    assert len(MODELS) == 679\n"})
+    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)]) == "false"
+    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert scope_repo.post_cutover_tests == [path]
+    # The whole suite has no list.
+    scope_repo.git("checkout", "-q", a)
+    d = scope_repo.commit("D", {"src/trusted_router/x.py": "X = 1\n"})
+    assert scope_repo.run(event="pull_request", head=d, pr_base=a, runs=[run_record(a)]) == "false"
+    assert scope_repo.flags["run_post_cutover"] and scope_repo.post_cutover_tests == []
+
+
+def test_a_file_gitattributes_marks_binary_still_shows_its_lines(scope_repo: ScopeRepo) -> None:
+    # B marks *.dat as binary for diffs; C changes a .dat that names a
+    # scheduled model. --text shows the line, which names it.
+    b = scope_repo.commit("B", {".gitattributes": "*.dat -diff\n"})
+    scope_repo.push()
+    c = scope_repo.commit("C", {"docs/models.dat": "vendor/soon-1\n"})
+    assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b)]) == "false"
+    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert "docs/models.dat names 'vendor/soon-1'" in scope_repo.last.stderr
+    # Without --text the patch shows no lines for it, and that alone runs
+    # the whole suite.
+    assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b)], mutation="no_text") == "false"
+    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert "docs/models.dat has no lines the diff shows" in scope_repo.last.stderr
+    assert scope_repo.post_cutover_tests == []
+    # A change to .gitattributes itself runs the complete matrix.
+    scope_repo.git("checkout", "-q", b)
+    d = scope_repo.commit("D", {".gitattributes": "*.dat -diff\n*.md -diff\n"})
+    assert scope_repo.run(event="push", head=d, before=b, runs=[run_record(b)]) == "false"
+    assert scope_repo.flags == ALL

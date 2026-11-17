@@ -35,6 +35,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "8"
+      # The whole suite: ci.yml's job may limit it to the tests a change
+      # reaches (post_cutover_tests); this one never does.
+      POST_CUTOVER_TESTS: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -79,6 +82,7 @@ jobs:
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+          ${POST_CUTOVER_TESTS}
       - name: Upload this shard's durations
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
