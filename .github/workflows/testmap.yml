@@ -21,10 +21,6 @@ name: Test map
 # selection with the same services, without coverage, which the recorder does
 # not need.
 on:
-  # TEMPORARY, for one validation run before merge (a dispatch needs the
-  # workflow on the default branch). Removed by the next commit.
-  push:
-    branches: [ci/test-map-shadow]
   schedule:
     - cron: "23 */3 * * *"
   workflow_dispatch:
