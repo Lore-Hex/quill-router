@@ -21,6 +21,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.routing import (
+    _MODEL_PROVIDER_PREFERENCE,
     _sort_endpoint_candidates,
     catalog_endpoint_candidates,
     chat_route_candidates,
@@ -1167,6 +1168,10 @@ def test_confidential_alias_uses_exact_e2e_endpoint_pool() -> None:
 def test_provider_incident_preference_preserves_model_and_explicit_pins(
     monkeypatch: pytest.MonkeyPatch, model_id: str, failing_provider: str,
 ) -> None:
+    # The incident preference puts the failing host last, not the hosts' live
+    # health: provider_routing_evidence.json is rewritten by the hourly price
+    # refresh, and with no preference for a model the default order follows it.
+    monkeypatch.setitem(_MODEL_PROVIDER_PREFERENCE, model_id, {failing_provider: 3_000})
     drop_routes(monkeypatch, model_id)
     for provider in (failing_provider, "novita"):
         serve_on_fixture_route(monkeypatch, model_id, provider, author=model_id.split("/")[0])
