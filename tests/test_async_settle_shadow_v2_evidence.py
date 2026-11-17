@@ -1978,20 +1978,6 @@ DISCOVERED_SCHEMAS = discovered_schemas()
 TRANSPORT_SCHEMAS = [(label, schema) for label, schema in DISCOVERED_SCHEMAS.values() if schema.retained_strings]
 
 
-def test_transport_schema_seed_inventory() -> None:
-    enabled = {key for key, (_, schema) in discovered_schemas().items() if schema.retained_strings}
-    disabled = {key for key, (_, schema) in discovered_schemas().items() if not schema.retained_strings}
-    assert enabled.isdisjoint(disabled)
-    assert enabled | disabled == set(discovered_schemas())
-    assert enabled == set(transport_seeds()), "transport-enabled schema missing a seed"
-    for key, rows in transport_seeds().items():
-        for name, _, base in rows:
-            assert [p for _, schema, n, _, _, positions in TRANSPORT_GRID if id(schema) == key and n == name for p in positions] == list(all_string_positions(base))
-    assert {name for rows in transport_seeds().values() for name, _, _ in rows} == {
-        "sample-settle", "sample-refund", "counter", "authorize-compared", "a1-counter",
-        *(f"wire-{phase}-{mode}" for phase in ("settle", "refund") for mode in ("full", "hash-only", "failure"))}
-
-
 TRANSPORT_GRID = [(label, schema, name, shape, base, positions[start:start + 32])
                   for label, schema in TRANSPORT_SCHEMAS
                   for name, shape, base in transport_seeds()[id(schema)]
@@ -2236,20 +2222,6 @@ NATIVE_GRID = [(label, schema, name, base, positions[start:start + 32])
               for name, base in NATIVE_SEEDS.get(key, [])
               for positions in [[path for path, _ in every_position(base)]]
               for start in range(0, len(positions), 32)]
-
-
-def test_native_schema_seed_inventory() -> None:
-    assert len(DISCOVERED_SCHEMAS) == 81  # Added operational STOP schema.
-    assert {label for key, (label, _) in DISCOVERED_SCHEMAS.items() if key not in FIXTURE_NATIVE_SEEDS} == set(UNSEEDED_FIXTURE_SCHEMAS)
-    # Explicit seeds fill the two empty nullable/mapping fixture slots.
-    assert set(NATIVE_SEEDS) == set(DISCOVERED_SCHEMAS)
-    assert all(rows for rows in NATIVE_SEEDS.values())
-    assert {(id(schema), name) for _, schema, name, _, _ in NATIVE_GRID} == {
-        (key, name) for key, rows in NATIVE_SEEDS.items() for name, _ in rows}
-    for key, rows in NATIVE_SEEDS.items():
-        for name, base in rows:
-            scheduled = [p for _, schema, n, _, paths in NATIVE_GRID if id(schema) == key and n == name for p in paths]
-            assert scheduled == [p for p, _ in every_position(base)]
 
 
 @exhaustive

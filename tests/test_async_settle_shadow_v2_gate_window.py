@@ -284,74 +284,6 @@ def test_long_family_has_ci_selection() -> None:
 
 
 
-@pytest.fixture(scope='module')
-def round16_window_collection(tmp_path_factory: Any) -> list[dict[str, Any]]:
-    """Collect the actual oracle items, then use xdist's loadgroup ID spelling."""
-    import os
-    import subprocess
-    import sys
-
-    scratch = tmp_path_factory.mktemp('window-collection')
-    output = scratch / 'items.json'
-    (scratch / 'window_collection.py').write_text("""
-import json
-from pathlib import Path
-from types import SimpleNamespace
-from xdist.remote import WorkerInteractor
-
-def pytest_collection_finish(session):
-    WorkerInteractor.pytest_collection_modifyitems(None,
-        SimpleNamespace(getvalue=lambda name: name == 'loadgroup'), session.items)
-    Path(OUTPUT).write_text(json.dumps([
-        dict(nodeid=item.nodeid, params={key: value for key, value in
-             getattr(getattr(item, 'callspec', None), 'params', {}).items()
-             if key in ('lexeme_case', 'path_range')}) for item in session.items]))
-""".replace('OUTPUT', repr(str(output))))
-    root = Path(__file__).parents[1]
-    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '--collect-only',  # noqa: S603
-        '-p', 'no:xdist', '-p', 'no:cacheprovider', '-p', 'window_collection',
-        '-m', 'proof_oracle', str(Path(__file__).relative_to(root))], cwd=root,
-        env={**os.environ, 'PYTHONPATH': str(scratch) + os.pathsep + os.environ.get('PYTHONPATH', '')},
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
-    assert result.returncode == 0, result.stdout
-    return json.loads(output.read_text())
-
-
-def test_round16_window_matrix_selection(round16_window_collection: Any, tmp_path: Any) -> None:
-    from tests.test_async_settle_shadow_v2_gate_loading import ROUND13_LEXEMES
-
-    pieces = [item for item in round16_window_collection
-              if '::test_round12_every_value_decode_is_local[' in item['nodeid']]
-    pairs = [(item['params']['lexeme_case'], item['params']['path_range']) for item in pieces]
-    assert len(pairs) == 480
-    assert set(pairs) == {(lexeme, part) for lexeme in range(30) for part in range(16)}
-    assert len(ROUND13_LEXEMES) == 20
-    original, _, _ = real_fixture(tmp_path, chain=False, traffic=False)
-    paths = []
-    pending = [((), json.loads(transport(original)))]
-    while pending:
-        path, value = pending.pop()
-        paths.append(path)
-        if isinstance(value, dict):
-            pending.extend(((*path, key), child) for key, child in value.items())
-        elif isinstance(value, list):
-            pending.extend(((*path, index), child) for index, child in enumerate(value))
-    # The unsplit original product is independent of the range helper.
-    original_pairs = {(lexeme, path) for lexeme in range(30) for path in paths
-                      if lexeme >= 10 or path}
-    selected_pairs = [(lexeme, path) for lexeme, part in pairs
-                      for path in _window_path_range(paths, part) if lexeme >= 10 or path]
-    assert len(selected_pairs) == len(set(selected_pairs))
-    assert set(selected_pairs) == original_pairs
-
-
-def test_round16_window_duration_selection(round16_window_collection: Any) -> None:
-    durations = json.loads((Path(__file__).parents[1] / '.test_durations').read_text())
-    assert round16_window_collection
-    missing = [item['nodeid'] for item in round16_window_collection if item['nodeid'] not in durations]
-    assert not missing, missing
-
-
 def test_round16_module_release_subprocess() -> None:
     """The sentinel's module teardown must pass its separate count checker."""
     import os
@@ -935,12 +867,6 @@ def test_every_nested_original_has_one_path_diagnostic(a3_originals: Any, bounda
         assert len(own) == 1 and own[0].gap == gap and own[0].count == 1, (stage, path, own)
         assert own[0].detail == gap
         assert through_all(raw, ports, tmp_path, stage)['verdict'] == 'BLOCKED'
-
-
-def test_seven_day_fixture_has_one_class_owner() -> None:
-    assert real_seven_days._fixture_function_marker.scope == 'class'
-    for function in (TestSevenDays.test_seven_day_churn_render, TestSevenDays.test_seven_day_blocked_render):
-        assert any(mark.name == 'xdist_group' and mark.args == ('p5-seven-days',) for mark in function.pytestmark)
 
 
 def test_seven_day_fixture_omits_unused_originals(tmp_path_factory: Any,

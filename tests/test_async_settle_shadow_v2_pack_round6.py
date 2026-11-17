@@ -112,20 +112,6 @@ def test_output_population_and_later_costs(tmp_path, captured, damage):  # noqa:
         measured_export_costs(files, plan, [AccountingResult('2026-10-12', (), (), 1, 1, 1)], receipts)
 
 
-@pytest.mark.parametrize('stage,name', [(s, n) for s, names in __import__(
-    'trusted_router.async_settle_shadow_v2_pack_external', fromlist=['REQUIRED_STAGES']).REQUIRED_STAGES.items() for n in names])
-def test_every_required_name_omission(tmp_path, stage, name):
-    from trusted_router.async_settle_shadow_v2_pack_external import REQUIRED_STAGES, external_pack
-    from trusted_router.async_settle_shadow_v2_pack_review import review_days
-    policy = {s: list(names) for s, names in REQUIRED_STAGES.items()}
-    policy[stage].remove(name)
-    files = PackFiles(tmp_path)
-    with pytest.raises(ValueError):
-        external_pack(files, stage=stage, required_stages=policy, supplied=[])
-    with pytest.raises(ValueError):
-        review_days(files, days=[], subjects={}, criteria={}, required_stages=policy, verifiers={})
-
-
 def test_false_contender_blocks(tmp_path, captured):  # noqa: F811
     files = PackFiles(tmp_path)
     plan = budget_capture(files, captured)

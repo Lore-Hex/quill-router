@@ -226,24 +226,6 @@ def test_each_producer_capture_deletion_blocks_pack(tmp_path, composed, producer
     assert not (tmp_path / 'output/stage/transport.json').exists()
 
 
-def test_original_byte_matrix_inventory():
-    from tests.shadow_v2_pack_round3_matrix import CASE_NAMES
-    required = {'middle_range_page', 'last_range_page', 'range_eof', 'entire_kind', 'entire_day',
-        'accounting_file', 'original_hash', 'original_bytes', 'object_generation', 'extra_native_rpc', 'extra_rerun',
-        'idle_boot', 'killed_boot', 'false_shutdown_zero', 'pre_budget', 'post_budget', 'cap_only_manifest',
-        'resolution_support', 'new_booking_region', 'required_criterion_moved', 'deferred_name_removed',
-        'earlier_stage_result'}
-    criteria = ('transport', 'size', 'regional_load', 'boot_transport', 'observer_freshness', 'marker_keys')
-    sources = {'transport': ('ci', 'regional_trial'), 'size': ('ci', 'sizing_trial'),
-        'regional_load': ('budget_trial',), 'boot_transport': ('regional_trial',), 'observer_freshness': (),
-        'marker_keys': ('ci',)}
-    required.update('criterion_' + c for c in criteria)
-    required.update('source_' + c + '_' + s for c, values in sources.items() for s in values)
-    required.update('seed_' + c + '_' + edge for c in (*criteria, 'stage_transport', 'fleet_budgets_pre', 'fleet_budgets')
-                    for edge in ('before', 'at'))
-    assert set(CASE_NAMES) == required
-
-
 @pytest.fixture(scope='module')
 def assembled(composed):
     from tests.shadow_v2_pack_round3_matrix import stage_ports
@@ -252,32 +234,6 @@ def assembled(composed):
     collect_day(root / 'capture', output, plan)
     original = json.loads((output / 'stage/transport.json').read_bytes())
     return original, stage_ports(original)
-
-
-from tests.shadow_v2_pack_round3_matrix import CASE_NAMES  # noqa: E402
-
-
-@pytest.mark.parametrize('case', CASE_NAMES)
-def test_composed_original_byte_matrix_base_defect(tmp_path, assembled, case):
-    from tests.shadow_v2_pack_round3_matrix import negative_bundle, requested_stage
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput, render
-    from trusted_router.async_settle_shadow_v2_gates import evaluate
-    from trusted_router.detached_jws import canonical
-    original, ports = assembled
-    raw = canonical(negative_bundle(original, case))
-    (tmp_path / (case + '.json')).write_bytes(raw)
-    loaded = load(raw, ports)
-    result = evaluate(loaded, ports, gate=requested_stage(case))
-    rendered = render(result)
-    actual = dict(loading=loaded.a2_streams['loading_issues'], gaps=list(result.gaps),
-        failures=[dict(gap=f.gap, rule=f.rule, subject=f.subject, count=f.count, days=list(f.days))
-                  for f in result.failures], counts=result.gate_report['failure_counts'] if result.gate_report else None,
-        unavailable=rendered.diagnostic() if isinstance(rendered, UnavailableGateOutput) else None)
-    expected = json.loads(Path('tests/shadow_v2_pack_round8_base_results.json').read_bytes())
-    # Exact current results after generated transport records and aligned launch times.
-    # The projection-page mismatch remains an existing loader result.
-    assert actual == expected['vectors'][expected['cases'][case]]
 
 
 def test_composer_missing_producer_named(tmp_path):

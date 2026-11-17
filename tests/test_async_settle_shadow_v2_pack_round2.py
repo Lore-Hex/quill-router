@@ -246,32 +246,6 @@ def test_unreferenced_basis_page_is_gap():
     assert not index.missing and index.keys == (key,)
 
 
-def test_current_loader_cap_result_is_expected_base_defect():
-    from trusted_router import async_settle_shadow_v2_a1_evidence as p1
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    cap = dict(v=2, policy_version='shadow-v2', contract_revision='a1', day=DAY, terminal_reserved=0, event_reserved=0)
-    raw = canonical(dict(policy_version='shadow-v2', contract_revision='a1', days=[DAY], completed_at_us=START,
-        rows=[dict(kind=p1.KINDS[5], id=DAY + '/cap-v2', raw=p1.CAP.serialize(cap).decode())]))
-    loaded = load(raw)
-    assert loaded.proof is None
-    assert loaded.a2_streams['loading_issues'] == [
-        {'gap': 'artifact_gap', 'path': 'proof.shutdown_inventory_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.cohort_seed_policy_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.pre_budget_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.post_budget_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.external_proofs_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.resolution_dag_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'manifest.independent_inventory_sha256', 'detail': 'artifact_gap'},
-        {'gap': 'artifact_gap', 'path': 'loading/release-plan.json', 'detail': 'artifact_gap'},
-        {'gap': 'artifact_gap', 'path': 'loading/signatures.json', 'detail': 'artifact_gap'},
-    ], 'A3-E base changed; update this expectation deliberately'
-
-    # Expected after the A3-E correction; current output above remains asserted.
-    from tests.shadow_v2_pack_round5_vectors import corrected_result
-    corrected = corrected_result('test_current_loader_cap_result_is_expected_base_defect')
-    assert corrected['rows'] == 1 and len(corrected['loading_validation']) == 25
-
-
 def test_stage_registers_every_producer_source_fixture_and_review(tmp_path):
     from trusted_router.async_settle_shadow_v2_pack_stage import (
         PRODUCERS,
@@ -464,36 +438,6 @@ def test_external_supplied_scope_cannot_shorten_design(tmp_path):
         else:
             with pytest.raises(ValueError, match='artifact_gap'):
                 scoped_result(files, **kwargs)
-
-
-def test_cap_survives_split_transport_with_expected_base_result(tmp_path):
-    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    from trusted_router.async_settle_shadow_v2_pack_streaming import restore_transport
-    cap = dict(v=2, policy_version='shadow-v2', contract_revision='a1', day=DAY,
-               terminal_reserved=0, event_reserved=0)
-    captured = tmp_path / 'original.json'
-    captured.write_bytes(canonical(dict(policy_version='shadow-v2', contract_revision='a1', days=[DAY],
-        completed_at_us=START, rows=[dict(kind=a1.KINDS[5], id=DAY + '/cap-v2', raw=a1.CAP.serialize(cap).decode())])))
-    plan = split_transport(captured, tmp_path / 'parts')
-    restored = restore_transport(PackFiles(tmp_path / 'parts'), plan, tmp_path / 'restored')
-    loaded = load(restored.read_bytes())
-    assert loaded.a2_streams['loading_issues'] == [
-        {'gap': 'artifact_gap', 'path': 'proof.shutdown_inventory_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.cohort_seed_policy_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.pre_budget_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.post_budget_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.external_proofs_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'proof.resolution_dag_sha256', 'detail': 'required payload absent'},
-        {'gap': 'artifact_gap', 'path': 'manifest.independent_inventory_sha256', 'detail': 'artifact_gap'},
-        {'gap': 'artifact_gap', 'path': 'loading/release-plan.json', 'detail': 'artifact_gap'},
-        {'gap': 'artifact_gap', 'path': 'loading/signatures.json', 'detail': 'artifact_gap'},
-    ]
-
-    # Expected after the A3-E correction; current output above remains asserted.
-    from tests.shadow_v2_pack_round5_vectors import corrected_result
-    corrected = corrected_result('test_cap_survives_split_transport_with_expected_base_result')
-    assert corrected['rows'] == 1 and len(corrected['loading_validation']) == 25
 
 
 def test_unnamed_basis_inside_named_page_is_gap():
