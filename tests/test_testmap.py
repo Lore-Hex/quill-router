@@ -266,6 +266,7 @@ def test_s7_a_data_file_selects_its_readers() -> None:
     ("git diff src/app/core.py @cwd=-", False),
     ("git --work-tree=./src status @cwd=-", False),   # an option's value names the repository
     ("git --work-tree=. status @cwd=-", False),
+    ("git --git-dir=./.git log @cwd=-", False),       # the repository's own history
     ("git --git-dir=<outside> log @cwd=-", True),
     ("python -c <program> @cwd=.", False),
     ("uv run python -m @cwd=.", False),
@@ -463,6 +464,30 @@ def test_compare_counts_collection_errors_and_files_the_selection_would_not_coll
     text = summary.read_text()
     assert "failures outside selection: 1 (module:tests/test_n.py)" in text
     assert "of which 4 are collection errors" in text
+
+
+def test_failed_ids_reads_only_the_runs_own_summary() -> None:
+    known = ["tests/test_a.py::test_x", "tests/a dir/test_b.py::test_y"]
+    log = "\n".join([
+        "2026-11-17T01:02:03.0000000Z ________ test_x ________",
+        # A test that ran pytest inside it shows that run's output in its
+        # failure report: its own summary, indented or "E"-prefixed lines.
+        "2026-11-17T01:02:03.0000000Z ----- Captured stdout call -----",
+        "2026-11-17T01:02:03.0000000Z =========== short test summary info ===========",
+        "2026-11-17T01:02:03.0000000Z FAILED tests/test_inner.py::test_nested - boom",
+        "2026-11-17T01:02:03.0000000Z ERROR tests/test_sample.py - ImportError",
+        "2026-11-17T01:02:03.0000000Z ======= 1 failed in 0.1s =======",
+        "2026-11-17T01:02:03.0000000Z E         ERROR tests/test_other.py::test_z - RuntimeError",
+        "2026-11-17T01:02:04.0000000Z =========== short test summary info ===========",
+        "2026-11-17T01:02:04.0000000Z FAILED tests/test_a.py::test_x - AssertionError",
+        "2026-11-17T01:02:04.0000000Z ERROR tests/a dir/test_c.py - ImportError: no",  # a path with a space
+        "2026-11-17T01:02:04.0000000Z ===== 1 failed, 1 error in 9.9s =====",
+        "2026-11-17T01:02:05.0000000Z ##[error]Process completed with exit code 1.",
+    ])
+    assert tm.failed_ids(log, known) == {"tests/test_a.py::test_x", tm.MODULE + "tests/a dir/test_c.py"}
+    # Without a summary section (a log cut short), only lines that start with the status count.
+    cut = "FAILED tests/test_a.py::test_x - boom\nE   ERROR tests/test_other.py::test_z - boom\n"
+    assert tm.failed_ids(cut, known) == {"tests/test_a.py::test_x"}
 
 
 # ---------------------------------------------------------------- map validity and lookup

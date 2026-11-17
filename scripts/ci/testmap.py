@@ -136,7 +136,7 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "3"
+RECORDER_VERSION = "4"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
@@ -1154,10 +1154,31 @@ def summary_lines(sel: Selection, total_tests: int) -> list[str]:
     return lines
 
 
-SUMMARY_LINE = re.compile(r"(?:^|\s)(?:FAILED|ERROR) (tests/.*)$")
-COLLECTION_ERROR = re.compile(r"(?:^|\s)ERROR (tests/\S+\.py)(?: - .*)?$")
+SUMMARY_LINE = re.compile(r"^(?:FAILED|ERROR) (tests/.*)$")
+COLLECTION_ERROR = re.compile(r"^ERROR (tests/(?:(?!::).)+?\.py)(?: - .*)?$")
+SUMMARY_HEADER = re.compile(r"^=+ short test summary info =+$")
+LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")  # a GitHub Actions job log's line prefix
 UNKNOWN = "unknown:"
 MODULE = "module:"
+
+
+def short_summary(log: str) -> list[str]:
+    """The lines of the run's own short test summary: the last "short test
+    summary info" section (a test that runs pytest inside it can print a
+    summary of its own earlier, in its failure report), to the next "="
+    rule. GitHub's timestamps are dropped. Without such a section, every
+    line, which still holds only lines that start with the status: a
+    nested run's output in a failure report is indented or prefixed "E"."""
+    lines = [LOG_TIMESTAMP.sub("", line.rstrip("\r")) for line in log.splitlines()]
+    starts = [i for i, line in enumerate(lines) if SUMMARY_HEADER.match(line)]
+    if not starts:
+        return lines
+    section = []
+    for line in lines[starts[-1] + 1:]:
+        if line.startswith("="):
+            break
+        section.append(line)
+    return section
 
 
 def failed_ids(log: str, known: Iterable[str]) -> set[str]:
@@ -1174,8 +1195,7 @@ def failed_ids(log: str, known: Iterable[str]) -> set[str]:
     for ids in by_file.values():
         ids.sort(key=len, reverse=True)
     out: set[str] = set()
-    for line in log.splitlines():
-        line = line.rstrip("\r")
+    for line in short_summary(log):
         collection = COLLECTION_ERROR.search(line)
         if collection:
             out.add(MODULE + collection.group(1))
