@@ -226,7 +226,50 @@ def _image_generation_prices(md: str) -> dict:
     return out
 
 
+def _standard_markdown_projection(md: str) -> str:
+    """Project explicitly Standard tables to the parser's historical column order."""
+    projected = []
+    standard = False
+    active = False
+    header = []
+    for line in md.splitlines():
+        label = line.strip().lower()
+        if not label.startswith("|"):
+            header = []
+            if label:
+                active = label == "### standard pricing data" or (
+                    label == "### grouped pricing table data" and standard
+                )
+                standard = label == "standard"
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if not active:
+            continue
+        if not header:
+            header = [cell.lower() for cell in cells]
+            continue
+        if len(header) != len(cells) or cells[0].startswith("---"):
+            continue
+        row = dict(zip(header, cells, strict=True))
+        if "model" not in row:
+            continue
+        if "short context input" in row:
+            fields = ["model"] + [
+                prefix + column for prefix in ("short context ", "long context ")
+                for column in ("input", "cached input", "output")
+            ]
+        elif "modality" in row:
+            fields = ["model", "modality", "input", "cached input", "output"]
+        else:
+            fields = ["model", "input", "cached input", "output"]
+        if all(field in row for field in fields):
+            projected.append("| " + " | ".join(row[field] for field in fields) + " |")
+    return "\n".join(projected)
+
+
 def parse(md: str) -> dict:
+    if re.search(r"^### [^\n]*pricing data\s*$", md, re.I | re.M):
+        md = _standard_markdown_projection(md)
     out: dict = {}
     _live_seen: set[str] = set()
 
