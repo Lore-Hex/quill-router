@@ -52,8 +52,10 @@ TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
 # unambiguously in the full checkout before trusting the registry lookup.
 IMAGE_TAG="${RELEASE:0:7}"
 [ "$(git rev-parse --verify "${IMAGE_TAG}^{commit}")" = "$RELEASE" ] || die "ambiguous image tag"
+# A push or dispatch run only: a pull_request run checks a merge commit and
+# skips the jobs its pull request did not change.
 CI="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml --commit "$RELEASE" \
-  --limit 1 --json conclusion --jq '.[0].conclusion')"
+  --json conclusion,event --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0].conclusion')"
 [ "$CI" = success ] || die "CI must pass for this exact release"
 # Check the command's status as well as its output: a call that prints the
 # account and then fails must not pass.

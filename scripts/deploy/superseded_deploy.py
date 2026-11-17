@@ -208,6 +208,16 @@ def pending_successor(runs: object, *, base: str) -> str | None:
     return None
 
 
+def gate_runs(runs: object) -> object:
+    """The push and dispatch runs of a `gh run list` listing, newest first: a
+    pull_request run checks a merge commit and skips the jobs its pull request
+    did not change, so it is no CI evidence for a commit on main."""
+
+    if not isinstance(runs, list):
+        return runs
+    return [run for run in runs if isinstance(run, dict) and run.get("event") in ("push", "workflow_dispatch")]
+
+
 def ci_green(runs: object) -> bool:
     """Whether the newest CI run in `gh run list` JSON concluded success."""
 
@@ -290,8 +300,8 @@ def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
         if not base_on_main(_gh_json(["api", f"repos/{repo}/compare/{successor}...{head}"])):
             continue
         ci = _gh_json(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", successor,
-                       "--limit", "1", "--json", "status,conclusion"])
-        if not ci_green(ci):
+                       "--json", "status,conclusion,event"])
+        if not ci_green(gate_runs(ci)):
             continue
         details = _gh_json(["run", "view", str(run["databaseId"]), "--repo", repo, "--json", "jobs"])
         if not isinstance(details, dict) or not isinstance(details.get("jobs"), list):

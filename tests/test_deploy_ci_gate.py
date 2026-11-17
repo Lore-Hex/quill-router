@@ -208,18 +208,70 @@ def test_the_push_or_dispatch_run_decides(tmp_path: Path, name: str, answers: li
     assert "CI is green" in result.stdout, name
 
 
-def test_every_ci_run_lookup_in_a_workflow_counts_push_and_dispatch_runs_only() -> None:
+def shell_ci_lookups(paths: list[Path]) -> list[tuple[str, str]]:
+    """Each `gh run list ... --workflow ci.yml ... --commit` command in the
+    files, with its continuation lines."""
     import re
 
-    lookups = []
-    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
-        text = path.read_text()
-        for match in re.finditer(r"gh run list(?:[^\n]*\\\n)*[^\n]*", text):
+    found = []
+    for path in paths:
+        for match in re.finditer(r"gh run list(?:[^\n]*\\\n)*[^\n]*", path.read_text()):
             command = match.group(0)
             if "--workflow ci.yml" in command and "--commit" in command:
-                lookups.append((path.name, command))
-    assert {name for name, _ in lookups} >= {"deploy.yml", "deploy-production.yml",
-                                              "deploy-azure-control-plane.yml", "deploy-growth-sync.yml"}
-    for name, command in lookups:
-        assert ',event' in command and 'select(.event == "push" or .event == "workflow_dispatch")' in command, name
+                found.append((str(path.relative_to(ROOT)), command))
+    return found
+
+
+def python_ci_lookups(paths: list[Path]) -> list[tuple[str, list[object]]]:
+    """Each `run list` argument sequence naming ci.yml in the Python files:
+    the string constants and names of a list or call that holds them."""
+    import ast
+
+    found = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        constants = {node.targets[0].id: node.value.value for node in tree.body
+                     if isinstance(node, ast.Assign) and len(node.targets) == 1
+                     and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
+        for node in ast.walk(tree):
+            items = node.elts if isinstance(node, ast.List) else node.args if isinstance(node, ast.Call) else None
+            if not items:
+                continue
+            values = [item.value if isinstance(item, ast.Constant) else
+                      constants.get(item.id, item.id) if isinstance(item, ast.Name) else None for item in items]
+            pairs = list(zip(values, values[1:], strict=False))
+            if ("run", "list") in pairs and ("--workflow", "ci.yml") in pairs and "--commit" in values:
+                found.append((str(path.relative_to(ROOT)), values))
+    return found
+
+
+def test_every_ci_run_lookup_counts_push_and_dispatch_runs_only() -> None:
+    # Workflows and deploy scripts alike: a gate that takes the newest run of
+    # any event could take a pull_request run, which checks a merge commit.
+    workflows = sorted((ROOT / ".github/workflows").glob("*.yml"))
+    scripts = sorted(path for path in (ROOT / "scripts").rglob("*") if path.suffix in (".sh", ".py", ""))
+    shell = shell_ci_lookups([*workflows, *(path for path in scripts if path.is_file() and path.suffix != ".py")])
+    assert {name for name, _ in shell} >= {
+        ".github/workflows/deploy.yml", ".github/workflows/deploy-production.yml",
+        ".github/workflows/deploy-azure-control-plane.yml", ".github/workflows/deploy-growth-sync.yml",
+        "scripts/deploy/aws_ecs_control_plane.sh", "scripts/deploy/settle_drain_worker.sh"}
+    for name, command in shell:
         assert "--limit 1" not in command, name
+        assert ",event" in command, name
+        if name.endswith(".sh"):
+            continue  # the script filters the listing itself; checked below
+        assert 'select(.event == "push" or .event == "workflow_dispatch")' in command, name
+    drain = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
+    assert 'runs=[run for run in json.load(sys.stdin) if run.get("event") in ("push", "workflow_dispatch")]' in drain
+    aws = (ROOT / "scripts/deploy/aws_ecs_control_plane.sh").read_text()
+    assert """--jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0].conclusion'""" in aws
+    python = python_ci_lookups([path for path in scripts if path.suffix == ".py"])
+    assert {name for name, _ in python} >= {"scripts/deploy/release_train.py", "scripts/deploy/superseded_deploy.py"}
+    for name, values in python:
+        # Either the listing asks for push runs, or it fetches each run's
+        # event for the caller to filter (release_train's ci(), tested in
+        # tests/test_release_train.py).
+        by_event = ("--event", "push") in list(zip(values, values[1:], strict=False))
+        fields = values[values.index("--json") + 1] if "--json" in values else ""
+        assert by_event or (isinstance(fields, str) and "event" in fields.split(",")), (name, values)
+        assert "--limit" not in values or by_event, (name, values)

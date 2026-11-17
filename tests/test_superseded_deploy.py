@@ -164,7 +164,7 @@ READY = {
     "--workflow deploy.yml": (WAITING_RUN, 0),
     "compare/aaa...bbb": (DESCENDS, 0),
     "compare/bbb...ccc": (ON_MAIN, 0),
-    "--workflow ci.yml --commit bbb": ('[{"status": "completed", "conclusion": "success"}]', 0),
+    "--workflow ci.yml --commit bbb": ('[{"status": "completed", "conclusion": "success", "event": "push"}]', 0),
     "run view 2": (json.dumps({"jobs": [
         {"name": name, "conclusion": "success"} for name in ("gate-on-ci", "build-image")
     ]}), 0),
@@ -176,7 +176,7 @@ HANG_TIMEOUT = 2.0
 
 
 def _ci(status: str, conclusion: str = "") -> str:
-    return json.dumps([{"status": status, "conclusion": conclusion}])
+    return json.dumps([{"status": status, "conclusion": conclusion, "event": "push"}])
 
 
 def test_main_deploys_when_only_docs_moved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -491,6 +491,15 @@ def test_pending_successor_is_the_newest_waiting_main_push_other_than_this_run()
     assert superseded.pending_successor({"not": "a list"}, base="aaa") is None
 
 
+def test_gate_runs_keep_push_and_dispatch_runs_newest_first() -> None:
+    runs = [{"event": "pull_request", "conclusion": "success"}, {"event": "push", "conclusion": "failure"},
+            {"event": "workflow_dispatch", "conclusion": "success"}, "x"]
+    assert superseded.gate_runs(runs) == [{"event": "push", "conclusion": "failure"},
+                                         {"event": "workflow_dispatch", "conclusion": "success"}]
+    assert superseded.gate_runs(None) is None
+    assert superseded.ci_green(superseded.gate_runs(runs)) is False
+
+
 def test_ci_green_needs_a_completed_successful_run() -> None:
     assert superseded.ci_green([{"status": "completed", "conclusion": "success"}]) is True
     for runs in ([], [{"status": "in_progress", "conclusion": ""}], [{"status": "completed", "conclusion": "failure"}], "x"):
@@ -734,8 +743,10 @@ def test_follow_main_dispatch_successor_requires_exact_mode_marker(tmp_path, mon
 @pytest.mark.parametrize("lookup,response", [
     ("compare/aaa...bbb", {"status": "diverged"}),
     ("compare/bbb...ccc", {"status": "diverged"}),
-    ("--workflow ci.yml --commit bbb", [{"status": "completed", "conclusion": "failure"}]),
+    ("--workflow ci.yml --commit bbb", [{"status": "completed", "conclusion": "failure", "event": "push"}]),
     ("--workflow ci.yml --commit bbb", [{"status": "in_progress", "conclusion": ""}]),
+    # A green pull_request run is no evidence that the successor's CI passed.
+    ("--workflow ci.yml --commit bbb", [{"status": "completed", "conclusion": "success", "event": "pull_request"}]),
     ("run view 2", {"jobs": [{"name": "gate-on-ci", "conclusion": "success"}]}),
     ("run view 2", {"jobs": [{"name": "build-image", "conclusion": "success"}]}),
 ])

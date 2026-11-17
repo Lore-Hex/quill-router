@@ -360,9 +360,18 @@ def scope(changes: list[str], root: Path, *, event: str = "pull_request", lines:
     return flags
 
 
-def selected(changes: list[str], root: Path, *, lines: str | None = "") -> tuple[bool, tuple[str, ...]]:
+def ordinary(changes: list[str]) -> str:
+    """A patch giving each changed file one line that names nothing."""
+    return "".join(patch(record.split("\t", 1)[1], "+an ordinary line") for record in changes)
+
+
+def selected(changes: list[str], root: Path, *, lines: str | None = None,
+             read: bool = True) -> tuple[bool, tuple[str, ...]]:
     """Whether the post-cutover suite runs, and the test files it is limited
-    to (empty: the whole suite)."""
+    to (empty: the whole suite). Without `lines`, every changed file's patch
+    has one line that names nothing; read=False passes no patch at all."""
+    if lines is None and read:
+        lines = ordinary(changes)
     flags, _, tests = scope_jobs(changes, root=root, event="pull_request", lines=lines, now=NOW)
     assert not tests or flags["run_post_cutover"]
     return flags["run_post_cutover"], tests
@@ -434,12 +443,36 @@ def test_other_ci_files_do_not_run_everything(tree: Path, path: str) -> None:
 
 
 def test_a_change_no_rule_names_skips_every_path_scoped_job(tree: Path) -> None:
-    changes = [raw("docs/design/x.md"), raw("infra/main.tf"), added("sites/token-exchange/new.html"),
-               deleted("frontend/src/old.ts"), raw(".github/workflows/deploy.yml")]
-    lines = (patch("docs/design/x.md", "+A paragraph about latency.") + patch("infra/main.tf", "-a = 1", "+a = 2")
-             + patch("sites/token-exchange/new.html", "+<p>menu</p>") + patch("frontend/src/old.ts", "-x();")
-             + patch(".github/workflows/deploy.yml", "+  timeout-minutes: 30"))
+    # Prose and workflow files that name nothing scheduled.
+    changes = [raw("docs/design/x.md"), added("README.md"), raw(".github/workflows/deploy.yml"),
+               deleted(".github/CODEOWNERS")]
+    lines = (patch("docs/design/x.md", "+A paragraph about latency.") + patch("README.md", "+Hello")
+             + patch(".github/workflows/deploy.yml", "+  timeout-minutes: 30")
+             + patch(".github/CODEOWNERS", "-* @owner"))
     assert scope(changes, tree, lines=lines) == dict.fromkeys(PATH_FLAGS, False)
+
+
+@pytest.mark.parametrize("path", [
+    "docs/catalog_expectations.json", "infra/main.tf", "sites/token-exchange/new.html", "frontend/src/old.ts",
+    "scripts/deploy/rollout.sh", "fastpath/internal/edge/edge.go", "proofs/CreditDebt.tla", "Dockerfile",
+    "docs/models.txt",
+])
+def test_any_other_data_file_runs_the_whole_post_cutover_suite(tree: Path, path: str) -> None:
+    # A test may read any of these through a path it builds: the review's
+    # case is docs/catalog_expectations.json going from 659 to 679, which
+    # names nothing scheduled.
+    lines = patch(path, '-{"models": 659}', '+{"models": 679}')
+    for record in (raw(path), added(path), deleted(path)):
+        assert selected([record], tree, lines=lines) == (True, ()), record
+
+
+def test_markdown_and_github_files_run_it_only_when_they_name_the_lifecycle(tree: Path) -> None:
+    # Prose does not feed the catalog expectations tests assert: the accepted
+    # exception. A Markdown or .github/ line naming something scheduled still
+    # runs the whole suite.
+    for path in ("docs/catalog.md", ".github/workflows/synthetic.yml"):
+        assert selected([raw(path)], tree, lines=patch(path, "-659 models", "+679 models")) == (False, ()), path
+        assert selected([raw(path)], tree, lines=patch(path, "+vendor/soon-2")) == (True, ()), path
 
 
 @pytest.mark.parametrize("path", [
@@ -527,8 +560,10 @@ def test_the_post_cutover_suite_runs_whole_on_the_application_its_data_and_harne
     for record in (raw(path), added(path), deleted(path)):
         # No changed lines name anything: the path alone decides, and it is
         # the whole suite, not a selection.
-        lines = patch("docs/a.md", "+notes")
+        lines = patch("docs/a.md", "+notes") + patch(path, "+an ordinary line")
         assert selected([raw("docs/a.md"), record], tree, lines=lines) == (True, ()), record
+        _, notes, _ = scope_jobs([raw("docs/a.md"), record], root=tree, event="pull_request", lines=lines, now=NOW)
+        assert f"run_post_cutover: runs, {path}" in notes, (record, notes)
 
 
 def test_every_catalog_data_path_runs_the_post_cutover_suite(tree: Path) -> None:
@@ -584,8 +619,11 @@ def test_a_file_whose_lines_the_patch_does_not_show_runs_the_whole_suite(tree: P
     # A binary file, an empty file added: a header with no hunk.
     header_only = f"diff --git a/{path} b/{path}\nindex 1..2 100644\nBinary files a/{path} and b/{path} differ\n"
     assert selected([raw(path)], tree, lines=header_only) == (True, ())
+    # An empty file added or deleted has no hunk but nothing to hide either.
     empty = f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..e69de29\n"
-    assert selected([added(path)], tree, lines=empty) == (True, ())
+    assert selected([added(path)], tree, lines=empty) == (False, ())
+    gone = f"diff --git a/{path} b/{path}\ndeleted file mode 100644\nindex e69de29..0000000\n"
+    assert selected([deleted(path)], tree, lines=gone) == (False, ())
     # A changed file the patch leaves out entirely.
     assert selected([raw(path)], tree, lines=patch("docs/other.md", "+x")) == (True, ())
     _, notes, _ = scope_jobs([raw(path)], root=tree, event="push", lines=patch("docs/other.md", "+x"), now=NOW)
@@ -596,7 +634,7 @@ def test_a_file_whose_lines_the_patch_does_not_show_runs_the_whole_suite(tree: P
 
 
 def test_the_post_cutover_suite_runs_without_lines_to_read_and_on_every_dispatch(tree: Path) -> None:
-    assert selected([raw("docs/a.md")], tree, lines=None) == (True, ())
+    assert selected([raw("docs/a.md")], tree, read=False) == (True, ())
     _, notes, _ = scope_jobs([raw("docs/a.md")], root=tree, event="push", lines=None, now=NOW)
     assert "run_post_cutover: runs, docs/a.md (no diff text to read)" in notes
     # A dispatch runs it whatever changed; the same change on a push does not.
@@ -695,16 +733,20 @@ def test_the_real_tree_scopes_typical_changes() -> None:
             lines = "".join(patch(record.split("\t", 1)[1], "+an ordinary line") for record in changes)
         return scope(list(changes), ROOT, lines=lines, now=datetime.now(UTC))
 
+    assert flags(raw("docs/design/ci-deploy-latency.md")) == dict.fromkeys(PATH_FLAGS, False)
+    # Terraform a test may read: the whole post-cutover suite, nothing else.
     infra = patch("infra/fastpath.tf", "+  machine_type = \"c3-standard-8\"")
-    assert flags(raw("infra/fastpath.tf"), lines=infra) == dict.fromkeys(PATH_FLAGS, False)
-    # A test file beside it: the post-cutover suite on the tests it reaches.
+    assert selected([raw("infra/fastpath.tf")], ROOT, lines=infra) == (True, ())
+    assert flags(raw("infra/fastpath.tf"), lines=infra) == dict.fromkeys(PATH_FLAGS, False) | {
+        "run_post_cutover": True}
+    # A test file: the post-cutover suite on the tests it reaches.
     test = "tests/test_enclave_security_guard.py"
-    flags_, _, tests = scope_jobs([raw("infra/fastpath.tf"), raw(test)], root=ROOT, event="pull_request",
-                                  lines=infra, now=datetime.now(UTC))
+    flags_, _, tests = scope_jobs([raw(test)], root=ROOT, event="pull_request",
+                                  lines=patch(test, "+    assert True"), now=datetime.now(UTC))
     assert flags_ == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}
     assert test in tests and 0 < len(tests) <= 10
     assert flags(raw("fastpath/internal/store/commit.go")) == {
-        "run_fastpath": True, "run_post_cutover": False, "run_proof_oracle": False, "run_proofs": True}
+        "run_fastpath": True, "run_post_cutover": True, "run_proof_oracle": False, "run_proofs": True}
     assert flags(raw("src/trusted_router/services/auto_refill.py")) == dict.fromkeys(PATH_FLAGS, False) | {
         "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
     assert flags(raw(SNAPSHOT), raw(MANIFEST)) == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}
@@ -754,14 +796,14 @@ def test_the_jobs_command_prints_one_line_per_flag(monkeypatch, capsys, tmp_path
     assert "complete matrix" in out.err
     monkeypatch.chdir(ROOT)
     lines = tmp_path / "lines.patch"
-    lines.write_text(patch("infra/a.tf", "+x = 1"))
-    monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('infra/a.tf')}\n"))
+    lines.write_text(patch("docs/a.md", "+x = 1"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('docs/a.md')}\n"))
     assert main(["jobs", "--event", "push", "--lines", str(lines)]) == 0
     out = capsys.readouterr()
     assert out.out == "".join(f"{flag}=false\n" for flag in PATH_FLAGS) + "post_cutover_tests=\n"
     assert "run_proofs: skips" in out.err
     # Unreadable lines are not an error; the post-cutover rule runs instead.
-    monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('infra/a.tf')}\n"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('docs/a.md')}\n"))
     assert main(["jobs", "--event", "push", "--lines", str(tmp_path / "missing.patch")]) == 0
     out = capsys.readouterr()
     assert "run_post_cutover=true\n" in out.out and "unreadable" in out.err
@@ -892,16 +934,31 @@ def test_a_directory_conftest_counts_as_imported_by_its_tests(suite: Path) -> No
 def test_a_script_change_selects_the_tests_that_import_or_name_it(suite: Path) -> None:
     assert selected([raw("scripts/lib.py")], suite) == (True, ("tests/test_e.py",))
     assert selected([raw("scripts/tool.py")], suite) == (True, ("tests/test_d.py",))
-    # A script no test imports or names reaches no test.
-    assert selected([raw("scripts/standalone.py")], suite) == (False, ())
+
+
+@pytest.mark.parametrize("path", ["scripts/standalone.py", "tests/loaded_by_name.py", "tests/fakes/unused.py",
+                                  "proofs/check_tool.py"])
+def test_python_that_reaches_no_test_runs_the_whole_suite(suite: Path, path: str) -> None:
+    # A test may load it by a computed name, importlib.import_module("tests."
+    # + name), or run it by a built path, ROOT / "scripts" / (name + ".py"):
+    # the review's cases. Neither import nor name finds those tests.
+    write(suite, {path: "VALUE = 1\n"})
+    assert selected([raw(path)], suite) == (True, ())
+    # Even beside a change that does reach tests.
+    assert selected([raw(path), raw("tests/test_c.py")], suite) == (True, ())
 
 
 def test_a_deleted_helper_selects_the_tests_that_imported_it(suite: Path) -> None:
     (suite / "tests/helper_x.py").unlink()
     assert selected([deleted("tests/helper_x.py")], suite) == (True, ("tests/test_a.py", "tests/test_b.py"))
-    # A deleted test file is no test to run.
+    # A deleted test file is no test to run, and no reason for the suite.
     (suite / "tests/test_c.py").unlink()
     assert selected([deleted("tests/test_c.py")], suite) == (False, ())
+    assert selected([deleted("tests/test_c.py"), raw("tests/test_a.py")], suite) == (True, ("tests/test_a.py",))
+    # A deleted helper nothing imported any more: the whole suite.
+    (suite / "tests/helper_y.py").unlink()
+    (suite / "tests/conformance/conftest.py").write_text("")
+    assert selected([deleted("tests/helper_y.py")], suite) == (True, ())
 
 
 def test_too_many_reached_tests_run_the_whole_suite(suite: Path) -> None:
@@ -916,22 +973,31 @@ def test_a_path_the_job_cannot_pass_safely_runs_the_whole_suite(suite: Path) -> 
 
 
 def test_other_changes_decide_between_a_selection_and_the_whole_suite(suite: Path) -> None:
-    lines = patch("docs/a.md", "+notes")
+    test = patch("tests/test_c.py", "+    pass")
+    lines = patch("docs/a.md", "+notes") + test
     assert selected([raw("tests/test_c.py"), raw("docs/a.md")], suite, lines=lines) == (True, ("tests/test_c.py",))
-    # A document naming a scheduled model, the application, a fixture or the
-    # harness: the whole suite.
-    named = patch("docs/a.md", "+vendor/soon-2 retires")
+    # A document naming a scheduled model, any other data file, the
+    # application, a fixture or the harness: the whole suite.
+    named = patch("docs/a.md", "+vendor/soon-2 retires") + test
     assert selected([raw("tests/test_c.py"), raw("docs/a.md")], suite, lines=named) == (True, ())
-    for other in ("src/trusted_router/main.py", "tests/fixtures/x.json", "tests/harness_helper.py", "uv.lock"):
-        assert selected([raw("tests/test_c.py"), raw(other)], suite, lines=lines) == (True, ()), other
-    # Python changes need no lines: the tests they reach decide.
-    assert selected([raw("tests/test_c.py")], suite, lines=None) == (True, ("tests/test_c.py",))
+    for other in ("src/trusted_router/main.py", "tests/fixtures/x.json", "tests/harness_helper.py", "uv.lock",
+                  "docs/catalog_expectations.json"):
+        assert selected([raw("tests/test_c.py"), raw(other)], suite, lines=lines + patch(other, "+x")) == (
+            True, ()), other
+    # A Python line naming the lifecycle runs the whole suite too, in a test
+    # or a helper; and no patch to read runs it.
+    for path in ("tests/test_c.py", "tests/helper_x.py", "scripts/lib.py"):
+        for line in ("+    # past the cutover", "+from tests.lifecycle_clock import catalog_predates",
+                     "-    model = 'vendor/soon-2'", "+RETIRED = True"):
+            assert selected([raw(path)], suite, lines=patch(path, line)) == (True, ()), (path, line)
+    assert selected([raw("tests/test_c.py")], suite, read=False) == (True, ())
 
 
 def test_the_jobs_command_prints_the_selected_tests(monkeypatch, capsys, suite: Path) -> None:
     monkeypatch.chdir(suite)
+    (suite / "lines.patch").write_text(patch("tests/helper_x.py", "+X = 2"))
     monkeypatch.setattr("sys.stdin", io.StringIO(f"{raw('tests/helper_x.py')}\n"))
-    assert main(["jobs", "--event", "pull_request"]) == 0
+    assert main(["jobs", "--event", "pull_request", "--lines", "lines.patch"]) == 0
     out = capsys.readouterr()
     assert out.out.splitlines()[-1] == "post_cutover_tests=tests/test_a.py tests/test_b.py"
     assert "run_post_cutover=true" in out.out

@@ -101,23 +101,31 @@ later push until a run passes it again, and its red holds every deploy.
   src/: code behaves differently on the post-cutover catalog), to the pricing
   scripts, the catalog-derived Go vectors, its split weights, the Python
   toolchain, the harness every test runs under (tests/conftest.py and what it
-  imports) or a test fixture; for a changed line in any other file that is
-  not Python that names a lifecycle identifier (LIFECYCLE_IDENTIFIERS) or a
-  scheduled entity (a model, upstream id or provider with a retirement still
-  ahead, or one whose price provider_lifecycle.py switches by date, read from
-  HEAD at scope time), or whose lines the diff cannot show; and on every
-  dispatch, the price refresh's publication gate. A test is code that can
-  depend on the catalog without naming anything (a count over every model),
-  so when the only Python that changed is outside src/ (tests, helpers,
-  scripts), the suite runs, in one shard, on the tests that can reach it:
+  imports) or a test fixture; for any other changed file that is not Python,
+  Markdown or under .github/ (a test may read it through a path it builds,
+  say a JSON of catalog expectations); for a changed line in a Markdown,
+  .github/ or Python file that names a lifecycle identifier
+  (LIFECYCLE_IDENTIFIERS) or a scheduled entity (a model, upstream id or
+  provider with a retirement still ahead, or one whose price
+  provider_lifecycle.py switches by date, read from HEAD at scope time), or a
+  file whose lines the diff cannot show; for a changed Python file that no
+  test imports or names (a test may load it by a computed name or path); and
+  on every dispatch, the price refresh's publication gate. A test is code
+  that can depend on the catalog without naming anything (a count over every
+  model), so when only Python outside src/ (tests, helpers, scripts) changed
+  otherwise, the suite runs, in one shard, on the tests that can reach it:
   each changed test file, every test that imports a changed module directly
   or through other modules (read from HEAD's sources, a directory's
   conftest.py counted as imported by its tests), and every test whose source
   names a changed file. More of those than an eighth of the test files runs
-  the whole suite instead. What it does not see is a change to a file that
-  is neither Python nor application code and names nothing scheduled, read
-  by a test that depends on the post-cutover catalog in aggregate; such a
-  test goes red on the next change that runs it, or at the cutover.
+  the whole suite instead.
+
+  Two gaps are accepted trade-offs. A helper that some tests import and
+  another test loads by a computed name selects only the importers. And a
+  Markdown change that names nothing scheduled runs nothing: prose documents
+  do not feed the catalog expectations tests assert. A test such a change
+  breaks past the cutovers goes red on the next change that runs it, or at
+  the cutover.
 """
 
 from __future__ import annotations
@@ -327,10 +335,14 @@ def plain_changes(records: Iterable[str]) -> list[Change] | None:
     return changes
 
 
+EMPTY_BLOB_INDEX = re.compile(r"^index (?:0+\.\.e69de29[0-9a-f]*|e69de29[0-9a-f]*\.\.0+)(?: [0-7]{6})?$")
+
+
 def changed_lines(patch: str) -> dict[str, list[str] | None]:
     """Each file's added and removed lines in a `git diff -U0` patch, keyed by
-    its `diff --git` header; None for a file with no hunk (a binary file, or
-    an empty one added or deleted), whose lines the patch does not show."""
+    its `diff --git` header; None for a file with no hunk whose lines the
+    patch does not show (a binary file). An empty file added or deleted has
+    no hunk and no lines: []."""
     files: dict[str, list[str] | None] = {}
     header: str | None = None
     current: list[str] | None = None
@@ -340,6 +352,8 @@ def changed_lines(patch: str) -> dict[str, list[str] | None]:
             files[header] = current = None
         elif header is None:
             continue
+        elif current is None and EMPTY_BLOB_INDEX.match(line):
+            files[header] = current = []
         elif line.startswith("@@"):
             if current is None:
                 files[header] = current = []
@@ -425,13 +439,13 @@ def test_files(root: Path) -> list[str]:
                   if path.name.startswith("test_") or path.name.endswith("_test.py"))
 
 
-def tests_reaching(root: Path, changed: Iterable[str]) -> list[str]:
-    """The test files a change to the Python files `changed` can affect: each
-    changed test file, every test file that imports a changed file directly
-    or through other modules (a directory's conftest.py counts as imported by
-    the tests under it), and every test file whose source names a changed
-    file by its name."""
-    changed = set(changed)
+def reaching_tests(root: Path, changed: Iterable[str]) -> dict[str, set[str]]:
+    """For each changed Python file, the test files a change to it can affect:
+    itself if it is one, every test file that imports it directly or through
+    other modules (a directory's conftest.py counts as imported by the tests
+    under it), and every test file whose source names it by its file name.
+    A test that loads it by a computed name or path is not found."""
+    changed = list(changed)
     tests = test_files(root)
     conftests = {test: [f"{'/'.join(test.split('/')[:depth])}/conftest.py"
                         for depth in range(2, test.count("/") + 1)] for test in tests}
@@ -442,19 +456,37 @@ def tests_reaching(root: Path, changed: Iterable[str]) -> list[str]:
     for path, targets in edges.items():
         for target in targets:
             dependents.setdefault(target, set()).add(path)
-    reached = set(changed)
-    pending = list(changed)
-    while pending:
-        for dependent in dependents.get(pending.pop(), ()):
-            if dependent not in reached:
-                reached.add(dependent)
-                pending.append(dependent)
-    selected = {test for test in tests if test in reached}
-    names = {name for name in (path.rsplit("/", 1)[-1] for path in changed) if name not in GENERIC_NAMES}
-    for test in tests:
-        if test not in selected and names and any(name in (root / test).read_text(encoding="utf-8") for name in names):
-            selected.add(test)
-    return sorted(selected)
+    sources: dict[str, str] = {}
+    reach: dict[str, set[str]] = {}
+    for path in changed:
+        reached = {path}
+        pending = [path]
+        while pending:
+            for dependent in dependents.get(pending.pop(), ()):
+                if dependent not in reached:
+                    reached.add(dependent)
+                    pending.append(dependent)
+        found = {test for test in tests if test in reached}
+        name = path.rsplit("/", 1)[-1]
+        if name not in GENERIC_NAMES:
+            for test in tests:
+                if test not in found:
+                    if test not in sources:
+                        sources[test] = (root / test).read_text(encoding="utf-8")
+                    if name in sources[test]:
+                        found.add(test)
+        reach[path] = found
+    return reach
+
+
+def tests_reaching(root: Path, changed: Iterable[str]) -> list[str]:
+    """Every test file a change to the Python files `changed` can affect."""
+    return sorted(set().union(*reaching_tests(root, changed).values()))
+
+
+def is_test_file(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return path.startswith("tests/") and (name.startswith("test_") or name.endswith("_test.py"))
 
 
 def manifest_paths(root: Path) -> frozenset[str]:
@@ -599,27 +631,41 @@ def post_cutover_plan(
         path = change.path
         if matches_any(path, (*PYTHON_TOOLCHAIN_PATHS, *POST_CUTOVER_INPUTS)) or is_test_fixture(path) or path in harness:
             return path, whole
-    # Nothing under src/ changed from here on.
-    python = [change.path for change in changes if change.path.endswith(".py")]
+    # Nothing under src/ changed from here on, and no file under tests/ that
+    # is not Python. Any other file but Markdown or one under .github/ may be
+    # read by a test through a path it builds: the whole suite.
+    python = [change for change in changes if change.path.endswith(".py")]
     others = [change.path for change in changes if not change.path.endswith(".py")]
-    if others:
-        if lines is None:
-            return f"{others[0]} (no diff text to read)", whole
-        files = {header_path(header): text for header, text in changed_lines(lines).items()}
-        entities = entity_pattern(scheduled_entities((root / LIFECYCLE_MODULE).read_text(encoding="utf-8"), now))
-        for path in others:
-            if path not in files or files[path] is None:
-                return f"{path} has no lines the diff shows", whole
-            for line in files[path] or ():
-                found = LIFECYCLE_IDENTIFIERS.search(line) or entities.search(line)
-                if found:
-                    return f"{path} names {found.group(0)!r}", whole
+    for path in others:
+        if not (path.endswith(".md") or path.startswith(".github/")):
+            return f"{path} may be read by a test through a constructed path", whole
+    # Markdown, .github/ and Python: a changed line naming the lifecycle, or
+    # a file whose lines the patch does not show, runs the whole suite.
+    named = [*others, *(change.path for change in python)]
+    if lines is None:
+        return f"{named[0]} (no diff text to read)", whole
+    files = {header_path(header): text for header, text in changed_lines(lines).items()}
+    entities = entity_pattern(scheduled_entities((root / LIFECYCLE_MODULE).read_text(encoding="utf-8"), now))
+    for path in named:
+        if path not in files or files[path] is None:
+            return f"{path} has no lines the diff shows", whole
+        for line in files[path] or ():
+            found = LIFECYCLE_IDENTIFIERS.search(line) or entities.search(line)
+            if found:
+                return f"{path} names {found.group(0)!r}", whole
     if not python:
         return None, whole
-    selected = tests_reaching(root, python)
+    # Python outside src/: the tests each file reaches. A file that reaches
+    # none may be loaded by a computed name or path: the whole suite. A
+    # deleted test file is no test to run.
+    reach = reaching_tests(root, [change.path for change in python])
+    for change in python:
+        if not reach[change.path] and not (change.status == "D" and is_test_file(change.path)):
+            return f"{change.path} reaches no test file that imports or names it", whole
+    selected = sorted(set().union(*reach.values()))
     if not selected:
         return None, whole
-    reason = f"{len(selected)} test files reach {python[0]}"
+    reason = f"{len(selected)} test files reach {python[0].path}"
     if len(selected) > len(test_files(root)) // 8 or not all(SAFE_PATH.fullmatch(path) for path in selected):
         return f"{reason}, so the whole suite", whole
     return reason, tuple(selected)

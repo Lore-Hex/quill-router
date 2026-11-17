@@ -273,7 +273,9 @@ def test_a_code_change_is_not_data_only_and_runs_the_jobs_that_read_it(scope_rep
         ("C3", {"scripts/pricing/parsers/fireworks.py": "def parse(h): ...\n"}, NONE | {"run_post_cutover": True}),
         ("C4", {"fastpath/testdata/model_alias_vectors_v1.json": "[]\n"},
          NONE | {"run_fastpath": True, "run_post_cutover": True}),
-        ("C5", {SPEC_CODE: "package spec // x\n"}, NONE | {"run_fastpath": True, "run_proofs": True}),
+        # Go source is a file a Python test may read: the post-cutover suite too.
+        ("C5", {SPEC_CODE: "package spec // x\n"},
+         NONE | {"run_fastpath": True, "run_proofs": True, "run_post_cutover": True}),
         ("C6", {DOC: "notes about vendor/soon-1\n"}, NONE | {"run_post_cutover": True}),
         ("C7", {DOC: "notes about latency\n"}, NONE),
     ]
@@ -396,14 +398,15 @@ def test_a_red_base_widens_the_comparison_to_its_newest_validated_ancestor(scope
     scope_repo.push()
     c = scope_repo.commit("C", {DOC: "more notes\n"})
     red = [run_record(b, conclusion="failure"), run_record(a)]
+    widened = NONE | {"run_fastpath": True, "run_post_cutover": True}
     assert scope_repo.run(event="push", head=c, before=b, runs=red) == "false"
-    assert scope_repo.flags == NONE | {"run_fastpath": True}
+    assert scope_repo.flags == widened
     assert f"compare with {a}" in scope_repo.last.stdout
     assert any(f"compare/{a}...{b}" in arg for call in scope_repo.gh_calls for arg in call)
     # A base still running widens the same way.
     running = [run_record(b, status="in_progress", conclusion=None), run_record(a)]
     assert scope_repo.run(event="push", head=c, before=b, runs=running) == "false"
-    assert scope_repo.flags == NONE | {"run_fastpath": True}
+    assert scope_repo.flags == widened
     # Once B's own run passed, C is compared with B and skips them.
     assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b), run_record(a)]) == "false"
     assert scope_repo.flags == NONE
@@ -532,7 +535,7 @@ def test_a_pull_request_compares_with_its_base_validated_or_not(scope_repo: Scop
     # The push of the same change does widen, and runs the fast path jobs.
     assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b, conclusion="failure"),
                                                                run_record(a)]) == "false"
-    assert scope_repo.flags == NONE | {"run_fastpath": True}
+    assert scope_repo.flags == NONE | {"run_fastpath": True, "run_post_cutover": True}
 
 
 def test_a_test_only_change_runs_the_post_cutover_suite_on_the_tests_it_reaches(scope_repo: ScopeRepo) -> None:
@@ -553,22 +556,28 @@ def test_a_test_only_change_runs_the_post_cutover_suite_on_the_tests_it_reaches(
 
 
 def test_a_file_gitattributes_marks_binary_still_shows_its_lines(scope_repo: ScopeRepo) -> None:
-    # B marks *.dat as binary for diffs; C changes a .dat that names a
-    # scheduled model. --text shows the line, which names it.
-    b = scope_repo.commit("B", {".gitattributes": "*.dat -diff\n"})
+    # B marks Markdown as binary for diffs; C changes a document that names a
+    # scheduled model. --text shows the line, which names it. (Any other
+    # data file runs the suite whatever its lines say.)
+    b = scope_repo.commit("B", {".gitattributes": "*.md -diff\n"})
     scope_repo.push()
-    c = scope_repo.commit("C", {"docs/models.dat": "vendor/soon-1\n"})
+    c = scope_repo.commit("C", {"docs/models.md": "vendor/soon-1\n"})
     assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b)]) == "false"
     assert scope_repo.flags == NONE | {"run_post_cutover": True}
-    assert "docs/models.dat names 'vendor/soon-1'" in scope_repo.last.stderr
+    assert "docs/models.md names 'vendor/soon-1'" in scope_repo.last.stderr
+    # A document naming nothing scheduled, read through --text, runs nothing.
+    scope_repo.git("checkout", "-q", b)
+    quiet = scope_repo.commit("Q", {"docs/models.md": "latency notes\n"})
+    assert scope_repo.run(event="push", head=quiet, before=b, runs=[run_record(b)]) == "false"
+    assert scope_repo.flags == NONE
     # Without --text the patch shows no lines for it, and that alone runs
     # the whole suite.
     assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b)], mutation="no_text") == "false"
     assert scope_repo.flags == NONE | {"run_post_cutover": True}
-    assert "docs/models.dat has no lines the diff shows" in scope_repo.last.stderr
+    assert "docs/models.md has no lines the diff shows" in scope_repo.last.stderr
     assert scope_repo.post_cutover_tests == []
     # A change to .gitattributes itself runs the complete matrix.
     scope_repo.git("checkout", "-q", b)
-    d = scope_repo.commit("D", {".gitattributes": "*.dat -diff\n*.md -diff\n"})
+    d = scope_repo.commit("D", {".gitattributes": "*.md -diff\n*.dat -diff\n"})
     assert scope_repo.run(event="push", head=d, before=b, runs=[run_record(b)]) == "false"
     assert scope_repo.flags == ALL
