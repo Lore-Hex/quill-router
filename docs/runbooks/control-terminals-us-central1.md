@@ -174,7 +174,10 @@ Enclave latency is a different measurement: fetch `enclave.request_end` from
 its logged region or the VM's resource.labels.zone (region is zone without its
 last suffix). Check the actual log schema first; do not substitute Cloud Run
 location for the caller's region. Exclude missing settle_ms and count them
-separately; do not treat them as zero.
+separately; do not treat them as zero. The project keeps only 10% of
+`request_end` lines with status 200 and outcome ok (`infra/logging_sampling.tf`)
+and every other `request_end` line, so compute percentiles over status-200 lines
+only and multiply their count by ten; never mix the two populations.
 
 ```sh
 gcloud logging read '

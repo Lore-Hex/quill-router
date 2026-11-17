@@ -36,16 +36,47 @@ resource "google_logging_project_exclusion" "sample_enclave_success_lifecycle" {
   project     = local.gcp_project_id
   name        = "sample-enclave-success-lifecycle"
   description = "Keep 10% of enclave per-request success lines; keep every failure and every other launcher line."
-  filter      = <<-EOT
+  # The launcher's journald export carries the line in jsonPayload.message
+  # (lowercase). Field names are case-sensitive, and until 2026-11-16 this
+  # filter read jsonPayload.MESSAGE only, so it matched nothing and kept every
+  # success line. Both spellings are matched so an export change cannot
+  # silently undo the sampling again.
+  filter = <<-EOT
     logName="projects/quill-cloud-proxy/logs/confidential-space-launcher"
     AND (
-      jsonPayload.MESSAGE:"enclave.request_accept "
+      jsonPayload.message:"enclave.request_accept "
+      OR jsonPayload.message:"enclave.request_start "
+      OR (jsonPayload.message:"enclave.request_end " AND jsonPayload.message:"status=200 outcome=\"ok\"")
+      OR (jsonPayload.message:"enclave.invoke_attempt " AND jsonPayload.message:" outcome=ok ")
+      OR (jsonPayload.message:"enclave.invoke_complete " AND jsonPayload.message:" outcome=ok ")
+      OR jsonPayload.MESSAGE:"enclave.request_accept "
       OR jsonPayload.MESSAGE:"enclave.request_start "
       OR (jsonPayload.MESSAGE:"enclave.request_end " AND jsonPayload.MESSAGE:"status=200 outcome=\"ok\"")
       OR (jsonPayload.MESSAGE:"enclave.invoke_attempt " AND jsonPayload.MESSAGE:" outcome=ok ")
       OR (jsonPayload.MESSAGE:"enclave.invoke_complete " AND jsonPayload.MESSAGE:" outcome=ok ")
     )
     AND sample(insertId, 0.9)
+  EOT
+}
+
+# Stage D (fast-path streams) heartbeats: the enclave logs every heartbeat it
+# sends and every one the owner accepts, per open stream every few seconds.
+# On 2026-11-16 they were 82% of launcher bytes (one EU instance with many
+# long streams), doubling project ingestion. Keep 1% of the two success lines;
+# every other stage_d line (refusals, cap reached, failures) is kept whole.
+resource "google_logging_project_exclusion" "sample_enclave_stage_d_heartbeats" {
+  project     = local.gcp_project_id
+  name        = "sample-enclave-stage-d-heartbeats"
+  description = "Keep 1% of enclave Stage D heartbeat sent/accepted lines; keep every other stage_d line."
+  filter      = <<-EOT
+    logName="projects/quill-cloud-proxy/logs/confidential-space-launcher"
+    AND (
+      jsonPayload.message:"enclave.stage_d_heartbeat_sent "
+      OR jsonPayload.message:"enclave.stage_d_heartbeat_accepted "
+      OR jsonPayload.MESSAGE:"enclave.stage_d_heartbeat_sent "
+      OR jsonPayload.MESSAGE:"enclave.stage_d_heartbeat_accepted "
+    )
+    AND sample(insertId, 0.99)
   EOT
 }
 
