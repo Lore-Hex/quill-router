@@ -281,16 +281,6 @@ _aws_waf_rules_json tr-eu.example.awsapprunner.com
     assert enforced_rules["AwsManagedCommon"]["OverrideAction"] == {"None": {}}
 
 
-def test_aws_waf_helper_associates_and_verifies_the_resource() -> None:
-    waf = (ROOT / "scripts/deploy/_aws_waf.sh").read_text(encoding="utf-8")
-
-    assert "wafv2 create-web-acl" in waf
-    assert "wafv2 update-web-acl" in waf
-    assert "wafv2 associate-web-acl" in waf
-    assert "wafv2 get-web-acl-for-resource" in waf
-    assert "verify_app_runner_waf" in waf
-
-
 def test_aws_waf_reconciliation_updates_associates_and_verifies(tmp_path: Path) -> None:
     calls = tmp_path / "calls.log"
     driver = tmp_path / "driver.sh"

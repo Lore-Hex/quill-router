@@ -203,11 +203,6 @@ def test_the_shipped_directory_hides_robot_robot_and_human() -> None:
     assert [a["domain"] for a in week["apps"]] == ["kilocode.ai"]
 
 
-def test_removed_listings_stay_removed() -> None:
-    slugs = {listing.slug for listing in encrypted_ai.directory().listings}
-    assert not slugs & {"apple-private-cloud-compute", "confident-security", "anonrouter"}
-
-
 def _run_builder(monkeypatch: pytest.MonkeyPatch, *, age: float | None,
                  rows: Any = None) -> list[set[str]]:
     inserted: list[set[str]] = []

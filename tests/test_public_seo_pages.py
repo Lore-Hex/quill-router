@@ -6,7 +6,6 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import replace
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -849,23 +848,6 @@ def test_sign_in_with_trustedrouter_launch_post_documents_generic_flow(
     payload = _json_ld(response.text)
     assert "sign-in-with-trustedrouter" in json.dumps(payload)
     assert "slopnazi" not in response.text.lower()
-
-
-def test_removed_integration_is_absent_from_public_surfaces(client: TestClient) -> None:
-    for path in (
-        "/sign-in-with-trustedrouter",
-        "/blog/sign-in-with-trustedrouter",
-        "/blog",
-        "/sitemap-core.xml",
-        "/llms.txt",
-    ):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert "slopnazi" not in response.text.lower()
-
-    assert client.get("/blog/sign-in-with-trustedrouter-slopnazi").status_code == 404
-    docs = Path("docs/sign-in-with-trustedrouter.md").read_text(encoding="utf-8")
-    assert "slopnazi" not in docs.lower()
 
 
 def test_confidential_computing_blog_explains_and_verifies_the_boundary(

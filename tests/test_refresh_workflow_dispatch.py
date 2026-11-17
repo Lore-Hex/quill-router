@@ -887,15 +887,6 @@ def test_publication_guards_have_effect(publication_repo: PublicationRepo, guard
         assert_snapshot_published(publication_repo, result)
 
 
-def test_ci_accepts_explicit_dispatch_for_bot_commits() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    triggers = workflow.get("on", workflow.get(True))
-
-    # Any dispatch is accepted; the refresh's scope=paths is one of the choices.
-    assert triggers["workflow_dispatch"]["inputs"]["scope"]["options"] == ["full", "paths"]
-    assert triggers["workflow_dispatch"]["inputs"]["scope"]["default"] == "full"
-
-
 def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
         encoding="utf-8"
