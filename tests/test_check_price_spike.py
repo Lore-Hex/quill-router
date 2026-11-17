@@ -1909,3 +1909,169 @@ def test_regolo_apertus_eur_tariff_approval_is_exact_to_the_ecb_fixing(tmp_path)
         {route: {"prompt": "1", "completion": before[route]["prompt"]}},
         {route: {"prompt": "1", "completion": after[route]["prompt"]}},
     )[0]
+
+
+# Routes held by the hourly refresh on 2026-11-16 (run 43862438969), with the
+# exact old and live rates in USD/token.
+_ZRO_ABYSS1 = "zro/abyss1 [zro:zro:abyss1]"
+_IO_V41 = "deepseek/deepseek-v4.1-flash [io-net:io-net:{}]"
+_NOVEMBER_16_TRANSITIONS = [
+    (_ZRO_ABYSS1, "prompt", "0.00000015", "0.0000003"),
+    (_ZRO_ABYSS1, "completion", "0.00000055", "0.0000011"),
+    (_ZRO_ABYSS1 + " cached-input", "prompt", "0.000000005", "0.00000001"),
+    *(
+        (_IO_V41.format(native), dimension, old, new)
+        for native in ("deepseek/deepseek-v4.1-flash", "deepseek-ai/DeepSeek-V4.1-Flash")
+        for dimension, old, new in (
+            ("prompt", "0.00000036", "0.0000008202"),
+            ("completion", "0.00000144", "0.0000033534"),
+        )
+    ),
+    (_IO_V41.format("deepseek-ai/DeepSeek-V4.1-Flash") + " cached-input",
+     "prompt", "0.00000018", "0.0000004101"),
+]
+
+
+@pytest.mark.parametrize(("route", "dimension", "old", "new"), _NOVEMBER_16_TRANSITIONS)
+def test_november_16_zro_and_io_net_approvals_are_exact(route, dimension, old, new):
+    before = {route: {"prompt": "1", "completion": "1", dimension: old}}
+    after = {route: {**before[route], dimension: new}}
+    assert check(before, after)[0] == []
+    # Another new value, another old value, a further doubling, the other
+    # axis, or another route still holds.
+    assert check(before, {route: {
+        **after[route], dimension: str(Decimal(new) + Decimal("0.000000000001")),
+    }})[0]
+    assert check({route: {**before[route], dimension: str(Decimal(old) / 2)}}, after)[0]
+    assert check(after, {route: {**after[route], dimension: str(Decimal(new) * 2)}})[0]
+    other_dimension = "prompt" if dimension == "completion" else "completion"
+    assert check(
+        {route: {"prompt": "1", "completion": "1", other_dimension: old}},
+        {route: {"prompt": "1", "completion": "1", other_dimension: new}},
+    )[0]
+    provider = check_price_spike.route_provider(route)
+    for other in (
+        route.replace(f"[{provider}:{provider}:", "[other:other:"),
+        route.replace(f"[{provider}:{provider}:", f"[{provider}:{provider}/fp8:"),
+        route.removesuffix(" cached-input") if route.endswith(" cached-input")
+        else route + " cached-input",
+        route.split(" [", 1)[0],
+    ):
+        assert check({other: before[route]}, {other: after[route]})[0]
+
+
+def _manifest_rates(tmp_path: Path, slug: str, raw: dict) -> dict[str, dict[str, str]]:
+    directory = tmp_path / slug
+    directory.mkdir(parents=True)
+    (directory / f"{slug}.json").write_text(json.dumps(raw), encoding="utf-8")
+    return _load_provider_manifests(directory)
+
+
+def test_zro_abyss1_live_table_refresh_passes_only_with_the_approval(tmp_path, monkeypatch):
+    """The 2026-11-16 Zro page, through the adapter and manifest writer."""
+    from scripts.pricing.providers import zro
+
+    html = (ROOT / "tests/fixtures/pricing/zro_models_2026-11-16.html").read_text(encoding="utf-8")
+    committed = json.loads(zro.MANIFEST_PATH.read_text(encoding="utf-8"))
+    (abyss1,) = [row for row in committed["models"] if row["id"] == "zro/abyss1"]
+    # Pin the launch tariff the refresh compared against.
+    before_raw = {"provider": "zro", "models": [{
+        **abyss1, "routable": True, "input_token_price_per_m": 150_000,
+        "output_token_price_per_m": 550_000, "cached_input_token_price_per_m": 5_000,
+    }]}
+    manifest = tmp_path / "zro.json"
+    manifest.write_text(json.dumps(before_raw), encoding="utf-8")
+    monkeypatch.setattr(zro, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(zro, "_DISCOVERED_ROWS", {})
+    monkeypatch.setattr(zro, "UPSTREAM_ID_MAP", {})
+    monkeypatch.setenv("ZRO_API_KEY", "test-only-key")
+    native_ids = ("deepseek-v4.1-flash", "glm-5.3", "dolly2-security", "abyss1", "zro/abyss1")
+    monkeypatch.setattr(zro, "fetch_json", lambda *_a, **_kw: {"data": [{"id": n} for n in native_ids]})
+    monkeypatch.setattr(zro, "fetch_html", lambda *_a, **_kw: html)
+    probed: list[str] = []
+    monkeypatch.setattr(zro, "probe_openai_chat", lambda **kw: probed.append(kw["model"]) or True)
+
+    zro.write_provider_manifest(zro.fetch())
+
+    assert "abyss1" not in probed  # A published route is not canaried again.
+    before = _manifest_rates(tmp_path / "before", "zro", before_raw)
+    after = _manifest_rates(
+        tmp_path / "after", "zro", json.loads(manifest.read_text(encoding="utf-8"))
+    )
+    assert {axis: Decimal(value) for axis, value in after[_ZRO_ABYSS1].items()} == {
+        "prompt": Decimal("0.0000003"), "completion": Decimal("0.0000011"),
+    }
+    assert Decimal(after[_ZRO_ABYSS1 + " cached-input"]["prompt"]) == Decimal("0.00000001")
+    assert check(before, after)[0] == []
+    # Positive control: without the approval the gate holds what the refresh held.
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    assert check_price_spike.failing_routes(before, after) == {
+        _ZRO_ABYSS1, _ZRO_ABYSS1 + " cached-input",
+    }
+
+
+def test_io_net_v41_flash_live_rates_pass_snapshot_and_manifest_only_when_approved(
+    tmp_path, monkeypatch,
+):
+    """IO's 2026-11-16 /models row, through the adapter, writer and both gates."""
+    from dataclasses import replace
+
+    from scripts.pricing import refresh
+    from scripts.pricing.providers import _direct_openai, io_net
+    from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
+
+    model_id, native = "deepseek/deepseek-v4.1-flash", "deepseek-ai/DeepSeek-V4.1-Flash"
+    # GET https://api.intelligence.io.solutions/api/v1/models, 2026-11-16.
+    live_row = {
+        "id": native, "object": "model", "context_window": 1048320, "max_tokens": 131072,
+        "input_token_price": 8.202e-07, "output_token_price": 3.3534e-06,
+        "cache_read_token_price": 4.101e-07, "supports_tools": True,
+    }
+    committed = json.loads(io_net.MANIFEST_PATH.read_text(encoding="utf-8"))
+    (row,) = [r for r in committed["models"] if r.get("upstream_id") == native]
+    before_raw = {"provider": "io-net", "models": [{
+        **row, "routable": True, "input_token_price_per_m": 360_000,
+        "output_token_price_per_m": 1_440_000, "cached_input_token_price_per_m": 180_000,
+    }]}
+    manifest = tmp_path / "io-net.json"
+    manifest.write_text(json.dumps(before_raw), encoding="utf-8")
+    monkeypatch.setenv("IONET_API_KEY", "test-only-key")
+    monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_a, **_kw: {"data": [live_row]})
+
+    def no_paid_canary(**_kwargs):
+        raise AssertionError("a published route is not canaried again")
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", no_paid_canary)
+    catalog = DirectOpenAIProvider(replace(io_net.CATALOG.spec, expected_models=()), manifest_path=manifest)
+    result = catalog.fetch()
+    catalog.write_provider_manifest(result)
+
+    block = refresh._price_to_pricing_block(result.prices[model_id])
+    paths = []
+    for side, prompt, completion in (
+        ("before", "0.00000036", "0.00000144"),
+        ("after", block["prompt"], block["completion"]),
+    ):
+        snapshot = _write(tmp_path, side + ".json", _make_endpoint_snapshot(
+            ("1", "1"), [("io-net", model_id, prompt, completion)], model_id=model_id,
+        ))
+        raw = before_raw if side == "before" else json.loads(manifest.read_text(encoding="utf-8"))
+        directory = tmp_path / side
+        directory.mkdir()
+        (directory / "io-net.json").write_text(json.dumps(raw), encoding="utf-8")
+        paths.append((snapshot, directory))
+    args = (paths[0][0], paths[1][0], paths[0][1], paths[1][1])
+    assert (Decimal(block["prompt"]), Decimal(block["completion"])) == (
+        Decimal("0.0000008202"), Decimal("0.0000033534"),
+    )
+    assert check_price_spike.spiking_providers(*args) == {}
+    # Positive control: without the approval the gate holds the same three
+    # routes the 2026-11-16 refresh held.
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    assert check_price_spike.spiking_providers(*args) == {
+        "io-net": [
+            f"{model_id} [io-net:io-net:{model_id}]",
+            f"{model_id} [io-net:io-net:{native}]",
+            f"{model_id} [io-net:io-net:{native}] cached-input",
+        ],
+    }

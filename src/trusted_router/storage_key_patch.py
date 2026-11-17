@@ -12,6 +12,7 @@ TYPED_LIMIT_PATCH_FIELDS = frozenset(
     {
         "limit",
         "limit_microdollars",
+        "limit_microdollars_at_most",
         "limit_daily_microdollars",
         "limit_weekly_microdollars",
         "limit_monthly_microdollars",
@@ -32,6 +33,14 @@ def apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
         )
     if "limit_microdollars" in patch:
         key.limit_microdollars = patch["limit_microdollars"]
+    if patch.get("limit_microdollars_at_most") is not None:
+        # Lower the lifetime limit to at most this, never raise it. Every
+        # backend applies a patch to the key it read inside its write
+        # transaction (Spanner and Postgres) or under its lock (memory), so a
+        # concurrent, lower cut cannot be overwritten by a higher one.
+        ceiling = int(patch["limit_microdollars_at_most"])
+        current = key.limit_microdollars
+        key.limit_microdollars = ceiling if current is None else min(current, ceiling)
     if "limit_reset" in patch:
         key.limit_reset = patch["limit_reset"]
     for window in ("daily", "weekly", "monthly"):

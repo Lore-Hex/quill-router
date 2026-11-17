@@ -123,6 +123,13 @@ def test_wallet_only_console_offers_stablecoin_without_card_controls() -> None:
     assert response.status_code == 200
     assert 'name="payment_method" value="stablecoin"' in response.text
     assert "<span>USDC</span>" in response.text
+    # The fixed USDC method still states its time to credit before checkout.
+    assert (
+        "<span data-credit-timing-text>Credit is added once the USDC transfer "
+        "confirms, usually within minutes.</span>"
+    ) in response.text
+    assert "<dd data-summary-timing>Usually within minutes</dd>" in response.text
+    assert "<span data-credit-timing-text>Credit is available as soon" not in response.text
     assert '<option value="auto">' not in response.text
     assert '<option value="ach">' not in response.text
     assert '<option value="paypal">' not in response.text
@@ -236,6 +243,6 @@ def test_verified_wallet_email_unlocks_standard_billing_options() -> None:
         page = client.get("/console/credits")
 
     assert checkout.status_code == 201, checkout.text
-    assert '<option value="auto">Card</option>' in page.text
+    assert '<option value="auto">Card, instant</option>' in page.text
     assert 'action="/console/credits/payment-methods/add"' in page.text
     assert 'action="/console/credits/auto-refill"' in page.text

@@ -24,7 +24,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
 from trusted_router.gateway_boot import GatewayBoot
-from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS, check_auto_refill_settings
 from trusted_router.operational_analytics_freshness import (
     BACKEND_MEMORY,
     REASON_NOT_CONFIGURED,
@@ -1643,6 +1643,31 @@ class InMemoryStore:
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         return self.api_keys.delete_many(workspace_id, key_hashes)
 
+    def record_chat_browser_key(
+        self, workspace_id: str, user_id: str, key_hash: str, *, expires_at: str | None = None,
+    ) -> None:
+        self.api_keys.record_chat_browser_key(workspace_id, user_id, key_hash, expires_at=expires_at)
+
+    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
+        return self.api_keys.chat_browser_key_hashes(workspace_id, user_id)
+
+    def list_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, key_hashes: list[str] | None = None,
+    ) -> list[ApiKeyUsageSnapshot]:
+        return self.api_keys.list_chat_browser_keys(workspace_id, user_id, key_hashes=key_hashes)
+
+    def forget_chat_browser_keys(
+        self, workspace_id: str, user_id: str, key_hashes: list[str],
+    ) -> None:
+        self.api_keys.forget_chat_browser_keys(workspace_id, user_id, key_hashes)
+
+    def forget_expired_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, expired_before: str,
+    ) -> None:
+        self.api_keys.forget_expired_chat_browser_keys(
+            workspace_id, user_id, expired_before=expired_before,
+        )
+
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
 
@@ -3039,9 +3064,15 @@ class InMemoryStore:
         threshold_microdollars: int,
         amount_microdollars: int,
     ) -> CreditAccount | None:
-        """Update auto-refill thresholds. Caller validates ranges; we just
-        store. Disabling clears the schedule but keeps the saved Stripe
-        customer/payment-method so re-enabling doesn't require re-onboarding."""
+        """Update auto-refill thresholds. Caller validates ranges; the store
+        refuses only a threshold at or above the amount (money.py). Disabling
+        clears the schedule but keeps the saved Stripe customer/payment-method
+        so re-enabling doesn't require re-onboarding."""
+        check_auto_refill_settings(
+            enabled=enabled,
+            threshold_microdollars=threshold_microdollars,
+            amount_microdollars=amount_microdollars,
+        )
         with self._lock:
             account = self.credits.get(workspace_id)
             if account is None:

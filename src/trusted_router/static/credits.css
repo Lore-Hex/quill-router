@@ -384,6 +384,7 @@ body.console:has(.credits-page) {
   max-width: 100%;
   min-height: 48px;
   padding: 8px 42px 8px 46px;
+  text-overflow: ellipsis;
   font-size: 15px;
   font-weight: 500;
   background: var(--tr-color-surface-bg-alt);
@@ -425,6 +426,37 @@ body.console:has(.credits-page) {
 .credits-select-chevron {
   right: 14px;
   color: var(--tr-color-text-tertiary);
+}
+
+/* Time to credit for the chosen method, kept close to the picker. The
+   slower bank path reads a step louder: primary text in a quiet panel. */
+.credits-timing {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -8px 0 0;
+  font-size: 13px;
+  color: var(--tr-color-text-secondary);
+}
+
+.credits-timing .credits-icon {
+  margin-top: 2px;
+  color: var(--tr-color-accent-base);
+}
+
+.credits-timing.is-slow {
+  width: fit-content;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--tr-color-line-rule);
+  border-radius: var(--tr-square, 6px);
+  background: var(--tr-color-surface-panel);
+  font-weight: 500;
+  color: var(--tr-color-text-primary);
+}
+
+.credits-timing.is-slow .credits-icon {
+  color: var(--tr-color-status-degraded);
 }
 
 /* Summary */
@@ -959,7 +991,10 @@ body.console:has(.credits-page) {
     width: 100%;
   }
 
+  /* Labels keep one line; a long value such as "Up to 4 business days"
+     wraps in its own column instead. */
   .credits-summary {
+    grid-template-columns: minmax(max-content, 1fr) auto;
     gap: 10px 16px;
     padding-top: 16px;
   }

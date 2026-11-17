@@ -295,7 +295,24 @@ reasons from its closed set.
 | accepted | `deadline_passed` | 409 `already_terminal` (§11 item 4) |
 | accepted | `rejected` | 409 `out_of_cohort`, logged as `fastpath.heartbeat_divergence` |
 | accepted | `invalid` | 409 `out_of_cohort`, logged and alerted: the envelope's seal failed |
-| accepted | `retry`, or no answer in the budget | 503 `Retry-After: 1`, as the kill switch answers |
+| accepted | `retry` twice (below), or no answer in the budget | 503 `Retry-After: 1`, as the kill switch answers |
+
+A `retry` is sent once more, the same bytes, within what remains of the
+same budget (§4.7), no sooner than 0.25 s after the first send and not with
+less than 0.1 s left; the resend's answer is the one mapped above. The owner
+answers a resend of a heartbeat it took as a replay, by the record already
+handed over, and takes one it refused as the first, so the resend adds no
+record (`requests.go`, the replay branch). It catches an acknowledgement
+that came after the front door's owner wait (2026-11-16: settle-log
+acknowledgements past 500 ms answered `retry`, and the route answered 503
+though the record landed moments later), and only one landing within
+roughly 0.5 to 1.3 s of the first send: the first `retry` comes at the
+owner wait (0.5 s) from the owner's own front door, or at about 0.75 s
+(owner wait plus peer wait) from another, and the resend's own owner wait
+must end inside the 1.5 s budget, so a second full cycle through another
+front door does not fit. A publish the server holds for seconds is beyond
+it; the settle log's hedge is the fix for that (the owner sends a held
+Publish call's batch again beside it, `settlelog.Settings.Hedge`, #2671).
 
 `cap_micro` is e on both paths (§2.2), so the enclave's mismatch log stays
 quiet. `expires_at_ms` becomes the owner's deadline (about 30 s ahead)

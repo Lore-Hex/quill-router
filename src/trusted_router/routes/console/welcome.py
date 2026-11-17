@@ -70,6 +70,9 @@ def register(app: FastAPI) -> None:
             credits_empty=available <= 0,
             can_run_first_call=balance_known and available > 0,
             onboarding_cell=cell,
+            # Only owners and admins can create keys (the create panel is not
+            # rendered for members), so members are not sent to it.
+            can_manage=ctx.can_manage,
         ), headers={"Cache-Control": "private, no-store"})
         if cell:
             onboarding_exposure(request, user_id=ctx.user.id, workspace_id=ctx.workspace.id)

@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.routes.console._shared import ConsoleDep, money, render
+from trusted_router.routes.console._shared import (
+    ConsoleDep,
+    money,
+    render,
+    require_manager,
+)
+from trusted_router.routes.console.social_rewards import _same_origin
 from trusted_router.routes.oauth_authorized_apps import (
     _authorized_app_shape,
     _live_delegated_snapshots,
@@ -24,7 +30,7 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         saved: str | None = None,
     ) -> Response:
-        _require_manager(ctx)
+        require_manager(ctx)
         grouped: dict[str, list[Any]] = {}
         for snapshot in _live_delegated_snapshots(ctx.workspace.id):
             grouped.setdefault(snapshot.api_key.app_id, []).append(snapshot)
@@ -49,11 +55,16 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/authorized-apps/{app_id}/budget")
     def console_update_authorized_app_budget(
+        request: Request,
         app_id: str,
         ctx: ConsoleDep,
+        settings: SettingsDep,
         monthly_budget: str = Form(""),
     ) -> Response:
-        _require_manager(ctx)
+        # Same-origin before the role check, as the key routes do: this
+        # changes key budgets.
+        _same_origin(request, settings)
+        require_manager(ctx)
         snapshots = _owned_app_snapshots(ctx.workspace.id, app_id)
         try:
             value = _monthly_budget(monthly_budget or None)
@@ -69,15 +80,13 @@ def register(app: FastAPI) -> None:
         return RedirectResponse("/console/authorized-apps?saved=budget", status_code=303)
 
     @app.post("/console/authorized-apps/{app_id}/revoke")
-    def console_revoke_authorized_app(app_id: str, ctx: ConsoleDep) -> Response:
-        _require_manager(ctx)
+    def console_revoke_authorized_app(
+        request: Request, app_id: str, ctx: ConsoleDep, settings: SettingsDep,
+    ) -> Response:
+        _same_origin(request, settings)
+        require_manager(ctx)
         snapshots = _owned_app_snapshots(ctx.workspace.id, app_id)
         _update_all_or_rollback(
             [row.api_key for row in snapshots], field="disabled", value=True
         )
         return RedirectResponse("/console/authorized-apps?saved=revoked", status_code=303)
-
-
-def _require_manager(ctx: Any) -> None:
-    if not ctx.can_manage:
-        raise HTTPException(status_code=403, detail="Requires workspace manager role")

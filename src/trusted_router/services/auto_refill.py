@@ -53,7 +53,9 @@ PENDING_RETRY_INTERVAL_SECONDS = 30 * 60
 @dataclass(frozen=True)
 class AutoRefillOutcome:
     fired: bool
-    reason: str  # "charged" | "disabled" | "above_threshold" | "pending" | "rate_limited" | "stripe_error:<code>"
+    # "charged" | "disabled" | "threshold_not_below_amount" | "above_threshold"
+    # | "pending" | "rate_limited" | "stripe_error:<code>"
+    reason: str
     payment_intent_id: str | None = None
     retryable: bool = False
 
@@ -109,6 +111,20 @@ def maybe_charge_after_settle(
     # Recheck here as an earlier account read may predate that commit.
     if STORE.get_workspace(workspace_id) is None:
         return AutoRefillOutcome(fired=False, reason="account_closed")
+
+    if account.auto_refill_threshold_microdollars >= account.auto_refill_amount_microdollars:
+        # Saving this is refused now (money.check_auto_refill_settings), but a
+        # configuration saved before that rule would charge again after
+        # every small settle. Do not charge it; the owner must fix it. Checked
+        # here, where a charge would otherwise go out, so a workspace above
+        # its threshold does not log on every settle.
+        log.warning(
+            "auto_refill.threshold_not_below_amount workspace=%s threshold=%s amount=%s",
+            workspace_id,
+            account.auto_refill_threshold_microdollars,
+            account.auto_refill_amount_microdollars,
+        )
+        return AutoRefillOutcome(fired=False, reason="threshold_not_below_amount")
 
     try:
         import stripe

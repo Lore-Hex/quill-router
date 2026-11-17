@@ -750,6 +750,76 @@ def test_perplexity_parses_exact_low_context_request_fee() -> None:
     assert perplexity._parse_low_context_request_price(html) == 5_000
 
 
+_PERPLEXITY_PRICING_2026_11_16 = (
+    Path(__file__).parent / "fixtures/pricing/perplexity_pricing_2026-11-16.html"
+)
+_LEGACY_SONAR_FEE_TABLE = """
+  <table>
+    <thead><tr><th>Model</th><th>Low Context Size</th><th>Medium Context Size</th></tr></thead>
+    <tbody><tr><td>Sonar</td><td>$5</td><td>$8</td></tr></tbody>
+  </table>
+"""
+
+
+def test_perplexity_post_sonar_price_list_is_a_withdrawn_fee_not_a_parser_fault() -> None:
+    html = _PERPLEXITY_PRICING_2026_11_16.read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError) as withdrawn:
+        perplexity._parse_low_context_request_price(html)
+    assert str(withdrawn.value) == perplexity.SONAR_FEE_WITHDRAWN
+    # A published fee table still wins: the route can price again once one exists.
+    assert perplexity._parse_low_context_request_price(html + _LEGACY_SONAR_FEE_TABLE) == 5_000
+    # Without the Agent API tool table it is an unknown page, not a withdrawal.
+    for unknown in (
+        html.replace("<h2>Agent API Pricing</h2>", "<h2>Pricing</h2>"),
+        html.replace("per invocation", "per call"),
+        "<html><body><h2>Agent API Pricing</h2></body></html>",
+    ):
+        with pytest.raises(RuntimeError, match="Sonar low-context request price not found"):
+            perplexity._parse_low_context_request_price(unknown)
+
+
+def test_perplexity_withdrawn_fee_keeps_sonar_quarantined_without_paid_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    html = _PERPLEXITY_PRICING_2026_11_16.read_text(encoding="utf-8")
+    manifest = tmp_path / "perplexity.json"
+    manifest.write_bytes(perplexity.MANIFEST_PATH.read_bytes())
+    catalog = DirectOpenAIProvider(replace(perplexity.CATALOG.spec), manifest_path=manifest)
+    monkeypatch.setattr(perplexity, "CATALOG", catalog)
+    monkeypatch.setattr(perplexity, "MANIFEST_PATH", manifest)
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-only-key")
+    monkeypatch.setattr(perplexity, "fetch_html", lambda url: html)
+    calls: list[str] = []
+
+    def catalog_row(url: str, *, extra_headers: dict[str, str]) -> dict:
+        calls.append(url)
+        return {"data": [{"id": "perplexity/sonar", "pricing": {
+            "unit": "usd_per_1m_tokens", "input": "0.25", "output": "2.50", "cache_read": "0.0625",
+        }}]}
+
+    monkeypatch.setattr(_direct_openai, "fetch_json", catalog_row)
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **kw: calls.append("canary"))
+
+    with pytest.raises(RuntimeError) as withdrawn:
+        perplexity.fetch()
+    assert str(withdrawn.value) == perplexity.SONAR_FEE_WITHDRAWN
+    assert calls == []  # No credentialed catalog call and no paid canary.
+    # The refresh holds the provider, so the committed manifest keeps its
+    # 2026-09-28 timestamp and stays expired: no Sonar route is published.
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    assert _provider_manifest_valid_until("perplexity", raw) < datetime.now(UTC)
+    assert not any(endpoint.provider == "perplexity" for endpoint in endpoints_for_model("perplexity/sonar"))
+    assert PREPAID_PROVIDER_HOLD_REASONS["perplexity"] == "billing-contract-unverified"
+
+    # Positive control: a published low-context fee lets discovery price Sonar
+    # again (the managed-billing hold above still applies to routing).
+    monkeypatch.setattr(perplexity, "fetch_html", lambda url: html + _LEGACY_SONAR_FEE_TABLE)
+    result = perplexity.fetch()
+    assert calls == [perplexity.URL]
+    assert set(result.prices) == {"perplexity/sonar"}
+    assert catalog.discovered_rows["perplexity/sonar"]["fixed_request_price_microdollars"] == 5_000
+
+
 def test_perceptron_filters_media_free_and_unpriced_rows() -> None:
     rows = perceptron._normalize_rows(
         [

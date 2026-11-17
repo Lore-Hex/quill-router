@@ -29,7 +29,10 @@ the default network behind the project's NAT with no external address.
 2. A release. `fastpath-release.yml` uploads every main commit whose CI
    passed to `gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/<commit>/`;
    the first is the commit that merged the workflow. Pin it in
-   `infra/fastpath.tf` (`fastpath_release`), merge, and reset both nodes so
+   `infra/fastpath.tf` (`fastpath_release`, with its digests in
+   `fastpath_release_digests`, read from the release's published
+   `SHA256SUMS` by "Pinning a release" in `fastpath-deploy.md`), merge, and
+   reset both nodes so
    the startup script installs it. A node that already ran a release takes
    the new one by "Taking a pinned release" in `fastpath-deploy.md`, which
    checks the release its process runs, not the file that names it:

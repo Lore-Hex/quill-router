@@ -4,6 +4,27 @@
 {% endblock %}
 {% block body %}
 {% import "console/_credits_icons.html" as icons %}
+{#- How long each payment method takes to add credit, as the payment code
+    behaves. Card and saved card: Stripe Checkout charges the card and the
+    checkout.session.completed webhook (payment_status "paid") credits it.
+    ACH: that session completes unpaid; credit waits for
+    checkout.session.async_payment_succeeded once the debit settles. USDC:
+    credited when Stripe reports the crypto payment paid; Stripe sets the
+    confirmations, so the copy says "usually". PayPal: captured and credited
+    on the return from PayPal unless PayPal holds the capture for review.
+    Adyen: credited by the AUTHORISATION webhook. `label` follows the option
+    name, `summary` fills the Credit available row, `line` sits under the
+    picker; console.js reads the same table from data-credit-timing. -#}
+{% set card_timing = {'label': 'instant', 'summary': 'Instant', 'line': 'Credit is available as soon as your card payment goes through.'} %}
+{% set credit_timing = {
+  'auto': card_timing,
+  'card': card_timing,
+  'ach': {'label': 'up to 4 business days', 'summary': 'Up to 4 business days', 'line': 'Credit is added once the bank payment settles, which can take up to 4 business days. Pay by card if you need it sooner.', 'slow': true},
+  'stablecoin': {'label': 'usually within minutes', 'summary': 'Usually within minutes', 'line': 'Credit is added once the USDC transfer confirms, usually within minutes.'},
+  'paypal': {'label': 'usually instant', 'summary': 'Usually instant', 'line': 'Credit is added when you return from PayPal, unless PayPal holds the payment for review.'},
+  'adyen': {'label': 'usually within minutes', 'summary': 'Usually within minutes', 'line': 'Credit is added once Adyen confirms the payment, usually within minutes.'},
+} %}
+{% set default_timing = credit_timing['stablecoin' if wallet_only_billing else 'auto'] %}
 <div class="credits-page">
   <section class="credits-balance" aria-labelledby="credits-balance-title">
     <div class="credits-balance-main">
@@ -16,13 +37,23 @@
         {% endif %}
       </div>
     </div>
+    {% if can_manage %}
     <a class="credits-send" href="/console/credit-transfers" aria-label="Send credits">{{ icons.svg('transfer', 18) }}<span>Send credits</span></a>
+    {% endif %}
   </section>
 
+  {# Members see the balance only: no card, payment history, receipts or
+     billing controls. The routes refuse members too; this only hides them. #}
+  {% if not can_manage %}
+  <section class="credits-add" aria-label="Billing" data-billing-manager-note>
+    <p class="credits-status" role="note">{{ icons.svg('shield', 18, 1.8) }}<span>Only workspace owners and admins can manage billing. Ask one of them to add or send credits.</span></p>
+  </section>
+  {% else %}
   <section class="credits-add" aria-labelledby="credits-add-title">
     <form class="credits-form" method="post" action="/console/credits/checkout"
           data-checkout-form
           data-fee-schedule="{{ checkout_fee_schedule_json }}"
+          data-credit-timing="{{ credit_timing|tojson|forceescape }}"
           data-paypal-minimum="{{ paypal_minimum_dollars }}">
       <h2 id="credits-add-title">Add credits</h2>
       {% if identity_verification_checkout %}<input type="hidden" name="purpose" value="identity_verification">{% endif %}
@@ -74,25 +105,30 @@
           <span data-method-icon="coin" data-methods="stablecoin">{{ icons.svg('coin') }}</span>
           <span data-method-icon="wallet" data-methods="paypal">{{ icons.svg('paypal') }}</span>
         </span>
-        <select name="payment_method" aria-label="Payment method" data-checkout-payment-method>
+        {#- Each option names its time to credit. The saved card's label is
+            refreshed from /stripe-details, which re-appends the suffix. -#}
+        <select name="payment_method" aria-label="Payment method" aria-describedby="credits-timing" data-checkout-payment-method>
           {% if has_payment_method %}
-          <option value="auto" data-credits-saved-card-label>{% include "console/_credits_saved_payment_method.html" %}</option>
-          <option value="card">Another card</option>
+          <option value="auto" data-credits-saved-card-label data-credits-label-suffix=", {{ credit_timing.auto.label }}">{% include "console/_credits_saved_payment_method.html" %}, {{ credit_timing.auto.label }}</option>
+          <option value="card">Another card, {{ credit_timing.card.label }}</option>
           {% else %}
-          <option value="auto">Card</option>
+          <option value="auto">Card, {{ credit_timing.auto.label }}</option>
           {% endif %}
-          <option value="ach">Bank account (ACH)</option>
-          <option value="stablecoin">USDC</option>
+          <option value="ach">Bank account (ACH), {{ credit_timing.ach.label }}</option>
+          <option value="stablecoin">USDC, {{ credit_timing.stablecoin.label }}</option>
           {% if paypal_enabled %}
-          <option value="paypal">PayPal</option>
+          <option value="paypal">PayPal, {{ credit_timing.paypal.label }}</option>
           {% endif %}
           {% if adyen_enabled %}
-          <option value="adyen">Adyen</option>
+          <option value="adyen">Adyen, {{ credit_timing.adyen.label }}</option>
           {% endif %}
         </select>
         <span class="credits-select-chevron" aria-hidden="true">{{ icons.svg('chevron', 16, 1.8) }}</span>
       </span>
       {% endif %}
+      {#- Rendered for the default method so it reads right without script;
+          console.js rewrites it when the method changes. -#}
+      <p class="credits-timing{% if default_timing.slow %} is-slow{% endif %}" id="credits-timing" aria-live="polite" data-credit-timing-line>{{ icons.svg('clock', 16, 1.8) }}<span data-credit-timing-text>{{ default_timing.line }}</span></p>
 
       <p class="credits-status" role="status" data-paypal-minimum-message hidden>{{ icons.svg('alert', 18, 1.8) }}<span data-paypal-minimum-text></span></p>
 
@@ -101,6 +137,8 @@
         <dd class="credits-summary-credit" data-summary-credit>{{ checkout_summary.credit }}</dd>
         <dt>Processing fee</dt>
         <dd data-summary-fee>{{ checkout_summary.fee }}</dd>
+        <dt>Credit available</dt>
+        <dd data-summary-timing>{{ default_timing.summary }}</dd>
         <dt class="credits-summary-total">Total at checkout</dt>
         <dd class="credits-summary-total" data-summary-total>{{ checkout_summary.total }}</dd>
       </dl>
@@ -114,8 +152,10 @@
       </div>
     </form>
   </section>
+  {% endif %}
 
   <div class="credits-rows">
+    {% if can_manage %}
     {# Wallet-only accounts cannot add or manage cards; a card saved before
        the account became wallet-only can still be removed here. #}
     {% if not wallet_only_billing or has_payment_method %}
@@ -153,6 +193,9 @@
           <input class="credits-switch" type="checkbox" role="switch" name="enabled" value="1" aria-labelledby="credits-refill-title"{% if auto_refill_enabled %} checked{% endif %}{% if not has_payment_method %} disabled{% endif %} data-auto-refill-switch>
         </span>
       </div>
+      {% if auto_refill_error_message %}
+      <p class="credits-status" role="alert" data-auto-refill-error>{{ icons.svg('alert', 18, 1.8) }}<span>{{ auto_refill_error_message }}</span></p>
+      {% endif %}
       <div class="credits-refill-settings{% if auto_refill_enabled %} is-open{% endif %}" data-auto-refill-settings>
         <label class="credits-field">
           <span>When balance is below</span>
@@ -172,6 +215,7 @@
       </div>
     </form>
     {% endif %}
+    {% endif %}
 
     <button class="credits-row credits-row-button credits-row-stack credits-row-rewards" type="button" data-rewards-open hidden>
       <span class="credits-disc credits-disc-blue" aria-hidden="true">{{ icons.svg('gift') }}</span>
@@ -180,11 +224,13 @@
     </button>
   </div>
 
+  {% if can_manage %}
   <section class="credits-history" aria-labelledby="credits-history-title" data-credits-stripe-details-url="/console/credits/stripe-details">
     <h2 id="credits-history-title">Payment history</h2>
     <div data-credits-payment-history aria-busy="true">
       <noscript><p class="credits-quiet"><a href="/console/credits/stripe-details">Open Stripe payment details</a></p></noscript>
     </div>
   </section>
+  {% endif %}
 </div>
 {% endblock %}

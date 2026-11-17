@@ -128,7 +128,10 @@ def forward(
 ) -> Forwarded:
     """Send an accepted heartbeat (a replay too: the owner may not have its
     first attempt) and read the answer. No client, no answer in the budget,
-    or `retry` is a retry."""
+    or `retry` is a retry. The client sends a heartbeat answered `retry` once
+    more within the same budget, which the owner takes as a replay
+    (FrontDoorClient.heartbeat); an answer to that resend is logged, so the
+    streams it kept are counted beside those it did not."""
     if client is None:
         logger.warning("fastpath heartbeat without a front door authorization_id=%s", authorization.id)
         return Forwarded()
@@ -151,6 +154,10 @@ def forward(
             "fastpath heartbeat unanswered authorization_id=%s seq=%d why=%s", authorization.id, seq, exc,
         )
         return Forwarded()
+    if answer.resent:
+        logger.warning(
+            "fastpath heartbeat resent authorization_id=%s seq=%d status=%s", authorization.id, seq, answer.status,
+        )
     if answer.status == frontdoor.ACCEPTED and answer.deadline is not None:
         return Forwarded(deadline=answer.deadline)
     reason = REJECTION_REASONS.get(answer.status)

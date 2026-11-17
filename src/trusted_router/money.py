@@ -28,6 +28,32 @@ VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS = 25 * MICRODOLLARS_PER_DOLLAR
 VERIFF_ATTEMPT_FEE_MICRODOLLARS = 5 * MICRODOLLARS_PER_DOLLAR
 
 
+class AutoRefillSettingsError(ValueError):
+    """An auto-refill configuration that would charge the saved card badly."""
+
+
+def check_auto_refill_settings(
+    *,
+    enabled: bool,
+    threshold_microdollars: int,
+    amount_microdollars: int,
+) -> None:
+    """Refuse an enabled auto-refill whose threshold is not below its amount.
+
+    Auto-refill charges whenever a settle leaves the balance below the
+    threshold. A refill no larger than the threshold lifts the balance only a
+    little above it, so a $500 threshold with a $5 amount charges the card
+    again after every $5 of usage, each time with its own processing fee.
+    Disabling is always allowed, whatever the stored numbers, so a workspace
+    saved before this rule can still switch auto-refill off. Every writer of
+    these settings calls this, the console form and each store alike.
+    """
+    if enabled and threshold_microdollars >= amount_microdollars:
+        raise AutoRefillSettingsError(
+            "The auto-refill threshold must be below the refill amount"
+        )
+
+
 def money_pair(name: str, microdollars: int) -> dict[str, object]:
     """Return both the float-dollar field and the integer-microdollars field
     for a money value, so response shapes don't have to repeat the conversion.

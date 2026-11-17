@@ -1,5 +1,6 @@
 {% extends "console/_layout.html" %}
 {% block body %}
+{% if can_manage %}
 <section class="panel">
   <div class="panel-head"><h2>Add destination</h2><span class="pill">metadata default</span></div>
   <div class="panel-body">
@@ -47,6 +48,9 @@
     </form>
   </div>
 </section>
+{% else %}
+<p class="console-flash" role="note" data-broadcast-manager-note>Only workspace owners and admins can manage Broadcast destinations. Ask one of them to add or change one.</p>
+{% endif %}
 
 <section class="panel">
   <div class="panel-head"><h2>Destinations</h2></div>
@@ -54,30 +58,40 @@
     <div class="table-scroll">
     <table>
       <thead>
+        {% if can_manage %}
         <tr><th>Name</th><th>Type</th><th>Endpoint</th><th>Content</th><th>Secrets</th><th>Status</th><th></th></tr>
+        {% else %}
+        <tr><th>Name</th><th>Type</th><th>Content</th><th>Status</th></tr>
+        {% endif %}
       </thead>
       <tbody>
         {% for destination in destinations %}
         <tr>
           <td>{{ destination.name }}</td>
           <td>{{ destination.type }}</td>
+          {% if can_manage %}
           <td><code>{{ destination.endpoint }}</code></td>
+          {% endif %}
           <td>{{ 'enabled' if destination.include_content else 'metadata only' }}</td>
+          {% if can_manage %}
           <td>
             {% if destination.api_key_configured %}<span class="pill">api key</span>{% endif %}
             {% if destination.headers_configured %}<span class="pill">headers</span>{% endif %}
             {% if not destination.api_key_configured and not destination.headers_configured %}none{% endif %}
           </td>
+          {% endif %}
           <td><span class="pill {{ 'good' if destination.enabled else '' }}">{{ 'active' if destination.enabled else 'disabled' }}</span></td>
+          {% if can_manage %}
           <td>
             <form class="inline-form" method="post" action="/console/broadcast/{{ destination.id }}/delete">
               <button class="btn" type="submit">Delete</button>
             </form>
           </td>
+          {% endif %}
         </tr>
         {% endfor %}
         {% if not destinations %}
-        <tr><td class="empty" colspan="7">No Broadcast destinations configured yet.</td></tr>
+        <tr><td class="empty" colspan="{{ 7 if can_manage else 4 }}">No Broadcast destinations configured yet.</td></tr>
         {% endif %}
       </tbody>
     </table>

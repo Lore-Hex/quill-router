@@ -379,6 +379,57 @@ def test_console_credits_save_auto_refill_persists_settings() -> None:
     assert account.auto_refill_amount_microdollars == 30_000_000
 
 
+@pytest.mark.parametrize(
+    "threshold,amount", [(20_000_000, 20_000_000), (500_000_000, 5_000_000)], ids=["equal", "above"],
+)
+def test_auto_refill_never_charges_a_saved_threshold_at_or_above_its_amount(
+    configured_workspace: str, stripe_settings: Settings, threshold: int, amount: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A configuration saved before the rule (the store refuses it now) must
+    not charge again after every small settle."""
+    account = STORE.credits[configured_workspace]  # bypass the store's check, as old data does
+    account.auto_refill_threshold_microdollars = threshold
+    account.auto_refill_amount_microdollars = amount
+    STORE.settle(STORE.reserve(configured_workspace, "fake-key-hash", 9_000_000).id, 9_000_000)
+
+    with patch("stripe.PaymentIntent.create", return_value=MagicMock(id="pi_never")) as create:
+        for _ in range(3):
+            outcome = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+            assert outcome == AutoRefillOutcome(fired=False, reason="threshold_not_below_amount")
+    create.assert_not_called()
+    assert "auto_refill.threshold_not_below_amount" in caplog.text
+    # Control: once the owner fixes it, the same balance charges.
+    account.auto_refill_threshold_microdollars = amount - 1_000_000
+    with patch("stripe.PaymentIntent.create", return_value=MagicMock(id="pi_fixed")) as create:
+        assert maybe_charge_after_settle(configured_workspace, settings=stripe_settings).fired is True
+    create.assert_called_once()
+
+
+def test_a_saved_threshold_at_or_above_its_amount_is_quiet_while_above_threshold(
+    configured_workspace: str, stripe_settings: Settings, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The skip-and-warn is where a charge would otherwise go out: a workspace
+    above its threshold settles without a warning each time."""
+    account = STORE.credits[configured_workspace]  # bypass the store's check, as old data does
+    account.auto_refill_threshold_microdollars = 9_000_000
+    account.auto_refill_amount_microdollars = 5_000_000
+    # $10 available, threshold $9: above it, so nothing would charge.
+    with patch("stripe.PaymentIntent.create") as create:
+        for _ in range(3):
+            outcome = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+            assert outcome == AutoRefillOutcome(fired=False, reason="above_threshold")
+    create.assert_not_called()
+    assert "auto_refill.threshold_not_below_amount" not in caplog.text
+    # Below it, the skip applies and is logged once per attempt.
+    STORE.settle(STORE.reserve(configured_workspace, "fake-key-hash", 2_000_000).id, 2_000_000)
+    with patch("stripe.PaymentIntent.create") as create:
+        outcome = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+    assert outcome == AutoRefillOutcome(fired=False, reason="threshold_not_below_amount")
+    create.assert_not_called()
+    assert caplog.text.count("auto_refill.threshold_not_below_amount") == 1
+
+
 def test_auto_refill_exits_band_after_successful_credit(
     configured_workspace: str, stripe_settings: Settings
 ) -> None:
