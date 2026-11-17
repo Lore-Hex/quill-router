@@ -562,21 +562,62 @@ def test_rpc_progress_only_updates_liveness_not_fleet_health(fake_store, monkeyp
 
 
 def test_fast_failures_keep_monitor_alive_without_publication(fake_store, monkeypatch):
-    exits = []
-    monkeypatch.setattr(worker, '_exit_stalled_worker', lambda: exits.append(1))
+    # The worker's clock advances one step per failed pass, so the liveness age
+    # the monitor and /health read follows completed passes, not how promptly a
+    # loaded runner schedules the loop thread. On real time, a 50 ms window
+    # failed CI whenever that thread waited longer than 50 ms for a CPU.
+    stall, step, passes_needed = .05, .01, 15
+    clock = [0.]
+    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    exits, passes, threads = [], [], set()
+    watched = threading.Event()
+    def exit_stalled():
+        exits.append(1)
+        watched.set()
+    monkeypatch.setattr(worker, '_exit_stalled_worker', exit_stalled)
     monkeypatch.setattr(worker, 'MONITOR_INTERVAL_SECONDS', .005)
+    original_age = worker.WorkerCadence.stall_age
+    def stall_age(self):
+        done = len(passes)
+        age = original_age(self)
+        # A monitor check after this many failed passes reads a clock at least
+        # 3x the window past startup: without the failure path's liveness
+        # refresh, it exits.
+        if threading.current_thread().name == 'settle-drain-monitor':
+            threads.add(threading.current_thread())
+            if done >= passes_needed:
+                watched.set()
+        return age
+    monkeypatch.setattr(worker.WorkerCadence, 'stall_age', stall_age)
+    original_pass = worker.drain_pass
+    def timed_pass(*args, **kwargs):
+        threads.add(threading.current_thread())
+        try:
+            return original_pass(*args, **kwargs)
+        finally:
+            clock[0] += step
+            passes.append(1)
+    monkeypatch.setattr(worker, 'drain_pass', timed_pass)
     def fail(*a, **kw):
         raise TimeoutError('private-reservation')
     monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', fail)
     # Every shard has a due row, so every slot reaches the failing claim.
     _workspace_rows(fake_store, [f"ws-{i}" for i in range(16)])
-    cfg = config(settle_outbox_poll_interval_seconds=.005).model_copy(
-        update={'settle_outbox_stall_seconds': .05})
+    # The poll interval exceeds one pass of worker time, so the loop waits
+    # between passes instead of spinning.
+    cfg = config(settle_outbox_poll_interval_seconds=2 * step).model_copy(
+        update={'settle_outbox_stall_seconds': stall})
     with TestClient(create_app(cfg, configure_store_arg=False, init_observability=False)) as client:
-        time.sleep(.2)
+        assert watched.wait(10)
         assert client.get('/health').status_code == 200
         assert exits == []
         assert read_health(fake_store[1]) is None
+    # Shutdown waits only briefly for the monitor. Both threads must end before
+    # monkeypatch restores the real clock and process exit.
+    assert len(threads) == 2
+    for thread in threads:
+        thread.join(10)
+        assert not thread.is_alive()
 
 
 def _workspace_rows(store, workspaces):
