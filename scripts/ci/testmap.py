@@ -1306,9 +1306,12 @@ def recorded_failures(records: list[dict], test_result: str | None) -> tuple[set
         return set(), None
 
     def ran_everything(r: dict) -> bool:  # what the record says, checked again
-        collected = r.get("collected")
-        return (r.get("complete") is True and r.get("exitstatus") in (0, 1) and isinstance(collected, int)
-                and not isinstance(collected, bool) and collected == r.get("reported"))
+        def count(value: object) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool)
+
+        status, collected, reported = r.get("exitstatus"), r.get("collected"), r.get("reported")
+        return (r.get("complete") is True and count(status) and status in (0, 1) and count(collected)
+                and count(reported) and collected == reported)
 
     complete = [r for r in records if ran_everything(r)]
     failed = {t for r in complete for t in r.get("failed", ())}
@@ -1350,21 +1353,32 @@ def cmd_compare(args: argparse.Namespace) -> int:
         modules = sorted(t for t in failed if t.startswith(MODULE))
         outside = sorted(t for t in failed if not t.startswith((UNKNOWN, MODULE)) and not runs(t))
         # A collection error is outside the selection when the selection runs
-        # no test of that file, or of any file under that directory (a failing
-        # conftest.py: pytest reports the directory), so pytest would not
-        # collect it. A file the map does not know runs (S11).
+        # no test of that file, of any file under that directory (a failing
+        # conftest.py: pytest reports the directory), or of that class (see
+        # missed), so pytest would not meet it. A file the map does not know
+        # runs (S11).
         runs_file = {t.split("::")[0] for t in known if runs(t)} | set(selection.get("whole_files", ()))
         known_files = {t.split("::")[0] for t in known}
 
         def files_under(path: str) -> set[str]:
-            path = path.split("::", 1)[0]  # a class that failed to collect (tests/x.py::TestK): its file
             if path.endswith(".py"):
                 return {path} & known_files
             prefix = path.rstrip("/") + "/"
             return {f for f in known_files if f.startswith(prefix)}
 
-        outside += [m for m in modules if not selection.get("full")
-                    and files_under(m[len(MODULE):]) and files_under(m[len(MODULE):]).isdisjoint(runs_file)]
+        def missed(path: str) -> bool:
+            if "::" in path:
+                # A class that failed to collect (tests/x.py::TestK): pytest
+                # meets it only when a test of that class is selected, or the
+                # file runs whole; a class the map does not know runs (S11).
+                if path.split("::", 1)[0] in selection.get("whole_files", ()):
+                    return False
+                tests = [t for t in known if XDIST_GROUP.sub("", t).startswith(path + "::")]
+                return bool(tests) and not any(runs(t) for t in tests)
+            files = files_under(path)
+            return bool(files) and files.isdisjoint(runs_file)
+
+        outside += [m for m in modules if not selection.get("full") and missed(m[len(MODULE):])]
         if selection.get("full"):
             lines.append(f"The shadow selection ran the full suite ({'; '.join(selection.get('reasons', [])[:1])}).")
         counts = (f"{len(failed)}, of which {len(modules)} are collection errors and {len(unknown)} are"

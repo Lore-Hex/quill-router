@@ -750,7 +750,8 @@ class Recorder:
         the repository is its name; other paths outside it are placeholders,
         and so are program text (after -c or -e), the word after a header,
         user or password option (-H, -u, -p, -a, -k, --password, --pw), a
-        value glued to -u, -p or -H (-phunter2), an option's =value unless
+        value glued to -u, -p, -H, -a or -k (-phunter2), a single-dash word
+        holding a keyword (-tTokenAbc), an option's =value unless
         it is a repository path (--eval=CODE is program text), a NAME=value's
         value (dotted names too), a URL's user, password, query and
         fragment, and user:password@ without a scheme. The word after a
@@ -795,7 +796,11 @@ class Recorder:
         if glued:
             # -phunter2, -uroot. It may be a cluster whose last flag takes
             # the next word (-up x, openssl's -passin x), or perl's -pe: hide
-            # that word too.
+            # that word too. A keyword past the first letter (-tTokenAbc,
+            # -ckeyZq) means the letters before the value letter may be the
+            # value already: hide the whole word.
+            if LONG_VALUE_FLAG.fullmatch(word) and len(glued.group(1)) > 1:
+                return "-<value>", program or "<value>"
             return "-" + glued.group(1) + "<value>", program or ("<value>" if takes_next else "")
         if program:
             return word, program

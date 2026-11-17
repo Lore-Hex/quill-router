@@ -964,13 +964,23 @@ def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -
     # A secret glued to -a or -k shows none of its characters.
     (["redis-cli", "-ahunter2Zq"], "redis-cli -a<value>"),
     (["openssl", "-khunter2Zq"], "openssl -k<value>"),
+    # A single-dash word holding a keyword past its first letter: all of it.
+    (["tool", "-tTokenAbc"], "tool -<value>"),
+    (["tool", "-tmysecrettoken"], "tool -<value>"),
+    (["tool", "-sbearerXYZ"], "tool -<value>"),
+    (["tool", "-Ccookie_val"], "tool -<value>"),
+    (["tool", "-ckeyZq"], "tool -<value>"),
+    # A "."-prefixed repository path that exists is kept.
+    (["tool", "./scripts/ci"], "tool ./scripts/ci"),
+    (["tool", "--from=./scripts/ci"], "tool --from=./scripts/ci"),
 ])
 def test_command_words_hide_secrets_and_program_text(tmp_path: Path, argv: list[str], recorded: str) -> None:
     from scripts.ci import testmap_recorder
 
     words = " ".join(testmap_recorder.Recorder(str(tmp_path)).words(argv))
     assert words == recorded
-    for secret in ("MyPassw0rd", "monkey_key1", "TokenAbc9", "api_key_user", "Zq", "prog text", "hunter2"):
+    for secret in ("MyPassw0rd", "monkey_key1", "TokenAbc", "api_key_user", "Zq", "prog text", "hunter2",
+                   "mysecret", "bearerXYZ", "cookie_val"):
         assert secret not in words
 
 

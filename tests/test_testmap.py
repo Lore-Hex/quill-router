@@ -501,7 +501,10 @@ def test_recorded_failures_are_compared_only_when_every_shard_recorded_them(tmp_
     # Nor is one without its test count, or whose "complete" is anything but true.
     uncounted = {k: v for k, v in _shard(2, "tests/test_n.py::test_c").items() if k != "collected"}
     truthy = [{**_shard(2, "tests/test_n.py::test_c"), "complete": value} for value in ("true", 1, [1])]
-    for record in (interrupted, short, uncounted, *truthy):
+    # Nor booleans or strings where pytest's exit status and counts go.
+    odd = [{**_shard(2, "tests/test_n.py::test_c"), key: value}
+           for key, value in (("exitstatus", True), ("exitstatus", False), ("reported", "10"), ("reported", True))]
+    for record in (interrupted, short, uncounted, *truthy, *odd):
         assert "shards 2 " in str(tm.recorded_failures([every[0], record, every[2]], "failure")[1])
     assert "no shard left a failure record" in str(tm.recorded_failures([], "failure")[1])
     # Every shard finished without a failing test, yet the job is red: a step outside pytest failed.
@@ -562,17 +565,31 @@ def test_a_directory_that_fails_to_collect_covers_every_test_file_under_it(tmp_p
     assert outside(["tests/test_s.py::test_a", "tests/sub/deep/test_y.py::test_c"]) == "failures outside selection: 0"
 
 
-def test_a_class_that_fails_to_collect_counts_for_its_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("selected", "whole", "error", "outside"), [
+    # A: the class's tests not selected, a sibling in its file selected: pytest never meets the class.
+    (["tests/test_n.py::test_d"], [], "tests/test_n.py::TestK", 1),
+    # B: a test of the class selected: pytest meets the error.
+    (["tests/test_n.py::TestK::test_k"], [], "tests/test_n.py::TestK", 0),
+    # C: the file runs whole.
+    ([], ["tests/test_n.py"], "tests/test_n.py::TestK", 0),
+    # D: a class the map does not know runs (S11), like an unknown file.
+    (["tests/test_n.py::test_d"], [], "tests/test_n.py::TestNew", 0),
+    ([], [], "tests/test_n.py::TestNew", 0),
+], ids=["sibling-selected", "class-selected", "file-whole", "unknown-class", "unknown-class-file-not-run"])
+def test_a_class_that_fails_to_collect_is_judged_by_its_tests(tmp_path: Path, selected: list[str], whole: list[str],
+                                                              error: str, outside: int) -> None:
     # A bad parametrize on a method: pytest reports tests/test_n.py::TestK.
-    selection = {"full": False, "whole_files": [], "selected": ["tests/test_s.py::test_a"],
-                 "not_selected": ["tests/test_n.py::TestK::test_k", "tests/test_n.py::test_d"]}
+    known = ["tests/test_s.py::test_a", "tests/test_n.py::TestK::test_k", "tests/test_n.py::test_d"]
+    selection = {"full": False, "whole_files": whole, "selected": ["tests/test_s.py::test_a", *selected],
+                 "not_selected": [t for t in known if t not in selected and t != "tests/test_s.py::test_a"]}
     tm.write_gz(selection, tmp_path / "selection.json.gz")
-    records = _records(tmp_path / "records", _shard(1, "tests/test_s.py::test_a"),
-                       _shard(2, collection=("tests/test_n.py::TestK",)), _shard(3, exitstatus=0))
+    records = _records(tmp_path / "records", _shard(1, "tests/test_s.py::test_a"), _shard(2, collection=(error,)),
+                       _shard(3, exitstatus=0))
     summary = tmp_path / "summary.md"
     tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(records),
              "--test-result", "failure", "--summary", str(summary)])
-    assert "failures outside selection: 1 (module:tests/test_n.py::TestK)" in summary.read_text()
+    expected = f"failures outside selection: 1 (module:{error})" if outside else "failures outside selection: 0"
+    assert expected in summary.read_text()
 
 
 def test_an_unavailable_comparison_gives_no_outside_count(tmp_path: Path) -> None:
