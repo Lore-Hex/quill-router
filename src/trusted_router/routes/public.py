@@ -309,17 +309,24 @@ class _CachedStaticFiles(StaticFiles):
     GET and HEAD requests use the in-memory copy.
 
     Browser caches keep unversioned paths for one day while Cloud CDN keeps a
-    shared copy for seven. A ``?v=`` URL naming this process's own release is
-    immutable for one year. A ``?v=`` naming any other release is answered
-    ``no-store``: during a deploy the control service (which renders /console
-    pages and stamps its release into asset URLs) and the public service
-    (which serves /static) run different releases for a while, and an
-    immutable answer then would let Cloud CDN keep one release's bytes under
-    another release's URL for a year.
+    shared copy for seven. A ``?v=`` URL is immutable for one year when the
+    token is one this process produces itself: its release (the pages'
+    ``static_version``), the auth pages' stylesheet fingerprint, or the
+    homepage asset fingerprint. A token of one of those shapes that this
+    process did not produce is answered ``no-store``: during a deploy the
+    control service (which renders /console and /auth pages and stamps its
+    tokens into asset URLs) and the public service (which serves /static) run
+    different releases for a while, and an immutable answer then would let
+    Cloud CDN keep one release's bytes under another release's URL for a year.
+    Any other ``?v=`` (a hand-written number in a static page) keeps the
+    immutable answer.
     """
 
     _SHARED_MAX_AGE = 7 * 86_400
     _VERSIONED_MAX_AGE = 365 * 86_400
+    # Shapes of the generated tokens: a 7-hex release, the 12-hex homepage
+    # fingerprint and the 16-hex auth stylesheet fingerprint.
+    _GENERATED_TOKEN = re.compile(r"[0-9a-f]{7}|[0-9a-f]{12}|[0-9a-f]{16}")
 
     def __init__(
         self, *args: Any, max_age: int = 86_400, release: str | None = None, **kwargs: Any
@@ -329,6 +336,7 @@ class _CachedStaticFiles(StaticFiles):
         # A local build has no release to compare against (its pages use a
         # file-mtime version), so every ?v= URL stays immutable there.
         self._release = release if release and release != "local" else None
+        self._own_tokens: frozenset[str] | None = None
         self._asset_bytes: dict[str, bytes] = {}
         for directory in self.all_directories:
             root = Path(directory).resolve()
@@ -344,6 +352,16 @@ class _CachedStaticFiles(StaticFiles):
                     _STATIC_ASSET_BYTES_BY_ROOT[root_key] = cached
             self._asset_bytes.update(cached)
 
+    def _tokens(self) -> frozenset[str]:
+        if self._own_tokens is None:
+            from trusted_router.homepage import homepage_assets_version
+            from trusted_router.views import _auth_styles_version
+
+            self._own_tokens = frozenset(
+                {self._release or "", _auth_styles_version(), homepage_assets_version()}
+            )
+        return self._own_tokens
+
     def _cache_control(self, scope: Scope) -> str:
         query = scope.get("query_string", b"")
         versions = [
@@ -352,11 +370,14 @@ class _CachedStaticFiles(StaticFiles):
             if name == b"v"
         ]
         if versions:
-            if self._release is not None and any(
-                unquote_to_bytes(value).decode("utf-8", "replace") != self._release
-                for value in versions
-            ):
-                return "no-store"
+            if self._release is not None:
+                for raw in versions:
+                    value = unquote_to_bytes(raw).decode("utf-8", "replace")
+                    foreign_generated = (
+                        not value or self._GENERATED_TOKEN.fullmatch(value) is not None
+                    ) and value not in self._tokens()
+                    if foreign_generated:
+                        return "no-store"
             return f"public, max-age={self._VERSIONED_MAX_AGE}, immutable"
         return (
             f"public, max-age={self._max_age}, s-maxage={self._SHARED_MAX_AGE}, "

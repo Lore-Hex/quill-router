@@ -744,6 +744,50 @@ def test_only_this_release_s_versioned_assets_are_immutable() -> None:
     assert _static_cache_control("9ce6d79", b"").startswith("public, max-age=86400")
 
 
+def test_this_process_s_fingerprints_are_immutable_and_foreign_ones_are_not() -> None:
+    from trusted_router.homepage import homepage_assets_version
+    from trusted_router.views import _auth_styles_version
+
+    immutable = "public, max-age=31536000, immutable"
+    auth, home = _auth_styles_version(), homepage_assets_version()
+    assert len(auth) == 16 and len(home) == 12
+    assert _static_cache_control("9ce6d79", f"v={auth}".encode()) == immutable
+    assert _static_cache_control("9ce6d79", f"v={home}".encode()) == immutable
+    # The same shapes from another release (control renders /auth pages with
+    # its own fingerprint while public, still older, serves /static).
+    assert _static_cache_control("9ce6d79", b"v=0123456789abcdef") == "no-store"
+    assert _static_cache_control("9ce6d79", b"v=0123456789ab") == "no-store"
+    # A hand-written version in a static page keeps its immutable answer.
+    assert _static_cache_control("9ce6d79", b"v=2") == immutable
+    assert _static_cache_control("9ce6d79", b"v=5") == immutable
+
+
+def test_every_versioned_asset_a_page_emits_is_immutable(test_settings: Settings) -> None:
+    import re
+
+    from trusted_router.main import create_app
+    from trusted_router.views import render_template
+
+    client = TestClient(
+        create_app(test_settings.model_copy(update={"release": "9ce6d79"}), init_observability=False)
+    )
+    pages = [
+        client.get("/").text,
+        render_template("auth/account_closed.html", page_title="Account closed"),
+        client.get("/static/choose-app.html").text,
+    ]
+    urls = {
+        url.replace("&amp;", "&")
+        for page in pages
+        for url in re.findall(r"(/static/[^\"'\s>]+\?v=[^\"'\s>]+)", page)
+    }
+    assert len(urls) >= 15, sorted(urls)
+    for url in sorted(urls):
+        response = client.get(url)
+        assert response.status_code == 200, url
+        assert response.headers["cache-control"] == "public, max-age=31536000, immutable", url
+
+
 def test_static_mount_compares_against_the_running_release(test_settings: Settings) -> None:
     from starlette.routing import Mount
 
