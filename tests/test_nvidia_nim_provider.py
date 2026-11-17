@@ -16,6 +16,7 @@ from trusted_router.catalog_data import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     PROVIDERS,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 LLM_REFERENCE_HTML = """
 <section>
@@ -468,6 +469,11 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
             # Versioned DeepSeek releases have an explicitly pinned provider
             # set. Provider discovery may prove that NVIDIA serves the exact
             # release, but it must not mutate that published route set.
+            continue
+        if provider_model_retired("nvidia-nim", row["id"], row["upstream_id"]):
+            # A lifecycle retirement removes the route while the row stays
+            # in the manifest with its retirement_at annotation.
+            assert f"{row['id']}@nvidia-nim/prepaid" not in built
             continue
         endpoints = [
             endpoint

@@ -2032,6 +2032,7 @@
       "status": 1,
       "id": "meta-llama/llama-guard-4-12b",
       "upstream_id": "meta/llama-guard-4-12b",
+      "retirement_at": "2026-11-16T09:00:00Z",
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
