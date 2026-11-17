@@ -989,11 +989,11 @@ def gh_api(path: str, raw: bool = False) -> object:
     return out if raw else json.loads(out)
 
 
-def repository_id(repo: str, api: Callable[..., object] = gh_api) -> int:
+def repository_id(repo: str, api: Callable[..., object] | None = None) -> int:
     env = os.environ.get("GITHUB_REPOSITORY_ID")
     if env and env.isdigit():
         return int(env)
-    return int(api(f"repos/{repo}")["id"])  # type: ignore[index]
+    return int((api or gh_api)(f"repos/{repo}")["id"])  # type: ignore[index]
 
 
 def map_artifacts(repo: str, repo_id: int, api: Callable[..., object]) -> dict[str, dict]:
@@ -1040,12 +1040,13 @@ def _created(art: dict) -> datetime | None:
         return None
 
 
-def find_map(repo: str, repo_id: int, base: str, *, root: Path, api: Callable[..., object] = gh_api,
+def find_map(repo: str, repo_id: int, base: str, *, root: Path, api: Callable[..., object] | None = None,
              now: datetime | None = None) -> tuple[dict | None, str]:
     """The newest valid map on `base`'s first-parent history (at most
     MAX_DISTANCE commits back, uploaded within MAX_AGE_HOURS by the server's
     clock), and why there is none."""
     now = now or datetime.now(UTC)
+    api = api or gh_api
     candidates = first_parents(root, base, MAX_DISTANCE + 1)
     if not candidates:
         return None, f"the history of {base[:12]} could not be read"
@@ -1076,11 +1077,12 @@ def find_map(repo: str, repo_id: int, base: str, *, root: Path, api: Callable[..
 
 
 def needed(repo: str, repo_id: int, head: str, *, root: Path, force: bool = False,
-           api: Callable[..., object] = gh_api) -> tuple[bool, str]:
+           api: Callable[..., object] | None = None) -> tuple[bool, str]:
     """Should the map workflow record? Not when the newest valid map's commit
     and `head` agree on everything the map is built from (MAP_INPUTS)."""
     if force:
         return True, "a dispatch asked for a map"
+    api = api or gh_api
     newest = sorted(map_artifacts(repo, repo_id, api).items(), key=lambda kv: kv[1].get("created_at", ""), reverse=True)
     for sha, art in newest:
         if run_problem(repo, repo_id, art, sha, api) is not None:
@@ -1148,8 +1150,10 @@ def failed_ids(log: str, known: Iterable[str]) -> set[str]:
 
 
 def _write_summary(path: str | None, lines: list[str]) -> None:
+    """The job summary, and stderr: stdout carries machine output (`needed`
+    writes it to GITHUB_OUTPUT)."""
     text = "\n".join(lines) + "\n"
-    print(text)
+    print(text, file=sys.stderr)
     if path:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(text)

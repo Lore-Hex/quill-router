@@ -764,3 +764,20 @@ def test_shadow_never_fails_the_step(tmp_path: Path) -> None:
     assert selection["full"] and "failed" in selection["reasons"][0]
     assert tm.main(["compare", "--selection", str(tmp_path / "none.json.gz"), "--failed", str(summary),
                     "--summary", str(summary)]) == 0
+
+
+def test_needed_prints_only_github_output_lines_on_stdout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    head = commit_all(root, "x") if (root / "f").write_text("x") else ""
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("GITHUB_REPOSITORY_ID", str(REPO_ID))
+    monkeypatch.setattr(tm, "gh_api", fake_api([], [], {}))
+    summary = tmp_path / "summary.md"
+    assert tm.main(["needed", "--repo", "o/r", "--head", head, "--summary", str(summary)]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines() == ["record=true"]  # GITHUB_OUTPUT takes stdout whole
+    assert "Test map: recording" in summary.read_text() and "there is no valid map yet" in summary.read_text()
+
