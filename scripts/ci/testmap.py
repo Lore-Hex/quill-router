@@ -1,57 +1,77 @@
 """The per-test footprint map and the test selection it drives (shadow mode).
 
-Stdlib only, like commit_scope.py, so the scope job runs it before `uv sync`.
+Stdlib only, like commit_scope.py, so a job can run it before `uv sync`.
 
+  needed    the "Test map" workflow's first job: record=true unless the newest
+            valid map's commit and main's head agree on everything the map is
+            built from (MAP_INPUTS).
   compact   one shard's raw recorder output (scripts/ci/testmap_recorder.py,
             one JSONL file per process) -> one gzipped fragment: interned keys,
             identical footprints shared, each test's scoped fixtures resolved.
-  merge     the eight fragments of a green push run -> the map, stamped with
-            the commit, the recorder and schema versions and the shard count,
-            plus the functions and Python files that existed at that commit.
-  shadow    on a pull request: find the newest valid map at or before the
-            base, select the tests the diff can reach, write the selection
-            (gzipped JSON) and a job summary. Report only: nothing reads the
-            selection to decide what runs.
-  compare   after the test shards: the failed test IDs of this run against
-            the shadow selection, "failures outside selection: N (IDs)".
+  merge     the eight fragments of a run whose shards all passed -> the map,
+            stamped with the commit, event, recorder and schema versions and
+            the shard count, plus the functions and Python files that existed
+            at that commit.
+  shadow    on a pull request (ci.yml's coverage job): find the newest valid
+            map on the base's first-parent history, select the tests the
+            diff can reach, write the selection (gzipped JSON) and a job
+            summary. Report only: nothing reads the selection to decide what
+            runs.
+  compare   after the test shards: this run's failed tests against the shadow
+            selection, "failures outside selection: N (IDs)".
 
 What a footprint holds (the recorder's docstring has how it is recorded):
-  f  functions that started or resumed ("path:qualname")
+  f  functions that started or resumed ("path:qualname"), and calls of a
+     functools cache ("path:qualname@memo": a hit runs no Python code)
   o  repository files opened for reading (an import is not a read)
   d  repository directories listed
   s  commands started ("argv0 argv1 ... @cwd=<repo-relative or ->")
 A test's footprint is its own window (setup, call and teardown), its module's
-collection, the setup of every module/class/package/session fixture it
-requests, and, for each memoized function it called ("<key>@memo" in f: a
-cache hit runs no Python code), what that function's misses ran (`cached`).
-`global` is what ran outside every window: imports, session hooks,
-collection hooks, and misses at import time.
+collection and the setup of every module/class/package/session fixture it
+requests. `cached` holds what each memoized function's misses ran (at most
+the recorder's cap of misses per function; `incomplete_memo` lists the
+functions that missed more often). `global` is what ran outside every window:
+imports, session hooks, collection hooks, and misses at import time.
 
-Selection rules (the full suite runs on any fail-safe; reasons are reported):
+Selection rules (the full suite runs on any fail-safe; reasons are reported).
+The changes are the pull request's (base..head) and, as drift, those between
+the map's commit and the base: the map is up to hours old, and a call edge
+added since can only come from a changed function body, so a function
+changed since the map selects what ran it like one the pull request changed.
 
   Fail-safes (run everything):
    F1 a diff record that is not a plain add/modify/delete of a regular file;
-      an empty diff; a change to what decides CI (commit_scope's
-      FULL_MATRIX_PATHS, any .gitattributes) or to the Python toolchain;
-      the pull request labeled ci:full.
-   F2 no map; a map that is unreadable, of another schema or recorder
-      version, not from a push to main, not from all of its shards, or
-      stale: not the base or a first-parent ancestor within MAX_DISTANCE
-      commits and MAX_AGE_HOURS of it.
-   F3 a changed file read outside every window (at import or session
-      time), or a changed function that ran outside every window (at import:
-      main.py builds its app at import, so create_app's callees are there).
+      an empty diff; a change (pull request or drift) to what decides CI
+      (commit_scope's FULL_MATRIX_PATHS, any .gitattributes) or to the
+      Python toolchain; the pull request labeled ci:full.
+   F2 no map; a map that is not this repository's own "Test map" run
+      (MAP_WORKFLOW, a MAP_EVENTS event on main, head repository ours, green)
+      at a commit on the base's first-parent history (git rev-list, not
+      dates) within MAX_DISTANCE commits, uploaded within MAX_AGE_HOURS by
+      the server's clock; a map that is unreadable, of another schema or
+      recorder version, or not from all of its shards; a map whose commit
+      is not an ancestor of the base.
+   F3 a file the pull request changed that is read outside every window (at
+      import or session time), or a changed function (pull request or
+      drift) that ran outside every window (at import: main.py builds its
+      app at import, so create_app's callees are there). Data that changed
+      only as drift does not count: the hourly price refresh rewrites catalog
+      data read at import, which would run everything on every pull request;
+      the refresh's commit ran the full suite itself, and the next map is at
+      most hours away. A known gap.
    F4 a changed module-level statement that is not an import, a docstring,
       an assignment, a class body or a decorated definition (a call, an
       `if`, a `try` at module level); a .py file the diff cannot parse.
-   F5 a changed function, or a changed Python file, the map cannot know:
-      it existed at the base but not at the map's commit.
+   F5 a changed function, or a changed Python file, the map cannot know: it
+      exists at the base but neither at the map's commit nor as an addition
+      among the drift changes.
    F6 the selection reaches more than FULL_SHARE of the suite's weight.
+   F7 a change to any conftest.py, at any depth (pull request or drift).
 
   Selection (union):
    S1 a changed test file runs whole (a deleted one runs nothing).
    S2 a changed line selects the tests that ran the innermost def that
-      encloses it and existed at the base; a new nested def changes its
+      encloses it and existed on the old side; a new nested def changes its
       enclosing def.
    S3 a class change (a new method, a class-level statement) selects what
       names the class and every method of it that ran.
@@ -65,15 +85,18 @@ Selection rules (the full suite runs on any fail-safe; reasons are reported):
       too), except through a listing of its directory.
    S7 a changed file selects the tests that opened it; an added or deleted
       one the tests that listed its directory.
-   S8 a test that started a Python process, or git in the repository, is
-      selected by any change; another command by a change to the file it
-      names, to its directory, or to any shell script.
+   S8 a test that started a command is selected by any change, unless the
+      command is git outside the repository or one of NARROW_COMMANDS: what
+      python, uv run, env, bash -c or a script reads is unknown.
    S9 a changed test helper (Python under tests/ or scripts/) also selects
-      what commit_scope's reverse import walk reaches (not through
-      conftest.py, which every test imports: its functions select by S2).
-   S10 a test that called a memoized function inherits what its misses ran,
-      so a change a miss reaches selects the tests the cache served; module
-      and session fixture setups count for every test that requests them; a
+      what commit_scope's reverse import walk reaches.
+   S10 a memoized function whose misses a change reaches selects its users:
+      the tests that marked a call of it, and every test that ran a function
+      naming it (a hit runs no Python code and a call site is observed once
+      per test, so the marks alone can miss a call; the name index finds the
+      callers, aliases and registries that hand it out). A memoized function
+      in `incomplete_memo` selects its users whatever changed. Module and
+      session fixture setups count for every test that requests them; a
       module's collection counts for each of its tests.
    S11 a test the map does not know runs (compare counts it as selected).
 """
@@ -105,18 +128,24 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "1"
+RECORDER_VERSION = "2"
 SHARDS = 8
 MAX_DISTANCE = 40
-MAX_AGE_HOURS = 24
+MAX_AGE_HOURS = 48
+# The map comes from this workflow's own runs on main, nothing else (F2).
+MAP_WORKFLOW = ".github/workflows/testmap.yml"
+MAP_EVENTS = frozenset({"push", "schedule", "workflow_dispatch"})
+# What the map is built from: the map workflow records again when one changed.
+MAP_INPUTS = ("src", "tests", "scripts/ci", "pyproject.toml", "uv.lock", ".python-version", "conftest.py",
+              ":(glob)**/conftest.py")
 FULL_SHARE = 0.7
 ARTIFACT = "testmap"
 MEMO = "@memo"  # the recorder's mark for a call of a functools cache
 # Directories the name index and the map's universe skip: not repository code.
 SKIP_DIRS = frozenset({".git", ".venv", "node_modules", "__pycache__", ".hypothesis", ".ruff_cache",
                        ".mypy_cache", ".pytest_cache"})
-PYTHON_EXE = re.compile(r"(?:^|/)python[0-9.]*$")
-GIT_EXE = re.compile(r"(?:^|/)git$")
+# Commands that read no repository file whatever their arguments (S8).
+NARROW_COMMANDS = frozenset({"id", "true", "false", "echo", "printf", "sleep", "uname", "whoami", "date"})
 MODULE_KINDS_SELECTING = frozenset({"assign", "class", "decorator"})
 MODULE_KINDS_INERT = frozenset({"import", "docstring"})
 
@@ -172,6 +201,7 @@ def compact(raw_dir: Path, shard: int) -> dict:
     fixtures: dict[str, dict[str, set[str]]] = defaultdict(_empty)
     collect: dict[str, dict[str, set[str]]] = defaultdict(_empty)
     cached: dict[str, dict[str, set[str]]] = defaultdict(_empty)
+    incomplete: set[str] = set()
     glob_fp = _empty()
     errors: list[str] = []
     headers: list[dict] = []
@@ -207,6 +237,8 @@ def compact(raw_dir: Path, shard: int) -> dict:
                     _union(collect[record["c"]], record)
                 elif "cf" in record:
                     _union(cached[record["cf"]], record)
+                elif "mi" in record:
+                    incomplete.add(record["mi"])
                 elif "g" in record:
                     _union(glob_fp, record)
         if not ended:
@@ -235,6 +267,7 @@ def compact(raw_dir: Path, shard: int) -> dict:
         "keys": interner.keys, "fps": interner.fps, "tests": out_tests,
         "collect": {m: interner.fp(v[k] for k in PARTS) for m, v in sorted(collect.items())},
         "cached": {c: interner.fp(v[k] for k in PARTS) for c, v in sorted(cached.items())},
+        "incomplete_memo": sorted(incomplete),
         "global": interner.fp(glob_fp[k] for k in PARTS),
     }
 
@@ -260,6 +293,7 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
     tests: dict[str, list] = {}
     collect: dict[str, set[int]] = defaultdict(set)
     cached: dict[str, set[int]] = defaultdict(set)
+    incomplete: set[str] = set()
     globals_: set[int] = set()
     for fragment in fragments:
         for nodeid, rt, fx in fragment["tests"]:
@@ -270,6 +304,7 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
             collect[module].add(remap(fragment, i))
         for key, i in fragment["cached"].items():
             cached[key].add(remap(fragment, i))
+        incomplete.update(fragment.get("incomplete_memo", ()))
         globals_.add(remap(fragment, fragment["global"]))
 
     def joined(ids: set[int]) -> int:
@@ -288,6 +323,7 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
         "tests": [tests[t] for t in sorted(tests)],
         "collect": {m: joined(ids) for m, ids in sorted(collect.items())},
         "cached": {c: joined(ids) for c, ids in sorted(cached.items())},
+        "incomplete_memo": sorted(incomplete),
         "global": joined(globals_),
         "memoized": sorted({k[: -len(MEMO)] for k in interner.keys if k.endswith(MEMO)}),
         "universe_files": sorted(index.universe),
@@ -609,13 +645,13 @@ def validate_map(data: dict, *, commit: str | None = None) -> str | None:
         return f"map schema {data.get('schema')} is not {SCHEMA_VERSION}"
     if data.get("recorder") != RECORDER_VERSION:
         return f"map recorder {data.get('recorder')} is not {RECORDER_VERSION}"
-    if data.get("event") != "push" or data.get("ref") != "refs/heads/main":
-        return f"map is from {data.get('event')} of {data.get('ref')}, not a push to main"
+    if data.get("event") not in MAP_EVENTS or data.get("ref") != "refs/heads/main":
+        return f"map is from a {data.get('event')} run of {data.get('ref')}, not main's"
     if data.get("fragments") != list(range(1, int(data.get("shards") or 0) + 1)) or data.get("shards") != SHARDS:
         return f"map has fragments {data.get('fragments')} of {data.get('shards')} shards, expected {SHARDS}"
     if commit is not None and data.get("commit") != commit:
         return f"map commit {data.get('commit')} is not {commit}"
-    for name in ("keys", "fps", "tests", "collect", "cached", "memoized", "global"):
+    for name in ("keys", "fps", "tests", "collect", "cached", "memoized", "incomplete_memo", "global"):
         if name not in data:
             return f"map has no {name}"
     return None
@@ -654,10 +690,26 @@ def _split_command(cmd: str) -> tuple[list[str], str]:
     return body.split(), cwd
 
 
+def command_is_narrow(cmd: str) -> bool:
+    """Can the selector tell what a recorded command reads? Only git outside
+    the repository (a test's scratch repository) and a few utilities that read
+    no files. Anything else (python, uv run, env, bash -c, a script that
+    starts Python) may read any file: the test is selected by every change."""
+    toks, cwd = _split_command(cmd)
+    if not toks:
+        return False
+    exe = toks[0].rsplit("/", 1)[-1]
+    if exe in NARROW_COMMANDS:
+        return True
+    if exe == "git":
+        return cwd == "-" and not any(tok == "." or "/" in tok and not tok.startswith("<") for tok in toks[1:])
+    return False
+
+
 def helper_reach(root: Path, helpers: list[str]) -> set[str]:
     """Test files that import a changed helper, directly or through other
-    helpers (not through conftest.py: every test loads it, and its functions
-    select by what ran), or name its file."""
+    helpers (not through conftest.py: a change to any conftest.py runs the
+    full suite), or name its file."""
     if not helpers:
         return set()
     tests = cs.test_files(root)
@@ -687,24 +739,44 @@ def helper_reach(root: Path, helpers: list[str]) -> set[str]:
     return found
 
 
+@dataclass
+class Drift:
+    """What changed between the map's commit and the base (an ancestor of
+    the base), and the defs and files that exist at the base but not at the
+    map's commit."""
+    changes: list[cs.Change]
+    classify: Callable[[cs.Change], PyChange]
+    added_files: set[str] = field(default_factory=set)
+    added_keys: set[str] = field(default_factory=set)
+
+
 def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Callable[[cs.Change], PyChange],
-           index: Callable[[], NameIndex], weights: dict[str, float]) -> Selection:
-    """Rules S1-S10 and fail-safes F1 and F3-F6 (F2, the map's validity, and
-    the ci:full label are the caller's; S11 is `contains`)."""
+           index: Callable[[], NameIndex], weights: dict[str, float], drift: Drift | None = None) -> Selection:
+    """Rules S1-S10 and fail-safes F1, F3-F7 over the pull request's changes
+    and, as drift, the changes between the map's commit and the base (F2, the
+    map's validity, and the ci:full label are the caller's; S11 is
+    `membership`)."""
     commit = str(tmap.data.get("commit", ""))
     reasons: list[str] = []
+    drift = drift or Drift([], classify)
 
     def full(reason: str) -> Selection:
         return Selection(True, [reason, *reasons], map_commit=commit)
 
     if not changes:
         return full("the comparison is empty")
-    for change in changes:  # F1
+    every = [(change, False) for change in changes] + [(change, True) for change in drift.changes]
+    for change, drifted in every:  # F1, F7
         path = change.path
+        since = " (changed since the map)" if drifted else ""
         if cs.matches_any(path, cs.FULL_MATRIX_PATHS) or path.rsplit("/", 1)[-1] in cs.FULL_MATRIX_NAMES:
-            return full(f"{path} decides what CI runs")
+            return full(f"{path} decides what CI runs{since}")
         if path in cs.PYTHON_TOOLCHAIN_PATHS:
-            return full(f"{path} is the Python toolchain")
+            return full(f"{path} is the Python toolchain{since}")
+        if path.rsplit("/", 1)[-1] == "conftest.py":
+            return full(f"{path} is a conftest.py{since}")
+    if drift.changes:
+        reasons.append(f"{len(drift.changes)} files changed between the map ({commit[:12]}) and the base count too")
 
     global_funcs = tmap.global_funcs()
     global_opens = tmap.global_opens()
@@ -714,7 +786,6 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
     opened: set[str] = set()    # S7
     listed: set[str] = set()    # S6, S7
     helpers: list[str] = []     # S9
-    changed_paths = {c.path for c in changes}
     names: NameIndex | None = None
 
     def name_index() -> NameIndex:
@@ -723,11 +794,16 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
             names = index()
         return names
 
-    for change in changes:
+    for change, drifted in every:
         path, status = change.path, change.status
+        since = " (changed since the map)" if drifted else ""
         if status in ("A", "D"):
             listed.add(path.rsplit("/", 1)[0] if "/" in path else ".")
-        if path in global_opens:  # F3
+        # F3 for data: a file read at import or session time. Not for drift:
+        # the hourly price refresh rewrites catalog data read at import, so
+        # every pull request would run everything; the refresh's own commit
+        # ran the full suite, and the next map is at most hours away.
+        if path in global_opens and not drifted:
             return full(f"{path} is read outside every test (at import or session time)")
         opened.add(path)
         if not path.endswith(".py"):
@@ -735,40 +811,42 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
         if cs.is_test_file(path):  # S1
             if status != "D":
                 whole.add(path)
-                reasons.append(f"{path}: changed test file runs whole")
+                reasons.append(f"{path}: changed test file runs whole{since}")
             continue
         if status == "A":  # S6
             continue
-        if path.startswith(("tests/", "scripts/")) and not path.endswith("/conftest.py"):
+        if path.startswith(("tests/", "scripts/")):
             helpers.append(path)
-        if path not in tmap.universe_files:  # F5
+        if path not in tmap.universe_files and path not in drift.added_files:  # F5
             return full(f"{path} is newer than the map ({commit[:12]})")
         if status == "D":  # S5
             files.add(path)
             continue
-        info = classify(change)
+        info = (drift.classify if drifted else classify)(change)
         if info.unparsable:  # F4
-            return full(f"{path} does not parse")
+            return full(f"{path} does not parse{since}")
         for kind, name in sorted(info.kinds):  # F4
             if kind not in MODULE_KINDS_SELECTING | MODULE_KINDS_INERT:
-                return full(f"{path}: a module-level {name or kind} statement changed")
+                return full(f"{path}: a module-level {name or kind} statement changed{since}")
         for q in sorted(info.funcs):  # S2
             key = f"{path}:{q}"
-            if key not in tmap.universe_funcs:  # F5
-                return full(f"{key} is newer than the map ({commit[:12]})")
+            if key not in tmap.universe_funcs:
+                if key in drift.added_keys or path in drift.added_files:
+                    continue  # added since the map: its callers are drift changes
+                return full(f"{key} is newer than the map ({commit[:12]})")  # F5
             if key in global_funcs:  # F3
-                return full(f"{key} runs at import or session time")
+                return full(f"{key} runs at import or session time{since}")
             keys |= {key, key + MEMO}
         for cls in sorted(info.classes):  # S3
             keys |= name_index().spread({cls})
             prefix = f"{path}:{cls}."
             keys |= {k for k in tmap.known_funcs if k.startswith(prefix)}
-            reasons.append(f"{path}: class {cls} changed")
+            reasons.append(f"{path}: class {cls} changed{since}")
         spread = {name for kind, name in info.kinds if kind in MODULE_KINDS_SELECTING and name}
         if spread:  # S4
             found = name_index().spread(spread)
             keys |= found
-            reasons.append(f"{path}: module-level {', '.join(sorted(spread)[:4])} named by {len(found)} functions")
+            reasons.append(f"{path}: module-level {', '.join(sorted(spread)[:4])} named by {len(found)} functions{since}")
     static_reach = helper_reach(root, helpers)  # S9
     if static_reach:
         reasons.append(f"{len(static_reach)} test files import or name a changed helper")
@@ -777,28 +855,22 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
     for path in files:
         prefix = f"{path}:"
         key_ids |= {i for i, k in enumerate(tmap.keys) if k.startswith(prefix)}
+    # S10: a memoized function whose misses were not all recorded (more than
+    # the recorder's cap): what called it runs whatever changed.
+    incomplete = list(tmap.data.get("incomplete_memo", []))
+    if incomplete:
+        key_ids |= tmap.ids([*incomplete, *(k + MEMO for k in incomplete)])
+        key_ids |= tmap.ids(name_index().spread({k.rsplit(":", 1)[-1].rsplit(".", 1)[-1] for k in incomplete}))
+        reasons.append(f"{len(incomplete)} memoized functions have misses the map did not record: their callers run")
     open_ids = tmap.ids(opened)
     dir_ids = tmap.ids(listed)
-    shell_changed = any(p.endswith(".sh") for p in changed_paths)
-    changed_dirs = {p.rsplit("/", 1)[0] for p in changed_paths if "/" in p}
-    command_hit: dict[int, bool] = {}
+    narrow: dict[int, bool] = {}
 
-    def spawn_hit(command_ids: list[int]) -> bool:  # S8
+    def spawn_hit(command_ids: list[int]) -> bool:  # S8: what a command reads is unknown
         for cid in command_ids:
-            hit = command_hit.get(cid)
-            if hit is None:
-                toks, cwd = _split_command(tmap.keys[cid])
-                exe = toks[0] if toks else ""
-                in_repo = cwd != "-" or any(tok == "." or tok in tmap.universe_files for tok in toks[1:])
-                if PYTHON_EXE.search(exe) or (GIT_EXE.search(exe) and in_repo):
-                    hit = True
-                else:
-                    hit = any(tok in changed_paths or tok in changed_dirs
-                              or (tok.rsplit("/", 1)[0] in changed_dirs if "/" in tok else False)
-                              for tok in toks)
-                    hit = hit or (shell_changed and any(tok.endswith(".sh") for tok in toks))
-                command_hit[cid] = hit
-            if hit:
+            if cid not in narrow:
+                narrow[cid] = command_is_narrow(tmap.keys[cid])
+            if not narrow[cid]:
                 return True
         return False
 
@@ -813,12 +885,17 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
             fp_hit[i] = found
         return found
 
-    while True:  # S10: a memoized function's callers inherit what its misses ran
+    # S10: a memoized function's users inherit what its misses ran. Users are
+    # the tests that marked a call of it and, since a hit runs no Python code
+    # and a call site is observed once per test, every test that ran a
+    # function naming it (the name index: callers, aliases, registries).
+    while True:
         new: set[int] = set()
         for name, i in tmap.cached.items():
             if name in tmap.key_id and tmap.key_id[name] not in key_ids and is_hit(i):
                 new |= tmap.ids({name, name + MEMO})
-        if not new:
+                new |= tmap.ids(name_index().spread({name.rsplit(":", 1)[-1].rsplit(".", 1)[-1]}))
+        if not new - key_ids:
             break
         key_ids |= new
         fp_hit.clear()
@@ -845,6 +922,10 @@ def git(root: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout  # noqa: S603,S607 -- git and gh, fixed argv
 
 
+def git_ok(root: Path, *args: str) -> bool:
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).returncode == 0  # noqa: S603,S607 -- git and gh, fixed argv
+
+
 def git_show(root: Path, rev: str, path: str) -> str | None:
     result = subprocess.run(["git", "-C", str(root), "show", f"{rev}:{path}"], capture_output=True, text=True)  # noqa: S603,S607 -- git and gh, fixed argv
     return result.stdout if result.returncode == 0 else None
@@ -860,52 +941,162 @@ def python_change_reader(root: Path, base: str, head: str) -> Callable[[cs.Chang
     return read
 
 
+def diff_changes(root: Path, old: str, new: str) -> list[cs.Change] | None:
+    records = git(root, "-c", "core.quotePath=true", "diff", "--no-renames", "--raw", old, new).split("\n")
+    return cs.plain_changes(records)
+
+
+def defs_of(source: str | None) -> set[str]:
+    if source is None:
+        return set()
+    try:
+        return {span[2] for span in _spans(ast.parse(source)) if span[3] == "func"}
+    except SyntaxError:
+        return set()
+
+
+def drift_between(root: Path, map_commit: str, base: str) -> Drift | None:
+    """The changes from the map's commit to the base (None: not comparable)."""
+    changes = diff_changes(root, map_commit, base)
+    if changes is None:
+        return None
+    drift = Drift(changes, python_change_reader(root, map_commit, base))
+    for change in changes:
+        if change.path.endswith(".py"):
+            if change.status == "A":
+                drift.added_files.add(change.path)
+            elif change.status == "M":
+                added = defs_of(git_show(root, base, change.path)) - defs_of(git_show(root, map_commit, change.path))
+                drift.added_keys |= {f"{change.path}:{q}" for q in added}
+    return drift
+
+
+def first_parents(root: Path, base: str, count: int) -> list[str]:
+    """`base` and its first-parent ancestors, newest first: the history's own
+    order, not commit dates (which their authors set)."""
+    shallow = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],  # noqa: S603,S607 -- git and gh, fixed argv
+                             capture_output=True, text=True).stdout.strip() == "true"
+    if shallow or not git_ok(root, "cat-file", "-e", f"{base}^{{commit}}"):
+        subprocess.run(["git", "-C", str(root), "fetch", "-q", f"--depth={count}", "origin", base],  # noqa: S603,S607 -- git and gh, fixed argv
+                       capture_output=True, check=False)
+    result = subprocess.run(["git", "-C", str(root), "rev-list", "--first-parent", f"--max-count={count}", base],  # noqa: S603,S607 -- git and gh, fixed argv
+                            capture_output=True, text=True)
+    return result.stdout.split() if result.returncode == 0 else []
+
+
 def gh_api(path: str, raw: bool = False) -> object:
     out = subprocess.run(["gh", "api", path], capture_output=True, check=True).stdout  # noqa: S603,S607 -- git and gh, fixed argv
     return out if raw else json.loads(out)
 
 
-def find_map(repo: str, base: str, *, api: Callable[..., object] = gh_api) -> tuple[dict | None, str]:
-    """The newest map at or before `base`, and why there is none."""
-    commits = api(f"repos/{repo}/commits?sha={base}&per_page={MAX_DISTANCE + 1}")
-    if not isinstance(commits, list) or not commits:
-        return None, f"the history of {base} could not be read"
-    artifacts = api(f"repos/{repo}/actions/artifacts?name={ARTIFACT}&per_page=100")
+def repository_id(repo: str, api: Callable[..., object] = gh_api) -> int:
+    env = os.environ.get("GITHUB_REPOSITORY_ID")
+    if env and env.isdigit():
+        return int(env)
+    return int(api(f"repos/{repo}")["id"])  # type: ignore[index]
+
+
+def map_artifacts(repo: str, repo_id: int, api: Callable[..., object]) -> dict[str, dict]:
+    """Unexpired `testmap` artifacts of this repository's own runs on main,
+    newest per commit. A fork's pull request run can upload an artifact with
+    the same name and a branch called main: its head repository is not ours."""
+    listing = api(f"repos/{repo}/actions/artifacts?name={ARTIFACT}&per_page=100")
     by_sha: dict[str, dict] = {}
-    for art in (artifacts or {}).get("artifacts", []) if isinstance(artifacts, dict) else []:
+    for art in (listing or {}).get("artifacts", []) if isinstance(listing, dict) else []:
         run = art.get("workflow_run") or {}
-        if art.get("expired") or run.get("head_branch") != "main":
+        if art.get("expired") or art.get("name") != ARTIFACT or run.get("head_branch") != "main":
+            continue
+        if run.get("repository_id") != repo_id or run.get("head_repository_id") != repo_id:
             continue
         sha = run.get("head_sha")
         if sha and (sha not in by_sha or art.get("created_at", "") > by_sha[sha].get("created_at", "")):
             by_sha[sha] = art
-    base_time = _when(commits[0])
-    for distance, commit in enumerate(commits[: MAX_DISTANCE + 1]):
-        sha = commit.get("sha")
-        if sha not in by_sha:
+    return by_sha
+
+
+def run_problem(repo: str, repo_id: int, art: dict, sha: str, api: Callable[..., object]) -> str | None:
+    """Why the run that uploaded `art` is not the map workflow's own green run
+    on main at `sha`, or None."""
+    run = api(f"repos/{repo}/actions/runs/{art['workflow_run']['id']}")
+    if not isinstance(run, dict):
+        return "its run could not be read"
+    if run.get("path") != MAP_WORKFLOW:
+        return f"its run is {run.get('path')}, not {MAP_WORKFLOW}"
+    if run.get("event") not in MAP_EVENTS:
+        return f"its run is a {run.get('event')} run"
+    if run.get("head_branch") != "main" or run.get("head_sha") != sha:
+        return f"its run is on {run.get('head_branch')} at {str(run.get('head_sha'))[:12]}"
+    if (run.get("repository") or {}).get("id") != repo_id or (run.get("head_repository") or {}).get("id") != repo_id:
+        return "its run is from another repository"
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        return f"its run is {run.get('status')}/{run.get('conclusion')}"
+    return None
+
+
+def _created(art: dict) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(art.get("created_at")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def find_map(repo: str, repo_id: int, base: str, *, root: Path, api: Callable[..., object] = gh_api,
+             now: datetime | None = None) -> tuple[dict | None, str]:
+    """The newest valid map on `base`'s first-parent history (at most
+    MAX_DISTANCE commits back, uploaded within MAX_AGE_HOURS by the server's
+    clock), and why there is none."""
+    now = now or datetime.now(UTC)
+    candidates = first_parents(root, base, MAX_DISTANCE + 1)
+    if not candidates:
+        return None, f"the history of {base[:12]} could not be read"
+    artifacts = map_artifacts(repo, repo_id, api)
+    skipped: list[str] = []
+    for distance, sha in enumerate(candidates):
+        art = artifacts.get(sha)
+        if art is None:
             continue
-        when = _when(commit)
-        if base_time and when and (base_time - when).total_seconds() > MAX_AGE_HOURS * 3600:
-            return None, f"the newest map ({sha[:12]}) is more than {MAX_AGE_HOURS} h older than the base"
-        zipped = api(f"repos/{repo}/actions/artifacts/{by_sha[sha]['id']}/zip", raw=True)
-        with zipfile.ZipFile(io.BytesIO(zipped)) as archive:  # type: ignore[arg-type]
-            name = next((n for n in archive.namelist() if n.endswith(".json.gz")), None)
-            if name is None:
-                return None, f"the map artifact of {sha[:12]} holds no map"
-            data = json.loads(gzip.decompress(archive.read(name)))
-        why = validate_map(data, commit=sha)
+        created = _created(art)
+        if created is None or (now - created).total_seconds() > MAX_AGE_HOURS * 3600:
+            skipped.append(f"{sha[:12]}: uploaded more than {MAX_AGE_HOURS} h ago")
+            continue
+        why = run_problem(repo, repo_id, art, sha, api)
+        if why is None:
+            zipped = api(f"repos/{repo}/actions/artifacts/{art['id']}/zip", raw=True)
+            with zipfile.ZipFile(io.BytesIO(zipped)) as archive:  # type: ignore[arg-type]
+                name = next((n for n in archive.namelist() if n.endswith(".json.gz")), None)
+                data = json.loads(gzip.decompress(archive.read(name))) if name else {}
+            why = validate_map(data, commit=sha) if data else "the artifact holds no map"
         if why:
-            return None, why
+            skipped.append(f"{sha[:12]}: {why}")
+            continue
         data["_distance"] = distance
         return data, ""
-    return None, f"no map at or within {MAX_DISTANCE} commits before {base[:12]}"
+    note = f" (passed over: {'; '.join(skipped[:3])})" if skipped else ""
+    return None, f"no valid map at or within {MAX_DISTANCE} first-parent commits before {base[:12]}{note}"
 
 
-def _when(commit: dict) -> datetime | None:
-    try:
-        return datetime.fromisoformat(commit["commit"]["committer"]["date"].replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError):
-        return None
+def needed(repo: str, repo_id: int, head: str, *, root: Path, force: bool = False,
+           api: Callable[..., object] = gh_api) -> tuple[bool, str]:
+    """Should the map workflow record? Not when the newest valid map's commit
+    and `head` agree on everything the map is built from (MAP_INPUTS)."""
+    if force:
+        return True, "a dispatch asked for a map"
+    newest = sorted(map_artifacts(repo, repo_id, api).items(), key=lambda kv: kv[1].get("created_at", ""), reverse=True)
+    for sha, art in newest:
+        if run_problem(repo, repo_id, art, sha, api) is not None:
+            continue
+        if sha == head:
+            return False, f"the newest map is of {head[:12]} already"
+        subprocess.run(["git", "-C", str(root), "fetch", "-q", "--depth=1", "origin", sha],  # noqa: S603,S607 -- git and gh, fixed argv
+                       capture_output=True, check=False)
+        try:
+            changed = git(root, "diff", "--name-only", sha, head, "--", *MAP_INPUTS).split()
+        except subprocess.CalledProcessError:
+            return True, f"{sha[:12]}, the newest map's commit, cannot be compared with {head[:12]}"
+        if changed:
+            return True, f"{len(changed)} files the map is built from changed since {sha[:12]} (first: {changed[0]})"
+        return False, f"nothing the map is built from changed since {sha[:12]}"
+    return True, "there is no valid map yet"
 
 
 # ---------------------------------------------------------------- reports
@@ -926,15 +1117,30 @@ def summary_lines(sel: Selection, total_tests: int) -> list[str]:
     return lines
 
 
-FAILED = re.compile(r"\b(?:FAILED|ERROR) (tests/\S+)")
+SUMMARY_LINE = re.compile(r"(?:^|\s)(?:FAILED|ERROR) (tests/.*)$")
+UNKNOWN = "unknown:"
 
 
-def failed_ids(log: str) -> set[str]:
-    out = set()
-    for m in FAILED.finditer(log):
-        test = m.group(1)
-        if "::" in test:
-            out.add(XDIST_GROUP.sub("", test))
+def failed_ids(log: str, known: Iterable[str]) -> set[str]:
+    """The tests a pytest log reports FAILED or ERROR. A short-summary line is
+    "<status> <node id>[ - <message>]" and a node ID may hold spaces, so a
+    line is matched against the known IDs (the map's) of its file, longest
+    first; a line no known ID matches is "unknown:<line>": a test the map
+    does not know, which the selection runs (S11)."""
+    by_file: dict[str, list[str]] = defaultdict(list)
+    for test_id in known:
+        by_file[test_id.split("::")[0]].append(test_id)
+    for ids in by_file.values():
+        ids.sort(key=len, reverse=True)
+    out: set[str] = set()
+    for line in log.splitlines():
+        m = SUMMARY_LINE.search(line.rstrip("\r"))
+        if not m or "::" not in m.group(1):
+            continue
+        rest = m.group(1)
+        match = next((t for t in by_file.get(rest.split("::")[0], ())
+                      if rest == t or rest.startswith(t + " - ") or rest.startswith(t + " ")), None)
+        out.add(match if match is not None else UNKNOWN + rest.split(" - ")[0])
     return out
 
 
@@ -967,25 +1173,35 @@ def shadow(args: argparse.Namespace, root: Path) -> Selection:
         labels = gh_api(f"repos/{args.repo}/issues/{args.pr}/labels?per_page=100")
         if any(label.get("name") == "ci:full" for label in labels):  # type: ignore[union-attr]
             return Selection(True, ["the pull request is labeled ci:full"])
-    subprocess.run(["git", "fetch", "-q", "--depth=1", "origin", args.base], cwd=root, check=False)  # noqa: S603,S607 -- git and gh, fixed argv
-    records = git(root, "-c", "core.quotePath=true", "diff", "--no-renames", "--raw", args.base, args.head).split("\n")
-    changes = cs.plain_changes(records)
-    if changes is None:
-        return Selection(True, ["a diff record is not an add, modify or delete of a regular file"])
     if args.map:
         data = read_gz(Path(args.map))
         why = validate_map(data)
+        first_parents(root, args.base, MAX_DISTANCE + 1)
     else:
-        found, why = find_map(args.repo, args.base)
+        found, why = find_map(args.repo, repository_id(args.repo), args.base, root=root)
         data = found or {}
     if why or not data:
         return Selection(True, [f"no usable map: {why}"])
+    changes = diff_changes(root, args.base, args.head)
+    if changes is None:
+        return Selection(True, ["a diff record is not an add, modify or delete of a regular file"])
+    map_commit = str(data["commit"])
+    drift: Drift | None = None
+    if map_commit != args.base:
+        # The map can be hours old. A call edge added since then can only
+        # come from a changed function body: the changes from the map's
+        # commit to the base count as changes too.
+        if not git_ok(root, "merge-base", "--is-ancestor", map_commit, args.base):
+            return Selection(True, [f"the map's commit {map_commit[:12]} is not an ancestor of the base"])
+        drift = drift_between(root, map_commit, args.base)
+        if drift is None:
+            return Selection(True, ["a diff record between the map's commit and the base is not plain"])
     tmap = TestMap(data)
     weights = test_weights(root, (t[0] for t in tmap.tests))
     sel = select(changes, tmap, root=root, classify=python_change_reader(root, args.base, args.head),
-                 index=lambda: NameIndex.build(root), weights=weights)
+                 index=lambda: NameIndex.build(root), weights=weights, drift=drift)
     if "_distance" in data:
-        sel.notes.append(f"map {data['commit'][:12]} is {data['_distance']} commits before the base")
+        sel.notes.append(f"map {map_commit[:12]} is {data['_distance']} first-parent commits before the base")
     return sel
 
 
@@ -996,24 +1212,38 @@ def cmd_compare(args: argparse.Namespace) -> int:
             selection = read_gz(Path(args.selection))
         except OSError:
             selection = {"full": True, "reasons": ["no shadow selection for this run"]}
+        known = [*selection.get("selected", ()), *selection.get("not_selected", ())]
         failed: set[str] = set()
         if args.failed:
-            failed = {line.strip() for line in Path(args.failed).read_text().splitlines() if line.strip()}
+            failed = failed_ids(Path(args.failed).read_text(encoding="utf-8"), known)
         else:
             jobs = gh_api(f"repos/{args.repo}/actions/runs/{args.run_id}/jobs?per_page=100")
             for job in (jobs or {}).get("jobs", []):  # type: ignore[union-attr]
                 if job.get("name", "").startswith("test (") and job.get("conclusion") == "failure":
                     log = gh_api(f"repos/{args.repo}/actions/jobs/{job['id']}/logs", raw=True)
-                    failed |= failed_ids(log.decode("utf-8", "replace"))  # type: ignore[union-attr]
+                    failed |= failed_ids(log.decode("utf-8", "replace"), known)  # type: ignore[union-attr]
         runs = membership(selection)
-        outside = sorted(t for t in failed if not runs(t))
+        unknown = sorted(t for t in failed if t.startswith(UNKNOWN))
+        outside = sorted(t for t in failed if not t.startswith(UNKNOWN) and not runs(t))
         if selection.get("full"):
             lines.append(f"The shadow selection ran the full suite ({'; '.join(selection.get('reasons', [])[:1])}).")
         lines.append(f"failures outside selection: {len(outside)}" + (f" ({', '.join(outside[:50])})" if outside else ""))
-        lines.append(f"failures in this run: {len(failed)}")
+        lines.append(f"failures in this run: {len(failed)}, of which {len(unknown)} are tests the map does not know"
+                     " (the selection runs those)")
     except Exception as error:  # report only
         lines.append(f"the comparison failed ({type(error).__name__}: {error})")
     _write_summary(args.summary, lines)
+    return 0
+
+
+def cmd_needed(args: argparse.Namespace) -> int:
+    try:
+        head = args.head or git(Path.cwd(), "rev-parse", "HEAD").strip()
+        record, why = needed(args.repo, repository_id(args.repo), head, root=Path.cwd(), force=args.force == "true")
+    except Exception as error:  # cannot tell: record
+        record, why = True, f"the check failed ({type(error).__name__}: {error})"
+    print(f"record={'true' if record else 'false'}")
+    _write_summary(args.summary, [f"### Test map: {'recording' if record else 'skipped'}", "", why])
     return 0
 
 
@@ -1032,6 +1262,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--event", required=True)
     p.add_argument("--run-id", required=True)
     p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("needed", help="record=true|false: did the map's inputs change since the last map")
+    p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
+    p.add_argument("--head", default="")
+    p.add_argument("--force", default="false")
+    p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     p = sub.add_parser("shadow", help="select the tests a pull request reaches (report only)")
     p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     p.add_argument("--base", required=True)
@@ -1045,7 +1280,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     p.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", ""))
     p.add_argument("--selection", required=True)
-    p.add_argument("--failed", help="a file of failed test IDs instead of the run's logs")
+    p.add_argument("--failed", help="a pytest log to read failures from instead of the run's shard logs")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     args = parser.parse_args(argv)
     if args.command == "compact":
@@ -1060,8 +1295,11 @@ def main(argv: list[str] | None = None) -> int:
                      run_id=args.run_id, root=Path.cwd())
         write_gz(tmap, args.out)
         print(f"map {args.commit[:12]}: {len(tmap['tests'])} tests, {len(tmap['fps'])} footprints, "
-              f"{len(tmap['keys'])} keys, {args.out.stat().st_size / 1e6:.1f} MB")
+              f"{len(tmap['keys'])} keys, {len(tmap['incomplete_memo'])} incomplete memoized functions, "
+              f"{args.out.stat().st_size / 1e6:.1f} MB")
         return 0
+    if args.command == "needed":
+        return cmd_needed(args)
     if args.command == "shadow":
         return cmd_shadow(args)
     return cmd_compare(args)

@@ -15,7 +15,6 @@ import json
 import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -58,6 +57,16 @@ def reads(path):
 
 def lists(path):
     return sorted(os.listdir(path))
+
+
+@functools.lru_cache(maxsize=None)
+def spread(n):
+    return inner() + n
+
+
+@functools.lru_cache(maxsize=None)
+def many(n):
+    return n
 '''
 
 GEN = '''
@@ -79,6 +88,11 @@ if os.environ.get("TR_TESTMAP_OUT"):
     import scripts.ci.testmap_recorder  # noqa: F401
 
     pytest_plugins = ["scripts.ci.testmap_recorder"]
+
+from pkg import core  # noqa: E402
+
+core.collected()  # at import: the collection window must still record it (restart_events in enter)
+{after}
 '''
 
 TESTS = '''
@@ -172,6 +186,49 @@ def test_n_relative_open_after_cwd_removed(tmp_path):
         os.chdir(here)
 
 
+def test_p_spawn_words(tmp_path):
+    subprocess.run(["true", str(tmp_path), "x" * 500, "SECRET_TOKEN=hunter2"], check=False)
+    subprocess.run([sys.executable, "-c", "print('secret program text')"], check=False)
+    subprocess.run(["env", "FOO=bar", "true"], check=False)
+
+
+def test_q_thread_misses():
+    import threading
+
+    def work():
+        for n in range(5):
+            core.spread(n)
+
+    threads = [threading.Thread(target=work) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for _ in range(200):
+        core.plain()
+    for thread in threads:
+        thread.join()
+
+
+def test_r_many_misses():
+    for n in range(40):
+        core.many(n)
+
+
+@pytest.fixture(scope="module")
+def late():
+    return core.setup_value()
+
+
+def test_s_fixture_after_a_direct_call(request):
+    # setup_value() runs in this test's window first, then in the setup of a
+    # module fixture opened inside it: that window must record it again.
+    assert core.setup_value() == 5
+    assert request.getfixturevalue("late") == 5
+
+
+def test_t_uses_late(late):
+    assert late == 5
+
+
 def test_m_inprocess_pytest(tmp_path):
     # As tests/test_lock_order_guard.py does: pytest.main on a copy of conftest.
     with open(os.path.join(HERE, "tests", "conftest.py")) as handle:
@@ -184,7 +241,7 @@ def test_m_inprocess_pytest(tmp_path):
 '''
 
 
-def project(tmp_path: Path, occupy: str = "") -> Path:
+def project(tmp_path: Path, occupy: str = "", after: str = "", tests: str | None = None) -> Path:
     root = tmp_path / "proj"
     (root / "src/pkg").mkdir(parents=True)
     (root / "tests").mkdir()
@@ -193,8 +250,8 @@ def project(tmp_path: Path, occupy: str = "") -> Path:
     (root / "src/pkg/gen.py").write_text(GEN)
     (root / "src/pkg/data.txt").write_text("x")
     (root / "src/pkg/page.html").write_text("hi")
-    (root / "tests/conftest.py").write_text(CONFTEST.format(occupy=occupy))
-    (root / "tests/test_sample.py").write_text(TESTS)
+    (root / "tests/conftest.py").write_text(CONFTEST.format(occupy=occupy, after=after))
+    (root / "tests/test_sample.py").write_text(TESTS if tests is None else tests)
     return root
 
 
@@ -262,6 +319,7 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stdout + result.stderr
     fp = effective(fragment)
     t = "tests/test_sample.py::"
+    own = {nodeid: {fragment["keys"][k] for k in fragment["fps"][rt][0]} for nodeid, rt, _ in fragment["tests"]}
     # A generator started in one test and resumed in the next (PY_RESUME).
     assert "src/pkg/gen.py:gen" in fp[t + "test_b_resumes_generator"]["f"]
     # A cache hit runs no Python code: the call is marked, the miss ran the body.
@@ -270,7 +328,16 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert {"src/pkg/core.py:cached", "src/pkg/core.py:inner"} <= fp[t + "test_c_fills_cache"]["f"]
     # A module fixture set up during an earlier test.
     assert "src/pkg/core.py:setup_value" in fp[t + "test_f_fixture_second"]["f"]
-    # A call made while the module was collected (its parametrization).
+    # A module fixture whose setup ran inside another test's window, after
+    # that test had run the same function: entering the fixture's window
+    # re-arms it, so the fixture's record (inherited here) has it.
+    assert "src/pkg/core.py:setup_value" in fp[t + "test_t_uses_late"]["f"]
+    assert "src/pkg/core.py:setup_value" not in own[t + "test_t_uses_late"]
+    # A call made while the module was collected (its parametrization),
+    # although conftest.py already ran it at import: entering the collection
+    # window re-arms what ran before it.
+    collect = {fragment["keys"][k] for k in fragment["fps"][fragment["collect"]["tests/test_sample.py"]][0]}
+    assert "src/pkg/core.py:collected" in collect
     assert "src/pkg/core.py:collected" in fp[t + "test_g_param[2]"]["f"]
     # Reads, listings and commands.
     assert "src/pkg/data.txt" in fp[t + "test_h_reads"]["o"]
@@ -283,6 +350,18 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert "src/pkg/gen.py:gen" in fp[t + "test_m_inprocess_pytest"]["f"]
     assert not any("test_inner" in nodeid for nodeid in fp)
     assert fragment["valid"], fragment["errors"]
+    # A command's words identify it without leaking: outside paths, program
+    # text, environment values and long words are cut.
+    spawns = " ".join(fp[t + "test_p_spawn_words"]["s"])
+    assert "true <outside> " + "x" * 200 + " SECRET_TOKEN=<value> @cwd=." in spawns
+    assert f"{os.path.basename(sys.executable)} -c <program> @cwd=." in spawns
+    assert "env FOO=<value> true @cwd=." in spawns
+    assert "secret program text" not in spawns and "hunter2" not in spawns and str(tmp_path) not in spawns
+    assert "x" * 201 not in spawns
+    # Misses on other threads are recorded on their own (and the shard stays valid).
+    assert "src/pkg/core.py:spread" in fragment["cached"]
+    # More misses than the cap: the function is incomplete, its users always run.
+    assert fragment["incomplete_memo"] == ["src/pkg/core.py:many"]
     # Importing a module is not reading it.
     assert not any(o.endswith(".py") for o in fp[t + "test_a_starts_generator"]["o"])
     # Positive control for the attributions above: none is in the test's own window.
@@ -314,11 +393,50 @@ def test_the_recorder_is_opt_in_and_a_nested_process_stays_off(tmp_path: Path) -
 
 
 def test_a_taken_monitoring_tool_invalidates_the_shard_without_failing_tests(tmp_path: Path) -> None:
-    occupy = "if sys.monitoring.get_tool(3) is None:\n    sys.monitoring.use_tool_id(3, 'someone else')"
-    root = project(tmp_path, occupy=textwrap.dedent(occupy))
-    fragment, result = recorded(root, tmp_path)
+    occupy = ("if sys.monitoring.get_tool(3) is None:\n"
+              "    sys.monitoring.use_tool_id(3, 'someone else')\n"
+              "    sys.monitoring.register_callback(3, sys.monitoring.events.PY_START, lambda code, offset: None)\n"
+              "    sys.monitoring.set_events(3, sys.monitoring.events.PY_START)")
+    after = ("with open(os.environ['EVENTS_OUT'], 'w') as handle:\n"
+             "    handle.write(str(sys.monitoring.get_events(3)))")
+    root = project(tmp_path, occupy=occupy, after=after)
+    fragment, result = recorded(root, tmp_path, EVENTS_OUT=str(tmp_path / "events"))
     assert result.returncode == 0, result.stdout + result.stderr
     assert not fragment["valid"] and any("tool 3" in e for e in fragment["errors"])
+    # The recorder did not turn off the events of a tool that is not its own.
+    assert (tmp_path / "events").read_text() == str(sys.monitoring.events.PY_START)
+
+
+SABOTAGE = '''
+import scripts.ci.testmap_recorder as recorder
+
+from pkg import core
+
+
+def boom(*args, **kwargs):
+    raise RuntimeError("boom")
+
+
+def test_a_a_failing_callback_does_not_raise():
+    setattr(recorder.RECORDER, "{attribute}", boom)
+    assert core.spread(7) == 11  # a miss: PY_START opens it, PY_RETURN closes it
+    assert core.plain() == 1
+
+
+def test_b_later_tests_still_run():
+    assert core.spread(8) == 12 and core.plain() == 1
+'''
+
+
+@pytest.mark.parametrize(("attribute", "callback"), [("open_miss", "PY_START"), ("close_miss", "PY_RETURN"),
+                                                     ("note", "CALL")])
+def test_an_error_in_a_callback_never_reaches_the_test(tmp_path: Path, attribute: str, callback: str) -> None:
+    root = project(tmp_path, tests=SABOTAGE.replace("{attribute}", attribute))
+    fragment, result = recorded(root, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+    assert not fragment["valid"]
+    assert any(f"{callback}: RuntimeError: boom" in e for e in fragment["errors"]), fragment["errors"]
 
 
 @pytest.mark.parametrize("workers", ["2"])
@@ -328,5 +446,5 @@ def test_xdist_workers_record_and_the_shard_compacts(tmp_path: Path, workers: st
     fragment, result = recorded(root, tmp_path, "-n", workers, "--dist", "loadfile")
     assert result.returncode == 0, result.stdout + result.stderr
     assert fragment["valid"], fragment["errors"]
-    assert len(fragment["tests"]) == 15
+    assert len(fragment["tests"]) == 20
     assert len(list((tmp_path / "raw").glob("gw*.jsonl"))) == int(workers)

@@ -2,10 +2,10 @@
 
 Opt-in. Nothing happens unless TR_TESTMAP_OUT names an output directory, and
 tests/conftest.py imports this module only then, before any application
-import (an import-time read would otherwise go unrecorded). ci.yml sets it on
-pushes to main (and on a dispatch asking for test_map) only; pull request
-shards and local runs never load it. scripts/ci/testmap.py compacts the
-output and holds the selection rules.
+import (an import-time read would otherwise go unrecorded). Only the "Test
+map" workflow (.github/workflows/testmap.yml) sets it: no ci.yml job, so no
+deploy gate, ever runs a test under the recorder. scripts/ci/testmap.py
+compacts the output and holds the selection rules.
 
 What a test's window (setup, call and teardown) records:
   f  every function that starts or resumes under the repository: a
@@ -26,16 +26,20 @@ What a test's window (setup, call and teardown) records:
   d  repository directories listed (os.listdir, os.scandir, glob.glob,
      os.walk through scandir).
   s  commands started (subprocess.Popen, os.posix_spawn, os.exec*, os.system):
-     the first argv words, repository paths made relative, and the working
-     directory relative to the repository ("-" outside it).
+     the first four argv words and the working directory relative to the
+     repository ("-" outside it). The map is a public artifact, so a word is
+     cut at MAX_WORD characters, program text after -c and environment values
+     are placeholders, and a path outside the repository is "<outside>" (the
+     executable keeps its name).
 Separate windows, each written once and inherited by the tests that use it:
   c   a test module's collection (its import and parametrization);
   fx  the setup of a module, class, package or session fixture;
   cf  a memoized function's miss: from its PY_START to its PY_RETURN (a local
       event set on the function once its first call is seen), events re-armed
-      so every function the miss runs is recorded; the first 20 misses per
-      function. A test that marked the function inherits it. A miss that
-      raises closes with the window around it.
+      so every function the miss runs is recorded; the first MAX_MISSES misses
+      per function, on the thread that missed. A function that misses more
+      often is written as "mi" (incomplete): the selector runs its users
+      whatever changed. A miss that raises closes with the window around it.
   g   everything outside every window: imports, session and collection hooks
       (a miss at import time counts here too).
 Jinja serves a template from its cache after the first load, without
@@ -59,9 +63,13 @@ Nothing reachable from a test holds the recorder: hook frames keep no
 windows (the recorder keeps its own stack), and the session is held weakly.
 Tests that walk object graphs from their frames stay within their bounds.
 
-The recorder never raises into a test: an internal error writes an "err"
-record, stops recording, and makes the shard's fragment invalid, so no map
-is built from it.
+The recorder never raises into a test: every callback, hook and audit
+handler catches everything (an exception escaping a PY_RETURN callback would
+propagate into the function's caller); an internal error writes an "err"
+record, stops recording (turning off tool 3's events only if the tool is
+ours), and makes the shard's fragment invalid, so no map is built from it.
+Hook windows are entered and left under a lock by pytest's hooks; miss
+windows are per thread.
 
 Processes: the process that first loads the recorder owns the output (it
 sets TR_TESTMAP_OWNER); its xdist workers (direct children) record too. A
@@ -74,6 +82,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import sys
 import threading
 import types
@@ -85,13 +94,16 @@ import pytest
 try:
     from scripts.ci.testmap import RECORDER_VERSION
 except ImportError:  # pragma: no cover - loaded by path in a synthetic project
-    RECORDER_VERSION = "1"
+    RECORDER_VERSION = "2"
 
 TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
 OWNER_ENV = "TR_TESTMAP_OWNER"
 MEMO = "@memo"
 MAX_MISSES = 20
+MAX_WORD = 200
+PROGRAM_FLAG = re.compile(r"-[A-Za-z]*c")          # python -c, bash -c, sh -ec: program text follows
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)  # env NAME=value
 ROOT = os.path.realpath(os.getcwd()) + os.sep
 SKIP_PARTS = ("/.venv/", "/.git/", "/__pycache__/", "/.hypothesis/", "/.pytest_cache/", "/.mypy_cache/",
               "/.ruff_cache/", "/node_modules/", "/site-packages/")
@@ -124,37 +136,56 @@ class Window:
         self.dirs: set[str] = set()
         self.spawns: set[str] = set()
 
+    def absorb(self, other: Window) -> None:
+        self.codes.update(other.codes)
+        self.memo.update(other.memo)
+        self.opens |= other.opens
+        self.dirs |= other.dirs
+        self.spawns |= other.spawns
+
 
 class Recorder:
+    """Hook windows (a test, a scoped fixture's setup, a module's collection)
+    nest on one stack, entered and left by pytest's hooks under a lock. A
+    miss window belongs to the thread whose call missed: each thread keeps
+    its own stack of them, so a callback on another thread can neither pop
+    nor mix into it. What any thread runs counts for the hook window open
+    at the time, and for the open misses of its own thread."""
+
     def __init__(self, out_dir: str) -> None:
         self.glob = Window()
         self.cur = self.glob
-        self.stack: list[tuple[Window, bool]] = []  # (outer window, merge into it even if global)
-        self.memo_codes: dict[int, Any] = {}   # memoized functions seen called: id -> code
-        self.memo_open: list[Any] = []         # codes of the misses now recording, innermost last
+        self.stack: list[Window] = []
+        self.hook_lock = threading.RLock()
+        self.out_lock = threading.Lock()
+        self.local = threading.local()          # .misses: [(code, Window)], innermost last
+        self.miss_stacks: list[list[tuple[Any, Window]]] = []
+        self.memo_codes: dict[int, Any] = {}    # memoized functions seen called: id -> code
         self.misses: dict[int, int] = {}
         self.active = True
-        self.lock = threading.Lock()
+        self.tool_ours = False
         self.paths: dict[str, str | None] = {}
         self.config_ref: Any = None  # the session this process records, weakly; see pytest_configure
         worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
         os.makedirs(out_dir, exist_ok=True)
         self.out = open(os.path.join(out_dir, f"{worker}-{os.getpid()}.jsonl"), "w", encoding="utf-8")  # noqa: SIM115
-        self.write({"h": {"recorder": RECORDER_VERSION, "root": ROOT, "pid": os.getpid(), "worker": worker,
+        self.write({"h": {"recorder": RECORDER_VERSION, "pid": os.getpid(), "worker": worker,
                           "python": sys.version.split()[0]}})
 
     # -- output
     def write(self, record: dict) -> None:
-        with self.lock:
+        with self.out_lock:
             self.out.write(json.dumps(record, separators=(",", ":")) + "\n")
 
     def fail(self, where: str, error: BaseException) -> None:
+        """Stop recording and mark this process's output invalid. Never raises."""
         if not self.active:
             return
         self.active = False
         try:
-            mon.set_events(TOOL_ID, 0)
-        except Exception:  # noqa: S110 - already broken, keep the test running
+            if self.tool_ours:
+                mon.set_events(TOOL_ID, 0)
+        except Exception:  # noqa: S110 - already failing; the tests keep running
             pass
         try:
             self.write({"err": f"{where}: {type(error).__name__}: {error}"})
@@ -169,81 +200,133 @@ class Recorder:
             found = self.paths[filename] = self.rel(filename) if not filename.startswith("<") else None
         return found
 
+    def key(self, code: Any) -> str | None:
+        path = self.code_path(code.co_filename)
+        return None if path is None else f"{path}:{code.co_qualname}"
+
     def dump(self, window: Window) -> dict:
         funcs = set()
         for codes, suffix in ((window.codes, ""), (window.memo, MEMO)):
-            for code in list(codes.values()):
-                path = self.code_path(code.co_filename)
-                if path is not None:
-                    funcs.add(f"{path}:{code.co_qualname}{suffix}")
-        return {"f": sorted(funcs), "o": sorted(window.opens), "d": sorted(window.dirs), "s": sorted(window.spawns)}
+            for code in codes.copy().values():
+                key = self.key(code)
+                if key is not None:
+                    funcs.add(key + suffix)
+        return {"f": sorted(funcs), "o": sorted(window.opens.copy()), "d": sorted(window.dirs.copy()),
+                "s": sorted(window.spawns.copy())}
 
-    # -- windows: the recorder keeps the stack, so no hook frame holds one
-    def enter(self, into_global: bool = False) -> None:
-        self.stack.append((self.cur, into_global))
-        self.cur = Window()
-        mon.restart_events()
+    # -- hook windows: the recorder keeps the stack, so no hook frame holds one
+    def enter(self) -> None:
+        with self.hook_lock:
+            self.stack.append(self.cur)
+            self.cur = Window()
+            # Re-arm every location: what ran before this window (an earlier
+            # test, or the import of the module now being collected) must
+            # report again when it runs in this one.
+            mon.restart_events()
 
     def leave(self) -> Window:
-        window = self.cur
-        prev, into_global = self.stack.pop()
-        # What ran in a nested window ran in the outer one too; a test's own
-        # window is not part of the global one, a miss at import time is.
-        if prev is not self.glob or into_global:
-            prev.codes.update(window.codes)
-            prev.memo.update(window.memo)
-            prev.opens |= window.opens
-            prev.dirs |= window.dirs
-            prev.spawns |= window.spawns
-        self.cur = prev
-        mon.restart_events()
-        return window
+        with self.hook_lock:
+            window = self.cur
+            if not self.stack:
+                raise RuntimeError("a window closed that was not open")
+            prev = self.stack.pop()
+            if prev is not self.glob:  # what ran in a nested window ran in the outer one too
+                prev.absorb(window)
+            self.cur = prev
+            mon.restart_events()
+            return window
 
-    # -- event sources
+    def thread_misses(self) -> list[tuple[Any, Window]]:
+        stack = getattr(self.local, "misses", None)
+        if stack is None:
+            stack = self.local.misses = []
+            with self.out_lock:
+                self.miss_stacks.append(stack)
+        return stack
+
+    def note(self, attr: str, value: Any, ident: int | None = None) -> None:
+        """Record into the hook window and the open misses of this thread."""
+        targets = [self.cur, *(window for _, window in getattr(self.local, "misses", ()) or ())]
+        for window in targets:
+            if ident is None:
+                getattr(window, attr).add(value)
+            else:
+                getattr(window, attr)[ident] = value
+
+    # -- sys.monitoring callbacks: each one catches everything (an exception
+    # escaping a PY_RETURN callback propagates into the function's caller)
     def on_code(self, code: Any, offset: int, _disable: Any = sys.monitoring.DISABLE) -> Any:
         # DISABLE is bound at definition: module globals are cleared at
         # interpreter shutdown, while a callback can still fire.
-        ident = id(code)
-        self.cur.codes[ident] = code
-        if ident in self.memo_codes and self.misses.get(ident, 0) < MAX_MISSES:
-            self.misses[ident] = self.misses.get(ident, 0) + 1
-            self.enter(into_global=True)
-            self.cur.codes[ident] = code
-            self.memo_open.append(code)
+        try:
+            if self.active:
+                ident = id(code)
+                self.note("codes", code, ident)
+                if ident in self.memo_codes:
+                    self.open_miss(code, ident)
+                    return None  # a memoized function's start is a miss: count every one
+        except Exception as error:
+            self.fail("PY_START", error)
         return _disable
 
+    def open_miss(self, code: Any, ident: int) -> None:
+        count = self.misses[ident] = self.misses.get(ident, 0) + 1
+        if count <= MAX_MISSES:
+            window = Window()
+            window.codes[ident] = code
+            self.thread_misses().append((code, window))
+            mon.restart_events()  # the miss records every function it runs
+        elif count == MAX_MISSES + 1:
+            key = self.key(code)
+            if key is not None:
+                self.write({"mi": key})  # later misses go unrecorded: its users always run
+
     def on_return(self, code: Any, offset: int, value: Any) -> Any:
-        if self.memo_open and self.memo_open[-1] is code:
-            self.close_miss()
+        try:
+            stack = getattr(self.local, "misses", None)
+            if stack and stack[-1][0] is code:
+                self.close_miss(stack)
+        except Exception as error:
+            self.fail("PY_RETURN", error)
         return None
 
-    def close_miss(self) -> None:
-        code = self.memo_open.pop()
-        window = self.leave()
-        path = self.code_path(code.co_filename)
-        if path is not None:
-            self.write({"cf": f"{path}:{code.co_qualname}", **self.dump(window)})
+    def close_miss(self, stack: list[tuple[Any, Window]]) -> None:
+        try:
+            code, window = stack.pop()
+            key = self.key(code)
+            if key is not None and self.active:
+                self.write({"cf": key, **self.dump(window)})
+        except Exception as error:
+            self.fail("miss", error)
 
-    def close_misses(self) -> None:
-        """Close the misses still recording (one raised) before a hook's window closes."""
-        while self.memo_open:
-            self.close_miss()
+    def close_misses(self, every_thread: bool = False) -> None:
+        """Close misses still open (one raised): this thread's before a hook
+        window closes, every thread's at the end of the session."""
+        stacks = list(self.miss_stacks) if every_thread else [getattr(self.local, "misses", None) or []]
+        for stack in stacks:
+            while stack:
+                self.close_miss(stack)
 
     def on_call(self, code: Any, offset: int, func: Any, arg0: Any,
                 _disable: Any = sys.monitoring.DISABLE, _lru: Any = LRU, _method: Any = types.MethodType) -> Any:
-        kind = type(func)
-        if kind is _method:
-            func = func.__func__
-            kind = type(func)
-        if kind is _lru:
-            wrapped = getattr(func, "__wrapped__", None)
-            target = getattr(wrapped, "__code__", None)
-            if target is not None:
-                ident = id(target)
-                self.cur.memo[ident] = target
-                if ident not in self.memo_codes:
-                    self.memo_codes[ident] = target
-                    mon.set_local_events(TOOL_ID, target, mon.events.PY_RETURN)
+        try:
+            if self.active:
+                kind = type(func)
+                if kind is _method:
+                    func = func.__func__
+                    kind = type(func)
+                if kind is _lru:
+                    target = getattr(getattr(func, "__wrapped__", None), "__code__", None)
+                    # Only the repository's caches: a library's is not in the map.
+                    if target is not None and self.code_path(target.co_filename) is not None:
+                        ident = id(target)
+                        self.note("memo", target, ident)
+                        if ident not in self.memo_codes:
+                            self.memo_codes[ident] = target
+                            mon.set_local_events(TOOL_ID, target, mon.events.PY_RETURN)
+                            mon.restart_events()  # its start may be disabled already: every miss must report
+        except Exception as error:
+            self.fail("CALL", error)
         return _disable
 
     def rel(self, path: Any) -> str | None:
@@ -273,12 +356,12 @@ class Recorder:
                     return
                 if rel.endswith(".py") and self.not_a_read():
                     return
-                self.cur.opens.add(rel)
+                self.note("opens", rel)
             elif event in ("os.listdir", "os.scandir", "glob.glob"):
                 if args and args[0] is not None and not isinstance(args[0], int):
                     rel = self.rel(args[0])
                     if rel is not None:
-                        self.cur.dirs.add(rel)
+                        self.note("dirs", rel)
             elif event == "subprocess.Popen":
                 self.spawn(args[1], args[2])
             elif event in ("os.posix_spawn", "os.exec"):
@@ -305,19 +388,41 @@ class Recorder:
             frame = frame.f_back
         return display
 
-    def spawn(self, argv: Any, cwd: Any) -> None:
+    def words(self, argv: Any) -> list[str]:
+        """A command's first words, as little as identifies it: the map is a
+        public artifact. Repository paths are relative; the executable outside
+        the repository is its name; other paths outside it, program text
+        after -c, and environment values are placeholders; every word is cut
+        at MAX_WORD characters."""
         if isinstance(argv, (str, bytes, os.PathLike)):
-            words = [os.fsdecode(argv)]
+            raw = [os.fsdecode(argv)]
         else:
-            words = [os.fsdecode(a) if isinstance(a, (str, bytes, os.PathLike)) else str(a) for a in list(argv)[:4]]
-        words = [(self.rel(w) or w) if os.path.isabs(w) or w.startswith(".") else w for w in words]
+            raw = [os.fsdecode(a) if isinstance(a, (str, bytes, os.PathLike)) else str(a) for a in list(argv)[:4]]
+        out: list[str] = []
+        program = False
+        for index, word in enumerate(raw):
+            if program:
+                out.append("<program>")
+                program = False
+                continue
+            if PROGRAM_FLAG.fullmatch(word):
+                program = True
+            elif ASSIGNMENT.fullmatch(word):
+                word = word.split("=", 1)[0] + "=<value>"
+            elif os.path.isabs(word) or word.startswith("."):
+                rel = self.rel(word)
+                word = rel if rel is not None else (os.path.basename(word) if index == 0 else "<outside>")
+            out.append(" ".join(word.split())[:MAX_WORD] or "''")
+        return out
+
+    def spawn(self, argv: Any, cwd: Any) -> None:
         if cwd is None:
             try:
                 cwd = os.getcwd()
             except OSError:
                 cwd = None
         where = self.rel(cwd) if cwd is not None else None
-        self.cur.spawns.add(" ".join(" ".join(words).split()) + f" @cwd={where or '-'}")
+        self.note("spawns", " ".join(self.words(argv)) + f" @cwd={where or '-'}")
 
 
 RECORDER: Recorder | None = None
@@ -356,12 +461,17 @@ def _start() -> Recorder | None:
     except ValueError as error:
         recorder.fail("sys.monitoring tool 3 is taken", error)
         return recorder
-    mon.register_callback(TOOL_ID, mon.events.PY_START, recorder.on_code)
-    mon.register_callback(TOOL_ID, mon.events.PY_RESUME, recorder.on_code)
-    mon.register_callback(TOOL_ID, mon.events.CALL, recorder.on_call)
-    mon.register_callback(TOOL_ID, mon.events.PY_RETURN, recorder.on_return)
-    mon.set_events(TOOL_ID, mon.events.PY_START | mon.events.PY_RESUME | mon.events.CALL)
-    sys.addaudithook(_audit_hook(recorder))
+    recorder.tool_ours = True
+    try:
+        mon.register_callback(TOOL_ID, mon.events.PY_START, recorder.on_code)
+        mon.register_callback(TOOL_ID, mon.events.PY_RESUME, recorder.on_code)
+        mon.register_callback(TOOL_ID, mon.events.CALL, recorder.on_call)
+        mon.register_callback(TOOL_ID, mon.events.PY_RETURN, recorder.on_return)
+        mon.set_events(TOOL_ID, mon.events.PY_START | mon.events.PY_RESUME | mon.events.CALL)
+        sys.addaudithook(_audit_hook(recorder))
+    except Exception as error:
+        recorder.fail("setup", error)
+        return recorder
     try:
         import jinja2.environment
 
@@ -385,7 +495,7 @@ def _template_read(filename: Any) -> None:
     try:
         rel = rec.rel(filename)
         if rel is not None:
-            rec.cur.opens.add(rel)
+            rec.note("opens", rel)
     except Exception as error:
         rec.fail("template", error)
 
@@ -418,6 +528,19 @@ def _fixture_key(fixturedef: Any, request: Any) -> str:
     return f"{scope}|{anchor}|{fixturedef.baseid}|{fixturedef.argname}"
 
 
+def _open(config: Any) -> bool:
+    """Enter a hook window for `config`'s session; False when not recording."""
+    rec = _ours(config)
+    if rec is None:
+        return False
+    try:
+        rec.enter()
+        return True
+    except Exception as error:
+        rec.fail("enter", error)
+        return False
+
+
 def _close(record: dict) -> None:
     """Leave the innermost window and write it under `record`'s key."""
     rec = RECORDER
@@ -438,9 +561,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.hookimpl(wrapper=True)
 def pytest_make_collect_report(collector: pytest.Collector) -> Any:
-    if not isinstance(collector, pytest.Module) or _ours(collector.config) is None:
+    if not isinstance(collector, pytest.Module) or not _open(collector.config):
         return (yield)
-    RECORDER.enter()  # type: ignore[union-attr]
     try:
         return (yield)
     finally:
@@ -449,9 +571,8 @@ def pytest_make_collect_report(collector: pytest.Collector) -> Any:
 
 @pytest.hookimpl(wrapper=True)
 def pytest_fixture_setup(fixturedef: Any, request: Any) -> Any:
-    if fixturedef.scope == "function" or _ours(request.config) is None:
+    if fixturedef.scope == "function" or not _open(request.config):
         return (yield)
-    RECORDER.enter()  # type: ignore[union-attr]
     try:
         return (yield)
     finally:
@@ -460,12 +581,16 @@ def pytest_fixture_setup(fixturedef: Any, request: Any) -> Any:
 
 @pytest.hookimpl(wrapper=True, tryfirst=True)
 def pytest_runtest_protocol(item: pytest.Item, nextitem: Any) -> Any:
-    if _ours(item.config) is None:
+    if not _open(item.config):
         return (yield)
-    RECORDER.enter()  # type: ignore[union-attr]
     try:
         return (yield)
     finally:
+        _close({"t": item.nodeid, "x": _scoped_fixtures(item)})
+
+
+def _scoped_fixtures(item: pytest.Item) -> list[str]:
+    try:
         scoped = []
         info = getattr(item, "_fixtureinfo", None)
         if info is not None:
@@ -473,7 +598,11 @@ def pytest_runtest_protocol(item: pytest.Item, nextitem: Any) -> Any:
                 defs = info.name2fixturedefs.get(name) or ()
                 if defs and defs[-1].scope != "function":
                     scoped.append(f"{defs[-1].scope}|{defs[-1].baseid}|{defs[-1].argname}")
-        _close({"t": item.nodeid, "x": sorted(scoped)})
+        return sorted(scoped)
+    except Exception as error:
+        if RECORDER is not None:
+            RECORDER.fail("fixtures", error)
+        return []
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -482,9 +611,10 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         return
     try:
         if rec.active:
-            rec.close_misses()
+            rec.close_misses(every_thread=True)
             rec.active = False
-            mon.set_events(TOOL_ID, 0)
+            if rec.tool_ours:
+                mon.set_events(TOOL_ID, 0)
             rec.write({"g": True, **rec.dump(rec.glob)})
             rec.write({"end": True})  # compact treats a file without it as cut short
         rec.out.close()

@@ -532,9 +532,7 @@ def test_the_complete_matrix_is_one_dispatch_or_one_label_away():
     triggers = workflow.get("on", workflow.get(True))
     assert triggers["workflow_dispatch"] == {"inputs": {"scope": {
         "description": "full runs every job; paths skips a path-scoped job none of whose inputs changed",
-        "type": "choice", "options": ["full", "paths"], "default": "full"}, "test_map": {
-        "description": "record each test's footprint and build the testmap artifact, as a push to main does",
-        "type": "boolean", "default": False}}}
+        "type": "choice", "options": ["full", "paths"], "default": "full"}}}
     # GitHub's default activity types: opened, synchronize, reopened.
     assert triggers["pull_request"] == {"branches": ["main"]}
     assert "labeled" not in json.dumps(triggers)
@@ -733,29 +731,28 @@ def test_a_passing_tests_temporary_directory_is_not_kept() -> None:
 
 
 # The per-test footprint map and the shadow selection (scripts/ci/testmap.py,
-# scripts/ci/testmap_recorder.py). Shadow mode: nothing it produces decides
-# what runs, and nothing it does can fail a job.
-TESTMAP_CONDITION = "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.test_map) }}"
+# scripts/ci/testmap_recorder.py, .github/workflows/testmap.yml). Shadow mode:
+# nothing it produces decides what runs, and nothing it does can fail a ci.yml
+# job or hold a deploy.
 
 
 def _steps_named(job: dict, *words: str) -> list[dict]:
     return [step for step in job["steps"] if all(w.lower() in str(step.get("name", "")).lower() for w in words)]
 
 
-def test_the_recorder_runs_on_pushes_and_asked_for_dispatches_only() -> None:
+def _commands(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def test_no_ci_yml_job_runs_a_test_under_the_recorder() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
     jobs = yaml.safe_load(workflow)["jobs"]
-    test = jobs["test"]
-    assert test["env"]["TESTMAP"] == TESTMAP_CONDITION
-    assert jobs["coverage"]["env"]["TESTMAP"] == TESTMAP_CONDITION
-    step = next(step for step in test["steps"] if "uv run pytest" in step.get("run", ""))
-    # Outside the workspace (the deploy tests copy the repository), and empty
-    # (off) unless TESTMAP is true.
-    assert step["env"] == {"TR_TESTMAP_OUT": "${{ env.TESTMAP == 'true' && format('{0}/testmap-raw', runner.temp) || '' }}"}
-    # Nothing else turns it on, and the test command itself is unchanged.
-    commands = "\n".join(line for line in workflow.splitlines() if not line.lstrip().startswith("#"))
-    assert commands.count("TR_TESTMAP_OUT") == 1
-    assert "testmap" not in step["run"]
+    assert "TR_TESTMAP_OUT" not in _commands(workflow)
+    assert "testmap_recorder" not in workflow
+    # The only map steps are the coverage job's two report-only ones on a pull request.
+    assert {name: [s.get("name") for s in job["steps"] if "testmap" in json.dumps(s)]
+            for name, job in jobs.items() if "testmap" in json.dumps(job.get("steps", []))} == {
+        "coverage": ["Shadow test selection (report only)", "Failures outside the shadow selection (report only)"]}
     # tests/conftest.py loads the recorder under that variable only, before
     # any application import.
     conftest = (ROOT / "tests/conftest.py").read_text()
@@ -764,63 +761,101 @@ def test_the_recorder_runs_on_pushes_and_asked_for_dispatches_only() -> None:
     assert conftest.index(guard) < conftest.index("import tests.lifecycle_freeze") < conftest.index("from trusted_router")
 
 
-def test_the_map_steps_cannot_fail_a_job_and_build_from_every_shard() -> None:
-    from scripts.ci import testmap
-
-    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-    test, coverage = jobs["test"], jobs["coverage"]
-    shard_steps = _steps_named(test, "test map")
-    assert [s["name"] for s in shard_steps] == ["Compact this shard's test map", "Upload this shard's test map"]
-    for step in shard_steps:
-        assert step["if"] == "env.TESTMAP == 'true'" and step["continue-on-error"] is True
-    upload = shard_steps[1]
-    assert upload["with"]["name"] == "testmap-fragment-${{ matrix.shard }}"
-    assert upload["with"]["path"] == "testmap-${{ matrix.shard }}.json.gz" and upload["with"]["retention-days"] == 1
-    # The map steps come after every step the shard ran before.
-    assert test["steps"].index(shard_steps[0]) > max(
-        i for i, s in enumerate(test["steps"]) if "coverage" in str(s.get("with", {}).get("name", "")))
-    merge_steps = _steps_named(coverage, "test map")
-    assert [s["name"] for s in merge_steps] == ["Collect every shard's test map", "Merge the test map", "Upload the test map"]
-    for step in merge_steps:
-        assert step["if"] == "env.TESTMAP == 'true' && needs.test.result == 'success'"
-        assert step["continue-on-error"] is True
-    assert merge_steps[0]["with"] == {"pattern": "testmap-fragment-*", "path": "testmap-fragments"}
-    command = merge_steps[1]["run"]
-    assert f"--shards {test['env']['TEST_SHARDS']}" in command and int(test["env"]["TEST_SHARDS"]) == testmap.SHARDS
-    for flag in ('--commit "${GITHUB_SHA}"', '--ref "${GITHUB_REF}"', '--event "${GITHUB_EVENT_NAME}"',
-                 '--run-id "${GITHUB_RUN_ID}"'):
-        assert flag in command
-    assert merge_steps[2]["with"] == {"name": testmap.ARTIFACT, "path": "testmap.json.gz", "retention-days": 14,
-                                      "if-no-files-found": "ignore"}
-    floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
-    assert all(coverage["steps"].index(s) < coverage["steps"].index(floor) for s in merge_steps)
-
-
-def test_the_shadow_selection_is_report_only() -> None:
+def test_the_shadow_selection_is_report_only_and_off_the_scope_job() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     scope, coverage, test = jobs["scope"], jobs["coverage"], jobs["test"]
-    shadow = _steps_named(scope, "shadow test selection")
-    assert [s["name"] for s in shadow] == ["Shadow test selection (report only)", "Upload the shadow test selection"]
+    # Nothing waits on it: not in scope, which every path-scoped job needs.
+    assert "testmap" not in json.dumps(scope)
+    shadow = _steps_named(coverage, "shadow")
+    assert [s["name"] for s in shadow] == ["Shadow test selection (report only)",
+                                           "Failures outside the shadow selection (report only)",
+                                           "Upload the shadow test selection"]
     for step in shadow:
         assert step["if"] == "github.event_name == 'pull_request'" and step["continue-on-error"] is True
-        assert "id" not in step  # no outputs: the scope job's outputs are unchanged
-    assert shadow[0]["timeout-minutes"] == 5
+        assert step["timeout-minutes"] == 5
+        assert "id" not in step
     assert "testmap.py shadow" in shadow[0]["run"] and '--base "${PR_BASE_SHA}"' in shadow[0]["run"]
-    assert shadow[1]["with"]["name"] == "test-selection" and shadow[1]["with"]["path"] == "selection.json.gz"
-    compare = _steps_named(coverage, "shadow")
-    assert [s["name"] for s in compare] == ["Fetch the shadow test selection",
-                                            "Failures outside the shadow selection (report only)"]
-    for step in compare:
-        assert step["if"] == "github.event_name == 'pull_request'" and step["continue-on-error"] is True
-    assert compare[0]["with"] == {"name": "test-selection", "path": "test-selection"}
-    assert compare[1]["run"] == "python3 scripts/ci/testmap.py compare --selection test-selection/selection.json.gz"
+    assert shadow[0]["env"]["PR_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert shadow[1]["run"] == "python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+    assert shadow[2]["with"]["name"] == "test-selection" and shadow[2]["with"]["path"] == "selection.json.gz"
     floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
-    assert coverage["steps"].index(compare[1]) < coverage["steps"].index(floor)
-    assert coverage["permissions"] == {"contents": "read", "actions": "read"}
+    assert all(coverage["steps"].index(s) < coverage["steps"].index(floor) for s in shadow)
+    assert coverage["permissions"] == {"contents": "read", "actions": "read", "pull-requests": "read"}
     # What runs is unchanged: every shard, whatever the selection says.
     assert test["strategy"]["matrix"]["shard"] == list(range(1, int(test["env"]["TEST_SHARDS"]) + 1))
     assert "needs" not in test and "if" not in test
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    assert "test-selection" not in json.dumps(test)
-    assert "selection.json" not in "\n".join(str(job.get("if", "")) for job in jobs.values())
-    assert workflow.count("testmap.py shadow") == 1 and workflow.count("testmap.py compare") == 1
+
+
+def _testmap() -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows/testmap.yml").read_text())
+
+
+def test_the_map_has_its_own_workflow_that_nothing_gates_on() -> None:
+    from scripts.ci import testmap
+
+    workflow = _testmap()
+    assert testmap.MAP_WORKFLOW == ".github/workflows/testmap.yml"
+    assert workflow["name"] == "Test map" != "CI"
+    triggers = workflow.get("on", workflow.get(True))
+    assert set(triggers) == {"schedule", "workflow_dispatch"}
+    assert triggers["schedule"] == [{"cron": "23 */3 * * *"}]
+    assert workflow["concurrency"] == {"group": "testmap-${{ github.ref }}", "cancel-in-progress": False}
+    assert workflow["permissions"] == {"contents": "read"}
+    # No deploy gate, release script or required check can see it: they read
+    # ci.yml's runs, the workflow named CI, or the required check names.
+    readers = [path.relative_to(ROOT).as_posix()
+               for path in [*(ROOT / ".github/workflows").glob("*.y*ml"), *(ROOT / "scripts").rglob("*.py"),
+                            *(ROOT / "scripts").rglob("*.sh")]
+               if "testmap.yml" in path.read_text(errors="replace") or "Test map" in path.read_text(errors="replace")]
+    # ci.yml only names it where its pull request runs read the map (report only).
+    assert sorted(readers) == [".github/workflows/ci.yml", ".github/workflows/testmap.yml",
+                               "scripts/ci/testmap.py", "scripts/ci/testmap_recorder.py"]
+    refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
+    import re
+    required = set(re.findall(r'"([^"]+)"', re.findall(r'for context in ((?:"[^"\n]+" ?)+); do', refresh)[0]))
+    produced = {job.get("name", key) for key, job in workflow["jobs"].items()}
+    produced |= {f"{job.get('name', key)} ({shard})" for key, job in workflow["jobs"].items()
+                 for shard in job.get("strategy", {}).get("matrix", {}).get("shard", [])}
+    assert not produced & required and not any(name in {"CI", "test", "lint"} for name in produced)
+
+
+def test_every_map_job_and_step_is_bounded() -> None:
+    for name, job in _testmap()["jobs"].items():
+        assert isinstance(job["timeout-minutes"], int) and job["timeout-minutes"] <= 35, name
+        for step in job["steps"]:
+            assert isinstance(step.get("timeout-minutes"), int), (name, step.get("name", step.get("uses")))
+    assert _testmap()["jobs"]["record"]["timeout-minutes"] == 35
+
+
+def test_the_map_records_ci_yml_s_test_selection_in_eight_shards_and_merges_only_green() -> None:
+    from scripts.ci import testmap
+
+    jobs = _testmap()["jobs"]
+    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]["test"]
+    record = jobs["record"]
+    assert jobs["changes"]["outputs"] == {"record": "${{ steps.decide.outputs.record }}"}
+    decide = next(s for s in jobs["changes"]["steps"] if s.get("id") == "decide")
+    assert "testmap.py needed" in decide["run"] and '>> "$GITHUB_OUTPUT"' not in decide["run"]
+    assert 'tee -a "$GITHUB_OUTPUT"' in decide["run"]
+    assert record["needs"] == "changes" and record["if"] == "needs.changes.outputs.record == 'true'"
+    assert record["strategy"] == {"fail-fast": False, "matrix": {"shard": list(range(1, testmap.SHARDS + 1))}}
+    assert record["env"] == ci["env"] and int(record["env"]["TEST_SHARDS"]) == testmap.SHARDS
+    assert {name: {k: v for k, v in service.items()} for name, service in record["services"].items()} == {
+        name: {k: v for k, v in service.items()} for name, service in ci["services"].items()}
+    step = next(s for s in record["steps"] if "uv run pytest" in s.get("run", ""))
+    assert step["env"] == {"TR_TESTMAP_OUT": "${{ runner.temp }}/testmap-raw"}
+    assert '-m "not provider_health and not proof_oracle"' in step["run"]
+    assert "--splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}" in step["run"]
+    assert "--cov" not in step["run"] and "--store-durations" not in step["run"]
+    upload = next(s for s in record["steps"] if s.get("with", {}).get("name", "").startswith("testmap-fragment"))
+    assert upload["with"]["name"] == "testmap-fragment-${{ matrix.shard }}"
+    merge = jobs["merge"]
+    assert merge["needs"] == "record" and merge["if"] == "needs.record.result == 'success'"
+    command = next(s["run"] for s in merge["steps"] if "testmap.py merge" in s.get("run", ""))
+    assert f"--shards {testmap.SHARDS}" in command
+    for flag in ('--commit "${GITHUB_SHA}"', '--ref "${GITHUB_REF}"', '--event "${GITHUB_EVENT_NAME}"',
+                 '--run-id "${GITHUB_RUN_ID}"'):
+        assert flag in command
+    upload = next(s for s in merge["steps"] if s.get("with", {}).get("name") == testmap.ARTIFACT)
+    assert upload["with"] == {"name": testmap.ARTIFACT, "path": "testmap.json.gz", "retention-days": 14}
+    assert "continue-on-error" not in json.dumps(jobs)
