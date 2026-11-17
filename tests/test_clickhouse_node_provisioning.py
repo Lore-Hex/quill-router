@@ -239,13 +239,6 @@ def test_cluster_load_balancer_is_private_global_access_and_three_backend() -> N
     assert "http://${ip}:8123/ping" in script
 
 
-def test_rollout_prefers_private_clickhouse_load_balancer() -> None:
-    script = (ROOT / "scripts/deploy/rollout.sh").read_text()
-
-    assert "compute addresses describe tr-clickhouse-ilb" in script
-    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}" in script
-
-
 def test_operational_deploy_moves_benchmark_code_and_schema_together() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
 

@@ -419,7 +419,7 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	// pass as stream.hold. With fastpath_stream_ceiling (streams section
 	// 12.4, PR 4) the same two are answered with their ceilings, and one at
 	// the bound and one request that does not stream with none.
-	if answered != 195+31 || streams != 31 || ceilings != 2 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
+	if answered != 203+31 || streams != 31 || ceilings != 2 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
 		t.Fatalf("answered %d (%d streams, %d with a ceiling, %d with a cache affinity key), unavailable %d, refunded %d: "+
 			"not the goldens' counts", answered, streams, ceilings, affinity, unavailable, refunded)
 	}

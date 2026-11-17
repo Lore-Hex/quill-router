@@ -675,7 +675,7 @@ func checkAffinity(t *testing.T, c authorizeCase, d Decided) bool {
 // routing-snapshot-v1.md, "What Go evaluates"): Go passes them, which is
 // always safe; the shadow counts them python_answered_go_passed.evaluate.pass.
 var evaluatorPasses = map[string]string{
-	"answer:provider:max_price": "provider.max_price",
+	"answer:provider:preferred_max_latency": "provider.preferred_max_latency",
 }
 
 // checkAnswered holds a decision to an answered case: what the pipeline
@@ -796,6 +796,9 @@ func TestEveryGoldenReasonIsNamed(t *testing.T) {
 		PassRecordsNotDurable, PassAsyncSettleShadow, PassMonitorKey, PassDigestNotAccepted, PassEvaluateRefused,
 		PassEstimateOverflow, PassCandidatesBYOK, PassCandidatesEstimated, PassCandidatesPrivate,
 		PassStreamUndeclared, PassStreamHold, gwauth.ReasonTagsMergedInvalid} {
+		named[r] = true
+	}
+	for _, r := range maxPricePasses {
 		named[r] = true
 	}
 	for _, c := range authorizeGoldens(t).Cases {

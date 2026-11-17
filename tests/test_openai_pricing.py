@@ -115,7 +115,7 @@ def test_openai_isolation_does_not_accept_invalid_prices(
         openai.fetch()
 
 
-@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.2-sol"])
 def test_sol_luna_discovery_preserves_verified_tool_and_vision_capabilities(
     model: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,3 +139,25 @@ def test_sol_luna_discovery_preserves_verified_tool_and_vision_capabilities(
     for item in (models[f"openai/{model}"], endpoints[f"openai/{model}@openai/prepaid"]):
         assert {"tools", "reasoning_effort", "structured_outputs"} <= set(item.supported_parameters)
     assert models[f"openai/{model}"].input_modalities == ("text", "image")
+
+
+@pytest.mark.parametrize(("name", "short", "long"), [
+    ("sol", (2, 10, 0.1), (4, 15, 0.2)),
+    ("astra", (8, 40, 0.4), (16, 60, 0.8)),
+])
+def test_openai_62_published_standard_prices_match_committed_routes(name, short, long):
+    model = f"gpt-6.2-{name}"
+    header = "| Model | Short context input | Short context output | Short context cached input | Short context 30m write | Short context 12h write | Long context input | Long context output | Long context cached input | Long context 30m write | Long context 12h write |"
+    row = f"| {model} | " + " | ".join(f"${n}" for n in (*short, 10, 20, *long, 20, 40)) + " |"
+    batch = f"### Batch pricing data\n{header}\n" + row.replace("$", "$9")
+    canonical = f"openai/{model}"
+    assert canonical not in parser.parse(batch)
+    tiers = parser.parse(f"{batch}\n### Standard pricing data\n{header}\n{row}")[canonical]["tiers"]
+    route = next(r for r in json.loads(openai.MANIFEST_PATH.read_text())["models"] if r["id"] == canonical)
+    assert route["upstream_id"] == model and route["routable"]
+    assert tiers == [
+        {"max_prompt_tokens": t["max_prompt_tokens"], "prompt_micro_per_m": t["input_token_price_per_m"],
+         "completion_micro_per_m": t["output_token_price_per_m"],
+         "prompt_cached_micro_per_m": t["cached_input_token_price_per_m"]}
+        for t in route["price_tiers"]
+    ]

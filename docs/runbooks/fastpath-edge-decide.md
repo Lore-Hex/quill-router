@@ -620,7 +620,11 @@ bar cannot be read until a node's shadow restarts after the step's start
 The decide line ends with its pass mix, counted beside `passed`, each pass
 once, and changing nothing the edge answers or passes. `float_at={...}`
 counts the `body.float` passes by where the first float is
-(`gwauth/float_at.go`): `provider.max_price`,
+(`gwauth/float_at.go`): `provider.max_price` (only a float inside a limit's
+list or object: a limit itself is no `body.float`, the evaluator reads it
+and passes a spelling it does not read under its own reason,
+`evaluate.max_price.not_object`, `.option`, `.type`, `.negative`,
+`.exponent` or `.digits`, in `passed`),
 `provider.preferred_max_latency`, `provider.preferred_min_throughput`,
 `provider.sort`, `provider.options`, `provider.other`, `trace`, `metadata`,
 `tags`, `extra` (a member the schema does not declare, its name never

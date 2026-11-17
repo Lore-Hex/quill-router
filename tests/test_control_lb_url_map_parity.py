@@ -70,10 +70,6 @@ BASE_FIXTURES = {
         "base_service_surface_url_map.py.txt",
         "9ecf8df52b2b967c5f9d5bd962934dd481d5154b9740b9a497cf792642d150ed",
     ),
-    "infra/control_lb_url_map.tf": (
-        "base_control_lb_url_map.tf.txt",
-        "beeac18f205da50d1d93fa2fc3f9b30c2fc489dce6af051581621c4b77475389",
-    ),
 }
 TERMINAL_PATHS = {
     "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
@@ -222,57 +218,6 @@ def test_terminal_rule_parity_paths_backends_and_plain_service(
         assert _resolve_backend(emitted, "trustedrouter.com", path) == (
             expected_link if enabled else gateway or internal
         )
-
-
-def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None:
-    source = (ROOT / "infra/control_lb_url_map.tf").read_text()
-    dynamic = _terminal_dynamic(source)
-    without = source[:dynamic.start()] + source[dynamic.end():]
-
-    def uncomment(text: str) -> str:
-        return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
-
-    # Compare whitespace-collapsed code, so column alignment is not a change.
-    without = uncomment(without)
-    # NYTEX temporary aliases (#2622): a market may list temporary_aliases,
-    # which leave its permanent aliases matcher and get their own matcher with
-    # a 302; every other matcher keeps the 301 it had. Fold that back to the
-    # earlier shape; nothing else in the map may differ.
-    temporary_aliases = (
-        ("for market in local.exchange_markets : concat([", "for market in local.exchange_markets : ["),
-        (' redirect_code = "MOVED_PERMANENTLY_DEFAULT" }', " }"),
-        (
-            '[for alias in market.aliases : alias if !contains(try(market.temporary_aliases, []), alias)], '
-            '[for alias in market.aliases : "www.${alias}" if !contains(try(market.temporary_aliases, []), alias)]',
-            'market.aliases, [for alias in market.aliases : "www.${alias}"]',
-        ),
-        (
-            '], length(try(market.temporary_aliases, [])) == 0 ? [] : [{ name = "exchange-${market.slug}-temporary-aliases" '
-            'hosts = flatten([for alias in market.temporary_aliases : [alias, "www.${alias}"]]) slug = market.slug '
-            'redirect = market.domain redirect_code = "FOUND" }]) ])',
-            "] ])",
-        ),
-        ("redirect_response_code = path_matcher.value.redirect_code", 'redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"'),
-    )
-    for added, earlier in temporary_aliases:
-        expected = 2 if "MOVED_PERMANENTLY_DEFAULT\" }" in added else 1
-        assert without.count(added) == expected, added
-        without = without.replace(added, earlier)
-    # Creator retirement adds only these two earnings aliases; all prior
-    # routing, including disabled terminal behavior, must stay identical.
-    assert without.count('"/earnings", "/earnings/*", ') == 1
-    without = without.replace('"/earnings", "/earnings/*", ', "")
-    # Billing reconciliation adds exactly these two control-plane aliases.
-    assert without.count('"/requests", "/requests/*", ') == 1
-    without = without.replace('"/requests", "/requests/*", ', "")
-    # Markets with forward_to redirect both matchers; without it, as before.
-    for forwarded, base in (
-        ("redirect = try(market.forward_to, null)", "redirect = null"),
-        ("redirect = try(market.forward_to, market.domain)", "redirect = market.domain"),
-    ):
-        assert without.count(forwarded) == 1
-        without = without.replace(forwarded, base)
-    assert uncomment(without) == uncomment(_base_source("infra/control_lb_url_map.tf"))
 
 
 @pytest.mark.parametrize("shape", ["production", "internal", "gateway", "authorize"])

@@ -138,9 +138,22 @@ const (
 	// PassEvaluate is any evaluator pass not named below (the request's
 	// shape or a snapshot input Go does not reproduce); PassEvaluateRefused
 	// any refusal, which Python makes itself.
-	PassEvaluate            = "evaluate.pass"
-	PassEvaluateRefused     = "evaluate.refused"
-	PassEstimateOverflow    = "evaluate.estimate_overflow"
+	PassEvaluate         = "evaluate.pass"
+	PassEvaluateRefused  = "evaluate.refused"
+	PassEstimateOverflow = "evaluate.estimate_overflow"
+	// The evaluator's passes for a provider.max_price it does not read
+	// (routingsnapshot.MaxPrice*, max_price.go), each its own reason so the
+	// pass mix shows which spellings of the limit still reach Python: not
+	// an object, a member other than prompt and completion, a limit that is
+	// not a number (a string, which Python answers, or a boolean), a
+	// negative limit, one with an exponent, or one with more than nine
+	// digits before the point or six after it.
+	PassMaxPriceNotObject   = "evaluate.max_price.not_object"
+	PassMaxPriceOption      = "evaluate.max_price.option"
+	PassMaxPriceType        = "evaluate.max_price.type"
+	PassMaxPriceNegative    = "evaluate.max_price.negative"
+	PassMaxPriceExponent    = "evaluate.max_price.exponent"
+	PassMaxPriceDigits      = "evaluate.max_price.digits"
 	PassCandidatesBYOK      = "candidates.byok"
 	PassCandidatesEstimated = "candidates.estimated_usage"
 	PassCandidatesPrivate   = "candidates.private_proxy"
@@ -166,6 +179,16 @@ const (
 	evaluatorWindowReason     = "the instant is outside the snapshot's window"
 	evaluatorEstimateOverflow = "the estimate exceeds int64"
 )
+
+// maxPricePasses names each of the evaluator's provider.max_price passes.
+var maxPricePasses = map[string]string{
+	routingsnapshot.MaxPriceNotObject: PassMaxPriceNotObject,
+	routingsnapshot.MaxPriceOption:    PassMaxPriceOption,
+	routingsnapshot.MaxPriceType:      PassMaxPriceType,
+	routingsnapshot.MaxPriceNegative:  PassMaxPriceNegative,
+	routingsnapshot.MaxPriceExponent:  PassMaxPriceExponent,
+	routingsnapshot.MaxPriceDigits:    PassMaxPriceDigits,
+}
 
 // EstimatedUsageModels is ESTIMATED_USAGE_SNAPSHOT_MODELS (stage_d.py,
 // decision 7): a candidate of one of these models passes. A test holds it
@@ -590,6 +613,9 @@ func Decide(in DecideInputs) Decided {
 			return pass(PassClockWindow)
 		case evaluatorEstimateOverflow:
 			return pass(PassEstimateOverflow)
+		}
+		if reason, ok := maxPricePasses[res.Reason]; ok {
+			return pass(reason)
 		}
 		return pass(PassEvaluate)
 	}

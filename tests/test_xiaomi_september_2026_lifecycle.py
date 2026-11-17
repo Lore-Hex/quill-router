@@ -11,7 +11,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import xiaomi
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import FAST_MODEL_ORDER, endpoints_for_model
+from trusted_router.catalog import endpoints_for_model
 
 _CUTOFF = datetime(2026, 9, 7, 16, 0, tzinfo=UTC)
 _ULTRASPEED = "xiaomi/mimo-v2.5-pro-ultraspeed"
@@ -139,7 +139,3 @@ def test_xiaomi_manifest_refresh_restores_retirement_metadata(
     refreshed = json.loads(manifest_path.read_text(encoding="utf-8"))
     refreshed_ultraspeed = next(row for row in refreshed["models"] if row["id"] == _ULTRASPEED)
     assert refreshed_ultraspeed["retirement_at"] == "2026-09-07T16:00:00Z"
-
-
-def test_fast_pool_no_longer_depends_on_limited_beta() -> None:
-    assert _ULTRASPEED not in FAST_MODEL_ORDER

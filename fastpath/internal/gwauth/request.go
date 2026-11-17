@@ -3,9 +3,10 @@ package gwauth
 // The authorize request as Python's route reads it
 // (docs/design/fast-admission-e2-decide.md, §3, §7 and §8.2): the body
 // parsed strictly as schemas.GatewayAuthorizeRequest, and the headers the
-// route reads. Whatever Go cannot hold exactly as Python would (a float, a
-// duplicate key, a value pydantic would coerce, a string whose whitespace
-// Python strips differently) is a Pass with its §3 reason, never a guess.
+// route reads. Whatever Go cannot hold exactly as Python would (a float
+// other than provider.max_price's limits, a duplicate key, a value pydantic
+// would coerce, a string whose whitespace Python strips differently) is a
+// Pass with its §3 reason, never a guess.
 
 import (
 	"encoding/json"
@@ -157,7 +158,7 @@ func parseBody(body []byte, h Headers) (Request, pyjson.Object, Pass) {
 	if !ok {
 		return Request{}, nil, passFor(ReasonUnparseable)
 	}
-	if hasFloat(object) {
+	if passingFloat(object) {
 		// Located only once the request passes: the requests that do not
 		// pass here pay nothing for it.
 		return Request{}, nil, Pass{Reason: ReasonFloat, FloatAt: floatAt(object)}
@@ -207,7 +208,9 @@ func shallowAndShort(body []byte) bool {
 }
 
 // hasFloat reports a number with a fraction or an exponent anywhere: Python
-// reads it as a float, whose repr Go does not hold to the fingerprint.
+// reads it as a float. The body's one place a float does not pass is
+// provider.max_price's limits (passingFloat); everywhere else Go passes
+// rather than decide on a float.
 func hasFloat(v any) bool {
 	switch v := v.(type) {
 	case json.Number:
@@ -335,7 +338,7 @@ func typeOf(f field, v any) verdict {
 	case kindInt:
 		switch v := v.(type) {
 		case json.Number:
-			return exact // hasFloat already passed fractions and exponents
+			return exact // passingFloat already passed fractions and exponents
 		case bool:
 			return laxUnlessStrict(f)
 		case string:
@@ -623,8 +626,10 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 }
 
 // routingOf is the evaluator's input: the body's routing fields as sent
-// (Evaluate strips them itself). An integer beyond int64, which Python
-// holds and Go's evaluator does not, passes.
+// (Evaluate strips them itself), each number literal as the body spelled it
+// (pyjson's NumbersAsWritten): the evaluator reads provider.max_price's
+// limits from their literals, never from a float. An integer beyond int64,
+// which Python holds and Go's evaluator does not, passes.
 func routingOf(values, dumped map[string]any) (routingsnapshot.Request, Pass) {
 	var req routingsnapshot.Request
 	req.Model = values["model"].(string)
@@ -642,7 +647,7 @@ func routingOf(values, dumped map[string]any) (routingsnapshot.Request, Pass) {
 		if !present || v == nil {
 			continue
 		}
-		raw, err := pyjson.Dumps(v, pyjson.Options{})
+		raw, err := pyjson.Dumps(v, pyjson.Options{NumbersAsWritten: true})
 		if err != nil {
 			return req, passFor(ReasonEvaluatorInput)
 		}

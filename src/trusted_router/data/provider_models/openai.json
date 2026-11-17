@@ -1035,10 +1035,98 @@
           "cached_input_token_price_per_m": 200000
         }
       ]
+    },
+    {
+      "display_name": "gpt-6.2-astra",
+      "title": "gpt-6.2-astra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.2-astra",
+      "upstream_id": "gpt-6.2-astra",
+      "created": 1793430042,
+      "routable": true,
+      "input_token_price_per_m": 8000000,
+      "output_token_price_per_m": 40000000,
+      "cached_input_token_price_per_m": 400000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 8000000,
+          "output_token_price_per_m": 40000000,
+          "cached_input_token_price_per_m": 400000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 16000000,
+          "output_token_price_per_m": 60000000,
+          "cached_input_token_price_per_m": 800000
+        }
+      ],
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ]
+    },
+    {
+      "display_name": "gpt-6.2-sol",
+      "title": "gpt-6.2-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.2-sol",
+      "upstream_id": "gpt-6.2-sol",
+      "created": 1793642820,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 10000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 200000
+        }
+      ],
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ]
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-17T18:34:58Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 40
+  "model_count": 42
 }

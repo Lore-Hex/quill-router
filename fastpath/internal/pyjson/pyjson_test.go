@@ -182,3 +182,26 @@ func TestISOFormatTruncatesToTheMicrosecondInUTC(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// TestNumbersAsWrittenKeepsEachLiteral: with NumbersAsWritten each number
+// is its literal exactly as the document spelled it, the integers' "-0"
+// and the floats' trailing zeros and exponents included, where Dumps alone
+// writes what Python reads from it; a literal that is not a JSON number is
+// still refused, and nothing else changes.
+func TestNumbersAsWrittenKeepsEachLiteral(t *testing.T) {
+	tree := Object{
+		{Key: "a", Value: json.Number("0.950000")}, {Key: "b", Value: json.Number("-0")},
+		{Key: "c", Value: json.Number("1E0")}, {Key: "d", Value: []any{json.Number("3.30"), "x", true, nil}},
+	}
+	got, err := Dumps(tree, Options{NumbersAsWritten: true})
+	if want := `{"a":0.950000,"b":-0,"c":1E0,"d":[3.30,"x",true,null]}`; err != nil || string(got) != want {
+		t.Errorf("as written: %s %v, want %s", got, err, want)
+	}
+	got, err = Dumps(tree, Options{})
+	if want := `{"a":0.95,"b":0,"c":1.0,"d":[3.3,"x",true,null]}`; err != nil || string(got) != want {
+		t.Errorf("as Python writes: %s %v, want %s", got, err, want)
+	}
+	if _, err := Dumps(json.Number("01"), Options{NumbersAsWritten: true}); err == nil {
+		t.Error("a literal that is not a JSON number was written")
+	}
+}

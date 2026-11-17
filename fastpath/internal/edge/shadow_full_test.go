@@ -508,7 +508,7 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 	// unavailable; the two past the hold bound pass as stream.hold. With the
 	// policy's fastpath_stream_ceiling (section 12.4, PR 4) three more
 	// streams and one request that does not stream are answered.
-	if classes[ClassAgreeFull] != 195+31+1+5+2+notLeasedRows || rowsAgree != 195+31+1 || notLeasedRows != 1 ||
+	if classes[ClassAgreeFull] != 203+31+1+5+2+notLeasedRows || rowsAgree != 203+31+1 || notLeasedRows != 1 ||
 		affinityAgree != 18 || readBack != 1 ||
 		classes[ClassPythonUnavailable] != 2+1 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 ||
 		classes[ClassPythonAnsweredGoPassed+"."+PassStreamHold] != 2 {

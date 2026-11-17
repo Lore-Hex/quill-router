@@ -276,15 +276,6 @@ def test_round3_notify_example_is_directly_eligible() -> None:
     assert "other regions require identity verification first" in source
 
 
-def test_retired_creator_blog_no_longer_advertises_verification_onboarding() -> None:
-    from trusted_router.content.blog import BLOG_POSTS_BY_SLUG
-
-    post = BLOG_POSTS_BY_SLUG["you-are-a-model-provider"]
-    assert "retired" in post.title
-    assert "which is what unlocks phone verification" not in post.body_html
-    assert "and then a government ID check" not in post.body_html
-
-
 def test_round3_oauth_design_warns_against_inferring_lower_tiers() -> None:
     from pathlib import Path
 

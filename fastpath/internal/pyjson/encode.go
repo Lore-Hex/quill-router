@@ -62,6 +62,12 @@ type Object []Member
 type Options struct {
 	SortKeys    bool
 	EnsureASCII bool
+	// NumbersAsWritten writes each json.Number as its literal, exactly as
+	// the document spelled it (still refusing one that is not a JSON
+	// number), instead of as Python writes what json.loads reads from it.
+	// It is not json.dumps: it is for a caller that reads the literal
+	// itself, as the routing evaluator reads provider.max_price.
+	NumbersAsWritten bool
 
 	// pydantic is DumpsPydantic's: floats by FormatFloatPydantic, a NaN or
 	// an infinity as null.
@@ -227,6 +233,9 @@ func appendNumber(dst []byte, literal string, o Options) ([]byte, error) {
 	integer, ok := numberLiteral(literal)
 	if !ok {
 		return nil, fmt.Errorf("pyjson: %q is not a JSON number", literal)
+	}
+	if o.NumbersAsWritten {
+		return append(dst, literal...), nil
 	}
 	if integer {
 		if digits := strings.TrimPrefix(literal, "-"); len(digits) > maxIntDigits {
