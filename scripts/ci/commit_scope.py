@@ -901,8 +901,11 @@ class Names:
                 # A directory is a base for other paths; its files count
                 # when something lists or globs it.
                 self.named_dirs.add(place.path)
-            elif place.path.split("/", 1)[0] in ("tests", "scripts") and FILE_SUFFIX.search(place.path):
-                self.found.add(place.path)  # a file the tests name that does not exist yet
+            elif place.path and FILE_SUFFIX.search(place.path):
+                # A file the code names that does not exist at HEAD: one a
+                # change deleted or renamed away (its deletion record must run
+                # the lane), or one a change may add. Kept wherever it is.
+                self.found.add(place.path)
 
     def glob(self, pattern: str, directories: list[str] | None, *, recursive: bool) -> None:
         """Files a glob (or a listing: pattern "*") can match under each
@@ -1103,10 +1106,30 @@ def _parse(source: str, path: str) -> ast.AST | None:
         return None
 
 
-_CLOSURES: dict[tuple[str, int], frozenset[str]] = {}  # (root, what the closure reads) -> closure
+@dataclass(frozen=True)
+class HeavyWalk:
+    """heavy_closure() and, for each file in it, the file the walk reached
+    it from first ("" for a starting file): a path from a heavy test to it."""
+    closure: frozenset[str]
+    parents: dict[str, str]
+
+    def path_to(self, path: str) -> list[str]:
+        """The files from a starting file down to `path`, both included."""
+        chain = [path]
+        while self.parents.get(chain[-1]):
+            chain.append(self.parents[chain[-1]])
+        return chain[::-1]
+
+
+_WALKS: dict[tuple[str, int], HeavyWalk] = {}  # (root, what the walk reads) -> walk
 
 
 def heavy_closure(root: Path, tree: Tree | None = None) -> frozenset[str]:
+    """Every repository file the heavy tests can load or read: heavy_walk()."""
+    return heavy_walk(root, tree).closure
+
+
+def heavy_walk(root: Path, tree: Tree | None = None) -> HeavyWalk:
     """Every repository file the heavy tests can load or read, by these rules,
     from HEAD's sources: start at HEAVY_TESTS and tests/conftest.py; from each
     Python file, follow the modules it imports and the package __init__.py of
@@ -1126,10 +1149,11 @@ def heavy_closure(root: Path, tree: Tree | None = None) -> frozenset[str]:
     key = (str(root.resolve()), hash((HEAVY_TESTS, TEST_HARNESS, tuple(tree.files), tuple(
         (lambda stat: (stat.st_size, stat.st_mtime_ns))((root / path).stat())
         for path in tree.files if path.endswith(".py")))))
-    if key in _CLOSURES:
-        return _CLOSURES[key]
+    if key in _WALKS:
+        return _WALKS[key]
     heavy = frozenset(HEAVY_TESTS)
     seen: set[str] = set()
+    parents: dict[str, str] = dict.fromkeys((*HEAVY_TESTS, *TEST_HARNESS), "")
     emptied: dict[str, set[str]] = {}  # test module -> the tests whose bodies were left out
     kept: dict[str, frozenset[str]] = {}  # test module -> the tests something calls
     identifiers: dict[str, set[str]] = {}
@@ -1160,6 +1184,11 @@ def heavy_closure(root: Path, tree: Tree | None = None) -> frozenset[str]:
         identifiers[path] = referenced_identifiers(parsed)
         return targets
 
+    def reached(path: str, targets: set[str]) -> None:
+        for target in sorted(targets - seen):
+            parents.setdefault(target, path)
+            pending.append(target)
+
     pending = [*HEAVY_TESTS, *TEST_HARNESS]
     while pending:
         while pending:
@@ -1172,16 +1201,16 @@ def heavy_closure(root: Path, tree: Tree | None = None) -> frozenset[str]:
                 # fixture), not one they run: its tests do not run, unless
                 # something calls one by name or reads the file as a path.
                 partial = is_test_file(path) and path not in heavy and path not in named_as_paths
-                pending.extend(read(path, frozenset() if partial else None) - seen)
+                reached(path, read(path, frozenset() if partial else None))
         called = set().union(*identifiers.values()) if identifiers else set()
         for path, names in list(emptied.items()):
             if path in named_as_paths:
-                pending.extend(read(path, None) - seen)
+                reached(path, read(path, None))
             elif names & called:
                 kept[path] = kept.get(path, frozenset()) | (names & called)
-                pending.extend(read(path, kept[path]) - seen)
-    _CLOSURES[key] = frozenset(seen)
-    return _CLOSURES[key]
+                reached(path, read(path, kept[path]))
+    _WALKS[key] = HeavyWalk(frozenset(seen), {path: parents[path] for path in seen})
+    return _WALKS[key]
 
 
 def empty_test_bodies(tree: ast.Module, keep: frozenset[str]) -> set[str]:

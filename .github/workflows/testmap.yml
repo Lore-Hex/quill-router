@@ -171,10 +171,27 @@ jobs:
           name: testmap
           path: testmap.json.gz
           retention-days: 14
-      # After the upload, so a red check still leaves the map. Every file the
-      # heavy lane's tests ran or opened in this map must be a change that
-      # runs ci.yml's test-heavy (commit_scope.py's run_heavy); a red run
-      # names each one that is not.
+
+  # Every file the heavy lane's tests ran or opened in this map must be a
+  # change that runs ci.yml's test-heavy (commit_scope.py's run_heavy); a red
+  # job names each one that is not. A job of its own, after the upload: when
+  # it fails, the run is red but the map stays usable (testmap.py's
+  # run_problem accepts a run whose only failed job is this one and whose
+  # merge job passed), so the shadow selection and `needed` keep the new map.
+  heavy-scope:
+    name: heavy lane scope
+    needs: merge
+    if: needs.merge.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+      - name: Download the map
+        timeout-minutes: 3
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: testmap
       - name: The heavy lane's scope covers what its tests ran
         timeout-minutes: 5
         run: python3 scripts/ci/testmap.py heavy --map testmap.json.gz

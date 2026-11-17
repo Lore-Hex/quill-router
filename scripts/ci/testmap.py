@@ -19,11 +19,16 @@ Stdlib only, like commit_scope.py, so a job can run it before `uv sync`.
             runs.
   compare   after the test shards: this run's failed tests against the shadow
             selection, "failures outside selection: N (IDs)".
-  heavy     the map workflow, after merging a map: every repository file a
-            test of commit_scope.HEAVY_TESTS ran or opened in it must be a
-            change that runs the heavy lane (run_heavy); exit 1 naming each
-            one that is not. --write also records the paths in
-            HEAVY_SNAPSHOT, which the default suite holds the scope to.
+  heavy     the map workflow's "heavy lane scope" job, after a map is
+            merged: every repository file a test of commit_scope.HEAVY_TESTS
+            ran or opened in it must be a change that runs the heavy lane
+            (run_heavy); exit 1 naming each one that is not. --write also
+            records them in HEAVY_SNAPSHOT, with the path the walk took to
+            each, which the default suite holds the scope to.
+  heavy-prune
+            deletes HEAVY_SNAPSHOT's stale entries: files no heavy test can
+            reach any more because a file on the path that reached them
+            changed (no map needed).
 
 What a footprint holds (the recorder's docstring has how it is recorded):
   f  functions that started or resumed ("path:qualname"), and calls of a
@@ -55,7 +60,8 @@ changed since the map selects what ran it like one the pull request changed.
       (commit_scope's FULL_MATRIX_PATHS, any .gitattributes) or to the
       Python toolchain; the pull request labeled ci:full.
    F2 no map; a map that is not this repository's own "Test map" run
-      (MAP_WORKFLOW, a MAP_EVENTS event on main, head repository ours, green)
+      (MAP_WORKFLOW, a MAP_EVENTS event on main, head repository ours, green,
+      or red only in HEAVY_CHECK_JOB after MAP_JOB passed)
       at a commit on the base's first-parent history (git rev-list, not
       dates) within MAX_DISTANCE commits, uploaded within MAX_AGE_HOURS by
       the server's clock; a map that is unreadable, of another schema or
@@ -119,6 +125,7 @@ from __future__ import annotations
 import argparse
 import ast
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -147,6 +154,10 @@ MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
 # The map comes from this workflow's own runs on main, nothing else (F2).
 MAP_WORKFLOW = ".github/workflows/testmap.yml"
+# Its job that uploads the map, and the heavy lane's check against the map,
+# which may fail without making the map unusable (run_problem).
+MAP_JOB = "merge map"
+HEAVY_CHECK_JOB = "heavy lane scope"
 MAP_EVENTS = frozenset({"push", "schedule", "workflow_dispatch"})
 # What the map is built from: the map workflow records again when one changed.
 MAP_INPUTS = ("src", "tests", "scripts/ci", "pyproject.toml", "uv.lock", ".python-version", "conftest.py",
@@ -1070,8 +1081,18 @@ def run_problem(repo: str, repo_id: int, art: dict, sha: str, api: Callable[...,
         return f"its run is on {run.get('head_branch')} at {str(run.get('head_sha'))[:12]}"
     if (run.get("repository") or {}).get("id") != repo_id or (run.get("head_repository") or {}).get("id") != repo_id:
         return "its run is from another repository"
-    if run.get("status") != "completed" or run.get("conclusion") != "success":
-        return f"its run is {run.get('status')}/{run.get('conclusion')}"
+    problem = f"its run is {run.get('status')}/{run.get('conclusion')}"
+    if run.get("status") != "completed" or run.get("conclusion") not in ("success", "failure"):
+        return problem
+    if run.get("conclusion") == "failure":
+        # Red only because the heavy lane's check against the new map failed:
+        # the map is as good as a green run's.
+        jobs = api(f"repos/{repo}/actions/runs/{run.get('id')}/jobs?per_page=100")
+        listed = jobs.get("jobs", []) if isinstance(jobs, dict) else []
+        failed = {job.get("name") for job in listed if job.get("conclusion") not in ("success", "skipped")}
+        merged = any(job.get("name") == MAP_JOB and job.get("conclusion") == "success" for job in listed)
+        if not (merged and failed == {HEAVY_CHECK_JOB}):
+            return problem
     return None
 
 
@@ -1341,6 +1362,69 @@ def heavy_outside(root: Path, paths: Iterable[str]) -> list[str]:
                   and not cs.heavy_covers(path, closure) and not cs.matches_any(path, cs.FULL_MATRIX_PATHS))
 
 
+def file_digest(path: Path) -> str | None:
+    """A short digest of a file's bytes; None for a file that does not exist."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return None
+
+
+def heavy_snapshot(root: Path, data: dict, paths: Iterable[str]) -> dict:
+    """The snapshot of a map's heavy footprint (HEAVY_SNAPSHOT): its files that
+    exist, and for each the walk reached, the path that reached it (`parents`,
+    each file's parent up to a heavy test) with the digest of every file on
+    it (`sha256`), so a later check can tell an entry a change made
+    unreachable from one the scope's rules stopped reaching."""
+    walk = cs.heavy_walk(root)
+    files = sorted(path for path in set(paths) if (root / path).is_file())
+    parents: dict[str, str] = {}
+    for path in files:
+        # Only an entry the closure alone covers can go stale; src/, test
+        # fixtures and the toolchain are inputs whatever reaches them.
+        if path in walk.closure and not cs.heavy_covers(path, frozenset()):
+            chain = walk.path_to(path)
+            parents.update(zip(chain[1:], chain[:-1], strict=True))
+    on_paths = set(parents.values())
+    return {"map": {key: data.get(key) for key in ("commit", "run_id", "created")},
+            "tests": sorted(cs.HEAVY_TESTS), "files": files, "parents": dict(sorted(parents.items())),
+            "sha256": {path: file_digest(root / path) for path in sorted(on_paths)}}
+
+
+def heavy_snapshot_check(root: Path, snapshot: dict) -> tuple[list[str], dict[str, str]]:
+    """The snapshot's entries outside the lane's scope, as (regressions,
+    stale). Stale: no heavy test can reach the entry any more because a file
+    on the path that reached it changed or went away since the snapshot, or
+    its heavy test left the lane: a refactor, which the check lets pass (and
+    `heavy-prune` deletes). A regression: every file on that path is as it
+    was, or no path was recorded, yet the scope no longer covers the entry:
+    commit_scope's rules stopped reaching it. A fresh map is what tells a
+    dynamic read a refactor added from a stale entry; the map workflow
+    checks every new one."""
+    walk = cs.heavy_walk(root)
+    parents: dict[str, str] = snapshot.get("parents", {})
+    digests: dict[str, str] = snapshot.get("sha256", {})
+    regressions: list[str] = []
+    stale: dict[str, str] = {}
+    for path in snapshot["files"]:
+        if not (root / path).is_file() or path in HEAVY_LEAKS or cs.matches_any(path, cs.FULL_MATRIX_PATHS) \
+                or cs.heavy_covers(path, walk.closure):
+            continue
+        chain = [path]
+        while chain[-1] in parents and len(chain) <= len(parents):
+            chain.append(parents[chain[-1]])
+        chain.reverse()
+        if len(chain) < 2:
+            regressions.append(path)
+        elif chain[0] not in (*cs.HEAVY_TESTS, *cs.TEST_HARNESS):
+            stale[path] = f"{chain[0]} is no longer in the lane"
+        elif changed := next((step for step in chain[:-1] if file_digest(root / step) != digests.get(step)), None):
+            stale[path] = f"{changed} changed since the snapshot (the walk reached it by {' -> '.join(chain)})"
+        else:
+            regressions.append(path)
+    return regressions, stale
+
+
 def cmd_heavy(args: argparse.Namespace) -> int:
     root = Path.cwd()
     data = read_gz(Path(args.map))
@@ -1358,9 +1442,8 @@ def cmd_heavy(args: argparse.Namespace) -> int:
             return 1
         # Repository files only: a map also records names opened relative to
         # another directory (a temporary one).
-        snapshot = {"map": {key: data.get(key) for key in ("commit", "run_id", "created")},
-                    "tests": sorted(cs.HEAVY_TESTS), "files": sorted(p for p in paths if (root / p).is_file())}
-        Path(args.write).write_text(json.dumps(snapshot, indent=1) + "\n", encoding="utf-8")
+        Path(args.write).write_text(json.dumps(heavy_snapshot(root, data, paths), indent=1) + "\n",
+                                    encoding="utf-8")
     outside = heavy_outside(root, paths)
     lines = [f"### Heavy lane scope against map {str(data.get('commit'))[:12]}", "",
              f"{len(paths)} paths the lane's tests ran or opened; outside the lane's scope: {len(outside)}"]
@@ -1371,6 +1454,34 @@ def cmd_heavy(args: argparse.Namespace) -> int:
     for path in outside:
         print(f"::error title=Heavy lane scope::{path} is in a heavy test's footprint but outside run_heavy")
     return 1 if outside else 0
+
+
+def cmd_heavy_prune(args: argparse.Namespace) -> int:
+    """Delete the snapshot's stale entries (heavy_snapshot_check); exit 1
+    naming each regression, which only a fix to commit_scope's rules (or, if
+    the change is intended, a deletion by hand) resolves."""
+    root = Path.cwd()
+    target = root / args.snapshot
+    snapshot = json.loads(target.read_text(encoding="utf-8"))
+    regressions, stale = heavy_snapshot_check(root, snapshot)
+    for path, why in sorted(stale.items()):
+        print(f"deleted {path}: {why}")
+    files = [path for path in snapshot["files"] if path not in stale]
+    parents: dict[str, str] = snapshot.get("parents", {})
+    kept: dict[str, str] = {}
+    for path in files:
+        while path in parents and path not in kept:
+            kept[path] = parents[path]
+            path = parents[path]
+    on_paths = set(kept.values())
+    snapshot.update(files=files, parents=dict(sorted(kept.items())),
+                    sha256={path: digest for path, digest in snapshot.get("sha256", {}).items() if path in on_paths})
+    target.write_text(json.dumps(snapshot, indent=1) + "\n", encoding="utf-8")
+    for path in regressions:
+        print(f"::error title=Heavy lane scope::{path} is no longer in run_heavy although every file on the path "
+              "that reached it is unchanged: commit_scope's rules stopped reaching it. Fix the rule, or delete the "
+              f"entry from {args.snapshot} by hand if that is intended.")
+    return 1 if regressions else 0
 
 
 def cmd_needed(args: argparse.Namespace) -> int:
@@ -1423,9 +1534,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--map", required=True, help="a map file (testmap.json.gz)")
     p.add_argument("--write", help=f"also write the footprint snapshot ({HEAVY_SNAPSHOT})")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
+    p = sub.add_parser("heavy-prune", help="delete the footprint snapshot's stale entries (no map needed)")
+    p.add_argument("--snapshot", default=HEAVY_SNAPSHOT)
     args = parser.parse_args(argv)
     if args.command == "heavy":
         return cmd_heavy(args)
+    if args.command == "heavy-prune":
+        return cmd_heavy_prune(args)
     if args.command == "compact":
         fragment = compact(args.raw, args.shard)
         write_gz(fragment, args.out)

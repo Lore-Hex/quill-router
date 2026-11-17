@@ -528,6 +528,8 @@ def fake_api(artifacts: list[dict], runs: list[dict], maps: dict[int, dict]):
             return buf.getvalue()
         if "/artifacts?" in path:
             return {"artifacts": artifacts}
+        if "/actions/runs/" in path and "/jobs?" in path:
+            return {"jobs": by_run[int(path.split("/actions/runs/")[1].split("/")[0])].get("jobs", [])}
         if "/actions/runs/" in path:
             return by_run[int(path.rsplit("/", 1)[1])]
         raise AssertionError(f"unexpected API call {path}")  # never the commits listing: dates lie
@@ -580,6 +582,33 @@ def test_find_map_refuses_a_map_from_anything_but_its_own_workflow_on_main(tmp_p
     api = fake_api([artifact(1, shas[1]), artifact(2, shas[2])], [run(1, shas[1]), run(2, shas[2])],
                    {1: mapped(shas[1]), 2: mapped(shas[2])})
     assert tm.find_map("o/r", REPO_ID, shas[0], root=root, api=api, now=NOW)[0]["commit"] == shas[1]
+
+
+def red_run(art_id: int, sha: str, jobs: dict[str, str]) -> dict:
+    return {**run(art_id, sha, conclusion="failure"),
+            "jobs": [{"name": name, "conclusion": conclusion} for name, conclusion in jobs.items()]}
+
+
+@pytest.mark.parametrize(("jobs", "usable"), [
+    # Red only in the heavy lane's check, after the map was merged: usable.
+    ({"map inputs": "success", "record (1)": "success", tm.MAP_JOB: "success", tm.HEAVY_CHECK_JOB: "failure"}, True),
+    # Anything else red, or no merged map, is not.
+    ({"map inputs": "success", "record (1)": "failure", tm.MAP_JOB: "skipped", tm.HEAVY_CHECK_JOB: "skipped"}, False),
+    ({"map inputs": "success", "record (1)": "success", tm.MAP_JOB: "failure", tm.HEAVY_CHECK_JOB: "skipped"}, False),
+    ({"map inputs": "failure", "record (1)": "success", tm.MAP_JOB: "success", tm.HEAVY_CHECK_JOB: "failure"}, False),
+    ({"map inputs": "success", tm.HEAVY_CHECK_JOB: "failure"}, False),
+    ({"map inputs": "success", tm.MAP_JOB: "success", tm.HEAVY_CHECK_JOB: "cancelled"}, True),
+])
+def test_a_run_red_only_in_the_heavy_check_still_gives_a_usable_map(tmp_path: Path, jobs: dict, usable: bool) -> None:
+    root, shas = history(tmp_path, ["2026-11-17T10:00:00Z", "2026-11-17T10:30:00Z", "2026-11-17T11:00:00Z"])
+    api = fake_api([artifact(1, shas[1]), artifact(2, shas[2])], [red_run(1, shas[1], jobs), run(2, shas[2])],
+                   {1: mapped(shas[1]), 2: mapped(shas[2])})
+    found, _ = tm.find_map("o/r", REPO_ID, shas[0], root=root, api=api, now=NOW)
+    assert found is not None and found["commit"] == (shas[1] if usable else shas[2])
+    # A cancelled or still-running run is never usable, whatever its jobs.
+    cancelled = {**red_run(1, shas[1], jobs), "conclusion": "cancelled"}
+    assert tm.run_problem("o/r", REPO_ID, artifact(1, shas[1]), shas[1],
+                          fake_api([], [cancelled], {})) == "its run is completed/cancelled"
 
 
 def test_map_artifacts_reads_past_a_first_page_of_other_testmap_artifacts(tmp_path: Path) -> None:
@@ -909,15 +938,98 @@ def test_the_heavy_check_names_each_file_outside_the_lane(tmp_path: Path, monkey
 
 def test_the_heavy_scope_covers_everything_the_map_saw_the_lane_use(monkeypatch) -> None:
     # scripts/ci/heavy_footprint.json: every file the heavy tests ran or
-    # opened in a map (testmap.py heavy --write). Regenerate it from a newer
-    # map when HEAVY_TESTS gains a file. The map workflow checks each new map.
+    # opened in a map (testmap.py heavy --write), with the path the walk took
+    # to each. Regenerate it from a newer map when HEAVY_TESTS gains a file.
+    # An entry a refactor made unreachable is stale and passes (testmap.py
+    # heavy-prune deletes it); the map workflow checks each new map whole.
     root = Path(__file__).resolve().parents[1]
     snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
     assert set(cs.HEAVY_TESTS) <= set(snapshot["tests"])
-    assert len(snapshot["files"]) > 1000
-    assert tm.heavy_outside(root, snapshot["files"]) == []
-    # The check can fail: a scope read from one of the lane's files misses
-    # the helpers the others ran.
-    monkeypatch.setattr(cs, "HEAVY_TESTS", ("tests/test_async_settle_shadow_cohort_http.py",))
-    missed = tm.heavy_outside(root, snapshot["files"])
-    assert {"tests/shadow_v2_gate_totality.py", "tests/shadow_health_cold_start_simulation.py"} <= set(missed)
+    assert len(snapshot["files"]) > 1000 and snapshot["parents"] and snapshot["sha256"]
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    assert regressions == [], f"run_heavy's rules no longer reach {regressions} (stale entries pass: {stale})"
+    # The check can fail: rules that stop following import statements lose
+    # what the lane still reaches by unchanged files.
+    monkeypatch.setattr(cs, "_WALKS", {})
+    monkeypatch.setattr(cs, "statement_imports", lambda path, tree: set())
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    assert {"tests/shadow_v2_gate_totality.py", "tests/fakes/requested_model_extension.py"} <= set(regressions)
+    assert stale == {}
+
+
+def lane_tree(tmp_path: Path, monkeypatch) -> Path:
+    """A heavy test that imports a helper directly and another through a
+    helper that is not a test."""
+    files = {"tests/__init__.py": "", "tests/conftest.py": "", "tests/fakes/__init__.py": "",
+             HEAVY_FILE: ("from tests.fakes.requested_model_extension import compare\n"
+                          "from tests.middle import vectors\n\n\ndef test_a():\n    assert compare() and vectors\n"),
+             "tests/fakes/requested_model_extension.py": "def compare():\n    return True\n",
+             "tests/middle.py": "from tests.shadow_vectors import vectors\n",
+             "tests/shadow_vectors.py": "vectors = [1]\n",
+             "tests/test_other_user.py": "from tests.fakes.requested_model_extension import compare\n"}
+    for path, text in files.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE,))
+    monkeypatch.chdir(tmp_path)
+    data = build_map({f"{HEAVY_FILE}::test_a": {"f": ["tests/fakes/requested_model_extension.py:compare",
+                                                       "tests/middle.py:<module>", "tests/shadow_vectors.py:<module>"]}})
+    snapshot = tm.heavy_snapshot(tmp_path, data, tm.heavy_footprint(tm.TestMap(data), [HEAVY_FILE]))
+    (tmp_path / tm.HEAVY_SNAPSHOT).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / tm.HEAVY_SNAPSHOT).write_text(json.dumps(snapshot))
+    assert snapshot["parents"] == {"tests/fakes/requested_model_extension.py": HEAVY_FILE,
+                                   "tests/middle.py": HEAVY_FILE, "tests/shadow_vectors.py": "tests/middle.py"}
+    assert tm.heavy_snapshot_check(tmp_path, snapshot) == ([], {})
+    return tmp_path
+
+
+def test_a_refactor_that_stops_using_a_helper_leaves_a_stale_entry_that_passes(tmp_path: Path, monkeypatch,
+                                                                              capsys) -> None:
+    # The review's case: the heavy test stops importing a helper other tests
+    # still use. The helper leaves run_heavy (correctly), and its snapshot
+    # entry is stale, not a regression; heavy-prune deletes it.
+    root = lane_tree(tmp_path, monkeypatch)
+    (root / HEAVY_FILE).write_text("from tests.middle import vectors\n\n\ndef test_a():\n    assert vectors\n")
+    snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+    assert tm.heavy_outside(root, snapshot["files"]) == ["tests/fakes/requested_model_extension.py"]
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    assert regressions == [] and list(stale) == ["tests/fakes/requested_model_extension.py"]
+    assert stale["tests/fakes/requested_model_extension.py"].startswith(f"{HEAVY_FILE} changed since the snapshot")
+    assert tm.main(["heavy-prune"]) == 0
+    assert "deleted tests/fakes/requested_model_extension.py" in capsys.readouterr().out
+    pruned = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+    assert "tests/fakes/requested_model_extension.py" not in pruned["files"]
+    assert "tests/fakes/requested_model_extension.py" not in pruned["parents"]
+    assert tm.heavy_snapshot_check(root, pruned) == ([], {})
+
+
+def test_a_change_to_a_helper_between_heavy_test_and_entry_is_stale_too(tmp_path: Path, monkeypatch) -> None:
+    # A pull request that touches no heavy file: the helper in between
+    # stops importing what the heavy test reached through it.
+    root = lane_tree(tmp_path, monkeypatch)
+    (root / "tests/middle.py").write_text("vectors = [2]\n")
+    regressions, stale = tm.heavy_snapshot_check(root, json.loads((root / tm.HEAVY_SNAPSHOT).read_text()))
+    assert regressions == [] and list(stale) == ["tests/shadow_vectors.py"]
+    assert "tests/middle.py changed since the snapshot" in stale["tests/shadow_vectors.py"]
+
+
+def test_rules_that_stop_reaching_an_unchanged_path_are_a_regression(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = lane_tree(tmp_path, monkeypatch)
+    monkeypatch.setattr(cs, "_WALKS", {})
+    monkeypatch.setattr(cs, "statement_imports", lambda path, tree: set())
+    snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    assert set(regressions) == {"tests/fakes/requested_model_extension.py", "tests/middle.py",
+                                "tests/shadow_vectors.py"} and stale == {}
+    # heavy-prune keeps a regression and names it; only a rule fix or a
+    # deliberate deletion by hand resolves it.
+    assert tm.main(["heavy-prune"]) == 1
+    assert "commit_scope's rules stopped reaching it" in capsys.readouterr().out
+    assert json.loads((root / tm.HEAVY_SNAPSHOT).read_text())["files"] == snapshot["files"]
+    # A heavy test that left the lane makes what only it reached stale.
+    monkeypatch.setattr(cs, "_WALKS", {})
+    monkeypatch.undo()
+    monkeypatch.setattr(cs, "HEAVY_TESTS", ("tests/test_newer.py",))
+    monkeypatch.chdir(root)
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    assert regressions == [] and stale["tests/middle.py"] == f"{HEAVY_FILE} is no longer in the lane"

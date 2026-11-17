@@ -1155,6 +1155,18 @@ def test_the_heavy_lane_runs_on_src_its_closure_fixtures_and_toolchain(heavy_tre
     assert scope([deleted("tests/imported_helper.py")], heavy_tree)["run_heavy"]
 
 
+def test_deleting_or_renaming_a_file_the_lane_reads_runs_it(heavy_tree: Path) -> None:
+    # HEAD's sources still name the file a change deleted or moved away: its
+    # deletion record runs the lane, wherever in the repository it was.
+    (heavy_tree / "docs/named.md").unlink()
+    for changes in ([deleted("docs/named.md")], [deleted("docs/named.md"), added("docs/renamed.md")]):
+        assert scope(changes, heavy_tree)["run_heavy"], changes
+    (heavy_tree / "scripts/data/table.csv").unlink()
+    assert scope([deleted("scripts/data/table.csv")], heavy_tree)["run_heavy"]
+    # A document nothing names still runs nothing.
+    assert not scope([deleted("docs/other.md")], heavy_tree)["run_heavy"]
+
+
 def test_a_heavy_file_that_does_not_parse_runs_the_lane(heavy_tree: Path) -> None:
     write(heavy_tree, {"tests/imported_helper.py": "def broken(:\n"})
     flags, notes, _ = scope_jobs([raw("docs/other.md")], root=heavy_tree, event="push", lines="", now=NOW)

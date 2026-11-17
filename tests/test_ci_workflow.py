@@ -967,3 +967,22 @@ def test_the_map_records_ci_yml_s_test_selection_in_eight_shards_and_merges_only
     upload = next(s for s in merge["steps"] if s.get("with", {}).get("name") == testmap.ARTIFACT)
     assert upload["with"] == {"name": testmap.ARTIFACT, "path": "testmap.json.gz", "retention-days": 14}
     assert "continue-on-error" not in json.dumps(jobs)
+
+
+def test_the_heavy_check_of_each_map_is_a_job_of_its_own_after_the_upload() -> None:
+    # A red check names what the heavy lane's scope misses, and leaves the
+    # map usable: testmap.py's run_problem accepts a run whose only failed
+    # job is this one, after the merge job (which uploads the map) passed.
+    from scripts.ci import testmap
+
+    jobs = _testmap()["jobs"]
+    merge, check = jobs["merge"], jobs["heavy-scope"]
+    assert merge["name"] == testmap.MAP_JOB and check["name"] == testmap.HEAVY_CHECK_JOB
+    assert check["needs"] == "merge" and check["if"] == "needs.merge.result == 'success'"
+    assert not any("testmap.py heavy" in step.get("run", "") for step in merge["steps"])
+    download = next(step for step in check["steps"] if "download-artifact" in step.get("uses", ""))
+    assert download["with"] == {"name": testmap.ARTIFACT}
+    assert [step["run"] for step in check["steps"] if "run" in step] == [
+        "python3 scripts/ci/testmap.py heavy --map testmap.json.gz"]
+    # Nothing else may fail a run and keep its map.
+    assert set(jobs) == {"changes", "record", "merge", "heavy-scope"}
