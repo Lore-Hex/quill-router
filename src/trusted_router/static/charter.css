@@ -334,10 +334,6 @@ textarea {
 
 .trust-diagram,
 
-.copy-terminal,
-
-.code-card,
-
 .cta-band,
 
 .repo-card,
@@ -383,8 +379,7 @@ textarea {
 
 .panel-head,
 .model-catalog-head,
-.status-section-head,
-.code-head {
+.status-section-head {
   border-bottom-color: var(--border-hairline);
 }
 
@@ -883,21 +878,9 @@ tbody tr:hover {
   padding: 28px;
 }
 
-.copy-terminal,
-.code-card,
 pre {
   background: var(--code-pre-bg);
   color: var(--code-ink);
-}
-
-.copy-terminal pre,
-.code-card pre {
-  color: var(--code-ink);
-}
-
-.copy-terminal .provider-application-template {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .trust-diagram {

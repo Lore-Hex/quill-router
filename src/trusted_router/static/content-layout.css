@@ -388,10 +388,6 @@ table.content-reference,
     scroll-padding-inline-start: var(--scroll-table-pin);
   }
 
-  .scroll-table.can-scroll-right {
-    mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 24px), transparent);
-  }
-
   .scroll-table-controls {
     margin: 0 0 var(--tr-space-stack-xs);
   }
@@ -650,46 +646,6 @@ table.content-reference,
   margin-bottom: 0;
 }
 
-.content-code-frame {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.content-code-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--tr-space-stack-xs);
-  margin-top: 4px;
-}
-
-.content-code-controls[hidden] {
-  display: none;
-}
-
-.content-code-scroll {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--tr-color-line-rule);
-  border-radius: var(--tr-radius-panel);
-  background: var(--tr-color-surface-panel-inset);
-  color: var(--tr-color-link-base);
-  cursor: pointer;
-}
-
-.content-code-scroll:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.content-code-scroll svg {
-  width: 20px;
-  height: 20px;
-}
-
-.content-code-scroll:focus-visible,
 .content-disclosure summary:focus-visible {
   outline: 2px solid var(--tr-color-focus);
   outline-offset: 3px;
@@ -996,14 +952,17 @@ table.content-reference,
   }
 }
 
-/* Code blocks: one shared component (NYTE code block standard), built by
-   content-layout.js around every <pre> on public pages. Ink panel, square,
-   no border or shadow; a 48px header strip inside it with the label on the
-   left and an icon-only Copy button (and a scroll arrow while code is hidden
-   to the right) on the right. Lines never wrap; code scrolls in the panel.
-   Rules start at :root so page sheets loaded later cannot restyle the
-   panel. Colours fall back to the kit values outside the NYTE theme. */
-:root .tr-code {
+/* Code blocks: one shared component (NYTE code block standard). This block
+   is the only place the panel, header strip, label, Copy button, scroll
+   chevrons and code colours are defined. content-layout.js builds it around
+   every <pre> on public pages (.tr-code); the quickstart box (.md-code) and
+   the homepage migration panel put the same classes in their markup:
+   .tr-code-head for the strip, .tr-code-tools for its button group,
+   .tr-code-copy for Copy and .tr-code-body for a scrolling code area.
+   Ink panel, square, no border or shadow; lines never wrap. Rules start at
+   :root so page sheets loaded later cannot restyle the parts. Colours fall
+   back to the kit values outside the NYTE theme. */
+:root {
   --tr-code-ink: var(--nyte-ink, #151311);
   --tr-code-cream: var(--nyte-cream, #FAF8F4);
   --tr-code-lime: var(--nyte-lime, #C9E265);
@@ -1012,7 +971,9 @@ table.content-reference,
   --tr-code-sunken: var(--nyte-sunken, #221F1C);
   --tr-code-pad-block: 24px;
   --tr-code-pad-inline: 28px;
+}
 
+:root .tr-code {
   position: relative;
   display: block;
   box-sizing: border-box;
@@ -1029,6 +990,7 @@ table.content-reference,
 
 :root .tr-code-head {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -1036,6 +998,8 @@ table.content-reference,
   height: 48px;
   padding: 0 2px 0 var(--tr-code-pad-inline);
   border-bottom: 1.5px solid var(--tr-code-rule);
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
 }
 
 :root .tr-code-label {
@@ -1062,7 +1026,8 @@ table.content-reference,
   gap: 4px;
 }
 
-:root :is(.tr-code-copy, .tr-code-next) {
+/* Copy: an icon-only button in the strip. */
+:root .tr-code-copy {
   display: flex;
   flex: none;
   align-items: center;
@@ -1080,11 +1045,11 @@ table.content-reference,
   cursor: pointer;
 }
 
-:root :is(.tr-code-copy, .tr-code-next)[hidden] {
+:root .tr-code-copy[hidden] {
   display: none;
 }
 
-:root :is(.tr-code-copy, .tr-code-next) svg {
+:root .tr-code-copy svg {
   width: 20px;
   height: 20px;
   fill: none;
@@ -1101,16 +1066,18 @@ table.content-reference,
   display: block;
 }
 
-:root :is(.tr-code-copy, .tr-code-next):hover {
+:root .tr-code-copy:hover {
   background: var(--tr-code-sunken);
 }
 
-:root :is(.tr-code-copy, .tr-code-next):focus-visible {
+:root .tr-code-copy:focus-visible {
   outline: 2px solid var(--tr-code-cream);
   outline-offset: -4px;
 }
 
-:root .tr-code pre {
+/* The code itself. In .tr-code the <pre> scrolls; in a .tr-code-body the
+   body scrolls and the <pre> is as wide as its longest line. */
+:root :is(.tr-code pre, .tr-code-body pre) {
   display: block;
   box-sizing: border-box;
   width: auto;
@@ -1138,7 +1105,23 @@ table.content-reference,
   text-size-adjust: 100%;
 }
 
-:root .tr-code pre code {
+:root .tr-code-body {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
+}
+
+:root .tr-code-body pre {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  overflow: visible;
+}
+
+:root :is(.tr-code pre, .tr-code-body pre) code {
   padding: 0;
   border: 0;
   background: transparent;
@@ -1148,17 +1131,23 @@ table.content-reference,
   overflow-wrap: inherit;
 }
 
-:root .tr-code pre:focus-visible {
+:root .tr-code pre:focus-visible,
+:root .tr-code-body:focus-visible,
+:root .tr-code-body:has(pre:focus-visible) {
   outline: 2px solid var(--tr-code-cream);
   outline-offset: -2px;
 }
 
+:root .tr-code-body pre:focus-visible {
+  outline: 0;
+}
+
 /* Strings and values lime, comments muted */
-:root .tr-code .tr-code-s {
+:root :is(.tr-code, .tr-code-body) .tr-code-s {
   color: var(--tr-code-lime);
 }
 
-:root .tr-code .tr-code-c {
+:root :is(.tr-code, .tr-code-body) .tr-code-c {
   color: var(--tr-code-muted);
 }
 
@@ -1209,7 +1198,7 @@ table.content-reference,
 }
 
 @media (max-width: 700px) {
-  :root .tr-code {
+  :root {
     --tr-code-pad-block: 20px;
     --tr-code-pad-inline: 20px;
   }
@@ -1240,125 +1229,158 @@ table.content-reference,
   }
 }
 
-/* Tabbed quickstart boxes (model and compare pages) take the same panel:
-   tabs in the strip instead of the label. Their footer stays on the page. */
-:root .md-code {
+/* Sideways scroll: one component for rows, code and tables (NYTE
+   sideways-scroll rule; content-layout.js TRScroll). A chevron in a 36px
+   square, Ink on light grounds and Cream on Ink, on a band of the ground
+   colour that the content slides under: never a gradient fade. 52 x 44 to
+   tap. Rows (chips, link rows): the band is sticky inside the row, full row
+   height, and takes no width, so the row's layout does not change. Code:
+   the band sits over the code area's edge, vertically centred. Tables: the
+   chevrons sit in a bar above the table. */
+:root .tr-scroll-edge {
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  box-sizing: border-box;
+  width: 52px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--tr-scroll-ground, var(--nyte-cream, #FAF8F4));
+}
+
+:root .tr-scroll-edge[hidden] {
+  display: none;
+}
+
+:root .tr-scroll-edge.is-off {
+  visibility: hidden;
+}
+
+:root .tr-scroll-edge.is-row {
+  position: sticky;
+  align-self: stretch;
+}
+
+:root .tr-scroll-edge-prev.is-row {
+  left: 0;
+  margin-right: calc(-52px - var(--tr-scroll-gap, 0px));
+}
+
+:root .tr-scroll-edge-next.is-row {
+  right: 0;
+  margin-left: calc(-52px - var(--tr-scroll-gap, 0px));
+}
+
+/* A sticky band stops at the row's padding; this covers the padding too. */
+:root .tr-scroll-edge.is-row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--tr-scroll-pad, 0px);
+  background: inherit;
+}
+
+:root .tr-scroll-edge-prev.is-row::after {
+  right: 100%;
+}
+
+:root .tr-scroll-edge-next.is-row::after {
+  left: 100%;
+}
+
+:root .tr-scroll-host {
+  position: relative;
+}
+
+:root .tr-scroll-edge.is-over {
+  position: absolute;
+  height: 44px;
+  transform: translateY(-50%);
+}
+
+:root .tr-scroll-edge .tr-scroll-btn {
+  display: flex;
+  align-items: center;
+  width: 52px;
+  height: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
   border: 0;
   border-radius: 0;
   box-shadow: none;
   background: transparent;
-}
-
-:root .md-code-head {
-  gap: 16px;
-  height: 48px;
-  padding: 0 2px 0 28px;
-  border-bottom: 1.5px solid var(--nyte-dark-rule, #3A3631);
-  background: var(--nyte-ink, #151311);
-}
-
-:root .md-code .md-tabs {
-  gap: 24px;
-  align-self: stretch;
-}
-
-:root .md-code .md-tabs button {
-  height: 48px;
-  min-height: 48px;
-  padding: 0;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--nyte-ink-2-dark, #B9B2A8);
-  font: 500 14px/1.2 "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-:root .md-code .md-tabs button[aria-selected="true"] {
-  border-bottom-color: var(--nyte-cream, #FAF8F4);
   color: var(--nyte-cream, #FAF8F4);
+  cursor: pointer;
 }
 
-:root .md-code .md-tabs button:focus-visible,
-:root .md-code .md-copy:focus-visible,
-:root .md-code .md-expand:focus-visible {
-  outline: 2px solid var(--nyte-cream, #FAF8F4);
-  outline-offset: -4px;
+:root .tr-scroll-edge-prev .tr-scroll-btn {
+  justify-content: flex-start;
 }
 
-:root .md-code .md-copy {
-  width: 44px;
-  height: 44px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+:root .tr-scroll-edge-next .tr-scroll-btn {
+  justify-content: flex-end;
 }
 
-:root .md-code .md-copy:hover {
-  background: var(--nyte-sunken, #221F1C);
+:root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn svg {
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  background: var(--nyte-ink, #151311);
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
 }
 
-:root .md-code .md-copy-icon {
-  width: 20px;
-  height: 20px;
+:root .tr-scroll-edge.on-dark .tr-scroll-btn {
+  color: var(--nyte-ink, #151311);
+}
+
+:root .tr-scroll-edge.on-dark .tr-scroll-btn svg {
   background: var(--nyte-cream, #FAF8F4);
 }
 
-:root .md-code .md-code-body {
-  background: var(--nyte-ink, #151311);
+:root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn:focus-visible {
+  outline: 0;
 }
 
-:root .md-code .md-code-panel pre {
-  padding: 24px 28px;
-  overflow-x: auto;
-  color: var(--nyte-cream, #FAF8F4);
-  font: 400 14px/1.7 var(--font-mono, var(--tr-font-family-mono));
-  white-space: pre;
-  overflow-wrap: normal;
-  /* stylelint-disable-next-line property-no-vendor-prefix -- iOS Safari only reads the prefixed form. */
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
+:root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn:focus-visible svg {
+  outline: 2px solid var(--nyte-ink, #151311);
+  outline-offset: 2px;
 }
 
-:root .md-code .md-model-id {
-  color: var(--nyte-lime, #C9E265);
+:root .tr-scroll-edge.on-dark .tr-scroll-btn:focus-visible svg {
+  outline-color: var(--nyte-cream, #FAF8F4);
 }
 
-:root .md-code .md-expand {
-  margin-top: 0;
-  background: var(--nyte-ink, #151311);
-  color: var(--nyte-cream, #FAF8F4);
+/* The bar above a scrolling table: chevrons at its right. */
+:root .tr-scroll-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
-:root .md-code .md-expand-icon {
-  border-color: var(--nyte-dark-rule, #3A3631);
-  background: var(--nyte-ink, #151311);
+:root .tr-scroll-bar[hidden],
+:root .tr-scroll-bar .tr-scroll-btn[hidden] {
+  display: none;
 }
 
-:root .md-code .md-code-foot {
-  padding: 16px 0 0;
-  border-top: 0;
+:root .tr-scroll-bar .tr-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
-}
-
-@media (max-width: 760px) {
-  :root .md-code-head {
-    padding-left: 20px;
-  }
-
-  :root .md-code .md-tabs {
-    gap: 20px;
-  }
-
-  :root .md-code .md-code-panel pre {
-    padding: 20px;
-    font-size: 14px;
-  }
-
-  /* The folded prompt ends at a straight edge: the kit has no fades. */
-  :root .md-code.md-collapsible:not(.md-expanded) .md-code-body {
-    mask-image: none;
-  }
+  color: var(--nyte-cream, #FAF8F4);
+  cursor: pointer;
 }

@@ -7,15 +7,15 @@
    <div class="acts"><a class="button button-primary" data-homepage-cta data-action="open-signin" data-signin-mode="signup" href="/console/api-keys">Create my API key</a><a class="button button-secondary" href="/docs/migrate-from-openrouter">Migration guide</a></div>
   </div>
   <details class="mobile-disclosure migration-disclosure" id="migration-example" data-mobile-disclosure open><summary><span>View code examples</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="r">
-   <div class="ph2">
+   <div class="ph2 tr-code-head">
     <div class="mode-switch" role="tablist" aria-label="How to migrate"><button class="mode" type="button" role="tab" id="mode-tab-code" aria-controls="migration-code" tabindex="0" data-mode="code" aria-selected="true">Code</button><button class="mode" type="button" role="tab" id="mode-tab-agent" aria-controls="migration-code" tabindex="-1" data-mode="agent" aria-selected="false">Agent prompt</button></div>
-    <div class="pf"><span class="hint" hidden></span><button class="cp icon-button" type="button" data-copycode="" aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div>
+    <div class="pf tr-code-tools"><span class="hint" hidden></span><button class="cp tr-code-copy" type="button" data-copycode="" aria-label="Copy code" title="Copy code"><svg class="tr-code-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><svg class="tr-code-done" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.5 L9.5 17.5 L19.5 7"/></svg></button></div>
    </div>
    <div class="code-options">
      <label class="code-option" for="migration-language"><span>Language</span><select id="migration-language"><option value="py">Python</option><option value="ts">TypeScript</option><option value="curl">cURL</option></select></label>
      <label class="code-option" for="migration-source"><span>Migrating from</span><select id="migration-source"><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option></select></label>
    </div>
-   <div class="mcode-scroll"><pre class="mcode" id="migration-code" role="tabpanel" aria-labelledby="mode-tab-code" tabindex="0">  from openai import OpenAI
+   <div class="mcode-scroll tr-code-body"><pre class="mcode" id="migration-code" role="tabpanel" aria-labelledby="mode-tab-code" tabindex="0">  from openai import OpenAI
   import os
 
   client = OpenAI(

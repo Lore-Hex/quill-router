@@ -26,7 +26,8 @@ for (const [slug, organization, matchedOrganization = organization] of pages) {
       await button.click();
       expect(await page.evaluate(() => window.copiedCompanyText)).toBe(text);
       await expect(page.locator(`#${id}-status`)).toHaveText("Copied. Ready for your agent chat.");
-      await expect(button.locator("img")).toBeVisible();
+      // Panel Copy buttons are the shared code block's icon-only button.
+      await expect(button.locator("svg.tr-code-icon, svg.tr-code-done").first()).toBeVisible();
     }
   });
 

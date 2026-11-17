@@ -99,35 +99,31 @@
 }
 #get-started h2{text-wrap:balance}
 
-/* Migration code: NYTE code block standard. Ink panel; a 48px header strip with the
-   Code / Agent prompt tabs and the copy button; pickers sit in a strip below it;
-   code never wraps and scrolls sideways. Diff lines keep muted red and green tints. */
-#migrate .r{--code-ink:var(--nyte-ink,#151311);--code-cream:var(--nyte-cream,#faf8f4);--code-muted:var(--nyte-ink-2-dark,#b9b2a8);--code-rule:var(--nyte-dark-rule,#3a3631);--code-hover:var(--nyte-raised,#2a2825);background:var(--code-ink);color:var(--code-cream)}
-#migrate .ph2{display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:16px;height:48px;min-height:48px;padding:0 2px 0 16px;border-bottom:1px solid var(--code-rule);background:transparent}
+/* Migration code: the shared code block (content-layout.css .tr-code-head,
+   .tr-code-tools, .tr-code-copy, .tr-code-body) plus this panel's own parts:
+   Code / Agent prompt tabs in the strip, the Language and Migrating from
+   pickers in a strip below it, and muted red and green diff lines. */
+#migrate .r{background:var(--tr-code-ink);color:var(--tr-code-cream)}
+#migrate .ph2{padding-left:16px}
 #migrate .mode-switch{display:flex;gap:4px;height:100%;padding:0;border:0;border-radius:0;background:transparent}
-#migrate .mode{height:100%;min-height:44px;padding:0 12px;border-radius:0;border-bottom:2px solid transparent;background:transparent;color:var(--code-muted);font:500 14px/1 var(--mono)}
-#migrate .mode:hover{background:transparent;color:var(--code-cream)}
-#migrate .mode[aria-selected="true"]{background:transparent;color:var(--code-cream);border-bottom-color:var(--code-cream)}
-#migrate .mode:focus-visible{outline:2px solid var(--code-cream);outline-offset:-4px}
-#migrate .pf{display:flex;align-items:center;justify-content:flex-end;gap:12px;min-height:0;min-width:0;padding:0;border:0}
-#migrate .pf .hint{font-size:15px;line-height:1.3;color:var(--code-muted);margin:0;text-align:right}
-#migrate .pf .cp.icon-button{width:44px;height:44px;border:0;border-radius:0;background:transparent;color:var(--code-cream)}
-#migrate .pf .cp.icon-button:hover{background:var(--code-hover)}
-#migrate .pf .cp.icon-button:focus-visible{outline:2px solid var(--code-cream);outline-offset:-4px}
-#migrate .code-options{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;margin:0;padding:10px 16px;border-bottom:1px solid var(--code-rule)}
+#migrate .mode{height:100%;min-height:44px;padding:0 12px;border-radius:0;border-bottom:2px solid transparent;background:transparent;color:var(--tr-code-muted);font:500 14px/1 var(--mono)}
+#migrate .mode:hover{background:transparent;color:var(--tr-code-cream)}
+#migrate .mode[aria-selected="true"]{background:transparent;color:var(--tr-code-cream);border-bottom-color:var(--tr-code-cream)}
+#migrate .mode:focus-visible{outline:2px solid var(--tr-code-cream);outline-offset:-4px}
+#migrate .pf{justify-content:flex-end;min-height:0;min-width:0;padding:0;border:0}
+#migrate .pf .hint{margin:0 8px 0 0;font-size:15px;line-height:1.3;color:var(--tr-code-muted);text-align:right}
+#migrate .code-options{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;margin:0;padding:10px 16px;border-bottom:1.5px solid var(--tr-code-rule)}
 #migrate .code-options[hidden]{display:none}
-#migrate .code-option{display:flex;align-items:center;gap:10px;min-width:0;color:var(--code-muted);font:400 14px/1.3 var(--font, inherit)}
-#migrate .code-option select{appearance:none;-webkit-appearance:none;width:auto;min-width:0;min-height:40px;padding:8px 40px 8px 12px;border:1px solid var(--code-rule);border-radius:0;background:var(--code-ink) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FAF8F4' stroke-width='1.8' stroke-linecap='square'><path d='m6 9 6 6 6-6'/></svg>") no-repeat right 14px center/14px 14px;color:var(--code-cream);font:500 15px/1.4 var(--font, inherit);color-scheme:dark;cursor:pointer}
-#migrate .code-option select:hover{border-color:var(--code-muted)}
-#migrate .code-option select:focus-visible{outline:2px solid var(--code-cream);outline-offset:2px}
-#migrate .mcode-scroll{flex:1;min-width:0;overflow-x:auto;background:var(--code-ink)}
-#migrate .mcode-scroll:has(.mcode:focus-visible){outline:2px solid var(--code-cream);outline-offset:-2px}
-#migrate pre.mcode{box-sizing:border-box;width:max-content;min-width:100%;min-height:0;margin:0;padding:24px 28px;background:transparent;color:var(--code-cream);font:400 14px/1.7 var(--mono);white-space:pre;overflow:visible;overflow-wrap:normal;outline:0}
-#migrate pre.mcode .del,#migrate pre.mcode .add{display:block;margin:0 -28px;padding:0 28px}
+#migrate .code-option{display:flex;align-items:center;gap:10px;min-width:0;color:var(--tr-code-muted);font:400 14px/1.3 var(--font, inherit)}
+#migrate .code-option select{appearance:none;-webkit-appearance:none;width:auto;min-width:0;min-height:40px;padding:8px 40px 8px 12px;border:1px solid var(--tr-code-rule);border-radius:0;background:var(--tr-code-ink) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FAF8F4' stroke-width='1.8' stroke-linecap='square'><path d='m6 9 6 6 6-6'/></svg>") no-repeat right 14px center/14px 14px;color:var(--tr-code-cream);font:500 15px/1.4 var(--font, inherit);color-scheme:dark;cursor:pointer}
+#migrate .code-option select:hover{border-color:var(--tr-code-muted)}
+#migrate .code-option select:focus-visible{outline:2px solid var(--tr-code-cream);outline-offset:2px}
+#migrate .mcode-scroll{flex:1}
+#migrate pre.mcode .del,#migrate pre.mcode .add{display:block;margin:0 calc(-1 * var(--tr-code-pad-inline));padding:0 var(--tr-code-pad-inline)}
 #migrate pre.mcode .del{background:rgb(255 107 53 / 16%);color:#ffb49a}
 #migrate pre.mcode .add{background:rgb(201 226 101 / 14%);color:var(--nyte-lime-tint,#e9f0c2)}
-#migrate pre.mcode .cm{color:var(--code-muted)}
-#migrate pre.mcode.prompt{width:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+#migrate pre.mcode .cm{color:var(--tr-code-muted)}
+#migrate pre.mcode.prompt{width:auto;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(min-width:601px){#migrate .migration-disclosure{background:var(--nyte-ink,#151311)}}
 #migrate .val code{overflow-wrap:anywhere}
 @media(max-width:600px){
@@ -138,6 +134,4 @@
  #migrate .code-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:12px 20px 16px}
  #migrate .code-option{display:grid;gap:6px}
  #migrate .code-option select{width:100%;font-size:16px;min-height:44px}
- #migrate pre.mcode{padding:20px}
- #migrate pre.mcode .del,#migrate pre.mcode .add{margin:0 -20px;padding:0 20px}
 }

@@ -1,109 +1,49 @@
-/* Shared quickstart box and chip row (templates/public/_quickstart_box.html,
- * driven by quickstart.js). Colours read the page's --md-* tokens when it
- * sets them and fall back to the model page's dark palette. Load it after
- * the page's own sheet. */
+/* Shared quickstart box and chip row (templates/public/_quickstart_box.html
+ * and the compare kit, driven by quickstart.js) on model and compare pages.
+ * The panel, header strip, Copy button, code colours and scroll chevrons
+ * come from the shared code block in content-layout.css (.tr-code-head,
+ * .tr-code-tools, .tr-code-copy, .tr-code-body); this sheet only adds what
+ * the box has of its own: kit Tabs in the strip, the footer, and the phone
+ * prompt fold. The chip row scrolls with the shared sideways-scroll
+ * chevrons. */
 
 /* Quickstart code box */
 .md-code {
+  position: relative;
   overflow: hidden;
-  border: 1px solid var(--md-line, #1E2621);
-  border-radius: var(--tr-square, 12px);
-  background: var(--md-code-bg, #0F1411);
 }
 
-.md-code-head {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--md-line, #1E2621);
-}
-
+/* Kit Tabs in the strip instead of a label. */
 .md-tabs {
   display: flex;
-  gap: 22px;
+  align-self: stretch;
+  gap: 24px;
 }
 
 .md-tabs button {
+  height: 48px;
   min-height: 48px;
-  padding: 14px 0 12px;
+  padding: 0;
   border: 0;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
-  color: var(--md-secondary, #C3C9C3);
-  font: 450 15px var(--tr-font-family-sans, Archivo, Arial, sans-serif);
+  color: var(--tr-code-muted);
+  font: 500 14px/1.2 "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans, Archivo, Arial, sans-serif);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
 .md-tabs button[aria-selected="true"] {
-  border-bottom-color: var(--md-accent, #CCE8D7);
-  color: var(--md-text, #EDF8F5);
+  border-bottom-color: var(--tr-code-cream);
+  color: var(--tr-code-cream);
 }
 
 .md-tabs button:focus-visible,
-.md-copy:focus-visible,
-.md-expand:focus-visible,
-.md-chips-arrow:focus-visible {
-  outline: 2px solid var(--md-link, #C0E1FF);
-  outline-offset: 2px;
-}
-
-.md-copy {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  margin-left: auto;
-  border: 1px solid var(--md-control-line, #526859);
-  border-radius: var(--tr-square, 6px);
-  background: transparent;
-  color: var(--md-accent, #CCE8D7);
-  cursor: pointer;
-}
-
-.md-copy:hover {
-  border-color: var(--md-accent, #CCE8D7);
-}
-
-.md-copy[hidden],
-.md-expand[hidden] {
-  display: none;
-}
-
-.md-copy-icon {
-  display: block;
-  width: 17px;
-  height: 17px;
-  background: var(--md-bar-top, #9EE6B8);
-  mask: url("/static/copy-icon.svg") center / contain no-repeat;
-}
-
-.md-code-panel pre {
-  margin: 0;
-  padding: 22px 20px;
-  overflow-x: auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--md-text, #EDF8F5);
-  font-family: var(--md-mono, var(--tr-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace));
-  font-size: 15px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.md-code-panel pre code {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-
-.md-model-id {
-  color: var(--md-amber, #F2C879);
+.md-expand:focus-visible {
+  outline: 2px solid var(--tr-code-cream);
+  outline-offset: -4px;
 }
 
 /* Tabs need script; without it every panel shows, labelled by its tab. */
@@ -111,12 +51,13 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   display: none;
 }
 
+.js-off .md-copy,
 .js-off .md-tabs button[aria-selected="false"] {
   display: none;
 }
 
 .js-off .md-code-panel + .md-code-panel {
-  border-top: 1px solid var(--md-line, #1E2621);
+  border-top: 1.5px solid var(--tr-code-rule);
 }
 
 .md-expand {
@@ -125,11 +66,16 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   justify-content: center;
   width: 100%;
   min-height: 48px;
-  margin-top: -8px;
+  margin: 0;
+  padding: 0;
   border: 0;
-  background: transparent;
-  color: var(--md-accent, #CCE8D7);
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
   cursor: pointer;
+}
+
+.md-expand[hidden] {
+  display: none;
 }
 
 .md-expand-icon {
@@ -138,9 +84,9 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   justify-content: center;
   width: 36px;
   height: 36px;
-  border: 1px solid var(--tr-color-line-control, #526859);
+  border: 1px solid var(--tr-code-rule);
   border-radius: 50%;
-  background: var(--md-code-bg, #0F1411);
+  background: var(--tr-code-ink);
   transition: transform 160ms ease;
 }
 
@@ -148,47 +94,36 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   transform: rotate(180deg);
 }
 
+/* The footer sits on the page below the panel. */
 .md-code-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 20px;
-  border-top: 1px solid var(--md-line, #1E2621);
-  background: var(--md-code-foot, #121915);
+  padding: 16px 0 0;
   font-size: 16px;
 }
 
-.md-copy-status {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+.md-code-foot .btn.md-cta-small {
+  min-height: 44px;
+  padding: 0 20px;
+  font-size: 16px;
+  font-weight: 650;
+  white-space: nowrap;
 }
 
-/* Chip row: one sideways-scrolling row */
-.md-chips-wrap {
-  position: relative;
-}
-
+/* Chip row: one sideways-scrolling row. */
 .md-chips {
   display: flex;
   flex-wrap: nowrap;
   gap: 10px;
   overflow-x: auto;
-  padding: 0 40px 8px 0;
+  padding: 0 0 8px;
   scrollbar-width: none;
-  mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 112px), transparent calc(100% - 40px));
 }
 
 .md-chips::-webkit-scrollbar {
   display: none;
-}
-
-.md-chips-wrap[data-at-end] .md-chips {
-  padding-right: 0;
-  mask-image: none;
 }
 
 .md-chips-wrap .md-chips a {
@@ -207,68 +142,30 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   color: var(--md-text, #EDF8F5);
 }
 
-/* A still, quiet arrow: it shows while more chips sit off to the right and
- * scrolls the row for mouse users. */
-.md-chips-arrow {
-  position: absolute;
-  top: 4px;
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--md-secondary, #C3C9C3);
-  cursor: pointer;
-}
-
-.md-chips-arrow:hover {
-  color: var(--md-text, #EDF8F5);
-  background: var(--tr-color-surface-hover, #14251C);
-}
-
-.md-chips-arrow[hidden] {
-  display: none;
-}
-
 /* Phones */
 @media (max-width: 760px) {
-  .md-code-head {
-    gap: 12px;
-    padding: 0 14px;
-  }
-
   .md-tabs {
-    gap: 16px;
-  }
-
-  .md-tabs button {
-    font-size: 14px;
-  }
-
-  .md-code-panel pre {
-    padding: 14px;
-    font-size: 13px;
+    gap: 20px;
   }
 
   .md-code-foot {
     flex-direction: column;
     align-items: stretch;
     gap: 12px;
-    padding: 14px;
     font-size: 15px;
+  }
+
+  .md-code-foot .btn.md-cta-small {
+    min-height: 48px;
+    width: 100%;
+    justify-content: center;
   }
 
   /* Bleeds to the screen edge across a 20px page gutter. */
   .md-chips {
     gap: 8px;
     margin: 0 -20px;
-    padding: 0 60px 8px 20px;
-    mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 112px), transparent calc(100% - 40px));
+    padding: 0 20px 8px;
   }
 
   .md-chips-wrap .md-chips a {
@@ -277,13 +174,12 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   }
 }
 
-/* Phones under 640px show the start of the prompt with a fade until the
- * reader expands it. Script adds .md-collapsible, so without it the whole
- * prompt shows. */
+/* Phones under 640px show the start of the prompt until the reader expands
+ * it, ending at a straight edge (the kit has no fades). Script adds
+ * .md-collapsible, so without it the whole prompt shows. */
 @media (max-width: 639px) {
   .md-code.md-collapsible:not(.md-expanded) .md-code-body {
     max-height: 132px;
-    overflow: hidden;
-    mask-image: linear-gradient(var(--tr-legacy-000000, #000) 55%, transparent);
+    overflow-y: hidden;
   }
 }

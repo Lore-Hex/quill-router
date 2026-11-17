@@ -15,8 +15,6 @@
   --md-bar: var(--tr-legacy-6b9480, #6B9480);
   --md-bar-top: var(--tr-legacy-9ee6b8, #9EE6B8);
   --md-amber: var(--tr-legacy-f2c879, #F2C879);
-  --md-code-bg: var(--tr-legacy-0f1411, #0F1411);
-  --md-code-foot: var(--tr-legacy-121915, #121915);
   --md-mono: var(--tr-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 
   background: var(--md-bg);
@@ -287,29 +285,6 @@
 .md-faq summary:focus-visible {
   outline: 2px solid var(--md-link);
   outline-offset: 2px;
-}
-
-.md-example {
-  margin: 0;
-  padding: 22px 20px;
-  overflow-x: auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--md-text);
-  font-family: var(--md-mono);
-  font-size: 15px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.md-example code {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
 }
 
 .model-detail-page .btn.md-cta-small {
@@ -720,13 +695,6 @@
 
 .md-subhead {
   margin-top: 24px;
-}
-
-.md-example {
-  margin-bottom: 18px;
-  border: 1px solid var(--md-line);
-  border-radius: var(--tr-square, 12px);
-  background: var(--md-code-bg);
 }
 
 /* About */

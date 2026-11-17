@@ -1,3 +1,309 @@
+// Shared helpers for code blocks and sideways scrolling on public pages.
+// window.TRCode: the kit's copy and check icons and one copy behaviour.
+// window.TRScroll: one sideways-scroll component (chevron buttons that show
+// only while there is more to see). Page scripts load after this file, so
+// they can call these; everything here also attaches on its own.
+(() => {
+  "use strict";
+  const svgNS = "http://www.w3.org/2000/svg";
+  const icon = (className, paths) => {
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    if (className) svg.setAttribute("class", className);
+    paths.forEach((d) => {
+      const path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", d);
+      svg.append(path);
+    });
+    return svg;
+  };
+  // The kit's copy and check shapes, as on the NYTE API page.
+  const copyPaths = ["M9 9 L20 9 L20 20 L9 20 L9 9", "M15 7.25 L15 4 L4 4 L4 15 L7.25 15"];
+  const donePaths = ["M4.5 12.5 L9.5 17.5 L19.5 7"];
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  // Copy: writes the text, swaps the icon for a check, says "Copied" in the
+  // button's label and in a role=status line. Without clipboard access it
+  // selects the text instead. Buttons that carry their own icon keep it.
+  const wireCopy = (button, {
+    text, source, status, done = "Copied.", fallback = "Code selected. Use your device's copy command.",
+    resetAfter = 2000, onCopy, disableWhileCopying = false, keepLabel = false,
+  } = {}) => {
+    if (!button || "copyWired" in button.dataset) return;
+    button.dataset.copyWired = "";
+    if (button.classList.contains("tr-code-copy") && !button.querySelector("svg, img")) {
+      button.replaceChildren(icon("tr-code-icon", copyPaths), icon("tr-code-done", donePaths));
+    }
+    // The resting label is read at each click: pages may rename the button.
+    let resting = "";
+    let restingTitle = "";
+    let timer = 0;
+    const statusEl = () => (typeof status === "function" ? status() : status);
+    const announce = (message) => {
+      const line = statusEl();
+      if (!line) return;
+      line.textContent = "";
+      window.setTimeout(() => { line.textContent = message; }, 50);
+    };
+    button.addEventListener("click", async () => {
+      const node = typeof source === "function" ? source() : source;
+      const value = typeof text === "function" ? text() : (node ? node.textContent.trim() : "");
+      if (!value && !node) return;
+      if (!button.classList.contains("is-done")) {
+        resting = button.getAttribute("aria-label") || "";
+        restingTitle = button.title;
+      }
+      window.clearTimeout(timer);
+      if (disableWhileCopying) button.disabled = true;
+      try {
+        await navigator.clipboard.writeText(value);
+        button.classList.add("is-done");
+        button.setAttribute("data-copied", "");
+        if (!keepLabel) {
+          button.setAttribute("aria-label", "Copied");
+          if (restingTitle) button.title = "Copied";
+        }
+        announce(done);
+        onCopy?.();
+      } catch {
+        const selection = window.getSelection();
+        if (node && selection) {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        announce(fallback);
+      } finally {
+        if (disableWhileCopying) button.disabled = false;
+      }
+      timer = window.setTimeout(() => {
+        button.classList.remove("is-done");
+        button.removeAttribute("data-copied");
+        if (!keepLabel) {
+          if (resting) button.setAttribute("aria-label", resting);
+          else button.removeAttribute("aria-label");
+          if (restingTitle) button.title = restingTitle;
+        }
+      }, resetAfter);
+    });
+  };
+  window.TRCode = { icon, copyPaths, donePaths, wireCopy };
+
+  // Sideways scroll (NYTE sideways-scroll rule): one chevron button, three
+  // placements.
+  // - row: single-line rows (chips, link rows). A sticky band in the row's
+  //   own ground colour, inside the row, holds the chevron; the row's
+  //   content slides under it. The band takes no width of its own.
+  // - over: code. The chevron sits over the code area's edge, vertically
+  //   centred, on a band of the panel's Ink.
+  // - bar: tables. The chevrons sit in a bar above the table, so a tall
+  //   table's arrows are seen before its middle.
+  // The square is Ink on light grounds and Cream on Ink. No gradients. Each
+  // chevron scrolls about 80% of the visible width (instantly with reduced
+  // motion) and hides at its end; neither shows while the content fits.
+  const chevrons = { prev: "m15 5-7 7 7 7", next: "m9 5 7 7-7 7" };
+  const groundOf = (element) => {
+    for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
+      const colour = getComputedStyle(node).backgroundColor;
+      const parts = colour.match(/[\d.]+/g);
+      if (parts && (parts.length < 4 || Number(parts[3]) > 0.5)) return colour;
+    }
+    return "rgb(250, 248, 244)";
+  };
+  const isLight = (colour) => {
+    const [r, g, b] = colour.match(/[\d.]+/g).map(Number);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 140;
+  };
+
+  // Rows are measured together once per frame (all reads, then all writes),
+  // and rows and code only start once they come near the screen: a catalog
+  // page has well over a thousand rows.
+  const queue = new Set();
+  let frame = 0;
+  const flush = () => {
+    frame = 0;
+    const items = [...queue];
+    queue.clear();
+    items.map((item) => [item, item.measure()]).forEach(([item, state]) => item.apply(state));
+  };
+  const schedule = (item) => {
+    queue.add(item);
+    if (!frame) frame = window.requestAnimationFrame(flush);
+  };
+  const attached = new WeakMap();
+  const resized = new ResizeObserver((entries) => entries.forEach((entry) => {
+    const item = attached.get(entry.target) || attached.get(entry.target.parentElement);
+    if (item) schedule(item);
+  }));
+  const nearScreen = new IntersectionObserver((entries) => entries.forEach((entry) => {
+    if (!entry.isIntersecting) return;
+    nearScreen.unobserve(entry.target);
+    attached.get(entry.target)?.start();
+  }), { rootMargin: "400px 0px" });
+
+  // attach(scroller, { place: "row" | "over" | "bar", bar, label, focusLabel })
+  const attach = (scroller, { place = "row", bar = null, label = "", focusLabel = "" } = {}) => {
+    if (!scroller) return null;
+    if (attached.has(scroller)) return attached.get(scroller);
+    const list = /^(UL|OL)$/.test(scroller.tagName);
+    const host = place === "over" ? scroller.parentElement : null;
+    const make = (side) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `tr-scroll-btn tr-scroll-${side}`;
+      const text = `Scroll ${label ? `${label} ` : ""}${side === "prev" ? "left" : "right"}`;
+      button.setAttribute("aria-label", text);
+      button.title = text;
+      button.append(icon("", [chevrons[side]]));
+      button.addEventListener("click", () => {
+        const step = scroller.clientWidth * 0.8 * (side === "prev" ? -1 : 1);
+        scroller.scrollBy({ left: step, behavior: reduceMotion.matches ? "instant" : "smooth" });
+      });
+      if (place === "bar") {
+        button.hidden = true;
+        return { button, edge: button };
+      }
+      // Rows and code: the button sits on a band of the ground colour.
+      const edge = document.createElement(list ? "li" : "span");
+      edge.className = `tr-scroll-edge tr-scroll-edge-${side} is-${place}`;
+      if (list) edge.setAttribute("role", "none");
+      edge.hidden = true;
+      edge.append(button);
+      return { button, edge };
+    };
+    let prev = null;
+    let next = null;
+    const ownsFocus = Boolean(focusLabel) && !scroller.hasAttribute("tabindex");
+    const show = (part, on) => {
+      if (place === "bar") part.button.hidden = !on;
+      else part.edge.classList.toggle("is-off", !on);
+      part.button.tabIndex = on ? 0 : -1;
+      part.button.setAttribute("aria-hidden", String(!on));
+    };
+    let ground = "";
+    const item = {
+      // Reads only.
+      measure: () => {
+        const style = getComputedStyle(scroller);
+        const max = scroller.scrollWidth - scroller.clientWidth;
+        const overflow = /auto|scroll/.test(style.overflowX) && max > 1;
+        const state = { overflow, max, x: Math.abs(scroller.scrollLeft) };
+        if (!overflow || place === "bar") return state;
+        if (!ground) state.ground = groundOf(scroller);
+        if (place === "row") {
+          state.gap = parseFloat(style.columnGap) || 0;
+          state.padStart = parseFloat(style.paddingLeft) || 0;
+          state.padEnd = parseFloat(style.paddingRight) || 0;
+        } else {
+          // Over code: line up with the code area inside its panel.
+          state.top = scroller.offsetTop + scroller.clientHeight / 2;
+          state.left = scroller.offsetLeft;
+          state.right = host.clientWidth - scroller.offsetLeft - scroller.clientWidth;
+        }
+        return state;
+      },
+      // Writes only. The buttons are added the first time there is more to
+      // see; a row's band takes no width, so adding it changes nothing.
+      apply: (state) => {
+        const { overflow, max, x } = state;
+        if (!prev && (overflow || place === "bar")) {
+          prev = make("prev");
+          next = make("next");
+          if (place === "bar") bar.append(prev.button, next.button);
+          else if (place === "over") {
+            host.classList.add("tr-scroll-host");
+            host.append(prev.edge, next.edge);
+          } else {
+            scroller.prepend(prev.edge);
+            scroller.append(next.edge);
+          }
+        }
+        if (bar) bar.hidden = !overflow;
+        if (!prev) return;
+        if (place !== "bar") {
+          prev.edge.hidden = !overflow;
+          next.edge.hidden = !overflow;
+          [prev.edge, next.edge].forEach((edge) => {
+            if (state.ground) {
+              edge.style.setProperty("--tr-scroll-ground", state.ground);
+              edge.classList.toggle("on-dark", !isLight(state.ground));
+            }
+            if (place === "row" && overflow) {
+              edge.style.setProperty("--tr-scroll-gap", `${state.gap}px`);
+              // A sticky band stops at the row's padding; it covers that too.
+              edge.style.setProperty("--tr-scroll-pad", `${edge === prev.edge ? state.padStart : state.padEnd}px`);
+            }
+          });
+          if (state.ground) ground = state.ground;
+          if (place === "over" && overflow) {
+            prev.edge.style.top = `${state.top}px`;
+            prev.edge.style.left = `${state.left}px`;
+            next.edge.style.top = `${state.top}px`;
+            next.edge.style.right = `${state.right}px`;
+          }
+        }
+        show(prev, overflow && x > 1);
+        show(next, overflow && x < max - 1);
+        if (ownsFocus) {
+          if (overflow) {
+            scroller.tabIndex = 0;
+            scroller.setAttribute("aria-label", `${focusLabel}, scroll sideways for more`);
+          } else {
+            scroller.removeAttribute("tabindex");
+            scroller.removeAttribute("aria-label");
+          }
+        }
+      },
+      started: false,
+      start: () => {
+        if (item.started) return;
+        item.started = true;
+        scroller.addEventListener("scroll", () => schedule(item), { passive: true });
+        resized.observe(scroller);
+        // Code: tabs and pickers change the content, not the box.
+        if (place === "over") [...scroller.children].forEach((child) => resized.observe(child));
+        document.fonts.ready.then(() => schedule(item));
+        schedule(item);
+      },
+      update: () => schedule(item),
+    };
+    attached.set(scroller, item);
+    nearScreen.observe(scroller);
+    return item;
+  };
+
+  // Code areas (.tr-code-body) in the quickstart box and homepage panel.
+  const attachCode = (body) => attach(body, { place: "over", label: "code" });
+  // Rows: anything marked data-scroll-row, plus the existing row classes.
+  const rows = [
+    "[data-scroll-row]",
+    ".models-page-hero-links",
+    ".model-explorer > .model-filter-row",
+    ".model-result-card .catalog-privacy-summary",
+    ".model-result-card .model-card-badges",
+    ".model-result-card .model-card-providers",
+    "[data-md-chips-track]",
+    ".compare-chip-track",
+  ].join(", ");
+  const scan = (root) => {
+    if (root.matches?.(rows)) attach(root);
+    root.querySelectorAll?.(rows).forEach((row) => attach(row));
+    if (root.matches?.(".tr-code-body")) attachCode(root);
+    root.querySelectorAll?.(".tr-code-body").forEach(attachCode);
+  };
+  window.TRScroll = { attach, scan };
+  scan(document);
+  // Cards and rows drawn later (filters, pagination) get the same arrows.
+  new MutationObserver((records) => {
+    records.forEach((record) => record.addedNodes.forEach((node) => {
+      if (node.nodeType === 1 && !node.classList.contains("tr-scroll-edge")) scan(node);
+    }));
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+
 // Repeat column labels visually on phones while retaining table semantics.
 (() => {
   "use strict";
@@ -76,57 +382,6 @@
     table.after(accordion);
     table.classList.add("has-reference-accordion");
   });
-  // Arrow buttons for anything that scrolls sideways; hidden when it fits.
-  const addScrollControls = (scroller, noun, placeControls) => {
-    const controls = document.createElement("div");
-    controls.className = "content-code-controls";
-    controls.hidden = true;
-    placeControls(controls);
-    const buttons = [-1, 1].map((direction) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "content-code-scroll";
-      button.setAttribute("aria-label", `Scroll ${noun} ${direction < 0 ? "left" : "right"}`);
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 20 20");
-      svg.setAttribute("width", "20");
-      svg.setAttribute("height", "20");
-      svg.setAttribute("aria-hidden", "true");
-      svg.setAttribute("focusable", "false");
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", direction < 0 ? "M12 5 7 10l5 5" : "m8 5 5 5-5 5");
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", "currentColor");
-      path.setAttribute("stroke-width", "1.5");
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("stroke-linejoin", "round");
-      svg.append(path);
-      button.append(svg);
-      button.addEventListener("click", () => {
-        scroller.scrollBy({ left: direction * scroller.clientWidth * 0.75, behavior: "instant" });
-        update();
-      });
-      controls.append(button);
-      return button;
-    });
-    const label = noun.charAt(0).toUpperCase() + noun.slice(1);
-    const update = () => {
-      const maxScroll = scroller.scrollWidth - scroller.clientWidth;
-      const overflow = maxScroll > 1;
-      controls.hidden = !overflow;
-      buttons[0].disabled = scroller.scrollLeft <= 1;
-      buttons[1].disabled = scroller.scrollLeft >= maxScroll - 1;
-      scroller.classList.toggle("has-overflow", overflow);
-      scroller.classList.toggle("can-scroll-right", overflow && scroller.scrollLeft < maxScroll - 1);
-      scroller.tabIndex = overflow ? 0 : -1;
-      scroller.setAttribute("aria-label", overflow ? `${label}, scroll horizontally for more` : label);
-    };
-    scroller.addEventListener("scroll", update, { passive: true });
-    new ResizeObserver(update).observe(scroller);
-    document.fonts.ready.then(update);
-    update();
-  };
-  // Code examples scroll with the shared code block's own arrow (below).
   // Comparison tables: arrows sit above the table so the scroll is seen first.
   document.querySelectorAll(".scroll-table").forEach((wrap) => {
     // Pinned names like "trustedrouter/trev-1.0" may wrap only after the slash.
@@ -140,10 +395,11 @@
         node.replaceWith(...parts.flatMap((part, index) => (index ? [document.createElement("wbr"), part] : [part])));
       });
     });
-    addScrollControls(wrap, "table", (controls) => {
-      controls.classList.add("scroll-table-controls");
-      wrap.before(controls);
-    });
+    // Strip placement: a bar above the table holds the arrows.
+    const controls = document.createElement("div");
+    controls.className = "tr-scroll-bar scroll-table-controls";
+    wrap.before(controls);
+    window.TRScroll.attach(wrap, { place: "bar", bar: controls, label: "table", focusLabel: "Table" });
   });
 })();
 
@@ -273,35 +529,18 @@
 
 // Code blocks: one shared component for every <pre> on public pages (the
 // NYTE code block standard). An Ink panel with a header strip inside it: a
-// short label (language or file) on the left; on the right a scroll arrow
-// while code is hidden to the right, and an icon-only Copy button. Existing
-// .copy-terminal and .green-code panels become the panel and their head
-// becomes the strip; an existing data-copy-target still names what is
-// copied. Tabbed quickstart boxes (.md-code), the homepage, chat output and
-// the console keep their own code.
+// short label (language or file) on the left and an icon-only Copy button
+// on the right. Wide code scrolls in the panel with the shared scroll
+// chevrons over its edges. Existing .copy-terminal, .green-code and .company-code panels
+// become the panel and their head becomes the strip; an existing
+// data-copy-target or data-copy-prompt-target still names what is copied.
+// Tabbed quickstart boxes (.md-code) and the homepage migration panel use
+// the same strip, copy and scroll parts from their own markup; chat output
+// and the console keep their own code.
 (() => {
   "use strict";
   if (document.body.classList.contains("console")) return;
   const skip = ".mcode, .md-code, .fusion-answer, .chat-msg-md, [data-code-plain]";
-  const svgNS = "http://www.w3.org/2000/svg";
-  const icon = (className, paths) => {
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("focusable", "false");
-    if (className) svg.setAttribute("class", className);
-    paths.forEach((d) => {
-      const path = document.createElementNS(svgNS, "path");
-      path.setAttribute("d", d);
-      svg.append(path);
-    });
-    return svg;
-  };
-  // The kit's copy and check shapes, as on the NYTE API page.
-  const copyPaths = ["M9 9 L20 9 L20 20 L9 20 L9 9", "M15 7.25 L15 4 L4 4 L4 15 L7.25 15"];
-  const donePaths = ["M4.5 12.5 L9.5 17.5 L19.5 7"];
-  const nextPaths = ["m9 5 7 7-7 7"];
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const collapseAfter = 10;
 
   // Head labels name the language, a file, or describe the example. The strip
@@ -365,16 +604,24 @@
 
   document.querySelectorAll("pre").forEach((pre) => {
     if (pre.closest(skip) || pre.closest(".tr-code")) return;
-    let panel = pre.closest(".copy-terminal, .green-code");
+    let panel = pre.closest(".copy-terminal, .green-code, .company-code");
     if (panel && panel.querySelectorAll("pre").length !== 1) panel = null;
-    const oldHead = panel?.querySelector(":scope > .code-head, :scope > .green-code-head") || null;
+    const oldHead = panel?.querySelector(":scope > .code-head, :scope > .green-code-head, :scope > .company-code-head") || null;
     const oldButton = oldHead?.querySelector("button") || null;
-    const targetId = oldButton?.dataset.copyTarget || "";
+    const promptTarget = oldButton?.dataset.copyPromptTarget || "";
+    const targetId = oldButton?.dataset.copyTarget || promptTarget;
     const source = (targetId && document.getElementById(targetId)) || pre;
+    // Prompt panels (copy-prompt.js) keep their status line and wording.
+    const promptStatus = promptTarget ? document.getElementById(oldButton.dataset.copyPromptStatus || "") : null;
 
+    // Head text: each child, and a <small> inside one names the language.
     const parts = oldHead
       ? [...oldHead.children].filter((el) => el.tagName !== "BUTTON")
-        .map((el) => el.textContent.trim()).filter(Boolean)
+        .flatMap((el) => {
+          const small = el.querySelector("small");
+          const own = small ? el.textContent.replace(small.textContent, "") : el.textContent;
+          return [own.trim(), small?.textContent.trim() || ""];
+        }).filter(Boolean)
       : [];
     const language = parts.map((part) => languages.get(part.toLowerCase())).find(Boolean) || "";
     const file = parts.find(isFile) || "";
@@ -399,84 +646,43 @@
     labelText.textContent = label;
     const tools = document.createElement("span");
     tools.className = "tr-code-tools";
-    const next = document.createElement("button");
-    next.type = "button";
-    next.className = "tr-code-next";
-    next.setAttribute("aria-label", "Scroll code right");
-    next.title = "Scroll code right";
-    next.hidden = true;
-    next.append(icon("", nextPaths));
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "tr-code-copy";
-    const resting = `Copy ${name}`;
+    const resting = oldButton?.getAttribute("aria-label") || `Copy ${name}`;
     copy.setAttribute("aria-label", resting);
     copy.title = resting;
-    if (targetId) copy.dataset.copyTarget = targetId;
-    copy.append(icon("tr-code-icon", copyPaths), icon("tr-code-done", donePaths));
-    tools.append(next, copy);
+    if (targetId && !promptTarget) copy.dataset.copyTarget = targetId;
+    if (promptTarget) {
+      copy.dataset.copyPromptTarget = promptTarget;
+      copy.dataset.copyPromptStatus = oldButton.dataset.copyPromptStatus || "";
+      copy.setAttribute("aria-controls", promptTarget);
+    }
+    tools.append(copy);
     head.append(labelText, tools);
     if (oldHead) oldHead.replaceWith(head);
     else panel.prepend(head);
 
-    const status = document.createElement("span");
-    status.className = "tr-code-status";
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    status.setAttribute("aria-atomic", "true");
-    panel.append(status);
+    let status = promptStatus;
+    // A prompt panel's own status line inside the panel is read out, not shown.
+    if (status && panel.contains(status)) status.classList.add("tr-code-status");
+    if (!status) {
+      status = document.createElement("span");
+      status.className = "tr-code-status";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      status.setAttribute("aria-atomic", "true");
+      panel.append(status);
+    }
 
     highlight(pre, language || guessed);
 
-    let timer = 0;
-    const announce = (message) => {
-      status.textContent = "";
-      window.setTimeout(() => { status.textContent = message; }, 50);
-    };
-    copy.addEventListener("click", async () => {
-      window.clearTimeout(timer);
-      try {
-        await navigator.clipboard.writeText(source.textContent.trim());
-        copy.classList.add("is-done");
-        copy.setAttribute("aria-label", "Copied");
-        copy.title = "Copied";
-        announce("Copied.");
-      } catch {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(source);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        announce("Code selected. Use your device's copy command.");
-      }
-      timer = window.setTimeout(() => {
-        copy.classList.remove("is-done");
-        copy.setAttribute("aria-label", resting);
-        copy.title = resting;
-      }, 2000);
-    });
+    window.TRCode.wireCopy(copy, promptTarget
+      ? { source, status, done: "Copied. Ready for your agent chat.", fallback: "Prompt selected. Use your device's copy command." }
+      : { source, status });
 
-    // Lines never wrap; wide code scrolls inside the panel.
-    const ownsFocus = !pre.hasAttribute("tabindex");
-    const update = () => {
-      const max = pre.scrollWidth - pre.clientWidth;
-      next.hidden = !(max > 1 && pre.scrollLeft < max - 1);
-      if (!ownsFocus) return;
-      if (max > 1) {
-        pre.tabIndex = 0;
-        pre.setAttribute("aria-label", `${title || label}, scroll sideways for more`);
-      } else {
-        pre.removeAttribute("tabindex");
-        pre.removeAttribute("aria-label");
-      }
-    };
-    next.addEventListener("click", () => {
-      pre.scrollBy({ left: pre.clientWidth * 0.75, behavior: reduceMotion.matches ? "instant" : "smooth" });
-    });
-    pre.addEventListener("scroll", update, { passive: true });
-    new ResizeObserver(update).observe(pre);
-    document.fonts.ready.then(update);
-    update();
+    // Lines never wrap; wide code scrolls in the panel with the shared chevrons.
+    const scroll = window.TRScroll.attach(pre, { place: "over", label: "code", focusLabel: title || label });
 
     // Docs pages: long examples show their first lines on phones; copying
     // still copies all of it.
@@ -493,7 +699,7 @@
     };
     toggle.addEventListener("click", () => {
       setCollapsed(!pre.classList.contains("is-collapsed"));
-      update();
+      scroll.update();
     });
     pre.after(toggle);
     setCollapsed(true);

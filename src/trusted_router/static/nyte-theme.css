@@ -1754,8 +1754,9 @@
 }
 
 /* Swipe rows on phones: chip and link rows stay on one line and scroll
-   sideways. The fade at the right edge and the cut-off last item say
-   there is more; the fade clears at the end of the row. */
+   sideways. The shared sideways-scroll chevrons (content-layout.js and
+   .tr-scroll-* in content-layout.css) show while more sits off either edge;
+   no fade. */
 @media (max-width: 560px) {
   :root[data-brand="nyte"] :is(
     .model-explorer > .model-filter-row,
@@ -1771,8 +1772,6 @@
     overscroll-behavior-x: contain;
     scrollbar-width: none;
     white-space: nowrap;
-    padding-right: 40px;
-    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
   }
 
   :root[data-brand="nyte"] :is(
@@ -1797,26 +1796,6 @@
 
   :root[data-brand="nyte"] .models-page-hero-links {
     gap: 20px;
-  }
-
-  @supports (animation-timeline: scroll(self inline)) {
-    :root[data-brand="nyte"] :is(
-      .model-explorer > .model-filter-row,
-      .models-page-hero-links,
-      .model-result-card .catalog-privacy-summary,
-      .model-result-card .model-card-badges,
-      .model-result-card .model-card-providers
-    ) {
-      animation: nyte-fade-clear linear both;
-      animation-timeline: scroll(self inline);
-      animation-range: 85% 100%;
-    }
-  }
-}
-
-@keyframes nyte-fade-clear {
-  to {
-    mask-image: linear-gradient(to right, #000 100%, transparent);
   }
 }
 

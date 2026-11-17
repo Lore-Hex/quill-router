@@ -27,10 +27,8 @@
 .green-facts strong { display: block; font-size: 23px; color: var(--text-display); margin-bottom: 8px; }
 .green-section { padding-block: 72px; }
 .green-section > p:not(.green-eyebrow) { color: var(--text-body); }
-.green-code { margin-top: 30px; max-width: 850px; border: 1px solid var(--border-default); border-radius: var(--tr-square, 4px); overflow: hidden; background: var(--surface-raised); }
-.green-code-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border-default); font: 13px var(--font-mono); }
-.green-code pre { margin: 0; padding: 24px; overflow-x: auto; font: 14px/1.8 var(--font-mono); }
-.green-code .btn { min-height: 40px; }
+/* The example is the shared code block (content-layout.css); only its place here. */
+.green-code { margin-top: 30px; max-width: 850px; }
 .green-tokens .green-small { font-size: 15px; }
 .green-band { border-block: 1px solid var(--border-default); background: var(--surface-raised); }
 .green-models { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 36px; margin-block: 30px; }
