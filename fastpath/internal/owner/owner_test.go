@@ -1155,6 +1155,95 @@ func TestAReplayAnswersAsTheHeartbeatItRepeats(t *testing.T) {
 	}
 }
 
+// TestAResendOfAHeartbeatAddsNoRecord: the control plane sends a heartbeat
+// its front door answered retry once more, the same seq and hash
+// (fastpath_frontdoor.FrontDoorClient.heartbeat, after 2026-11-16's slow
+// acknowledgements). A resend while the first's record awaits its
+// acknowledgement waits on that record and is answered by it; one after the
+// acknowledgement is answered at once; and a first send the lease refused
+// while its publishes were failing is taken by the resend as the first.
+// Each heartbeat is one record, however many times it is sent.
+func TestAResendOfAHeartbeatAddsNoRecord(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	a := f.admit(t, 500, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		deadline time.Time
+		err      error
+	}
+	second := HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 2, Running: 2, EchoGranted: true}
+	f.log.hold()
+	// The front door's owner wait ends before the acknowledgement.
+	ownerWait, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if _, err := f.lease.Heartbeat(ownerWait, a, second); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a heartbeat whose record is not acknowledged within the owner wait: %v", err)
+	}
+	resent := make(chan answer, 1)
+	go func() {
+		d, err := f.lease.Heartbeat(ctx, a, second)
+		resent <- answer{d, err}
+	}()
+	select {
+	case got := <-resent:
+		t.Fatalf("the resend was answered before the record's acknowledgement: %+v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if n := len(f.log.records(t, "lease-1")); n != 2 {
+		t.Fatalf("%d records after a heartbeat and its resend, want 2", n)
+	}
+	f.log.letGo()
+	got := <-resent
+	if got.err != nil || !got.deadline.Equal(start.Add(30*time.Second)) {
+		t.Fatalf("the resend once acknowledged: %+v", got)
+	}
+	if d, err := f.lease.Heartbeat(ctx, a, second); err != nil || !d.Equal(got.deadline) {
+		t.Fatalf("a resend after the acknowledgement: %v, %v", d, err)
+	}
+
+	// A publish fails: until one succeeds again the lease refuses a new
+	// heartbeat at once, with no record.
+	failed := func() bool {
+		f.lease.mu.Lock()
+		defer f.lease.mu.Unlock()
+		return f.lease.failed
+	}
+	f.log.fail("lease-1", 1000)
+	refund := f.admit(t, 1, false)
+	go func() { _, _ = f.lease.Refund(ctx, refund) }()
+	waitFor(t, "the lease's failing publishes", failed)
+	third := HeartbeatOf{GatewaySeq: 3, Hash: sum("h3"), Usage: 3, Running: 3, EchoGranted: true}
+	f.lease.mu.Lock()
+	numbered := f.lease.nextSeq
+	f.lease.mu.Unlock()
+	if _, err := f.lease.Heartbeat(ctx, a, third); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat while the lease's publishes fail: %v", err)
+	}
+	f.lease.mu.Lock()
+	if f.lease.nextSeq != numbered {
+		t.Error("a refused heartbeat took a record's number")
+	}
+	f.lease.mu.Unlock()
+	f.log.fail("lease-1", 0)
+	waitFor(t, "the lease's publishes succeeding again", func() bool { return !failed() })
+	if _, err := f.lease.Heartbeat(ctx, a, third); err != nil {
+		t.Fatalf("the resend once the lease publishes again: %v", err)
+	}
+	seqs := map[int64]int{}
+	for _, r := range f.log.records(t, "lease-1") {
+		if r.Kind == record.Heartbeat {
+			seqs[r.Snapshot.GatewaySeq]++
+		}
+	}
+	if len(seqs) != 3 || seqs[1] != 1 || seqs[2] != 1 || seqs[3] != 1 {
+		t.Fatalf("heartbeat records by seq: %v, want one each of 1, 2 and 3", seqs)
+	}
+}
+
 // TestEveryLetWaitsForTheLeaseToStop: a second Let while the first is under
 // way returns only once the flusher has stopped, as the first does.
 func TestEveryLetWaitsForTheLeaseToStop(t *testing.T) {
