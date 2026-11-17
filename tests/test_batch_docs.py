@@ -58,7 +58,6 @@ def test_public_privacy_and_legal_pages_scope_batch_retention(client: TestClient
 
     privacy = client.get("/privacy")
     assert privacy.status_code == 200
-    assert "August 24, 2026" in privacy.text
     assert "Submitting a Batch request is an explicit instruction" in privacy.text
     assert "scheduled for deletion after 30 days" in privacy.text
 

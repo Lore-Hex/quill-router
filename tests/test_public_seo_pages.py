@@ -1012,12 +1012,21 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert "never logs prompt or output content" in privacy.text
     assert "opt-in Batch API" in privacy.text
     assert "We do not use customer prompts or outputs to train our own models" in privacy.text
+    assert "November 17, 2026" in privacy.text
+    assert "does not include prompts or outputs" in privacy.text
+    assert "does not identify any customer, user, account, workspace or API key" in privacy.text
+    assert "including providers of indexes and benchmarks" in privacy.text
     assert "/legal/subprocessors" in privacy.text
     assert "security@trustedrouter.com" in privacy.text
 
     terms = client.get("/terms")
     assert terms.status_code == 200
     assert "Terms of Service | TrustedRouter" in terms.text
+    assert "November 17, 2026" in terms.text
+    assert "and license it to third parties" in terms.text
+    assert "Aggregated usage data does not include your content and does not identify you" in (
+        terms.text
+    )
     assert "Charges, credits, and taxes" in terms.text
     assert "Acceptable use" in terms.text
     assert "Delaware law" in terms.text
