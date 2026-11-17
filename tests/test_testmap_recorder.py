@@ -195,6 +195,11 @@ def test_p_spawn_words(tmp_path):
                    check=False)
     subprocess.run(["true", "-e", "console.log('js secret')"], check=False)
     subprocess.run(["true", "--work-tree=" + os.path.join(HERE, "src"), "--format=%H"], check=False)
+    subprocess.run(["true", "-uroot", "-phunter4", "db"], check=False)       # mysql
+    subprocess.run(["true", "-uuser:pw123", "https://example.com/x"], check=False)  # curl
+    subprocess.run(["true", "login", "-p", "dockerpw"], check=False)         # docker login
+    subprocess.run(["true", "postgresql://u:p@ss789@db.example/name"], check=False)
+    subprocess.run(["true", "--git-dir=" + os.path.join(HERE, ".git"), "log"], check=False)
 
 
 def test_q_thread_misses():
@@ -381,8 +386,15 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert "true --password=<value> --token <value> @cwd=." in spawns
     assert "true -H <value> https://example.com/p @cwd=." in spawns
     assert "true -e <program> @cwd=." in spawns
-    assert "true --work-tree=./src --format=%H @cwd=." in spawns
-    for secret in ("hunter3", "tok123", "tok456", "pw789", "sec0", "js secret"):
+    assert "true --work-tree=./src --format=<value> @cwd=." in spawns
+    assert "true -u<value> -p<value> db @cwd=." in spawns
+    assert "true -u<value> https://example.com/x @cwd=." in spawns
+    assert "true login -p <value> @cwd=." in spawns
+    assert "true postgresql://db.example/name @cwd=." in spawns
+    # The repository's .git is the repository's (rel() skips it for opens): S8 must see a path.
+    assert "true --git-dir=./.git log @cwd=." in spawns
+    for secret in ("hunter3", "tok123", "tok456", "pw789", "sec0", "js secret", "root", "hunter4", "pw123",
+                   "dockerpw", "ss789"):
         assert secret not in spawns, secret
     assert "x" * 201 not in spawns
     # Misses on other threads are recorded on their own (and the shard stays valid).
@@ -582,6 +594,21 @@ async def cached_async():
     return _ASYNC_VALUE
 
 
+def inner_h():
+    return 9
+
+
+_HASHES = {}  # not named like a cache: a private module dict a function fills and serves
+
+
+def hashed(key):
+    found = _HASHES.get(key)
+    if found is None:
+        found = inner_h()
+        _HASHES[key] = found
+    return found
+
+
 INSIDE = threading.Event()
 GO = threading.Event()
 
@@ -702,6 +729,14 @@ def test_14_m1_hit():
     assert core.m1() == 1
 
 
+def test_15a_private_fill():
+    assert core.hashed("k") == 9
+
+
+def test_15b_private_hit():
+    assert core.hashed("k") == 9
+
+
 def test_15_a_raising_miss_closes():
     try:
         core.raising()
@@ -756,6 +791,7 @@ def test_a_change_selects_the_tests_any_cache_served(tmp_path: Path) -> None:
     assert _selected_for(fragment, root, "inner_e") == (False, ["test_09_singleton_built",
                                                                "test_10_singleton_reused"])
     assert _selected_for(fragment, root, "inner_f") == (False, ["test_11_async_fill", "test_12_async_hit"])
+    assert _selected_for(fragment, root, "inner_h") == (False, ["test_15a_private_fill", "test_15b_private_hit"])
     full, selected = _selected_for(fragment, root, "inner_b")
     assert not full and {"test_07_hand_fill", "test_08_hand_hit"} <= set(selected)
     # Two misses at once on two threads: the location the first thread's
@@ -767,6 +803,168 @@ def test_a_change_selects_the_tests_any_cache_served(tmp_path: Path) -> None:
     raised = {keys[k] for k in fragment["fps"][fragment["cached"]["src/pkg/core.py:raising"]][0]}
     assert "src/pkg/core.py:inner_b" in raised and "src/pkg/core.py:after_raise" not in raised
     assert fragment["incomplete_memo"] == [] and fragment["unattributed_memo"] == []
+
+
+KEEPS = """
+import collections
+
+_MONITOR_HASH = {}
+_VERIFIED = collections.OrderedDict()
+_ENSURED = set()
+_logged = False
+_ACTIVE = 0
+_CLIENT = None
+
+
+def monitor_hash(key):
+    cached = _MONITOR_HASH.get(key)
+    if cached is None:
+        cached = len(key)
+        _MONITOR_HASH[key] = cached
+    return cached
+
+
+def resolve(key):
+    if key in _VERIFIED:
+        _VERIFIED.move_to_end(key)
+        return _VERIFIED[key]
+    return None
+
+
+def ensure(key):
+    _ENSURED.add(key)
+
+
+def client():
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = object()
+    return _CLIENT
+
+
+def log_once():
+    global _logged
+    if not _logged:
+        _logged = True
+
+
+def lazy_init():
+    global _ready
+    if _ready:
+        return
+    _populate_registry()
+    _ready = True
+
+
+def ternary_singleton():
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = compute() if FLAG else None
+    return _CLIENT
+
+
+def or_none_singleton():
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = build() or None
+    return _CLIENT
+
+
+def counter_as_once_flag():
+    global _ACTIVE
+    if _ACTIVE:
+        return
+    _load()
+    _ACTIVE += 1
+
+
+def none_as_done_flag():
+    global _CLIENT
+    if _CLIENT is None:
+        return
+    _load()
+    _CLIENT = None
+
+
+def reset():
+    global _CLIENT
+    _CLIENT = None
+
+
+def count():
+    global _ACTIVE
+    _ACTIVE += 1
+    _ACTIVE -= 1
+
+
+def from_a_call():
+    _make()[1] = 2
+
+
+def reads_a_constant():
+    return VERTEX_DURABLE_CACHE
+"""
+
+
+def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -> None:
+    from scripts.ci.testmap_recorder import keeps_cache
+
+    module = compile(KEEPS, "keeps.py", "exec")
+    functions = {c.co_name: c for c in module.co_consts if hasattr(c, "co_code")}
+    # A "done once" flag serves what ran before it was set (lazy_init), and
+    # so does a counter or a None the function also reads (`if _n: return`);
+    # a store a jump reaches is no constant (`compute() if FLAG else None`,
+    # `build() or None`). A reset to None and a counter serve nothing.
+    assert {name for name, code in functions.items() if keeps_cache(code)} == {
+        "monitor_hash", "resolve", "ensure", "client", "log_once", "lazy_init", "ternary_singleton",
+        "or_none_singleton", "counter_as_once_flag", "none_as_done_flag"}
+
+
+@pytest.mark.parametrize(("argv", "recorded"), [
+    # A value glued to its flag holding a keyword (pass, key, token, auth).
+    (["mysql", "-uroot", "-pMyPassw0rd", "db"], "mysql -u<value> -p<value> <value>"),
+    (["mysql", "-uroot", "-pmonkey_key1", "db"], "mysql -u<value> -p<value> <value>"),
+    (["sshpass", "-pTokenAbc9", "ssh"], "sshpass -p<value> <value>"),
+    (["curl", "-uapi_key_user", "https://h.example/x"], "curl -u<value> <value>"),
+    (["openssl", "-passin", "pass:Zq11v"], "openssl -p<value> <value>"),
+    (["tool", "-up", "Zq28v"], "tool -u<value> <value>"),
+    # An option after a value flag is read as an option: its program text stays hidden.
+    (["python", "-P", "-c", "print('prog text')"], "python -P -c <program>"),
+    (["python", "-u", "-c", "import sys; print('prog text')"], "python -u -c <program>"),
+    (["bash", "-e", "-c", "echo prog text"], "bash -e -c <program>"),
+    (["python", "-P", "-m", "trusted_router.routing_snapshot_worker"],
+     "python -P -m trusted_router.routing_snapshot_worker"),
+    # A URL's user and password stop at "?" and "#"; scheme-less user:password@host.
+    (["curl", "https://h.example/cb?sig=abc@Zq9vTail"], "curl https://h.example/cb"),
+    (["curl", "https://user:SEC/RETV@x.example/p"], "curl https://x.example/p"),
+    (["tool", "user:Zq24v@host"], "tool <value>@host"),
+    # An option's inner NAME=value, and more password options.
+    (["curl", "--data=token=Zq1v"], "curl --data=token=<value>"),
+    (["redis-cli", "-a", "Zq8v"], "redis-cli -a <value>"),
+    (["openssl", "-k", "Zq12v"], "openssl -k <value>"),
+    (["tool", "--pw", "Zq16v"], "tool --pw <value>"),
+    (["tool", "--bearer", "Zq15v"], "tool --bearer <value>"),
+    # A secret that starts with "-" after its flag: an option only if it looks like one.
+    (["redis-cli", "-a", "-Zk3yQ"], "redis-cli -a <value>"),
+    (["sshpass", "-p", "-x9Zq", "ssh"], "sshpass -p <value> ssh"),
+    (["curl", "-H", "-QZq", "https://h.example/x"], "curl -H <value> https://h.example/x"),
+    (["openssl", "-k", "-QZq"], "openssl -k <value>"),
+    (["git", "log", "-p", "--stat"], "git log -p --stat"),
+    # Dotted keys, any option's non-path value, program text after "=".
+    (["tool", "-Ddb.password=Zq1"], "tool -Ddb.password=<value>"),
+    (["tool", "--db.password=Zq2"], "tool --db.password=<value>"),
+    (["helm", "--set", "db.password=Zq3"], "helm --set db.password=<value>"),
+    (["tool", "-Dfoo=Zq4"], "tool -Dfoo=<value>"),
+    (["node", "--eval=code('Zq5')"], "node --eval=<program>"),
+    (["sh", "--command=echo Zq6"], "sh --command=<program>"),
+])
+def test_command_words_hide_secrets_and_program_text(tmp_path: Path, argv: list[str], recorded: str) -> None:
+    from scripts.ci import testmap_recorder
+
+    words = " ".join(testmap_recorder.Recorder(str(tmp_path)).words(argv))
+    assert words == recorded
+    for secret in ("MyPassw0rd", "monkey_key1", "TokenAbc9", "api_key_user", "Zq", "prog text"):
+        assert secret not in words
 
 
 def test_caches_made_past_functools_lru_cache_are_incomplete_or_unattributed(tmp_path: Path) -> None:

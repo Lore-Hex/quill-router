@@ -266,7 +266,11 @@ def test_s7_a_data_file_selects_its_readers() -> None:
     ("git diff src/app/core.py @cwd=-", False),
     ("git --work-tree=./src status @cwd=-", False),   # an option's value names the repository
     ("git --work-tree=. status @cwd=-", False),
+    ("git --git-dir=./.git log @cwd=-", False),       # the repository's own history
     ("git --git-dir=<outside> log @cwd=-", True),
+    ("git log -p <value> @cwd=-", False),              # a hidden word may be a repository path
+    ("git -c <program> commit @cwd=-", False),
+    ("git --work-tree=<value> status @cwd=-", False),
     ("python -c <program> @cwd=.", False),
     ("uv run python -m @cwd=.", False),
     ("env PYTHONPATH=<value> python3 -c @cwd=-", False),
@@ -463,6 +467,119 @@ def test_compare_counts_collection_errors_and_files_the_selection_would_not_coll
     text = summary.read_text()
     assert "failures outside selection: 1 (module:tests/test_n.py)" in text
     assert "of which 4 are collection errors" in text
+
+
+def _records(root: Path, *records: dict) -> Path:
+    for n, record in enumerate(records, 1):
+        (root / f"test-failures-{n}").mkdir(parents=True)
+        (root / f"test-failures-{n}" / "failures.json").write_text(json.dumps(record))
+    return root
+
+
+def _shard(group: int, *failed: str, complete: bool = True, exitstatus: int = 1, collection: tuple = ()) -> dict:
+    return {"group": group, "splits": 3, "complete": complete, "exitstatus": exitstatus if complete else None,
+            "failed": list(failed), "collection_errors": list(collection)}
+
+
+def test_recorded_failures_are_compared_only_when_every_shard_recorded_them(tmp_path: Path) -> None:
+    every = [_shard(1, "tests/test_a.py::test_x[1 2]"), _shard(2, collection=("tests/test_b.py",)),
+             _shard(3, exitstatus=0)]
+    assert tm.recorded_failures(every, "failure") == ({"tests/test_a.py::test_x[1 2]", tm.MODULE + "tests/test_b.py"},
+                                                      None)
+    # A green test job failed nothing, records or not.
+    assert tm.recorded_failures([], "success") == (set(), None)
+    # A shard that stopped before pytest finished (cancelled, timed out) or left nothing.
+    failed, why = tm.recorded_failures([every[0], _shard(2, complete=False), every[2]], "failure")
+    assert failed == {"tests/test_a.py::test_x[1 2]"} and why is not None and "shards 2 " in why
+    failed, why = tm.recorded_failures([every[0], every[2]], "failure")
+    assert why is not None and "shards 2 " in why
+    # A record that says complete but shows otherwise (interrupted: exit 2;
+    # fewer tests reported than collected) is not taken at its word.
+    interrupted = {**_shard(2, "tests/test_n.py::test_c"), "exitstatus": 2}
+    short = {**_shard(2, "tests/test_n.py::test_c"), "collected": 10, "reported": 1}
+    for record in (interrupted, short):
+        assert "shards 2 " in str(tm.recorded_failures([every[0], record, every[2]], "failure")[1])
+    assert "no shard left a failure record" in str(tm.recorded_failures([], "failure")[1])
+    # Every shard finished without a failing test, yet the job is red: a step outside pytest failed.
+    why = tm.recorded_failures([_shard(1, exitstatus=0), _shard(2, exitstatus=0), _shard(3, exitstatus=0)],
+                               "failure")[1]
+    assert why is not None and "no shard recorded a failing test" in why
+
+
+def test_compare_reads_the_failure_records_and_never_reports_a_zero_it_did_not_measure(tmp_path: Path) -> None:
+    selection = {"full": False, "whole_files": [], "selected": ["tests/test_s.py::test_a"],
+                 "not_selected": ["tests/test_s.py::test_b words[x y]", "tests/test_n.py::test_c@grp"]}
+    tm.write_gz(selection, tmp_path / "selection.json.gz")
+    records = _records(tmp_path / "red",
+                       _shard(1, "tests/test_s.py::test_a", "tests/test_s.py::test_b words[x y]"),
+                       _shard(2, "tests/test_n.py::test_c@grp", "tests/test_new.py::test_q"),
+                       _shard(3, exitstatus=0))
+    summary = tmp_path / "summary.md"
+
+    def compare(failures: Path, result: str) -> str:
+        summary.write_text("")
+        assert tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(failures),
+                        "--test-result", result, "--summary", str(summary)]) == 0
+        return summary.read_text()
+
+    text = compare(records, "failure")
+    assert ("failures outside selection: 2 (tests/test_n.py::test_c@grp, tests/test_s.py::test_b words[x y])"
+            in text)
+    assert "failures in this run: 4, of which 0 are collection errors and 1 are tests the map does not know" in text
+    # A shard without a complete record: unavailable, with the reason; never "0".
+    partial = _records(tmp_path / "partial", _shard(1, "tests/test_s.py::test_a"), _shard(2, complete=False))
+    text = compare(partial, "failure")
+    assert "comparison unavailable: shards 2, 3 left no complete failure record" in text
+    assert "failures outside selection" not in text
+    text = compare(tmp_path / "no-artifacts", "failure")
+    assert "comparison unavailable" in text and "failures outside selection" not in text
+    # A green run.
+    assert "failures outside selection: 0" in compare(tmp_path / "no-artifacts", "success")
+
+
+def test_a_directory_that_fails_to_collect_covers_every_test_file_under_it(tmp_path: Path) -> None:
+    # A failing tests/sub/conftest.py: pytest reports the directory. It is
+    # outside the selection when the selection runs no test file under it.
+    def outside(selected: list[str]) -> str:
+        known = ["tests/sub/test_x.py::test_b", "tests/sub/deep/test_y.py::test_c", "tests/test_s.py::test_a"]
+        selection = {"full": False, "whole_files": [], "selected": selected,
+                     "not_selected": [t for t in known if t not in selected]}
+        tm.write_gz(selection, tmp_path / "selection.json.gz")
+        records = tmp_path / f"records-{len(selected)}"
+        _records(records, _shard(1, "tests/test_s.py::test_a"), _shard(2, collection=("tests/sub",)),
+                 _shard(3, exitstatus=0))
+        summary = tmp_path / "summary.md"
+        summary.write_text("")
+        tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(records),
+                 "--test-result", "failure", "--summary", str(summary)])
+        return next(line for line in summary.read_text().splitlines() if line.startswith("failures outside"))
+
+    assert outside(["tests/test_s.py::test_a"]) == "failures outside selection: 1 (module:tests/sub)"
+    assert outside(["tests/test_s.py::test_a", "tests/sub/deep/test_y.py::test_c"]) == "failures outside selection: 0"
+
+
+def test_failed_ids_reads_only_the_runs_own_summary() -> None:
+    known = ["tests/test_a.py::test_x", "tests/a dir/test_b.py::test_y"]
+    log = "\n".join([
+        "2026-11-17T01:02:03.0000000Z ________ test_x ________",
+        # A test that ran pytest inside it shows that run's output in its
+        # failure report: its own summary, indented or "E"-prefixed lines.
+        "2026-11-17T01:02:03.0000000Z ----- Captured stdout call -----",
+        "2026-11-17T01:02:03.0000000Z =========== short test summary info ===========",
+        "2026-11-17T01:02:03.0000000Z FAILED tests/test_inner.py::test_nested - boom",
+        "2026-11-17T01:02:03.0000000Z ERROR tests/test_sample.py - ImportError",
+        "2026-11-17T01:02:03.0000000Z ======= 1 failed in 0.1s =======",
+        "2026-11-17T01:02:03.0000000Z E         ERROR tests/test_other.py::test_z - RuntimeError",
+        "2026-11-17T01:02:04.0000000Z =========== short test summary info ===========",
+        "2026-11-17T01:02:04.0000000Z FAILED tests/test_a.py::test_x - AssertionError",
+        "2026-11-17T01:02:04.0000000Z ERROR tests/a dir/test_c.py - ImportError: no",  # a path with a space
+        "2026-11-17T01:02:04.0000000Z ===== 1 failed, 1 error in 9.9s =====",
+        "2026-11-17T01:02:05.0000000Z ##[error]Process completed with exit code 1.",
+    ])
+    assert tm.failed_ids(log, known) == {"tests/test_a.py::test_x", tm.MODULE + "tests/a dir/test_c.py"}
+    # Without a summary section (a log cut short), only lines that start with the status count.
+    cut = "FAILED tests/test_a.py::test_x - boom\nE   ERROR tests/test_other.py::test_z - boom\n"
+    assert tm.failed_ids(cut, known) == {"tests/test_a.py::test_x"}
 
 
 # ---------------------------------------------------------------- map validity and lookup

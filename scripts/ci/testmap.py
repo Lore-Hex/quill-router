@@ -17,8 +17,10 @@ Stdlib only, like commit_scope.py, so a job can run it before `uv sync`.
             diff can reach, write the selection (gzipped JSON) and a job
             summary. Report only: nothing reads the selection to decide what
             runs.
-  compare   after the test shards: this run's failed tests against the shadow
-            selection, "failures outside selection: N (IDs)".
+  compare   after the test shards: the failures every shard recorded
+            (scripts/ci/failure_record.py) against the shadow selection,
+            "failures outside selection: N (IDs)"; "comparison unavailable:
+            <why>" when a red run's failures were not all recorded.
 
 What a footprint holds (the recorder's docstring has how it is recorded):
   f  functions that started or resumed ("path:qualname"), and calls of a
@@ -136,7 +138,7 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "3"
+RECORDER_VERSION = "6"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
@@ -719,9 +721,11 @@ def command_is_narrow(cmd: str) -> bool:
         return True
     if exe == "git":
         # A repository path among its words (--work-tree=src: an option's
-        # value counts) means it reads the repository.
+        # value counts) means it reads the repository. A word the recorder
+        # hid (<value>, <program>) may be one; only <outside> is known not.
         values = [tok.split("=", 1)[-1] for tok in toks[1:]]
-        return cwd == "-" and not any(v == "." or "/" in v and not v.startswith("<") for v in values)
+        return cwd == "-" and not any(
+            v == "." or ("<value>" in v or "<program>" in v) or "/" in v and not v.startswith("<") for v in values)
     return False
 
 
@@ -1009,8 +1013,11 @@ def first_parents(root: Path, base: str, count: int) -> list[str]:
 
 
 def gh_api(path: str, raw: bool = False) -> object:
-    out = subprocess.run(["gh", "api", path], capture_output=True, check=True).stdout  # noqa: S603,S607 -- git and gh, fixed argv
-    return out if raw else json.loads(out)
+    done = subprocess.run(["gh", "api", path], capture_output=True)  # noqa: S603,S607 -- git and gh, fixed argv
+    if done.returncode:  # gh's own message (HTTP status, missing scope) is the useful part
+        raise RuntimeError(f"gh api {path}: exit {done.returncode}: "
+                           f"{done.stderr.decode('utf-8', 'replace').strip()[:500]}")
+    return done.stdout if raw else json.loads(done.stdout)
 
 
 def repository_id(repo: str, api: Callable[..., object] | None = None) -> int:
@@ -1154,10 +1161,32 @@ def summary_lines(sel: Selection, total_tests: int) -> list[str]:
     return lines
 
 
-SUMMARY_LINE = re.compile(r"(?:^|\s)(?:FAILED|ERROR) (tests/.*)$")
-COLLECTION_ERROR = re.compile(r"(?:^|\s)ERROR (tests/\S+\.py)(?: - .*)?$")
+SUMMARY_LINE = re.compile(r"^(?:FAILED|ERROR) (tests/.*)$")
+COLLECTION_ERROR = re.compile(r"^ERROR (tests/(?:(?!::).)+?\.py)(?: - .*)?$")
+SUMMARY_HEADER = re.compile(r"^=+ short test summary info =+$")
+LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")  # a GitHub Actions job log's line prefix
 UNKNOWN = "unknown:"
 MODULE = "module:"
+
+
+def short_summary(log: str) -> list[str]:
+    """The lines of the run's own short test summary: the last "short test
+    summary info" section (a test that runs pytest inside it can print a
+    summary of its own earlier, in its failure report), to the next "="
+    rule. GitHub's timestamps are dropped. Without such a section (a log
+    cut short), every line that starts with the status: that still counts a
+    nested run's lines that pytest printed flush left, as captured stdout
+    is, though not the indented or "E"-prefixed ones of an assertion."""
+    lines = [LOG_TIMESTAMP.sub("", line.rstrip("\r")) for line in log.splitlines()]
+    starts = [i for i, line in enumerate(lines) if SUMMARY_HEADER.match(line)]
+    if not starts:
+        return lines
+    section = []
+    for line in lines[starts[-1] + 1:]:
+        if line.startswith("="):
+            break
+        section.append(line)
+    return section
 
 
 def failed_ids(log: str, known: Iterable[str]) -> set[str]:
@@ -1174,8 +1203,7 @@ def failed_ids(log: str, known: Iterable[str]) -> set[str]:
     for ids in by_file.values():
         ids.sort(key=len, reverse=True)
     out: set[str] = set()
-    for line in log.splitlines():
-        line = line.rstrip("\r")
+    for line in short_summary(log):
         collection = COLLECTION_ERROR.search(line)
         if collection:
             out.add(MODULE + collection.group(1))
@@ -1253,6 +1281,53 @@ def shadow(args: argparse.Namespace, root: Path) -> Selection:
     return sel
 
 
+def load_failure_records(directory: Path) -> list[dict]:
+    """Every shard's scripts/ci/failure_record.py output under `directory`
+    (one artifact directory per shard)."""
+    records = []
+    for path in sorted(directory.rglob("failures.json")):
+        try:
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            records.append({"complete": False, "unreadable": path.parent.name})
+    return records
+
+
+def recorded_failures(records: list[dict], test_result: str | None) -> tuple[set[str], str | None]:
+    """The tests this run failed ("module:<path>" for a module or directory
+    that did not collect), and why they cannot be compared, if they cannot.
+    A green test job failed nothing. A red one is comparable only when every
+    shard left a complete record (it ran every test it collected: see
+    scripts/ci/failure_record.py) and the records hold a failure: otherwise a
+    shard stopped early (cancelled, timed out, interrupted, crashed, out of
+    xdist worker restarts) or a step outside pytest failed, and nothing
+    measured which tests failed."""
+    if test_result == "success":
+        return set(), None
+
+    def ran_everything(r: dict) -> bool:  # what the record says, checked again
+        return bool(r.get("complete")) and r.get("exitstatus") in (0, 1) and r.get("collected") in (
+            None, r.get("reported"))
+
+    complete = [r for r in records if ran_everything(r)]
+    failed = {t for r in complete for t in r.get("failed", ())}
+    failed |= {MODULE + path for r in complete for path in r.get("collection_errors", ())}
+    if not records:
+        return failed, f"the test job's result is {test_result or 'unknown'} and no shard left a failure record"
+    splits = next((r["splits"] for r in records if isinstance(r.get("splits"), int)), None)
+    groups = {r.get("group") for r in complete}
+    stopped = sorted({str(r.get("group") or r.get("unreadable") or "?") for r in records if not ran_everything(r)}
+                     | ({str(g) for g in range(1, splits + 1) if g not in groups} if splits else set()))
+    if stopped:
+        return failed, (f"shards {', '.join(stopped)} left no complete failure record (cancelled, timed out,"
+                        " interrupted, or stopped before every test it collected ran)")
+    if not failed:
+        statuses = sorted({str(r.get("exitstatus")) for r in complete})
+        return failed, (f"the test job's result is {test_result or 'unknown'} but no shard recorded a failing"
+                        f" test (pytest exit statuses {', '.join(statuses)}: a step outside the tests failed)")
+    return failed, None
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     lines = ["### Shadow selection against this run's failures", ""]
     try:
@@ -1261,33 +1336,49 @@ def cmd_compare(args: argparse.Namespace) -> int:
         except OSError:
             selection = {"full": True, "reasons": ["no shadow selection for this run"]}
         known = [*selection.get("selected", ()), *selection.get("not_selected", ())]
-        failed: set[str] = set()
+        unavailable: str | None = None
         if args.failed:
             failed = failed_ids(Path(args.failed).read_text(encoding="utf-8"), known)
         else:
-            jobs = gh_api(f"repos/{args.repo}/actions/runs/{args.run_id}/jobs?per_page=100")
-            for job in (jobs or {}).get("jobs", []):  # type: ignore[union-attr]
-                if job.get("name", "").startswith("test (") and job.get("conclusion") == "failure":
-                    log = gh_api(f"repos/{args.repo}/actions/jobs/{job['id']}/logs", raw=True)
-                    failed |= failed_ids(log.decode("utf-8", "replace"), known)  # type: ignore[union-attr]
+            failed, unavailable = recorded_failures(load_failure_records(Path(args.failures)), args.test_result)
+            known_ids = {XDIST_GROUP.sub("", t) for t in known}
+            failed = {t if t.startswith(MODULE) or XDIST_GROUP.sub("", t) in known_ids else UNKNOWN + t
+                      for t in failed}
         runs = membership(selection)
         unknown = sorted(t for t in failed if t.startswith(UNKNOWN))
         modules = sorted(t for t in failed if t.startswith(MODULE))
         outside = sorted(t for t in failed if not t.startswith((UNKNOWN, MODULE)) and not runs(t))
         # A collection error is outside the selection when the selection runs
-        # no test of that file (pytest would not collect it). A file the map
-        # does not know runs (S11).
+        # no test of that file, or of any file under that directory (a failing
+        # conftest.py: pytest reports the directory), so pytest would not
+        # collect it. A file the map does not know runs (S11).
         runs_file = {t.split("::")[0] for t in known if runs(t)} | set(selection.get("whole_files", ()))
         known_files = {t.split("::")[0] for t in known}
+
+        def files_under(path: str) -> set[str]:
+            if path.endswith(".py"):
+                return {path} & known_files
+            prefix = path.rstrip("/") + "/"
+            return {f for f in known_files if f.startswith(prefix)}
+
         outside += [m for m in modules if not selection.get("full")
-                    and m[len(MODULE):] in known_files and m[len(MODULE):] not in runs_file]
+                    and files_under(m[len(MODULE):]) and files_under(m[len(MODULE):]).isdisjoint(runs_file)]
         if selection.get("full"):
             lines.append(f"The shadow selection ran the full suite ({'; '.join(selection.get('reasons', [])[:1])}).")
-        lines.append(f"failures outside selection: {len(outside)}" + (f" ({', '.join(outside[:50])})" if outside else ""))
-        lines.append(f"failures in this run: {len(failed)}, of which {len(modules)} are collection errors and"
-                     f" {len(unknown)} are tests the map does not know (the selection runs those)")
+        counts = (f"{len(failed)}, of which {len(modules)} are collection errors and {len(unknown)} are"
+                  f" tests the map does not know (the selection runs those)")
+        if unavailable:
+            # Never a zero that measured nothing.
+            lines.append(f"comparison unavailable: {unavailable}")
+            if failed:
+                lines.append(f"failures recorded all the same: {counts}; {len(outside)} outside the selection"
+                             + (f" ({', '.join(outside[:50])})" if outside else ""))
+        else:
+            lines.append(f"failures outside selection: {len(outside)}"
+                         + (f" ({', '.join(outside[:50])})" if outside else ""))
+            lines.append(f"failures in this run: {counts}" + (f" ({', '.join(sorted(failed)[:20])})" if failed else ""))
     except Exception as error:  # report only
-        lines.append(f"the comparison failed ({type(error).__name__}: {error})")
+        lines.append(f"comparison unavailable: the comparison failed ({type(error).__name__}: {error})")
     _write_summary(args.summary, lines)
     return 0
 
@@ -1333,10 +1424,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     p = sub.add_parser("compare", help="this run's failed tests against the shadow selection")
-    p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
-    p.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", ""))
     p.add_argument("--selection", required=True)
-    p.add_argument("--failed", help="a pytest log to read failures from instead of the run's shard logs")
+    p.add_argument("--failures", default="test-failures",
+                   help="the test shards' failure records (scripts/ci/failure_record.py), one directory each")
+    p.add_argument("--test-result", default=os.environ.get("TEST_RESULT"),
+                   help="the test job's result (success, failure, cancelled)")
+    p.add_argument("--failed", help="a pytest log to read failures from instead of the failure records")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     args = parser.parse_args(argv)
     if args.command == "compact":

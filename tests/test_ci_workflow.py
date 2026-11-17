@@ -783,7 +783,30 @@ def test_the_shadow_selection_is_report_only_and_off_the_scope_job() -> None:
         assert "id" not in step
     assert "testmap.py shadow" in shadow[0]["run"] and '--base "${PR_BASE_SHA}"' in shadow[0]["run"]
     assert shadow[0]["env"]["PR_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
-    assert shadow[1]["run"] == "python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+    assert shadow[1]["run"] == ("python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+                                " --failures test-failures")
+    # The comparison reads the test shards' failure records, never their logs:
+    # a red run with a missing record says "unavailable", not zero.
+    assert shadow[1]["env"] == {"TEST_RESULT": "${{ needs.test.result }}"}
+    collect = next(s for s in coverage["steps"] if s.get("name") == "Collect every shard's failed tests")
+    assert collect["if"] == "github.event_name == 'pull_request'" and collect["continue-on-error"] is True
+    assert collect["uses"] == "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    assert collect["with"] == {"pattern": "test-failures-*", "path": "test-failures"}
+    assert coverage["steps"].index(collect) < coverage["steps"].index(shadow[1])
+    # One step of the test job uploads the failure record: after the tests,
+    # whatever their outcome, bounded, and unable to fail the job.
+    uploads = [s for s in test["steps"] if "test-failures" in json.dumps(s)]
+    assert len(uploads) == 1
+    upload = uploads[0]
+    tests_step = next(s for s in test["steps"] if "uv run pytest" in s.get("run", ""))
+    assert test["steps"].index(upload) > test["steps"].index(tests_step)
+    assert upload["if"] == "always()" and upload["continue-on-error"] is True
+    assert upload["timeout-minutes"] == 5
+    assert upload["with"]["name"] == "test-failures-${{ matrix.shard }}"
+    assert upload["with"]["path"] == "${{ runner.temp }}/test-failures/failures.json"
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    assert ('if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_TEMP"):\n'
+            '    pytest_plugins = [*globals().get("pytest_plugins", []), "scripts.ci.failure_record"]') in conftest
     assert shadow[2]["with"]["name"] == "test-selection" and shadow[2]["with"]["path"] == "selection.json.gz"
     floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
     assert all(coverage["steps"].index(s) < coverage["steps"].index(floor) for s in shadow)
