@@ -617,6 +617,20 @@ jobs:
         env:
           TEST_RESULT: ${{ needs.test.result }}
         run: python3 scripts/ci/testmap.py compare --selection selection.json.gz --failures test-failures
+      - name: TEMPORARY diagnose the job logs API (scratch PR only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jobs="repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100"
+          failed=$(gh api "$jobs" --jq '[.jobs[] | select(.name | startswith("test (")) | select(.conclusion == "failure") | .id][0]' || true)
+          passed=$(gh api "$jobs" --jq '[.jobs[] | select(.name | startswith("test (")) | select(.conclusion == "success") | .id][0]' || true)
+          for id in "$failed" "$passed"; do
+            echo "== job $id"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${id}/logs" > /dev/null 2> err.txt; echo "exit $?"; head -c 600 err.txt; echo
+            curl -sS -o /dev/null -w "curl status %{http_code} redirect %{redirect_url}\n" -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/jobs/${id}/logs" || true
+          done
       - name: Upload the shadow test selection
         if: github.event_name == 'pull_request'
         continue-on-error: true
