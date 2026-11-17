@@ -324,9 +324,11 @@ class _CachedStaticFiles(StaticFiles):
 
     _SHARED_MAX_AGE = 7 * 86_400
     _VERSIONED_MAX_AGE = 365 * 86_400
-    # Shapes of the generated tokens: a 7-hex release, the 12-hex homepage
-    # fingerprint and the 16-hex auth stylesheet fingerprint.
-    _GENERATED_TOKEN = re.compile(r"[0-9a-f]{7}|[0-9a-f]{12}|[0-9a-f]{16}")
+    # Shapes of the generated tokens: a release (7 hex on GCP, `git rev-parse
+    # --short` on AWS and Azure, so the running release's own length is added
+    # below), the 12-hex homepage fingerprint and the 16-hex auth stylesheet
+    # fingerprint.
+    _GENERATED_LENGTHS = frozenset({7, 12, 16})
 
     def __init__(
         self, *args: Any, max_age: int = 86_400, release: str | None = None, **kwargs: Any
@@ -336,7 +338,6 @@ class _CachedStaticFiles(StaticFiles):
         # A local build has no release to compare against (its pages use a
         # file-mtime version), so every ?v= URL stays immutable there.
         self._release = release if release and release != "local" else None
-        self._own_tokens: frozenset[str] | None = None
         self._asset_bytes: dict[str, bytes] = {}
         for directory in self.all_directories:
             root = Path(directory).resolve()
@@ -351,16 +352,19 @@ class _CachedStaticFiles(StaticFiles):
                     }
                     _STATIC_ASSET_BYTES_BY_ROOT[root_key] = cached
             self._asset_bytes.update(cached)
-
-    def _tokens(self) -> frozenset[str]:
-        if self._own_tokens is None:
+        # The tokens this process's pages put in ?v=, computed at startup so a
+        # request never reads container files for them.
+        self._own_tokens: frozenset[str] = frozenset()
+        self._generated = re.compile(r"[0-9a-f]{7}|[0-9a-f]{12}|[0-9a-f]{16}")
+        if self._release is not None:
             from trusted_router.homepage import homepage_assets_version
             from trusted_router.views import _auth_styles_version
 
             self._own_tokens = frozenset(
-                {self._release or "", _auth_styles_version(), homepage_assets_version()}
+                {self._release, _auth_styles_version(), homepage_assets_version()}
             )
-        return self._own_tokens
+            lengths = sorted(self._GENERATED_LENGTHS | {len(self._release)})
+            self._generated = re.compile("|".join(f"[0-9a-f]{{{n}}}" for n in lengths))
 
     def _cache_control(self, scope: Scope) -> str:
         query = scope.get("query_string", b"")
@@ -374,8 +378,8 @@ class _CachedStaticFiles(StaticFiles):
                 for raw in versions:
                     value = unquote_to_bytes(raw).decode("utf-8", "replace")
                     foreign_generated = (
-                        not value or self._GENERATED_TOKEN.fullmatch(value) is not None
-                    ) and value not in self._tokens()
+                        not value or self._generated.fullmatch(value) is not None
+                    ) and value not in self._own_tokens
                     if foreign_generated:
                         return "no-store"
             return f"public, max-age={self._VERSIONED_MAX_AGE}, immutable"

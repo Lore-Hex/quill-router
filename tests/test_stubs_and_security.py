@@ -760,6 +760,30 @@ def test_this_process_s_fingerprints_are_immutable_and_foreign_ones_are_not() ->
     # A hand-written version in a static page keeps its immutable answer.
     assert _static_cache_control("9ce6d79", b"v=2") == immutable
     assert _static_cache_control("9ce6d79", b"v=5") == immutable
+    # AWS and Azure releases are `git rev-parse --short` (9 hex here): another
+    # release of the running release's own length is foreign too.
+    assert _static_cache_control("e2fdd0bcb", b"v=e2fdd0bcb") == immutable
+    assert _static_cache_control("e2fdd0bcb", b"v=3195bc529") == "no-store"
+
+
+def test_the_auth_fingerprint_covers_every_asset_it_versions() -> None:
+    import hashlib
+    import re
+
+    from trusted_router.brand_theme import brand_theme
+    from trusted_router.routes.public import STATIC_DIR
+    from trusted_router.views import TEMPLATES_DIR, _auth_styles_version
+
+    template = (TEMPLATES_DIR / "auth" / "_base.html").read_text(encoding="utf-8")
+    versioned = re.findall(r"/static/([^\"'?]+)\?v=\{\{ auth_styles_version\(\) \}\}", template)
+    assert {"content-layout.css", "content-layout.js", "auth.css"} <= set(versioned)
+    sheets = ["tokens.css", "brand.css", "auth.css", "charter.css", "content-layout.css", "content-layout.js"]
+    if brand_theme() == "nyte":
+        sheets += ["nyte-page.js", "nyte-theme.css"]
+    assert set(versioned) <= set(sheets)
+    _auth_styles_version.cache_clear()
+    expected = hashlib.sha256(b"".join((STATIC_DIR / name).read_bytes() for name in sheets)).hexdigest()[:16]
+    assert _auth_styles_version() == expected
 
 
 def test_every_versioned_asset_a_page_emits_is_immutable(test_settings: Settings) -> None:
