@@ -576,6 +576,44 @@ by itself; the gate below is what does. In order:
 Turning it off is the literal `false` and the same unit rewrite; the
 absence policy is disabled by the same apply.
 
+## The settle log's hedge
+
+An owner sends a settle log batch whose Publish call is unanswered after
+`-settle-hedge` (the release's default 250ms) again beside it, at most
+three more times, each within the publish deadline, so a call the server
+holds does not hold the lease's key for the whole 5 s (2026-11-16, #2671).
+It never hedges a batch past 64 KiB, and hedges stay within about a tenth
+of calls beyond a burst of ten. The owner's minute line counts it:
+`publish_calls` (batches sent), `publish_hedges`, `hedges_won` (batches a
+hedge acknowledged) and `hedges_withheld` (by size or budget). Hedges well
+past a tenth of `publish_calls`, or `hedges_withheld` climbing, mean the
+settle log is slow throughout, not a few held calls; hedge losers also show
+as `cancelled` in the topic's `send_request_count`.
+
+Turning it off, fastest first:
+
+1. **Any node:** pin the release before #2671 ("Taking a pinned release").
+   This works on every node whatever script it was created with.
+2. **A node created from the script that reads `fastpath-settle-hedge`**
+   (check: `gcloud compute instances describe NODE --zone=ZONE
+   --project=quill-cloud-proxy --format='value(metadata.items.startup-script)'
+   | grep -c settle-hedge` is not 0): in `infra/fastpath.tf` set
+
+   ```hcl
+   fastpath_settle_hedge = "0"
+   ```
+
+   and apply (metadata, in place), then take each node by the unit
+   rewrite, one at a time, the other serving, exactly
+   as "Turning the edge policy and the decide shadow on" takes a metadata
+   change: mark it leaving, wait for its leases and the balancer, stop the
+   unit, run `sudo google_metadata_script_runner startup`, and read
+   `-settle-hedge 0` back from the running process. A reset is not enough.
+
+The script refuses any value but `0` or `1ms` to `9999ms` before writing the
+unit. The attribute is set only with a pinned release that takes
+`-settle-hedge` ("A flag the unit passes"); `""` leaves it off.
+
 ## The money settings: required tier, allowance and floor
 
 `docs/design/fast-admission-widening.md`, (b) and step WS0 of section

@@ -480,7 +480,10 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
         for_each.group(1), re.M)
     assert nodes and len(placed) == len(nodes), (nodes, placed)
     metadata = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$", resource, re.M)
-    assert metadata and metadata.group(1) == "local.fastpath_edge_snapshot", metadata
+    # The settle log's hedge attribute merges in after it, as unconditionally
+    # (empty unless set, test_fastpath_settle_hedge.py).
+    assert metadata and metadata.group(1).split(", ") == [
+        "local.fastpath_edge_snapshot", "local.fastpath_settle_hedge_metadata"], metadata
 
 
 def test_the_snapshot_flags_are_found() -> None:

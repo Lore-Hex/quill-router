@@ -51,9 +51,46 @@ var (
 // Settings are a publisher's. Deadline bounds each publish from its
 // hand-over, through its queue and every retry (§4.5): shorter than the
 // reaper's grace less twice the skew allowance, for the settle log.
+//
+// Hedge, the settle log's alone, is how long a batch's Publish call may go
+// unanswered before the same batch is sent again beside it; zero sends each
+// batch once. A call the server holds for seconds while others are answered
+// in milliseconds would otherwise hold the lease's key, and every answer
+// waiting on its records, until the deadline fails it (2026-11-16: calls
+// held to the 5 s deadline and cancelled, while most took under 30 ms).
 type Settings struct {
 	Deadline time.Duration
+	Hedge    time.Duration
 }
+
+// maxHedges is the most calls a batch is sent again in, after Hedge, three
+// times Hedge and seven times Hedge, each within its deadline.
+const maxHedges = 3
+
+// A hedge's bounds, so a broad slowdown, when every call is slow, does not
+// send every batch four times over:
+//
+//   - maxHedgeBytes: a batch whose request is larger is never hedged.
+//     Pub/Sub takes about 1 MB/s on one ordering key, and a batch hedged to
+//     the limit is sent four times, so 64 KiB keeps its copies to a quarter
+//     of a second's allowance on its lease's key, and its copies' memory
+//     small. A heartbeat's or a terminal's record is a few hundred bytes to
+//     a few KiB (a first heartbeat's basis and boot binding included), so
+//     the records whose answers wait on a call, a stream's heartbeats among
+//     them, stay hedged; a batch past it is a large backlog or a hand-off's
+//     records, which no heartbeat answer waits on alone.
+//   - a budget: every batch's first call earns a tenth of a hedge
+//     (hedgeShare), up to hedgeBurst hedges banked, and each hedge spends
+//     one, so hedges stay within about a tenth of calls beyond a burst. A
+//     log starts with the burst banked.
+//
+// A hedge either bound withholds is counted (Calls.Withheld), and that
+// batch is sent no more copies.
+const (
+	maxHedgeBytes = 64 << 10
+	hedgeShare    = 10
+	hedgeBurst    = 10
+)
 
 // Pub/Sub's limits on one Publish call: its messages, and its request's
 // size, 10 MB, which a batch keeps under with room for the topic's name.
@@ -112,18 +149,83 @@ func (p *Pending) Wait(ctx context.Context) (string, error) {
 	}
 }
 
-// Log publishes a region's settle log: one sender per lease key, one
-// Publish call at a time, each carrying every record queued for the key.
+// Log publishes a region's settle log: one sender per lease key, one batch
+// at a time, each carrying every record queued for the key. A batch is sent
+// in one Publish call, and, with Settings.Hedge, again in another beside it
+// when the first is slow (sendBatch).
 type Log struct {
 	publish  publishFunc
 	topic    string
 	deadline time.Duration
+	hedge    time.Duration
 	clock    func() time.Time
 
 	mu      sync.Mutex
 	keys    map[string]*key
 	stopped bool
 	senders sync.WaitGroup
+
+	calls hedgeBudget
+}
+
+// Calls are a Log's Publish calls over a period: the batches sent (each
+// batch's first call), the calls a batch was sent again in, the batches a
+// hedge's answer acknowledged, and the batches a hedge was withheld from by
+// its size or the budget.
+type Calls struct {
+	Batches, Hedges, Won, Withheld int64
+}
+
+// hedgeBudget is the Log's hedge budget, in tenths of a hedge, and its
+// period's calls, under one lock.
+type hedgeBudget struct {
+	mu     sync.Mutex
+	tenths int64
+	c      Calls
+}
+
+func newHedgeBudget() hedgeBudget { return hedgeBudget{tenths: hedgeBurst * hedgeShare} }
+
+// sent counts a batch's first call, which earns a tenth of a hedge.
+func (b *hedgeBudget) sent() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.c.Batches++
+	b.tenths = min(b.tenths+1, hedgeBurst*hedgeShare)
+}
+
+// take spends a hedge if one is banked, and reports whether it was.
+func (b *hedgeBudget) take() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.tenths < hedgeShare {
+		b.c.Withheld++
+		return false
+	}
+	b.tenths -= hedgeShare
+	b.c.Hedges++
+	return true
+}
+
+func (b *hedgeBudget) withheld() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.c.Withheld++
+}
+
+func (b *hedgeBudget) won() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.c.Won++
+}
+
+// TakeCalls returns the calls since the last taken, and starts the next.
+func (l *Log) TakeCalls() Calls {
+	l.calls.mu.Lock()
+	defer l.calls.mu.Unlock()
+	c := l.calls.c
+	l.calls.c = Calls{}
+	return c
 }
 
 // key is a lease's ordering key: the records handed over and not yet sent,
@@ -144,7 +246,11 @@ func openLog(publish publishFunc, topic string, s Settings, clock func() time.Ti
 	if s.Deadline <= 0 || topic == "" {
 		return nil, fmt.Errorf("settlelog: a topic %q and a deadline of %v", topic, s.Deadline)
 	}
-	return &Log{publish: publish, topic: topic, deadline: s.Deadline, clock: clock, keys: map[string]*key{}}, nil
+	if s.Hedge < 0 {
+		return nil, fmt.Errorf("settlelog: a hedge of %v", s.Hedge)
+	}
+	return &Log{publish: publish, topic: topic, deadline: s.Deadline, hedge: s.Hedge, clock: clock,
+		keys: map[string]*key{}, calls: newHedgeBudget()}, nil
 }
 
 // Publish hands a record to its lease's key without waiting. Records handed
@@ -263,26 +369,110 @@ func takeBatch(queue *[]*Pending) []*Pending {
 	return batch
 }
 
-// sendBatch sends one batch and returns its message IDs, or its error.
+// sendBatch sends one batch and returns its message IDs, or its error, all
+// within its first record's deadline, the earliest.
+//
+// With Hedge, a call not answered by then is joined by another sending the
+// same batch, and again at three and seven times Hedge (maxHedges), each
+// only before the deadline and within the hedge's bounds (maxHedgeBytes,
+// the budget); the first call answered with the batch's
+// message IDs is the batch's answer, and the rest are cancelled. Every call
+// carries the same records with the same owner sequence numbers, so a copy
+// stored beside another, or later, after a batch behind this one, is a
+// duplicate the auditor skips (an owner record at or below its progress), as
+// a republish's is; and nothing behind the batch is sent before one call
+// acknowledges it, so a hedge never stores a record before one ahead of it.
+// A call that fails ends the batch only once no other is under way: the
+// client library retries within a call what can be retried, so a hedge
+// answers a slow call, never an error.
 func (l *Log) sendBatch(batch []*Pending) ([]string, error) {
 	deadline := batch[0].deadline
 	if !l.clock().Before(deadline) {
 		return nil, ErrDeadline
 	}
 	msgs := make([]*pubsubpb.PubsubMessage, len(batch))
+	size := 0
 	for i, p := range batch {
 		msgs[i] = p.msg
+		size += p.size
 	}
+	req := &pubsubpb.PublishRequest{Topic: l.topic, Messages: msgs}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	resp, err := l.publish(ctx, &pubsubpb.PublishRequest{Topic: l.topic, Messages: msgs})
-	if err == nil && len(resp.GetMessageIds()) != len(batch) {
-		err = fmt.Errorf("settlelog: %d message IDs for %d records", len(resp.GetMessageIds()), len(batch))
+	type answer struct {
+		ids   []string
+		err   error
+		hedge bool
 	}
-	if err != nil {
-		return nil, err
+	// Room for every call's answer, so a call that ends after the batch's
+	// answer never blocks.
+	answers := make(chan answer, 1+maxHedges)
+	call := func(hedge bool) {
+		r := req
+		if hedge {
+			// Its own copy: the client library and the transport read a
+			// request while its call runs, and the first call may still.
+			r = proto.CloneOf(req)
+		}
+		resp, err := l.publish(ctx, r)
+		if err == nil && len(resp.GetMessageIds()) != len(batch) {
+			err = fmt.Errorf("settlelog: %d message IDs for %d records", len(resp.GetMessageIds()), len(batch))
+		}
+		answers <- answer{ids: resp.GetMessageIds(), err: err, hedge: hedge}
 	}
-	return resp.GetMessageIds(), nil
+	l.calls.sent()
+	go call(false)
+	under, hedged := 1, 0
+	var next <-chan time.Time
+	wait := l.hedge
+	var timer *time.Timer
+	if wait > 0 {
+		timer = time.NewTimer(wait)
+		defer timer.Stop()
+		next = timer.C
+	}
+	var failed error
+	for {
+		select {
+		case a := <-answers:
+			under--
+			if a.err == nil {
+				if a.hedge {
+					l.calls.won()
+				}
+				return a.ids, nil
+			}
+			if failed == nil {
+				failed = a.err
+			}
+			if under == 0 {
+				return nil, failed
+			}
+		case <-next:
+			if !l.clock().Before(deadline) {
+				next = nil
+				continue
+			}
+			if size > maxHedgeBytes {
+				l.calls.withheld()
+				next = nil
+				continue
+			}
+			if !l.calls.take() {
+				next = nil
+				continue
+			}
+			go call(true)
+			under++
+			hedged++
+			if hedged == maxHedges {
+				next = nil
+				continue
+			}
+			wait *= 2
+			timer.Reset(wait)
+		}
+	}
 }
 
 // Records publishes the record topic, unordered, each record in its own

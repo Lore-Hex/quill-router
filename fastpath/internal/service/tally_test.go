@@ -5,23 +5,28 @@ import (
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/owner"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/settlelog"
 )
 
 // TestTheOwnerLineStatesTheTally: the owner's period line states each of
 // the tally's figures, its waits in milliseconds and the acknowledgements'
-// mean among them, and an empty period's mean as zero.
+// mean among them, and an empty period's mean as zero; then the settle
+// log's calls and hedges.
 func TestTheOwnerLineStatesTheTally(t *testing.T) {
 	got := ownerTallyLine(owner.Tally{Acks: 4, AcksSlow: 1, AckTotal: 2 * time.Second, AckMax: 1200 * time.Millisecond,
 		DepthMax: 7, PublishFailures: 2, Heartbeats: 9, HeartbeatsSlow: 3, HeartbeatMax: 1400 * time.Millisecond,
-		Terminals: 5, TerminalsSlow: 1, TerminalMax: 1100 * time.Millisecond})
+		Terminals: 5, TerminalsSlow: 1, TerminalMax: 1100 * time.Millisecond}, settlelog.Calls{Batches: 60, Hedges: 6, Won: 2,
+		Withheld: 1})
 	want := "fastpath owner: acks=4 ack_avg_ms=500 ack_max_ms=1200 acks_slow=1 depth_max=7 publish_failures=2 " +
-		"heartbeats=9 heartbeat_max_ms=1400 heartbeats_slow=3 terminals=5 terminal_max_ms=1100 terminals_slow=1"
+		"heartbeats=9 heartbeat_max_ms=1400 heartbeats_slow=3 terminals=5 terminal_max_ms=1100 terminals_slow=1 " +
+		"publish_calls=60 publish_hedges=6 hedges_won=2 hedges_withheld=1"
 	if got != want {
 		t.Fatalf("the line:\n%s\nwant\n%s", got, want)
 	}
-	if got := ownerTallyLine(owner.Tally{}); got != "fastpath owner: acks=0 ack_avg_ms=0 ack_max_ms=0 acks_slow=0 "+
-		"depth_max=0 publish_failures=0 heartbeats=0 heartbeat_max_ms=0 heartbeats_slow=0 terminals=0 "+
-		"terminal_max_ms=0 terminals_slow=0" {
+	if got := ownerTallyLine(owner.Tally{}, settlelog.Calls{}); got != "fastpath owner: acks=0 ack_avg_ms=0 "+
+		"ack_max_ms=0 acks_slow=0 depth_max=0 publish_failures=0 heartbeats=0 heartbeat_max_ms=0 heartbeats_slow=0 "+
+		"terminals=0 terminal_max_ms=0 terminals_slow=0 publish_calls=0 publish_hedges=0 hedges_won=0 "+
+		"hedges_withheld=0" {
 		t.Fatalf("an empty period's line: %s", got)
 	}
 }

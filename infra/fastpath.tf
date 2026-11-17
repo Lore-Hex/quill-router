@@ -311,6 +311,15 @@ locals {
   # The enabler's tier is lowered after every node runs them.
   fastpath_allowance_tier2 = "250000000"
   fastpath_allowance_tier1 = "100000000"
+  # The settle log's hedge (-settle-hedge, #2671): "" leaves the attribute
+  # off, and a node runs its release's default (250ms); "0" turns the hedge
+  # off. Set only with a pinned release that takes the flag, and only a node
+  # created from the script that reads the attribute takes it, by the unit
+  # rewrite in docs/runbooks/fastpath-deploy.md, "The settle log's hedge".
+  fastpath_settle_hedge = ""
+  fastpath_settle_hedge_metadata = {
+    for name, value in { fastpath-settle-hedge = local.fastpath_settle_hedge } : name => value if value != ""
+  }
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -633,7 +642,7 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-floor               = local.fastpath_floor
     fastpath-allowance-tier2     = local.fastpath_allowance_tier2
     fastpath-allowance-tier1     = local.fastpath_allowance_tier1
-  }, local.fastpath_edge_snapshot)
+  }, local.fastpath_edge_snapshot, local.fastpath_settle_hedge_metadata)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
     release_bucket = google_storage_bucket.fastpath_releases.name
