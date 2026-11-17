@@ -154,6 +154,24 @@ def test_l_render_second():
     assert ENV.get_template("page.html").render() == "hi"
 
 
+def test_n_relative_open_after_cwd_removed(tmp_path):
+    # A test that chdirs into a directory and removes it: the recorder must
+    # not fail on the next relative open (os.getcwd raises).
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    here = os.getcwd()
+    os.chdir(gone)
+    try:
+        gone.rmdir()
+        try:
+            open("missing.txt")
+        except FileNotFoundError:
+            pass
+        subprocess.run([sys.executable, "-c", "pass"], check=False, cwd=here)
+    finally:
+        os.chdir(here)
+
+
 def test_m_inprocess_pytest(tmp_path):
     # As tests/test_lock_order_guard.py does: pytest.main on a copy of conftest.
     with open(os.path.join(HERE, "tests", "conftest.py")) as handle:
@@ -310,5 +328,5 @@ def test_xdist_workers_record_and_the_shard_compacts(tmp_path: Path, workers: st
     fragment, result = recorded(root, tmp_path, "-n", workers, "--dist", "loadfile")
     assert result.returncode == 0, result.stdout + result.stderr
     assert fragment["valid"], fragment["errors"]
-    assert len(fragment["tests"]) == 14
+    assert len(fragment["tests"]) == 15
     assert len(list((tmp_path / "raw").glob("gw*.jsonl"))) == int(workers)

@@ -252,7 +252,10 @@ class Recorder:
         except TypeError:
             return None
         if not os.path.isabs(text):
-            text = os.path.join(os.getcwd(), text)
+            try:
+                text = os.path.join(os.getcwd(), text)
+            except OSError:  # a test removed the directory it chdir'd into:
+                return None  # nothing relative can be opened there
         text = os.path.realpath(text) + os.sep
         if not text.startswith(ROOT) or any(part in text for part in SKIP_PARTS):
             return None
@@ -308,7 +311,12 @@ class Recorder:
         else:
             words = [os.fsdecode(a) if isinstance(a, (str, bytes, os.PathLike)) else str(a) for a in list(argv)[:4]]
         words = [(self.rel(w) or w) if os.path.isabs(w) or w.startswith(".") else w for w in words]
-        where = self.rel(cwd if cwd is not None else os.getcwd())
+        if cwd is None:
+            try:
+                cwd = os.getcwd()
+            except OSError:
+                cwd = None
+        where = self.rel(cwd) if cwd is not None else None
         self.cur.spawns.add(" ".join(" ".join(words).split()) + f" @cwd={where or '-'}")
 
 
