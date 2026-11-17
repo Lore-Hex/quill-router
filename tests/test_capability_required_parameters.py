@@ -56,6 +56,14 @@ def _hosts(body: dict[str, Any]) -> list[tuple[str, str]]:
     return [(model.id, endpoint.provider) for model, endpoint in _routes(body)]
 
 
+def _unfiltered_a_hosts(route_type: str) -> list[tuple[str, str]]:
+    # The hourly health snapshot ranks these hosts. Capability filtering must
+    # preserve that order, not assume which host ranked first this hour.
+    hosts = _hosts({"model": MODEL_A, "route_type": route_type})
+    assert sorted(hosts) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    return hosts
+
+
 def _without_the_rule(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]) -> list[tuple[str, str]]:
     with monkeypatch.context() as patch:
         patch.setattr(routing, "CAPABILITY_REQUIRED_PARAMETERS", NO_RULE)
@@ -121,7 +129,7 @@ def test_tool_choice_needs_tool_calling_not_its_own_declaration(monkeypatch):
     # part of tool calling.
     _serve(monkeypatch, MODEL_A, [("deepinfra", ("max_tokens",)), ("novita", ("tools",))])
     body = {"model": MODEL_A, "route_type": "chat.completions", "requested_parameters": ["tool_choice"]}
-    assert _without_the_rule(monkeypatch, body) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    assert _without_the_rule(monkeypatch, body) == _unfiltered_a_hosts("chat.completions")
     assert _hosts(body) == [(MODEL_A, "novita")]
 
 
@@ -167,12 +175,11 @@ def test_structured_output_trusts_the_model_not_route_silence(monkeypatch):
         "route_type": "responses",
         "requested_parameters": ["response_format"],
     }
-    assert _without_the_rule(monkeypatch, body) == [
-        (MODEL_A, "deepinfra"), (MODEL_A, "novita"), (MODEL_B, "parasail"),
-    ]
+    ranked_a = _unfiltered_a_hosts("responses")
+    assert _without_the_rule(monkeypatch, body) == [*ranked_a, (MODEL_B, "parasail")]
     # B declares structured output nowhere, so the pool skips it; both of
     # A's routes stay.
-    assert _hosts(body) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    assert _hosts(body) == ranked_a
     # A route declaring response_format itself takes it as well.
     _serve(monkeypatch, MODEL_B, [("parasail", ("response_format",))])
     assert (MODEL_B, "parasail") in _hosts(body)
@@ -245,7 +252,7 @@ def test_orchestration_subcalls_are_not_filtered_by_their_parents_parameters(mon
     # its own json_object format), so the list does not describe them.
     _serve(monkeypatch, MODEL_A, [("deepinfra", ("max_tokens",)), ("novita", ("tools",))])
     body = {"model": MODEL_A, "route_type": route_type, "requested_parameters": ["tools", "response_format"]}
-    assert _hosts(body) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    assert _hosts(body) == _unfiltered_a_hosts(route_type)
 
 
 def test_authorize_sends_a_tool_request_only_to_tool_routes(monkeypatch):
