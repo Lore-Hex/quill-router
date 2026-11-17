@@ -120,8 +120,16 @@ function completionMetadata(payload, response) {
   };
 }
 
-function activationErrorCopy(status) {
+function activationErrorCopy(status, canCreateKeys = true) {
   if (status === 401) {
+    // Members cannot create keys, and the create panel is not rendered for
+    // them; do not send them there.
+    if (!canCreateKeys) {
+      return {
+        title: "This key was not accepted",
+        message: "Ask a workspace owner or admin for a new API key, then run the check again.",
+      };
+    }
     return {
       title: "This key was not accepted",
       message: "Create a new API key, then run the check again.",
@@ -130,6 +138,13 @@ function activationErrorCopy(status) {
     };
   }
   if (status === 402) {
+    // Members cannot add credits; the Credits page shows them only the balance.
+    if (!canCreateKeys) {
+      return {
+        title: "Credits are required",
+        message: "Ask a workspace owner or admin to add credits, then run the check again.",
+      };
+    }
     return {
       title: "Credits are required",
       message: "Add credits, then return here to run the live request.",
@@ -150,7 +165,7 @@ function activationErrorCopy(status) {
 }
 
 function showActivationError(flow, status) {
-  const copy = activationErrorCopy(status);
+  const copy = activationErrorCopy(status, flow.dataset.canCreateKeys !== "false");
   const container = flow.querySelector("[data-call-error]");
   const result = flow.querySelector("[data-call-result]");
   if (result)

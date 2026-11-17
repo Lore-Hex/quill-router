@@ -31,9 +31,16 @@ from trusted_router.money import (
     MICRODOLLARS_PER_DOLLAR,
     MIN_PAYPAL_CHECKOUT_DOLLARS,
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
+    AutoRefillSettingsError,
+    check_auto_refill_settings,
     money_pair,
 )
-from trusted_router.routes.console._shared import ConsoleDep, money, render
+from trusted_router.routes.console._shared import (
+    ConsoleDep,
+    money,
+    render,
+    require_manager,
+)
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.adyen_billing import (
     ADYEN_WEB_CSS_SRI,
@@ -104,6 +111,14 @@ _CHECKOUT_ERROR_COPY: dict[str, str] = {
     "checkout_unavailable": "Checkout is temporarily unavailable.",
 }
 
+# One line per redirect code the auto-refill handler sends back to the page.
+_AUTO_REFILL_ERROR_COPY: dict[str, str] = {
+    "auto_refill_threshold": (
+        "Set the refill amount above the threshold, so one refill lifts the "
+        "balance back over it. Auto refill was not changed."
+    ),
+}
+
 
 def checkout_fee_schedule(settings: Settings) -> dict[str, Any]:
     """What the page needs to preview a checkout's line items: the option →
@@ -151,8 +166,36 @@ def register(app: FastAPI) -> None:
         checkout: str = "",
         error: str = "",
     ) -> Response:
-        credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
+        balance: dict[str, Any] = {
+            "credits_balance": money(
+                summary["total_credits"] - summary["total_usage"] if summary else 0
+            ),
+            "credits_reserved": money(summary["reserved"] if summary else 0),
+            "credits_reserved_nonzero": bool(summary and summary["reserved"] > 0),
+            "credits_available": money(summary["available"] if summary else 0),
+            "credits_empty": not summary or summary["available"] <= 0,
+            "credits_usage": money(summary["total_usage"] if summary else 0),
+        }
+        if not ctx.can_manage:
+            # Members see the balance only. The saved card, payment history,
+            # receipts and every billing control are for owners and admins,
+            # as GET /v1/credits and the billing API are; none of that data
+            # is read or handed to the template here.
+            return HTMLResponse(
+                render(
+                    "console/credits.html",
+                    settings=settings,
+                    ctx=ctx,
+                    active="credits",
+                    page_title="Credits",
+                    can_manage=False,
+                    api_base_url=ctx.api_base_url,
+                    **balance,
+                ),
+                headers=_PRIVATE_CREDITS_HEADERS,
+            )
+        credit = STORE.get_credit_account(ctx.workspace.id)
         wallet_only_billing = is_wallet_only_user(ctx.user)
         # This local fallback uses only persisted billing metadata. Live
         # PaymentMethod.retrieve + PaymentIntent.search calls are deferred to
@@ -189,6 +232,7 @@ def register(app: FastAPI) -> None:
                 ctx=ctx,
                 active="credits",
                 page_title="Credits",
+                can_manage=True,
                 checkout_presets=presets,
                 checkout_selected_preset=selected_preset,
                 checkout_max_credit_dollars=(
@@ -206,14 +250,8 @@ def register(app: FastAPI) -> None:
                 verification_topup_line=(
                     purpose == "identity_verification" and verification_remaining > 0
                 ),
-                credits_balance=money(
-                    summary["total_credits"] - summary["total_usage"] if summary else 0
-                ),
-                credits_reserved=money(summary["reserved"] if summary else 0),
-                credits_reserved_nonzero=bool(summary and summary["reserved"] > 0),
-                credits_available=money(summary["available"] if summary else 0),
-                credits_empty=not summary or summary["available"] <= 0,
-                credits_usage=money(summary["total_usage"] if summary else 0),
+                **balance,
+                auto_refill_error_message=_AUTO_REFILL_ERROR_COPY.get(error),
                 auto_refill_enabled=credit.auto_refill_enabled if credit else False,
                 auto_refill_threshold_dollars=(
                     credit.auto_refill_threshold_microdollars // 1_000_000
@@ -280,6 +318,9 @@ def register(app: FastAPI) -> None:
         only from the authenticated console context; the client cannot request
         another tenant's Stripe metadata by supplying an id.
         """
+        # The card and the payment history with its receipt links are for
+        # owners and admins, as GET /v1/credits is.
+        require_manager(ctx)
         credit = await run_in_threadpool(STORE.get_credit_account, ctx.workspace.id)
         payment_method_id = credit.stripe_payment_method_id if credit else None
         saved_payment_method, payment_result = await asyncio.gather(
@@ -325,6 +366,9 @@ def register(app: FastAPI) -> None:
         purpose: str = Form(""),
         other_amount: str = Form(""),
     ) -> Response:
+        # A completed card checkout saves the paying card as the workspace's
+        # card (internal/webhook.py), so buying is a manager action too.
+        require_manager(ctx)
         if amount == CHECKOUT_OTHER_AMOUNT:
             # The "Other" preset posts its dollar amount in a second field so
             # the preset radios and the free amount share one form name.
@@ -466,6 +510,7 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
+        require_manager(ctx)
         if is_wallet_only_user(ctx.user):
             return _wallet_only_redirect()
         credit = STORE.get_credit_account(ctx.workspace.id)
@@ -491,6 +536,7 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
+        require_manager(ctx)
         if is_wallet_only_user(ctx.user):
             return _wallet_only_redirect()
         credit = STORE.get_credit_account(ctx.workspace.id)
@@ -510,6 +556,7 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
+        require_manager(ctx)
         try:
             result = remove_saved_payment_method(
                 workspace_id=ctx.workspace.id,
@@ -528,6 +575,9 @@ def register(app: FastAPI) -> None:
         threshold: int = Form(..., ge=10, le=500),
         amount: int = Form(..., ge=5, le=2000),
     ) -> Response:
+        # Enabling charges the saved card off-session after every settle
+        # below the threshold, so only owners and admins may change it.
+        require_manager(ctx)
         credit = STORE.get_credit_account(ctx.workspace.id)
         # Reject the enable toggle if there's no saved payment method —
         # otherwise the trigger fires every settle and silently fails.
@@ -536,12 +586,26 @@ def register(app: FastAPI) -> None:
             return _wallet_only_redirect()
         if truly_enable and not (credit and credit.stripe_customer_id and credit.stripe_payment_method_id):
             return RedirectResponse(url="/console/credits?error=no_payment_method", status_code=303)
-        STORE.update_auto_refill_settings(
-            ctx.workspace.id,
-            enabled=truly_enable,
-            threshold_microdollars=threshold * 1_000_000,
-            amount_microdollars=amount * 1_000_000,
-        )
+        threshold_microdollars = threshold * MICRODOLLARS_PER_DOLLAR
+        amount_microdollars = amount * MICRODOLLARS_PER_DOLLAR
+        try:
+            # The store applies the same check; asking first keeps a refused
+            # pair a form error rather than a server error.
+            check_auto_refill_settings(
+                enabled=truly_enable,
+                threshold_microdollars=threshold_microdollars,
+                amount_microdollars=amount_microdollars,
+            )
+            STORE.update_auto_refill_settings(
+                ctx.workspace.id,
+                enabled=truly_enable,
+                threshold_microdollars=threshold_microdollars,
+                amount_microdollars=amount_microdollars,
+            )
+        except AutoRefillSettingsError:
+            return RedirectResponse(
+                url="/console/credits?error=auto_refill_threshold", status_code=303
+            )
         return RedirectResponse(url="/console/credits?saved=1", status_code=303)
 
 

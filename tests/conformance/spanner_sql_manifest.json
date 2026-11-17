@@ -2251,7 +2251,7 @@
       ]
     },
     "storage_gcp_keys:txn:1": {
-      "fingerprint": "8b2b096b220bf2a685d9f9a730627e35da13babfb74af02b6476766e4ea0bb72",
+      "fingerprint": "e3935ca0b6225f64c76744e2715fc15b080501f8f3bae8db81e107a3b07cc5b8",
       "scenarios": [
         {
           "bindings": {},
@@ -5175,7 +5175,7 @@
     "storage_gcp_key_shard_admin:reshard_key_usage.txn": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
     "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "0d1807404835e427a88c46085cefbbbfc33365a4bc42bf07d4710cb0768fd5ce",
     "storage_gcp_keys:SpannerApiKeys._delete_batch.delete_batch_txn": "f186ed3fbbe47f2878dee911eebadd6eb29a70a908f63e8a8c35ebc8d068b8c2",
-    "storage_gcp_keys:SpannerApiKeys.update.txn": "8b2b096b220bf2a685d9f9a730627e35da13babfb74af02b6476766e4ea0bb72",
+    "storage_gcp_keys:SpannerApiKeys.update.txn": "e3935ca0b6225f64c76744e2715fc15b080501f8f3bae8db81e107a3b07cc5b8",
     "storage_gcp_legacy_reservations:legacy_reservation_snapshot": "c5b3818e113170d5fda5422e9c83441ee7119014e4a74afd80330cf735b965d7",
     "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox._enqueue_tx": "99d2a2f669e53e54014e83d8f1ed598c6003b63d010c06adcaf2250e497dd92f",
     "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox.oldest_enqueued_at": "178dbad6786105bf7dd13e736189503a4df7c3df9cde6f7d136c6896bc3baafc",

@@ -23,7 +23,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
 from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, GatewayBoot
-from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS, check_auto_refill_settings
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
     BACKEND_SPANNER,
@@ -201,6 +201,15 @@ from trusted_router.storage_gcp_user_models import SpannerUserProvidedModels
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
+from trusted_router.storage_key_usage import (
+    CHAT_BROWSER_KEY_INDEX_KIND,
+    api_key_usage_from_typed,
+    chat_browser_key_index_body,
+    chat_browser_key_index_expired,
+    chat_browser_key_index_id,
+    chat_browser_key_index_prefix,
+    is_users_chat_browser_key,
+)
 from trusted_router.storage_models import (
     EMAIL_ATTACH_ALREADY_VERIFIED,
     EMAIL_ATTACH_ATTACHED,
@@ -2859,6 +2868,66 @@ class SpannerStore(OperationalAnalyticsReads):
     def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
         return self.api_keys.delete_many(workspace_id, key_hashes)
 
+    def record_chat_browser_key(
+        self, workspace_id: str, user_id: str, key_hash: str, *, expires_at: str | None = None,
+    ) -> None:
+        self._write_entity(
+            CHAT_BROWSER_KEY_INDEX_KIND,
+            chat_browser_key_index_id(workspace_id, user_id, key_hash),
+            chat_browser_key_index_body(workspace_id, user_id, key_hash, expires_at),
+        )
+
+    def chat_browser_key_hashes(self, workspace_id: str, user_id: str) -> list[str]:
+        """One key-range read of this user's index rows (primary key prefix)."""
+        refs = self._list_entities(
+            CHAT_BROWSER_KEY_INDEX_KIND,
+            prefix=chat_browser_key_index_prefix(workspace_id, user_id),
+            cls=dict,
+        )
+        return [str(ref["key_id"]) for ref in refs]
+
+    def list_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, key_hashes: list[str] | None = None,
+    ) -> list[ApiKeyUsageSnapshot]:
+        """The index read (unless ``key_hashes`` is given), then per key one
+        point read of the record and one strong typed point-read of its
+        usage."""
+        wanted = (
+            self.chat_browser_key_hashes(workspace_id, user_id)
+            if key_hashes is None else sorted(set(key_hashes))
+        )
+        snapshots: list[ApiKeyUsageSnapshot] = []
+        for key_hash in wanted:
+            key = self.get_key_by_hash(key_hash)
+            if key is None or not is_users_chat_browser_key(key, workspace_id, user_id):
+                continue
+            snapshots.append(api_key_usage_from_typed(key, self.typed_key_usage(key.hash)))
+        return snapshots
+
+    def forget_chat_browser_keys(
+        self, workspace_id: str, user_id: str, key_hashes: list[str],
+    ) -> None:
+        if key_hashes:
+            self._delete_entities(
+                CHAT_BROWSER_KEY_INDEX_KIND,
+                [chat_browser_key_index_id(workspace_id, user_id, h) for h in key_hashes],
+            )
+
+    def forget_expired_chat_browser_keys(
+        self, workspace_id: str, user_id: str, *, expired_before: str,
+    ) -> None:
+        """The index key-range read, then one delete if anything expired."""
+        refs = self._list_entities(
+            CHAT_BROWSER_KEY_INDEX_KIND,
+            prefix=chat_browser_key_index_prefix(workspace_id, user_id),
+            cls=dict,
+        )
+        self.forget_chat_browser_keys(
+            workspace_id,
+            user_id,
+            [str(ref["key_id"]) for ref in refs if chat_browser_key_index_expired(ref, expired_before)],
+        )
+
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
 
@@ -4734,6 +4803,14 @@ class SpannerStore(OperationalAnalyticsReads):
         threshold_microdollars: int,
         amount_microdollars: int,
     ) -> CreditAccount | None:
+        # Same rule as the in-memory store: no enabled threshold at or above
+        # the amount, whoever the caller is (money.py).
+        check_auto_refill_settings(
+            enabled=enabled,
+            threshold_microdollars=threshold_microdollars,
+            amount_microdollars=amount_microdollars,
+        )
+
         def txn(transaction: Any) -> CreditAccount | None:
             account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
             if account is None:

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from trusted_router.auth import Principal, SettingsDep
 from trusted_router.money import format_money_display
-from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console._shared import ConsoleDep, render, require_manager
 from trusted_router.routes.credit_transfers import execute_credit_transfer, transfer_shapes
 from trusted_router.schemas import CreditTransferRequest
 from trusted_router.storage import STORE
@@ -24,6 +24,8 @@ def register(app: FastAPI) -> None:
         error: str = "",
         idempotency_key: str = "",
     ) -> Response:
+        # Transfers show counterparties and amounts; sending is manager-only.
+        require_manager(ctx)
         movements = STORE.list_credit_movements(
             ctx.workspace.id,
             kinds=["user_transfer_out", "user_transfer_in"],
@@ -58,7 +60,9 @@ def register(app: FastAPI) -> None:
             return RedirectResponse("/console/credit-transfers?" + urlencode(query), status_code=303)
 
         if not ctx.can_manage:
-            return redirect(error="forbidden")
+            # The transfers page is manager-only; the Credits page tells a
+            # member to ask a workspace owner or admin.
+            return RedirectResponse("/console/credits", status_code=303)
         try:
             body = CreditTransferRequest(
                 recipient_username=recipient_username,

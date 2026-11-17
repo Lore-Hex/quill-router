@@ -27,6 +27,7 @@ function credits(state = {}) {
     has_payment_method: false, payment_method_pending: false, has_stripe_customer: false,
     saved_payment_method: null, auto_refill_enabled: false, auto_refill_threshold_dollars: 10,
     auto_refill_amount_dollars: 25, identity_verification_checkout: false, paypal_pending: false,
+    can_manage: true,
     ...state,
   };
   return execFileSync(process.env.TEST_PYTHON || path.join(root, '.venv', 'bin', 'python'), ['-c', `
@@ -378,4 +379,41 @@ test('wallet-only checkout derives the stablecoin ceiling', async ({ page }) => 
   await amount.fill('9776.66');
   await expect(page.locator('[data-checkout-submit]')).toBeEnabled();
   expect((await summary(page))[2]).toBe('$10000.00');
+});
+
+test('a member sees the balance and a note, with no billing controls or Stripe fetch', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  const requests = [];
+  page.on('request', (request) => requests.push(new URL(request.url()).pathname));
+  // The member route renders only the balance fields; the rest stays unset.
+  await load(page, {
+    can_manage: false, credits_balance: '$12.34',
+    has_payment_method: true, has_stripe_customer: true, auto_refill_enabled: true,
+    saved_payment_method: { id_tail: 'ab1234', brand: 'visa', last4: '4242', details_available: true },
+  });
+  await expect(page.locator('.credits-balance-amount')).toHaveText('$12.34');
+  await expect(page.getByRole('note').filter({ hasText: 'Only workspace owners and admins can manage billing.' })).toBeVisible();
+  await expect(page.locator('.credits-page form')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Send credits' })).toHaveCount(0);
+  await expect(page.getByRole('switch', { name: 'Auto refill' })).toHaveCount(0);
+  await expect(page.getByText('Payment history')).toHaveCount(0);
+  await expect(page.getByText('4242')).toHaveCount(0);
+  await page.waitForTimeout(200);
+  expect(requests).not.toContain('/console/credits/stripe-details');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+});
+
+test('a refused auto-refill pair shows its reason by the switch', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await load(page, {
+    has_payment_method: true, has_stripe_customer: true,
+    saved_payment_method: { id_tail: 'ab1234', brand: 'visa', last4: '4242', details_available: true },
+    auto_refill_error_message: 'Set the refill amount above the threshold, so one refill lifts the balance back over it. Auto refill was not changed.',
+  });
+  const alert = page.getByRole('alert').filter({ hasText: 'Set the refill amount above the threshold' });
+  await expect(alert).toBeVisible();
+  const row = await page.locator('[data-auto-refill] .credits-row').boundingBox();
+  const box = await alert.boundingBox();
+  expect(box.y).toBeGreaterThanOrEqual(row.y + row.height - 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });

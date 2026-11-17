@@ -279,6 +279,45 @@ def test_member_sees_each_capped_keys_budget_mode(
     assert ("· strict admission" in page) is strict
 
 
+def test_member_sees_the_budget_mode_of_a_key_with_only_a_total_cap(
+    console: dict, client: TestClient
+) -> None:
+    """The `limit_display != 'none'` half of the budget-mode condition: a key
+    capped only in total, with no window limits, still says what happens over
+    budget."""
+    workspace = console["workspace"]
+    _raw, capped = STORE.create_api_key(
+        workspace_id=workspace.id, name="total-only", creator_user_id=workspace.owner_user_id,
+        limit_microdollars=7_000_000,
+    )
+    assert all(
+        getattr(capped, f"limit_{w}_microdollars") is None for w in ("daily", "weekly", "monthly")
+    )
+    member = STORE.add_members(workspace.id, ["total-viewer@example.com"], role="member")[0]
+    _sign_in(client, workspace.id, member.user_id)
+
+    page = client.get("/console/api-keys").text
+
+    assert "of $7.00" in page
+    assert page.count("Over budget: requests are blocked (429)") == 1
+
+
+def test_member_viewing_a_disabled_key_gets_no_enable_or_delete_form(
+    console: dict, client: TestClient
+) -> None:
+    workspace, key = console["workspace"], console["key"]
+    STORE.update_key(key.hash, {"disabled": True})
+    member = STORE.add_members(workspace.id, ["disabled-viewer@example.com"], role="member")[0]
+    _sign_in(client, workspace.id, member.user_id)
+
+    page = client.get("/console/api-keys").text
+
+    assert "disabled</span>" in page
+    for action in ("enable", "delete", "disable"):
+        assert f'action="/console/api-keys/{key.hash}/{action}"' not in page, action
+    assert ">Enable</button>" not in page and ">Delete</button>" not in page
+
+
 _CROSS_ORIGINS = ["http://evil.test", "null", None]
 
 
