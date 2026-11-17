@@ -258,7 +258,7 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert "src/pkg/data.txt" in fp[t + "test_h_reads"]["o"]
     assert "src/pkg" in fp[t + "test_i_lists"]["d"]
     assert any("python" in s and "@cwd=." in s for s in fp[t + "test_j_nested_python_stays_off"]["s"])
-    # Jinja renders from source while recording: the second render reads it too.
+    # A template served from Jinja's cache still counts as read.
     assert "src/pkg/page.html" in fp[t + "test_l_render_second"]["o"]
     # An in-process pytest's tests count for the test that ran it and write
     # no records of their own; the outer session's output stays whole.

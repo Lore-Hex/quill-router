@@ -38,8 +38,10 @@ Separate windows, each written once and inherited by the tests that use it:
       raises closes with the window around it.
   g   everything outside every window: imports, session and collection hooks
       (a miss at import time counts here too).
-Jinja's template cache is off while recording, so every render reads its
-template files.
+Jinja serves a template from its cache after the first load, without
+reading the file: every template load, cached or not, records the
+template's file as opened. (Turning the cache off instead recompiled every
+render and made tests/test_sitemap_seo_hygiene.py four times slower.)
 
 Why opens inside shutil.copytree are kept: the deploy-script tests copy the
 repository and run shell scripts and git inside the copy. Those processes'
@@ -355,16 +357,29 @@ def _start() -> Recorder | None:
     try:
         import jinja2.environment
 
-        original_init = jinja2.environment.Environment.__init__
+        original_load = jinja2.environment.Environment._load_template
 
-        def init(self: Any, *args: Any, **kwargs: Any) -> None:
-            kwargs["cache_size"] = 0
-            original_init(self, *args, **kwargs)
+        def load_template(self: Any, name: Any, globals: Any) -> Any:
+            template = original_load(self, name, globals)
+            _template_read(getattr(template, "filename", None))
+            return template
 
-        jinja2.environment.Environment.__init__ = init  # type: ignore[method-assign]
-    except ImportError:
+        jinja2.environment.Environment._load_template = load_template  # type: ignore[method-assign]
+    except (ImportError, AttributeError):
         pass
     return recorder
+
+
+def _template_read(filename: Any) -> None:
+    rec = RECORDER
+    if rec is None or not rec.active or not filename:
+        return
+    try:
+        rel = rec.rel(filename)
+        if rel is not None:
+            rec.cur.opens.add(rel)
+    except Exception as error:
+        rec.fail("template", error)
 
 
 RECORDER = _start()
