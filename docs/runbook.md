@@ -967,9 +967,8 @@ process applied the row (the scheduled drain route, or a settle the gateway
 sent in `sync` mode). A settle accepted in `async-v1` mode is neither: the
 router only stores the row, the worker is the first to ask the fast path, and
 no log carries the row's id or its reason. For such a row, and whenever the
-router lines are absent, read the fast-path owner's logs for the minutes
-before the park. With an id, read the row itself (`last_error`,
-`next_attempt_at`).
+router lines are absent, read the fast-path owner's logs around the time of
+the park. With an id, read the row itself (`last_error`, `next_attempt_at`).
 
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once
