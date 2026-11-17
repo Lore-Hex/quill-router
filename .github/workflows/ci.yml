@@ -234,6 +234,13 @@ jobs:
             python3 scripts/ci/commit_scope.py jobs --full < /dev/null | tee -a "$GITHUB_OUTPUT"
           else
             git -c core.quotePath=true diff --no-renames --raw "${ref}" "${head}" > scoped-paths.txt
+            # THROWAWAY, #2693 only, reverted before review: drop the CI files
+            # this pull request changes, so one of its runs shows the path
+            # rules (a heavy lane skip) instead of the complete matrix.
+            if [ "${PR_NUMBER:-}" = 2693 ]; then
+              grep -v -E $'\t(\\.github/workflows/ci\\.yml|scripts/ci/)' scoped-paths.txt > scoped-paths.demo || true
+              mv scoped-paths.demo scoped-paths.txt
+            fi
             git -c core.quotePath=true diff --no-renames --no-color --text --no-ext-diff --no-textconv \
               -U0 "${ref}" "${head}" -- . ':(exclude)src' > scoped-lines.patch
             echo "paths that decide the path-scoped jobs (${ref}..${head}):"
