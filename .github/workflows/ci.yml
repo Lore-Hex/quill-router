@@ -3,11 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+  # No `labeled` trigger: with cancel-in-progress below, adding any label
+  # would cancel the pull request's run and start another. The scope job
+  # reads the ci:full label when it runs; to force the complete matrix on an
+  # open pull request, add the label, then push or re-run every job of its
+  # latest run (`gh run rerun <run-id>`, without --failed, so the scope job
+  # runs again and reads the labels afresh).
   pull_request:
     branches: [main]
-    # labeled: adding the ci:full label starts a run of the complete matrix
-    # at once (see the scope job). Any other label starts an ordinary run.
-    types: [opened, synchronize, reopened, labeled]
   # Bot-authored pricing branches use GITHUB_TOKEN, so GitHub suppresses their
   # normal push-triggered workflows. refresh-prices.yml dispatches CI for the
   # generated branch before advancing protected main with the checked SHA,
@@ -85,7 +88,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      actions: read   # the ci.yml runs of the base and of its ancestors
+      actions: read         # the ci.yml runs of the base and of its ancestors
+      pull-requests: read   # the pull request's labels, read when the job runs
     outputs:
       data_only: ${{ steps.scope.outputs.data_only }}
       run_fastpath: ${{ steps.scope.outputs.run_fastpath }}
@@ -98,7 +102,7 @@ jobs:
       PUSH_BEFORE: ${{ github.event.before }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       DISPATCH_SCOPE: ${{ inputs.scope }}
-      FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Classify the commit by its changed paths
@@ -149,8 +153,16 @@ jobs:
           full=""
           if [ "${EVENT_NAME}" = workflow_dispatch ] && [ "${DISPATCH_SCOPE}" != paths ]; then
             full="a dispatch runs the complete matrix unless it asks for scope=paths"
-          elif [ "${FULL_LABEL}" = true ]; then
-            full="the pull request is labeled ci:full"
+          elif [ "${EVENT_NAME}" = pull_request ]; then
+            # The labels as they are now, not as the event recorded them: a
+            # re-run keeps the original event, and the label is often added
+            # after it. Labels that cannot be read run the complete matrix.
+            if ! labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels?per_page=100" \
+                --jq '.[].name'); then
+              full="the pull request's labels could not be read"
+            elif grep -qxF 'ci:full' <<< "${labels}"; then
+              full="the pull request is labeled ci:full"
+            fi
           fi
           data_only=false
           base_validated=false

@@ -226,7 +226,11 @@ hand and is the one place the oracle runs at the post-cutover clock, since no
 endpoint the oracle settles changes between the clocks
 (tests/test_async_settle_proof_oracle.py holds that, and 666 pairs of default
 and post-cutover shards over 31 hours never disagreed). A dispatch without
-scope=paths and a pull request labeled ci:full run the complete matrix.
+scope=paths and a pull request labeled ci:full run the complete matrix. The
+scope job reads the label through the API when it runs, and adding a label
+starts no run (a `labeled` trigger would cancel the pull request's run on any
+label): add it, then push or re-run every job of the latest run with
+`gh run rerun <run-id>`.
 
 Measured over 31 hours before the change, CI used about 56,600 job-minutes a
 day. Replaying the rules over the last 100 merged pull requests, the oracle

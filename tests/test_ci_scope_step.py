@@ -103,10 +103,13 @@ class ScopeRepo:
 
     def run(self, *, event: str, head: str, before: str = "", pr_base: str = "",
             runs: list[dict[str, object]] | None = None, mutation: str | None = None,
-            dispatch_scope: str = "paths", full_label: str = "false") -> str:
+            dispatch_scope: str = "paths", labels: list[str] | None = None,
+            labels_error: bool = False) -> str:
         """data_only; the path-scoped flags are in self.flags afterwards.
-        dispatch_scope defaults to the price refresh's scope=paths."""
-        (self.root / "scenario.json").write_text(json.dumps({"runs": runs or []}))
+        dispatch_scope defaults to the price refresh's scope=paths; labels
+        are the pull request's labels when the step runs."""
+        (self.root / "scenario.json").write_text(json.dumps(
+            {"runs": runs or [], "labels": labels or [], "labels_error": labels_error}))
         script = self.script.replace(
             "python3 scripts/ci/commit_scope.py",
             f"python3 {shlex.quote(str(ROOT / 'scripts/ci/commit_scope.py'))}",
@@ -126,7 +129,7 @@ class ScopeRepo:
         env = {**self.env, "GITHUB_SHA": head, "EVENT_NAME": event, "PUSH_BEFORE": before,
                "PR_BASE_SHA": pr_base, "GITHUB_OUTPUT": str(output),
                "DISPATCH_SCOPE": dispatch_scope if event == "workflow_dispatch" else "",
-               "FULL_LABEL": full_label}
+               "PR_NUMBER": "42" if event == "pull_request" else ""}
         (self.root / "scope.sh").write_text(script)
         self.git("checkout", "-q", head)
         result = subprocess.run(  # noqa: S603 -- real workflow step, local git and fake gh only
@@ -164,7 +167,7 @@ def scope_repo(tmp_path: Path) -> ScopeRepo:
     commands["git"] = str(real_git.resolve()) if real_git.is_file() else commands["git"]
     for name in ("bash", "jq", "git"):
         (bin_dir / name).symlink_to(commands[name])
-    for name in ("sed", "tee"):
+    for name in ("sed", "tee", "grep"):
         tool = shutil.which(name)
         assert tool, f"the scope step needs {name} on PATH"
         (bin_dir / name).symlink_to(tool)
@@ -451,9 +454,48 @@ def test_the_ci_full_label_runs_the_complete_matrix(scope_repo: ScopeRepo) -> No
     c = scope_repo.commit("C", {SNAPSHOT: '{"v": 2}\n'})
     assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)]) == "true"
     assert scope_repo.flags == NONE | {"run_post_cutover": True}
-    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)], full_label="true") == "false"
+    assert any("issues/42/labels" in arg for call in scope_repo.gh_calls for arg in call)
+    # Another label changes nothing; ci:full, among others, runs everything,
+    # the data-only skips included.
+    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)],
+                          labels=["bug", "ci:fullish", "full"]) == "true"
+    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)],
+                          labels=["bug", "ci:full"]) == "false"
     assert scope_repo.flags == ALL
     assert "labeled ci:full" in scope_repo.last.stdout
+
+
+def test_a_rerun_reads_the_labels_as_they_are_now(scope_repo: ScopeRepo) -> None:
+    # A re-run keeps the original event payload, so the step asks the API for
+    # the labels each time it runs: the same event and commits, run again
+    # after the label is added, run the complete matrix.
+    a = scope_repo.shas["A"]
+    c = scope_repo.commit("C", {DOC: "notes for review\n"})
+    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)]) == "false"
+    assert scope_repo.flags == NONE
+    scope_repo.reset_events()
+    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)],
+                          labels=["ci:full"]) == "false"
+    assert scope_repo.flags == ALL
+    assert [call for call in scope_repo.gh_calls if any("labels" in arg for arg in call)]
+
+
+def test_unreadable_labels_run_the_complete_matrix(scope_repo: ScopeRepo) -> None:
+    a = scope_repo.shas["A"]
+    c = scope_repo.commit("C", {DOC: "notes for review\n"})
+    assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)], labels_error=True) == "false"
+    assert scope_repo.flags == ALL
+    assert "labels could not be read" in scope_repo.last.stdout
+
+
+def test_only_a_pull_request_reads_labels(scope_repo: ScopeRepo) -> None:
+    a = scope_repo.shas["A"]
+    c = scope_repo.commit("C", {DOC: "notes for review\n"})
+    scope_repo.reset_events()
+    assert scope_repo.run(event="push", head=c, before=a, runs=[run_record(a)], labels=["ci:full"]) == "false"
+    assert scope_repo.flags == NONE
+    assert not any("labels" in arg for call in scope_repo.gh_calls for arg in call)
 
 
 def test_a_change_to_how_ci_decides_runs_every_path_scoped_job(scope_repo: ScopeRepo) -> None:

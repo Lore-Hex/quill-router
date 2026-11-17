@@ -477,21 +477,32 @@ def test_path_scoped_jobs_skip_only_on_their_own_flag():
 def test_the_complete_matrix_is_one_dispatch_or_one_label_away():
     # A dispatch runs every job unless it asks for scope=paths, which only
     # the price refresh's publication gate does; a pull request labeled
-    # ci:full runs every job, and adding the label starts a run.
+    # ci:full runs every job. Adding a label starts no run: with
+    # cancel-in-progress, a `labeled` trigger would cancel the pull
+    # request's run on any label. The scope job reads the labels through the
+    # API when it runs, so a push or a re-run after labeling honours it.
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     triggers = workflow.get("on", workflow.get(True))
     assert triggers["workflow_dispatch"] == {"inputs": {"scope": {
         "description": "full runs every job; paths skips a path-scoped job none of whose inputs changed",
         "type": "choice", "options": ["full", "paths"], "default": "full"}}}
-    assert triggers["pull_request"] == {"branches": ["main"],
-                                       "types": ["opened", "synchronize", "reopened", "labeled"]}
+    # GitHub's default activity types: opened, synchronize, reopened.
+    assert triggers["pull_request"] == {"branches": ["main"]}
+    assert "labeled" not in json.dumps(triggers)
     scope = workflow["jobs"]["scope"]
     assert scope["env"]["DISPATCH_SCOPE"] == "${{ inputs.scope }}"
-    assert scope["env"]["FULL_LABEL"] == "${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}"
+    assert scope["env"]["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    # Not the event payload's labels, which a re-run would repeat.
+    assert "github.event.pull_request.labels" not in json.dumps(scope)
     script = next(step for step in scope["steps"] if step.get("id") == "scope")["run"]
+    flat = " ".join(script.split())
     assert ('if [ "${EVENT_NAME}" = workflow_dispatch ] && [ "${DISPATCH_SCOPE}" != paths ]; then'
             in script)
-    assert 'elif [ "${FULL_LABEL}" = true ]; then' in script
+    assert ('elif [ "${EVENT_NAME}" = pull_request ]; then '
+            "# The labels as they are now") in flat
+    assert ('if ! labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels?per_page=100" '
+            "\\ --jq '.[].name'); then full=\"the pull request's labels could not be read\"") in flat
+    assert "elif grep -qxF 'ci:full' <<< \"${labels}\"; then" in script
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
     assert refresh.count("gh workflow run ci.yml") == 1
     dispatch = refresh[refresh.index("gh workflow run ci.yml"):]
@@ -506,7 +517,7 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     scope = jobs["scope"]
     assert set(scope["outputs"]) == {"data_only", *PATH_FLAGS}
-    assert scope["permissions"] == {"contents": "read", "actions": "read"}
+    assert scope["permissions"] == {"contents": "read", "actions": "read", "pull-requests": "read"}
     assert "needs" not in scope
     step = next(step for step in scope["steps"] if step.get("id") == "scope")
     script = step["run"]

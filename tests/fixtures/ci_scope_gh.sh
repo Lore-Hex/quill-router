@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Offline gh double for ci.yml's scope step. Answers the API reads the step
-# makes (a comparison of two commits, a commit's ci.yml runs, and the latest
-# successful runs) from the scenario and the fixture's origin repository;
-# fails closed on anything else.
+# makes (a comparison of two commits, a commit's ci.yml runs, the latest
+# successful runs, and a pull request's labels) from the scenario and the
+# fixture's origin repository; fails closed on anything else.
 set -euo pipefail
 
 scenario="${TMPDIR}/scenario.json"
@@ -54,6 +54,14 @@ case "${endpoint}" in
     # Newest first, as the API lists them. The API keeps successful runs;
     # the step's jq applies its own selection too.
     jq -r '{workflow_runs: [.runs[] | select(.conclusion == "success")]} | '"${filter}" "${scenario}"
+    ;;
+  repos/*/issues/*/labels\?per_page=100)
+    # The labels as they are when the step runs; labels_error fails the read.
+    if [ "$(jq -r '.labels_error // false' "${scenario}")" = true ]; then
+      echo "HTTP 502: Bad Gateway" >&2
+      exit 1
+    fi
+    jq -r '[(.labels // [])[] | {name: .}] | '"${filter}" "${scenario}"
     ;;
   repos/*/actions/workflows/ci.yml/runs\?head_sha=*)
     query=${endpoint##*\?}
