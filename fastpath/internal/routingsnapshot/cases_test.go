@@ -72,7 +72,6 @@ func init() {
 		"z-ai/glm-5.3", "deepseek/deepseek-v4.1-flash",
 	} {
 		// Request parsing the snapshot does not carry the tables of yet.
-		outsideTheCohort[model+"+max_price"] = "provider.max_price"
 		outsideTheCohort[model+"+perf"] = "provider.preferred_max_latency"
 		// The fixture snapshot lists 16 providers, but the cases ran against
 		// the process's whole provider table: "google" names google-vertex,
@@ -87,6 +86,31 @@ func init() {
 	// the malformed list.
 	outsideTheCohort["router_name_then_blank_item"] = "provider.only has an item that is not a provider name"
 	outsideTheCohort["router_name_then_null_item"] = "provider.only has an item that is not a provider name"
+	// provider.max_price spellings Go does not read (max_price.go). Python
+	// answers the string, the exponent of 1e+300 and the ten-digit integer,
+	// and refuses the rest (a seventh place, a boolean, a negative number, a
+	// list, another member, a max_price that is not an object), or, for
+	// 1e-06 and -0.0, reads a limit no route meets.
+	for name, reason := range map[string]string{
+		"seventh_place":               MaxPriceDigits,
+		"ten_digits":                  MaxPriceDigits,
+		"half_microdollar":            MaxPriceExponent,
+		"one_microdollar_as_exponent": MaxPriceExponent,
+		"exponent":                    MaxPriceExponent,
+		"string":                      MaxPriceType,
+		"boolean":                     MaxPriceType,
+		"list":                        MaxPriceType,
+		"negative":                    MaxPriceNegative,
+		"negative_zero":               MaxPriceNegative,
+		"other_member":                MaxPriceOption,
+		"not_object:number":           MaxPriceNotObject,
+		"not_object:list":             MaxPriceNotObject,
+		"not_object:string":           MaxPriceNotObject,
+		// A performance preference passes before max_price is read.
+		"before_perf": "provider.preferred_max_latency",
+	} {
+		outsideTheCohort["max_price:"+name] = reason
+	}
 }
 
 func loadCases(t *testing.T) routingCases {

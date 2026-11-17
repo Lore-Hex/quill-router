@@ -195,6 +195,9 @@ type prefs struct {
 	requireParameters bool
 	requested         []string
 	capability        []string
+	// maxPrompt and maxCompletion are provider.max_price's limits in
+	// microdollars per million tokens, nil for none (max_price.go).
+	maxPrompt, maxCompletion *int64
 }
 
 // Rerank is what routing_state.rank reads of a request's provider
@@ -589,7 +592,9 @@ func (s *Snapshot) requestedModelIDs(req Request, p *prefs) ([]string, Result, b
 // its tables. The refusals it makes, in Python's field and item order: the
 // router-name refusal, the allow_fallbacks refusals, a min_privacy spelling
 // the snapshot's table lacks, and a require_parameters that is not a
-// boolean (a null is one: Python reads the key's None).
+// boolean (a null is one: Python reads the key's None). provider.max_price
+// is read after them, as Python reads it; a limit Go does not read passes
+// (max_price.go), never refused here.
 func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (prefs, Result, bool) {
 	p := prefs{allowFallbacks: true}
 	fields := map[string]json.RawMessage{}
@@ -621,7 +626,7 @@ func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (p
 		}
 	}
 	// Present and not null, these need tables the snapshot does not carry.
-	for _, name := range []string{"max_price", "preferred_max_latency", "preferred_min_throughput"} {
+	for _, name := range []string{"preferred_max_latency", "preferred_min_throughput"} {
 		if !isNull(name) {
 			return p, pass("provider.%s", name), false
 		}
@@ -836,6 +841,13 @@ func (s *Snapshot) parseProvider(raw, topLevelAllowFallbacks json.RawMessage) (p
 	if requireRefusal != nil {
 		return p, *requireRefusal, false
 	}
+	// provider.max_price, which Python reads after every refusal above
+	// (routing.provider_route_preferences). A limit Go does not read passes
+	// with its reason (max_price.go); Python refuses some of those itself.
+	var maxPriceReason string
+	if p.maxPrompt, p.maxCompletion, maxPriceReason = maxTokenPrices(fields["max_price"]); maxPriceReason != "" {
+		return p, pass("%s", maxPriceReason), false
+	}
 	p.order = lists["order"]
 	p.only = set(lists["only"])
 	p.ignore = set(lists["ignore"])
@@ -1010,6 +1022,11 @@ func (s *Snapshot) filter(candidates []int, p prefs, at int64) []int {
 			continue
 		}
 		if p.requireParameters && !s.supportsRequested(e, p.requested) {
+			continue
+		}
+		// _endpoint_matches_parameter_and_price_filters: provider.max_price
+		// against the headline prices at the instant.
+		if p.overMaxPrice(e.epochAt(at).Headline) {
 			continue
 		}
 		if !s.takesCapability(e, p, declared, at) {

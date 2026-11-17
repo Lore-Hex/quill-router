@@ -68,6 +68,10 @@ SECTION_3 = {
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
     "policy.async_settle_shadow", "policy.monitor_key", "policy.digest_not_accepted",
     "evaluate.refused", "candidates.byok", "candidates.estimated_usage", "candidates.private_proxy",
+    # A provider.max_price spelling the evaluator does not read
+    # (fastpath/internal/routingsnapshot/max_price.go).
+    "evaluate.max_price.not_object", "evaluate.max_price.option", "evaluate.max_price.type",
+    "evaluate.max_price.negative", "evaluate.max_price.exponent", "evaluate.max_price.digits",
     "owner.off", "owner.busy", "owner.invalid", "owner.failed", "owner.unreachable",
     "insert.scope_taken", "insert.failed",
     # An estimate past int64 (the fake store keeps it, where a real Spanner
@@ -103,6 +107,8 @@ DESCRIPTIVE = {
     "nested_trace", "nested_metadata", "unicode_extra", "int_near_2_63", "int_beyond_2_63", "attribution",
     "tags", "tags_empty", "whitespace", "models_list", "allow_fallbacks_spelling", "idempotency_header",
     "idempotency_body", "invocation_nonce", "defaults",
+    # A float that is a provider.max_price limit Go reads from its literal.
+    "max_price_float",
 }
 TIMING = ["total_ms", "spanner_rpcs", "key_lookup_ms", "routing_ms", "store_ms", "post_commit_ms"]
 

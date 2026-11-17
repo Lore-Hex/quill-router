@@ -1,6 +1,10 @@
 package gwauth
 
-import "github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
+import (
+	"encoding/json"
+
+	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
+)
 
 // Where a body passed as body.float has its first float (Pass.FloatAt, the
 // decide line's float_at in edge/decide_path.go). It is a measurement and
@@ -22,7 +26,9 @@ import "github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 //
 // The first float is the first in body order: the first member of the body
 // that holds a float, and within provider the first member of provider that
-// does.
+// does. provider.max_price's limits are not floats here (passingFloat): the
+// evaluator reads them, and names its own reason for a limit it does not
+// take, so provider.max_price counts only a float deeper inside it.
 const (
 	FloatAtProviderMaxPrice               = "provider.max_price"
 	FloatAtProviderPreferredMaxLatency    = "provider.preferred_max_latency"
@@ -79,10 +85,63 @@ func FloatAtNames() map[string]bool {
 	return out
 }
 
-// floatAt is where the first float of a decoded body is, "" for none.
+// passingFloat reports a float the body passes for (body.float): any float
+// but provider.max_price's limits. A limit is provider.max_price itself or
+// the value of one of its members, when provider is an object (and
+// max_price is one, for a member): the routing evaluator reads each from
+// its literal (routingsnapshot.maxTokenPrices), and passes with its own
+// reason any it does not take: max_price not an object, a member other
+// than prompt and completion, an exponent, more digits than it reads. A
+// float anywhere else, inside a limit's list or object too, passes here.
+func passingFloat(object pyjson.Object) bool {
+	for _, m := range object {
+		if memberHasFloat(m.Key, m.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+// memberHasFloat is hasFloat over one member of the body, max_price's
+// limits aside.
+func memberHasFloat(key string, v any) bool {
+	o, isObject := v.(pyjson.Object)
+	if key != "provider" || !isObject {
+		return hasFloat(v)
+	}
+	for _, m := range o {
+		if providerMemberHasFloat(m.Key, m.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+// providerMemberHasFloat is hasFloat over one member of provider,
+// max_price's limits aside.
+func providerMemberHasFloat(key string, v any) bool {
+	if key != "max_price" {
+		return hasFloat(v)
+	}
+	switch v := v.(type) {
+	case json.Number:
+		return false // a limit where an object belongs: the evaluator's not-an-object
+	case pyjson.Object:
+		for _, m := range v {
+			if _, limit := m.Value.(json.Number); !limit && hasFloat(m.Value) {
+				return true
+			}
+		}
+		return false
+	}
+	return hasFloat(v)
+}
+
+// floatAt is where the first float of a decoded body is, "" for none: the
+// first passingFloat counts.
 func floatAt(object pyjson.Object) string {
 	for _, m := range object {
-		if !hasFloat(m.Value) {
+		if !memberHasFloat(m.Key, m.Value) {
 			continue
 		}
 		switch m.Key {
@@ -111,7 +170,7 @@ func floatAtInProvider(v any) string {
 		return FloatAtProviderOther
 	}
 	for _, m := range o {
-		if !hasFloat(m.Value) {
+		if !providerMemberHasFloat(m.Key, m.Value) {
 			continue
 		}
 		if name, ok := floatAtProvider[m.Key]; ok {
