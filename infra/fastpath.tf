@@ -180,6 +180,36 @@ locals {
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+  # The digests of each release a pin may name, copied from the release's
+  # published SHA256SUMS when it is pinned (docs/runbooks/fastpath-deploy.md,
+  # "Pinning a release"): fastpath, the node binary's sha256 as SHA256SUMS
+  # lists it, and sha256sums, the sha256 of the SHA256SUMS file itself. The
+  # nodes' startup script and the load generator's check what they download
+  # against these (instance attributes fastpath-release-sha256 and
+  # fastpath-release-sums-sha256) before installing anything, so a later
+  # overwrite of the release bucket cannot change what a node runs. A pin
+  # whose release has no entry here fails the plan (the precondition on the
+  # nodes) and tests/test_fastpath_release_integrity.py. An entry stays while
+  # a rollback may return to its release. b1d3dbcf9 is #2666's pin, listed
+  # so that change and this one land in either order.
+  fastpath_release_digests = {
+    "daedb45adc927a1e30e0d4ed41fe57c81aeccc76" = {
+      fastpath   = "42e381dbe30a2380cd2bd6f6a556e09db2f2bafdeaa80b5d3dd310e3359e792a"
+      sha256sums = "20d897793d7302991454cd11d5514883ce0fd529d38be91ce8bbbdb20843fd23"
+    }
+    "b1d3dbcf990d6f896a65c5fe1affc61e04eec923" = {
+      fastpath   = "b5e11ff14dcd52dc7e5ec65b6bd077bcfec9ff413ebaab19fb9b392677855b60"
+      sha256sums = "50311ae074fb78935ab124abaa29117119ae0722671116f0225c0a2bf9defb96"
+    }
+  }
+  fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
+  fastpath_release_sums_sha256 = try(local.fastpath_release_digests[local.fastpath_release].sha256sums, "")
+  fastpath_release_digests_ok = alltrue([
+    can(regex("^[0-9a-f]{64}$", local.fastpath_release_sha256)),
+    can(regex("^[0-9a-f]{64}$", local.fastpath_release_sums_sha256)),
+  ])
+
   # The edge (E1): its port, the control plane's internal surface in the
   # nodes' region (the Cloud Run service behind /internal; its internal
   # ingress admits a VM of this project's VPC, Cloud NAT egress included)
@@ -473,6 +503,16 @@ resource "google_spanner_database_iam_member" "fastpath_node_database" {
 
 # The releases: fastpath-release.yml uploads each CI-passed main commit's
 # binaries under fastpath/<commit>/; the nodes read the one named above.
+# The workflow never overwrites a published object (it uploads with
+# --if-generation-match=0), and the nodes check what they download against
+# the digests pinned above, but anything holding the bucket's admin role can
+# still overwrite or delete an object. So the bucket keeps every object's
+# earlier generations: with versioning, an overwrite or a delete leaves the
+# object before it as a noncurrent version, readable by its generation,
+# for a year. Every live release is kept, whatever its age: any of them may
+# be pinned again, a rollback included, and a release a node is pinned to
+# must stay readable for the node's next reset. Pruning releases no pin can
+# name is a separate decision (a release is about 140 MB).
 resource "google_storage_bucket" "fastpath_releases" {
   project                     = local.gcp_project_id
   name                        = local.fastpath_release_bucket
@@ -480,6 +520,20 @@ resource "google_storage_bucket" "fastpath_releases" {
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    condition {
+      with_state                 = "ARCHIVED"
+      days_since_noncurrent_time = 365
+    }
+    action {
+      type = "Delete"
+    }
+  }
 }
 
 resource "google_storage_bucket_iam_member" "fastpath_releases_writer" {
@@ -567,16 +621,18 @@ resource "google_compute_instance" "fastpath_node" {
   }
 
   metadata = merge({
-    enable-oslogin             = "TRUE"
-    fastpath-release           = local.fastpath_release
-    fastpath-edge-upstream     = local.fastpath_edge_upstream
-    fastpath-edge-token-secret = local.fastpath_edge_token_secret
-    fastpath-fleet-audit       = local.fastpath_fleet_audit ? "true" : "false"
-    fastpath-required-tier     = local.fastpath_required_tier
-    fastpath-allowance         = local.fastpath_allowance
-    fastpath-floor             = local.fastpath_floor
-    fastpath-allowance-tier2   = local.fastpath_allowance_tier2
-    fastpath-allowance-tier1   = local.fastpath_allowance_tier1
+    enable-oslogin               = "TRUE"
+    fastpath-release             = local.fastpath_release
+    fastpath-release-sha256      = local.fastpath_release_sha256
+    fastpath-release-sums-sha256 = local.fastpath_release_sums_sha256
+    fastpath-edge-upstream       = local.fastpath_edge_upstream
+    fastpath-edge-token-secret   = local.fastpath_edge_token_secret
+    fastpath-fleet-audit         = local.fastpath_fleet_audit ? "true" : "false"
+    fastpath-required-tier       = local.fastpath_required_tier
+    fastpath-allowance           = local.fastpath_allowance
+    fastpath-floor               = local.fastpath_floor
+    fastpath-allowance-tier2     = local.fastpath_allowance_tier2
+    fastpath-allowance-tier1     = local.fastpath_allowance_tier1
   }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
@@ -608,6 +664,13 @@ resource "google_compute_instance" "fastpath_node" {
     # binary matches the pin; which script a node runs is read from the
     # instance (docs/runbooks/fastpath-deploy.md, "Turning the edge on").
     ignore_changes = [metadata_startup_script]
+
+    # A node whose script verifies its release refuses a release without
+    # its pinned digests, so a pin lands with them or not at all.
+    precondition {
+      condition     = local.fastpath_release_digests_ok
+      error_message = "local.fastpath_release_digests has no well-formed fastpath and sha256sums digests for local.fastpath_release; copy them from the release's published SHA256SUMS (docs/runbooks/fastpath-deploy.md, \"Pinning a release\")."
+    }
   }
 
   depends_on = [
@@ -658,18 +721,46 @@ resource "google_compute_instance" "fastpath_loadgen" {
   }
 
   metadata = {
-    enable-oslogin   = "TRUE"
-    fastpath-release = local.fastpath_release
+    enable-oslogin               = "TRUE"
+    fastpath-release             = local.fastpath_release
+    fastpath-release-sums-sha256 = local.fastpath_release_sums_sha256
   }
 
+  # The tools are verified as a node verifies its release
+  # (infra/fastpath_node_startup.sh.tftpl): SHA256SUMS against the digest
+  # pinned beside the release, each tool against SHA256SUMS, all in a
+  # staging directory before any is installed; any failure installs nothing.
   metadata_startup_script = <<-EOT
     #!/bin/bash
     set -euo pipefail
-    release="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-release')"
+    attribute() { curl -sf -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"; }
+    release="$(attribute fastpath-release)"
+    sums_sha256="$(attribute fastpath-release-sums-sha256 || true)"
+    refuse() {
+      echo "fastpath-loadgen: release $release failed verification: $1; nothing installed" | systemd-cat -t fastpath-loadgen -p err
+      exit 1
+    }
+    [[ $release =~ ^[0-9a-f]{40}$ ]] || refuse "fastpath-release is not a 40-character commit"
+    [[ $sums_sha256 =~ ^[0-9a-f]{64}$ ]] || refuse "fastpath-release-sums-sha256 is not a pinned sha256 digest"
     install -d /opt/fastpath
+    rm -rf /opt/fastpath/.stage.*
+    stage="$(mktemp -d /opt/fastpath/.stage.XXXXXX)"
+    trap 'rm -rf "$stage"' EXIT
+    gcloud storage cp "gs://${google_storage_bucket.fastpath_releases.name}/fastpath/$release/SHA256SUMS" "$stage/SHA256SUMS" \
+      || refuse "its SHA256SUMS could not be read"
+    sums_got="$(sha256sum < "$stage/SHA256SUMS" | cut -d' ' -f1)"
+    [ "$sums_got" = "$sums_sha256" ] || refuse "its SHA256SUMS has sha256 $sums_got, not the pinned $sums_sha256"
     for tool in loadgen fastpathwatch load-mix.json; do
-      gcloud storage cp "gs://${google_storage_bucket.fastpath_releases.name}/fastpath/$release/$tool" "/opt/fastpath/$tool"
-      chmod 0755 "/opt/fastpath/$tool"
+      want="$(awk -v name="$tool" '$2 == name { print $1 }' "$stage/SHA256SUMS")"
+      [[ $want =~ ^[0-9a-f]{64}$ ]] || refuse "its SHA256SUMS does not list one sha256 digest for $tool"
+      gcloud storage cp "gs://${google_storage_bucket.fastpath_releases.name}/fastpath/$release/$tool" "$stage/$tool" \
+        || refuse "$tool could not be read"
+      got="$(sha256sum < "$stage/$tool" | cut -d' ' -f1)"
+      [ "$got" = "$want" ] || refuse "$tool has sha256 $got, not SHA256SUMS's $want"
+    done
+    for tool in loadgen fastpathwatch load-mix.json; do
+      chmod 0755 "$stage/$tool"
+      mv "$stage/$tool" "/opt/fastpath/$tool"
     done
     echo "$release" > /opt/fastpath/release
   EOT
@@ -680,6 +771,22 @@ resource "google_compute_instance" "fastpath_loadgen" {
   }
 
   allow_stopping_for_update = true
+
+  lifecycle {
+    # metadata_startup_script forces a new instance when it changes, and
+    # infra-apply refuses any plan that replaces a resource
+    # (scripts/deploy/check_terraform_plan.py), so the generator, like the
+    # nodes, keeps the script it was created with: the verifying script
+    # above reaches it when it is next created (replaced by an owner's
+    # `terraform apply -replace`, or deleted by hand and recreated by the
+    # next apply). Its pin and digest are metadata, applied in place.
+    ignore_changes = [metadata_startup_script]
+
+    precondition {
+      condition     = local.fastpath_release_digests_ok
+      error_message = "local.fastpath_release_digests has no well-formed fastpath and sha256sums digests for local.fastpath_release; copy them from the release's published SHA256SUMS (docs/runbooks/fastpath-deploy.md, \"Pinning a release\")."
+    }
+  }
 
   depends_on = [
     google_storage_bucket_iam_member.fastpath_releases_reader,

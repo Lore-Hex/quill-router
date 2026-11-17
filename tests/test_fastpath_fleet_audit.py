@@ -121,7 +121,7 @@ def test_the_audit_and_its_absence_policy_turn_on_together() -> None:
     assert re.search(r"^\s+enabled\s+= local\.fastpath_fleet_audit$", policy, re.M)
     assert _fleet_local() in {"true", "false"}
     fastpath = _read("infra", "fastpath.tf")
-    assert 'fastpath-fleet-audit       = local.fastpath_fleet_audit ? "true" : "false"' in fastpath
+    assert re.search(r'^\s*fastpath-fleet-audit\s+= local\.fastpath_fleet_audit \? "true" : "false"$', fastpath, re.M)
     # The command's own default is off: a node given no flag audits nothing.
     main = _read("fastpath", "cmd", "fastpath", "main.go")
     assert 'flag.BoolVar(&cfg.FleetAudit, "fleet-audit", false,' in main

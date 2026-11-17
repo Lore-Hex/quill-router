@@ -5,6 +5,14 @@ name: Fast path release
 # where infra/fastpath.tf's nodes read the release they are told to run.
 # Only CI's success triggers it, so no commit is uploaded whose checks failed
 # (docs/design/fast-admission-production-rollout.md, W8).
+#
+# A published object is never overwritten: each upload carries
+# --if-generation-match=0, so it succeeds only where no object exists, and a
+# second run for the same commit (CI re-run on main) first compares what is
+# already there. A byte-identical object is left alone, a missing one is
+# uploaded, and one that differs fails the run with the published object
+# unchanged. SHA256SUMS goes up last, so a release whose SHA256SUMS exists
+# is complete; the nodes refuse a release without one.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -30,6 +38,10 @@ jobs:
         with:
           go-version: "1.26.10"
           cache-dependency-path: fastpath/go.sum
+      # The binaries are written outside the checkout: a file written into
+      # it makes git report the tree modified, and every binary built after
+      # it would carry vcs.modified=true. Each binary must name this commit,
+      # unmodified, or nothing is uploaded.
       - name: Build the node's binaries
         working-directory: fastpath
         env:
@@ -38,13 +50,23 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          mkdir -p ../release
-          go build -trimpath -ldflags="-s -w" -o ../release/fastpath ./cmd/fastpath
-          go build -trimpath -ldflags="-s -w" -o ../release/fastpathctl ./cmd/fastpathctl
-          go build -trimpath -ldflags="-s -w" -o ../release/loadgen ./cmd/loadgen
-          go build -trimpath -ldflags="-s -w" -o ../release/fastpathwatch ./cmd/fastpathwatch
-          cp testdata/load-mix.json ../release/load-mix.json
-          (cd ../release && sha256sum fastpath fastpathctl loadgen fastpathwatch load-mix.json > SHA256SUMS)
+          out="$RUNNER_TEMP/release"
+          mkdir -p "$out"
+          go build -trimpath -ldflags="-s -w" -o "$out/fastpath" ./cmd/fastpath
+          go build -trimpath -ldflags="-s -w" -o "$out/fastpathctl" ./cmd/fastpathctl
+          go build -trimpath -ldflags="-s -w" -o "$out/loadgen" ./cmd/loadgen
+          go build -trimpath -ldflags="-s -w" -o "$out/fastpathwatch" ./cmd/fastpathwatch
+          cp testdata/load-mix.json "$out/load-mix.json"
+          (cd "$out" && sha256sum fastpath fastpathctl loadgen fastpathwatch load-mix.json > SHA256SUMS)
+          for binary in fastpath fastpathctl loadgen fastpathwatch; do
+            info="$(go version -m "$out/$binary")"
+            if ! grep -qxF "$(printf '\tbuild\tvcs.revision=%s' "$COMMIT")" <<<"$info" \
+              || ! grep -qxF "$(printf '\tbuild\tvcs.modified=false')" <<<"$info"; then
+              echo "::error::$binary does not report vcs.revision=$COMMIT with vcs.modified=false"
+              printf '%s\n' "$info"
+              exit 1
+            fi
+          done
       - name: Authenticate to GCP via WIF
         uses: Lore-Hex/quill-router/.github/actions/gcp-auth@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
         with:
@@ -53,5 +75,21 @@ jobs:
       - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
       - name: Upload the release
         run: |
-          gcloud storage cp release/fastpath release/fastpathctl release/loadgen release/fastpathwatch release/load-mix.json release/SHA256SUMS "gs://$BUCKET/fastpath/$COMMIT/"
-          echo "uploaded fastpath/$COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          sha256sum --check --strict SHA256SUMS
+          published="$RUNNER_TEMP/published"
+          mkdir -p "$published"
+          for file in fastpath fastpathctl loadgen fastpathwatch load-mix.json SHA256SUMS; do
+            if gcloud storage cp "gs://$BUCKET/fastpath/$COMMIT/$file" "$published/$file" 2>/dev/null; then
+              if cmp -s "$published/$file" "$file"; then
+                echo "fastpath/$COMMIT/$file is already published, byte-identical; left alone"
+                continue
+              fi
+              echo "::error::fastpath/$COMMIT/$file is already published and differs from this build; it is not overwritten"
+              exit 1
+            fi
+            gcloud storage cp --if-generation-match=0 "$file" "gs://$BUCKET/fastpath/$COMMIT/$file"
+          done
+          echo "published fastpath/$COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
