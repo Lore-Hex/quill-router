@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-import functools
 import os
+
+# The per-test footprint recorder, opt-in (ci.yml's push shards set
+# TR_TESTMAP_OUT). Imported before anything else so the application's
+# import-time reads and memoized functions are recorded; see the module.
+if os.environ.get("TR_TESTMAP_OUT"):
+    import scripts.ci.testmap_recorder  # noqa: F401
+
+    pytest_plugins = ["scripts.ci.testmap_recorder"]
+
+import functools
 from collections.abc import Callable, Iterator
 
 import pytest

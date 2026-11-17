@@ -532,7 +532,9 @@ def test_the_complete_matrix_is_one_dispatch_or_one_label_away():
     triggers = workflow.get("on", workflow.get(True))
     assert triggers["workflow_dispatch"] == {"inputs": {"scope": {
         "description": "full runs every job; paths skips a path-scoped job none of whose inputs changed",
-        "type": "choice", "options": ["full", "paths"], "default": "full"}}}
+        "type": "choice", "options": ["full", "paths"], "default": "full"}, "test_map": {
+        "description": "record each test's footprint and build the testmap artifact, as a push to main does",
+        "type": "boolean", "default": False}}}
     # GitHub's default activity types: opened, synchronize, reopened.
     assert triggers["pull_request"] == {"branches": ["main"]}
     assert "labeled" not in json.dumps(triggers)
@@ -728,3 +730,97 @@ def test_a_passing_tests_temporary_directory_is_not_kept() -> None:
     options = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
     assert options["tmp_path_retention_policy"] == "failed"
     assert options["tmp_path_retention_count"] == 3
+
+
+# The per-test footprint map and the shadow selection (scripts/ci/testmap.py,
+# scripts/ci/testmap_recorder.py). Shadow mode: nothing it produces decides
+# what runs, and nothing it does can fail a job.
+TESTMAP_CONDITION = "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.test_map) }}"
+
+
+def _steps_named(job: dict, *words: str) -> list[dict]:
+    return [step for step in job["steps"] if all(w.lower() in str(step.get("name", "")).lower() for w in words)]
+
+
+def test_the_recorder_runs_on_pushes_and_asked_for_dispatches_only() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    jobs = yaml.safe_load(workflow)["jobs"]
+    test = jobs["test"]
+    assert test["env"]["TESTMAP"] == TESTMAP_CONDITION
+    assert jobs["coverage"]["env"]["TESTMAP"] == TESTMAP_CONDITION
+    step = next(step for step in test["steps"] if "uv run pytest" in step.get("run", ""))
+    # Outside the workspace (the deploy tests copy the repository), and empty
+    # (off) unless TESTMAP is true.
+    assert step["env"] == {"TR_TESTMAP_OUT": "${{ env.TESTMAP == 'true' && format('{0}/testmap-raw', runner.temp) || '' }}"}
+    # Nothing else turns it on, and the test command itself is unchanged.
+    commands = "\n".join(line for line in workflow.splitlines() if not line.lstrip().startswith("#"))
+    assert commands.count("TR_TESTMAP_OUT") == 1
+    assert "testmap" not in step["run"]
+    # tests/conftest.py loads the recorder under that variable only, before
+    # any application import.
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    guard = 'if os.environ.get("TR_TESTMAP_OUT"):\n    import scripts.ci.testmap_recorder'
+    assert conftest.count(guard) == 1
+    assert conftest.index(guard) < conftest.index("import tests.lifecycle_freeze") < conftest.index("from trusted_router")
+
+
+def test_the_map_steps_cannot_fail_a_job_and_build_from_every_shard() -> None:
+    from scripts.ci import testmap
+
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    test, coverage = jobs["test"], jobs["coverage"]
+    shard_steps = _steps_named(test, "test map")
+    assert [s["name"] for s in shard_steps] == ["Compact this shard's test map", "Upload this shard's test map"]
+    for step in shard_steps:
+        assert step["if"] == "env.TESTMAP == 'true'" and step["continue-on-error"] is True
+    upload = shard_steps[1]
+    assert upload["with"]["name"] == "testmap-fragment-${{ matrix.shard }}"
+    assert upload["with"]["path"] == "testmap-${{ matrix.shard }}.json.gz" and upload["with"]["retention-days"] == 1
+    # The map steps come after every step the shard ran before.
+    assert test["steps"].index(shard_steps[0]) > max(
+        i for i, s in enumerate(test["steps"]) if "coverage" in str(s.get("with", {}).get("name", "")))
+    merge_steps = _steps_named(coverage, "test map")
+    assert [s["name"] for s in merge_steps] == ["Collect every shard's test map", "Merge the test map", "Upload the test map"]
+    for step in merge_steps:
+        assert step["if"] == "env.TESTMAP == 'true' && needs.test.result == 'success'"
+        assert step["continue-on-error"] is True
+    assert merge_steps[0]["with"] == {"pattern": "testmap-fragment-*", "path": "testmap-fragments"}
+    command = merge_steps[1]["run"]
+    assert f"--shards {test['env']['TEST_SHARDS']}" in command and int(test["env"]["TEST_SHARDS"]) == testmap.SHARDS
+    for flag in ('--commit "${GITHUB_SHA}"', '--ref "${GITHUB_REF}"', '--event "${GITHUB_EVENT_NAME}"',
+                 '--run-id "${GITHUB_RUN_ID}"'):
+        assert flag in command
+    assert merge_steps[2]["with"] == {"name": testmap.ARTIFACT, "path": "testmap.json.gz", "retention-days": 14,
+                                      "if-no-files-found": "ignore"}
+    floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
+    assert all(coverage["steps"].index(s) < coverage["steps"].index(floor) for s in merge_steps)
+
+
+def test_the_shadow_selection_is_report_only() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    scope, coverage, test = jobs["scope"], jobs["coverage"], jobs["test"]
+    shadow = _steps_named(scope, "shadow test selection")
+    assert [s["name"] for s in shadow] == ["Shadow test selection (report only)", "Upload the shadow test selection"]
+    for step in shadow:
+        assert step["if"] == "github.event_name == 'pull_request'" and step["continue-on-error"] is True
+        assert "id" not in step  # no outputs: the scope job's outputs are unchanged
+    assert shadow[0]["timeout-minutes"] == 5
+    assert "testmap.py shadow" in shadow[0]["run"] and '--base "${PR_BASE_SHA}"' in shadow[0]["run"]
+    assert shadow[1]["with"]["name"] == "test-selection" and shadow[1]["with"]["path"] == "selection.json.gz"
+    compare = _steps_named(coverage, "shadow")
+    assert [s["name"] for s in compare] == ["Fetch the shadow test selection",
+                                            "Failures outside the shadow selection (report only)"]
+    for step in compare:
+        assert step["if"] == "github.event_name == 'pull_request'" and step["continue-on-error"] is True
+    assert compare[0]["with"] == {"name": "test-selection", "path": "test-selection"}
+    assert compare[1]["run"] == "python3 scripts/ci/testmap.py compare --selection test-selection/selection.json.gz"
+    floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
+    assert coverage["steps"].index(compare[1]) < coverage["steps"].index(floor)
+    assert coverage["permissions"] == {"contents": "read", "actions": "read"}
+    # What runs is unchanged: every shard, whatever the selection says.
+    assert test["strategy"]["matrix"]["shard"] == list(range(1, int(test["env"]["TEST_SHARDS"]) + 1))
+    assert "needs" not in test and "if" not in test
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    assert "test-selection" not in json.dumps(test)
+    assert "selection.json" not in "\n".join(str(job.get("if", "")) for job in jobs.values())
+    assert workflow.count("testmap.py shadow") == 1 and workflow.count("testmap.py compare") == 1

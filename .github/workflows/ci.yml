@@ -22,6 +22,13 @@ on:
         type: choice
         options: [full, paths]
         default: full
+      # Records the per-test footprint map as a push to main does (see the
+      # test job). Only someone dispatching by hand sets it; the price
+      # refresh's publication gate does not.
+      test_map:
+        description: "record each test's footprint and build the testmap artifact, as a push to main does"
+        type: boolean
+        default: false
 
 # One CI run per branch or pull request: a newer push cancels the run of the
 # commit it supersedes. Without this, 2026-10-20's push cadence left 60 queued
@@ -240,6 +247,28 @@ jobs:
             python3 scripts/ci/commit_scope.py jobs --event "${EVENT_NAME}" --lines scoped-lines.patch \
               < scoped-paths.txt | tee -a "$GITHUB_OUTPUT"
           fi
+      # Shadow test selection (scripts/ci/testmap.py): which tests this pull
+      # request's diff can reach, from the newest per-test footprint map at or
+      # before its base. Report only: nothing reads it to decide what runs, the
+      # test job still runs every shard, and a failure here cannot fail the
+      # job (continue-on-error) or change its outputs (no step id). The
+      # coverage job compares this run's failures with it.
+      - name: Shadow test selection (report only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: >-
+          python3 scripts/ci/testmap.py shadow --base "${PR_BASE_SHA}" --head "${GITHUB_SHA}"
+          --pr "${PR_NUMBER}" --out selection.json.gz
+      - name: Upload the shadow test selection
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-selection
+          path: selection.json.gz
+          retention-days: 7
+          if-no-files-found: ignore
 
   lint:
     runs-on: ubuntu-24.04
@@ -420,6 +449,10 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "8"
+      # The per-test footprint map (scripts/ci/testmap_recorder.py): recorded
+      # on a push to main, and on a dispatch that asks for test_map. Pull
+      # requests never load the recorder; their shards run as before.
+      TESTMAP: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.test_map) }}
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
@@ -484,6 +517,11 @@ jobs:
         # --durations-path is both the split input and the recording output.
         run: cp .test_durations durations-${{ matrix.shard }}.json
       - name: Tests and coverage
+        # TR_TESTMAP_OUT turns the recorder on (tests/conftest.py loads it
+        # only then), outside the workspace: the deploy-script tests copy
+        # the repository.
+        env:
+          TR_TESTMAP_OUT: ${{ env.TESTMAP == 'true' && format('{0}/testmap-raw', runner.temp) || '' }}
         # least_duration is greedy per-test bin-packing. The default
         # duration_based_chunks cuts CONTIGUOUS slices of collection order,
         # and with one 18.5-minute conformance file early in the ordering the
@@ -532,6 +570,24 @@ jobs:
           name: coverage-${{ matrix.shard }}
           path: coverage-${{ matrix.shard }}.dat
           retention-days: 1
+      # The shard's footprints, compacted (python3: stdlib only). A failure
+      # here costs the map, never the shard: the coverage job builds the map
+      # only from all eight fragments of a run whose shards all passed.
+      - name: Compact this shard's test map
+        if: env.TESTMAP == 'true'
+        continue-on-error: true
+        run: >-
+          python3 scripts/ci/testmap.py compact "${RUNNER_TEMP}/testmap-raw"
+          --shard ${{ matrix.shard }} --out testmap-${{ matrix.shard }}.json.gz
+      - name: Upload this shard's test map
+        if: env.TESTMAP == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: testmap-fragment-${{ matrix.shard }}
+          path: testmap-${{ matrix.shard }}.json.gz
+          retention-days: 1
+          if-no-files-found: ignore
 
   coverage:
     # The 70% gate, enforced once over the combined shards.
@@ -552,6 +608,11 @@ jobs:
     needs: [test, scope]
     if: ${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read  # the shadow comparison reads this run's failed shard logs
+    env:
+      TESTMAP: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.test_map) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -562,6 +623,48 @@ jobs:
         with:
           pattern: coverage-*
           path: shards
+      # The per-test footprint map: the eight shard fragments of a run whose
+      # shards all passed, merged and kept for 14 days. The scope job of a
+      # pull request reads the newest one at or before its base (pushes to
+      # main only). Never fails the job.
+      - name: Collect every shard's test map
+        if: env.TESTMAP == 'true' && needs.test.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: testmap-fragment-*
+          path: testmap-fragments
+      - name: Merge the test map
+        if: env.TESTMAP == 'true' && needs.test.result == 'success'
+        continue-on-error: true
+        run: >-
+          python3 scripts/ci/testmap.py merge testmap-fragments --shards 8
+          --commit "${GITHUB_SHA}" --ref "${GITHUB_REF}" --event "${GITHUB_EVENT_NAME}"
+          --run-id "${GITHUB_RUN_ID}" --out testmap.json.gz
+      - name: Upload the test map
+        if: env.TESTMAP == 'true' && needs.test.result == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: testmap
+          path: testmap.json.gz
+          retention-days: 14
+          if-no-files-found: ignore
+      # Shadow selection against what failed: the evidence for enforcing it.
+      # Before the floor, which exits on a failed shard. Never fails the job.
+      - name: Fetch the shadow test selection
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: test-selection
+          path: test-selection
+      - name: Failures outside the shadow selection (report only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/testmap.py compare --selection test-selection/selection.json.gz
       - name: Combine and enforce the floor
         run: |
           set -euo pipefail
