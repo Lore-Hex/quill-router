@@ -75,7 +75,8 @@ concurrency:
 # request, since its base; for a push or a dispatch, since the newest
 # ancestor-or-self of the base whose own ci.yml run concluded success. There
 # is no scheduled run: a push to main applies the same rules as a pull
-# request, so a combination of two green pull requests that breaks a job is
+# request (except the post-cutover suite, which runs on pull requests and
+# dispatches only), so a combination of two green pull requests that breaks a job is
 # caught by the push that makes it, and because a push compares with the
 # newest passing commit, a job a red commit failed runs again on every later
 # push until it passes. A dispatch without scope=paths, a pull request
@@ -604,13 +605,16 @@ jobs:
   # the Python toolchain, for a changed line elsewhere that names a lifecycle
   # identifier or an entity with a scheduled change, and on every dispatch
   # (the price refresh gates publication on its run). commit_scope.py's
-  # docstring has the rule and what it leaves out. A push to main runs it
-  # under the same rule, so a combination of pull requests that only fails
-  # past a cutover reddens the push that makes it. post-cutover-daily.yml,
+  # docstring has the rule and what it leaves out. It does not run on a push
+  # to main (commit_scope.py's SKIPPED_ON_PUSH): a red here means something
+  # breaks on a future scheduled date, not that the commit is broken, the
+  # pull request already ran it under the same rule, and a combination of
+  # pull requests that fails only past a cutover reddens the next pull
+  # request that runs it, weeks before the cutover. post-cutover-daily.yml,
   # run by hand, runs it on demand.
   test-post-cutover:
     needs: scope
-    if: needs.scope.outputs.run_post_cutover != 'false'
+    if: github.event_name != 'push' && needs.scope.outputs.run_post_cutover != 'false'
     # Sharded for the same reason as `test`: gate-on-ci waits for the whole
     # run, so the slowest job sets deploy latency. Leaving this one unsharded
     # would just move the bottleneck here.
@@ -1024,9 +1028,10 @@ jobs:
   # skipped job only when it is one of the jobs above that carry the data-only
   # condition AND `scope` classified the commit as data-only, or one of the
   # path-scoped jobs (commit_scope.py's PATH_SCOPED_JOBS) AND `scope` set its
-  # flag to exactly `false`, and fails on a failed `scope`, a failed job, or
-  # a skip for any other reason. NEEDS carries the scope job's outputs. The
-  # deploy
+  # flag to exactly `false`, or the post-cutover suite on a push to main
+  # (commit_scope.py's SKIPPED_ON_PUSH), and fails on a failed `scope`, a
+  # failed job, or a skip for any other reason. NEEDS carries the scope
+  # job's outputs. The deploy
   # gate and the price-refresh gate read the run's conclusion, which this job
   # now determines, and branch protection requires the `CI` check.
   # !cancelled() rather than always(): a cancelled run releases its slot.
@@ -1053,7 +1058,8 @@ jobs:
     env:
       NEEDS: ${{ toJSON(needs) }}
       DATA_ONLY: ${{ needs.scope.outputs.data_only }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Every job succeeded, or was skipped for a data-only commit or unchanged inputs
+      - name: Every job succeeded, or was skipped for a data-only commit, unchanged inputs or a push
         run: python3 scripts/ci/commit_scope.py summarize

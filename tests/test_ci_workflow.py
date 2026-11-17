@@ -273,9 +273,14 @@ def test_heavy_jobs_have_no_schedule_and_the_post_cutover_clock_runs_on_demand()
     # proof oracle's post-cutover clock and the model checks available by hand.
     import copy
 
+    from scripts.ci.commit_scope import PUSH_SKIP_CONDITION, SKIPPED_ON_PUSH
+
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     ci = workflow["jobs"]
-    assert not any("github.event_name" in str(job.get("if", "")) for job in ci.values())
+    # Only the post-cutover suite skips by event: on a push to main.
+    assert PUSH_SKIP_CONDITION == "github.event_name != 'push'"
+    assert {name for name, job in ci.items() if "github.event_name" in str(job.get("if", ""))} == SKIPPED_ON_PUSH
+    assert all(str(ci[name]["if"]).startswith(f"{PUSH_SKIP_CONDITION} && ") for name in SKIPPED_ON_PUSH)
     assert ci["proof-oracle"]["strategy"]["matrix"]["clock"] == ORACLE_CLOCKS
     # The daily jobs inherit nothing from ci.yml's top level.
     assert "env" not in workflow and "defaults" not in workflow
@@ -451,6 +456,7 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     from scripts.ci.commit_scope import (
         DATA_ONLY_CONDITION,
         PATH_SCOPED_JOBS,
+        PUSH_SKIP_CONDITION,
         SKIPPED_FOR_DATA_ONLY,
         path_condition,
     )
@@ -475,7 +481,7 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     for name in ALWAYS_RUN_JOBS:
         assert "if" not in jobs[name] or name == "ci", name
     assert jobs["test-post-cutover"]["needs"] == "scope"
-    assert jobs["test-post-cutover"]["if"] == path_condition("run_post_cutover")
+    assert jobs["test-post-cutover"]["if"] == f"{PUSH_SKIP_CONDITION} && {path_condition('run_post_cutover')}"
     # The jobs that read the published catalog: the suite under both clocks,
     # lint's catalog history check, the production import and the browser
     # smoke (which starts the app on the committed snapshot).
@@ -625,7 +631,8 @@ def test_summary_job_derives_the_run_conclusion_from_every_job():
     # NEEDS carries every job's result and the scope job's outputs (its
     # path-scoped flags among them).
     assert summary["env"] == {"NEEDS": "${{ toJSON(needs) }}",
-                              "DATA_ONLY": "${{ needs.scope.outputs.data_only }}"}
+                              "DATA_ONLY": "${{ needs.scope.outputs.data_only }}",
+                              "EVENT_NAME": "${{ github.event_name }}"}
     assert [step["run"] for step in summary["steps"] if "run" in step] == [
         "python3 scripts/ci/commit_scope.py summarize"]
     assert "continue-on-error" not in summary

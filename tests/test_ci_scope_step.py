@@ -273,9 +273,12 @@ def test_a_code_change_is_not_data_only_and_runs_the_jobs_that_read_it(scope_rep
         ("C3", {"scripts/pricing/parsers/fireworks.py": "def parse(h): ...\n"}, NONE | {"run_post_cutover": True}),
         ("C4", {"fastpath/testdata/model_alias_vectors_v1.json": "[]\n"},
          NONE | {"run_fastpath": True, "run_post_cutover": True}),
-        # Go source is a file a Python test may read: the post-cutover suite too.
-        ("C5", {SPEC_CODE: "package spec // x\n"},
+        ("C5", {SPEC_CODE: "package spec // x\n"}, NONE | {"run_fastpath": True, "run_proofs": True}),
+        # Go naming a scheduled model: the post-cutover suite too.
+        ("C8", {SPEC_CODE: "package spec // vendor/soon-1\n"},
          NONE | {"run_fastpath": True, "run_proofs": True, "run_post_cutover": True}),
+        # A data file a test could load expectations from.
+        ("C9", {"docs/catalog_expectations.json": '{"models": 679}\n'}, NONE | {"run_post_cutover": True}),
         ("C6", {DOC: "notes about vendor/soon-1\n"}, NONE | {"run_post_cutover": True}),
         ("C7", {DOC: "notes about latency\n"}, NONE),
     ]
@@ -398,7 +401,7 @@ def test_a_red_base_widens_the_comparison_to_its_newest_validated_ancestor(scope
     scope_repo.push()
     c = scope_repo.commit("C", {DOC: "more notes\n"})
     red = [run_record(b, conclusion="failure"), run_record(a)]
-    widened = NONE | {"run_fastpath": True, "run_post_cutover": True}
+    widened = NONE | {"run_fastpath": True}
     assert scope_repo.run(event="push", head=c, before=b, runs=red) == "false"
     assert scope_repo.flags == widened
     assert f"compare with {a}" in scope_repo.last.stdout
@@ -535,7 +538,7 @@ def test_a_pull_request_compares_with_its_base_validated_or_not(scope_repo: Scop
     # The push of the same change does widen, and runs the fast path jobs.
     assert scope_repo.run(event="push", head=c, before=b, runs=[run_record(b, conclusion="failure"),
                                                                run_record(a)]) == "false"
-    assert scope_repo.flags == NONE | {"run_fastpath": True, "run_post_cutover": True}
+    assert scope_repo.flags == NONE | {"run_fastpath": True}
 
 
 def test_a_test_only_change_runs_the_post_cutover_suite_on_the_tests_it_reaches(scope_repo: ScopeRepo) -> None:

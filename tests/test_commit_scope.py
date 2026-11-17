@@ -219,14 +219,21 @@ def test_a_path_scoped_job_may_skip_only_when_its_own_flag_is_false(job: str, fl
     assert summarize(bare, "false") == [f"{job}: skipped"]
 
 
-def test_no_event_excuses_a_skip_any_more() -> None:
-    # A push to main used to excuse the post-cutover suite and the model
-    # checks. Now the push applies the same flags as a pull request.
-    for job in ("test-post-cutover", "proofs"):
-        assert summarize(needs(**{job: "skipped"}), "false") == [f"{job}: skipped"]
-    import inspect
+def test_a_push_excuses_only_the_post_cutover_suite() -> None:
+    # The owner's trade-off: the post-cutover suite runs on pull requests and
+    # dispatches, not on a push to main. Every other path-scoped job, the
+    # model checks among them, skips on a push only when its flag is false.
+    from scripts.ci.commit_scope import SKIPPED_ON_PUSH
 
-    assert list(inspect.signature(summarize).parameters) == ["needs", "data_only"]
+    assert SKIPPED_ON_PUSH == {"test-post-cutover"}
+    assert summarize(needs(test_post_cutover="skipped"), "false", "push") == []
+    for event in ("pull_request", "workflow_dispatch", "schedule", "", "PUSH"):
+        assert summarize(needs(test_post_cutover="skipped"), "false", event) == ["test-post-cutover: skipped"], event
+    for job in ("proofs", "proof-oracle", "fastpath", "fastpath-spanner", "fastpath-walks", "test", "lint"):
+        assert summarize(needs(**{job: "skipped"}), "false", "push") == [f"{job}: skipped"], job
+    # A push excuses a skip, never a failure.
+    for result in ("failure", "cancelled", "timed_out", None):
+        assert summarize(needs(test_post_cutover=result), "false", "push") == [f"test-post-cutover: {result}"]
 
 
 @pytest.mark.parametrize("separator", [" ", " ", "\u0085"])
@@ -265,6 +272,12 @@ def test_summarize_command_exits_non_zero_with_an_annotation(monkeypatch, capsys
     monkeypatch.setenv("NEEDS", json.dumps(needs(test="failure")))
     assert main(["summarize"]) == 1
     assert "::error title=CI job did not succeed::test: failure" in capsys.readouterr().out
+    # The event reaches the summary: a push excuses the post-cutover skip.
+    monkeypatch.setenv("NEEDS", json.dumps(needs(test_post_cutover="skipped")))
+    monkeypatch.setenv("EVENT_NAME", "push")
+    assert main(["summarize"]) == 0
+    assert "event_name: push" in capsys.readouterr().out
+    monkeypatch.delenv("EVENT_NAME")
     # The scope job's flags reach the summary through NEEDS.
     monkeypatch.setenv("NEEDS", json.dumps(needs(test_post_cutover="skipped")))
     assert main(["summarize"]) == 1
@@ -453,17 +466,35 @@ def test_a_change_no_rule_names_skips_every_path_scoped_job(tree: Path) -> None:
 
 
 @pytest.mark.parametrize("path", [
-    "docs/catalog_expectations.json", "infra/main.tf", "sites/token-exchange/new.html", "frontend/src/old.ts",
-    "scripts/deploy/rollout.sh", "fastpath/internal/edge/edge.go", "proofs/CreditDebt.tla", "Dockerfile",
-    "docs/models.txt",
+    "docs/catalog_expectations.json", "docs/models.txt", "infra/expected.yaml", "config/limits.yml",
+    "data/routes.jsonl", "pricing/table.csv", "pricing/table.tsv", "settings.toml", "probe.ini",
+    "probe.cfg", "feed.xml", "docs/UPPER.JSON",
 ])
-def test_any_other_data_file_runs_the_whole_post_cutover_suite(tree: Path, path: str) -> None:
-    # A test may read any of these through a path it builds: the review's
-    # case is docs/catalog_expectations.json going from 659 to 679, which
-    # names nothing scheduled.
+def test_a_data_file_runs_the_whole_post_cutover_suite(tree: Path, path: str) -> None:
+    # A test may load expectations from it through a path it builds: the
+    # review's case is docs/catalog_expectations.json going from 659 to 679,
+    # which names nothing scheduled.
     lines = patch(path, '-{"models": 659}', '+{"models": 679}')
     for record in (raw(path), added(path), deleted(path)):
         assert selected([record], tree, lines=lines) == (True, ()), record
+
+
+@pytest.mark.parametrize("path", [
+    "infra/main.tf", "scripts/deploy/rollout.sh", "fastpath/internal/edge/edge.go", "proofs/CreditDebt.tla",
+    "frontend/src/old.ts", "sites/token-exchange/new.html", "sites/token-exchange/site.css",
+    "src_static/x.js", "Dockerfile", "docs/catalog.md", ".github/workflows/synthetic.yml",
+    ".github/dependabot.yml",
+])
+def test_code_and_config_run_it_only_when_they_name_the_lifecycle(tree: Path, path: str) -> None:
+    # An expectation that changes past the cutovers without naming anything
+    # scheduled comes from catalog-shaped data; code and configuration name
+    # their models, and the line scan sees those. Workflow YAML is
+    # configuration, not a data file a test loads expectations from.
+    quiet = patch(path, "-count = 659", "+count = 679")
+    for record in (raw(path), added(path), deleted(path)):
+        assert selected([record], tree, lines=quiet) == (False, ()), record
+        assert selected([record], tree, lines=patch(path, "+model = vendor/soon-2")) == (True, ()), record
+        assert selected([record], tree, lines=patch(path, "+# retires at the cutover")) == (True, ()), record
 
 
 def test_markdown_and_github_files_run_it_only_when_they_name_the_lifecycle(tree: Path) -> None:
@@ -734,11 +765,9 @@ def test_the_real_tree_scopes_typical_changes() -> None:
         return scope(list(changes), ROOT, lines=lines, now=datetime.now(UTC))
 
     assert flags(raw("docs/design/ci-deploy-latency.md")) == dict.fromkeys(PATH_FLAGS, False)
-    # Terraform a test may read: the whole post-cutover suite, nothing else.
+    # Terraform naming nothing scheduled: nothing.
     infra = patch("infra/fastpath.tf", "+  machine_type = \"c3-standard-8\"")
-    assert selected([raw("infra/fastpath.tf")], ROOT, lines=infra) == (True, ())
-    assert flags(raw("infra/fastpath.tf"), lines=infra) == dict.fromkeys(PATH_FLAGS, False) | {
-        "run_post_cutover": True}
+    assert flags(raw("infra/fastpath.tf"), lines=infra) == dict.fromkeys(PATH_FLAGS, False)
     # A test file: the post-cutover suite on the tests it reaches.
     test = "tests/test_enclave_security_guard.py"
     flags_, _, tests = scope_jobs([raw(test)], root=ROOT, event="pull_request",
@@ -746,7 +775,7 @@ def test_the_real_tree_scopes_typical_changes() -> None:
     assert flags_ == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}
     assert test in tests and 0 < len(tests) <= 10
     assert flags(raw("fastpath/internal/store/commit.go")) == {
-        "run_fastpath": True, "run_post_cutover": True, "run_proof_oracle": False, "run_proofs": True}
+        "run_fastpath": True, "run_post_cutover": False, "run_proof_oracle": False, "run_proofs": True}
     assert flags(raw("src/trusted_router/services/auto_refill.py")) == dict.fromkeys(PATH_FLAGS, False) | {
         "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
     assert flags(raw(SNAPSHOT), raw(MANIFEST)) == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}

@@ -227,8 +227,12 @@ that change can reach: each changed test, the tests that import a changed
 module directly or through others, and the tests that name it. A test is
 code that can depend on the catalog without naming anything scheduled. A
 changed Python file that reaches no test, a Python line naming the lifecycle,
-and any other changed file but Markdown and .github/ (a test may read it
-through a path it builds) run the whole suite.
+and a changed data file a test could load expectations from (JSON, YAML,
+TOML, CSV, text and the like) run the whole suite; other code and
+configuration run it when a changed line names the lifecycle. The
+post-cutover suite runs on pull requests and dispatches, not on a push to
+main: its red means a future date will break, and the pull request already
+ran it.
 post-cutover-daily.yml has no schedule any more; it runs by hand and is the
 one place the oracle runs at the post-cutover clock, since no endpoint the
 oracle settles changes between the clocks in either leg
@@ -244,15 +248,15 @@ label): add it, then push or re-run every job of the latest run with
 
 Measured over 31 hours before the change, CI used about 56,600 job-minutes a
 day. Replaying the rules over the last 100 merged pull requests, the oracle
-would have run for 40, the post-cutover suite for 92 whole and 7 more in one
+would have run for 40, the post-cutover suite for 65 whole and 22 more in one
 shard, the fast path jobs for 34 and the model checks for 4; over 147 push
 runs, with the comparison widened past bases that had not yet passed (98 of
-them), for 77%, 97% whole and 3% in one shard, 47% and 13%. With the
-measured per-job minutes that is about 16,300 job-minutes a day fewer (29%):
-8,600 from the oracle's post-cutover clock on pull requests, 5,100 from its
-default clock on pull requests, 1,300 and 1,600 from the model checks and the
-fast path jobs on pull requests, offset by 3,600 for the post-cutover suite
-that pushes to main now run. These are estimates
+them), the oracle for 77%, the fast path jobs for 47% and the model checks
+for 13% (a push runs no post-cutover suite). With the measured per-job
+minutes that is about 22,000 job-minutes a day fewer (39%): 8,600 from the
+oracle's post-cutover clock on pull requests, 5,100 from its default clock on
+pull requests, 2,800 from the post-cutover suite, and 1,300 and 1,600 from
+the model checks and the fast path jobs on pull requests. These are estimates
 from one window's cadence, not a measurement of the new workflow.
 
 ## Validation and measurement

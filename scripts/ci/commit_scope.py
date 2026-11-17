@@ -25,14 +25,16 @@ before `uv sync`:
              not a raw record), an empty diff, a change to ci.yml, scripts/ci/
              or any .gitattributes (which decides what a diff shows), and a
              rule whose inputs cannot be derived.
-  summarize  reads the `needs` context of the summary job (JSON in NEEDS)
-             and the scope output (DATA_ONLY) and exits non-zero unless every
-             job succeeded, allowing a skipped job only when it is one of the
-             jobs ci.yml skips for a data-only commit AND the commit was
-             data-only, or when it is path-scoped (PATH_SCOPED_JOBS) and the
-             scope job's output for its flag is exactly `false`. A heavy job
-             skipped while its flag is not `false`, a failed scope job, or a
-             job in any other state fails the run.
+  summarize  reads the `needs` context of the summary job (JSON in NEEDS),
+             the scope output (DATA_ONLY) and the event (EVENT_NAME) and exits
+             non-zero unless every job succeeded, allowing a skipped job only
+             when it is one of the jobs ci.yml skips for a data-only commit AND
+             the commit was data-only, when it is path-scoped
+             (PATH_SCOPED_JOBS) and the scope job's output for its flag is
+             exactly `false`, or when it is one of SKIPPED_ON_PUSH (the
+             post-cutover suite) AND the event is a push. A heavy job skipped
+             otherwise, a failed scope job, or a job in any other state fails
+             the run.
 
 Data-only commits. The hourly price refresh publishes commits that touch only
 DATA_ONLY_PATHS and gates publication on the ci.yml run of that commit. Every
@@ -46,11 +48,12 @@ catalog data path sets. tests/test_ci_workflow.py holds the workflow text to
 these lists, and holds DATA_ONLY_PATHS to the files refresh-prices.yml stages.
 
 Path-scoped jobs. Each flag names the files its jobs read; the jobs run on
-pull requests, pushes to main and dispatches alike, whenever one of those
-files differs between REF and HEAD, and skip otherwise. There is no scheduled
-run: a job runs when something it reads changed, and pushes to main apply the
-same rules as pull requests, so two green pull requests that combine into a
-red main are caught by the push that combines them. A pull request's REF is
+pull requests, pushes to main and dispatches alike (the post-cutover suite
+excepted, below), whenever one of those files differs between REF and HEAD,
+and skip otherwise. There is no scheduled run: a job runs when something it
+reads changed, and pushes to main apply the same rules as pull requests, so
+two green pull requests that combine into a red main are caught by the push
+that combines them. A pull request's REF is
 its base: what it skips it did not change, and nothing ships from its run.
 A push's or a dispatch's REF is the newest ancestor-or-self of its base whose
 own ci.yml run passed, so a job a red commit failed keeps running on every
@@ -101,16 +104,20 @@ later push until a run passes it again, and its red holds every deploy.
   src/: code behaves differently on the post-cutover catalog), to the pricing
   scripts, the catalog-derived Go vectors, its split weights, the Python
   toolchain, the harness every test runs under (tests/conftest.py and what it
-  imports) or a test fixture; for any other changed file that is not Python,
-  Markdown or under .github/ (a test may read it through a path it builds,
-  say a JSON of catalog expectations); for a changed line in a Markdown,
-  .github/ or Python file that names a lifecycle identifier
-  (LIFECYCLE_IDENTIFIERS) or a scheduled entity (a model, upstream id or
-  provider with a retirement still ahead, or one whose price
-  provider_lifecycle.py switches by date, read from HEAD at scope time), or a
-  file whose lines the diff cannot show; for a changed Python file that no
-  test imports or names (a test may load it by a computed name or path); and
-  on every dispatch, the price refresh's publication gate. A test is code
+  imports) or a test fixture; for any other changed file in a data format a
+  test could load expectations from (DATA_SUFFIXES: JSON, YAML, TOML, CSV,
+  text and the like), outside .github/; for a changed line in any other file
+  that names a lifecycle identifier (LIFECYCLE_IDENTIFIERS) or a scheduled
+  entity (a model, upstream id or provider with a retirement still ahead, or
+  one whose price provider_lifecycle.py switches by date, read from HEAD at
+  scope time), or a file whose lines the diff cannot show; for a changed
+  Python file that no test imports or names (a test may load it by a
+  computed name or path); and on every dispatch, the price refresh's
+  publication gate. An expectation that changes past the cutovers without
+  naming anything scheduled has to come from catalog-shaped data (a count, a
+  list), hence the data formats; code and configuration that feed a test
+  (Terraform, shell, Go, TypeScript, HTML, Markdown, workflows) name their
+  models, and the line scan sees those. A test is code
   that can depend on the catalog without naming anything (a count over every
   model), so when only Python outside src/ (tests, helpers, scripts) changed
   otherwise, the suite runs, in one shard, on the tests that can reach it:
@@ -120,12 +127,18 @@ later push until a run passes it again, and its red holds every deploy.
   names a changed file. More of those than an eighth of the test files runs
   the whole suite instead.
 
-  Two gaps are accepted trade-offs. A helper that some tests import and
-  another test loads by a computed name selects only the importers. And a
-  Markdown change that names nothing scheduled runs nothing: prose documents
-  do not feed the catalog expectations tests assert. A test such a change
-  breaks past the cutovers goes red on the next change that runs it, or at
-  the cutover.
+  It runs on pull requests and dispatches, not on a push to main
+  (SKIPPED_ON_PUSH): a post-cutover red means something breaks on a future
+  scheduled date, not that the commit is broken, and the pull request already
+  ran it under the same rules. Two green pull requests that combine into a
+  post-cutover red go red on the next pull request that runs the suite;
+  cutovers are scheduled weeks out.
+
+  These are accepted owner trade-offs: a helper that some tests import and
+  another loads by a computed name selects only the importers; a file in no
+  data format that names nothing scheduled runs nothing; and a push to main
+  never runs the suite. A test such a change breaks past the cutovers goes
+  red on the next change that runs it, or at the cutover.
 """
 
 from __future__ import annotations
@@ -177,6 +190,11 @@ SKIPPED_FOR_DATA_ONLY: frozenset[str] = frozenset({
 })
 
 DATA_ONLY_CONDITION = "needs.scope.outputs.data_only != 'true'"
+
+# Jobs whose `if` in ci.yml starts with PUSH_SKIP_CONDITION: they skip on a
+# push to main, and summarize() accepts that skip on a push only.
+SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover"})
+PUSH_SKIP_CONDITION = "github.event_name != 'push'"
 
 # Jobs whose `if` in ci.yml carries path_condition(flag): they run when the
 # flag is anything but `false`, and summarize() accepts their skip only when
@@ -233,6 +251,11 @@ POST_CUTOVER_INPUTS: tuple[str, ...] = (
     "scripts/update_model_changes.py",
     "fastpath/testdata/**",
     ".test_durations-post-cutover",
+)
+# Formats a test could load catalog expectations from: a change to one runs
+# the whole post-cutover suite whatever its lines say.
+DATA_SUFFIXES: tuple[str, ...] = (
+    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".txt", ".ini", ".cfg", ".xml",
 )
 LIFECYCLE_MODULE = "src/trusted_router/provider_lifecycle.py"
 LIFECYCLE_IDENTIFIERS = re.compile(
@@ -632,15 +655,15 @@ def post_cutover_plan(
         if matches_any(path, (*PYTHON_TOOLCHAIN_PATHS, *POST_CUTOVER_INPUTS)) or is_test_fixture(path) or path in harness:
             return path, whole
     # Nothing under src/ changed from here on, and no file under tests/ that
-    # is not Python. Any other file but Markdown or one under .github/ may be
-    # read by a test through a path it builds: the whole suite.
+    # is not Python. A data file a test could load expectations from, through
+    # a path it builds: the whole suite.
     python = [change for change in changes if change.path.endswith(".py")]
     others = [change.path for change in changes if not change.path.endswith(".py")]
     for path in others:
-        if not (path.endswith(".md") or path.startswith(".github/")):
-            return f"{path} may be read by a test through a constructed path", whole
-    # Markdown, .github/ and Python: a changed line naming the lifecycle, or
-    # a file whose lines the patch does not show, runs the whole suite.
+        if path.lower().endswith(DATA_SUFFIXES) and not path.startswith(".github/"):
+            return f"{path} is data a test could load", whole
+    # Any other file, and Python: a changed line naming the lifecycle, or a
+    # file whose lines the patch does not show, runs the whole suite.
     named = [*others, *(change.path for change in python)]
     if lines is None:
         return f"{named[0]} (no diff text to read)", whole
@@ -717,7 +740,7 @@ def scope_jobs(
     return flags, notes, selected
 
 
-def summarize(needs: dict[str, dict[str, object]], data_only: str) -> list[str]:
+def summarize(needs: dict[str, dict[str, object]], data_only: str, event_name: str = "") -> list[str]:
     """Return the reasons the run must fail; an empty list means success."""
     failures: list[str] = []
     scope = needs.get("scope", {})
@@ -735,6 +758,8 @@ def summarize(needs: dict[str, dict[str, object]], data_only: str) -> list[str]:
             continue
         if result == "skipped" and job in PATH_SCOPED_JOBS and flags.get(PATH_SCOPED_JOBS[job]) == "false":
             continue
+        if result == "skipped" and job in SKIPPED_ON_PUSH and event_name == "push":
+            continue
         failures.append(f"{job}: {result}")
     return failures
 
@@ -747,7 +772,7 @@ def main(argv: list[str] | None = None) -> int:
     jobs.add_argument("--event", default="", help="github.event_name")
     jobs.add_argument("--lines", type=Path, help="git diff -U0 REF HEAD outside src/")
     jobs.add_argument("--full", action="store_true", help="every flag true; stdin is not read")
-    sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY; exit 1 on any failure")
+    sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY, EVENT_NAME; exit 1 on any failure")
     args = parser.parse_args(argv)
     if args.command == "classify":
         # Records are split on "\n" alone: str.splitlines also splits on
@@ -776,14 +801,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     needs = json.loads(os.environ["NEEDS"])
     data_only = os.environ.get("DATA_ONLY", "")
+    event_name = os.environ.get("EVENT_NAME", "")
     for job, info in sorted(needs.items()):
         print(f"{job}: {info.get('result')}")
     print(f"data_only: {data_only or '<unset>'}")
+    print(f"event_name: {event_name or '<unset>'}")
     outputs = needs.get("scope", {}).get("outputs")
     for flag in PATH_FLAGS:
         value = outputs.get(flag) if isinstance(outputs, dict) else None
         print(f"{flag}: {value or '<unset>'}")
-    failures = summarize(needs, data_only)
+    failures = summarize(needs, data_only, event_name)
     for failure in failures:
         print(f"::error title=CI job did not succeed::{failure}")
     return 1 if failures else 0
