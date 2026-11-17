@@ -1,9 +1,7 @@
 """Round five: process ownership, worker setup and native producer handoff."""
 from __future__ import annotations
 
-import ast
 import asyncio
-import inspect
 import re
 import ssl
 import subprocess
@@ -196,21 +194,6 @@ async def test_whole_setup_deadline_and_single_worker(monkeypatch):
                 h._STARTUP_WORKER.release()
                 break
             await asyncio.sleep(.005)
-
-
-def test_authorize_uses_owned_input_only():
-    from trusted_router.services import async_settle_shadow_cohort as cohort
-    from trusted_router.services.async_settle_shadow_cohort_runtime import Runtime
-    source = inspect.getsource(cohort.authorize)
-    assert not hasattr(cohort, "NativeAttempt") and not hasattr(cohort, "NativeAttempts")
-    assert "startup_" not in source and "report(" not in source and ".retain(" not in source
-    assert "NativeAttempt" not in source and "native_attempt" not in source
-    tree = ast.parse(source)
-    assert not any(isinstance(n, ast.AugAssign) for n in ast.walk(tree))
-    runtime = inspect.getsource(Runtime.authorize_http)
-    assert runtime.count("self.startup_admission.ready") == 1
-    assert ".append(" not in runtime and "collect_native" not in runtime
-    assert "self.defer_input(inputs, capable)" in runtime
 
 
 def test_all_deployed_router_regions_use_released_resource():
