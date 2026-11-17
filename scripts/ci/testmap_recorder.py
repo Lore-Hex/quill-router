@@ -14,12 +14,15 @@ What a test's window (setup, call and teardown) records:
      location costs one callback per window; restart_events() re-arms every
      location when a window opens or closes. Resume events catch a generator
      or coroutine started in an earlier test.
-     A call of a functools.cache/lru_cache function is marked "<key>@memo"
-     (a CALL event, also disabled per call site per window): a hit runs no
-     Python code, so without the mark a test served from a cache would not
-     record the function at all. The caches themselves are untouched: the
-     frozen-execution guard tests walk object graphs from them and recognize
-     them by type.
+     A call of one of the repository's functools.cache/lru_cache functions is
+     marked "<key>@memo": a hit runs no Python code, so without the mark a
+     test served from a cache would not record the function at all. A CALL
+     event (disabled per call site per window) registers a cache and marks
+     the call; a window also marks every registered cache whose hit count
+     rose while it was open, which catches a hit at a call site that had
+     already reported another callee. The caches themselves are untouched:
+     the frozen-execution guard tests walk object graphs from them and
+     recognize them by type.
   o  repository files opened (the "open" audit event). The import system's
      own reads of .py/.pyc files are not reads: executing the module is
      what the f set records.
@@ -34,12 +37,14 @@ What a test's window (setup, call and teardown) records:
 Separate windows, each written once and inherited by the tests that use it:
   c   a test module's collection (its import and parametrization);
   fx  the setup of a module, class, package or session fixture;
-  cf  a memoized function's miss: from its PY_START to its PY_RETURN (a local
-      event set on the function once its first call is seen), events re-armed
-      so every function the miss runs is recorded; the first MAX_MISSES misses
-      per function, on the thread that missed. A function that misses more
-      often is written as "mi" (incomplete): the selector runs its users
-      whatever changed. A miss that raises closes with the window around it.
+  cf  a memoized function's miss: from its PY_START (never disabled for it)
+      to its PY_RETURN (a local event set once its first call is seen), on the
+      thread that missed, events re-armed so every function the miss runs is
+      recorded. Every miss is recorded; what one adds to the function's
+      earlier misses is written. Past MAX_MISSES misses in one process the
+      function is written as "mi" (incomplete) instead, and the selector runs
+      its users whatever changed. A miss that raises closes with the window
+      around it.
   g   everything outside every window: imports, session and collection hooks
       (a miss at import time counts here too).
 Jinja serves a template from its cache after the first load, without
@@ -100,7 +105,10 @@ TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
 OWNER_ENV = "TR_TESTMAP_OWNER"
 MEMO = "@memo"
-MAX_MISSES = 20
+# Every miss is recorded (a capped recording would leave the function's later
+# misses unknown); past this many in one process the function is written as
+# incomplete instead, a bound on time and output that the suite never reaches.
+MAX_MISSES = 1_000_000
 MAX_WORD = 200
 PROGRAM_FLAG = re.compile(r"-[A-Za-z]*c")          # python -c, bash -c, sh -ec: program text follows
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)  # env NAME=value
@@ -155,12 +163,14 @@ class Recorder:
     def __init__(self, out_dir: str) -> None:
         self.glob = Window()
         self.cur = self.glob
-        self.stack: list[Window] = []
+        self.stack: list[tuple[Window, dict[int, int]]] = []  # (outer window, cache hits at entry)
         self.hook_lock = threading.RLock()
         self.out_lock = threading.Lock()
         self.local = threading.local()          # .misses: [(code, Window)], innermost last
         self.miss_stacks: list[list[tuple[Any, Window]]] = []
         self.memo_codes: dict[int, Any] = {}    # memoized functions seen called: id -> code
+        self.memo_caches: dict[int, tuple[Any, Any, int]] = {}  # id(cache) -> (weak cache, code, hits when seen)
+        self.cf_seen: dict[str, dict[str, set[str]]] = {}  # what a function's misses ran, written so far
         self.misses: dict[int, int] = {}
         self.active = True
         self.tool_ours = False
@@ -215,9 +225,28 @@ class Recorder:
                 "s": sorted(window.spawns.copy())}
 
     # -- hook windows: the recorder keeps the stack, so no hook frame holds one
+    def cache_hits(self) -> dict[int, int]:
+        hits = {}
+        for ident, (ref, _code, _seen) in list(self.memo_caches.items()):
+            cache = ref()
+            if cache is None:
+                self.memo_caches.pop(ident, None)
+            else:
+                hits[ident] = cache.cache_info().hits
+        return hits
+
+    def mark_hits(self, window: Window, before: dict[int, int]) -> None:
+        """A cache whose hit count rose while the window was open served it,
+        whichever call site asked (a CALL event reports a site once per
+        window, so a site that called something else first never reports)."""
+        for ident, (ref, code, seen) in list(self.memo_caches.items()):
+            cache = ref()
+            if cache is not None and cache.cache_info().hits > before.get(ident, seen):
+                window.memo[id(code)] = code
+
     def enter(self) -> None:
         with self.hook_lock:
-            self.stack.append(self.cur)
+            self.stack.append((self.cur, self.cache_hits()))
             self.cur = Window()
             # Re-arm every location: what ran before this window (an earlier
             # test, or the import of the module now being collected) must
@@ -229,7 +258,8 @@ class Recorder:
             window = self.cur
             if not self.stack:
                 raise RuntimeError("a window closed that was not open")
-            prev = self.stack.pop()
+            prev, hits = self.stack.pop()
+            self.mark_hits(window, hits)
             if prev is not self.glob:  # what ran in a nested window ran in the outer one too
                 prev.absorb(window)
             self.cur = prev
@@ -291,11 +321,17 @@ class Recorder:
         return None
 
     def close_miss(self, stack: list[tuple[Any, Window]]) -> None:
+        """Write what this miss ran that the function's earlier misses did not."""
         try:
             code, window = stack.pop()
             key = self.key(code)
             if key is not None and self.active:
-                self.write({"cf": key, **self.dump(window)})
+                seen = self.cf_seen.setdefault(key, {part: set() for part in ("f", "o", "d", "s")})
+                new = {part: sorted(set(values) - seen[part]) for part, values in self.dump(window).items()}
+                if any(new.values()):
+                    for part, values in new.items():
+                        seen[part].update(values)
+                    self.write({"cf": key, **new})
         except Exception as error:
             self.fail("miss", error)
 
@@ -321,6 +357,9 @@ class Recorder:
                     if target is not None and self.code_path(target.co_filename) is not None:
                         ident = id(target)
                         self.note("memo", target, ident)
+                        entry = self.memo_caches.get(id(func))
+                        if entry is None or entry[0]() is not func:  # new, or a dead cache's id reused
+                            self.memo_caches[id(func)] = (weakref.ref(func), target, func.cache_info().hits)
                         if ident not in self.memo_codes:
                             self.memo_codes[ident] = target
                             mon.set_local_events(TOOL_ID, target, mon.events.PY_RETURN)

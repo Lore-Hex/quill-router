@@ -209,8 +209,23 @@ def test_q_thread_misses():
 
 
 def test_r_many_misses():
-    for n in range(40):
-        core.many(n)
+    import scripts.ci.testmap_recorder as recorder
+
+    bound = recorder.MAX_MISSES
+    recorder.MAX_MISSES = 5  # the safety bound, lowered to reach it
+    try:
+        for n in range(40):
+            core.many(n)
+    finally:
+        recorder.MAX_MISSES = bound
+
+
+def test_u_polymorphic_call_site():
+    # The loop's call site reports its first callee (plain) and is then
+    # disabled for this test; the cache's hit count shows the second call
+    # (test_c_fills_cache filled the cache).
+    for function in (core.plain, core.cached):
+        function()
 
 
 @pytest.fixture(scope="module")
@@ -360,8 +375,10 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert "x" * 201 not in spawns
     # Misses on other threads are recorded on their own (and the shard stays valid).
     assert "src/pkg/core.py:spread" in fragment["cached"]
-    # More misses than the cap: the function is incomplete, its users always run.
+    # Past the safety bound of misses a function is incomplete: its users always run.
     assert fragment["incomplete_memo"] == ["src/pkg/core.py:many"]
+    # A hit at a call site that had reported another callee is still marked.
+    assert "src/pkg/core.py:cached@memo" in own[t + "test_u_polymorphic_call_site"]
     # Importing a module is not reading it.
     assert not any(o.endswith(".py") for o in fp[t + "test_a_starts_generator"]["o"])
     # Positive control for the attributions above: none is in the test's own window.
@@ -446,5 +463,5 @@ def test_xdist_workers_record_and_the_shard_compacts(tmp_path: Path, workers: st
     fragment, result = recorded(root, tmp_path, "-n", workers, "--dist", "loadfile")
     assert result.returncode == 0, result.stdout + result.stderr
     assert fragment["valid"], fragment["errors"]
-    assert len(fragment["tests"]) == 20
+    assert len(fragment["tests"]) == 21
     assert len(list((tmp_path / "raw").glob("gw*.jsonl"))) == int(workers)

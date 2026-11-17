@@ -28,9 +28,9 @@ What a footprint holds (the recorder's docstring has how it is recorded):
   s  commands started ("argv0 argv1 ... @cwd=<repo-relative or ->")
 A test's footprint is its own window (setup, call and teardown), its module's
 collection and the setup of every module/class/package/session fixture it
-requests. `cached` holds what each memoized function's misses ran (at most
-the recorder's cap of misses per function; `incomplete_memo` lists the
-functions that missed more often). `global` is what ran outside every window:
+requests. `cached` holds what each memoized function's misses ran (every
+miss; `incomplete_memo` lists any function that missed past the recorder's
+safety bound). `global` is what ran outside every window:
 imports, session hooks, collection hooks, and misses at import time.
 
 Selection rules (the full suite runs on any fail-safe; reasons are reported).
@@ -91,13 +91,13 @@ changed since the map selects what ran it like one the pull request changed.
    S9 a changed test helper (Python under tests/ or scripts/) also selects
       what commit_scope's reverse import walk reaches.
    S10 a memoized function whose misses a change reaches selects its users:
-      the tests that marked a call of it, and every test that ran a function
-      naming it (a hit runs no Python code and a call site is observed once
-      per test, so the marks alone can miss a call; the name index finds the
-      callers, aliases and registries that hand it out). A memoized function
-      in `incomplete_memo` selects its users whatever changed. Module and
-      session fixture setups count for every test that requests them; a
-      module's collection counts for each of its tests.
+      the tests in whose window it missed, and those the recorder marked as
+      calling it or served by its cache (a hit runs no Python code: the
+      recorder marks a call, and a rise in the cache's hit count while the
+      window was open). A memoized function in `incomplete_memo` selects its
+      users whatever changed. Module and session fixture setups count for
+      every test that requests them; a module's collection counts for each of
+      its tests.
    S11 a test the map does not know runs (compare counts it as selected).
 """
 
@@ -860,8 +860,7 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
     incomplete = list(tmap.data.get("incomplete_memo", []))
     if incomplete:
         key_ids |= tmap.ids([*incomplete, *(k + MEMO for k in incomplete)])
-        key_ids |= tmap.ids(name_index().spread({k.rsplit(":", 1)[-1].rsplit(".", 1)[-1] for k in incomplete}))
-        reasons.append(f"{len(incomplete)} memoized functions have misses the map did not record: their callers run")
+        reasons.append(f"{len(incomplete)} memoized functions have misses the map did not record: their users run")
     open_ids = tmap.ids(opened)
     dir_ids = tmap.ids(listed)
     narrow: dict[int, bool] = {}
@@ -885,16 +884,13 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
             fp_hit[i] = found
         return found
 
-    # S10: a memoized function's users inherit what its misses ran. Users are
-    # the tests that marked a call of it and, since a hit runs no Python code
-    # and a call site is observed once per test, every test that ran a
-    # function naming it (the name index: callers, aliases, registries).
+    # S10: a memoized function's users (a miss in their window, or a call or
+    # hit the recorder marked) inherit what its misses ran.
     while True:
         new: set[int] = set()
         for name, i in tmap.cached.items():
             if name in tmap.key_id and tmap.key_id[name] not in key_ids and is_hit(i):
                 new |= tmap.ids({name, name + MEMO})
-                new |= tmap.ids(name_index().spread({name.rsplit(":", 1)[-1].rsplit(".", 1)[-1]}))
         if not new - key_ids:
             break
         key_ids |= new

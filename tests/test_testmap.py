@@ -339,28 +339,14 @@ def test_f6_a_selection_over_the_full_share_runs_everything() -> None:
 
 def test_s10_a_memoized_function_with_unrecorded_misses_runs_its_users_whatever_changed() -> None:
     tests = {"tests/test_c.py::test_hit": {"f": [f"{SRC}:helper@memo"]},
-             "tests/test_c.py::test_caller": {"f": [f"{OTHER}:reads"]}}
+             "tests/test_c.py::test_miss": {"f": [f"{SRC}:helper"]},
+             "tests/test_c.py::test_other": {"f": [f"{OTHER}:reads"]}}
     tmap = base_map(tests=tests)
     tmap["incomplete_memo"] = [f"{SRC}:helper"]
-    index = tm.NameIndex(funcs_by_ident={"helper": {f"{OTHER}:reads"}}, defined_from={}, universe={})
-    sel = run_select(tmap, [("M", "docs/readme.md")], index=index)
-    assert set(sel.selected) == {"tests/test_c.py::test_hit", "tests/test_c.py::test_caller"}
+    sel = run_select(tmap, [("M", "docs/readme.md")])
+    assert set(sel.selected) == {"tests/test_c.py::test_hit", "tests/test_c.py::test_miss"}
     tmap["incomplete_memo"] = []
-    assert run_select(tmap, [("M", "docs/readme.md")], index=index).selected == []
-
-
-def test_s10_a_miss_reached_by_a_change_selects_the_tests_that_ran_a_caller() -> None:
-    # The caller's test called the cache through a site it had already used
-    # for something else: no @memo mark. It ran reads(), which names helper.
-    tests = {"tests/test_c.py::test_unmarked": {"f": [f"{OTHER}:reads"]}}
-    tmap = base_map(tests=tests, cached={f"{SRC}:helper": {"f": [f"{SRC}:helper", f"{SRC}:work"]}})
-    index = tm.NameIndex(funcs_by_ident={"helper": {f"{OTHER}:reads"}}, defined_from={}, universe={})
-    sel = run_select(tmap, [("M", SRC)], py={SRC: changed("work")}, index=index)
-    assert "tests/test_c.py::test_unmarked" in sel.selected
-    # Positive control: no miss of helper ran work, so its callers are not reached.
-    tmap = base_map(tests=tests, cached={f"{SRC}:helper": {"f": [f"{SRC}:helper"]}})
-    assert "tests/test_c.py::test_unmarked" not in run_select(tmap, [("M", SRC)], py={SRC: changed("work")},
-                                                              index=index).selected
+    assert run_select(tmap, [("M", "docs/readme.md")]).selected == []
 
 
 # ---------------------------------------------------------------- drift: the map's commit before the base
