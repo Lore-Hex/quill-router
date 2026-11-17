@@ -175,8 +175,21 @@ locals {
   # b1d3dbcf9 rather than #2650's own merge (67f6442dc) because that
   # commit's CI hit an unrelated flaky test and published nothing; their
   # fastpath/ trees are identical. The nodes take it one at a time in
-  # either order.
-  fastpath_release        = "b1d3dbcf990d6f896a65c5fe1affc61e04eec923"
+  # either order. Both nodes run b1d3dbcf9 (node 16 since 01:13Z, node 15
+  # since 02:18Z on 2026-11-17).
+  # 2918dbbcf: the settle log hedges a publish call the server holds: at 1,
+  # 3 and 7 times the hedge delay (250ms, the release default;
+  # fastpath-settle-hedge overrides it, "0" turns it off on a node whose
+  # startup script passes the flag) it sends the same batch again, before
+  # the batch's deadline, within a per-node budget and never for a batch over
+  # the size cap (#2671). Every copy carries the same owner sequence numbers,
+  # so the auditor skips a duplicate as it skips a republish's. The
+  # nodes' startup script is not replaced on running nodes
+  # (ignore_changes), so on 15 and 16 the off switch is pinning b1d3dbcf9
+  # again. The other fastpath/ changes since b1d3dbcf9 are tests and test
+  # data (#2670, #2677, #2661). The nodes take it one at a time in either
+  # order.
+  fastpath_release        = "2918dbbcff831e82600ba23c0546cfeec49f70bd"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -201,6 +214,10 @@ locals {
     "b1d3dbcf990d6f896a65c5fe1affc61e04eec923" = {
       fastpath   = "b5e11ff14dcd52dc7e5ec65b6bd077bcfec9ff413ebaab19fb9b392677855b60"
       sha256sums = "50311ae074fb78935ab124abaa29117119ae0722671116f0225c0a2bf9defb96"
+    }
+    "2918dbbcff831e82600ba23c0546cfeec49f70bd" = {
+      fastpath   = "41f56868d8b3cce320da2ef14a1fcab28f159288d60d0e41a76215313d741c17"
+      sha256sums = "b4af0b6b0f1c2272cdc74d94311af804537f1a8fbaf1e54b35bd01d2bcd68642"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
