@@ -75,6 +75,7 @@
 
     if (copy && status) {
       copy.hidden = false;
+      const resting = copy.getAttribute("aria-label") || "Copy";
       // Clear the live region before each message so a repeat copy is
       // announced again, and empty it once the tick fades.
       const announce = (message) => {
@@ -88,9 +89,11 @@
           await navigator.clipboard.writeText(source.textContent.trim());
           announce("Copied.");
           copy.setAttribute("data-copied", "");
+          copy.setAttribute("aria-label", "Copied");
           window.clearTimeout(copiedTimer);
           copiedTimer = window.setTimeout(() => {
             copy.removeAttribute("data-copied");
+            copy.setAttribute("aria-label", resting);
             status.textContent = "";
           }, 1600);
         } catch {

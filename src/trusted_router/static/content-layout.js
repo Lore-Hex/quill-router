@@ -126,13 +126,7 @@
     document.fonts.ready.then(update);
     update();
   };
-  document.querySelectorAll(".content-section pre").forEach((pre) => {
-    const frame = document.createElement("div");
-    frame.className = "content-code-frame";
-    pre.before(frame);
-    frame.append(pre);
-    addScrollControls(pre, "code example", (controls) => frame.append(controls));
-  });
+  // Code examples scroll with the shared code block's own arrow (below).
   // Comparison tables: arrows sit above the table so the scroll is seen first.
   document.querySelectorAll(".scroll-table").forEach((wrap) => {
     // Pinned names like "trustedrouter/trev-1.0" may wrap only after the slash.
@@ -277,84 +271,230 @@
   });
 })();
 
-// Docs code blocks: a Copy button, and a fade while code is hidden to the right.
+// Code blocks: one shared component for every <pre> on public pages (the
+// NYTE code block standard). An Ink panel with a header strip inside it: a
+// short label (language or file) on the left; on the right a scroll arrow
+// while code is hidden to the right, and an icon-only Copy button. Existing
+// .copy-terminal and .green-code panels become the panel and their head
+// becomes the strip; an existing data-copy-target still names what is
+// copied. Tabbed quickstart boxes (.md-code), the homepage, chat output and
+// the console keep their own code.
 (() => {
   "use strict";
-  if (!document.body.hasAttribute("data-docs-code")) return;
-  // Lucide copy and check icons (ISC), the same copy shape as static/copy-icon.svg.
-  const icon = (shapes) => {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  if (document.body.classList.contains("console")) return;
+  const skip = ".mcode, .md-code, .fusion-answer, .chat-msg-md, [data-code-plain]";
+  const svgNS = "http://www.w3.org/2000/svg";
+  const icon = (className, paths) => {
+    const svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
-    shapes.forEach(([tag, attrs]) => {
-      const shape = document.createElementNS("http://www.w3.org/2000/svg", tag);
-      Object.entries(attrs).forEach(([name, value]) => shape.setAttribute(name, value));
-      svg.append(shape);
+    if (className) svg.setAttribute("class", className);
+    paths.forEach((d) => {
+      const path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", d);
+      svg.append(path);
     });
     return svg;
   };
-  const copyIcon = () => icon([
-    ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }],
-    ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }],
-  ]);
-  const checkIcon = () => icon([["path", { d: "M20 6 9 17l-5-5" }]]);
+  // The kit's copy and check shapes, as on the NYTE API page.
+  const copyPaths = ["M9 9 L20 9 L20 20 L9 20 L9 9", "M15 7.25 L15 4 L4 4 L4 15 L7.25 15"];
+  const donePaths = ["M4.5 12.5 L9.5 17.5 L19.5 7"];
+  const nextPaths = ["m9 5 7 7-7 7"];
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const collapseAfter = 10;
+
+  // Head labels name the language, a file, or describe the example. The strip
+  // shows the language (or file); a description names the Copy button.
+  const languages = new Map([
+    ["python", "Python"], ["typescript", "TypeScript"], ["javascript", "JavaScript"],
+    ["json", "JSON"], ["application/json", "JSON"], ["html", "HTML"], ["swift", "Swift"],
+    ["yaml", "YAML"], ["http", "HTTP"], ["prompt", "Prompt"], ["curl", "Shell"],
+    ["curl + jq", "Shell"], ["bash", "Shell"], ["shell", "Shell"], ["uvx", "Shell"],
+    ["environment", "Shell"],
+  ]);
+  const isFile = (text) => /^[\w.-]+\.[a-z]{1,5}$/i.test(text);
+  const guess = (code) => {
+    const text = code.trim();
+    // The first line that is not a comment says the most.
+    const first = text.split("\n").find((line) => line.trim() && !/^\s*(#(?!!)|\/\/)/.test(line)) || "";
+    if (/^[[{]/.test(first) || /^\s*"[\w.-]+"\s*:/.test(first)) return "JSON";
+    if (/^</.test(first)) return "HTML";
+    if (/^(GET|POST|PUT|PATCH|DELETE) \S/.test(first)) return "HTTP";
+    if (/^(\$ |#!|curl\b|export |pip3? |npm |npx |uvx? |git |docker |brew |claude |codex |openssl |wget |echo |jq |python3? )/.test(first)) return "Shell";
+    if (/^(from [\w.]+ import |import [\w.]+\s*$|import \w+ as |def |print\(|\w+ = OpenAI\(|\w+ = \w+(\.\w+)+\()/m.test(text)) return "Python";
+    if (/^(import .+ from ["']|const |let |await |export )/m.test(text)) return "JavaScript";
+    return "";
+  };
+
+  // Quiet highlighting: strings and values in lime, comments muted. Only
+  // plain text nodes are touched, so markup inside the code stays as it is.
+  const highlighters = {
+    Python: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|((?:^|(?<=\s))#[^\n]*)/g,
+    Shell: /("(?:[^"\\\n]|\\.)*"|'[^'\n]*')|((?:^|(?<=\s))#[^\n]*)/g,
+    JSON: /("(?:[^"\\\n]|\\.)*")()/g,
+    JavaScript: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`)|((?:^|(?<=\s))\/\/[^\n]*)/g,
+    TypeScript: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`)|((?:^|(?<=\s))\/\/[^\n]*)/g,
+    HTTP: /("(?:[^"\\\n]|\\.)*")()/g,
+    HTML: /("[^"\n]*")|(<!--[^]*?-->)/g,
+  };
+  const highlight = (pre, language) => {
+    const pattern = highlighters[language];
+    if (!pattern) return;
+    const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+    nodes.forEach((node) => {
+      const text = node.textContent;
+      const parts = [];
+      let last = 0;
+      for (const match of text.matchAll(pattern)) {
+        if (!match[0]) continue;
+        if (match.index > last) parts.push(text.slice(last, match.index));
+        const span = document.createElement("span");
+        span.className = match[1] ? "tr-code-s" : "tr-code-c";
+        span.textContent = match[0];
+        parts.push(span);
+        last = match.index + match[0].length;
+      }
+      if (!parts.length) return;
+      if (last < text.length) parts.push(text.slice(last));
+      node.replaceWith(...parts);
+    });
+  };
+
   document.querySelectorAll("pre").forEach((pre) => {
-    if (pre.closest(".content-code-frame")) return;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "docs-code-copy";
-    const show = (icon, label) => {
-      button.replaceChildren(icon());
-      button.setAttribute("aria-label", label);
-      button.title = label;
+    if (pre.closest(skip) || pre.closest(".tr-code")) return;
+    let panel = pre.closest(".copy-terminal, .green-code");
+    if (panel && panel.querySelectorAll("pre").length !== 1) panel = null;
+    const oldHead = panel?.querySelector(":scope > .code-head, :scope > .green-code-head") || null;
+    const oldButton = oldHead?.querySelector("button") || null;
+    const targetId = oldButton?.dataset.copyTarget || "";
+    const source = (targetId && document.getElementById(targetId)) || pre;
+
+    const parts = oldHead
+      ? [...oldHead.children].filter((el) => el.tagName !== "BUTTON")
+        .map((el) => el.textContent.trim()).filter(Boolean)
+      : [];
+    const language = parts.map((part) => languages.get(part.toLowerCase())).find(Boolean) || "";
+    const file = parts.find(isFile) || "";
+    const guessed = guess(pre.textContent);
+    const label = language || file || guessed || parts[0] || "Text";
+    const title = parts[0] && parts[0] !== label && !languages.has(parts[0].toLowerCase()) ? parts[0] : "";
+    const plain = label === "Text" || label === "Prompt";
+    const knownLanguage = [...languages.values(), "JavaScript"].includes(label);
+    const name = title || (plain ? label.toLowerCase() : knownLanguage ? `${label} code` : label);
+
+    if (!panel) {
+      panel = document.createElement("div");
+      pre.before(panel);
+      panel.append(pre);
+    }
+    panel.classList.add("tr-code");
+
+    const head = document.createElement("div");
+    head.className = "tr-code-head";
+    const labelText = document.createElement("span");
+    labelText.className = label === file ? "tr-code-label is-file" : "tr-code-label";
+    labelText.textContent = label;
+    const tools = document.createElement("span");
+    tools.className = "tr-code-tools";
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "tr-code-next";
+    next.setAttribute("aria-label", "Scroll code right");
+    next.title = "Scroll code right";
+    next.hidden = true;
+    next.append(icon("", nextPaths));
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "tr-code-copy";
+    const resting = `Copy ${name}`;
+    copy.setAttribute("aria-label", resting);
+    copy.title = resting;
+    if (targetId) copy.dataset.copyTarget = targetId;
+    copy.append(icon("tr-code-icon", copyPaths), icon("tr-code-done", donePaths));
+    tools.append(next, copy);
+    head.append(labelText, tools);
+    if (oldHead) oldHead.replaceWith(head);
+    else panel.prepend(head);
+
+    const status = document.createElement("span");
+    status.className = "tr-code-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "true");
+    panel.append(status);
+
+    highlight(pre, language || guessed);
+
+    let timer = 0;
+    const announce = (message) => {
+      status.textContent = "";
+      window.setTimeout(() => { status.textContent = message; }, 50);
     };
-    show(copyIcon, "Copy code");
-    button.addEventListener("click", async () => {
+    copy.addEventListener("click", async () => {
+      window.clearTimeout(timer);
       try {
-        await navigator.clipboard.writeText(pre.innerText.trim());
-        show(checkIcon, "Copied");
+        await navigator.clipboard.writeText(source.textContent.trim());
+        copy.classList.add("is-done");
+        copy.setAttribute("aria-label", "Copied");
+        copy.title = "Copied";
+        announce("Copied.");
       } catch {
         const selection = window.getSelection();
         const range = document.createRange();
-        range.selectNodeContents(pre);
+        range.selectNodeContents(source);
         selection?.removeAllRanges();
         selection?.addRange(range);
-        show(checkIcon, "Code selected");
+        announce("Code selected. Use your device's copy command.");
       }
-      setTimeout(() => show(copyIcon, "Copy code"), 2000);
+      timer = window.setTimeout(() => {
+        copy.classList.remove("is-done");
+        copy.setAttribute("aria-label", resting);
+        copy.title = resting;
+      }, 2000);
     });
-    const head = pre.closest(".copy-terminal")?.querySelector(":scope > .code-head");
-    if (head) {
-      // The Copy button takes the place of the language label.
-      const label = head.children.length > 1 ? head.lastElementChild : null;
-      if (label) label.replaceWith(button); else head.append(button);
-    } else {
-      const frame = document.createElement("div");
-      frame.className = "docs-code-frame";
-      pre.before(frame);
-      frame.append(button, pre);
-    }
+
+    // Lines never wrap; wide code scrolls inside the panel.
+    const ownsFocus = !pre.hasAttribute("tabindex");
     const update = () => {
-      pre.classList.toggle("can-scroll-right", pre.scrollWidth - pre.clientWidth - pre.scrollLeft > 1);
+      const max = pre.scrollWidth - pre.clientWidth;
+      next.hidden = !(max > 1 && pre.scrollLeft < max - 1);
+      if (!ownsFocus) return;
+      if (max > 1) {
+        pre.tabIndex = 0;
+        pre.setAttribute("aria-label", `${title || label}, scroll sideways for more`);
+      } else {
+        pre.removeAttribute("tabindex");
+        pre.removeAttribute("aria-label");
+      }
     };
+    next.addEventListener("click", () => {
+      pre.scrollBy({ left: pre.clientWidth * 0.75, behavior: reduceMotion.matches ? "instant" : "smooth" });
+    });
     pre.addEventListener("scroll", update, { passive: true });
     new ResizeObserver(update).observe(pre);
     document.fonts.ready.then(update);
     update();
-    // Long examples show their first lines on phones; copying still copies all of it.
-    const lines = pre.innerText.trim().split("\n").length;
+
+    // Docs pages: long examples show their first lines on phones; copying
+    // still copies all of it.
+    if (!document.body.hasAttribute("data-docs-code")) return;
+    const lines = pre.textContent.trim().split("\n").length;
     if (lines <= collapseAfter + 2) return;
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = "docs-code-more";
+    toggle.className = "tr-code-more";
     const setCollapsed = (collapsed) => {
       pre.classList.toggle("is-collapsed", collapsed);
       toggle.textContent = collapsed ? `Show all ${lines} lines` : "Show less";
       toggle.setAttribute("aria-expanded", String(!collapsed));
     };
-    toggle.addEventListener("click", () => setCollapsed(!pre.classList.contains("is-collapsed")));
+    toggle.addEventListener("click", () => {
+      setCollapsed(!pre.classList.contains("is-collapsed"));
+      update();
+    });
     pre.after(toggle);
     setCollapsed(true);
   });

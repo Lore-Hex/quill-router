@@ -87,6 +87,7 @@ document.querySelectorAll("[data-md-code]").forEach((code) => {
 
   if (copy && status) {
     copy.hidden = false;
+    const resting = copy.getAttribute("aria-label") || "Copy";
     copy.addEventListener("click", async () => {
       const source = activePanel()?.querySelector("code");
       if (!source) return;
@@ -94,7 +95,11 @@ document.querySelectorAll("[data-md-code]").forEach((code) => {
         await navigator.clipboard.writeText(source.textContent.trim());
         status.textContent = "Copied.";
         copy.setAttribute("data-copied", "");
-        window.setTimeout(() => copy.removeAttribute("data-copied"), 1600);
+        copy.setAttribute("aria-label", "Copied");
+        window.setTimeout(() => {
+          copy.removeAttribute("data-copied");
+          copy.setAttribute("aria-label", resting);
+        }, 1600);
       } catch {
         const selection = window.getSelection();
         if (selection) {

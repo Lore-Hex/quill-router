@@ -996,122 +996,369 @@ table.content-reference,
   }
 }
 
-/* Docs code blocks: Copy button in the header (or on its own line above the
-   code), and a fade on the right edge while code is hidden. */
-.docs-code-frame {
-  display: grid;
-  gap: var(--tr-space-stack-xs);
+/* Code blocks: one shared component (NYTE code block standard), built by
+   content-layout.js around every <pre> on public pages. Ink panel, square,
+   no border or shadow; a 48px header strip inside it with the label on the
+   left and an icon-only Copy button (and a scroll arrow while code is hidden
+   to the right) on the right. Lines never wrap; code scrolls in the panel.
+   Rules start at :root so page sheets loaded later cannot restyle the
+   panel. Colours fall back to the kit values outside the NYTE theme. */
+:root .tr-code {
+  --tr-code-ink: var(--nyte-ink, #151311);
+  --tr-code-cream: var(--nyte-cream, #FAF8F4);
+  --tr-code-lime: var(--nyte-lime, #C9E265);
+  --tr-code-muted: var(--nyte-ink-2-dark, #B9B2A8);
+  --tr-code-rule: var(--nyte-dark-rule, #3A3631);
+  --tr-code-sunken: var(--nyte-sunken, #221F1C);
+  --tr-code-pad-block: 24px;
+  --tr-code-pad-inline: 28px;
+
+  position: relative;
+  display: block;
+  box-sizing: border-box;
   min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
 }
 
-.docs-code-copy {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
+:root .tr-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  box-sizing: border-box;
+  height: 48px;
+  padding: 0 2px 0 var(--tr-code-pad-inline);
+  border-bottom: 1.5px solid var(--tr-code-rule);
+}
+
+:root .tr-code-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tr-code-muted);
+  font: 500 14px/1.2 "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+:root .tr-code-label.is-file {
+  font: 400 14px/1.2 var(--font-mono, var(--tr-font-family-mono));
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root .tr-code-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+:root :is(.tr-code-copy, .tr-code-next) {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--tr-color-line-rule);
-  border-radius: var(--tr-radius-panel);
-  background: var(--tr-color-surface-panel-inset);
-  color: var(--tr-color-text-primary);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--tr-code-cream);
   cursor: pointer;
 }
 
-.docs-code-copy svg {
-  width: 16px;
-  height: 16px;
+:root :is(.tr-code-copy, .tr-code-next)[hidden] {
+  display: none;
+}
+
+:root :is(.tr-code-copy, .tr-code-next) svg {
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentcolor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
-[data-docs-code] pre,
-[data-docs-code] pre code {
-  font-size: 13px;
-  line-height: 1.5;
+:root .tr-code-copy .tr-code-done,
+:root .tr-code-copy.is-done .tr-code-icon {
+  display: none;
 }
 
-/* iPhone Safari enlarges text in blocks that scroll sideways; keep code at
-   the size set here. */
-[data-docs-code] pre {
+:root .tr-code-copy.is-done .tr-code-done {
+  display: block;
+}
+
+:root :is(.tr-code-copy, .tr-code-next):hover {
+  background: var(--tr-code-sunken);
+}
+
+:root :is(.tr-code-copy, .tr-code-next):focus-visible {
+  outline: 2px solid var(--tr-code-cream);
+  outline-offset: -4px;
+}
+
+:root .tr-code pre {
+  display: block;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: var(--tr-code-pad-block) var(--tr-code-pad-inline);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--tr-code-cream);
+  font: 400 14px/1.7 var(--font-mono, var(--tr-font-family-mono));
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  tab-size: 2;
+  mask-image: none;
   /* stylelint-disable-next-line property-no-vendor-prefix -- iOS Safari only reads the prefixed form. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-/* The collapse only applies on phones. */
-.docs-code-more {
+:root .tr-code pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+  overflow-wrap: inherit;
+}
+
+:root .tr-code pre:focus-visible {
+  outline: 2px solid var(--tr-code-cream);
+  outline-offset: -2px;
+}
+
+/* Strings and values lime, comments muted */
+:root .tr-code .tr-code-s {
+  color: var(--tr-code-lime);
+}
+
+:root .tr-code .tr-code-c {
+  color: var(--tr-code-muted);
+}
+
+/* The provider application is an email template: prose lines wrap. */
+:root .tr-code pre.provider-application-template {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+:root .tr-code-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Body text before or after a code block keeps paragraph spacing. */
+:root :is(p, ul, ol, dl, h3, h4, blockquote, .muted-copy) + .tr-code {
+  margin-top: 16px;
+}
+
+:root .tr-code + :is(p, ul, ol, dl, h3, h4, blockquote, .tr-code) {
+  margin-top: 16px;
+}
+
+/* Status sections inset their text; the panel lines up with it. */
+:root .status-section > .tr-code {
+  margin-inline: 18px;
+}
+
+/* The collapse for long docs examples only applies on phones. */
+:root .tr-code-more {
   display: none;
 }
 
-.docs-code-copy:focus-visible {
-  outline: 2px solid var(--tr-color-focus);
-  outline-offset: 3px;
-}
-
-.docs-code-frame > .docs-code-copy {
-  justify-self: end;
-}
-
-/* Keep the button closer to its own code than to the block above. */
-.docs-code-frame {
-  margin-top: var(--tr-space-stack-xs);
-}
-
-.docs-code-frame > pre {
-  padding-top: var(--tr-space-stack-xs);
-}
-
-[data-docs-code] pre.can-scroll-right {
-  mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 56px), transparent);
+/* Inline code in body text: body colour, mono one pixel under body size,
+   no box. */
+:root body:not(.console) :is(p, li, dd) > code:not([class]) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--font-mono, var(--tr-font-family-mono));
+  font-size: calc(1em - 1px);
 }
 
 @media (max-width: 700px) {
-  .docs-code-copy {
-    width: 44px;
-    height: 44px;
+  :root .tr-code {
+    --tr-code-pad-block: 20px;
+    --tr-code-pad-inline: 20px;
   }
 
-  [data-docs-code] pre,
-  [data-docs-code] pre code {
-    font-size: 11.5px;
+  :root .tr-code pre.is-collapsed {
+    max-height: calc(10 * 1.7 * 14px + 20px);
   }
 
-  [data-docs-code] pre.is-collapsed {
-    max-height: calc(10 * 1.5 * 11.5px + var(--tr-space-stack-md));
-    overflow-y: hidden;
-    mask-image: linear-gradient(to bottom, var(--tr-legacy-000000, #000) calc(100% - 40px), transparent);
-  }
-
-  [data-docs-code] pre.is-collapsed.can-scroll-right {
-    mask-image:
-      linear-gradient(to bottom, var(--tr-legacy-000000, #000) calc(100% - 40px), transparent),
-      linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 56px), transparent);
-    mask-composite: intersect;
-  }
-
-  .docs-code-more {
+  :root .tr-code-more {
     display: block;
     width: 100%;
     min-height: 44px;
+    margin: 0;
+    padding: 0 20px;
     border: 0;
-    border-top: 1px solid var(--tr-color-line-rule);
+    border-top: 1.5px solid var(--tr-code-rule);
+    border-radius: 0;
     background: transparent;
-    color: var(--tr-color-link-base);
-    font-family: var(--tr-font-family-sans);
-    font-size: 14px;
-    font-weight: var(--tr-font-weight-medium);
+    color: var(--tr-code-cream);
+    font: 500 14px/1.2 var(--tr-font-family-sans);
+    text-align: left;
     cursor: pointer;
   }
 
-  .docs-code-more:focus-visible {
-    outline: 2px solid var(--tr-color-focus);
-    outline-offset: -2px;
+  :root .tr-code-more:focus-visible {
+    outline: 2px solid var(--tr-code-cream);
+    outline-offset: -4px;
+  }
+}
+
+/* Tabbed quickstart boxes (model and compare pages) take the same panel:
+   tabs in the strip instead of the label. Their footer stays on the page. */
+:root .md-code {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+:root .md-code-head {
+  gap: 16px;
+  height: 48px;
+  padding: 0 2px 0 28px;
+  border-bottom: 1.5px solid var(--nyte-dark-rule, #3A3631);
+  background: var(--nyte-ink, #151311);
+}
+
+:root .md-code .md-tabs {
+  gap: 24px;
+  align-self: stretch;
+}
+
+:root .md-code .md-tabs button {
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--nyte-ink-2-dark, #B9B2A8);
+  font: 500 14px/1.2 "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+:root .md-code .md-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--nyte-cream, #FAF8F4);
+  color: var(--nyte-cream, #FAF8F4);
+}
+
+:root .md-code .md-tabs button:focus-visible,
+:root .md-code .md-copy:focus-visible,
+:root .md-code .md-expand:focus-visible {
+  outline: 2px solid var(--nyte-cream, #FAF8F4);
+  outline-offset: -4px;
+}
+
+:root .md-code .md-copy {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+:root .md-code .md-copy:hover {
+  background: var(--nyte-sunken, #221F1C);
+}
+
+:root .md-code .md-copy-icon {
+  width: 20px;
+  height: 20px;
+  background: var(--nyte-cream, #FAF8F4);
+}
+
+:root .md-code .md-code-body {
+  background: var(--nyte-ink, #151311);
+}
+
+:root .md-code .md-code-panel pre {
+  padding: 24px 28px;
+  overflow-x: auto;
+  color: var(--nyte-cream, #FAF8F4);
+  font: 400 14px/1.7 var(--font-mono, var(--tr-font-family-mono));
+  white-space: pre;
+  overflow-wrap: normal;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- iOS Safari only reads the prefixed form. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+:root .md-code .md-model-id {
+  color: var(--nyte-lime, #C9E265);
+}
+
+:root .md-code .md-expand {
+  margin-top: 0;
+  background: var(--nyte-ink, #151311);
+  color: var(--nyte-cream, #FAF8F4);
+}
+
+:root .md-code .md-expand-icon {
+  border-color: var(--nyte-dark-rule, #3A3631);
+  background: var(--nyte-ink, #151311);
+}
+
+:root .md-code .md-code-foot {
+  padding: 16px 0 0;
+  border-top: 0;
+  background: transparent;
+}
+
+@media (max-width: 760px) {
+  :root .md-code-head {
+    padding-left: 20px;
   }
 
-  .copy-terminal .code-head:has(.docs-code-copy) {
-    padding-block: 6px;
+  :root .md-code .md-tabs {
+    gap: 20px;
+  }
+
+  :root .md-code .md-code-panel pre {
+    padding: 20px;
+    font-size: 14px;
+  }
+
+  /* The folded prompt ends at a straight edge: the kit has no fades. */
+  :root .md-code.md-collapsible:not(.md-expanded) .md-code-body {
+    mask-image: none;
   }
 }
