@@ -1,7 +1,7 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>Effective</strong><span>August 24, 2026</span></div>
+  <div><strong>Effective</strong><span>November 17, 2026</span></div>
   <div><strong>Controller</strong><span>{{ entity.name }}</span></div>
   <div><strong>Prompt and output logs</strong><span>Never</span></div>
   <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
@@ -9,7 +9,7 @@
 
 <section class="model-catalog legal-copy" data-substantive-content="privacy">
   <div class="model-catalog-head"><div><span class="eyebrow">Plain-language summary</span><h2>The privacy boundary, in brief</h2></div></div>
-  <p>TrustedRouter is operated by {{ entity.name }}. Ordinary inference requests are designed to pass through the attested gateway without becoming prompt or output logs. We retain the account, billing, security, and usage metadata needed to provide the service, and downstream model providers process requests according to the route you select. Batch is a separate, opt-in mode with encrypted temporary retention. This summary is not a replacement for the complete policy below.</p>
+  <p>TrustedRouter is operated by {{ entity.name }}. Ordinary inference requests are designed to pass through the attested gateway without becoming prompt or output logs. We retain the account, billing, security, and usage metadata needed to provide the service, and downstream model providers process requests according to the route you select. We may also combine usage metadata across customers into aggregated usage data that does not identify you, and license it to third parties. Batch is a separate, opt-in mode with encrypted temporary retention. This summary is not a replacement for the complete policy below.</p>
 
   <div class="model-catalog-head"><div><span class="eyebrow">Scope</span><h2>What this policy covers</h2></div></div>
   <p>This Privacy Policy explains how {{ entity.name }}, a {{ entity.type }}, collects, uses, discloses, and protects information when you use TrustedRouter websites, dashboards, APIs, SDKs, plugins, and related services.</p>
@@ -27,10 +27,10 @@
   <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service. Our first-party campaign cookie is encrypted, authenticated, HttpOnly, and limited to source, campaign, landing page, pseudonymous click fingerprints, an anonymous identifier, and, for Google ad traffic, Google's click identifier. It does not contain prompts, outputs, API keys, BYOK credentials, email addresses, or payment details. Google click identifiers are retained only as encrypted ciphertext outside the cookie, for up to 90 days. TrustedRouter honors browser Global Privacy Control and Do Not Track signals by not creating or using this attribution cookie for that request.</p>
 
   <h2>How we use information</h2>
-  <p>We use information to provide and secure the service, authenticate users, route requests, meter usage, process payments, prevent abuse, respond to support, maintain reliability, comply with law, and improve product performance. We do not use customer prompts or outputs to train our own models.</p>
+  <p>We use information to provide and secure the service, authenticate users, route requests, meter usage, process payments, prevent abuse, respond to support, maintain reliability, comply with law, and improve product performance. We do not use customer prompts or outputs to train our own models. We also use usage metadata, such as model, provider, provider region, provider list pricing, token counts and latency, to create aggregated usage data. Aggregated usage data is combined across customers, does not include prompts or outputs, and does not identify any customer, user, account, workspace or API key.</p>
 
   <h2>How we disclose information</h2>
-  <p>We disclose information to infrastructure, authentication, payment, communications, monitoring, and model-provider subprocessors as needed to provide the service. The current platform and downstream model-provider list is published at <a href="/legal/subprocessors">/legal/subprocessors</a>. We may also disclose information when required by law, to protect rights and safety, during a corporate transaction, or with your direction or consent.</p>
+  <p>We disclose information to infrastructure, authentication, payment, communications, monitoring, and model-provider subprocessors as needed to provide the service. The current platform and downstream model-provider list is published at <a href="/legal/subprocessors">/legal/subprocessors</a>. We may also disclose information when required by law, to protect rights and safety, during a corporate transaction, or with your direction or consent. We may license aggregated usage data to third parties, including providers of indexes and benchmarks.</p>
   <p>For a visitor who arrived through a Google ad, a server-side conversion worker may return Google's own click identifier, conversion class, event time, an opaque deduplication identifier, and, for a settled purchase, amount and currency to Google Ads. This reporting does not include email, name, account or workspace identifiers, API keys, model or provider choices, prompts, outputs, request bodies, or payment credentials. TrustedRouter does not load Google Analytics, Google Tag Manager, a Google Ads browser tag, or an X pixel.</p>
 
   <h2>Retention</h2>
