@@ -218,6 +218,22 @@ def test_s4_a_module_level_name_selects_what_names_it_transitively() -> None:
     assert not inert.full and inert.selected == []
 
 
+def test_s3_s4_select_the_tests_a_cache_served_not_only_those_that_missed() -> None:
+    # Review probe probe_s4_memo.py: a module-level PRICE_TABLE that an
+    # lru_cache function reads changed. The test that missed the cache ran
+    # price_for; the test the cache served has only "price_for@memo".
+    price = f"{SRC}:price_for"
+    tests = {"tests/test_p.py::test_miss": {"f": [price, price + "@memo"]},
+             "tests/test_p.py::test_hit": {"f": [price + "@memo"]}}
+    tmap = base_map(tests=tests, cached={price: {"f": [price]}})
+    s4 = tm.NameIndex(funcs_by_ident={"PRICE_TABLE": {price}}, defined_from={}, universe={})
+    sel = run_select(tmap, [("M", SRC)], py={SRC: changed(kinds=(("assign", "PRICE_TABLE"),))}, index=s4)
+    assert sel.selected == ["tests/test_p.py::test_hit", "tests/test_p.py::test_miss"]
+    s3 = tm.NameIndex(funcs_by_ident={"Thing": {price}}, defined_from={}, universe={})
+    sel = run_select(tmap, [("M", SRC)], py={SRC: changed(classes=("Thing",))}, index=s3)
+    assert sel.selected == ["tests/test_p.py::test_hit", "tests/test_p.py::test_miss"]
+
+
 def test_s3_a_class_change_selects_its_methods_and_what_names_it() -> None:
     tmap = base_map(tests={"tests/test_t.py::test_thing": {"f": [f"{SRC}:Thing.run"]}})
     sel = run_select(tmap, [("M", SRC)], py={SRC: changed(classes=("Thing",))})
@@ -248,6 +264,9 @@ def test_s7_a_data_file_selects_its_readers() -> None:
     ("git ls-files @cwd=.", False),                   # the repository itself
     ("git -C . rev-parse @cwd=-", False),
     ("git diff src/app/core.py @cwd=-", False),
+    ("git --work-tree=./src status @cwd=-", False),   # an option's value names the repository
+    ("git --work-tree=. status @cwd=-", False),
+    ("git --git-dir=<outside> log @cwd=-", True),
     ("python -c <program> @cwd=.", False),
     ("uv run python -m @cwd=.", False),
     ("env PYTHONPATH=<value> python3 -c @cwd=-", False),
@@ -346,6 +365,7 @@ def test_s10_a_memoized_function_with_unrecorded_misses_runs_its_users_whatever_
     sel = run_select(tmap, [("M", "docs/readme.md")])
     assert set(sel.selected) == {"tests/test_c.py::test_hit", "tests/test_c.py::test_miss"}
     tmap["incomplete_memo"] = []
+    tmap["unattributed_memo"] = []
     assert run_select(tmap, [("M", "docs/readme.md")]).selected == []
 
 
@@ -426,12 +446,32 @@ def test_failed_ids_matches_known_ids_exactly_spaces_included() -> None:
     assert not runs("tests/test_a.py::test_x[1 2]")
 
 
+def test_compare_counts_collection_errors_and_files_the_selection_would_not_collect(tmp_path: Path) -> None:
+    selection = {"full": False, "whole_files": ["tests/test_w.py"], "selected": ["tests/test_s.py::test_a"],
+                 "not_selected": ["tests/test_s.py::test_b", "tests/test_n.py::test_c", "tests/test_w.py::test_d"]}
+    tm.write_gz(selection, tmp_path / "selection.json.gz")
+    log = tmp_path / "shard.log"
+    log.write_text("ERROR tests/test_n.py - ImportError: cannot import name 'x'\n"   # no test of it selected
+                   "ERROR tests/test_s.py - ImportError: boom\n"                    # one of its tests selected
+                   "ERROR tests/test_w.py\n"                                        # runs whole
+                   "ERROR tests/test_new.py - SyntaxError\n")                       # unknown: runs (S11)
+    assert tm.failed_ids(log.read_text(), []) == {"module:tests/test_n.py", "module:tests/test_s.py",
+                                                  "module:tests/test_w.py", "module:tests/test_new.py"}
+    summary = tmp_path / "summary.md"
+    assert tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failed", str(log),
+                    "--summary", str(summary)]) == 0
+    text = summary.read_text()
+    assert "failures outside selection: 1 (module:tests/test_n.py)" in text
+    assert "of which 4 are collection errors" in text
+
+
 # ---------------------------------------------------------------- map validity and lookup
 
 
 def test_validate_map_checks_schema_recorder_event_shards_and_commit() -> None:
     good = base_map()
     good["incomplete_memo"] = []
+    good["unattributed_memo"] = []
     assert tm.validate_map(good) is None
     assert tm.validate_map(good, commit="a" * 40) is None
     for event in ("push", "schedule", "workflow_dispatch"):
@@ -497,6 +537,7 @@ def fake_api(artifacts: list[dict], runs: list[dict], maps: dict[int, dict]):
 def mapped(sha: str) -> dict:
     data = base_map(commit=sha)
     data["incomplete_memo"] = []
+    data["unattributed_memo"] = []
     data["event"] = "schedule"
     return data
 
@@ -541,6 +582,27 @@ def test_find_map_refuses_a_map_from_anything_but_its_own_workflow_on_main(tmp_p
     assert tm.find_map("o/r", REPO_ID, shas[0], root=root, api=api, now=NOW)[0]["commit"] == shas[1]
 
 
+def test_map_artifacts_reads_past_a_first_page_of_other_testmap_artifacts(tmp_path: Path) -> None:
+    root, shas = history(tmp_path, ["2026-11-17T10:00:00Z", "2026-11-17T11:00:00Z"])
+    forks = [artifact(100 + n, shas[0], head_repo_id=999) for n in range(100)]
+    real = artifact(1, shas[1])
+    runs = {r["id"]: r for r in [run(1, shas[1])]}
+
+    def api(path: str, raw: bool = False):
+        if path.endswith("/zip"):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as archive:
+                archive.writestr("testmap.json.gz", gzip.compress(json.dumps(mapped(shas[1])).encode()))
+            return buf.getvalue()
+        if "/artifacts?" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            return {"artifacts": forks if page == 1 else [real] if page == 2 else []}
+        return runs[int(path.rsplit("/", 1)[1])]
+
+    found, why = tm.find_map("o/r", REPO_ID, shas[0], root=root, api=api, now=NOW)
+    assert found is not None and found["commit"] == shas[1], why
+
+
 def test_find_map_orders_candidates_by_history_not_by_dates(tmp_path: Path) -> None:
     # The parent of the base claims to be from next year, its own parent from
     # last year: the order is the history's, so the parent's map is the nearest.
@@ -570,24 +632,46 @@ def test_needed_records_unless_nothing_the_map_reads_changed(tmp_path: Path) -> 
     (root / "docs").mkdir()
     (root / "docs/a.md").write_text("a\n")
     git(root, "init", "-q", "-b", "main")
-    git(root, "add", ".")
-    git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "mapped")
-    mapped_sha = git(root, "rev-parse", "HEAD")
-    api = fake_api([artifact(1, mapped_sha)], [run(1, mapped_sha)], {})
-    assert tm.needed("o/r", REPO_ID, mapped_sha, root=root, api=api)[0] is False
+    mapped_sha = commit_all(root, "mapped")
+    api = fake_api([artifact(1, mapped_sha)], [run(1, mapped_sha)], {1: mapped(mapped_sha)})
+    assert tm.needed("o/r", REPO_ID, mapped_sha, root=root, api=api, now=NOW)[0] is False
     (root / "docs/a.md").write_text("b\n")
-    git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "docs")
-    docs_sha = git(root, "rev-parse", "HEAD")
-    assert tm.needed("o/r", REPO_ID, docs_sha, root=root, api=api)[0] is False
-    assert tm.needed("o/r", REPO_ID, docs_sha, root=root, api=api, force=True)[0] is True
+    docs_sha = commit_all(root, "docs")
+    assert tm.needed("o/r", REPO_ID, docs_sha, root=root, api=api, now=NOW)[0] is False
+    assert tm.needed("o/r", REPO_ID, docs_sha, root=root, api=api, now=NOW, force=True)[0] is True
     (root / "src/a.py").write_text("x = 2\n")
-    git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "code")
-    code_sha = git(root, "rev-parse", "HEAD")
-    record, why = tm.needed("o/r", REPO_ID, code_sha, root=root, api=api)
+    code_sha = commit_all(root, "code")
+    record, why = tm.needed("o/r", REPO_ID, code_sha, root=root, api=api, now=NOW)
     assert record and "src/a.py" in why
-    # A fork's artifact is not a map: nothing valid exists, so record.
-    fork = fake_api([artifact(1, code_sha, head_repo_id=999)], [run(1, code_sha)], {})
-    assert tm.needed("o/r", REPO_ID, code_sha, root=root, api=fork) == (True, "there is no valid map yet")
+
+
+@pytest.mark.parametrize("unusable", ["fork artifact", "uploaded too long ago", "other recorder version",
+                                      "beyond the distance"])
+def test_needed_records_when_the_newest_map_is_unusable(tmp_path: Path, unusable: str) -> None:
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs/a.md").write_text("a\n")
+    git(root, "init", "-q", "-b", "main")
+    mapped_sha = commit_all(root, "mapped")
+    head = mapped_sha
+    art, data = artifact(1, mapped_sha), mapped(mapped_sha)
+    if unusable == "fork artifact":
+        art = artifact(1, mapped_sha, head_repo_id=999)
+    elif unusable == "uploaded too long ago":
+        art = artifact(1, mapped_sha, created="2026-11-14T00:00:00Z")
+    elif unusable == "other recorder version":
+        data = {**data, "recorder": "0"}
+    else:
+        for n in range(tm.MAX_DISTANCE + 1):  # docs only: nothing the map reads changed
+            (root / "docs/a.md").write_text(str(n))
+            head = commit_all(root, f"docs {n}")
+    record, why = tm.needed("o/r", REPO_ID, head, root=root, api=fake_api([art], [run(1, mapped_sha)], {1: data}),
+                            now=NOW)
+    assert record and "no usable map" in why, why
+    # Positive control: the same map, usable, at the same head.
+    if unusable != "beyond the distance":
+        good = fake_api([artifact(1, mapped_sha)], [run(1, mapped_sha)], {1: mapped(mapped_sha)})
+        assert tm.needed("o/r", REPO_ID, head, root=root, api=good, now=NOW)[0] is False
 
 
 # ---------------------------------------------------------------- compact and merge
@@ -696,7 +780,7 @@ def test_shadow_and_compare_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     summary = tmp_path / "summary.md"
     out = tmp_path / "selection.json.gz"
     # The map is of the base: the pull request changes docs no test reads.
-    tmap = {**build_map(tests, commit=base, **universe), "incomplete_memo": []}
+    tmap = {**build_map(tests, commit=base, **universe), "incomplete_memo": [], "unattributed_memo": []}
     tm.write_gz(tmap, tmp_path / "map.json.gz")
     assert tm.main(["shadow", "--base", base, "--head", head, "--map", str(tmp_path / "map.json.gz"),
                     "--out", str(out), "--summary", str(summary)]) == 0
@@ -705,7 +789,7 @@ def test_shadow_and_compare_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     assert selection["selected"] == []
     # The map is of the commit before the base: work() changed in between,
     # so the tests that ran it are selected although the pull request did not touch it.
-    tmap = {**build_map(tests, commit=mapped_sha, **universe), "incomplete_memo": []}
+    tmap = {**build_map(tests, commit=mapped_sha, **universe), "incomplete_memo": [], "unattributed_memo": []}
     tm.write_gz(tmap, tmp_path / "map.json.gz")
     assert tm.main(["shadow", "--base", base, "--head", head, "--map", str(tmp_path / "map.json.gz"),
                     "--out", str(out), "--summary", str(summary)]) == 0
@@ -720,7 +804,7 @@ def test_shadow_and_compare_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
     assert tm.main(["compare", "--selection", str(out), "--failed", str(log), "--summary", str(summary)]) == 0
     text = summary.read_text()
     assert "failures outside selection: 1 (tests/test_core.py::test_two words[a b])" in text
-    assert "failures in this run: 3, of which 1 are tests the map does not know" in text
+    assert "failures in this run: 3, of which 0 are collection errors and 1 are tests the map does not know" in text
 
 
 def test_shadow_refuses_a_map_whose_commit_is_not_an_ancestor_of_the_base(tmp_path: Path,
@@ -733,7 +817,8 @@ def test_shadow_refuses_a_map_whose_commit_is_not_an_ancestor_of_the_base(tmp_pa
     (root / "src/a.py").write_text("x = 2\n")
     newer = commit_all(root, "after the base")
     monkeypatch.chdir(root)
-    tm.write_gz({**build_map(many(3), commit=newer), "incomplete_memo": []}, tmp_path / "map.json.gz")
+    tm.write_gz({**build_map(many(3), commit=newer), "incomplete_memo": [], "unattributed_memo": []},
+                tmp_path / "map.json.gz")
     out = tmp_path / "selection.json.gz"
     assert tm.main(["shadow", "--base", base, "--head", base, "--map", str(tmp_path / "map.json.gz"),
                     "--out", str(out), "--summary", str(tmp_path / "s.md")]) == 0
@@ -765,5 +850,5 @@ def test_needed_prints_only_github_output_lines_on_stdout(tmp_path: Path, monkey
     assert tm.main(["needed", "--repo", "o/r", "--head", head, "--summary", str(summary)]) == 0
     out = capsys.readouterr().out
     assert out.splitlines() == ["record=true"]  # GITHUB_OUTPUT takes stdout whole
-    assert "Test map: recording" in summary.read_text() and "there is no valid map yet" in summary.read_text()
+    assert "Test map: recording" in summary.read_text() and "no usable map" in summary.read_text()
 

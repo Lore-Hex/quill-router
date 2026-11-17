@@ -29,9 +29,14 @@ What a footprint holds (the recorder's docstring has how it is recorded):
 A test's footprint is its own window (setup, call and teardown), its module's
 collection and the setup of every module/class/package/session fixture it
 requests. `cached` holds what each memoized function's misses ran (every
-miss; `incomplete_memo` lists any function that missed past the recorder's
-safety bound). `global` is what ran outside every window:
-imports, session hooks, collection hooks, and misses at import time.
+miss), and what every call of a function that keeps a cache by hand ran (a
+module global it assigns, a private global or attribute named like a cache:
+the recorder's docstring lists them and what is not covered).
+`incomplete_memo` lists any function whose misses were not all recorded (past
+the recorder's safety bound, or a cache tracked only after its first use);
+`unattributed_memo` any cache that served a hit no window recorded. `global`
+is what ran outside every window: imports, session hooks, collection hooks,
+and misses at import time.
 
 Selection rules (the full suite runs on any fail-safe; reasons are reported).
 The changes are the pull request's (base..head) and, as drift, those between
@@ -50,7 +55,8 @@ changed since the map selects what ran it like one the pull request changed.
       dates) within MAX_DISTANCE commits, uploaded within MAX_AGE_HOURS by
       the server's clock; a map that is unreadable, of another schema or
       recorder version, or not from all of its shards; a map whose commit
-      is not an ancestor of the base.
+      is not an ancestor of the base; a map with any `unattributed_memo`
+      (nothing names the tests that cache served; checked in select).
    F3 a file the pull request changed that is read outside every window (at
       import or session time), or a changed function (pull request or
       drift) that ran outside every window (at import: main.py builds its
@@ -94,8 +100,10 @@ changed since the map selects what ran it like one the pull request changed.
       the tests in whose window it missed, and those the recorder marked as
       calling it or served by its cache (a hit runs no Python code: the
       recorder marks a call, and a rise in the cache's hit count while the
-      window was open). A memoized function in `incomplete_memo` selects its
-      users whatever changed. Module and session fixture setups count for
+      window was open). A function that keeps a cache by hand selects the
+      tests that called it when a change reaches what any of its calls ran.
+      A memoized function in `incomplete_memo` selects its users whatever
+      changed. Module and session fixture setups count for
       every test that requests them; a module's collection counts for each of
       its tests.
    S11 a test the map does not know runs (compare counts it as selected).
@@ -128,7 +136,7 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "2"
+RECORDER_VERSION = "3"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
@@ -202,6 +210,7 @@ def compact(raw_dir: Path, shard: int) -> dict:
     collect: dict[str, dict[str, set[str]]] = defaultdict(_empty)
     cached: dict[str, dict[str, set[str]]] = defaultdict(_empty)
     incomplete: set[str] = set()
+    unattributed: set[str] = set()
     glob_fp = _empty()
     errors: list[str] = []
     headers: list[dict] = []
@@ -239,6 +248,8 @@ def compact(raw_dir: Path, shard: int) -> dict:
                     _union(cached[record["cf"]], record)
                 elif "mi" in record:
                     incomplete.add(record["mi"])
+                elif "um" in record:
+                    unattributed.add(record["um"])
                 elif "g" in record:
                     _union(glob_fp, record)
         if not ended:
@@ -268,6 +279,7 @@ def compact(raw_dir: Path, shard: int) -> dict:
         "collect": {m: interner.fp(v[k] for k in PARTS) for m, v in sorted(collect.items())},
         "cached": {c: interner.fp(v[k] for k in PARTS) for c, v in sorted(cached.items())},
         "incomplete_memo": sorted(incomplete),
+        "unattributed_memo": sorted(unattributed),
         "global": interner.fp(glob_fp[k] for k in PARTS),
     }
 
@@ -294,6 +306,7 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
     collect: dict[str, set[int]] = defaultdict(set)
     cached: dict[str, set[int]] = defaultdict(set)
     incomplete: set[str] = set()
+    unattributed: set[str] = set()
     globals_: set[int] = set()
     for fragment in fragments:
         for nodeid, rt, fx in fragment["tests"]:
@@ -305,6 +318,7 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
         for key, i in fragment["cached"].items():
             cached[key].add(remap(fragment, i))
         incomplete.update(fragment.get("incomplete_memo", ()))
+        unattributed.update(fragment.get("unattributed_memo", ()))
         globals_.add(remap(fragment, fragment["global"]))
 
     def joined(ids: set[int]) -> int:
@@ -324,6 +338,7 @@ def merge(fragments: list[dict], *, shards: int, commit: str, ref: str, event: s
         "collect": {m: joined(ids) for m, ids in sorted(collect.items())},
         "cached": {c: joined(ids) for c, ids in sorted(cached.items())},
         "incomplete_memo": sorted(incomplete),
+        "unattributed_memo": sorted(unattributed),
         "global": joined(globals_),
         "memoized": sorted({k[: -len(MEMO)] for k in interner.keys if k.endswith(MEMO)}),
         "universe_files": sorted(index.universe),
@@ -651,7 +666,8 @@ def validate_map(data: dict, *, commit: str | None = None) -> str | None:
         return f"map has fragments {data.get('fragments')} of {data.get('shards')} shards, expected {SHARDS}"
     if commit is not None and data.get("commit") != commit:
         return f"map commit {data.get('commit')} is not {commit}"
-    for name in ("keys", "fps", "tests", "collect", "cached", "memoized", "incomplete_memo", "global"):
+    for name in ("keys", "fps", "tests", "collect", "cached", "memoized", "incomplete_memo", "unattributed_memo",
+                 "global"):
         if name not in data:
             return f"map has no {name}"
     return None
@@ -702,7 +718,10 @@ def command_is_narrow(cmd: str) -> bool:
     if exe in NARROW_COMMANDS:
         return True
     if exe == "git":
-        return cwd == "-" and not any(tok == "." or "/" in tok and not tok.startswith("<") for tok in toks[1:])
+        # A repository path among its words (--work-tree=src: an option's
+        # value counts) means it reads the repository.
+        values = [tok.split("=", 1)[-1] for tok in toks[1:]]
+        return cwd == "-" and not any(v == "." or "/" in v and not v.startswith("<") for v in values)
     return False
 
 
@@ -754,8 +773,8 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
            index: Callable[[], NameIndex], weights: dict[str, float], drift: Drift | None = None) -> Selection:
     """Rules S1-S10 and fail-safes F1, F3-F7 over the pull request's changes
     and, as drift, the changes between the map's commit and the base (F2, the
-    map's validity, and the ci:full label are the caller's; S11 is
-    `membership`)."""
+    map's validity, and the ci:full label are the caller's, except a map's
+    `unattributed_memo`; S11 is `membership`)."""
     commit = str(tmap.data.get("commit", ""))
     reasons: list[str] = []
     drift = drift or Drift([], classify)
@@ -765,6 +784,10 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
 
     if not changes:
         return full("the comparison is empty")
+    unattributed = tmap.data.get("unattributed_memo") or []
+    if unattributed:  # F2
+        return full(f"the map has {len(unattributed)} memoized functions whose cache served tests it cannot name"
+                    f" ({', '.join(unattributed[:3])})")
     every = [(change, False) for change in changes] + [(change, True) for change in drift.changes]
     for change, drifted in every:  # F1, F7
         path = change.path
@@ -851,6 +874,10 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
     if static_reach:
         reasons.append(f"{len(static_reach)} test files import or name a changed helper")
 
+    # A selected function selects the tests its cache served too: every key
+    # has its "@memo" twin (S2 adds it itself; S3 and S4 reach keys through
+    # the name index, which knows only plain keys).
+    keys |= {key + MEMO for key in keys if not key.endswith(MEMO)}
     key_ids = tmap.ids(keys)
     for path in files:
         prefix = f"{path}:"
@@ -889,8 +916,9 @@ def select(changes: list[cs.Change], tmap: TestMap, *, root: Path, classify: Cal
     while True:
         new: set[int] = set()
         for name, i in tmap.cached.items():
-            if name in tmap.key_id and tmap.key_id[name] not in key_ids and is_hit(i):
-                new |= tmap.ids({name, name + MEMO})
+            twins = tmap.ids({name, name + MEMO})
+            if not twins <= key_ids and is_hit(i):
+                new |= twins
         if not new - key_ids:
             break
         key_ids |= new
@@ -992,21 +1020,34 @@ def repository_id(repo: str, api: Callable[..., object] | None = None) -> int:
     return int((api or gh_api)(f"repos/{repo}")["id"])  # type: ignore[index]
 
 
-def map_artifacts(repo: str, repo_id: int, api: Callable[..., object]) -> dict[str, dict]:
+MAX_ARTIFACT_PAGES = 10
+
+
+def map_artifacts(repo: str, repo_id: int, api: Callable[..., object],
+                  now: datetime | None = None) -> dict[str, dict]:
     """Unexpired `testmap` artifacts of this repository's own runs on main,
     newest per commit. A fork's pull request run can upload an artifact with
-    the same name and a branch called main: its head repository is not ours."""
-    listing = api(f"repos/{repo}/actions/artifacts?name={ARTIFACT}&per_page=100")
+    the same name and a branch called main: its head repository is not ours.
+    Every page is read (newest first) until the artifacts are older than
+    MAX_AGE_HOURS, so a flood of other `testmap` artifacts cannot push a real
+    map off the first page; MAX_ARTIFACT_PAGES bounds the walk."""
+    now = now or datetime.now(UTC)
     by_sha: dict[str, dict] = {}
-    for art in (listing or {}).get("artifacts", []) if isinstance(listing, dict) else []:
-        run = art.get("workflow_run") or {}
-        if art.get("expired") or art.get("name") != ARTIFACT or run.get("head_branch") != "main":
-            continue
-        if run.get("repository_id") != repo_id or run.get("head_repository_id") != repo_id:
-            continue
-        sha = run.get("head_sha")
-        if sha and (sha not in by_sha or art.get("created_at", "") > by_sha[sha].get("created_at", "")):
-            by_sha[sha] = art
+    for page in range(1, MAX_ARTIFACT_PAGES + 1):
+        listing = api(f"repos/{repo}/actions/artifacts?name={ARTIFACT}&per_page=100&page={page}")
+        artifacts = (listing or {}).get("artifacts", []) if isinstance(listing, dict) else []
+        for art in artifacts:
+            run = art.get("workflow_run") or {}
+            if art.get("expired") or art.get("name") != ARTIFACT or run.get("head_branch") != "main":
+                continue
+            if run.get("repository_id") != repo_id or run.get("head_repository_id") != repo_id:
+                continue
+            sha = run.get("head_sha")
+            if sha and (sha not in by_sha or art.get("created_at", "") > by_sha[sha].get("created_at", "")):
+                by_sha[sha] = art
+        created = [c for c in (_created(a) for a in artifacts) if c is not None]
+        if len(artifacts) < 100 or (created and all((now - c).total_seconds() > MAX_AGE_HOURS * 3600 for c in created)):
+            break
     return by_sha
 
 
@@ -1046,7 +1087,7 @@ def find_map(repo: str, repo_id: int, base: str, *, root: Path, api: Callable[..
     candidates = first_parents(root, base, MAX_DISTANCE + 1)
     if not candidates:
         return None, f"the history of {base[:12]} could not be read"
-    artifacts = map_artifacts(repo, repo_id, api)
+    artifacts = map_artifacts(repo, repo_id, api, now)
     skipped: list[str] = []
     for distance, sha in enumerate(candidates):
         art = artifacts.get(sha)
@@ -1073,28 +1114,26 @@ def find_map(repo: str, repo_id: int, base: str, *, root: Path, api: Callable[..
 
 
 def needed(repo: str, repo_id: int, head: str, *, root: Path, force: bool = False,
-           api: Callable[..., object] | None = None) -> tuple[bool, str]:
-    """Should the map workflow record? Not when the newest valid map's commit
-    and `head` agree on everything the map is built from (MAP_INPUTS)."""
+           api: Callable[..., object] | None = None, now: datetime | None = None) -> tuple[bool, str]:
+    """Should the map workflow record? Not when the newest map a pull request
+    on `head` could use (find_map: provenance, first-parent distance, age,
+    validity) agrees with `head` on everything the map is built from
+    (MAP_INPUTS). No usable map: record."""
     if force:
         return True, "a dispatch asked for a map"
-    api = api or gh_api
-    newest = sorted(map_artifacts(repo, repo_id, api).items(), key=lambda kv: kv[1].get("created_at", ""), reverse=True)
-    for sha, art in newest:
-        if run_problem(repo, repo_id, art, sha, api) is not None:
-            continue
-        if sha == head:
-            return False, f"the newest map is of {head[:12]} already"
-        subprocess.run(["git", "-C", str(root), "fetch", "-q", "--depth=1", "origin", sha],  # noqa: S603,S607 -- git and gh, fixed argv
-                       capture_output=True, check=False)
-        try:
-            changed = git(root, "diff", "--name-only", sha, head, "--", *MAP_INPUTS).split()
-        except subprocess.CalledProcessError:
-            return True, f"{sha[:12]}, the newest map's commit, cannot be compared with {head[:12]}"
-        if changed:
-            return True, f"{len(changed)} files the map is built from changed since {sha[:12]} (first: {changed[0]})"
-        return False, f"nothing the map is built from changed since {sha[:12]}"
-    return True, "there is no valid map yet"
+    found, why = find_map(repo, repo_id, head, root=root, api=api, now=now)
+    if found is None:
+        return True, f"there is no usable map ({why})"
+    sha = str(found["commit"])
+    if sha == head:
+        return False, f"the newest usable map is of {head[:12]} already"
+    try:
+        changed = git(root, "diff", "--name-only", sha, head, "--", *MAP_INPUTS).split()
+    except subprocess.CalledProcessError:
+        return True, f"{sha[:12]}, the newest usable map's commit, cannot be compared with {head[:12]}"
+    if changed:
+        return True, f"{len(changed)} files the map is built from changed since {sha[:12]} (first: {changed[0]})"
+    return False, f"nothing the map is built from changed since {sha[:12]}"
 
 
 # ---------------------------------------------------------------- reports
@@ -1116,7 +1155,9 @@ def summary_lines(sel: Selection, total_tests: int) -> list[str]:
 
 
 SUMMARY_LINE = re.compile(r"(?:^|\s)(?:FAILED|ERROR) (tests/.*)$")
+COLLECTION_ERROR = re.compile(r"(?:^|\s)ERROR (tests/\S+\.py)(?: - .*)?$")
 UNKNOWN = "unknown:"
+MODULE = "module:"
 
 
 def failed_ids(log: str, known: Iterable[str]) -> set[str]:
@@ -1124,7 +1165,9 @@ def failed_ids(log: str, known: Iterable[str]) -> set[str]:
     "<status> <node id>[ - <message>]" and a node ID may hold spaces, so a
     line is matched against the known IDs (the map's) of its file, longest
     first; a line no known ID matches is "unknown:<line>": a test the map
-    does not know, which the selection runs (S11)."""
+    does not know, which the selection runs (S11). "ERROR <file>.py[ - ...]",
+    with no "::", is a collection error (an import error, say): every test of
+    the file failed; it is "module:<file>"."""
     by_file: dict[str, list[str]] = defaultdict(list)
     for test_id in known:
         by_file[test_id.split("::")[0]].append(test_id)
@@ -1132,7 +1175,12 @@ def failed_ids(log: str, known: Iterable[str]) -> set[str]:
         ids.sort(key=len, reverse=True)
     out: set[str] = set()
     for line in log.splitlines():
-        m = SUMMARY_LINE.search(line.rstrip("\r"))
+        line = line.rstrip("\r")
+        collection = COLLECTION_ERROR.search(line)
+        if collection:
+            out.add(MODULE + collection.group(1))
+            continue
+        m = SUMMARY_LINE.search(line)
         if not m or "::" not in m.group(1):
             continue
         rest = m.group(1)
@@ -1224,12 +1272,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     failed |= failed_ids(log.decode("utf-8", "replace"), known)  # type: ignore[union-attr]
         runs = membership(selection)
         unknown = sorted(t for t in failed if t.startswith(UNKNOWN))
-        outside = sorted(t for t in failed if not t.startswith(UNKNOWN) and not runs(t))
+        modules = sorted(t for t in failed if t.startswith(MODULE))
+        outside = sorted(t for t in failed if not t.startswith((UNKNOWN, MODULE)) and not runs(t))
+        # A collection error is outside the selection when the selection runs
+        # no test of that file (pytest would not collect it). A file the map
+        # does not know runs (S11).
+        runs_file = {t.split("::")[0] for t in known if runs(t)} | set(selection.get("whole_files", ()))
+        known_files = {t.split("::")[0] for t in known}
+        outside += [m for m in modules if not selection.get("full")
+                    and m[len(MODULE):] in known_files and m[len(MODULE):] not in runs_file]
         if selection.get("full"):
             lines.append(f"The shadow selection ran the full suite ({'; '.join(selection.get('reasons', [])[:1])}).")
         lines.append(f"failures outside selection: {len(outside)}" + (f" ({', '.join(outside[:50])})" if outside else ""))
-        lines.append(f"failures in this run: {len(failed)}, of which {len(unknown)} are tests the map does not know"
-                     " (the selection runs those)")
+        lines.append(f"failures in this run: {len(failed)}, of which {len(modules)} are collection errors and"
+                     f" {len(unknown)} are tests the map does not know (the selection runs those)")
     except Exception as error:  # report only
         lines.append(f"the comparison failed ({type(error).__name__}: {error})")
     _write_summary(args.summary, lines)

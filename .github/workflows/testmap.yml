@@ -16,8 +16,11 @@ name: Test map
 #
 # Every three hours, recording only when main's head differs from the newest
 # valid map's commit in something the map is built from (testmap.py's
-# MAP_INPUTS); a dispatch can force a run. Runs queue rather than cancel each
-# other: a cancelled run would leave no map. The shards run ci.yml's test
+# MAP_INPUTS); a dispatch can force a run. A running recording is never
+# cancelled (cancel-in-progress is off: a cancelled run leaves no map). GitHub
+# keeps at most one run pending per concurrency group and replaces a pending
+# run with a newer one rather than queueing it; the newer run records main's
+# newer head, so the replaced one loses nothing. The shards run ci.yml's test
 # selection with the same services, without coverage, which the recorder does
 # not need.
 on:

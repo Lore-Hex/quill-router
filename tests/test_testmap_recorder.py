@@ -190,6 +190,11 @@ def test_p_spawn_words(tmp_path):
     subprocess.run(["true", str(tmp_path), "x" * 500, "SECRET_TOKEN=hunter2"], check=False)
     subprocess.run([sys.executable, "-c", "print('secret program text')"], check=False)
     subprocess.run(["env", "FOO=bar", "true"], check=False)
+    subprocess.run(["true", "--password=hunter3", "--token", "tok123"], check=False)
+    subprocess.run(["true", "-H", "Authorization: Bearer tok456", "https://user:pw789@example.com/p?q=sec0"],
+                   check=False)
+    subprocess.run(["true", "-e", "console.log('js secret')"], check=False)
+    subprocess.run(["true", "--work-tree=" + os.path.join(HERE, "src"), "--format=%H"], check=False)
 
 
 def test_q_thread_misses():
@@ -372,6 +377,13 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     assert f"{os.path.basename(sys.executable)} -c <program> @cwd=." in spawns
     assert "env FOO=<value> true @cwd=." in spawns
     assert "secret program text" not in spawns and "hunter2" not in spawns and str(tmp_path) not in spawns
+    # Option values, a header, a URL's user, password and query, -e program text.
+    assert "true --password=<value> --token <value> @cwd=." in spawns
+    assert "true -H <value> https://example.com/p @cwd=." in spawns
+    assert "true -e <program> @cwd=." in spawns
+    assert "true --work-tree=./src --format=%H @cwd=." in spawns
+    for secret in ("hunter3", "tok123", "tok456", "pw789", "sec0", "js secret"):
+        assert secret not in spawns, secret
     assert "x" * 201 not in spawns
     # Misses on other threads are recorded on their own (and the shard stays valid).
     assert "src/pkg/core.py:spread" in fragment["cached"]
@@ -454,6 +466,324 @@ def test_an_error_in_a_callback_never_reaches_the_test(tmp_path: Path, attribute
     assert "2 passed" in result.stdout
     assert not fragment["valid"]
     assert any(f"{callback}: RuntimeError: boom" in e for e in fragment["errors"]), fragment["errors"]
+
+
+def test_a_failure_to_name_a_window_stops_the_recorder_not_the_test(tmp_path: Path) -> None:
+    tests = '''
+import pytest
+
+import scripts.ci.testmap_recorder as recorder
+
+
+def boom(*args, **kwargs):
+    raise RuntimeError("boom")
+
+
+def test_a_breaks_the_fixture_key():
+    recorder._fixture_key = boom
+
+
+@pytest.fixture(scope="module")
+def scoped():
+    return 1
+
+
+def test_b_uses_a_module_fixture(scoped):
+    assert scoped == 1
+
+
+def test_c_later_tests_still_run():
+    assert True
+'''
+    fragment, result = recorded(project(tmp_path, tests=tests), tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "3 passed" in result.stdout
+    assert not fragment["valid"]
+    assert any("fx: RuntimeError: boom" in e for e in fragment["errors"]), fragment["errors"]
+
+
+CACHES = '''
+import asyncio
+import contextvars
+import functools
+import threading
+
+
+def leaf():
+    return 7
+
+
+def inner_b():
+    return 2
+
+
+def inner_c():
+    return 3
+
+
+def inner_d():
+    return 4
+
+
+def inner_e():
+    return 5
+
+
+def inner_f():
+    return 6
+
+
+@functools.lru_cache(maxsize=None)
+def via_c_only():
+    return inner_c()
+
+
+@functools.lru_cache(maxsize=None)
+def via_partial():
+    return inner_d()
+
+
+@functools.lru_cache(maxsize=None)
+def first_through_c():
+    return leaf()
+
+
+_CACHE = {}
+
+
+def handrolled():
+    if "k" not in _CACHE:
+        _CACHE["k"] = inner_b()
+    return _CACHE["k"]
+
+
+_CLIENT = None
+
+
+def client():
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = inner_e()
+    return _CLIENT
+
+
+_ASYNC_VALUE = None
+
+
+async def fetch():
+    await asyncio.sleep(0)
+    return inner_f()
+
+
+async def cached_async():
+    global _ASYNC_VALUE
+    if _ASYNC_VALUE is None:
+        _ASYNC_VALUE = await fetch()
+    return _ASYNC_VALUE
+
+
+INSIDE = threading.Event()
+GO = threading.Event()
+
+
+def shared():
+    return 1
+
+
+@functools.lru_cache(maxsize=None)
+def m1():
+    INSIDE.set()
+    GO.wait(5)
+    return shared()
+
+
+@functools.lru_cache(maxsize=None)
+def m2():
+    value = shared()
+    GO.set()
+    return value
+
+
+@functools.lru_cache(maxsize=None)
+def raising():
+    inner_b()
+    raise ValueError("no")
+
+
+def after_raise():
+    return 0
+
+
+def inner_g():
+    return 8
+
+
+def _late_a():
+    return inner_g()
+
+
+def _late_b():
+    return inner_g()
+
+
+# Caches made past functools.lru_cache, as a library might: the recorder
+# cannot see them made. One is called directly after a miss through C (a
+# late registration); the other only through C, miss and hit.
+late_a = functools.update_wrapper(functools._lru_cache_wrapper(_late_a, None, False, functools._CacheInfo), _late_a)
+late_b = functools._lru_cache_wrapper(_late_b, None, False, functools._CacheInfo)  # no __wrapped__ even
+'''
+
+CACHE_TESTS = '''
+import asyncio
+import contextvars
+import functools
+import threading
+
+from pkg import core
+
+
+def test_01_ctx_fill():
+    assert contextvars.copy_context().run(core.via_c_only) == 3
+
+
+def test_02_ctx_hit():
+    assert contextvars.copy_context().run(core.via_c_only) == 3
+
+
+def test_03_partial_fill():
+    assert functools.partial(core.via_partial)() == 4
+
+
+def test_04_partial_hit():
+    assert functools.partial(core.via_partial)() == 4
+
+
+def test_05_miss_through_c():
+    assert contextvars.copy_context().run(core.first_through_c) == 7
+
+
+def test_06_hit_direct():
+    assert core.first_through_c() == 7
+
+
+def test_07_hand_fill():
+    assert core.handrolled() == 2
+
+
+def test_08_hand_hit():
+    assert core.handrolled() == 2
+
+
+def test_09_singleton_built():
+    assert core.client() == 5
+
+
+def test_10_singleton_reused():
+    assert core.client() == 5
+
+
+def test_11_async_fill():
+    assert asyncio.run(core.cached_async()) == 6
+
+
+def test_12_async_hit():
+    assert asyncio.run(core.cached_async()) == 6
+
+
+def test_13_two_threads_miss_at_once():
+    thread = threading.Thread(target=core.m1)
+    thread.start()
+    core.INSIDE.wait(5)
+    core.m2()  # runs shared() while m1 waits; shared() is then disabled for m1's thread too
+    thread.join()
+
+
+def test_14_m1_hit():
+    assert core.m1() == 1
+
+
+def test_15_a_raising_miss_closes():
+    try:
+        core.raising()
+    except ValueError:
+        pass
+    assert core.after_raise() == 0
+
+'''
+
+LATE_TESTS = '''
+import contextvars
+
+from pkg import core
+
+
+def test_late_and_unseen_caches():
+    contextvars.copy_context().run(core.late_a)
+    core.late_a()
+    contextvars.copy_context().run(core.late_b)
+    contextvars.copy_context().run(core.late_b)
+
+
+def test_other():
+    assert core.plain() == 1
+'''
+
+
+def _selected_for(fragment: dict, root: Path, func: str) -> tuple[bool, list[str]]:
+    tmap = tm.TestMap({**fragment, "memoized": [], "universe_files": ["src/pkg/core.py"],
+                       "universe_funcs": [f"src/pkg/core.py:{func}"], "unattributed_memo": []})
+    sel = tm.select([cs.Change("M", "src/pkg/core.py")], tmap, root=root,
+                    classify=lambda c: tm.PyChange(funcs={func}), index=lambda: tm.NameIndex({}, {}, {}),
+                    weights={})
+    return sel.full, sorted(t.split("::")[1] for t in sel.selected)
+
+
+def test_a_change_selects_the_tests_any_cache_served(tmp_path: Path) -> None:
+    root = project(tmp_path, tests=CACHE_TESTS)
+    (root / "src/pkg/core.py").write_text(CORE + CACHES)
+    fragment, result = recorded(root, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fragment["valid"], fragment["errors"]
+    # A functools cache called only from C (Context.run, functools.partial):
+    # tracked from the moment it is made, so its hit is marked and its miss
+    # recorded, and a change to what the miss ran selects the test it served.
+    assert _selected_for(fragment, root, "inner_c") == (False, ["test_01_ctx_fill", "test_02_ctx_hit"])
+    assert _selected_for(fragment, root, "inner_d") == (False, ["test_03_partial_fill", "test_04_partial_hit"])
+    # A cache whose only miss came through C, hit directly later.
+    assert _selected_for(fragment, root, "leaf") == (False, ["test_05_miss_through_c", "test_06_hit_direct"])
+    # A cache kept by hand in a module dict, a singleton built on first use,
+    # and an async one (its windows close at each await and reopen after).
+    assert _selected_for(fragment, root, "inner_e") == (False, ["test_09_singleton_built",
+                                                               "test_10_singleton_reused"])
+    assert _selected_for(fragment, root, "inner_f") == (False, ["test_11_async_fill", "test_12_async_hit"])
+    full, selected = _selected_for(fragment, root, "inner_b")
+    assert not full and {"test_07_hand_fill", "test_08_hand_hit"} <= set(selected)
+    # Two misses at once on two threads: the location the first thread's
+    # call disables still counts for the other thread's open miss.
+    assert _selected_for(fragment, root, "shared") == (False, ["test_13_two_threads_miss_at_once",
+                                                              "test_14_m1_hit"])
+    # A miss that raises closes there: what its test runs next is not the miss's.
+    keys = fragment["keys"]
+    raised = {keys[k] for k in fragment["fps"][fragment["cached"]["src/pkg/core.py:raising"]][0]}
+    assert "src/pkg/core.py:inner_b" in raised and "src/pkg/core.py:after_raise" not in raised
+    assert fragment["incomplete_memo"] == [] and fragment["unattributed_memo"] == []
+
+
+def test_caches_made_past_functools_lru_cache_are_incomplete_or_unattributed(tmp_path: Path) -> None:
+    root = project(tmp_path, tests=LATE_TESTS)
+    (root / "src/pkg/core.py").write_text(CORE + CACHES)
+    fragment, result = recorded(root, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fragment["valid"], fragment["errors"]
+    # One first called directly after a miss through C is incomplete (its
+    # users always run); one that only ever served through C served a test
+    # nothing names, and the selector runs everything.
+    assert fragment["incomplete_memo"] == ["src/pkg/core.py:_late_a"]
+    assert fragment["unattributed_memo"] == ["src/pkg/core.py:_late_b"]
+    sel = tm.select([cs.Change("M", "src/pkg/core.py")], tm.TestMap({**fragment, "memoized": []}), root=root,
+                    classify=lambda c: tm.PyChange(funcs={"plain"}), index=lambda: tm.NameIndex({}, {}, {}),
+                    weights={})
+    assert sel.full and "_late_b" in sel.reasons[0]
 
 
 @pytest.mark.parametrize("workers", ["2"])

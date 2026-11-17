@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-# The per-test footprint recorder, opt-in (ci.yml's push shards set
+# The per-test footprint recorder, opt-in (the Test map workflow's shards set
 # TR_TESTMAP_OUT). Imported before anything else so the application's
 # import-time reads and memoized functions are recorded; see the module.
 if os.environ.get("TR_TESTMAP_OUT"):

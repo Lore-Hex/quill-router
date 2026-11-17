@@ -16,13 +16,26 @@ What a test's window (setup, call and teardown) records:
      or coroutine started in an earlier test.
      A call of one of the repository's functools.cache/lru_cache functions is
      marked "<key>@memo": a hit runs no Python code, so without the mark a
-     test served from a cache would not record the function at all. A CALL
-     event (disabled per call site per window) registers a cache and marks
-     the call; a window also marks every registered cache whose hit count
-     rose while it was open, which catches a hit at a call site that had
+     test served from a cache would not record the function at all. The
+     recorder tracks every cache from the moment functools.lru_cache makes
+     it (functools.cache goes through lru_cache): the recorder replaces
+     functools.lru_cache, before any application import, with one that
+     returns the genuine cache and tells the recorder of it. A CALL event
+     (disabled per call site per window) marks a call; every window (hook
+     or miss) also marks each tracked cache whose hit count rose while it
+     was open, which catches a hit through C (functools.partial,
+     Context.run, map, sorted's key) and one at a call site that had
      already reported another callee. The caches themselves are untouched:
      the frozen-execution guard tests walk object graphs from them and
      recognize them by type.
+     A cache made past functools.lru_cache (functools._lru_cache_wrapper
+     called directly) is tracked from its first call event; if it had missed
+     or hit before that, the misses went unrecorded ("mi": its users always
+     run) and the hits unmarked ("um"). At the end of the session every
+     cache still alive that was never tracked and has hits is "um" too. A
+     map with any "um" makes the selector run everything (F2): nothing
+     names the tests those hits served. None is expected; the record says
+     which function to look at.
   o  repository files opened (the "open" audit event). The import system's
      own reads of .py/.pyc files are not reads: executing the module is
      what the f set records.
@@ -38,13 +51,53 @@ Separate windows, each written once and inherited by the tests that use it:
   c   a test module's collection (its import and parametrization);
   fx  the setup of a module, class, package or session fixture;
   cf  a memoized function's miss: from its PY_START (never disabled for it)
-      to its PY_RETURN (a local event set once its first call is seen), on the
-      thread that missed, events re-armed so every function the miss runs is
-      recorded. Every miss is recorded; what one adds to the function's
-      earlier misses is written. Past MAX_MISSES misses in one process the
-      function is written as "mi" (incomplete) instead, and the selector runs
-      its users whatever changed. A miss that raises closes with the window
-      around it.
+      to its PY_RETURN or PY_UNWIND (local and global events), events
+      re-armed so every function the miss runs is recorded. Every miss is
+      recorded; what one adds to the function's earlier misses is written.
+      Past MAX_MISSES misses in one process the function is written as "mi"
+      (incomplete) instead, and the selector runs its users whatever
+      changed. A miss window is kept on the stack of the thread that missed
+      (only that thread closes it), but what any thread runs while it is
+      open counts for it: a location one thread reports is disabled for
+      all, so another thread's open miss would not see it again, and the
+      work may be one the miss handed to that thread. (A miss window that
+      opens between another thread's report and its DISABLE taking effect
+      is caught by a counter of opened windows, except in the one bytecode
+      between the callback's last check and its return.)
+      A function that keeps a cache by hand is windowed the same way, every
+      call a "miss": one that assigns a module global (`global _CACHE`, a
+      singleton built on first use), or stores into, assigns or reads a
+      global or attribute named like a cache (CACHE_NAME: _CACHE,
+      _STATUS_RESPONSE_CACHE, self._cache, self._cached). A test that
+      called it inherits what any of its calls ran, as from a memoized
+      function's misses (selector S10). A generator or coroutine's window
+      closes at each yield or await (PY_YIELD) and reopens when it resumes.
+      Found by bytecode (keeps_cache) when the function first runs. In src
+      that is about sixty functions: ai_iq._models_payload, the
+      routes/public.py snapshots (_status_snapshot, _leaderboard_snapshot,
+      _fleet_snapshot_cached, _cached_public_response, ...), measured,
+      receipt_keys, sns_verify, company_affiliations, the gateway's
+      broadcast and fast path singletons, the snapshot publishers.
+      Not covered, and why:
+        - a cache filled outside the windowed functions' calls: by their
+          caller, or by another thread after they return. The tests that
+          read it do not inherit the filler's work. Found in src:
+          storage_gcp_authorize._outbox_table_available probes and fills
+          through _cached_outbox_availability/_remember_outbox_availability
+          (both windowed, the probe between them is not);
+          EdgePolicyPublisher signs on a background thread
+          (_sign_in_background) what current() serves; AdmissionRefresher's
+          worker fills the cache requests read. The module-level caches
+          listed above are filled where they are read.
+        - functools.cached_property: a hit is an instance attribute lookup
+          that runs nothing. None in src or scripts (one in
+          tests/test_async_settle_proof_oracle.py, on an instance made per
+          test, where the test that fills it is the one that reads it).
+        - a cache held by a closure (nonlocal) or under a name that is not
+          like CACHE_NAME, and a library's cache of repository results.
+        - shared state that is not a cache (the in-memory store, a module
+          setting a test leaves behind): any per-test selection assumes
+          tests do not depend on what an earlier test left.
   g   everything outside every window: imports, session and collection hooks
       (a miss at import time counts here too).
 Jinja serves a template from its cache after the first load, without
@@ -84,7 +137,9 @@ an owner that is not its parent and stays off.
 
 from __future__ import annotations
 
+import dis
 import functools
+import gc
 import json
 import os
 import re
@@ -92,14 +147,12 @@ import sys
 import threading
 import types
 import weakref
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
-try:
-    from scripts.ci.testmap import RECORDER_VERSION
-except ImportError:  # pragma: no cover - loaded by path in a synthetic project
-    RECORDER_VERSION = "2"
+RECORDER_VERSION = "3"  # scripts/ci/testmap.py holds the same value; its tests compare the two
 
 TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
@@ -110,8 +163,24 @@ MEMO = "@memo"
 # incomplete instead, a bound on time and output that the suite never reaches.
 MAX_MISSES = 1_000_000
 MAX_WORD = 200
-PROGRAM_FLAG = re.compile(r"-[A-Za-z]*c")          # python -c, bash -c, sh -ec: program text follows
+# Words after which the next word is program text or a secret: python -c,
+# bash -c, sh -ec, node -e, perl -pe, ruby -e; a header (curl -H); a user or
+# password option given as its own word.
+PROGRAM_FLAG = re.compile(r"-[A-Za-z]*[ce]|--(?:eval|exec|execute|command|print)")
+VALUE_FLAG = re.compile(r"-H|--header|-u|--user|--?[\w-]*(?:pass|token|secret|key|auth|cred|cookie)[\w-]*",
+                        re.IGNORECASE)
+OPTION_VALUE = re.compile(r"(--?[A-Za-z0-9][\w.-]*)=.*", re.DOTALL)  # --password=x, -Dname=x
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)  # env NAME=value
+URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^@\s]*@)?([^/?#\s]*)([^?#\s]*)[?#]?.*", re.DOTALL)
+# A function that keeps a cache by hand (see the module docstring): it
+# assigns a module global, or stores into, assigns or reads a global or
+# attribute named like a cache (_CACHE, self._cache, _STATUS_RESPONSE_CACHE).
+CACHE_NAME = re.compile(r"(?:^|_)cache[ds]?$", re.IGNORECASE)
+CACHE_MUTATORS = frozenset({"setdefault", "update", "pop", "popitem", "clear", "move_to_end", "append",
+                            "appendleft", "extend", "insert", "add", "discard", "remove", "__setitem__",
+                            "__delitem__"})
+NAME_LOADS = frozenset({"LOAD_GLOBAL", "LOAD_ATTR", "LOAD_DEREF", "LOAD_NAME", "LOAD_CLASSDEREF"})
+GLOBAL_WRITES = (bytes([dis.opmap["STORE_GLOBAL"]]), bytes([dis.opmap["DELETE_GLOBAL"]]))
 ROOT = os.path.realpath(os.getcwd()) + os.sep
 SKIP_PARTS = ("/.venv/", "/.git/", "/__pycache__/", "/.hypothesis/", "/.pytest_cache/", "/.mypy_cache/",
               "/.ruff_cache/", "/node_modules/", "/site-packages/")
@@ -152,13 +221,69 @@ class Window:
         self.spawns |= other.spawns
 
 
+Miss = tuple[Any, Window, dict[int, int]]  # (code, window, cache hits when it opened)
+
+
+def cached_code(cache: Any) -> Any:
+    """The code of the function a functools cache calls: its __wrapped__
+    (functools.update_wrapper sets it), else the function the cache holds."""
+    wrapped = getattr(cache, "__wrapped__", None)
+    if wrapped is None:
+        wrapped = next((o for o in gc.get_referents(cache) if isinstance(o, (types.FunctionType, types.MethodType))),
+                       None)
+    return getattr(wrapped, "__code__", None)
+
+
+def _start_of(instruction: dis.Instruction) -> tuple[int, int] | None:
+    p = instruction.positions
+    return None if p is None or p.lineno is None or p.col_offset is None else (p.lineno, p.col_offset)
+
+
+def keeps_cache(code: Any) -> bool:
+    """Does a function assign a module global, or store into, assign or read
+    a global or attribute named like a cache? Reading counts, for a private
+    name (VERTEX_DURABLE_CACHE is a constant; caches are _CACHE, self._cache):
+    a function that serves a cached value and calls a filler on a miss is
+    the one its callers run every time. A function named like a cache that
+    is only called is not one."""
+    ops = code.co_code[::2]
+    if any(op in ops for op in GLOBAL_WRITES):
+        return True
+    if not any(CACHE_NAME.search(name) for name in code.co_names):
+        return False
+    instructions = list(dis.get_instructions(code))
+    named: dict[tuple[int, int], int] = {}  # where a cache-named load starts -> its index
+    for index, ins in enumerate(instructions):
+        name = ins.argval if isinstance(ins.argval, str) else ""
+        if ins.opname in ("STORE_ATTR", "DELETE_ATTR") and CACHE_NAME.search(name):
+            return True  # self._cached = ...
+        if ins.opname in NAME_LOADS and CACHE_NAME.search(name):
+            where = _start_of(ins)
+            if where is not None:
+                named.setdefault(where, index)
+            after = instructions[index + 1] if index + 1 < len(instructions) else None
+            if after is not None and after.opname == "LOAD_ATTR" and after.argval in CACHE_MUTATORS:
+                return True  # _CACHE.setdefault(...), self._cache.clear()
+        if ins.opname in ("STORE_SUBSCR", "DELETE_SUBSCR") and _start_of(ins) in named:
+            return True  # _CACHE[key] = ..., del self._cache[key]
+    for where, index in named.items():
+        if not instructions[index].argval.startswith("_"):
+            continue  # a public name read (VERTEX_DURABLE_CACHE) is a constant; caches are private
+        after = instructions[index + 1] if index + 1 < len(instructions) else None
+        callee = any(other.opname.startswith("CALL") and _start_of(other) == where
+                     for other in instructions[index + 1:])
+        if not callee or (after is not None and after.opname == "LOAD_ATTR"):
+            return True  # a read: a function named like a cache, called, is not one
+    return False
+
+
 class Recorder:
     """Hook windows (a test, a scoped fixture's setup, a module's collection)
     nest on one stack, entered and left by pytest's hooks under a lock. A
     miss window belongs to the thread whose call missed: each thread keeps
-    its own stack of them, so a callback on another thread can neither pop
-    nor mix into it. What any thread runs counts for the hook window open
-    at the time, and for the open misses of its own thread."""
+    its own stack of them, and only that thread closes them. What any thread
+    runs counts for the hook window open at the time and for every open miss
+    window, whichever thread opened it."""
 
     def __init__(self, out_dir: str) -> None:
         self.glob = Window()
@@ -166,9 +291,13 @@ class Recorder:
         self.stack: list[tuple[Window, dict[int, int]]] = []  # (outer window, cache hits at entry)
         self.hook_lock = threading.RLock()
         self.out_lock = threading.Lock()
-        self.local = threading.local()          # .misses: [(code, Window)], innermost last
-        self.miss_stacks: list[list[tuple[Any, Window]]] = []
-        self.memo_codes: dict[int, Any] = {}    # memoized functions seen called: id -> code
+        self.miss_lock = threading.Lock()
+        self.local = threading.local()          # .misses: [Miss], innermost last
+        self.miss_stacks: list[list[Miss]] = []
+        self.open_misses: tuple[Window, ...] = ()  # every thread's open miss windows
+        self.opened = 0                         # miss windows opened so far, every thread
+        self.windowed: dict[int, Any] = {}      # memoized or hand-rolled cache functions: id -> code
+        self.classified: dict[int, Any] = {}    # repository code objects classified: id -> code
         self.memo_caches: dict[int, tuple[Any, Any, int]] = {}  # id(cache) -> (weak cache, code, hits when seen)
         self.cf_seen: dict[str, dict[str, set[str]]] = {}  # what a function's misses ran, written so far
         self.misses: dict[int, int] = {}
@@ -266,18 +395,20 @@ class Recorder:
             mon.restart_events()
             return window
 
-    def thread_misses(self) -> list[tuple[Any, Window]]:
+    def thread_misses(self) -> list[Miss]:
         stack = getattr(self.local, "misses", None)
         if stack is None:
             stack = self.local.misses = []
-            with self.out_lock:
+            with self.miss_lock:
                 self.miss_stacks.append(stack)
         return stack
 
     def note(self, attr: str, value: Any, ident: int | None = None) -> None:
-        """Record into the hook window and the open misses of this thread."""
-        targets = [self.cur, *(window for _, window in getattr(self.local, "misses", ()) or ())]
-        for window in targets:
+        """Record into the hook window and every open miss window. A miss on
+        another thread counts too: a location reported here is disabled for
+        every thread, so the other thread's miss would not see it again, and
+        what this thread runs may be work that miss handed it."""
+        for window in (self.cur, *self.open_misses):
             if ident is None:
                 getattr(window, attr).add(value)
             else:
@@ -291,20 +422,42 @@ class Recorder:
         try:
             if self.active:
                 ident = id(code)
+                opened = self.opened
                 self.note("codes", code, ident)
-                if ident in self.memo_codes:
+                if ident in self.windowed or (self.classified.get(ident) is not code and self.classify(code)):
                     self.open_miss(code, ident)
                     return None  # a memoized function's start is a miss: count every one
+                if self.opened != opened:
+                    # A miss window opened on another thread since this
+                    # callback read the windows: its restart may precede the
+                    # DISABLE, so leave the location armed.
+                    return None
         except Exception as error:
             self.fail("PY_START", error)
         return _disable
+
+    def classify(self, code: Any) -> bool:
+        """Does this repository function keep a cache by hand? Then it is
+        windowed like a memoized one (see the module docstring)."""
+        self.classified[id(code)] = code
+        if (code.co_name == "<module>" or code.co_filename == __file__ or self.code_path(code.co_filename) is None
+                or not keeps_cache(code)):
+            return False
+        self.windowed[id(code)] = code
+        mon.set_local_events(TOOL_ID, code, mon.events.PY_RETURN | mon.events.PY_YIELD)
+        return True
 
     def open_miss(self, code: Any, ident: int) -> None:
         count = self.misses[ident] = self.misses.get(ident, 0) + 1
         if count <= MAX_MISSES:
             window = Window()
             window.codes[ident] = code
-            self.thread_misses().append((code, window))
+            hits = self.cache_hits()
+            stack = self.thread_misses()
+            with self.miss_lock:
+                stack.append((code, window, hits))
+                self.open_misses = (*self.open_misses, window)
+                self.opened += 1
             mon.restart_events()  # the miss records every function it runs
         elif count == MAX_MISSES + 1:
             key = self.key(code)
@@ -312,18 +465,32 @@ class Recorder:
                 self.write({"mi": key})  # later misses go unrecorded: its users always run
 
     def on_return(self, code: Any, offset: int, value: Any) -> Any:
+        """PY_RETURN and PY_YIELD (local events of windowed functions), and
+        PY_UNWIND (global): the frame of `code` ended or suspended."""
         try:
             stack = getattr(self.local, "misses", None)
-            if stack and stack[-1][0] is code:
-                self.close_miss(stack)
+            if stack:
+                for index in range(len(stack) - 1, -1, -1):
+                    if stack[index][0] is code:
+                        while len(stack) > index:  # and any inner window left open
+                            self.close_miss(stack)
+                        break
         except Exception as error:
             self.fail("PY_RETURN", error)
         return None
 
-    def close_miss(self, stack: list[tuple[Any, Window]]) -> None:
+    def on_unwind(self, code: Any, offset: int, exception: Any) -> Any:
+        if self.open_misses:  # nothing open: the common case, at once
+            self.on_return(code, offset, exception)
+        return None
+
+    def close_miss(self, stack: list[Miss]) -> None:
         """Write what this miss ran that the function's earlier misses did not."""
         try:
-            code, window = stack.pop()
+            with self.miss_lock:
+                code, window, hits = stack.pop()
+                self.open_misses = tuple(w for w in self.open_misses if w is not window)
+            self.mark_hits(window, hits)
             key = self.key(code)
             if key is not None and self.active:
                 seen = self.cf_seen.setdefault(key, {part: set() for part in ("f", "o", "d", "s")})
@@ -336,8 +503,9 @@ class Recorder:
             self.fail("miss", error)
 
     def close_misses(self, every_thread: bool = False) -> None:
-        """Close misses still open (one raised): this thread's before a hook
-        window closes, every thread's at the end of the session."""
+        """Close misses still open: this thread's before a hook window closes
+        (a generator suspended by an exception, a frame that never returned),
+        every thread's at the end of the session."""
         stacks = list(self.miss_stacks) if every_thread else [getattr(self.local, "misses", None) or []]
         for stack in stacks:
             while stack:
@@ -347,26 +515,73 @@ class Recorder:
                 _disable: Any = sys.monitoring.DISABLE, _lru: Any = LRU, _method: Any = types.MethodType) -> Any:
         try:
             if self.active:
+                opened = self.opened
                 kind = type(func)
                 if kind is _method:
                     func = func.__func__
                     kind = type(func)
                 if kind is _lru:
-                    target = getattr(getattr(func, "__wrapped__", None), "__code__", None)
-                    # Only the repository's caches: a library's is not in the map.
-                    if target is not None and self.code_path(target.co_filename) is not None:
-                        ident = id(target)
-                        self.note("memo", target, ident)
-                        entry = self.memo_caches.get(id(func))
-                        if entry is None or entry[0]() is not func:  # new, or a dead cache's id reused
-                            self.memo_caches[id(func)] = (weakref.ref(func), target, func.cache_info().hits)
-                        if ident not in self.memo_codes:
-                            self.memo_codes[ident] = target
-                            mon.set_local_events(TOOL_ID, target, mon.events.PY_RETURN)
-                            mon.restart_events()  # its start may be disabled already: every miss must report
+                    entry = self.memo_caches.get(id(func))
+                    if entry is not None and entry[0]() is func:
+                        target = entry[1]
+                    else:  # created before the recorder, or past functools.lru_cache: late
+                        target = self.register(func, late=True)
+                    if target is not None:
+                        self.note("memo", target, id(target))
+                if self.opened != opened:
+                    return None  # as in on_code
         except Exception as error:
             self.fail("CALL", error)
         return _disable
+
+    def register(self, func: Any, *, late: bool) -> Any:
+        """Track one of the repository's functools caches: its misses open
+        windows and a rise in its hit count marks the window open at the
+        time. Returns the cached function's code, or None for a library's
+        cache (not in the map). A cache tracked only after it was used
+        (`late`) has misses no window recorded, so its users always run
+        ("mi"); one that served hits before is "um": nothing names the tests
+        it served, and the selector runs everything."""
+        target = cached_code(func)
+        if target is None or self.code_path(target.co_filename) is None:
+            return None
+        info = func.cache_info()
+        self.memo_caches[id(func)] = (weakref.ref(func), target, info.hits)
+        ident = id(target)
+        if ident not in self.windowed:
+            self.windowed[ident] = target
+            mon.set_local_events(TOOL_ID, target, mon.events.PY_RETURN | mon.events.PY_YIELD)
+            mon.restart_events()  # its start may be disabled already: every miss must report
+        if late and (info.hits or info.misses):
+            key = self.key(target)
+            if info.misses:
+                self.write({"mi": key})
+            if info.hits:
+                self.write({"um": key})
+        return target
+
+    def created(self, func: Any) -> None:
+        """functools.lru_cache made a cache: track it before any call, so a
+        miss or hit through C (functools.partial, Context.run, map, sorted's
+        key) is recorded like any other."""
+        if self.active:
+            try:
+                self.register(func, late=False)
+            except Exception as error:
+                self.fail("cache", error)
+
+    def unregistered(self) -> None:
+        """At the end of the session: a repository cache never tracked that
+        served hits (made past functools.lru_cache and only called from C)
+        served tests nothing names ("um")."""
+        for obj in gc.get_objects():
+            if type(obj) is LRU:
+                entry = self.memo_caches.get(id(obj))
+                if entry is not None and entry[0]() is obj:
+                    continue
+                target = cached_code(obj)
+                if target is not None and self.code_path(target.co_filename) is not None and obj.cache_info().hits:
+                    self.write({"um": self.key(target)})
 
     def rel(self, path: Any) -> str | None:
         try:
@@ -430,29 +645,50 @@ class Recorder:
     def words(self, argv: Any) -> list[str]:
         """A command's first words, as little as identifies it: the map is a
         public artifact. Repository paths are relative; the executable outside
-        the repository is its name; other paths outside it, program text
-        after -c, and environment values are placeholders; every word is cut
-        at MAX_WORD characters."""
+        the repository is its name; other paths outside it are placeholders,
+        and so are program text (after -c or -e), the word after a header,
+        user or password-like option, an option's =value, an environment
+        value, and a URL's user, password, query and fragment; every word is
+        cut at MAX_WORD characters."""
         if isinstance(argv, (str, bytes, os.PathLike)):
             raw = [os.fsdecode(argv)]
         else:
             raw = [os.fsdecode(a) if isinstance(a, (str, bytes, os.PathLike)) else str(a) for a in list(argv)[:4]]
         out: list[str] = []
-        program = False
+        hidden = ""
         for index, word in enumerate(raw):
-            if program:
-                out.append("<program>")
-                program = False
+            if hidden:
+                out.append(hidden)
+                hidden = ""
                 continue
-            if PROGRAM_FLAG.fullmatch(word):
-                program = True
+            if index and PROGRAM_FLAG.fullmatch(word):
+                hidden = "<program>"
+            elif index and VALUE_FLAG.fullmatch(word):
+                hidden = "<value>"
+            elif index and OPTION_VALUE.fullmatch(word):
+                name, value = word.split("=", 1)
+                word = name + "=" + ("<value>" if VALUE_FLAG.fullmatch(name) else self.word(value, index))
             elif ASSIGNMENT.fullmatch(word):
                 word = word.split("=", 1)[0] + "=<value>"
-            elif os.path.isabs(word) or word.startswith("."):
-                rel = self.rel(word)
-                word = rel if rel is not None else (os.path.basename(word) if index == 0 else "<outside>")
+            else:
+                word = self.word(word, index)
             out.append(" ".join(word.split())[:MAX_WORD] or "''")
         return out
+
+    def word(self, word: str, index: int) -> str:
+        """A URL without its user, password, query and fragment; a path in
+        the repository relative to it, as "./<path>" (a slash in it tells
+        the selector it is a path: S8); outside it a placeholder (the
+        executable keeps its name)."""
+        url = URL.fullmatch(word)
+        if url is not None:
+            return url.group(1) + url.group(2) + url.group(3)
+        if os.path.isabs(word) or word.startswith("."):
+            rel = self.rel(word)
+            if rel is not None:
+                return rel if rel == "." else "./" + rel
+            return os.path.basename(word) if index == 0 else "<outside>"
+        return word
 
     def spawn(self, argv: Any, cwd: Any) -> None:
         if cwd is None:
@@ -501,13 +737,20 @@ def _start() -> Recorder | None:
         recorder.fail("sys.monitoring tool 3 is taken", error)
         return recorder
     recorder.tool_ours = True
+    events = mon.events
     try:
-        mon.register_callback(TOOL_ID, mon.events.PY_START, recorder.on_code)
-        mon.register_callback(TOOL_ID, mon.events.PY_RESUME, recorder.on_code)
-        mon.register_callback(TOOL_ID, mon.events.CALL, recorder.on_call)
-        mon.register_callback(TOOL_ID, mon.events.PY_RETURN, recorder.on_return)
-        mon.set_events(TOOL_ID, mon.events.PY_START | mon.events.PY_RESUME | mon.events.CALL)
+        mon.register_callback(TOOL_ID, events.PY_START, recorder.on_code)
+        mon.register_callback(TOOL_ID, events.PY_RESUME, recorder.on_code)
+        mon.register_callback(TOOL_ID, events.CALL, recorder.on_call)
+        mon.register_callback(TOOL_ID, events.PY_RETURN, recorder.on_return)
+        mon.register_callback(TOOL_ID, events.PY_YIELD, recorder.on_return)
+        mon.register_callback(TOOL_ID, events.PY_UNWIND, recorder.on_unwind)
+        mon.set_events(TOOL_ID, events.PY_START | events.PY_RESUME | events.CALL | events.PY_UNWIND)
         sys.addaudithook(_audit_hook(recorder))
+        functools.lru_cache = _observed_lru_cache  # type: ignore[assignment]
+        for obj in gc.get_objects():  # caches made before this module: none, unless an import moved
+            if type(obj) is LRU:
+                recorder.register(obj, late=True)
     except Exception as error:
         recorder.fail("setup", error)
         return recorder
@@ -525,6 +768,34 @@ def _start() -> Recorder | None:
     except (ImportError, AttributeError):
         pass
     return recorder
+
+
+_ORIGINAL_LRU_CACHE = functools.lru_cache
+
+
+def _created(cache: Any) -> Any:
+    rec = RECORDER
+    if rec is not None:
+        rec.created(cache)
+    return cache
+
+
+@functools.wraps(_ORIGINAL_LRU_CACHE)
+def _observed_lru_cache(maxsize: Any = 128, typed: bool = False) -> Any:
+    """functools.lru_cache, telling the recorder of every cache it makes. The
+    cache is the genuine one (the frozen-execution guard tests recognize
+    caches by type); functools.cache goes through it too. It reaches the
+    recorder through this module's globals, never a closure: a module that
+    imported lru_cache holds this function, and the guard tests walk every
+    reference from such modules except into other modules' globals."""
+    made = _ORIGINAL_LRU_CACHE(maxsize, typed)
+    if callable(maxsize) and not isinstance(maxsize, bool):  # @lru_cache, no arguments
+        return _created(made)
+    return functools.partial(_decorate, made)
+
+
+def _decorate(made: Any, user_function: Any) -> Any:
+    return _created(made(user_function))
 
 
 def _template_read(filename: Any) -> None:
@@ -580,16 +851,17 @@ def _open(config: Any) -> bool:
         return False
 
 
-def _close(record: dict) -> None:
-    """Leave the innermost window and write it under `record`'s key."""
+def _close(where: str, record: Callable[[], dict]) -> None:
+    """Leave the innermost window and write it under the key `record()`
+    builds (inside the try: a failure to build it is the recorder's)."""
     rec = RECORDER
     if rec is None or not rec.active:
         return
     try:
         rec.close_misses()
-        rec.write({**record, **rec.dump(rec.leave())})
+        rec.write({**record(), **rec.dump(rec.leave())})
     except Exception as error:
-        rec.fail(next(iter(record)), error)
+        rec.fail(where, error)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -605,7 +877,7 @@ def pytest_make_collect_report(collector: pytest.Collector) -> Any:
     try:
         return (yield)
     finally:
-        _close({"c": collector.nodeid})
+        _close("c", lambda: {"c": collector.nodeid})
 
 
 @pytest.hookimpl(wrapper=True)
@@ -615,7 +887,7 @@ def pytest_fixture_setup(fixturedef: Any, request: Any) -> Any:
     try:
         return (yield)
     finally:
-        _close({"fx": _fixture_key(fixturedef, request)})
+        _close("fx", lambda: {"fx": _fixture_key(fixturedef, request)})
 
 
 @pytest.hookimpl(wrapper=True, tryfirst=True)
@@ -625,7 +897,7 @@ def pytest_runtest_protocol(item: pytest.Item, nextitem: Any) -> Any:
     try:
         return (yield)
     finally:
-        _close({"t": item.nodeid, "x": _scoped_fixtures(item)})
+        _close("t", lambda: {"t": item.nodeid, "x": _scoped_fixtures(item)})
 
 
 def _scoped_fixtures(item: pytest.Item) -> list[str]:
@@ -654,6 +926,10 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             rec.active = False
             if rec.tool_ours:
                 mon.set_events(TOOL_ID, 0)
+            try:
+                rec.unregistered()
+            except Exception as error:  # an "err" record: the shard's fragment is invalid
+                rec.write({"err": f"unregistered caches: {type(error).__name__}: {error}"})
             rec.write({"g": True, **rec.dump(rec.glob)})
             rec.write({"end": True})  # compact treats a file without it as cut short
         rec.out.close()
