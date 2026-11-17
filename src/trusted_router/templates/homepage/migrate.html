@@ -3,18 +3,19 @@
   <div class="l">
    <h2>Move over with one <code class="bu">base_url</code> change.</h2>
    <p class="lede">Keep your existing OpenAI-shaped calls. Add privacy and routing constraints only when you need them.</p>
-   <div class="field"><span class="k">Base URL</span><div class="val"><code>{{ api_base_url }}</code><button class="cp icon-button" type="button" data-copy="{{ api_base_url }}" aria-label="Copy base URL" title="Copy base URL"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div></div>
+   <div class="field"><span class="k">Base URL</span><div class="val"><code>{% set url_parts = api_base_url.split("://", 1) %}{% if url_parts|length == 2 %}{{ url_parts[0] }}://<wbr>{{ url_parts[1] }}{% else %}{{ api_base_url }}{% endif %}</code><button class="cp icon-button" type="button" data-copy="{{ api_base_url }}" aria-label="Copy base URL" title="Copy base URL"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div></div>
    <div class="acts"><a class="button button-primary" data-homepage-cta data-action="open-signin" data-signin-mode="signup" href="/console/api-keys">Create my API key</a><a class="button button-secondary" href="/docs/migrate-from-openrouter">Migration guide</a></div>
   </div>
   <details class="mobile-disclosure migration-disclosure" id="migration-example" data-mobile-disclosure open><summary><span>View code examples</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="r">
    <div class="ph2">
     <div class="mode-switch" role="tablist" aria-label="How to migrate"><button class="mode" type="button" role="tab" id="mode-tab-code" aria-controls="migration-code" tabindex="0" data-mode="code" aria-selected="true">Code</button><button class="mode" type="button" role="tab" id="mode-tab-agent" aria-controls="migration-code" tabindex="-1" data-mode="agent" aria-selected="false">Agent prompt</button></div>
-    <div class="code-options">
+    <div class="pf"><span class="hint" hidden></span><button class="cp icon-button" type="button" data-copycode="" aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div>
+   </div>
+   <div class="code-options">
      <label class="code-option" for="migration-language"><span>Language</span><select id="migration-language"><option value="py">Python</option><option value="ts">TypeScript</option><option value="curl">cURL</option></select></label>
      <label class="code-option" for="migration-source"><span>Migrating from</span><select id="migration-source"><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option></select></label>
-    </div>
    </div>
-   <pre class="mcode" id="migration-code" role="tabpanel" aria-labelledby="mode-tab-code" tabindex="0">  from openai import OpenAI
+   <div class="mcode-scroll"><pre class="mcode" id="migration-code" role="tabpanel" aria-labelledby="mode-tab-code" tabindex="0">  from openai import OpenAI
   import os
 
   client = OpenAI(
@@ -25,8 +26,7 @@
       messages=[{"role": "user", "content": "Hello"}],
 <span class="cm">      # optional: extra_body={"provider": {"min_privacy": "confidential"}}</span>
   )
-</pre>
-   <div class="pf"><span class="hint" hidden></span><button class="cp icon-button" type="button" data-copycode="" aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div>
+</pre></div>
   </div></div></details>
  </div>
 </div>
