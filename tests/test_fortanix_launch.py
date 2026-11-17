@@ -218,7 +218,8 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
     banner = page.select_one("[data-fortanix-promo]")
     assert banner is not None
     assert banner.select_one("a")["href"] == f"/models/{MODEL_ID}"
-    assert "$0.01 / 1M tokens" in banner.get_text()
+    assert "basically free" in banner.get_text()
+    assert "1¢ per million tokens" in banner.get_text()
     assert "Limited time, price may change" in banner.get_text()
     assert "trustedrouter/fortanix-test" not in response.text
 
