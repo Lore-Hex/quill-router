@@ -268,6 +268,9 @@ def test_s7_a_data_file_selects_its_readers() -> None:
     ("git --work-tree=. status @cwd=-", False),
     ("git --git-dir=./.git log @cwd=-", False),       # the repository's own history
     ("git --git-dir=<outside> log @cwd=-", True),
+    ("git log -p <value> @cwd=-", False),              # a hidden word may be a repository path
+    ("git -c <program> commit @cwd=-", False),
+    ("git --work-tree=<value> status @cwd=-", False),
     ("python -c <program> @cwd=.", False),
     ("uv run python -m @cwd=.", False),
     ("env PYTHONPATH=<value> python3 -c @cwd=-", False),

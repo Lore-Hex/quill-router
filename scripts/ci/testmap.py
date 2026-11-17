@@ -136,7 +136,7 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "4"
+RECORDER_VERSION = "5"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
@@ -719,9 +719,11 @@ def command_is_narrow(cmd: str) -> bool:
         return True
     if exe == "git":
         # A repository path among its words (--work-tree=src: an option's
-        # value counts) means it reads the repository.
+        # value counts) means it reads the repository. A word the recorder
+        # hid (<value>, <program>) may be one; only <outside> is known not.
         values = [tok.split("=", 1)[-1] for tok in toks[1:]]
-        return cwd == "-" and not any(v == "." or "/" in v and not v.startswith("<") for v in values)
+        return cwd == "-" and not any(
+            v == "." or ("<value>" in v or "<program>" in v) or "/" in v and not v.startswith("<") for v in values)
     return False
 
 
@@ -1166,9 +1168,10 @@ def short_summary(log: str) -> list[str]:
     """The lines of the run's own short test summary: the last "short test
     summary info" section (a test that runs pytest inside it can print a
     summary of its own earlier, in its failure report), to the next "="
-    rule. GitHub's timestamps are dropped. Without such a section, every
-    line, which still holds only lines that start with the status: a
-    nested run's output in a failure report is indented or prefixed "E"."""
+    rule. GitHub's timestamps are dropped. Without such a section (a log
+    cut short), every line that starts with the status: that still counts a
+    nested run's lines that pytest printed flush left, as captured stdout
+    is, though not the indented or "E"-prefixed ones of an assertion."""
     lines = [LOG_TIMESTAMP.sub("", line.rstrip("\r")) for line in log.splitlines()]
     starts = [i for i, line in enumerate(lines) if SUMMARY_HEADER.match(line)]
     if not starts:

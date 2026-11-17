@@ -67,8 +67,8 @@ Separate windows, each written once and inherited by the tests that use it:
       between the callback's last check and its return.)
       A function that keeps a cache by hand is windowed the same way, every
       call a "miss": one that assigns a module global (`global _CACHE`, a
-      singleton built on first use; a constant flag or a `+= 1` counter
-      does not count), stores into or mutates a private module global
+      singleton built on first use, a "done once" flag; a reset to None or
+      a `+= 1` counter does not count), stores into or mutates a private module global
       (_MONITOR_HASH[key] = ..., _VERIFIED.move_to_end(...), _ENSURED.add),
       or stores into, assigns or reads a global or attribute named like a
       cache (CACHE_NAME: _CACHE, _STATUS_RESPONSE_CACHE, self._cache,
@@ -175,7 +175,7 @@ from typing import Any
 
 import pytest
 
-RECORDER_VERSION = "4"  # scripts/ci/testmap.py holds the same value; its tests compare the two
+RECORDER_VERSION = "5"  # scripts/ci/testmap.py holds the same value; its tests compare the two
 
 TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
@@ -186,17 +186,22 @@ MEMO = "@memo"
 # incomplete instead, a bound on time and output that the suite never reaches.
 MAX_MISSES = 1_000_000
 MAX_WORD = 200
-# Words after which the next word is program text or a secret: python -c,
-# bash -c, sh -ec, node -e, perl -pe, ruby -e; a header (curl -H); a user or
-# password option given as its own word.
-PROGRAM_FLAG = re.compile(r"-[A-Za-z]*[ce]|--(?:eval|exec|execute|command|print)")
-VALUE_FLAG = re.compile(r"-H|--header|-u|--user|-p|--?[\w-]*(?:pass|token|secret|key|auth|cred|cookie)[\w-]*",
-                        re.IGNORECASE)
-ATTACHED_VALUE = re.compile(r"(-[upH]).+", re.DOTALL)  # a user, password or header glued to its flag
+# Words after which the next word is program text: python -c, bash -c,
+# sh -ec, node -e, perl -pe, ruby -e (a short cluster ending in c or e).
+PROGRAM_FLAG = re.compile(r"-[A-Za-z]{0,3}[ce]|--(?:eval|exec|execute|command|print)")
+# Options whose next word is a secret: a header (curl -H), a user (-u), a
+# password (-p, redis-cli -a, openssl -k), or any option named like one.
+# Single letters match case-sensitively (python -P, pip -U are not these).
+VALUE_CLUSTER = re.compile(r"-[A-Za-z]*[Hupak]")  # -p, -a; a cluster ending in one (-vp, -up)
+LONG_VALUE_FLAG = re.compile(r"--header|--user|--pw|--?[\w-]*(?:pass|token|secret|key|auth|cred|cookie|bearer)[\w-]*",
+                             re.IGNORECASE)
+GLUED_VALUE = re.compile(r"-([A-Za-z]*?[upH]).+", re.DOTALL)  # -phunter2, -uroot, -vpX: glued to its flag
 OPTION_VALUE = re.compile(r"(--?[A-Za-z0-9][\w.-]*)=.*", re.DOTALL)  # --password=x, -Dname=x
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)  # env NAME=value
-# The user and password run to the word's last "@": a password may hold "@" or "/".
-URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)(?:\S*@)?([^/?#\s]*)([^?#\s]*)[?#]?.*", re.DOTALL)
+# A URL's user and password run to its last "@" before any "?" or "#": a
+# password may hold "@" or "/", a query may hold "@".
+URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^?#\s]*@)?([^/?#\s]*)([^?#\s]*)[?#]?.*", re.DOTALL)
+CREDENTIALS = re.compile(r"[^\s/@:]+:[^\s/]*@(\S*)", re.DOTALL)  # user:password@host, no scheme
 # A function that keeps a cache by hand (see the module docstring and
 # keeps_cache): it assigns a module global, mutates a private one, or
 # stores into, assigns or reads a global or attribute named like a cache
@@ -270,24 +275,29 @@ def _private_global(ins: dis.Instruction) -> bool:
     return ins.opname == "LOAD_GLOBAL" and name.startswith("_") and not name.startswith("__")
 
 
-def _flag_or_counter(instructions: list[dis.Instruction], index: int) -> bool:
-    """Is the global store at `index` a constant (a "logged once" flag, a
-    reset to None) or `+= <constant>` / `-= <constant>` (a counter)? Neither
-    hands a later caller a value some earlier call computed."""
+def _reset_or_counter(instructions: list[dis.Instruction], index: int) -> bool:
+    """Is the global store at `index` a reset to None, or `+= <constant>` /
+    `-= <constant>` (a counter)? Neither hands a later caller a value an
+    earlier call computed. A store some jump reaches is neither (`_v =
+    compute() if FLAG else None`, `_c = build() or None`), and a constant
+    flag is not exempt: `if _ready: return; _populate(); _ready = True`
+    serves what _populate() did."""
+    store = instructions[index]
     before = instructions[index - 1] if index else None
-    if before is None:
+    if before is None or store.is_jump_target:
         return False
     if before.opname == "LOAD_CONST":
-        return True
+        return before.argval is None and not before.is_jump_target
     return (before.opname == "BINARY_OP" and before.argrepr in ("+=", "-=") and index >= 3
             and instructions[index - 2].opname == "LOAD_CONST"
             and instructions[index - 3].opname == "LOAD_GLOBAL"
-            and instructions[index - 3].argval == instructions[index].argval)
+            and instructions[index - 3].argval == store.argval
+            and not any(ins.is_jump_target for ins in instructions[index - 2:index]))
 
 
 def keeps_cache(code: Any) -> bool:
     """Does a function keep state across calls that a later call serves?
-      - it assigns a module global, other than a constant flag or a counter;
+      - it assigns a module global, other than a reset to None or a counter;
       - it stores into, or calls a mutating method of, a private module
         global (_MONITOR_HASH[key] = ..., _VERIFIED.move_to_end(...)) or a
         global or attribute named like a cache (self._cache[key] = ...);
@@ -301,7 +311,7 @@ def keeps_cache(code: Any) -> bool:
     ops = code.co_code[::2]
     if any(op in ops for op in GLOBAL_WRITES):
         instructions = list(dis.get_instructions(code))
-        if any(ins.opname in ("STORE_GLOBAL", "DELETE_GLOBAL") and not _flag_or_counter(instructions, index)
+        if any(ins.opname in ("STORE_GLOBAL", "DELETE_GLOBAL") and not _reset_or_counter(instructions, index)
                for index, ins in enumerate(instructions)):
             return True
     if not any(CACHE_NAME.search(name) or name.startswith("_") and not name.startswith("__") for name in code.co_names):
@@ -708,11 +718,14 @@ class Recorder:
         public artifact. Repository paths are relative; the executable outside
         the repository is its name; other paths outside it are placeholders,
         and so are program text (after -c or -e), the word after a header,
-        user or password-like option (-H, -u, -p, --password), a value
-        attached to -u, -p or -H (-phunter2), an option's =value, an
-        environment value, and a URL's user, password, query and fragment;
-        every word is cut at MAX_WORD characters. A path under the
-        repository is the repository's even where rel() skips it (.git)."""
+        user or password option (-H, -u, -p, -a, -k, --password, --pw), a
+        value glued to -u, -p or -H (-phunter2), an option's secret =value
+        or inner NAME=value, an environment value, a URL's user, password,
+        query and fragment, and user:password@ without a scheme. The word
+        after such an option is hidden only if it is not an option itself
+        (python -u -c: the -c still hides its program). Every word is cut
+        at MAX_WORD characters. A path under the repository is the
+        repository's even where rel() skips it (.git)."""
         if isinstance(argv, (str, bytes, os.PathLike)):
             raw = [os.fsdecode(argv)]
         else:
@@ -721,24 +734,49 @@ class Recorder:
         hidden = ""
         for index, word in enumerate(raw):
             if hidden:
-                out.append(hidden)
-                hidden = ""
-                continue
-            if index and PROGRAM_FLAG.fullmatch(word):
-                hidden = "<program>"
-            elif index and VALUE_FLAG.fullmatch(word):
-                hidden = "<value>"
-            elif index and (attached := ATTACHED_VALUE.fullmatch(word)) is not None:
-                word = attached.group(1) + "<value>"
-            elif index and OPTION_VALUE.fullmatch(word):
-                name, value = word.split("=", 1)
-                word = name + "=" + ("<value>" if VALUE_FLAG.fullmatch(name) else self.word(value, index))
+                held, hidden = hidden, ""
+                if not word.startswith("-"):  # an option is never taken for the value: read it as one
+                    out.append(held)
+                    continue
+            if index:
+                word, hidden = self.option(word)
             elif ASSIGNMENT.fullmatch(word):
                 word = word.split("=", 1)[0] + "=<value>"
             else:
                 word = self.word(word, index)
             out.append(" ".join(word.split())[:MAX_WORD] or "''")
         return out
+
+    def option(self, word: str) -> tuple[str, str]:
+        """An argument as recorded, and the placeholder for the next word if
+        it is program text or a secret."""
+        program = "<program>" if PROGRAM_FLAG.fullmatch(word) else ""
+        takes_next = bool(VALUE_CLUSTER.fullmatch(word) or LONG_VALUE_FLAG.fullmatch(word))
+        glued = GLUED_VALUE.fullmatch(word)
+        if glued:
+            # -phunter2, -uroot. It may be a cluster whose last flag takes
+            # the next word (-up x, openssl's -passin x), or perl's -pe: hide
+            # that word too.
+            return "-" + glued.group(1) + "<value>", program or ("<value>" if takes_next else "")
+        if program:
+            return word, program
+        if takes_next:
+            # A single-dash word holding a keyword may be a value glued to a
+            # flag (-tTokenAbc): hide it too.
+            hide = not word.startswith("--") and not VALUE_CLUSTER.fullmatch(word)
+            return ("-<value>" if hide else word), "<value>"
+        if OPTION_VALUE.fullmatch(word):
+            name, value = word.split("=", 1)
+            if VALUE_CLUSTER.fullmatch(name) or LONG_VALUE_FLAG.fullmatch(name):
+                value = "<value>"
+            elif ASSIGNMENT.fullmatch(value):  # --data=token=X
+                value = value.split("=", 1)[0] + "=<value>"
+            else:
+                value = self.word(value, 1)
+            return name + "=" + value, ""
+        if ASSIGNMENT.fullmatch(word):
+            return word.split("=", 1)[0] + "=<value>", ""
+        return self.word(word, 1), ""
 
     def word(self, word: str, index: int) -> str:
         """A URL without its user, password, query and fragment; a path in
@@ -748,6 +786,9 @@ class Recorder:
         url = URL.fullmatch(word)
         if url is not None:
             return url.group(1) + url.group(2) + url.group(3)
+        credentials = CREDENTIALS.fullmatch(word)
+        if credentials is not None:
+            return "<value>@" + credentials.group(1)
         if os.path.isabs(word) or word.startswith("."):
             rel = self.rel(word)
             if rel is None and index:

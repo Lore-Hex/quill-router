@@ -848,6 +848,28 @@ def log_once():
         _logged = True
 
 
+def lazy_init():
+    global _ready
+    if _ready:
+        return
+    _populate_registry()
+    _ready = True
+
+
+def ternary_singleton():
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = compute() if FLAG else None
+    return _CLIENT
+
+
+def or_none_singleton():
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = build() or None
+    return _CLIENT
+
+
 def reset():
     global _CLIENT
     _CLIENT = None
@@ -868,13 +890,51 @@ def reads_a_constant():
 """
 
 
-def test_keeps_cache_windows_private_module_state_but_not_flags_or_counters() -> None:
+def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -> None:
     from scripts.ci.testmap_recorder import keeps_cache
 
     module = compile(KEEPS, "keeps.py", "exec")
     functions = {c.co_name: c for c in module.co_consts if hasattr(c, "co_code")}
+    # A "done once" flag serves what ran before it was set (lazy_init); a
+    # store a jump reaches is no constant (`compute() if FLAG else None`,
+    # `build() or None`). A reset to None and a counter serve nothing.
     assert {name for name, code in functions.items() if keeps_cache(code)} == {
-        "monitor_hash", "resolve", "ensure", "client"}
+        "monitor_hash", "resolve", "ensure", "client", "log_once", "lazy_init", "ternary_singleton",
+        "or_none_singleton"}
+
+
+@pytest.mark.parametrize(("argv", "recorded"), [
+    # A value glued to its flag holding a keyword (pass, key, token, auth).
+    (["mysql", "-uroot", "-pMyPassw0rd", "db"], "mysql -u<value> -p<value> <value>"),
+    (["mysql", "-uroot", "-pmonkey_key1", "db"], "mysql -u<value> -p<value> <value>"),
+    (["sshpass", "-pTokenAbc9", "ssh"], "sshpass -p<value> <value>"),
+    (["curl", "-uapi_key_user", "https://h.example/x"], "curl -u<value> <value>"),
+    (["openssl", "-passin", "pass:Zq11v"], "openssl -p<value> <value>"),
+    (["tool", "-up", "Zq28v"], "tool -u<value> <value>"),
+    # An option after a value flag is read as an option: its program text stays hidden.
+    (["python", "-P", "-c", "print('prog text')"], "python -P -c <program>"),
+    (["python", "-u", "-c", "import sys; print('prog text')"], "python -u -c <program>"),
+    (["bash", "-e", "-c", "echo prog text"], "bash -e -c <program>"),
+    (["python", "-P", "-m", "trusted_router.routing_snapshot_worker"],
+     "python -P -m trusted_router.routing_snapshot_worker"),
+    # A URL's user and password stop at "?" and "#"; scheme-less user:password@host.
+    (["curl", "https://h.example/cb?sig=abc@Zq9vTail"], "curl https://h.example/cb"),
+    (["curl", "https://user:SEC/RETV@x.example/p"], "curl https://x.example/p"),
+    (["tool", "user:Zq24v@host"], "tool <value>@host"),
+    # An option's inner NAME=value, and more password options.
+    (["curl", "--data=token=Zq1v"], "curl --data=token=<value>"),
+    (["redis-cli", "-a", "Zq8v"], "redis-cli -a <value>"),
+    (["openssl", "-k", "Zq12v"], "openssl -k <value>"),
+    (["tool", "--pw", "Zq16v"], "tool --pw <value>"),
+    (["tool", "--bearer", "Zq15v"], "tool --bearer <value>"),
+])
+def test_command_words_hide_secrets_and_program_text(tmp_path: Path, argv: list[str], recorded: str) -> None:
+    from scripts.ci import testmap_recorder
+
+    words = " ".join(testmap_recorder.Recorder(str(tmp_path)).words(argv))
+    assert words == recorded
+    for secret in ("MyPassw0rd", "monkey_key1", "TokenAbc9", "api_key_user", "Zq", "prog text"):
+        assert secret not in words
 
 
 def test_caches_made_past_functools_lru_cache_are_incomplete_or_unattributed(tmp_path: Path) -> None:
