@@ -140,8 +140,9 @@ later push until a run passes it again, and its red holds every deploy.
   never runs the suite. A test such a change breaks past the cutovers goes
   red on the next change that runs it, or at the cutover.
 
-  run_heavy (test-heavy). The test files in HEAVY_TESTS (the slowest of the
-  async settle family, 28% of the default suite's recorded weight) left the
+  run_heavy (test-heavy). The test files in HEAVY_TESTS (scripts/ci/
+  heavy_tests.txt: the slowest of the async settle family, 28% of the default
+  suite's recorded weight) left the
   eight `test` shards, which pass each as --ignore (`heavy-tests --ignore`);
   test-heavy runs them, with coverage, in HEAVY_SHARDS shards, whenever a
   change can reach them:
@@ -687,26 +688,12 @@ def oracle_reason(changes: list[Change], root: Path) -> str | None:
 # shards, which pass each as --ignore; test-heavy runs them with coverage
 # when run_heavy is set.
 
-HEAVY_TESTS: tuple[str, ...] = (
-    "tests/test_async_settle_proof_oracle.py",
-    "tests/test_async_settle_shadow_cohort_differential.py",
-    "tests/test_async_settle_shadow_cohort_http.py",
-    "tests/test_async_settle_shadow_health_claim_contention.py",
-    "tests/test_async_settle_shadow_http.py",
-    "tests/test_async_settle_shadow_v2_a1_boundaries.py",
-    "tests/test_async_settle_shadow_v2_evidence.py",
-    "tests/test_async_settle_shadow_v2_gate_a2.py",
-    "tests/test_async_settle_shadow_v2_gate_a3.py",
-    "tests/test_async_settle_shadow_v2_gate_complete.py",
-    "tests/test_async_settle_shadow_v2_gate_loading.py",
-    "tests/test_async_settle_shadow_v2_gate_window.py",
-    "tests/test_async_settle_shadow_v2_gates.py",
-    "tests/test_async_settle_shadow_v2_pack_round3_composition.py",
-    "tests/test_async_settle_shadow_v2_pack_round4.py",
-    "tests/test_async_settle_shadow_v2_pack_round5.py",
-    "tests/test_async_settle_shadow_v2_pack_round6.py",
-    "tests/test_async_settle_shadow_v2_pack_round7_chain.py",
-)
+# The lane's test files, listed in scripts/ci/heavy_tests.txt (a list, not
+# code: application boundary guards scan scripts/*.py for module names).
+HEAVY_LIST = Path(__file__).resolve().with_name("heavy_tests.txt")
+HEAVY_TESTS: tuple[str, ...] = tuple(
+    line.strip() for line in HEAVY_LIST.read_text(encoding="utf-8").splitlines()
+    if line.strip() and not line.lstrip().startswith("#"))
 # The heavy lane's shards (ci.yml's test-heavy matrix; test_ci_workflow
 # holds the two together).
 HEAVY_SHARDS = 3
