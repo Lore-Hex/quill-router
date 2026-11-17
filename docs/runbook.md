@@ -927,7 +927,7 @@ intent more than 5 s past due, closes admission until it is resolved.
 `oldest_unresolved_age_seconds` still counts every row from its creation. If
 the read behind that recount fails, the publisher publishes creation ages
 instead. The publisher runs only in the drain worker, whose output keeps no
-text from that module's logger, so the failure line (`async admission read
+text from the publisher's module, so the failure line (`async admission read
 failed operation=drain_grace` in the code) ships as
 `logger=trusted_router.storage_gcp_async_admission level=WARNING
 exception_class=none`, at most once a minute per cause.
@@ -954,14 +954,22 @@ intent undecided ... why=...` warning ships from the worker as
 exception_class=none`, with neither the row nor the reason, and a failed read
 (`operation=drain_leased_wait` in the code) ships as the same
 `logger=trusted_router.storage_gcp_async_admission` line as a failed grace
-read: the two cannot be told apart there. The reason is in the router's
-logs, which keep their text. The router that took the settle and could not
-get a decision wrote `fastpath pilot terminal undecided, left to the drain
-authorization_id=... why=...`: that line gives both the row's key and the
-reason. The `leased intent undecided` warning keeps its text, `why=` included,
-only when a router process applied the row (the scheduled drain route, or a
-settle the gateway sent in `sync` mode). With the key, read the row
-itself (`last_error`, `next_attempt_at`) and the fast-path owner's logs.
+read: the two cannot be told apart there.
+
+A reason reaches a log only when a router process asked the fast path, since
+a router's logs keep their text. There are two such cases. A router that
+settled a leased authorization inline, asked the fast path and got no
+decision wrote `fastpath pilot terminal undecided, left to the drain
+authorization_id=... why=...`: that line gives the authorization id and the
+reason (the row's key is that id with its intent kind). And the `leased
+intent undecided` warning keeps its text, `why=` included, when a router
+process applied the row (the scheduled drain route, or a settle the gateway
+sent in `sync` mode). A settle accepted in `async-v1` mode is neither: the
+router only stores the row, the worker is the first to ask the fast path, and
+no log carries the row's id or its reason. For such a row, and whenever the
+router lines are absent, read the fast-path owner's logs for the minutes
+before the park. With an id, read the row itself (`last_error`,
+`next_attempt_at`).
 
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once
