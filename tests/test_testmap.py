@@ -469,6 +469,68 @@ def test_compare_counts_collection_errors_and_files_the_selection_would_not_coll
     assert "of which 4 are collection errors" in text
 
 
+def _records(root: Path, *records: dict) -> Path:
+    for n, record in enumerate(records, 1):
+        (root / f"test-failures-{n}").mkdir(parents=True)
+        (root / f"test-failures-{n}" / "failures.json").write_text(json.dumps(record))
+    return root
+
+
+def _shard(group: int, *failed: str, complete: bool = True, exitstatus: int = 1, collection: tuple = ()) -> dict:
+    return {"group": group, "splits": 3, "complete": complete, "exitstatus": exitstatus if complete else None,
+            "failed": list(failed), "collection_errors": list(collection)}
+
+
+def test_recorded_failures_are_compared_only_when_every_shard_recorded_them(tmp_path: Path) -> None:
+    every = [_shard(1, "tests/test_a.py::test_x[1 2]"), _shard(2, collection=("tests/test_b.py",)),
+             _shard(3, exitstatus=0)]
+    assert tm.recorded_failures(every, "failure") == ({"tests/test_a.py::test_x[1 2]", tm.MODULE + "tests/test_b.py"},
+                                                      None)
+    # A green test job failed nothing, records or not.
+    assert tm.recorded_failures([], "success") == (set(), None)
+    # A shard that stopped before pytest finished (cancelled, timed out) or left nothing.
+    failed, why = tm.recorded_failures([every[0], _shard(2, complete=False), every[2]], "failure")
+    assert failed == {"tests/test_a.py::test_x[1 2]"} and why is not None and "shards 2 " in why
+    failed, why = tm.recorded_failures([every[0], every[2]], "failure")
+    assert why is not None and "shards 2 " in why
+    assert "no shard left a failure record" in str(tm.recorded_failures([], "failure")[1])
+    # Every shard finished without a failing test, yet the job is red: a step outside pytest failed.
+    why = tm.recorded_failures([_shard(1, exitstatus=0), _shard(2, exitstatus=0), _shard(3, exitstatus=0)],
+                               "failure")[1]
+    assert why is not None and "no shard recorded a failing test" in why
+
+
+def test_compare_reads_the_failure_records_and_never_reports_a_zero_it_did_not_measure(tmp_path: Path) -> None:
+    selection = {"full": False, "whole_files": [], "selected": ["tests/test_s.py::test_a"],
+                 "not_selected": ["tests/test_s.py::test_b words[x y]", "tests/test_n.py::test_c@grp"]}
+    tm.write_gz(selection, tmp_path / "selection.json.gz")
+    records = _records(tmp_path / "red",
+                       _shard(1, "tests/test_s.py::test_a", "tests/test_s.py::test_b words[x y]"),
+                       _shard(2, "tests/test_n.py::test_c@grp", "tests/test_new.py::test_q"),
+                       _shard(3, exitstatus=0))
+    summary = tmp_path / "summary.md"
+
+    def compare(failures: Path, result: str) -> str:
+        summary.write_text("")
+        assert tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(failures),
+                        "--test-result", result, "--summary", str(summary)]) == 0
+        return summary.read_text()
+
+    text = compare(records, "failure")
+    assert ("failures outside selection: 2 (tests/test_n.py::test_c@grp, tests/test_s.py::test_b words[x y])"
+            in text)
+    assert "failures in this run: 4, of which 0 are collection errors and 1 are tests the map does not know" in text
+    # A shard without a complete record: unavailable, with the reason; never "0".
+    partial = _records(tmp_path / "partial", _shard(1, "tests/test_s.py::test_a"), _shard(2, complete=False))
+    text = compare(partial, "failure")
+    assert "comparison unavailable: shards 2, 3 left no complete failure record" in text
+    assert "failures outside selection" not in text
+    text = compare(tmp_path / "no-artifacts", "failure")
+    assert "comparison unavailable" in text and "failures outside selection" not in text
+    # A green run.
+    assert "failures outside selection: 0" in compare(tmp_path / "no-artifacts", "success")
+
+
 def test_failed_ids_reads_only_the_runs_own_summary() -> None:
     known = ["tests/test_a.py::test_x", "tests/a dir/test_b.py::test_y"]
     log = "\n".join([

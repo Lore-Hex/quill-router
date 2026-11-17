@@ -776,7 +776,30 @@ def test_the_shadow_selection_is_report_only_and_off_the_scope_job() -> None:
         assert "id" not in step
     assert "testmap.py shadow" in shadow[0]["run"] and '--base "${PR_BASE_SHA}"' in shadow[0]["run"]
     assert shadow[0]["env"]["PR_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
-    assert shadow[1]["run"] == "python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+    assert shadow[1]["run"] == ("python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+                                " --failures test-failures")
+    # The comparison reads the test shards' failure records, never their logs:
+    # a red run with a missing record says "unavailable", not zero.
+    assert shadow[1]["env"] == {"TEST_RESULT": "${{ needs.test.result }}"}
+    collect = next(s for s in coverage["steps"] if s.get("name") == "Collect every shard's failed tests")
+    assert collect["if"] == "github.event_name == 'pull_request'" and collect["continue-on-error"] is True
+    assert collect["uses"] == "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    assert collect["with"] == {"pattern": "test-failures-*", "path": "test-failures"}
+    assert coverage["steps"].index(collect) < coverage["steps"].index(shadow[1])
+    upload = next(s for s in test["steps"] if s.get("name") == "Upload this shard's failed tests")
+    assert upload["if"] == "always()" and upload["continue-on-error"] is True
+    assert upload["with"] == {"name": "test-failures-${{ matrix.shard }}",
+                              "path": "${{ runner.temp }}/test-failures/failures.json", "retention-days": 1,
+                              "if-no-files-found": "ignore"}
+    # That upload is the only step the shadow comparison adds to the test job.
+    assert [s.get("name") or s.get("uses", "").split("@")[0] for s in test["steps"]] == [
+        "actions/checkout", "Lore-Hex/quill-router/.github/actions/setup-uv", "Sync",
+        "Check out enclave source for the mandatory Sentry guard", "Require and inspect enclave source",
+        "Copy split weights for this shard", "Tests and coverage", "Upload this shard's durations",
+        "Upload this shard's failed tests", "Stash this shard's coverage", "actions/upload-artifact"]
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    assert ('if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_TEMP"):\n'
+            '    pytest_plugins = [*globals().get("pytest_plugins", []), "scripts.ci.failure_record"]') in conftest
     assert shadow[2]["with"]["name"] == "test-selection" and shadow[2]["with"]["path"] == "selection.json.gz"
     floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
     assert all(coverage["steps"].index(s) < coverage["steps"].index(floor) for s in shadow)
