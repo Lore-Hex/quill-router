@@ -718,6 +718,47 @@ def test_static_assets_are_memory_served_with_resilient_cdn_headers(
     assert unchanged.content == b""
 
 
+def _static_cache_control(release: str | None, query: bytes) -> str:
+    from trusted_router.routes.public import STATIC_DIR, _CachedStaticFiles
+
+    static = _CachedStaticFiles(directory=STATIC_DIR, release=release)
+    return static._cache_control({"query_string": query})
+
+
+def test_only_this_release_s_versioned_assets_are_immutable() -> None:
+    # During a deploy the control service renders /console pages with its
+    # release in ?v= while the public service, still on the previous release,
+    # serves /static. An immutable answer for a foreign ?v= would let Cloud CDN
+    # keep the previous release's bytes under the new release's URL for a year.
+    immutable = "public, max-age=31536000, immutable"
+    assert _static_cache_control("9ce6d79", b"v=9ce6d79&flow=console-navigation-v2") == immutable
+    assert _static_cache_control("9ce6d79", b"flow=x&v=9ce6d79") == immutable
+    assert _static_cache_control("6ab1d93", b"v=9ce6d79&flow=console-navigation-v2") == "no-store"
+    assert _static_cache_control("6ab1d93", b"v=6ab1d93&v=9ce6d79") == "no-store"
+    assert _static_cache_control("9ce6d79", b"v=%39ce6d79") == immutable
+    assert _static_cache_control("9ce6d79", b"v=") == "no-store"
+    # A local build's pages use a file-mtime version, so there is nothing to
+    # compare against and every ?v= stays immutable.
+    assert _static_cache_control("local", b"v=local-1700000000") == immutable
+    assert _static_cache_control(None, b"v=anything") == immutable
+    assert _static_cache_control("9ce6d79", b"").startswith("public, max-age=86400")
+
+
+def test_static_mount_compares_against_the_running_release(test_settings: Settings) -> None:
+    from starlette.routing import Mount
+
+    from trusted_router.main import create_app
+
+    app = create_app(test_settings.model_copy(update={"release": "9ce6d79"}), init_observability=False)
+    static = next(route.app for route in app.routes if isinstance(route, Mount) and route.path == "/static")
+    assert static._release == "9ce6d79"
+    client = TestClient(app)
+    assert client.get("/static/dashboard.js?v=9ce6d79").headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+    assert client.get("/static/dashboard.js?v=6ab1d93").headers["cache-control"] == "no-store"
+
+
 def test_read_only_blocks_writes_but_lets_reads_through() -> None:
     """Operational read-only flag (Stage 1 Spanner cutover prerequisite):
     POST/PUT/PATCH/DELETE return 503 with `Retry-After`; GET/HEAD/OPTIONS

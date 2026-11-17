@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse
+from urllib.parse import parse_qsl, unquote_to_bytes, urlencode, urlparse
 
 import httpx
 from email_validator import EmailNotValidError, validate_email
@@ -309,15 +309,26 @@ class _CachedStaticFiles(StaticFiles):
     GET and HEAD requests use the in-memory copy.
 
     Browser caches keep unversioned paths for one day while Cloud CDN keeps a
-    shared copy for seven. Explicit ``?v=`` URLs are immutable for one year.
+    shared copy for seven. A ``?v=`` URL naming this process's own release is
+    immutable for one year. A ``?v=`` naming any other release is answered
+    ``no-store``: during a deploy the control service (which renders /console
+    pages and stamps its release into asset URLs) and the public service
+    (which serves /static) run different releases for a while, and an
+    immutable answer then would let Cloud CDN keep one release's bytes under
+    another release's URL for a year.
     """
 
     _SHARED_MAX_AGE = 7 * 86_400
     _VERSIONED_MAX_AGE = 365 * 86_400
 
-    def __init__(self, *args: Any, max_age: int = 86_400, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, max_age: int = 86_400, release: str | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._max_age = max_age
+        # A local build has no release to compare against (its pages use a
+        # file-mtime version), so every ?v= URL stays immutable there.
+        self._release = release if release and release != "local" else None
         self._asset_bytes: dict[str, bytes] = {}
         for directory in self.all_directories:
             root = Path(directory).resolve()
@@ -335,10 +346,17 @@ class _CachedStaticFiles(StaticFiles):
 
     def _cache_control(self, scope: Scope) -> str:
         query = scope.get("query_string", b"")
-        versioned = any(
-            field.partition(b"=")[0] == b"v" for field in query.split(b"&") if field
-        )
-        if versioned:
+        versions = [
+            value
+            for name, _sep, value in (field.partition(b"=") for field in query.split(b"&") if field)
+            if name == b"v"
+        ]
+        if versions:
+            if self._release is not None and any(
+                unquote_to_bytes(value).decode("utf-8", "replace") != self._release
+                for value in versions
+            ):
+                return "no-store"
             return f"public, max-age={self._VERSIONED_MAX_AGE}, immutable"
         return (
             f"public, max-age={self._max_age}, s-maxage={self._SHARED_MAX_AGE}, "
@@ -1051,7 +1069,11 @@ def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
-    app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
+    app.mount(
+        "/static",
+        _CachedStaticFiles(directory=STATIC_DIR, release=settings.release),
+        name="static",
+    )
     trust_release_resolver = TrustReleaseResolver(settings)
     # One resolver per plane. The control plane mirrors three independently
     # published records rather than authoring two of them from its own config.
