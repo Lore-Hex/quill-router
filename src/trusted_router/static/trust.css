@@ -160,36 +160,11 @@
   color: var(--amber);
 }
 
-/* The full agent prompt, shown as text under the hero: an Ink panel with a
-   header strip, wrapped because it is prose rather than code. */
-.trust-prompt-block {
-  background: var(--nyte-ink, #151311);
-  color: var(--nyte-cream, #f4efe6);
-}
-
-.trust-prompt-head {
-  padding: 10px 20px;
-  border-bottom: 1px solid rgb(244 239 230 / 16%);
-}
-
-.trust-page .trust-prompt-block .trust-prompt-head h2 {
-  margin: 0;
-  color: inherit;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.trust-page .trust-prompt-block p {
+/* The full agent prompt under the hero uses the shared code block
+   (content-layout.js builds the strip and Copy). It is prose, so it wraps. */
+.trust-page .trust-prompt-block pre {
+  white-space: pre-wrap;
   max-width: 80ch;
-  margin: 0;
-  padding: 18px 20px 20px;
-  color: inherit;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
 }
 
 /* Under the prompt: the how-to paragraph, review link and source links

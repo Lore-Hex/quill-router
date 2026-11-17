@@ -35,9 +35,8 @@
     <section class="panel warn trust-notice"><h2>Live release record unavailable</h2>
       <p>This page cannot currently verify the running gateway digest and returns HTTP 503. Do not rely on an older embedded digest.</p></section>
     {% endif %}
-    <section class="trust-prompt-block" aria-labelledby="trust-prompt-label">
-      <div class="trust-prompt-head"><h2 id="trust-prompt-label">Agent prompt</h2></div>
-      <p id="trust-agent-prompt">{{ agent_prompt }}</p>
+    <section class="trust-prompt-block" aria-label="Agent prompt">
+      <div class="copy-terminal"><div class="code-head"><span>Agent prompt<small>Prompt</small></span></div><pre id="trust-agent-prompt">{{ agent_prompt }}</pre></div>
     </section>
     <section class="trust-overview" aria-label="How to verify and current workload">
       <div class="trust-overview-copy">
