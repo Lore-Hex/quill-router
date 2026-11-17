@@ -60,28 +60,28 @@
  .trpr .press-q{font-size:17px}
 }
 
-/* FAQ guides: the shared guide links continue the FAQ grid, unboxed. Heading and
-   intro in the FAQ heading column; links in the answers column, ruled like FAQ rows. */
+/* FAQ guides (option A): one section with the FAQ. A small "Go deeper" label and
+   plain guide links sit in the answers column under the questions, then sign-up. */
 #main>.trf-guides{padding-top:0}
-#main>.trf-guides>.content-section{grid-column:1/-1;display:grid;grid-template-columns:subgrid;grid-template-rows:auto 1fr auto auto;column-gap:inherit;row-gap:0;align-items:start;padding:0;border:0;border-radius:0;background:transparent}
+#main>.trf-guides>.content-section{grid-column:1/-1;display:grid;grid-template-columns:subgrid;column-gap:inherit;row-gap:0;align-items:start;padding:0;border:0;border-radius:0;background:transparent}
 #main>.trf-guides .panel-body{display:contents}
-#main>.trf-guides .panel-head{grid-column:1;grid-row:1}
-#main>.trf-guides .panel-head h2{margin:0;font-size:24px;line-height:1.25;font-weight:400;max-width:none;position:static}
-#main>.trf-guides .panel-body>p:first-child{grid-column:1;grid-row:2;margin:12px 0 0;max-width:34ch;font-size:16px;line-height:1.6;font-weight:450;color:var(--tr-color-text-primary)}
-#main>.trf-guides ul{grid-column:2;grid-row:1/span 2;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:32px;margin:0;padding:0;list-style:none;border-bottom:1px solid var(--homepage-rule)}
-#main>.trf-guides li{margin:0;border-top:1px solid var(--homepage-rule);font-size:16px;line-height:1.45}
-#main>.trf-guides li a{display:flex;align-items:center;min-height:56px;padding:12px 0;box-sizing:border-box;color:var(--tr-color-text-primary);font-weight:450;text-decoration:none}
-#main>.trf-guides li a:hover{text-decoration:underline;text-underline-offset:4px}
-#main>.trf-guides .panel-body>p:last-of-type{grid-column:2;grid-row:3;margin:28px 0 0;max-width:66ch;font-size:15px;line-height:1.6;font-weight:450;color:var(--tr-color-text-primary)}
+#main>.trf-guides .panel-head{grid-column:2;grid-row:1}
+#main>.trf-guides .panel-head h2{margin:0;font-family:inherit;font-size:13px;line-height:1.4;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--tr-color-text-secondary);max-width:none;position:static}
+#main>.trf-guides .panel-body>p:first-child{display:none}
+#main>.trf-guides ul{grid-column:2;grid-row:2;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 40px;margin:16px 0 0;padding:0;list-style:none}
+#main>.trf-guides li{margin:0;font-size:16px;line-height:1.5}
+#main>.trf-guides li a{color:var(--tr-color-text-primary);font-weight:450;text-decoration:underline;text-decoration-color:var(--homepage-rule);text-underline-offset:4px}
+#main>.trf-guides li a:hover{text-decoration-color:currentColor}
+#main>.trf-guides .panel-body>p:last-of-type{grid-column:2;grid-row:3;margin:40px 0 0;max-width:66ch;font-size:15px;line-height:1.6;font-weight:450;color:var(--tr-color-text-primary)}
 #main>.trf-guides .panel-body>.button{grid-column:2;grid-row:4;justify-self:start;margin-top:20px}
-#faq>.trf{padding-bottom:64px}
+#faq>.trf{padding-bottom:56px}
 @media(max-width:880px){
  #main>.trf-guides ul{grid-template-columns:1fr}
 }
 @media(max-width:600px){
- #main>.trf-guides>.content-section{grid-template-columns:minmax(0,1fr);grid-template-rows:none}
- #main>.trf-guides .panel-head,#main>.trf-guides .panel-body>p:first-child,#main>.trf-guides ul,#main>.trf-guides .panel-body>p:last-of-type,#main>.trf-guides .panel-body>.button{grid-column:1;grid-row:auto}
- #main>.trf-guides ul{margin-top:20px}
+ #main>.trf-guides>.content-section{grid-template-columns:minmax(0,1fr)}
+ #main>.trf-guides .panel-head,#main>.trf-guides ul,#main>.trf-guides .panel-body>p:last-of-type,#main>.trf-guides .panel-body>.button{grid-column:1;grid-row:auto}
+ #main>.trf-guides ul{grid-template-columns:1fr}
  #faq>.trf{padding-bottom:48px}
 }
 
