@@ -745,7 +745,7 @@ func TestTheCountIsOffTheHandlersPath(t *testing.T) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "pass:body.float")
 	held := map[string]string{c.Facts.Key.LookupHash: c.Facts.Key.WorkspaceID}
-	serve := func(h *decideEdge) (*blockingPeekCache, *http.Client, string) {
+	serve := func(h *decideEdge) (*blockingPeekCache, *http.Client, *httptest.Server) {
 		cache := &blockingPeekCache{KeyCache: h.cache, held: held, entered: make(chan struct{}),
 			release: make(chan struct{})}
 		h.edge.decider.cfg.Cache = cache
@@ -761,7 +761,7 @@ func TestTheCountIsOffTheHandlersPath(t *testing.T) {
 		client := &http.Client{Timeout: 5 * time.Second,
 			Transport: &http.Transport{MaxConnsPerHost: 1, DisableCompression: true}}
 		t.Cleanup(client.CloseIdleConnections)
-		return cache, client, srv.URL
+		return cache, client, srv
 	}
 	post := func(client *http.Client, url string, reused *bool) (int, error) {
 		req, err := http.NewRequest(http.MethodPost, url+c.Request.Path, bytes.NewReader(c.body()))
@@ -790,7 +790,8 @@ func TestTheCountIsOffTheHandlersPath(t *testing.T) {
 	}
 
 	h := newDecideEdge(t, f, c, nil)
-	cache, client, url := serve(h)
+	cache, client, srv := serve(h)
+	url := srv.URL
 	if code, err := post(client, url, nil); err != nil || code != http.StatusTeapot {
 		t.Fatalf("the first pass: %d %v", code, err)
 	}
@@ -801,6 +802,11 @@ func TestTheCountIsOffTheHandlersPath(t *testing.T) {
 			code, err, reused)
 	}
 	close(cache.release)
+	// A pass's mix is handed off as its handler returns, and the proxy
+	// flushes each write, so the client can have the second answer whole
+	// before the second hand-off is made. The server's Close returns once
+	// every handler has: both mixes are handed off by then.
+	srv.Close()
 	h.edge.decider.mixPending.Wait()
 	if got := h.edge.DecideCounts(); !maps.Equal(got.PassedEnabled, map[string]int64{gwauth.ReasonFloat: 2}) {
 		t.Fatalf("the two passes' mix: %+v", got)
@@ -810,7 +816,8 @@ func TestTheCountIsOffTheHandlersPath(t *testing.T) {
 	// as the handler returns, comes while the count is held.
 	h = newDecideEdge(t, f, c, nil)
 	h.edge.proxy.Transport = tracedTransport{base: unreachable{}}
-	cache, client, url = serve(h)
+	cache, client, srv = serve(h)
+	url = srv.URL
 	start := time.Now()
 	if code, err := post(client, url, nil); err != nil || code != http.StatusBadGateway {
 		t.Fatalf("the unreachable pass: %d %v", code, err)
