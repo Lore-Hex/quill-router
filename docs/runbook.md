@@ -925,8 +925,12 @@ each from when it falls due (`next_attempt_at`, at most 60 s after it was
 written). So one async, retried, parked or dead row more than 5 s old, or one
 intent more than 5 s past due, closes admission until it is resolved.
 `oldest_unresolved_age_seconds` still counts every row from its creation. If
-the read behind that recount fails (`async admission read failed
-operation=drain_grace`), the publisher publishes creation ages instead.
+the read behind that recount fails, the publisher publishes creation ages
+instead. The publisher runs only in the drain worker, whose output keeps no
+text from the publisher's module, so the failure line (`async admission read
+failed operation=drain_grace` in the code) ships as
+`logger=trusted_router.storage_gcp_async_admission level=WARNING
+exception_class=none`, at most once a minute per cause.
 
 One kind of parked row is the exception: a leased intent the fast path has
 not decided, parked with `last_error = 'fast path undecided'`
@@ -936,14 +940,35 @@ its park falls due (at most five minutes) and count it from then. A record
 with `p95_age_seconds` near zero, `oldest_unresolved_age_seconds` in the
 thousands and admission open is therefore expected while such a row waits; it
 is not a broken publisher. The row still counts in `backlog_count`,
-`sample_count` and `frozen_micro`. The exception ends when the row is three
-hours old (the drain then spends its attempts, toward `dead` and its alert),
-and it is not applied at all when more than 100 unresolved rows are between
-5 s and about 3 h 5 min old: every age then counts, so a fast path deciding
-nothing for many requests closes admission. To see why such a row waits, read
-the drain worker's `leased intent undecided` warnings and the fast-path
-owner's logs. If the read behind this fails (`async admission read failed
-operation=drain_leased_wait`), the publisher publishes the ages without it.
+`sample_count` and `frozen_micro`. The drain parks a row this way only until
+it is three hours old (it then spends its attempts, toward `dead` and its
+alert), so the exception ends when the last such park falls due, between
+3 h and about 3 h 5 min. It is not applied at all when more than 100
+unresolved rows are between 5 s and about 3 h 5 min old: every age then
+counts, so a fast path deciding nothing for many requests closes admission.
+If the read behind this fails, the publisher publishes the ages without it.
+
+The worker's logs do not say why such a row waits. Its `settle outbox leased
+intent undecided ... why=...` warning ships from the worker as
+`logger=trusted_router.services.settle_outbox_apply level=WARNING
+exception_class=none`, with neither the row nor the reason, and a failed read
+(`operation=drain_leased_wait` in the code) ships as the same
+`logger=trusted_router.storage_gcp_async_admission` line as a failed grace
+read: the two cannot be told apart there.
+
+A reason reaches a log only when a router process asked the fast path, since
+a router's logs keep their text. There are two such cases. A router that
+settled a leased authorization inline, asked the fast path and got no
+decision wrote `fastpath pilot terminal undecided, left to the drain
+authorization_id=... why=...`: that line gives the authorization id and the
+reason (the row's key is that id with its intent kind). And the `leased
+intent undecided` warning keeps its text, `why=` included, when a router
+process applied the row (the scheduled drain route, or a settle the gateway
+sent in `sync` mode). A settle accepted in `async-v1` mode is neither: the
+router only stores the row, the worker is the first to ask the fast path, and
+no log carries the row's id or its reason. For such a row, and whenever the
+router lines are absent, read the fast-path owner's logs around the time of
+the park. With an id, read the row itself (`last_error`, `next_attempt_at`).
 
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once

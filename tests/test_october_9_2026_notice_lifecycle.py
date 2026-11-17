@@ -24,6 +24,7 @@ from scripts.pricing.providers import (
     mistral,
     nebius,
     novita,
+    nvidia_nim,
     openai,
     sail_research,
     scaleway,
@@ -37,6 +38,7 @@ from scripts.pricing.providers import (
 )
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.synthetic.probes import rotation_candidates
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,8 @@ _CASES = [
          datetime(2026, 11, 14, 8, tzinfo=UTC), None),
     Case("atlas-cloud", "minimax/minimax-m2.7", "minimaxai/minimax-m2.7",
          datetime(2026, 11, 14, 8, tzinfo=UTC), None),
+    Case("nvidia-nim", "meta-llama/llama-guard-4-12b", "meta/llama-guard-4-12b",
+         datetime(2026, 11, 16, 9, tzinfo=UTC), None),
     Case("deepinfra", "inclusionai/ling-3.1-flash", "inclusionAI/Ling-3.1-flash",
          datetime(2026, 11, 15, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("tinfoil", "moonshotai/kimi-k3", "kimi-k3",
@@ -268,6 +272,7 @@ _MANIFESTS = {
     "openai": openai.MANIFEST_PATH,
     "sail-research": sail_research.MANIFEST_PATH,
     "atlas-cloud": atlas_cloud.MANIFEST_PATH,
+    "nvidia-nim": nvidia_nim.MANIFEST_PATH,
 }
 
 
@@ -321,3 +326,14 @@ def test_replacement_is_quoted_and_manifest_annotated(case: Case) -> None:
     assert rows[case.model]["upstream_id"] == case.native
     assert rows[case.model]["retirement_at"] == case.cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     assert rows[case.model].get("replacement_model_id") == case.replacement
+
+
+def test_routes_retired_by_now_leave_the_synthetic_probe_pool() -> None:
+    # The route-availability probe and the rotation probe both draw from this
+    # pool; a retired route left in it pages on the provider's 410 forever.
+    now = provider_lifecycle._utc_now()
+    pool = rotation_candidates()
+    in_effect = [case for case in _CASES if case.cutoff <= now]
+    assert in_effect
+    for case in in_effect:
+        assert case.model not in pool.get(case.provider, []), case

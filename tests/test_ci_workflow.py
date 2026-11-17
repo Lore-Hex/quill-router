@@ -233,7 +233,20 @@ def test_the_heavy_lane_and_the_shards_partition_the_suite() -> None:
     assert next(s for s in heavy["steps"] if "checkout" in s.get("uses", "")) == next(
         s for s in test["steps"] if "checkout" in s.get("uses", ""))
     uploads = {step["with"]["name"]: step for step in heavy["steps"] if "upload-artifact" in step.get("uses", "")}
-    assert set(uploads) == {"durations-default-heavy-${{ matrix.shard }}", "coverage-heavy-${{ matrix.shard }}"}
+    assert set(uploads) == {"durations-default-heavy-${{ matrix.shard }}", "coverage-heavy-${{ matrix.shard }}",
+                            "test-failures-heavy-${{ matrix.shard }}"}
+    # Its failure record, as the shards upload theirs: after the tests,
+    # whatever their outcome, bounded, unable to fail the job, and named so
+    # testmap.py's compare counts it against the lane's own result.
+    from scripts.ci.testmap import HEAVY_FAILURES
+
+    failures = uploads["test-failures-heavy-${{ matrix.shard }}"]
+    shard_upload = next(s for s in test["steps"] if s.get("with", {}).get("name") == "test-failures-${{ matrix.shard }}")
+    assert {k: v for k, v in failures.items() if k != "with"} == {k: v for k, v in shard_upload.items() if k != "with"}
+    assert {**failures["with"], "name": None} == {**shard_upload["with"], "name": None}
+    assert failures["with"]["name"].startswith(HEAVY_FAILURES)
+    tests_step = next(s for s in heavy["steps"] if "uv run pytest" in s.get("run", ""))
+    assert heavy["steps"].index(failures) > heavy["steps"].index(tests_step)
     assert uploads["coverage-heavy-${{ matrix.shard }}"]["with"]["path"] == "coverage-heavy-${{ matrix.shard }}.dat"
     assert any(step.get("run") == "mv .coverage coverage-heavy-${{ matrix.shard }}.dat" for step in heavy["steps"])
     # The coverage job downloads every coverage-* artifact, the lane's among them.
@@ -884,7 +897,33 @@ def test_the_shadow_selection_is_report_only_and_off_the_scope_job() -> None:
         assert "id" not in step
     assert "testmap.py shadow" in shadow[0]["run"] and '--base "${PR_BASE_SHA}"' in shadow[0]["run"]
     assert shadow[0]["env"]["PR_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
-    assert shadow[1]["run"] == "python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+    assert shadow[1]["run"] == ("python3 scripts/ci/testmap.py compare --selection selection.json.gz"
+                                " --failures test-failures")
+    # The comparison reads the test shards' failure records, never their logs:
+    # a red run with a missing record says "unavailable", not zero.
+    # The heavy lane's records count against its own result (testmap.py
+    # tells them apart by their artifacts' test-failures-heavy- names).
+    assert shadow[1]["env"] == {"TEST_RESULT": "${{ needs.test.result }}",
+                                "HEAVY_RESULT": "${{ needs.test-heavy.result }}"}
+    collect = next(s for s in coverage["steps"] if s.get("name") == "Collect every shard's failed tests")
+    assert collect["if"] == "github.event_name == 'pull_request'" and collect["continue-on-error"] is True
+    assert collect["uses"] == "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    assert collect["with"] == {"pattern": "test-failures-*", "path": "test-failures"}
+    assert coverage["steps"].index(collect) < coverage["steps"].index(shadow[1])
+    # One step of the test job uploads the failure record: after the tests,
+    # whatever their outcome, bounded, and unable to fail the job.
+    uploads = [s for s in test["steps"] if "test-failures" in json.dumps(s)]
+    assert len(uploads) == 1
+    upload = uploads[0]
+    tests_step = next(s for s in test["steps"] if "uv run pytest" in s.get("run", ""))
+    assert test["steps"].index(upload) > test["steps"].index(tests_step)
+    assert upload["if"] == "always()" and upload["continue-on-error"] is True
+    assert upload["timeout-minutes"] == 5
+    assert upload["with"]["name"] == "test-failures-${{ matrix.shard }}"
+    assert upload["with"]["path"] == "${{ runner.temp }}/test-failures/failures.json"
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    assert ('if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_TEMP"):\n'
+            '    pytest_plugins = [*globals().get("pytest_plugins", []), "scripts.ci.failure_record"]') in conftest
     assert shadow[2]["with"]["name"] == "test-selection" and shadow[2]["with"]["path"] == "selection.json.gz"
     floor = next(s for s in coverage["steps"] if s.get("name") == "Combine and enforce the floor")
     assert all(coverage["steps"].index(s) < coverage["steps"].index(floor) for s in shadow)

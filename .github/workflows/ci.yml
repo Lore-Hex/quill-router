@@ -536,6 +536,19 @@ jobs:
           name: durations-default-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
           retention-days: 7
+      # The shard's failed test IDs (scripts/ci/failure_record.py, loaded by
+      # tests/conftest.py in GitHub Actions), for the coverage job's report
+      # only shadow comparison. Whatever the outcome; it can never fail the job.
+      - name: Upload this shard's failed tests
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-failures-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-failures/failures.json
+          retention-days: 1
+          if-no-files-found: ignore
       - name: Stash this shard's coverage
         # Renamed off the dotfile before upload. `.coverage` is hidden, and
         # upload-artifact only stopped skipping hidden files behind an opt-in
@@ -612,6 +625,20 @@ jobs:
           name: durations-default-heavy-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
           retention-days: 7
+      # The lane's failed test IDs (scripts/ci/failure_record.py), for the
+      # coverage job's report-only shadow comparison, which counts them
+      # against this job's result. Whatever the outcome; it can never fail
+      # the job.
+      - name: Upload this shard's failed tests
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-failures-heavy-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-failures/failures.json
+          retention-days: 1
+          if-no-files-found: ignore
       - name: Stash this shard's coverage
         run: mv .coverage coverage-heavy-${{ matrix.shard }}.dat
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -658,8 +685,8 @@ jobs:
       TEST_SHARDS: "8"
       HEAVY_SHARDS: "3"
     # The shadow test selection reads the per-test footprint map (an artifact
-    # of the "Test map" workflow), the pull request's labels and this run's
-    # failed shard logs.
+    # of the "Test map" workflow's runs) and the pull request's labels; its
+    # comparison reads the test shards' failure records (this run's artifacts).
     permissions:
       contents: read
       actions: read
@@ -692,13 +719,26 @@ jobs:
         run: >-
           python3 scripts/ci/testmap.py shadow --base "${PR_BASE_SHA}" --head "${GITHUB_SHA}"
           --pr "${PR_NUMBER}" --out selection.json.gz
+      # Every test shard's failure record. A missing one (a cancelled or
+      # timed-out shard) makes the comparison say "unavailable", not zero.
+      - name: Collect every shard's failed tests
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: test-failures-*
+          path: test-failures
       - name: Failures outside the shadow selection (report only)
         if: github.event_name == 'pull_request'
         continue-on-error: true
         timeout-minutes: 5
+        # The heavy lane's records (test-failures-heavy-*) count against its
+        # own result: a skipped lane failed nothing.
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/testmap.py compare --selection selection.json.gz
+          TEST_RESULT: ${{ needs.test.result }}
+          HEAVY_RESULT: ${{ needs.test-heavy.result }}
+        run: python3 scripts/ci/testmap.py compare --selection selection.json.gz --failures test-failures
       - name: Upload the shadow test selection
         if: github.event_name == 'pull_request'
         continue-on-error: true

@@ -44,8 +44,9 @@ What a test's window (setup, call and teardown) records:
   s  commands started (subprocess.Popen, os.posix_spawn, os.exec*, os.system):
      the first four argv words and the working directory relative to the
      repository ("-" outside it). The map is a public artifact, so a word is
-     cut at MAX_WORD characters, program text after -c and environment values
-     are placeholders, and a path outside the repository is "<outside>" (the
+     cut at MAX_WORD characters, program text, secrets, option and
+     environment values and URL credentials are placeholders (Recorder.words
+     lists them), and a path outside the repository is "<outside>" (the
      executable keeps its name).
 Separate windows, each written once and inherited by the tests that use it:
   c   a test module's collection (its import and parametrization);
@@ -66,18 +67,26 @@ Separate windows, each written once and inherited by the tests that use it:
       between the callback's last check and its return.)
       A function that keeps a cache by hand is windowed the same way, every
       call a "miss": one that assigns a module global (`global _CACHE`, a
-      singleton built on first use), or stores into, assigns or reads a
-      global or attribute named like a cache (CACHE_NAME: _CACHE,
-      _STATUS_RESPONSE_CACHE, self._cache, self._cached). A test that
-      called it inherits what any of its calls ran, as from a memoized
-      function's misses (selector S10). A generator or coroutine's window
-      closes at each yield or await (PY_YIELD) and reopens when it resumes.
-      Found by bytecode (keeps_cache) when the function first runs. In src
-      that is about sixty functions: ai_iq._models_payload, the
-      routes/public.py snapshots (_status_snapshot, _leaderboard_snapshot,
-      _fleet_snapshot_cached, _cached_public_response, ...), measured,
-      receipt_keys, sns_verify, company_affiliations, the gateway's
+      singleton built on first use, a "done once" flag; a reset to None or
+      a `+= 1` counter does not count), stores into or mutates a private module global
+      (_MONITOR_HASH[key] = ..., _VERIFIED.move_to_end(...), _ENSURED.add),
+      or stores into, assigns or reads a global or attribute named like a
+      cache (CACHE_NAME: _CACHE, _STATUS_RESPONSE_CACHE, self._cache,
+      self._cached). A test that called it inherits what any of its calls
+      ran, as from a memoized function's misses (selector S10). A generator
+      or coroutine's window closes at each yield or await (PY_YIELD) and
+      reopens when it resumes. Found by bytecode (keeps_cache) when the
+      function first runs. In src that is about seventy functions:
+      ai_iq._models_payload, the routes/public.py snapshots
+      (_status_snapshot, _leaderboard_snapshot, _fleet_snapshot_cached,
+      _cached_public_response, ...), measured, receipt_keys, sns_verify,
+      company_affiliations, synthetic/funding.py's monitor_lookup_hash
+      (_MONITOR_HASH) and ensure_monitor_funding (_ENSURED),
+      async_settle_shadow_v2_gate_prior._resolve (_VERIFIED), the gateway's
       broadcast and fast path singletons, the snapshot publishers.
+      routes/public.py's _STATIC_ASSET_BYTES_BY_ROOT is filled in
+      _CachedStaticFiles.__init__, at import (the app is built then): the
+      global window holds it, and a change there runs everything (F3).
       Not covered, and why:
         - a cache filled outside the windowed functions' calls: by their
           caller, or by another thread after they return. The tests that
@@ -89,12 +98,26 @@ Separate windows, each written once and inherited by the tests that use it:
           (_sign_in_background) what current() serves; AdmissionRefresher's
           worker fills the cache requests read. The module-level caches
           listed above are filled where they are read.
+        - work a coroutine hands off while it awaits (run_in_threadpool,
+          asyncio.to_thread) to fill its cache: its window is closed during
+          the await, so the cache's later readers do not inherit that work.
+          Found in src: routes/bedrock_group_buy.py:273 (_public_snapshot
+          awaits _read_public_snapshot_parts) and routes/public.py:2932
+          (_cached_public_response awaits `build`). No current test reads a
+          value one of them cached in another test: every create_app
+          invalidates the bedrock snapshot, and every test builds its own
+          app (conftest's client fixture, tests/test_bedrock_group_buy.py);
+          the public response cache is bypassed when settings.environment
+          is "test", and the tests that run it under "local"
+          (tests/test_synthetic_monitoring.py, test_token_exchange_evidence,
+          test_clickhouse_unreachable_degrades) empty it first.
         - functools.cached_property: a hit is an instance attribute lookup
           that runs nothing. None in src or scripts (one in
           tests/test_async_settle_proof_oracle.py, on an instance made per
           test, where the test that fills it is the one that reads it).
-        - a cache held by a closure (nonlocal) or under a name that is not
-          like CACHE_NAME, and a library's cache of repository results.
+        - a cache held by a closure (nonlocal), in a public module global
+          or an attribute not named like CACHE_NAME, and a library's cache
+          of repository results.
         - shared state that is not a cache (the in-memory store, a module
           setting a test leaves behind): any per-test selection assumes
           tests do not depend on what an earlier test left.
@@ -152,7 +175,7 @@ from typing import Any
 
 import pytest
 
-RECORDER_VERSION = "3"  # scripts/ci/testmap.py holds the same value; its tests compare the two
+RECORDER_VERSION = "6"  # scripts/ci/testmap.py holds the same value; its tests compare the two
 
 TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
@@ -163,18 +186,29 @@ MEMO = "@memo"
 # incomplete instead, a bound on time and output that the suite never reaches.
 MAX_MISSES = 1_000_000
 MAX_WORD = 200
-# Words after which the next word is program text or a secret: python -c,
-# bash -c, sh -ec, node -e, perl -pe, ruby -e; a header (curl -H); a user or
-# password option given as its own word.
-PROGRAM_FLAG = re.compile(r"-[A-Za-z]*[ce]|--(?:eval|exec|execute|command|print)")
-VALUE_FLAG = re.compile(r"-H|--header|-u|--user|--?[\w-]*(?:pass|token|secret|key|auth|cred|cookie)[\w-]*",
-                        re.IGNORECASE)
+# Words after which the next word is program text: python -c, bash -c,
+# sh -ec, node -e, perl -pe, ruby -e (a short cluster ending in c or e).
+PROGRAM_FLAG = re.compile(r"-[A-Za-z]{0,3}[ce]|--(?:eval|exec|execute|command|print)")
+# Options whose next word is a secret: a header (curl -H), a user (-u), a
+# password (-p, redis-cli -a, openssl -k), or any option named like one.
+# Single letters match case-sensitively (python -P, pip -U are not these).
+VALUE_CLUSTER = re.compile(r"-[A-Za-z]*[Hupak]")  # -p, -a; a cluster ending in one (-vp, -up)
+LONG_VALUE_FLAG = re.compile(r"--header|--user|--pw|--?[\w.-]*(?:pass|token|secret|key|auth|cred|cookie|bearer)[\w.-]*",
+                             re.IGNORECASE)  # dotted keys too: -Ddb.password, --db.password
+# After a secret's flag, the next word is that secret unless it looks like an
+# option (-c, --format): a secret may start with "-" (redis-cli -a -Zk3y).
+OPTION_LIKE = re.compile(r"-[A-Za-z]|--[a-z][a-z0-9-]*(?:=.*)?", re.DOTALL)
+GLUED_VALUE = re.compile(r"-([A-Za-z]*?[upH]).+", re.DOTALL)  # -phunter2, -uroot, -vpX: glued to its flag
 OPTION_VALUE = re.compile(r"(--?[A-Za-z0-9][\w.-]*)=.*", re.DOTALL)  # --password=x, -Dname=x
-ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)  # env NAME=value
-URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^@\s]*@)?([^/?#\s]*)([^?#\s]*)[?#]?.*", re.DOTALL)
-# A function that keeps a cache by hand (see the module docstring): it
-# assigns a module global, or stores into, assigns or reads a global or
-# attribute named like a cache (_CACHE, self._cache, _STATUS_RESPONSE_CACHE).
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*=.*", re.DOTALL)  # env NAME=value, helm --set db.password=x
+# A URL's user and password run to its last "@" before any "?" or "#": a
+# password may hold "@" or "/", a query may hold "@".
+URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)(?:[^?#\s]*@)?([^/?#\s]*)([^?#\s]*)[?#]?.*", re.DOTALL)
+CREDENTIALS = re.compile(r"[^\s/@:]+:[^\s/]*@(\S*)", re.DOTALL)  # user:password@host, no scheme
+# A function that keeps a cache by hand (see the module docstring and
+# keeps_cache): it assigns a module global, mutates a private one, or
+# stores into, assigns or reads a global or attribute named like a cache
+# (_CACHE, self._cache, _STATUS_RESPONSE_CACHE).
 CACHE_NAME = re.compile(r"(?:^|_)cache[ds]?$", re.IGNORECASE)
 CACHE_MUTATORS = frozenset({"setdefault", "update", "pop", "popitem", "clear", "move_to_end", "append",
                             "appendleft", "extend", "insert", "add", "discard", "remove", "__setitem__",
@@ -239,36 +273,96 @@ def _start_of(instruction: dis.Instruction) -> tuple[int, int] | None:
     return None if p is None or p.lineno is None or p.col_offset is None else (p.lineno, p.col_offset)
 
 
+def _private_global(ins: dis.Instruction) -> bool:
+    name = ins.argval if isinstance(ins.argval, str) else ""
+    return ins.opname == "LOAD_GLOBAL" and name.startswith("_") and not name.startswith("__")
+
+
+def _reset_or_counter(instructions: list[dis.Instruction], index: int) -> int | None:
+    """If the global store at `index` is a reset to None or `+= <constant>`
+    / `-= <constant>` (a counter), the index of the counter's own load (-1
+    for a reset); else None. A store some jump reaches is neither (`_v =
+    compute() if FLAG else None`, `_c = build() or None`), and a constant
+    flag is never exempt: `if _ready: return; _populate(); _ready = True`
+    serves what _populate() did."""
+    store = instructions[index]
+    before = instructions[index - 1] if index else None
+    if before is None or store.is_jump_target:
+        return None
+    if before.opname == "LOAD_CONST":
+        return -1 if before.argval is None and not before.is_jump_target else None
+    if (before.opname == "BINARY_OP" and before.argrepr in ("+=", "-=") and index >= 3
+            and instructions[index - 2].opname == "LOAD_CONST"
+            and instructions[index - 3].opname == "LOAD_GLOBAL"
+            and instructions[index - 3].argval == store.argval
+            and not any(ins.is_jump_target for ins in instructions[index - 2:index])):
+        return index - 3
+    return None
+
+
+def _only_resets_and_counters(instructions: list[dis.Instruction]) -> bool:
+    """Is every global store a reset to None or a counter, and is no such
+    global read anywhere else in the function? A read makes it a run-once
+    flag: `if _n: return; _load(); _n += 1`, `if _pending is None: return;
+    ...; _pending = None` serve what ran before the store."""
+    names: set[str] = set()
+    own_loads: set[int] = set()
+    for index, ins in enumerate(instructions):
+        if ins.opname in ("STORE_GLOBAL", "DELETE_GLOBAL"):
+            own = _reset_or_counter(instructions, index) if ins.opname == "STORE_GLOBAL" else None
+            if own is None:
+                return False
+            names.add(ins.argval)
+            own_loads.add(own)
+    return not any(ins.opname == "LOAD_GLOBAL" and ins.argval in names and index not in own_loads
+                   for index, ins in enumerate(instructions))
+
+
 def keeps_cache(code: Any) -> bool:
-    """Does a function assign a module global, or store into, assign or read
-    a global or attribute named like a cache? Reading counts, for a private
-    name (VERTEX_DURABLE_CACHE is a constant; caches are _CACHE, self._cache):
-    a function that serves a cached value and calls a filler on a miss is
-    the one its callers run every time. A function named like a cache that
-    is only called is not one."""
+    """Does a function keep state across calls that a later call serves?
+      - it assigns a module global, other than a reset to None or a counter
+        that the function reads nowhere else;
+      - it stores into, or calls a mutating method of, a private module
+        global (_MONITOR_HASH[key] = ..., _VERIFIED.move_to_end(...)) or a
+        global or attribute named like a cache (self._cache[key] = ...);
+      - it assigns an attribute named like a cache (self._cached = ...);
+      - it reads a private global or attribute named like a cache (_CACHE,
+        self._cache; VERTEX_DURABLE_CACHE is a constant): a function that
+        serves a cached value and calls a filler on a miss is the one its
+        callers run every time. A function named like a cache that is only
+        called is not one."""
+    instructions: list[dis.Instruction] | None = None
     ops = code.co_code[::2]
     if any(op in ops for op in GLOBAL_WRITES):
-        return True
-    if not any(CACHE_NAME.search(name) for name in code.co_names):
+        instructions = list(dis.get_instructions(code))
+        if not _only_resets_and_counters(instructions):
+            return True
+    if not any(CACHE_NAME.search(name) or name.startswith("_") and not name.startswith("__") for name in code.co_names):
         return False
-    instructions = list(dis.get_instructions(code))
-    named: dict[tuple[int, int], int] = {}  # where a cache-named load starts -> its index
+    if instructions is None:
+        instructions = list(dis.get_instructions(code))
+    named: dict[tuple[int, int], int] = {}  # where a cache-named or private global load starts -> its index
     for index, ins in enumerate(instructions):
         name = ins.argval if isinstance(ins.argval, str) else ""
         if ins.opname in ("STORE_ATTR", "DELETE_ATTR") and CACHE_NAME.search(name):
             return True  # self._cached = ...
-        if ins.opname in NAME_LOADS and CACHE_NAME.search(name):
+        if (ins.opname in NAME_LOADS and CACHE_NAME.search(name)) or _private_global(ins):
             where = _start_of(ins)
             if where is not None:
                 named.setdefault(where, index)
             after = instructions[index + 1] if index + 1 < len(instructions) else None
             if after is not None and after.opname == "LOAD_ATTR" and after.argval in CACHE_MUTATORS:
-                return True  # _CACHE.setdefault(...), self._cache.clear()
-        if ins.opname in ("STORE_SUBSCR", "DELETE_SUBSCR") and _start_of(ins) in named:
-            return True  # _CACHE[key] = ..., del self._cache[key]
+                return True  # _CACHE.setdefault(...), self._cache.clear(), _ENSURED.add(...)
+        if ins.opname in ("STORE_SUBSCR", "DELETE_SUBSCR"):
+            where = _start_of(ins)
+            first = named.get(where) if where is not None else None
+            if first is not None and not any(other.opname.startswith("CALL") and _start_of(other) == where
+                                             for other in instructions[first + 1:index]):
+                return True  # _CACHE[key] = ..., del self._cache[key]; not _make()[key] = ...
     for where, index in named.items():
-        if not instructions[index].argval.startswith("_"):
-            continue  # a public name read (VERTEX_DURABLE_CACHE) is a constant; caches are private
+        name = instructions[index].argval
+        if not CACHE_NAME.search(name) or not name.startswith("_"):
+            continue  # reads count for private names like a cache only
         after = instructions[index + 1] if index + 1 < len(instructions) else None
         callee = any(other.opname.startswith("CALL") and _start_of(other) == where
                      for other in instructions[index + 1:])
@@ -647,9 +741,18 @@ class Recorder:
         public artifact. Repository paths are relative; the executable outside
         the repository is its name; other paths outside it are placeholders,
         and so are program text (after -c or -e), the word after a header,
-        user or password-like option, an option's =value, an environment
-        value, and a URL's user, password, query and fragment; every word is
-        cut at MAX_WORD characters."""
+        user or password option (-H, -u, -p, -a, -k, --password, --pw), a
+        value glued to -u, -p or -H (-phunter2), an option's =value unless
+        it is a repository path (--eval=CODE is program text), a NAME=value's
+        value (dotted names too), a URL's user, password, query and
+        fragment, and user:password@ without a scheme. The word after a
+        program flag is hidden unless it is an option (python -u -c: the -c
+        still hides its program); after a secret's flag, unless it looks
+        like one (-c, --verbose: a secret may start with "-"). Every word is
+        cut at MAX_WORD characters. A path under the repository is the
+        repository's even where rel() skips it (.git). Not hidden: a secret
+        given as a plain positional word (vault login X), which nothing
+        tells apart from any other argument."""
         if isinstance(argv, (str, bytes, os.PathLike)):
             raw = [os.fsdecode(argv)]
         else:
@@ -658,22 +761,56 @@ class Recorder:
         hidden = ""
         for index, word in enumerate(raw):
             if hidden:
-                out.append(hidden)
-                hidden = ""
-                continue
-            if index and PROGRAM_FLAG.fullmatch(word):
-                hidden = "<program>"
-            elif index and VALUE_FLAG.fullmatch(word):
-                hidden = "<value>"
-            elif index and OPTION_VALUE.fullmatch(word):
-                name, value = word.split("=", 1)
-                word = name + "=" + ("<value>" if VALUE_FLAG.fullmatch(name) else self.word(value, index))
+                held, hidden = hidden, ""
+                # An option is never taken for the value (python -u -c: the -c
+                # still hides its program), but after a secret's flag only a
+                # word that looks like an option is one.
+                option = word.startswith("-") and (held == "<program>" or OPTION_LIKE.fullmatch(word))
+                if not option:
+                    out.append(held)
+                    continue
+            if index:
+                word, hidden = self.option(word)
             elif ASSIGNMENT.fullmatch(word):
                 word = word.split("=", 1)[0] + "=<value>"
             else:
                 word = self.word(word, index)
             out.append(" ".join(word.split())[:MAX_WORD] or "''")
         return out
+
+    def option(self, word: str) -> tuple[str, str]:
+        """An argument as recorded, and the placeholder for the next word if
+        it is program text or a secret."""
+        program = "<program>" if PROGRAM_FLAG.fullmatch(word) else ""
+        takes_next = bool(VALUE_CLUSTER.fullmatch(word) or LONG_VALUE_FLAG.fullmatch(word))
+        glued = GLUED_VALUE.fullmatch(word)
+        if glued:
+            # -phunter2, -uroot. It may be a cluster whose last flag takes
+            # the next word (-up x, openssl's -passin x), or perl's -pe: hide
+            # that word too.
+            return "-" + glued.group(1) + "<value>", program or ("<value>" if takes_next else "")
+        if program:
+            return word, program
+        if takes_next:
+            # A single-dash word holding a keyword may be a value glued to a
+            # flag (-tTokenAbc): hide it too.
+            hide = not word.startswith("--") and not VALUE_CLUSTER.fullmatch(word)
+            return ("-<value>" if hide else word), "<value>"
+        if OPTION_VALUE.fullmatch(word):
+            name, value = word.split("=", 1)
+            if PROGRAM_FLAG.fullmatch(name):  # --eval=CODE, --command=CODE
+                value = "<program>"
+            elif VALUE_CLUSTER.fullmatch(name) or LONG_VALUE_FLAG.fullmatch(name):
+                value = "<value>"
+            elif ASSIGNMENT.fullmatch(value):  # --data=token=X
+                value = value.split("=", 1)[0] + "=<value>"
+            else:  # a repository path stays (S8 reads it); any other value may be a secret (-Dfoo=x)
+                shown = self.word(value, 1)
+                value = shown if shown.startswith(("./", "<")) or shown == "." else "<value>"
+            return name + "=" + value, ""
+        if ASSIGNMENT.fullmatch(word):
+            return word.split("=", 1)[0] + "=<value>", ""
+        return self.word(word, 1), ""
 
     def word(self, word: str, index: int) -> str:
         """A URL without its user, password, query and fragment; a path in
@@ -683,12 +820,25 @@ class Recorder:
         url = URL.fullmatch(word)
         if url is not None:
             return url.group(1) + url.group(2) + url.group(3)
+        credentials = CREDENTIALS.fullmatch(word)
+        if credentials is not None:
+            return "<value>@" + credentials.group(1)
         if os.path.isabs(word) or word.startswith("."):
             rel = self.rel(word)
+            if rel is None and index:
+                rel = self.under_root(word)  # <repo>/.git, <repo>/.venv: the repository's all the same
             if rel is not None:
                 return rel if rel == "." else "./" + rel
             return os.path.basename(word) if index == 0 else "<outside>"
         return word
+
+    def under_root(self, path: str) -> str | None:
+        """A path under the repository that rel() leaves out (SKIP_PARTS)."""
+        try:
+            text = os.path.realpath(os.path.join(os.getcwd(), path)) + os.sep
+        except OSError:
+            return None
+        return (text[len(ROOT):-1] or ".") if text.startswith(ROOT) else None
 
     def spawn(self, argv: Any, cwd: Any) -> None:
         if cwd is None:

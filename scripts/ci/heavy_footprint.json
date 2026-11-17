@@ -1683,7 +1683,7 @@
   "scripts/async_settle/shadow_v2_window.py": "aff07690effb383b",
   "src/trusted_router/async_settle_shadow_v2_gate_dependencies.py": "64c5e23b11b2db84",
   "src/trusted_router/async_settle_shadow_v2_pack_window.py": "9c4d7986f8c49012",
-  "tests/conftest.py": "1e57c29556c81c59",
+  "tests/conftest.py": "57070cbc07488308",
   "tests/fixtures/async_settlement/p4a_lifecycle_recorder.py": "cdbd284f23170215",
   "tests/shadow_v2_gate_a2_fixture.py": "98df6103fdac8bc3",
   "tests/shadow_v2_gate_cache.py": "623fd4063b42681d",
