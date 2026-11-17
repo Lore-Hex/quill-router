@@ -34,10 +34,11 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  queue: ${{ github.ref == 'refs/heads/main' && 'max' || 'single' }}
 
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate and refresh-prices.yml's
-# publication gate poll this WORKFLOW RUN's conclusion for the SHA. GitHub
+# publication gate require this WORKFLOW RUN's conclusion for the SHA. GitHub
 # concludes a run success when every job succeeded OR was skipped, so the
 # `ci` summary job at the end re-derives the conclusion from each job's
 # result and accepts a skipped job only in the two cases below.
@@ -86,7 +87,8 @@ concurrency:
 # drives this step against local repositories and a fake gh.
 jobs:
   scope:
-    runs-on: ubuntu-24.04
+    # GitHub-hosted Ubuntu 24.04; the group allows only this workflow on main.
+    runs-on: &short-runner ${{ github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'tr-ci-short' || 'ubuntu-24.04' }}
     permissions:
       contents: read
       actions: read         # the ci.yml runs of the base and of its ancestors
@@ -551,7 +553,7 @@ jobs:
     # code and skips it (its shards still ran and still gate the run).
     needs: [test, scope]
     if: ${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: *short-runner
     # The shadow test selection reads the per-test footprint map (an artifact
     # of the "Test map" workflow), the pull request's labels and this run's
     # failed shard logs.
@@ -1096,7 +1098,7 @@ jobs:
       - fastpath-walks
       - proofs
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
+    runs-on: *short-runner
     env:
       NEEDS: ${{ toJSON(needs) }}
       DATA_ONLY: ${{ needs.scope.outputs.data_only }}

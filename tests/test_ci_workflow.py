@@ -416,7 +416,13 @@ def test_every_ci_job_pins_the_ubuntu_24_04_runner_image():
     # failed, on main and on every PR; on 24.04 (system CPython 3.12.3, the interpreter the suite and
     # the local gates are calibrated on) they pass. Move the pin deliberately, re-measuring those guards.
     jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
-    assert {name: job['runs-on'] for name, job in jobs.items()} == dict.fromkeys(jobs, 'ubuntu-24.04')
+    short = {"scope", "coverage", "ci"}
+    dedicated = ("${{ github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main' "
+                 "&& (github.event_name == 'push' || github.event_name == 'workflow_dispatch') "
+                 "&& 'tr-ci-short' || 'ubuntu-24.04' }}")
+    assert short <= jobs.keys()
+    for name, job in jobs.items():
+        assert job['runs-on'] == (dedicated if name in short else 'ubuntu-24.04'), name
 
 
 def test_ci_cancels_the_run_it_supersedes_on_a_branch_but_never_on_main():
@@ -427,7 +433,8 @@ def test_ci_cancels_the_run_it_supersedes_on_a_branch_but_never_on_main():
     workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
     assert workflow['concurrency'] == {
         'group': "ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}",
-        'cancel-in-progress': "${{ github.ref != 'refs/heads/main' }}"}
+        'cancel-in-progress': "${{ github.ref != 'refs/heads/main' }}",
+        'queue': "${{ github.ref == 'refs/heads/main' && 'max' || 'single' }}"}
 
 
 def test_coverage_releases_cancelled_runs_without_accepting_partial_tests():
