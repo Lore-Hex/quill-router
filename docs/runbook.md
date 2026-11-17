@@ -927,8 +927,8 @@ intent more than 5 s past due, closes admission until it is resolved.
 `oldest_unresolved_age_seconds` still counts every row from its creation. If
 the read behind that recount fails, the publisher publishes creation ages
 instead. The publisher runs only in the drain worker, whose output keeps no
-text from other loggers, so the failure line (`async admission read failed
-operation=drain_grace` in the code) ships as
+text from that module's logger, so the failure line (`async admission read
+failed operation=drain_grace` in the code) ships as
 `logger=trusted_router.storage_gcp_async_admission level=WARNING
 exception_class=none`, at most once a minute per cause.
 
@@ -942,11 +942,11 @@ thousands and admission open is therefore expected while such a row waits; it
 is not a broken publisher. The row still counts in `backlog_count`,
 `sample_count` and `frozen_micro`. The drain parks a row this way only until
 it is three hours old (it then spends its attempts, toward `dead` and its
-alert), so the exception ends when the last such park falls due, at about
-3 h 5 min. It is not applied at all when more than 100 unresolved rows are
-between 5 s and about 3 h 5 min old: every age then counts, so a fast path
-deciding nothing for many requests closes admission. If the read behind this
-fails, the publisher publishes the ages without it.
+alert), so the exception ends when the last such park falls due, between
+3 h and about 3 h 5 min. It is not applied at all when more than 100
+unresolved rows are between 5 s and about 3 h 5 min old: every age then
+counts, so a fast path deciding nothing for many requests closes admission.
+If the read behind this fails, the publisher publishes the ages without it.
 
 The worker's logs do not say why such a row waits. Its `settle outbox leased
 intent undecided ... why=...` warning ships from the worker as
@@ -954,10 +954,14 @@ intent undecided ... why=...` warning ships from the worker as
 exception_class=none`, with neither the row nor the reason, and a failed read
 (`operation=drain_leased_wait` in the code) ships as the same
 `logger=trusted_router.storage_gcp_async_admission` line as a failed grace
-read: the two cannot be told apart there. The warning keeps its text, `why=`
-included, only when a router process applied the row (the scheduled drain
-route or a gateway's own settle). Otherwise read the row itself by its key
-(`last_error`, `next_attempt_at`) and the fast-path owner's logs.
+read: the two cannot be told apart there. The reason is in the router's
+logs, which keep their text. The router that took the settle and could not
+get a decision wrote `fastpath pilot terminal undecided, left to the drain
+authorization_id=... why=...`: that line gives both the row's key and the
+reason. The `leased intent undecided` warning keeps its text, `why=` included,
+only when a router process applied the row (the scheduled drain route, or a
+settle the gateway sent in `sync` mode). With the key, read the row
+itself (`last_error`, `next_attempt_at`) and the fast-path owner's logs.
 
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once
