@@ -22,6 +22,14 @@ The rule (routing.CAPABILITY_REQUIRED_PARAMETERS, _takes_capability_parameters):
 
 Each refusal below is checked with the rule switched off too: the same request
 then reaches the route the rule skips (the behaviour on main).
+
+Which routes a request reaches is the subject here, not their order. The
+routes of one model are ordered by provider health from
+src/trusted_router/data/provider_routing_evidence.json, which the hourly price
+refresh rewrites: on 2026-11-17 deepinfra's completion rate fell below the
+healthy floor while novita's rose above it, the fixture's two routes swapped
+places, and a check pinned to the old order held back the refresh. So a check
+over several routes of one model compares sets.
 """
 
 from __future__ import annotations
@@ -121,7 +129,9 @@ def test_tool_choice_needs_tool_calling_not_its_own_declaration(monkeypatch):
     # part of tool calling.
     _serve(monkeypatch, MODEL_A, [("deepinfra", ("max_tokens",)), ("novita", ("tools",))])
     body = {"model": MODEL_A, "route_type": "chat.completions", "requested_parameters": ["tool_choice"]}
-    assert _without_the_rule(monkeypatch, body) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    assert set(_without_the_rule(monkeypatch, body)) == {
+        (MODEL_A, "deepinfra"), (MODEL_A, "novita"),
+    }
     assert _hosts(body) == [(MODEL_A, "novita")]
 
 
@@ -167,12 +177,12 @@ def test_structured_output_trusts_the_model_not_route_silence(monkeypatch):
         "route_type": "responses",
         "requested_parameters": ["response_format"],
     }
-    assert _without_the_rule(monkeypatch, body) == [
+    assert set(_without_the_rule(monkeypatch, body)) == {
         (MODEL_A, "deepinfra"), (MODEL_A, "novita"), (MODEL_B, "parasail"),
-    ]
+    }
     # B declares structured output nowhere, so the pool skips it; both of
     # A's routes stay.
-    assert _hosts(body) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    assert set(_hosts(body)) == {(MODEL_A, "deepinfra"), (MODEL_A, "novita")}
     # A route declaring response_format itself takes it as well.
     _serve(monkeypatch, MODEL_B, [("parasail", ("response_format",))])
     assert (MODEL_B, "parasail") in _hosts(body)
@@ -245,7 +255,7 @@ def test_orchestration_subcalls_are_not_filtered_by_their_parents_parameters(mon
     # its own json_object format), so the list does not describe them.
     _serve(monkeypatch, MODEL_A, [("deepinfra", ("max_tokens",)), ("novita", ("tools",))])
     body = {"model": MODEL_A, "route_type": route_type, "requested_parameters": ["tools", "response_format"]}
-    assert _hosts(body) == [(MODEL_A, "deepinfra"), (MODEL_A, "novita")]
+    assert set(_hosts(body)) == {(MODEL_A, "deepinfra"), (MODEL_A, "novita")}
 
 
 def test_authorize_sends_a_tool_request_only_to_tool_routes(monkeypatch):
