@@ -53,9 +53,10 @@ all three successful runs. Of 42,436 observed tests, 41,577 had three samples,
 Use the median for three or more samples and the maximum for sparse new cases.
 Preserve previously known weights for tests not observed in these runs.
 
-Refresh with at least three independent successful runs per profile. A push to
-main runs no post-cutover shard, so take post-cutover runs from pull requests or
-from post-cutover-daily.yml:
+Refresh with at least three independent successful runs per profile. A run
+whose changes do not reach the post-cutover suite runs no post-cutover shard,
+so take post-cutover runs from runs that ran it, or dispatch
+post-cutover-daily.yml:
 
 ```sh
 gh run download RUN_ID -p 'durations-*' -D /tmp/ci-durations/RUN_ID
@@ -210,6 +211,34 @@ GitHub may skip one. With coverage cheaper, the default suite runs in eight
 shards instead of twelve. On #2377's run they took 8 to 14 minutes each, still
 inside that longest shard, with four fewer jobs in the queue and 91
 runner-minutes against 110 to 126.
+
+### Heavy jobs run when what they read changes (2026-11-16)
+
+This replaces the push skip and the daily run above. The TLA+ model checks,
+the proof oracle, the post-cutover suite and the three fast path jobs carry a
+flag each, which ci.yml's scope job computes with scripts/ci/commit_scope.py
+from the changed paths, on pull requests, pushes and dispatches alike. Each
+job runs only when a file its flag names changed: for a pull request since its
+base, for a push or dispatch since the newest ancestor-or-self of its base
+whose ci.yml run passed. The docstring of commit_scope.py lists each flag's
+files and why. post-cutover-daily.yml has no schedule any more; it runs by
+hand and is the one place the oracle runs at the post-cutover clock, since no
+endpoint the oracle settles changes between the clocks
+(tests/test_async_settle_proof_oracle.py holds that, and 666 pairs of default
+and post-cutover shards over 31 hours never disagreed). A dispatch without
+scope=paths and a pull request labeled ci:full run the complete matrix.
+
+Measured over 31 hours before the change, CI used about 56,600 job-minutes a
+day. Replaying the rules over the last 100 merged pull requests, the oracle
+would have run for 40, the post-cutover suite for 63, the fast path jobs for
+34 and the model checks for 4; over 147 push runs, with the comparison widened
+past bases that had not yet passed (98 of them), for 77%, 88%, 47% and 13%.
+With the measured per-job minutes that is about 19,200 job-minutes a day
+fewer (34%): 8,600 from the oracle's post-cutover clock on pull requests,
+5,100 from its default clock on pull requests, 3,200 and 1,300 from the
+post-cutover suite and the model checks on pull requests, offset by 3,300
+for the post-cutover suite that pushes to main now run. These are estimates
+from one window's cadence, not a measurement of the new workflow.
 
 ## Validation and measurement
 

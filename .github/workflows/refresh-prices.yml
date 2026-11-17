@@ -393,8 +393,10 @@ jobs:
       # browser smoke, and skips the jobs that read none of those files
       # (proof-oracle, fastpath, proofs, spanner conformance, frontend, BYOK
       # format diff, coverage floor); a commit that also touches a self-healed
-      # parser or the fastpath alias vectors runs the complete matrix. Its
-      # `CI` summary job sets the run's conclusion. A local ruff/mypy/pytest
+      # parser or the fastpath alias vectors runs every job whose inputs it
+      # changed (scope=paths: ci.yml's path-scoped jobs, commit_scope.py),
+      # the post-cutover suite always. Its `CI` summary job sets the run's
+      # conclusion. A local ruff/mypy/pytest
       # pass duplicated a subset of that run and added ~2 h, during which main
       # usually moved and the validated snapshot was discarded unpublished.
       - name: Commit, verify, and push if changed
@@ -537,7 +539,8 @@ jobs:
             git push --force origin "HEAD:refs/heads/${BRANCH}"
             gh workflow run ci.yml \
               --ref "${BRANCH}" \
-              --repo "${GITHUB_REPOSITORY}"
+              --repo "${GITHUB_REPOSITORY}" \
+              -f scope=paths
             echo "  dispatched ci.yml for generated snapshot ${SNAPSHOT_SHA} (round ${round})"
 
             ci_passed=""

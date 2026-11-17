@@ -193,7 +193,10 @@ class PublicationRepo:
         return [call for call in self.calls if call[:2] == ["workflow", "run"]]
 
     def dispatch(self, workflow: str, ref: str) -> list[str]:
-        return ["workflow", "run", workflow, "--ref", ref, "--repo", self.env["GITHUB_REPOSITORY"]]
+        call = ["workflow", "run", workflow, "--ref", ref, "--repo", self.env["GITHUB_REPOSITORY"]]
+        # The publication gate asks ci.yml for scope=paths: without it a
+        # dispatch runs the complete matrix, data-only commits included.
+        return call + (["-f", "scope=paths"] if workflow == "ci.yml" else [])
 
     def run(
         self, *, conclusion: str = "success", wrong_sha: bool = False,
@@ -885,9 +888,12 @@ def test_publication_guards_have_effect(publication_repo: PublicationRepo, guard
 
 
 def test_ci_accepts_explicit_dispatch_for_bot_commits() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
 
-    assert "workflow_dispatch: {}" in workflow
+    # Any dispatch is accepted; the refresh's scope=paths is one of the choices.
+    assert triggers["workflow_dispatch"]["inputs"]["scope"]["options"] == ["full", "paths"]
+    assert triggers["workflow_dispatch"]["inputs"]["scope"]["default"] == "full"
 
 
 def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
@@ -959,28 +965,24 @@ def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
 
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     # Excluding the redundant local oracle pass is safe only while the
-    # required exact-SHA CI includes every default/post-cutover proof shard
-    # for a commit that can change the oracle's result. That CI is the
-    # refresh's dispatch run, which keeps both clocks; only a push to main
-    # runs the default clock alone (ci.yml's test-post-cutover says why). The oracle builds its
-    # catalog from each case's fixture body, so a commit that touches only
-    # published catalog data cannot; ci.yml skips the shards for exactly that
-    # commit and runs them for a refresh that also rewrote a parser.
-    from scripts.ci.commit_scope import DATA_ONLY_CONDITION
+    # required exact-SHA CI runs the proof oracle for a commit that can
+    # change the oracle's result. That CI is the refresh's dispatch run. The
+    # oracle builds its catalog from each case's fixture body, so a commit
+    # that touches only published catalog data cannot; ci.yml skips the
+    # shards for exactly that commit (data-only) or for a commit none of
+    # whose changes the oracle reads (run_proof_oracle), and runs them for a
+    # refresh that rewrote a parser under src/. It runs the default
+    # lifecycle clock: no endpoint the oracle settles changes between the
+    # clocks (tests/test_async_settle_proof_oracle.py holds that).
+    from scripts.ci.commit_scope import DATA_ONLY_CONDITION, path_condition
 
     ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = ci["jobs"]["proof-oracle"]
-    assert job["if"] == DATA_ONLY_CONDITION
+    assert job["if"] == f"{DATA_ONLY_CONDITION} && {path_condition('run_proof_oracle')}"
     assert job["needs"] == "scope"
     assert "continue-on-error" not in job
     matrix = job["strategy"]["matrix"]
-    assert set(matrix) == {"clock", "shard"} and matrix["shard"] == [1, 2, 3, 4, 5, 6]
-    clocks = re.fullmatch(r"\$\{\{ fromJSON\(github\.event_name == 'push' && '(\[.*?\])' \|\| '(\[.*?\])'\) \}\}",
-                          matrix["clock"])
-    assert clocks, matrix["clock"]
-    # Every event but a push, the refresh's dispatch among them, runs both.
-    assert json.loads(clocks.group(2)) == ["default", "post-cutover"]
-    assert json.loads(clocks.group(1)) == ["default"]
+    assert matrix == {"clock": ["default"], "shard": [1, 2, 3, 4, 5, 6]}
     proof_steps = [step for step in job["steps"] if "-m proof_oracle" in step.get("run", "")]
     assert len(proof_steps) == 1
     assert "if" not in proof_steps[0]
