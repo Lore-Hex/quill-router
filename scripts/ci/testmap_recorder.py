@@ -17,10 +17,9 @@ What a test's window (setup, call and teardown) records:
      A call of a functools.cache/lru_cache function is marked "<key>@memo"
      (a CALL event, also disabled per call site per window): a hit runs no
      Python code, so without the mark a test served from a cache would not
-     record the function at all. testmap.py's selector lets a test that used
-     a memoized function inherit every window in which that function started
-     (missed). The caches themselves are untouched: the frozen-execution
-     guard tests walk object graphs from them and recognize them by type.
+     record the function at all. The caches themselves are untouched: the
+     frozen-execution guard tests walk object graphs from them and recognize
+     them by type.
   o  repository files opened (the "open" audit event). The import system's
      own reads of .py/.pyc files are not reads: executing the module is
      what the f set records.
@@ -32,7 +31,13 @@ What a test's window (setup, call and teardown) records:
 Separate windows, each written once and inherited by the tests that use it:
   c   a test module's collection (its import and parametrization);
   fx  the setup of a module, class, package or session fixture;
-  g   everything outside every window: imports, session and collection hooks.
+  cf  a memoized function's miss: from its PY_START to its PY_RETURN (a local
+      event set on the function once its first call is seen), events re-armed
+      so every function the miss runs is recorded; the first 20 misses per
+      function. A test that marked the function inherits it. A miss that
+      raises closes with the window around it.
+  g   everything outside every window: imports, session and collection hooks
+      (a miss at import time counts here too).
 Jinja's template cache is off while recording, so every render reads its
 template files.
 
@@ -84,6 +89,7 @@ TOOL_ID = 3
 OUT_ENV = "TR_TESTMAP_OUT"
 OWNER_ENV = "TR_TESTMAP_OWNER"
 MEMO = "@memo"
+MAX_MISSES = 20
 ROOT = os.path.realpath(os.getcwd()) + os.sep
 SKIP_PARTS = ("/.venv/", "/.git/", "/__pycache__/", "/.hypothesis/", "/.pytest_cache/", "/.mypy_cache/",
               "/.ruff_cache/", "/node_modules/", "/site-packages/")
@@ -121,7 +127,10 @@ class Recorder:
     def __init__(self, out_dir: str) -> None:
         self.glob = Window()
         self.cur = self.glob
-        self.stack: list[Window] = []
+        self.stack: list[tuple[Window, bool]] = []  # (outer window, merge into it even if global)
+        self.memo_codes: dict[int, Any] = {}   # memoized functions seen called: id -> code
+        self.memo_open: list[Any] = []         # codes of the misses now recording, innermost last
+        self.misses: dict[int, int] = {}
         self.active = True
         self.lock = threading.Lock()
         self.paths: dict[str, str | None] = {}
@@ -168,15 +177,17 @@ class Recorder:
         return {"f": sorted(funcs), "o": sorted(window.opens), "d": sorted(window.dirs), "s": sorted(window.spawns)}
 
     # -- windows: the recorder keeps the stack, so no hook frame holds one
-    def enter(self) -> None:
-        self.stack.append(self.cur)
+    def enter(self, into_global: bool = False) -> None:
+        self.stack.append((self.cur, into_global))
         self.cur = Window()
         mon.restart_events()
 
     def leave(self) -> Window:
         window = self.cur
-        prev = self.stack.pop()
-        if prev is not self.glob:  # what ran in a nested window ran in the outer one too
+        prev, into_global = self.stack.pop()
+        # What ran in a nested window ran in the outer one too; a test's own
+        # window is not part of the global one, a miss at import time is.
+        if prev is not self.glob or into_global:
             prev.codes.update(window.codes)
             prev.memo.update(window.memo)
             prev.opens |= window.opens
@@ -190,8 +201,31 @@ class Recorder:
     def on_code(self, code: Any, offset: int, _disable: Any = sys.monitoring.DISABLE) -> Any:
         # DISABLE is bound at definition: module globals are cleared at
         # interpreter shutdown, while a callback can still fire.
-        self.cur.codes[id(code)] = code
+        ident = id(code)
+        self.cur.codes[ident] = code
+        if ident in self.memo_codes and self.misses.get(ident, 0) < MAX_MISSES:
+            self.misses[ident] = self.misses.get(ident, 0) + 1
+            self.enter(into_global=True)
+            self.cur.codes[ident] = code
+            self.memo_open.append(code)
         return _disable
+
+    def on_return(self, code: Any, offset: int, value: Any) -> Any:
+        if self.memo_open and self.memo_open[-1] is code:
+            self.close_miss()
+        return None
+
+    def close_miss(self) -> None:
+        code = self.memo_open.pop()
+        window = self.leave()
+        path = self.code_path(code.co_filename)
+        if path is not None:
+            self.write({"cf": f"{path}:{code.co_qualname}", **self.dump(window)})
+
+    def close_misses(self) -> None:
+        """Close the misses still recording (one raised) before a hook's window closes."""
+        while self.memo_open:
+            self.close_miss()
 
     def on_call(self, code: Any, offset: int, func: Any, arg0: Any,
                 _disable: Any = sys.monitoring.DISABLE, _lru: Any = LRU, _method: Any = types.MethodType) -> Any:
@@ -203,7 +237,11 @@ class Recorder:
             wrapped = getattr(func, "__wrapped__", None)
             target = getattr(wrapped, "__code__", None)
             if target is not None:
-                self.cur.memo[id(target)] = target
+                ident = id(target)
+                self.cur.memo[ident] = target
+                if ident not in self.memo_codes:
+                    self.memo_codes[ident] = target
+                    mon.set_local_events(TOOL_ID, target, mon.events.PY_RETURN)
         return _disable
 
     def rel(self, path: Any) -> str | None:
@@ -311,6 +349,7 @@ def _start() -> Recorder | None:
     mon.register_callback(TOOL_ID, mon.events.PY_START, recorder.on_code)
     mon.register_callback(TOOL_ID, mon.events.PY_RESUME, recorder.on_code)
     mon.register_callback(TOOL_ID, mon.events.CALL, recorder.on_call)
+    mon.register_callback(TOOL_ID, mon.events.PY_RETURN, recorder.on_return)
     mon.set_events(TOOL_ID, mon.events.PY_START | mon.events.PY_RESUME | mon.events.CALL)
     sys.addaudithook(_audit_hook(recorder))
     try:
@@ -362,6 +401,7 @@ def _close(record: dict) -> None:
     if rec is None or not rec.active:
         return
     try:
+        rec.close_misses()
         rec.write({**record, **rec.dump(rec.leave())})
     except Exception as error:
         rec.fail(next(iter(record)), error)
@@ -419,6 +459,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         return
     try:
         if rec.active:
+            rec.close_misses()
             rec.active = False
             mon.set_events(TOOL_ID, 0)
             rec.write({"g": True, **rec.dump(rec.glob)})

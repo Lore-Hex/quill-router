@@ -17,7 +17,7 @@ from scripts.ci import testmap as tm
 # ---------------------------------------------------------------- a map, built by hand
 
 
-def build_map(tests: dict[str, dict], *, collect: dict | None = None, memoized: tuple[str, ...] = (),
+def build_map(tests: dict[str, dict], *, collect: dict | None = None, cached: dict | None = None,
               glob: dict | None = None, fixtures: dict[str, list[dict]] | None = None,
               universe_funcs: set[str] = frozenset(), universe_files: set[str] = frozenset(),
               commit: str = "a" * 40) -> dict:
@@ -35,7 +35,7 @@ def build_map(tests: dict[str, dict], *, collect: dict | None = None, memoized: 
         "event": "push", "run_id": "1", "shards": tm.SHARDS, "fragments": list(range(1, tm.SHARDS + 1)),
         "created": "2026-11-17T00:00:00Z", "keys": interner.keys, "fps": interner.fps, "tests": rows,
         "collect": {m: fp(f) for m, f in (collect or {}).items()},
-        "memoized": sorted(memoized),
+        "cached": {c: fp(f) for c, f in (cached or {}).items()}, "memoized": sorted(cached or {}),
         "global": fp(glob), "universe_files": sorted(universe_files), "universe_funcs": sorted(universe_funcs),
     }
 
@@ -194,7 +194,8 @@ def test_s10_fixture_collection_and_memoized_misses_are_inherited() -> None:
              "tests/test_cache.py::test_hit": {"f": [f"{SRC}:helper@memo"]}}
     fixtures = {"tests/test_fx.py::test_uses_fixture": [{"f": [f"{SRC}:work"]}]}
     collect = {"tests/test_col.py": {"f": [f"{SRC}:work"]}}
-    tmap = base_map(tests=tests, fixtures=fixtures, collect=collect, memoized=(f"{SRC}:helper",))
+    tmap = base_map(tests=tests, fixtures=fixtures, collect=collect,
+                    cached={f"{SRC}:helper": {"f": [f"{SRC}:helper", f"{SRC}:work"]}})
     sel = run_select(tmap, [("M", SRC)], py={SRC: changed("work")})
     assert set(sel.selected) == {"tests/test_a.py::test_work", "tests/test_fx.py::test_uses_fixture",
                                  "tests/test_col.py::test_collected", "tests/test_cache.py::test_miss",
@@ -202,7 +203,7 @@ def test_s10_fixture_collection_and_memoized_misses_are_inherited() -> None:
     # A change to the memoized function itself selects its cache's users too.
     sel = run_select(tmap, [("M", SRC)], py={SRC: changed("helper")})
     assert set(sel.selected) == {"tests/test_cache.py::test_miss", "tests/test_cache.py::test_hit"}
-    # Positive control: without fixtures, collection and the memoized list,
+    # Positive control: without fixtures, collection and the misses,
     # only the tests whose own windows ran `work` are selected.
     bare = base_map(tests=tests)
     assert set(run_select(bare, [("M", SRC)], py={SRC: changed("work")}).selected) == {
@@ -420,6 +421,7 @@ def test_compact_resolves_scoped_fixtures_and_shares_footprints(tmp_path: Path) 
         {"fx": "module|tests/test_a.py||db", "f": ["src/x.py:setup"]},
         {"t": "tests/test_a.py::test_1", "x": ["module||db"], "f": ["src/x.py:f"]},
         {"t": "tests/test_a.py::test_2", "x": ["module||db"], "f": ["src/x.py:f"]},
+        {"cf": "src/x.py:cached", "f": ["src/x.py:inner"]},
         {"g": True, "f": ["src/x.py:boot"], "o": ["data.json"]},
         {"end": True},
     ])
@@ -429,6 +431,8 @@ def test_compact_resolves_scoped_fixtures_and_shares_footprints(tmp_path: Path) 
     assert rows["tests/test_a.py::test_1"] == rows["tests/test_a.py::test_2"]  # one shared footprint
     fx_fp = frag["fps"][rows["tests/test_a.py::test_1"][1][0]]
     assert [frag["keys"][i] for i in fx_fp[0]] == ["src/x.py:setup"]
+    miss = frag["fps"][frag["cached"]["src/x.py:cached"]]
+    assert [frag["keys"][i] for i in miss[0]] == ["src/x.py:inner"]
 
 
 def test_compact_marks_a_shard_invalid_on_a_recorder_error(tmp_path: Path) -> None:

@@ -198,7 +198,7 @@ def recorded(root: Path, tmp_path: Path, *args: str, **env: str) -> tuple[dict, 
 def effective(fragment: dict) -> dict[str, dict[str, set[str]]]:
     """Each test's footprint with its collection and scoped fixtures folded
     in, as the selector reads it."""
-    fake = tm.TestMap({**fragment, "memoized": []})
+    fake = tm.TestMap({**fragment, "memoized": []})  # misses stay out: the attribution tests read them
     out = {}
     for nodeid, rt, fx in fake.tests:
         ids = [rt, *fx]
@@ -270,8 +270,10 @@ def test_what_coverage_cannot_attribute_the_recorder_does(tmp_path: Path) -> Non
     # Positive control for the attributions above: none is in the test's own window.
     own = {nodeid: {fragment["keys"][k] for k in fragment["fps"][rt][0]} for nodeid, rt, _ in fragment["tests"]}
     assert "src/pkg/core.py:setup_value" not in own[t + "test_f_fixture_second"]
-    # The selector lets the cache's later user inherit the miss: a change to
-    # inner() selects the test the cache served.
+    # The miss is recorded on its own, and the cache's later user inherits it:
+    # a change to inner() selects the test the cache served.
+    miss = fragment["fps"][fragment["cached"]["src/pkg/core.py:cached"]]
+    assert "src/pkg/core.py:inner" in {fragment["keys"][k] for k in miss[0]}
     tmap = tm.TestMap({**fragment, "memoized": ["src/pkg/core.py:cached"],
                        "universe_files": ["src/pkg/core.py"], "universe_funcs": ["src/pkg/core.py:inner"]})
     sel = tm.select([cs.Change("M", "src/pkg/core.py")], tmap, root=root,
