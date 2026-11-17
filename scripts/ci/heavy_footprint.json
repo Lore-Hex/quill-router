@@ -1,8 +1,8 @@
 {
  "map": {
-  "commit": "0e0a513e8c6cb06125c09cf93f287be48f67b1cc",
-  "run_id": "44139728950",
-  "created": "2026-11-17T17:59:06Z"
+  "commit": "3d9caa7f1ff5de1fd858e2fcb59cf4dd3e3b901f",
+  "run_id": "44192448102",
+  "created": "2026-11-17T23:07:58Z"
  },
  "tests": [
   "tests/test_async_settle_proof_oracle.py",
@@ -26,7 +26,6 @@
  ],
  "files": [
   ".github/workflows/ci.yml",
-  ".test_durations",
   "docs/design/async-settle-shadow-v2-p5-inputs.md",
   "docs/design/async-settle-shadow-v2.md",
   "pyproject.toml",
@@ -1571,6 +1570,7 @@
   "tests/test_async_settle_shadow_health_claim_contention.py",
   "tests/test_async_settle_shadow_http.py",
   "tests/test_async_settle_shadow_observation.py",
+  "tests/test_async_settle_shadow_owner_stall.py",
   "tests/test_async_settle_shadow_r11_validity.py",
   "tests/test_async_settle_shadow_v2_a1.py",
   "tests/test_async_settle_shadow_v2_a1_boundaries.py",

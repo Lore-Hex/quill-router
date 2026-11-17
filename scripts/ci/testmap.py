@@ -1440,6 +1440,10 @@ HEAVY_LEAKS: dict[str, str] = {
         "registered for every later test in the same worker; test-heavy does not run that module"),
     "tests/shadow_observation_diagnostics.py": (
         "NativeLiveness.report, called only by that leaked plugin in heavy tests' windows"),
+    "tests/test_async_settle_shadow_owner_stall.py": (
+        "the store clock its harness installs (harness.<locals>.<lambda>) keeps being called by the services its "
+        "tests start (svc.start()), whose threads outlive them into later tests in the same worker (map run "
+        "44192448102: test_async_settle_shadow_v2_gates.py's fixtures); test-heavy does not run that module"),
 }
 
 
