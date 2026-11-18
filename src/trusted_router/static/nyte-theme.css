@@ -2318,3 +2318,45 @@
   :root[data-brand="nyte"] .pricing-page #minimum-charges td:nth-child(6)::before { content: "Multiple"; }
 }
 
+/* Phones: one section rhythm for every page. Each section gets
+   --tr-phone-section-space above and below its content, whatever its own
+   sheet sets for laptops and desktops. Page sheets keep their desktop values;
+   add a page's section class here rather than a new phone value there. */
+:root {
+  --tr-phone-section-space: 40px;
+}
+
+@media (max-width: 760px) {
+  /* Homepage */
+  :root[data-brand="nyte"] .page {
+    --homepage-space: var(--tr-phone-section-space);
+  }
+
+  :root[data-brand="nyte"] .page :is(.trc, .trm, .trv, .trs, .trpr, .trf, .trft),
+  :root[data-brand="nyte"] .page .closing-cta {
+    padding-block: var(--tr-phone-section-space);
+  }
+
+  /* Sections spaced with padding */
+  :root[data-brand="nyte"] :is(.green-section, .green-final, .ti-section, .tm-section, .bgb-explainer, .bgb-pledge-layout, .bgb-messages, .cc-section, .cc-final) {
+    padding-block: var(--tr-phone-section-space);
+  }
+
+  :root[data-brand="nyte"] :is(.cc-explanation, .cc-section, .cc-enterprise) {
+    margin-top: 0;
+  }
+
+  :root[data-brand="nyte"] .badge-section {
+    padding-top: var(--tr-phone-section-space);
+  }
+
+  :root[data-brand="nyte"] .pricing-page .pricing-section:not(.public-hero + *) {
+    padding-top: var(--tr-phone-section-space);
+  }
+
+  /* Sections spaced with a top margin */
+  :root[data-brand="nyte"] :is(.eai-section, .bgb-privacy-band, .pricing-page #minimum-charges, .pricing-page .routing-feature-section),
+  :root[data-brand="nyte"] .openrouter-article main > :is(section, .v2-head):not(.v2-head + *) {
+    margin-top: var(--tr-phone-section-space);
+  }
+}
