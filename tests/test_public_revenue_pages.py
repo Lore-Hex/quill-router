@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from bs4 import BeautifulSoup
@@ -14,100 +15,117 @@ from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import PROVIDERS, endpoints_for_model
 from trusted_router.catalog_data import Model
 from trusted_router.dashboard import PUBLIC_PAGES
+from trusted_router.pricing import (
+    SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
+    STANDARD_PRICE_MARKUP_BASIS_POINTS,
+)
 from trusted_router.provider_lifecycle import (
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
 )
 
+# Public pages that sell, compare or explain the product. Each must render as
+# its own page: a template breakage or a route that falls through to another
+# page is caught by the structure below, not by a pinned headline.
+REVENUE_PAGES = (
+    "/compare/openrouter",
+    "/compare/vercel-ai-gateway",
+    "/compare/litellm",
+    "/docs/migrate-from-openrouter",
+    "/docs/synth",
+    "/docs/receipts",
+    "/synth",
+    "/resources",
+    "/customers/robot-robot-human",
+    "/careers",
+    "/blog",
+    "/blog/they-are-still-training-on-your-data",
+    "/blog/no-log-is-a-promise-attestation-is-proof",
+    "/blog/fusion-evals-open-source",
+    "/blog/sign-in-with-trustedrouter",
+    "/sign-in-with-trustedrouter",
+    "/security",
+    "/eu",
+    # SEO landing pages, each targeting a high-intent buyer query.
+    "/openrouter-alternative",
+    "/private-llm-api",
+    "/hipaa-llm-api",
+    "/llm-zero-data-retention",
+    "/claude-api-privacy",
+    "/litellm-alternative",
+    "/portkey-alternative",
+    "/confidential-computing-llm",
+    "/badge",
+    "/tinfoil-alternative",
+    "/openai-compatible-llm-api",
+    "/kimi-k2-api",
+    "/gemini-flash-alternative",
+    "/llm-provider-latency-benchmarks",
+    "/azure-openai-alternative",
+    "/deepseek-api-privacy",
+    "/glm-5-api",
+    "/gdpr-compliant-llm-api",
+    "/chinese-ai-models-us-hosted",
+    "/minimax-m3-api",
+    "/best-llm-router",
+    "/new-york-token-exchange",
+    "/llm-failover",
+    "/groq-alternative",
+    "/vertex-ai-alternative",
+    "/llm-api-for-financial-services",
+    "/llm-api-for-law-firms",
+    "/llm-data-residency",
+    "/no-log-llm-api",
+    "/anonymous-llm-api",
+    "/cline-api-provider",
+    "/sillytavern-api",
+    "/aws-bedrock-alternative",
+    "/llm-document-processing",
+    "/gpt-oss-120b-api",
+    "/eu-ai-act-llm-compliance",
+    "/x402-llm-api",
+)
+
 
 def test_revenue_pages_are_public(client: TestClient) -> None:
-    markers = {
-        "/compare/openrouter": "OpenRouter, but you can verify the prompt path.",
-        "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
-        "/compare/litellm": "LiteLLM and TrustedRouter fit in the same stack.",
-        "/docs/migrate-from-openrouter": "Change base_url",
-        "/docs/synth": "Run a panel of models inside the attested gateway.",
-        "/docs/receipts": "12% total TrustedRouter service fee",
-        "/synth": "Synthesize many models into one perfect frontier answer.",
-        "/resources": "Guides, comparisons, privacy references",
-        "/customers/robot-robot-human": "From first call to production-scale legal AI in three weeks.",
-        "/careers": "Work on attested AI routing",
-        "/blog": "TrustedRouter blog",
-        "/blog/they-are-still-training-on-your-data": ("They Are Still Training on Your Data"),
-        "/blog/no-log-is-a-promise-attestation-is-proof": (
-            "ZDR is a vague promise. Attestation is precise proof"
-        ),
-        "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
-        "/blog/sign-in-with-trustedrouter": "Sign in with TrustedRouter",
-        "/sign-in-with-trustedrouter": "A complete user-funded AI flow.",
-        "/security": "No prompt or output logs",
-        "/eu": "Use the EU gateway and an EU-focused model alias.",
-        # SEO landing pages — each targets a high-intent buyer query.
-        # The marker is a load-bearing headline from the page so a
-        # silent template breakage gets caught here.
-        "/openrouter-alternative": "Switch from OpenRouter in one base URL.",
-        "/private-llm-api": 'A private LLM API where "private" means cryptographically verified.',
-        "/hipaa-llm-api": "The LLM API whose privacy posture is verifiable",
-        "/llm-zero-data-retention": "Zero data retention as a verifiable property",
-        "/claude-api-privacy": "Call Claude through a prompt path you can verify.",
-        # Round-2 competitor-alternative + category pages.
-        "/litellm-alternative": "LiteLLM lets you self-host.",
-        "/portkey-alternative": "Portkey logs every request.",
-        "/confidential-computing-llm": "Run LLM inference behind hardware attestation",
-        "/badge": "Show where your customers' AI data goes.",
-        "/tinfoil-alternative": "Same verifiable-privacy bet.",
-        "/openai-compatible-llm-api": "Keep the SDK. Change the base URL.",
-        "/kimi-k2-api": "Kimi K2 with provider fallback and measured routes.",
-        "/gemini-flash-alternative": "Compare Gemini Flash with the cheapest good routes.",
-        "/llm-provider-latency-benchmarks": "Provider speed data from real routed requests.",
-        # SEO wave 2 — keyword-gap landing pages.
-        "/azure-openai-alternative": "Azure OpenAI promises privacy in a contract; TrustedRouter proves it with hardware attestation you can check live.",
-        "/deepseek-api-privacy": "DeepSeek V4 on attested infrastructure. With Confidential privacy, your prompts never reach the model vendor.",
-        "/glm-5-api": "Run GLM-5 and GLM-5.2 on attested hardware. With Confidential privacy, your prompts never reach the model vendor.",
-        "/gdpr-compliant-llm-api": "An LLM API built for GDPR workflows: attested inference, a signable DPA, and no prompt or output logs.",
-        "/chinese-ai-models-us-hosted": "Run GLM, Qwen, Kimi, and DeepSeek on US-hosted, attested infrastructure. With Confidential privacy, no prompt reaches the model vendor.",
-        "/minimax-m3-api": "MiniMax M3 on attested hardware, with the privacy tier chosen per request.",
-        "/best-llm-router": "The best AI router is the one whose privacy claims you can verify with a curl command.",
-        "/new-york-token-exchange": "A New York entry point to the AI inference market.",
-        "/llm-failover": "Your uptime should not depend on one provider's status page.",
-        "/groq-alternative": "Fast inference only counts when request 41 still goes through.",
-        "/vertex-ai-alternative": "If Vertex AI is only your Gemini endpoint, you are maintaining a cloud platform to make an API call.",
-        "/llm-api-for-financial-services": "An LLM API a bank risk committee can verify with one curl command.",
-        "/llm-api-for-law-firms": "When the gateway operator provably cannot read the prompt, your privilege analysis starts from different facts.",
-        "/llm-data-residency": "Residency pins where inference runs; attestation proves who can read the prompt.",
-        "/no-log-llm-api": "No prompt logs, enforced by code you can read and attestation you can check.",
-        "/anonymous-llm-api": "Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify the real-time content-stateless path.",
-        "/cline-api-provider": "Your coding agent streams your entire repo through its API provider, so pick one you can verify.",
-        "/sillytavern-api": "Point SillyTavern at an API that never logs prompts or outputs and proves what it runs.",
-        "/aws-bedrock-alternative": "Keep the privacy you chose Bedrock for, without the quota wall.",
-        "/llm-document-processing": "You do not need on-prem inference to keep your documents private.",
-        "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
-        "/eu-ai-act-llm-compliance": "Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.",
-        "/x402-llm-api": "Your agent gets a 402, signs a payment, retries the call, and reads the completion.",
-    }
-
-    for path, marker in markers.items():
+    headings: dict[str, str] = {}
+    for path in REVENUE_PAGES:
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
-        assert marker in response.text, f"{path} missing marker {marker!r}"
-        assert "Approved short copy only" not in response.text
-        # Editorial pages intentionally omit the marketing hero eyebrow.
-        # Keep checking the approved article identity instead of restoring
-        # decorative copy just to satisfy a shared landing-page assertion.
-        if path == "/openrouter-alternative":
-            article = BeautifulSoup(response.text, "html.parser")
-            assert "openrouter-article" in article.body.get("class", [])
-            assert article.select_one("main h1").get_text(strip=True) == (
-                "OpenRouter Alternatives: TrustedRouter vs 9 AI Gateways (2026)"
-            )
-            assert "OpenAI compatible API" not in response.text
-        elif not path.startswith("/blog"):
-            assert "OpenAI compatible API" in response.text
-        assert "Invalid API key" not in response.text
-        assert "Continue with MetaMask" in response.text
+        page = BeautifulSoup(response.text, "html.parser")
+        # The page is the one asked for: its canonical and og:url name this
+        # path, and it has its own title and headline.
+        canonical = page.select_one('link[rel="canonical"]')
+        assert canonical is not None and urlsplit(canonical["href"]).path == path, path
+        og_url = page.select_one('meta[property="og:url"]')
+        assert og_url is not None and urlsplit(og_url["content"]).path == path, path
+        assert page.title is not None and page.title.get_text(strip=True), path
+        heading = page.select_one("main h1")
+        assert heading is not None and heading.get_text(strip=True), f"{path} has no headline"
+        headings[path] = heading.get_text(" ", strip=True)
         # Every public page must unfurl: og:title + a card image.
-        assert 'property="og:title"' in response.text, f"{path} missing og:title"
-        assert 'property="og:image"' in response.text, f"{path} missing og:image"
-        assert 'name="twitter:card"' in response.text, f"{path} missing twitter:card"
+        for selector in ('meta[property="og:title"]', 'meta[property="og:image"]', 'meta[name="twitter:card"]'):
+            meta = page.select_one(selector)
+            assert meta is not None and meta.get("content"), f"{path} missing {selector}"
+        # A visitor can sign up from every page, and the wallet sign-in that
+        # needs no OAuth configuration is always offered.
+        assert page.select_one('[data-action="open-signin"]'), path
+        assert page.select_one('#signinModal [data-action="metamask-signin"]'), path
+        # No placeholder copy and no error page rendered as content.
+        assert "Approved short copy only" not in response.text
+        assert "Invalid API key" not in response.text
+    # No two routes render the same page.
+    duplicated = {heading for heading in headings.values() if list(headings.values()).count(heading) > 1}
+    assert not duplicated, {path: heading for path, heading in headings.items() if heading in duplicated}
+    # The editorial OpenRouter guide keeps its own article layout.
+    article = BeautifulSoup(client.get("/openrouter-alternative").text, "html.parser")
+    assert "openrouter-article" in article.body.get("class", [])
+
+
+def test_receipts_page_states_the_fees_billing_charges(client: TestClient) -> None:
+    # The page's fee claims must be the rates the billing code applies.
+    text = BeautifulSoup(client.get("/docs/receipts").text, "html.parser").get_text(" ", strip=True)
+    for basis_points in (SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS, STANDARD_PRICE_MARKUP_BASIS_POINTS):
+        assert f"{basis_points / 100:g}%" in text, basis_points
 
 
 def test_rrh_customer_story_scopes_privacy_claims_and_uses_tailored_og(
@@ -893,27 +911,26 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     response = client.get("/")
 
     assert response.status_code == 200
+    page = BeautifulSoup(response.text, "html.parser")
+    hrefs = {anchor["href"] for anchor in page.select("a[href]")}
     # Core invariant: the homepage links to the PUBLIC models page, never the
     # keyed API catalog.
-    assert 'href="/models"' in response.text
-    assert 'href="https://api.trustedrouter.com/v1/models"' not in response.text
-    # Landscape homepage (2026-10): assert its conversion surface, and that the
-    # previous hero and the older orbital-scene markup stay gone.
-    assert "Encrypt all your" in response.text
-    assert "Access hundreds of models confidentially" in response.text
-    assert "600+ AI Models at your fingertips." not in response.text
-    assert 'class="region-map-card"' not in response.text
-    assert "Provable privacy." not in response.text
-    assert "ATTESTED GATEWAY" not in response.text
-    assert 'base_url="https://api.openai.com/v1"' in response.text
-    assert f'base_url="{client.app.state.settings.api_base_url}"' in response.text
-    assert 'src="/static/trustedrouter-explainer.jpg"' not in response.text
-    assert "Create my API key" in response.text  # primary CTA
-    assert "No card required." in response.text
-    assert 'min_privacy": "confidential"' in response.text
-    assert 'href="/eu"' in response.text
-    assert "/static/homepage/homepage-landscape.css?v=" in response.text
-    assert 'class="brand-mark"' in response.text
+    assert "/models" in hrefs
+    api_base_url = client.app.state.settings.api_base_url
+    assert not any(href.startswith(f"{api_base_url}/models") for href in hrefs)
+    assert "/eu" in hrefs
+    # The primary call to action opens sign-up and falls back to key creation.
+    cta = page.select_one("#top a[data-homepage-cta]")
+    assert cta is not None
+    assert cta["href"] == "/console/api-keys"
+    assert cta["data-action"] == "open-signin" and cta["data-signin-mode"] == "signup"
+    # The migration sample points at the configured API base URL and shows
+    # the real privacy parameter, so copying it works.
+    migrate = page.select_one("section#migrate").get_text()
+    assert f'base_url="{api_base_url}"' in migrate
+    assert '"min_privacy": "confidential"' in migrate
+    assert page.select_one(".brand-mark")
+    assert page.select_one('link[rel="stylesheet"][href^="/static/homepage/homepage-landscape.css?v="]')
 
 
 def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -> None:

@@ -4,17 +4,20 @@ import datetime as dt
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from tests.private_repository import mentions as private_repository_mentions
 from tests.route_inventory import route_methods
+from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.og import og_image_svg, pricing_og_image_svg
 from trusted_router.routes.workspaces import MAX_WORKSPACE_MEMBER_MUTATIONS
+from trusted_router.routing import canonical_model_id
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
 from trusted_router.storage import STORE, InMemoryStore
@@ -332,75 +335,70 @@ def test_local_key_file_accepts_operator_aliases(tmp_path: Path) -> None:
 def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None:
     dashboard = client.get("/")
     assert dashboard.status_code == 200
-    # Landscape homepage: hero, conversion surfaces and the migration module
-    # stay real. The one-line base_url swap demonstrates migration without
-    # displacing the verification evidence lower down.
-    assert "Encrypt all your" in dashboard.text
-    assert "Create my API key" in dashboard.text
-    assert "No card required." in dashboard.text
-    assert "Move over with one" in dashboard.text
-    assert 'base_url="https://api.openai.com/v1"' in dashboard.text
-    assert f'base_url="{client.app.state.settings.api_base_url}"' in dashboard.text
-    assert "Three clouds, visible fallback" in dashboard.text
-    assert "world-map.svg" not in dashboard.text
-    assert "trustedrouter/auto" in dashboard.text  # routing model
-    assert "$25 USDC" not in dashboard.text
-    assert "Stripe Crypto" not in dashboard.text
-    assert "Quill Feather" not in dashboard.text
-    assert "https://quill.lorehex.co" not in dashboard.text
-    assert 'href="/status"' in dashboard.text
-    assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
-    assert 'href="/providers"' in dashboard.text
-    # The homepage features the open-weight leaders (the main use) by name.
-    assert "DeepSeek" in dashboard.text
-    assert "Qwen" in dashboard.text
-    assert "GLM" in dashboard.text
-    assert "Gemma" in dashboard.text
-    assert "Google" in dashboard.text
-    # Press coverage has its own section, led by VentureBeat.
-    assert '<section id="press"' in dashboard.text
-    assert "In the press" in dashboard.text
-    assert "Featured in" not in dashboard.text
-    for source in ("VentureBeat", "Axios", "Semafor", "The Information"):
-        assert f'alt="{source}"' in dashboard.text
-    assert "DeepSeek model in under 30 seconds" in dashboard.text
-    assert (
-        'href="https://www.axios.com/2026/08/25/'
-        'routing-is-coming-for-the-frontier-ai-labs"'
-    ) in dashboard.text
-    # Inline console is gone — these used to be rendered server-side here.
-    assert "Workspace Console" not in dashboard.text
-    assert 'id="signupForm"' not in dashboard.text
-    assert 'id="workspaceSelect"' not in dashboard.text
-    assert 'id="keyReveal"' not in dashboard.text
-    assert "Model Marketplace" not in dashboard.text
-    # The previous homepage's hero must not come back.
-    assert "600+ AI Models at your fingertips" not in dashboard.text
-    # Sign-in modal is present (MetaMask is always available; OAuth providers
-    # are conditional on settings, so we don't assert their buttons by default).
-    assert 'id="signinModal"' in dashboard.text
-    assert "Continue with MetaMask" in dashboard.text
-    assert 'data-action="open-signin"' in dashboard.text
+    page = BeautifulSoup(dashboard.text, "html.parser")
+    hrefs = {anchor["href"] for anchor in page.select("a[href]")}
+    # Landscape homepage: a headline, a sign-up call to action, and a
+    # migration module whose base_url swap uses the configured API base URL.
+    assert page.select_one("#top h1").get_text(strip=True)
+    assert page.select_one('#top [data-homepage-cta][data-action="open-signin"]')
+    migrate = page.select_one("section#migrate")
+    assert migrate is not None
+    assert f'base_url="{client.app.state.settings.api_base_url}"' in migrate.get_text()
+    # The evidence a visitor can check: live status, provider policies, the
+    # trust page and the public SDK source.
+    assert {"/status", "/providers", "/trust", "https://github.com/Lore-Hex/trusted-router-py"} <= hrefs
+    # Every routing alias the page offers is a model the router serves.
+    aliases = {element["data-alias"] for element in page.select("[data-alias]")}
+    assert aliases
+    assert all(canonical_model_id(alias) in MODELS for alias in aliases), aliases
+    # Press coverage: every logo is described and served, every story links
+    # out over https.
+    press = page.select_one("section#press")
+    assert press is not None and press.select_one("h2").get_text(strip=True)
+    logos = press.select("img")
+    assert logos and all(logo.get("alt") for logo in logos)
+    for logo in logos:
+        assert client.get(logo["src"]).status_code == 200, logo["src"]
+    stories = [anchor["href"] for anchor in press.select("a[href]")]
+    assert stories and all(href.startswith("https://") for href in stories)
+    # The public, cacheable homepage carries no account UI and no secret: the
+    # old inline console (signup form, workspace picker, key reveal) is gone.
+    assert not page.select("[data-copy-secret], #keyReveal, #signupForm, #workspaceSelect")
+    assert "sk-tr-v1-" not in dashboard.text
+    # Sign-in dialog: the wallet option needs no OAuth configuration, so it is
+    # always offered; OAuth buttons depend on settings (tested elsewhere).
+    assert page.select_one('#signinModal [data-action="metamask-signin"]')
+    assert page.select_one('[data-action="open-signin"]')
     # Static assets are release-cache-busted so a redeployed page does not
     # render with a day-old browser-cached CSS file.
-    assert '<script defer src="/static/dashboard.js?v=' in dashboard.text
-    assert 'href="/static/tokens.css?v=' in dashboard.text
-    assert 'href="/static/homepage/application.css?v=' in dashboard.text
-
-    providers_page = client.get("/providers", headers={"accept": "text/html"})
-    assert providers_page.status_code == 200
-    assert "Provider transparency" in providers_page.text
-    assert "Verified confidential inference" in providers_page.text
-    assert "Phala" in providers_page.text
-    assert "Tinfoil" in providers_page.text
-    assert "No provider claim" in providers_page.text
-    assert "Every label below describes the upstream provider" in providers_page.text
-    assert "Not verified" in providers_page.text
+    assert page.select_one('script[defer][src^="/static/dashboard.js?v="]')
+    for stylesheet in ("/static/tokens.css?v=", "/static/homepage/application.css?v="):
+        assert page.select_one(f'link[rel="stylesheet"][href^="{stylesheet}"]'), stylesheet
 
     providers_json = client.get("/providers", headers={"accept": "application/json"})
     assert providers_json.status_code == 200
     assert providers_json.headers["content-type"].startswith("application/json")
     provider_rows = providers_json.json()["data"]
+
+    # The providers page labels each provider from the same data the API
+    # publishes. "Verified confidential" needs provider compute, E2EE and ZDR
+    # together; the gateway itself is not an upstream provider and gets no card.
+    providers_page = client.get("/providers", headers={"accept": "text/html"})
+    assert providers_page.status_code == 200
+    cards = {
+        card["data-provider-id"]: card
+        for card in BeautifulSoup(providers_page.text, "html.parser").select("[data-provider-row]")
+    }
+    published = {row["id"]: row for row in provider_rows}
+    assert set(cards) == set(published) - {"trustedrouter"}
+    for provider_id, card in cards.items():
+        row = published[provider_id]
+        zdr = row["provider_zero_data_retention"] is True or row["prepaid_zero_data_retention"] is True
+        confidential = row["provider_confidential_compute"] is True and row["provider_e2ee"] is True and zdr
+        assert card["data-zdr"] == ("true" if zdr else "false"), provider_id
+        assert card["data-confidential"] == ("true" if confidential else "false"), provider_id
+    assert any(card["data-confidential"] == "true" for card in cards.values())
+    assert any(card["data-confidential"] == "false" for card in cards.values())
     assert [item["id"] for item in provider_rows[:2]] == ["trustedrouter", "tinfoil"]
     display_groups = [
         0

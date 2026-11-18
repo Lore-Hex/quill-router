@@ -531,7 +531,7 @@ def test_authorized_app_changes_require_same_origin(action: str, headers: dict[s
 
 def test_welcome_page_does_not_send_members_to_the_create_key_panel(gates: Gates) -> None:
     member_page = gates.client("member").get("/console/welcome").text
-    assert "already been displayed" in member_page
+    assert "data-key-already-revealed" in member_page
     assert "/console/api-keys#new-api-key" not in member_page
     assert "data-welcome-member-note" in member_page
     owner_page = gates.client("owner").get("/console/welcome").text

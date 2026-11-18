@@ -491,7 +491,7 @@ def test_welcome_preserves_key_reveal_when_balance_is_unavailable(
     assert 'class="console-balance' not in response.text
     assert "sensitive backend detail" not in response.text + caplog.text
     assert "acquisition.experiment_exposed" not in caplog.text
-    assert "already been displayed" in client.get("/console/welcome?first=1").text
+    assert "data-key-already-revealed" in client.get("/console/welcome?first=1").text
 
 
 @pytest.mark.parametrize("usage,reserved,can_run", [(300_000, 0, False), (0, 300_000, False), (100_000, 100_000, True)])

@@ -22,7 +22,7 @@
         <p class="activation-eyebrow">Your API key</p>
         <h2>Save it now</h2>
       </div>
-      <span class="pill warn">one time reveal</span>
+      <span class="pill warn" data-one-time-reveal>one time reveal</span>
     </div>
     <div class="panel-body">
       <div class="activation-code-panel activation-onboarding-agent">
@@ -159,7 +159,7 @@ console.log(response.choices[0].message.content);</pre>
   </section>
 </div>
 {% else %}
-<section class="panel activation-expired-panel">
+<section class="panel activation-expired-panel" data-key-already-revealed>
   <div class="panel-head"><h2>This key has already been displayed</h2></div>
   <div class="panel-body">
     {% if can_manage %}
