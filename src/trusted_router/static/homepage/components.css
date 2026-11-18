@@ -85,8 +85,19 @@
  #faq>.trf{padding-bottom:48px}
 }
 
-/* In the press follows Verify on the same Cream ground: one section gap, not two stacked. */
-#verify+#press>.trpr{padding-top:0}
+/* Verify sits on Ink, like the hero and footer, so Rules, Verify and Press read as three sections. */
+#request.request-section{border-bottom:0}
+.verify-section{--action-secondary-ink:var(--nyte-lilac,#DCD8FB);background:var(--nyte-ink,#151311);color:var(--nyte-cream,#FAF8F4)}
+.verify-section :is(h2,h3){color:var(--nyte-cream,#FAF8F4)}
+.verify-section .proof-point{background:transparent;border-color:var(--nyte-dark-rule,#3A3631)}
+.verify-section :is(.proof-point p,.proof-checklist){color:var(--nyte-stone,#DEDAD0)}
+.verify-section .proof-checklist li::before{color:var(--nyte-lime,#C9E265)}
+.verify-section .proof-point>a{color:var(--nyte-lilac,#DCD8FB);text-decoration-color:var(--nyte-ink-2,#57514A)}
+.verify-section .proof-point>a:hover{text-decoration-color:currentColor}
+.verify-section .button.button-secondary{color:var(--nyte-cream,#FAF8F4);border-color:var(--nyte-cream,#FAF8F4);background:transparent}
+.verify-section .button.button-secondary:hover{background:var(--nyte-cream,#FAF8F4);color:var(--nyte-ink,#151311)}
+/* Customers and the FAQ share Cream: a rule between them. */
+#faq{border-top:1px solid var(--tr-color-line-rule,#E8E4DB)}
 
 /* Pricing: See pricing beside the heading; the budget note and its link share one row. */
 #pricing .ph3{justify-content:space-between}
