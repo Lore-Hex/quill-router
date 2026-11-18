@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,8 @@ FULL_SHA = re.compile(r"[a-f0-9]{40}")
 MAX_ARTIFACT_BYTES = 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024
 HISTORY_WORKERS = 4
+READ_ATTEMPTS = 3
+_sleep = time.sleep
 
 
 class Refused(RuntimeError):
@@ -101,11 +104,27 @@ class GitHub:
         with self.cache_lock:
             self.cache.clear()
 
+    def _retry_timeout(self, subcommand: str, attempt: int) -> float | None:
+        if attempt > READ_ATTEMPTS:
+            return None
+        timeout = superseded._call_timeout(self.deadline)
+        if timeout is None:
+            return None
+        _sleep(min(attempt - 1, timeout))
+        timeout = superseded._call_timeout(self.deadline)
+        if timeout is not None:
+            print(f"release_train: retrying gh {subcommand} (try {attempt} of {READ_ATTEMPTS})",
+                  file=sys.stderr)
+        return timeout
+
     def json(self, *args: str) -> Any:
         with self.cache_lock:
             if args in self.cache:
                 return self.cache[args]
-        result = superseded._gh_json(list(args), self.deadline)
+        for attempt in range(1, READ_ATTEMPTS + 1):
+            result = superseded._gh_json(list(args), self.deadline)
+            if result is not None or self._retry_timeout(args[0], attempt + 1) is None:
+                break
         require(result is not None, "GitHub release evidence unavailable")
         with self.cache_lock:
             return self.cache.setdefault(args, result)
@@ -202,13 +221,17 @@ class GitHub:
                 "release artifact belongs to another run or commit")
         timeout = superseded._call_timeout(self.deadline)
         require(timeout is not None, "release selection deadline exceeded")
-        try:
-            result = subprocess.run(  # noqa: S603 - validated artifact ID in our fixed repository
-                ["gh", "api", f"repos/{REPO}/actions/artifacts/{item['id']}/zip"],  # noqa: S607
-                capture_output=True, check=True, timeout=timeout,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise Refused("release artifact download failed") from exc
+        for read_attempt in range(1, READ_ATTEMPTS + 1):
+            try:
+                result = subprocess.run(  # noqa: S603 - validated artifact ID in our fixed repository
+                    ["gh", "api", f"repos/{REPO}/actions/artifacts/{item['id']}/zip"],  # noqa: S607
+                    capture_output=True, check=True, timeout=timeout,
+                )
+                break
+            except (OSError, subprocess.SubprocessError) as exc:
+                timeout = self._retry_timeout("api", read_attempt + 1)
+                if timeout is None:
+                    raise Refused("release artifact download failed") from exc
         raw = manifest_from_zip(result.stdout)
         require(type(raw.get("schema_version")) is int and raw["schema_version"] == 1,
                 "unknown release manifest version")

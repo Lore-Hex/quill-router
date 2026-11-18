@@ -316,6 +316,236 @@ def rest_job(job_id=1, **changes):
             "status": "completed", "conclusion": "success", "run_attempt": 1, **changes}
 
 
+@pytest.fixture
+def retry_clock(monkeypatch):
+    clock = SimpleNamespace(now=100.0, pauses=[])
+
+    def pause(seconds):
+        assert seconds > 0
+        clock.pauses.append(seconds)
+        clock.now += seconds
+
+    monkeypatch.setattr(superseded_deploy, "_monotonic", lambda: clock.now)
+    monkeypatch.setattr(train.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(train, "_sleep", pause)
+    return clock
+
+
+@pytest.mark.parametrize("failures", [1, 2])
+@pytest.mark.parametrize("answer", [{"evidence": True}, []])
+def test_json_retry_recovers_and_caches(monkeypatch, retry_clock, failures, answer):
+    api = train.GitHub()
+    args = ("api", "repos/private/release-evidence")
+    calls = []
+    pause = train._sleep
+
+    def unlocked_pause(seconds):
+        assert not api.cache_lock.locked()
+        pause(seconds)
+
+    def lookup(actual, deadline):
+        assert not api.cache_lock.locked()
+        calls.append((actual, deadline))
+        return None if len(calls) <= failures else answer
+
+    monkeypatch.setattr(train, "_sleep", unlocked_pause)
+    monkeypatch.setattr(superseded_deploy, "_gh_json", lookup)
+    assert api.json(*args) == answer
+    assert api.json(*args) == answer
+    assert calls == [(list(args), api.deadline)] * (failures + 1)
+    assert retry_clock.pauses == [1, 2][:failures]
+
+
+def test_json_retry_exhaustion_refuses_without_caching(monkeypatch, retry_clock):
+    api = train.GitHub()
+    calls = []
+
+    def lookup(args, deadline):
+        calls.append((args, deadline))
+        return None
+
+    monkeypatch.setattr(superseded_deploy, "_gh_json", lookup)
+    with pytest.raises(train.Refused, match="^GitHub release evidence unavailable$"):
+        api.json("api", "repos/private/release-evidence")
+    assert len(calls) == 3
+    assert retry_clock.pauses == [1, 2]
+    assert api.cache == {}
+
+
+@pytest.mark.parametrize("subcommand", ["api", "run"])
+def test_json_retry_stderr_only_names_subcommand(monkeypatch, retry_clock, capsys, subcommand):
+    answers = iter([None, None, {}])
+    monkeypatch.setattr(superseded_deploy, "_gh_json", lambda *args: next(answers))
+    url = "https://api.github.com/repos/private/release-evidence"
+    assert train.GitHub().json(subcommand, url, "--private-argument") == {}
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == [
+        f"release_train: retrying gh {subcommand} (try 2 of 3)",
+        f"release_train: retrying gh {subcommand} (try 3 of 3)",
+    ]
+    assert url not in captured.err and "--private-argument" not in captured.err
+
+
+def fake_artifact_listing(monkeypatch):
+    metadata = {"total_count": 1, "artifacts": [{"id": 99, "name": "prepared-release-1",
+                "expired": False, "size_in_bytes": 500, "workflow_run": {"id": 1, "head_sha": A}}]}
+
+    def lookup(args, deadline):
+        assert args == ["api", f"repos/{train.REPO}/actions/runs/1/artifacts?per_page=100"]
+        return metadata
+
+    monkeypatch.setattr(superseded_deploy, "_gh_json", lookup)
+
+
+@pytest.mark.parametrize("failures", [1, 2, 3])
+@pytest.mark.parametrize("error", [OSError("unavailable"), subprocess.TimeoutExpired("gh", 10),
+                                   subprocess.CalledProcessError(1, "gh", stderr="HTTP 502")])
+def test_artifact_download_retry(monkeypatch, retry_clock, capsys, failures, error):
+    api = train.GitHub()
+    fake_artifact_listing(monkeypatch)
+    raw = {"schema_version": 1, "release": asdict(release())}
+    calls = []
+
+    def download(args, **kwargs):
+        calls.append(args)
+        assert kwargs == {"capture_output": True, "check": True,
+                          "timeout": superseded_deploy._call_timeout(api.deadline)}
+        if len(calls) <= failures:
+            raise error
+        return SimpleNamespace(stdout=zipped(raw))
+
+    monkeypatch.setattr(subprocess, "run", download)
+    if failures == 3:
+        with pytest.raises(train.Refused, match="^release artifact download failed$") as exc:
+            api.artifact(run(), "prepared")
+        assert exc.value.__cause__ is error
+    else:
+        assert api.artifact(run(), "prepared") == raw
+    attempts = min(failures + 1, 3)
+    assert calls == [["gh", "api", f"repos/{train.REPO}/actions/artifacts/99/zip"]] * attempts
+    assert retry_clock.pauses == [1, 2][:attempts - 1]
+    captured = capsys.readouterr()
+    assert captured.err.splitlines() == [
+        f"release_train: retrying gh api (try {attempt} of 3)" for attempt in range(2, attempts + 1)
+    ]
+    assert "repos/" not in captured.err and "/zip" not in captured.err
+
+
+@pytest.mark.parametrize("invalid,reason", [
+    ("archive", "unreadable release artifact"), ("version", "unknown release manifest version"),
+    ("identity", "prepared release identity mismatch"),
+])
+def test_artifact_retry_keeps_download_validation(monkeypatch, retry_clock, invalid, reason):
+    api = train.GitHub()
+    fake_artifact_listing(monkeypatch)
+    raw = {"schema_version": 2 if invalid == "version" else 1,
+           "release": asdict(release(run_id=2 if invalid == "identity" else 1))}
+    content = b"not a zip" if invalid == "archive" else zipped(raw)
+    calls = []
+
+    def download(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(1, args)
+        return SimpleNamespace(stdout=content)
+
+    monkeypatch.setattr(subprocess, "run", download)
+    with pytest.raises(train.Refused, match=f"^{reason}$"):
+        api.artifact(run(), "prepared")
+    assert len(calls) == 2
+    assert retry_clock.pauses == [1]
+
+
+@pytest.mark.parametrize("remaining,pauses,attempts", [(0.5, [0.5], 1), (2.5, [1, 1.5], 2)])
+@pytest.mark.parametrize("kind", ["json", "artifact"])
+def test_read_retry_respects_deadline(monkeypatch, retry_clock, capsys, remaining, pauses, attempts, kind):
+    api = train.GitHub(deadline=retry_clock.now + remaining)
+    calls = []
+    json_calls = []
+    original_json = superseded_deploy._gh_json
+
+    def lookup(args, deadline):
+        json_calls.append(args)
+        return original_json(args, deadline)
+
+    def fail(args, **kwargs):
+        assert retry_clock.now < api.deadline
+        assert kwargs["timeout"] <= api.deadline - retry_clock.now
+        calls.append(args)
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    if kind == "artifact":
+        fake_artifact_listing(monkeypatch)
+        with pytest.raises(train.Refused, match="^release artifact download failed$"):
+            api.artifact(run(), "prepared")
+    else:
+        monkeypatch.setattr(superseded_deploy, "_gh_json", lookup)
+        with pytest.raises(train.Refused, match="^GitHub release evidence unavailable$"):
+            api.json("api", "repos/private/release-evidence")
+        assert len(json_calls) == attempts
+    assert len(calls) == attempts
+    assert retry_clock.pauses == pauses
+    assert retry_clock.now == 100 + sum(pauses)
+    retries = [line for line in capsys.readouterr().err.splitlines() if line.startswith("release_train:")]
+    assert len(retries) == max(0, attempts - 1)
+
+    # Starting a fresh reader after expiry must not pause or launch gh at all.
+    retry_clock.now = api.deadline + 1
+    expired = train.GitHub(deadline=api.deadline)
+    json_calls.clear()
+    if kind == "artifact":
+        with pytest.raises(train.Refused, match="^release selection deadline exceeded$"):
+            expired.artifact(run(), "prepared")
+    else:
+        with pytest.raises(train.Refused, match="^GitHub release evidence unavailable$"):
+            expired.json("api", "repos/private/release-evidence")
+        assert len(json_calls) <= 1
+    assert len(calls) == attempts
+    assert retry_clock.pauses == pauses
+    assert retry_clock.now == api.deadline + 1
+    assert "release_train: retrying" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failures", [1, 3])
+def test_history_jobs_retry_preserves_complete_ordered_evidence(monkeypatch, retry_clock, failures):
+    api = train.GitHub()
+    shas = [C, A, B, D, B, A, C, D]
+    history = [{"databaseId": i} for i in range(10, 18)]
+    calls = []
+    guard = Lock()
+    bad_url = f"repos/{train.REPO}/actions/runs/11/jobs?filter=latest&per_page=100"
+
+    def lookup(args, deadline):
+        with guard:
+            calls.append(args)
+            failed_reads = sum(call[-1] == bad_url for call in calls)
+        if args[-1] == bad_url and failed_reads <= failures:
+            return None
+        if "/jobs?" in args[-1]:
+            run_id = int(args[-1].split("/")[-2])
+            rows = [rest_job(i + 1, run_id=run_id, name="rollout / " + name)
+                    for i, name in enumerate(superseded_deploy._DELIVERY_JOBS)]
+            return [{"total_count": len(rows), "jobs": rows}]
+        if "/compare/" in args[-1]:
+            return {"status": "ahead"}
+        run_id = int(args[-1].split("/")[-1])
+        return run(shas[run_id - 10], run_id)
+
+    monkeypatch.setattr(superseded_deploy, "_gh_json", lookup)
+    if failures == 3:
+        with pytest.raises(train.Refused, match="^release history is incomplete$"):
+            train.read_deliveries(api, history, D)
+    else:
+        assert train.read_deliveries(api, history, D) == (shas, [])
+        assert {call[-1] for call in calls if "/jobs?" in call[-1]} == {
+            f"repos/{train.REPO}/actions/runs/{i}/jobs?filter=latest&per_page=100" for i in range(10, 18)
+        }
+    assert sum(call[-1] == bad_url for call in calls) == min(failures + 1, 3)
+    assert retry_clock.pauses == [1, 2][:failures]
+
+
 def test_job_evidence_uses_complete_direct_latest_listing_and_existing_cache(monkeypatch):
     rows = [rest_job(i) for i in range(1, 102)]
     # A failed-job-only rerun retains successful jobs from the first attempt.
