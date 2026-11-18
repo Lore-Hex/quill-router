@@ -74,6 +74,7 @@ jobs:
     env:
       TEST_SHARDS: "8"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
+      TR_TEST_POSTGRES_SUPERUSER_DSN: postgresql://postgres:tr@localhost:5432/postgres
       TR_CONFORMANCE_SPANNER_PG_DSN: postgresql://localhost:5434/tr-conformance
     services:
       # ci.yml's test services, pinned alike: the conformance tests record

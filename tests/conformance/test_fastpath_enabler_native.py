@@ -37,8 +37,11 @@ CONFIG = fe.EnablerConfig(mode="apply", max_rank=10)
 SWITCH_ROWS = 16_000
 
 
-@pytest.fixture
-def database(native_emulator_resources):
+# The backend id puts "spanner-emulator" in every test id, so the CI
+# spanner-emulator job's `-k spanner-emulator` selects these tests.
+@pytest.fixture(params=["spanner-emulator"], ids=lambda backend: f"backend={backend}")
+def database(request, native_emulator_resources):
+    assert request.param == "spanner-emulator"
     schema = tuple(DDL)
     database = native_emulator_resources[0]._instance.database(  # noqa: SLF001 - SDK has no public accessor
         "enabler-" + uuid4().hex[:12], ddl_statements=schema[:20],
