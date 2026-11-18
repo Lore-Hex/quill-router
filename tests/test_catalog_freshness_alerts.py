@@ -5,6 +5,8 @@ import pytest
 
 from trusted_router.synthetic import route_health
 
+DIGEST_HOUR = datetime(2026, 11, 18, route_health.DEGRADATION_DIGEST_HOUR_UTC, 1, tzinfo=UTC)
+
 
 def test_expiring_catalog_alerts_are_provider_grouped_and_metadata_only(monkeypatch):
     now = datetime(2026, 9, 11, tzinfo=UTC)
@@ -69,10 +71,13 @@ def test_sustained_availability_alert_does_not_include_provider_text(monkeypatch
     events = []
     monkeypatch.setattr("trusted_router.synthetic.alerts.ops_alert", lambda message, **kw: events.append((message, kw)))
     flag = route_health.RouteHealthFlag("near-ai", "m", 6, 6, 1.0, "error", "PRIVATE", kind)
-    route_health.report_route_health([flag])
+    route_health.report_route_health([flag], now=DIGEST_HOUR)
     assert len(events) == 1
     assert "PRIVATE" not in repr(events)
-    assert events[0][1]["fingerprint"] == ["route-availability", "near-ai", "m"]
+    assert events[0][1]["fingerprint"] == (
+        ["route-availability", "near-ai", "m"] if kind == "availability"
+        else ["route-degradation-digest", "2026-11-18"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -99,11 +104,52 @@ def test_availability_alert_carries_only_error_class_and_status(
     flag = route_health.RouteHealthFlag(
         "chutes", "m", 24, 6, 0.25, error_type, "PRIVATE", kind, newest_error_status=error_status,
     )
-    route_health.report_route_health([flag])
+    route_health.report_route_health([flag], now=DIGEST_HOUR)
     (message, kw), = events
-    assert message.endswith("hours" + suffix if kind == "degradation" else "minutes" + suffix)
+    if kind == "degradation":
+        assert message.endswith("chutes/m 6/24 (25%)" + suffix)
+        assert kw["fingerprint"] == ["route-degradation-digest", "2026-11-18"]
+    else:
+        assert message.endswith("minutes" + suffix)
+        assert kw["fingerprint"] == ["route-availability", "chutes", "m"]
     assert "PRIVATE" not in message and "sk-" not in message
-    assert kw["fingerprint"] == ["route-availability", "chutes", "m"]
+
+
+def _flag(provider, kind="degradation", **kw):
+    return route_health.RouteHealthFlag(
+        provider, "glm-5.3-flash", 28, 7, 0.25, "provider_error", "PRIVATE sk-1", kind,
+        newest_error_status=502, **kw,
+    )
+
+
+def test_flaky_route_only_logs_outside_the_daily_digest_hour(monkeypatch, caplog):
+    events = []
+    monkeypatch.setattr("trusted_router.synthetic.alerts.ops_alert", lambda message, **kw: events.append((message, kw)))
+    off_hour = DIGEST_HOUR.replace(hour=(route_health.DEGRADATION_DIGEST_HOUR_UTC + 1) % 24)
+    with caplog.at_level("WARNING", logger="trusted_router.synthetic.route_health"):
+        route_health.report_route_health([_flag("near-ai")], now=off_hour)
+    assert events == []
+    assert "route-degradation: near-ai/glm-5.3-flash failed 7/28" in caplog.text
+    assert "PRIVATE" not in caplog.text and "sk-" not in caplog.text
+
+
+def test_daily_digest_groups_every_flaky_route_into_one_alert_and_outages_still_page(monkeypatch):
+    events = []
+    monkeypatch.setattr("trusted_router.synthetic.alerts.ops_alert", lambda message, **kw: events.append((message, kw)))
+    flags = [_flag("near-ai"), _flag("fortanix"), _flag("zro", kind="availability")]
+    route_health.report_route_health(flags, now=DIGEST_HOUR)
+    digest = [e for e in events if e[1]["fingerprint"][0] == "route-degradation-digest"]
+    pages = [e for e in events if e[1]["fingerprint"][0] == "route-availability"]
+    (message, kw), = digest
+    assert message.startswith("route-degradation daily digest 2026-11-18: 2 flaky routes")
+    assert message.index("fortanix/") < message.index("near-ai/")
+    assert kw["tags"] == {"degraded_routes": "2"}
+    assert [e[1]["fingerprint"] for e in pages] == [["route-availability", "zro", "glm-5.3-flash"]]
+    # The next day's digest is a new issue, not a reopened one.
+    events.clear()
+    route_health.report_route_health(flags[:1], now=DIGEST_HOUR + timedelta(days=1))
+    assert events[0][1]["fingerprint"] == ["route-degradation-digest", "2026-11-19"]
+    assert events[0][0].startswith("route-degradation daily digest 2026-11-19: 1 flaky route failed")
 
 
 def test_availability_alerts_never_quarantine_routes(monkeypatch):
