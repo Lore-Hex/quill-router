@@ -749,15 +749,42 @@ func TestALateCallbackKeepsNothing(t *testing.T) {
 		t.Fatalf("handled after the consumer stopped: %v", handled)
 	}
 	mu.Unlock()
+	// The next consumer handles its messages concurrently, as the record
+	// topic's consumer does, so what its handlers share is guarded. Each
+	// handler waits until both messages have reached it before it records
+	// its own, so the two always overlap: an unguarded write is a race the
+	// race detector reports on every run, not only when the client library
+	// happens to start the handlers together.
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
+	arrive := map[string]func(){}
+	var arrived []chan struct{}
+	for i := range 2 {
+		c := make(chan struct{})
+		arrive[fmt.Sprint("record-", i)] = sync.OnceFunc(func() { close(c) })
+		arrived = append(arrived, c)
+	}
 	got := map[string]bool{}
-	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx2, func(_ context.Context, d *RecordDelivery) {
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx2, func(cctx context.Context, d *RecordDelivery) {
+		arrive[string(d.Data)]()
+		for _, c := range arrived {
+			select {
+			case <-c:
+			case <-cctx.Done():
+				return
+			}
+		}
 		d.Ack()
-		if got[string(d.Data)] = true; len(got) == 2 {
+		mu.Lock()
+		got[string(d.Data)] = true
+		n := len(got)
+		mu.Unlock()
+		if n == 2 {
 			cancel2()
 		}
 	})
+	mu.Lock()
+	defer mu.Unlock()
 	if err != nil || len(got) != 2 {
 		t.Fatalf("the next consumer got %v: %v", got, err)
 	}
