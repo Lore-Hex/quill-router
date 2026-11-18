@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -3983,6 +3984,56 @@ def subprocessors_json(settings: Settings) -> str:
     return json.dumps(subprocessor_packet(), sort_keys=True, indent=2)
 
 
+
+def _price_label(microdollars: int) -> str:
+    dollars = microdollars / 1_000_000
+    if dollars >= 1:
+        return f"${dollars:,.2f}"
+    return "$" + f"{dollars:.3f}".rstrip("0").rstrip(".")
+
+
+def _models_hero_price_bars(all_models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The /models hero chart: output price per 1M tokens for the Popular models.
+
+    Read from the same catalog rows as the cards below, so the chart follows
+    price changes on its own. While the GLM 5.3 Flash launch offer runs, that
+    row shows the offer route's price and links to it.
+    """
+    offer = launch_offer_facts()
+    rows: list[dict[str, Any]] = []
+    for model in all_models:
+        if model.get("featured_rank") is None or model.get("completion_price_sort") is None:
+            continue
+        price = int(model["completion_price_sort"])
+        href = str(model.get("detail_href") or "")
+        is_offer = offer is not None and model["id"] == LAUNCH_OFFER_BASE_MODEL_ID and offer.output_microdollars < price
+        if is_offer:
+            price = offer.output_microdollars
+            href = f"/models/{LAUNCH_OFFER_MODEL_ID}"
+        if price <= 0 or not href:
+            continue
+        rows.append(
+            {
+                # "DeepSeek: DeepSeek V4 Flash 0731" -> "DeepSeek V4 Flash"
+                "name": re.sub(r" \d{4}$", "", str(model["name"]).split(": ", 1)[-1]),
+                "publisher_slug": model.get("publisher_slug"),
+                "price": price,
+                "label": _price_label(price),
+                "href": href,
+                "offer": is_offer,
+                "rank": model["featured_rank"],
+            }
+        )
+    rows = sorted(sorted(rows, key=lambda row: row["rank"])[:6], key=lambda row: row["price"])
+    if not rows:
+        return rows
+    low = math.log10(5_000)
+    high = math.log10(max(row["price"] for row in rows) * 1.25)
+    for row in rows:
+        share = (math.log10(max(row["price"], 5_000)) - low) / (high - low)
+        row["width"] = f"{max(3.0, min(100.0, share * 100)):.1f}%"
+    return rows
+
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
     all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()
@@ -4029,6 +4080,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
                 "privacy policy, and live API routes. Filter open-weight, US, and EU options."
             ),
             models=models,
+            hero_price_bars=_models_hero_price_bars(all_models),
             total_model_count=len(all_models),
             # Count the complete public provider catalog, not only providers with
             # a currently routable model. TrustedRouter itself is the router,
