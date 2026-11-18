@@ -228,6 +228,7 @@ from trusted_router.storage_custom_models import (
     normalize_user_provided_model_id,
 )
 from trusted_router.storage_errors import (
+    CreditHeadroomRaced,
     CreditRebalanceBusy,
     DeferredSettlementCapReached,
     LeasedOutcomeUnknown,
@@ -1926,6 +1927,16 @@ def _authorize_gateway_sync_impl(
                     request_id=getattr(request.state, "request_id", None),
                     trace_id=_cloud_trace_id(request),
                 )
+            elif isinstance(exc, CreditHeadroomRaced):
+                # The designed 503 for headroom the workspace's own
+                # concurrent requests took on every bounded repair. The
+                # app's handler answers it as any StoreUnavailable; this
+                # line is its mark.
+                _log_credit_headroom_raced(
+                    workspace.id,
+                    request_id=getattr(request.state, "request_id", None),
+                    trace_id=_cloud_trace_id(request),
+                )
             elif isinstance(exc, StrictBudgetBusy):
                 # The designed 503 for a strict key that could not get its
                 # per-process admission slot. The app's handler answers it
@@ -3287,7 +3298,7 @@ def _cloud_trace_id(request: Request) -> str:
     """The request's Cloud Trace id, lowercase, or "-" when it has none.
 
     The lines that mark a designed authorize 503 (lease headroom, rebalance
-    busy, strict budget busy) carry it so the deploy gate
+    busy, headroom raced, strict budget busy) carry it so the deploy gate
     (scripts/deploy/assert_no_billing_5xx.sh) can pair each authorize 503 in
     Cloud Run's request log with this line by trace: the request log records
     the status and URL only, never a response header or body.
@@ -3354,6 +3365,31 @@ def _log_credit_rebalance_busy(
     them. It carries no key, amount or model."""
     logger.info(
         "billing.credit_rebalance_busy workspace_id=%s request_id=%s trace=%s",
+        _log_value(workspace_id), _log_value(request_id), _log_value(trace_id),
+    )
+
+
+def _log_credit_headroom_raced(
+    workspace_id: str, *, request_id: str | None, trace_id: str = "-",
+) -> None:
+    """The mark of the headroom-raced 503: the workspace's credit is spread
+    across shards, and its own concurrent requests took the headroom from
+    every bounded repair of the typed authorize's credit recovery
+    (storage_errors.CreditHeadroomRaced, "credit headroom changed
+    concurrently"). Aggregate exhaustion was not proven, nothing is held,
+    and the caller is asked to retry.
+
+    The answer itself is the app's storage 503, unchanged, and the request
+    log records only status and URL, so this line is what tells it from a
+    storage outage: the billing 5xx deploy gate pairs it with the request
+    log by trace_id, and the log-based counter
+    trustedrouter_gateway_headroom_raced_503 counts it for the authorize-503
+    alert and for the rate alert (scripts/deploy/gateway_reliability.sh).
+    Its prefix, "INFO <logger> billing.credit_headroom_raced ", and
+    "trace=<id>" are read by both, so a change to either is a change to
+    them. It carries no key, amount or model."""
+    logger.info(
+        "billing.credit_headroom_raced workspace_id=%s request_id=%s trace=%s",
         _log_value(workspace_id), _log_value(request_id), _log_value(trace_id),
     )
 
