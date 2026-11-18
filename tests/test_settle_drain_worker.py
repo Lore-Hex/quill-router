@@ -649,7 +649,7 @@ def test_parallel_slots_apply_one_row_per_workspace_at_a_time(fake_store, monkey
         worker.drain_pass(10, settings=config())
     assert sorted(applied) == sorted(["hot"] * 8 + ["cold-a", "cold-b"])
     assert peak["hot"] == 1
-    assert worker._WORKSPACES._busy == set()
+    assert worker._WORKSPACES._busy == {}
     assert {row["status"] for row in fake_store[1].settle_outbox.values()} == {"done"}
     assert box.claim_shard(shard=0, lease_seconds=30) == []
 
@@ -671,7 +671,7 @@ def test_busy_workspace_rows_stay_unleased_for_the_next_pass(fake_store, monkeyp
     # The skipped row was never leased, so the next pass claims it at once.
     assert fake_store[1].settle_outbox[("fast-0", "settle")]["lease_owner"] is None
     assert worker._apply_slot(box, 0, 30, time.monotonic() + 2)[0] == 1
-    assert worker._WORKSPACES._busy == set()
+    assert worker._WORKSPACES._busy == {}
 
 
 def test_failed_claim_releases_the_workspace(fake_store, monkeypatch):
@@ -682,13 +682,13 @@ def test_failed_claim_releases_the_workspace(fake_store, monkeypatch):
         patch.setattr(SpannerSettleOutbox, "claim_candidates", fail)
         with pytest.raises(TimeoutError):
             worker._apply_slot(box, 0, 30, time.monotonic() + 2)
-    assert worker._WORKSPACES._busy == set()
+    assert worker._WORKSPACES._busy == {}
     def lost(self, candidates, **kwargs):
         return []
     with monkeypatch.context() as patch:
         patch.setattr(SpannerSettleOutbox, "claim_candidates", lost)
         assert worker._apply_slot(box, 0, 30, time.monotonic() + 2) == (0, "", 0)
-    assert worker._WORKSPACES._busy == set()
+    assert worker._WORKSPACES._busy == {}
 
 
 def test_apply_failure_releases_the_workspace(fake_store, monkeypatch):
@@ -699,4 +699,247 @@ def test_apply_failure_releases_the_workspace(fake_store, monkeypatch):
     monkeypatch.setattr(drain, "_resolve_row", resolve)
     with pytest.raises(KeyboardInterrupt):
         worker._apply_slot(box, 0, 30, time.monotonic() + 2)
-    assert worker._WORKSPACES._busy == set()
+    assert worker._WORKSPACES._busy == {}
+
+
+@pytest.fixture
+def workspace_turns(monkeypatch):
+    """Observe actual contention, without a scheduler-dependent sleep."""
+    turns = []
+    original_state = worker._WorkspaceState
+
+    class Turn:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.waiting = threading.Event()
+            turns.append(self)
+
+        def acquire(self, blocking=True):
+            if blocking and self.lock.locked():
+                self.waiting.set()
+            return self.lock.acquire(blocking=blocking)
+
+        def release(self):
+            self.lock.release()
+
+    def state():
+        result = original_state()
+        result.turn = Turn()
+        return result
+
+    monkeypatch.setattr(worker, '_WorkspaceState', state)
+    monkeypatch.setattr(worker, '_WORKSPACES', worker._WorkspaceGate())
+    yield turns
+    assert worker._WORKSPACES._busy == {}
+    assert all(not turn.lock.locked() for turn in turns)
+
+
+def test_two_workspace_slots_overlap_claim_and_resolve_but_serialize_applies(
+        fake_store, monkeypatch, workspace_turns):
+    from concurrent.futures import ThreadPoolExecutor
+
+    box = _workspace_rows(fake_store, ['hot', 'hot', 'hot', 'cold'])
+    first_apply, finish_apply, resolving, second_apply = (threading.Event() for _ in range(4))
+    inflight, peak, applied = Counter(), Counter(), []
+    lock = threading.Lock()
+    original_resolve = drain._resolve_row
+
+    def apply(row):
+        with lock:
+            inflight[row.workspace_id] += 1
+            peak[row.workspace_id] = max(peak[row.workspace_id], inflight[row.workspace_id])
+        try:
+            if row.authorization_id == 'fast-0':
+                first_apply.set()
+                assert workspace_turns[0].waiting.wait(5)
+                # The other slot has claimed the same workspace while this applies.
+                assert fake_store[1].settle_outbox[('fast-1', 'settle')]['lease_owner']
+                assert finish_apply.wait(5)
+            elif row.authorization_id == 'fast-1':
+                second_apply.set()
+                assert resolving.wait(5)
+            applied.append(row.authorization_id)
+            return ApplyOutcome.SETTLED_NOW
+        finally:
+            with lock:
+                inflight[row.workspace_id] -= 1
+
+    def resolve(observed, row, outcome, **kwargs):
+        if row.authorization_id == 'fast-0':
+            resolving.set()
+            # The next apply must start while this row still awaits its done-mark.
+            assert second_apply.wait(5)
+            assert fake_store[1].settle_outbox[('fast-0', 'settle')]['lease_owner']
+        return original_resolve(observed, row, outcome, **kwargs)
+
+    monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
+    monkeypatch.setattr(drain, '_resolve_row', resolve)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(worker._apply_slot, box, 0, 30, float('inf'), None, 2)
+        try:
+            assert first_apply.wait(5)
+            second = pool.submit(worker._apply_slot, box, 1, 30, float('inf'), None, 2)
+            assert workspace_turns[0].waiting.wait(5)
+            # Both places are held: a third hot row stays unleased, but cold runs.
+            assert worker._apply_slot(box, 2, 30, float('inf'), None, 2) == (0, '', 0)
+            third = fake_store[1].settle_outbox[('fast-2', 'settle')]
+            assert third['status'] == 'pending' and third['lease_owner'] is None
+            assert worker._apply_slot(box, 3, 30, float('inf'), None, 2)[1] == ApplyOutcome.SETTLED_NOW
+        finally:
+            finish_apply.set()
+        assert first.result(timeout=5)[1] == second.result(timeout=5)[1] == ApplyOutcome.SETTLED_NOW
+    assert peak == {'hot': 1, 'cold': 1}
+    assert sorted(applied) == ['fast-0', 'fast-1', 'fast-3']
+
+
+@pytest.mark.parametrize('reason', ['deadline', 'lease', 'stop'])
+def test_workspace_wait_rechecks_before_apply(fake_store, monkeypatch, caplog, workspace_turns, reason):
+    from concurrent.futures import ThreadPoolExecutor
+
+    box = _workspace_rows(fake_store, ['hot'])
+    clock = [0.]
+    now = dt.datetime.now(dt.UTC)
+    stop = threading.Event()
+    applied = []
+
+    class DateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now + dt.timedelta(seconds=clock[0])
+
+    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    monkeypatch.setattr(worker, 'dt', SimpleNamespace(datetime=DateTime, UTC=dt.UTC))
+    monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: applied.append(row))
+    original_release = SpannerSettleOutbox.release_claim
+
+    def release(self, row):
+        assert not workspace_turns[0].lock.locked()
+        return original_release(self, row)
+
+    monkeypatch.setattr(SpannerSettleOutbox, 'release_claim', release)
+    assert worker._WORKSPACES.enter('hot', 2)
+    with caplog.at_level(logging.INFO), ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            with worker._WORKSPACES.applying('hot'):
+                future = pool.submit(worker._apply_slot, box, 0, 30, 2 if reason == 'deadline' else 100, stop, 2)
+                assert workspace_turns[0].waiting.wait(5)
+                clock[0] = 31.
+                if reason == 'stop':
+                    stop.set()
+            assert future.result(timeout=5) == (1, 'deferred', 0)
+        finally:
+            worker._WORKSPACES.leave('hot')
+    assert not applied
+    released = '1' if reason == 'deadline' else 'none'
+    assert any(message.endswith(f'reason={reason} released={released}') for message in caplog.messages)
+    assert (fake_store[1].settle_outbox[('fast-0', 'settle')]['lease_owner'] is None) == (reason == 'deadline')
+
+
+@pytest.mark.parametrize('operation', ['apply', 'resolve', 'claim', 'lost_claim'])
+@pytest.mark.parametrize('error', [RuntimeError, KeyboardInterrupt])
+def test_two_workspace_slots_release_places_and_turns_on_failure(
+        fake_store, monkeypatch, workspace_turns, operation, error):
+    box = _workspace_rows(fake_store, ['hot'])
+
+    def fail(*args, **kwargs):
+        if operation == 'lost_claim':
+            return []
+        raise error('failure')
+
+    monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: ApplyOutcome.SETTLED_NOW)
+    if operation in {'claim', 'lost_claim'}:
+        monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', fail)
+    else:
+        monkeypatch.setattr(drain, 'apply_frozen_settle' if operation == 'apply' else '_resolve_row', fail)
+    if operation != 'lost_claim' and (error is KeyboardInterrupt or operation == 'claim'):
+        with pytest.raises(error):
+            worker._apply_slot(box, 0, 30, float('inf'), None, 2)
+    else:
+        result = worker._apply_slot(box, 0, 30, float('inf'), None, 2)
+        assert result[:2] == {'apply': (1, ApplyOutcome.ERROR), 'resolve': (1, 'resolve_error'),
+                             'lost_claim': (0, '')}[operation]
+    # Keep the lock objects after the last place leaves: deleting a locked entry
+    # would hide a missing finally-release from an emptiness-only assertion.
+    assert worker._WORKSPACES._busy == {}
+    assert all(not turn.lock.locked() for turn in workspace_turns)
+
+
+def test_rows_without_workspace_have_no_slot_or_apply_limit(fake_store, monkeypatch, workspace_turns):
+    from concurrent.futures import ThreadPoolExecutor
+
+    box = _workspace_rows(fake_store, [None, None])
+    together = threading.Barrier(2)
+
+    def apply(row):
+        together.wait(timeout=5)
+        return ApplyOutcome.SETTLED_NOW
+
+    monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(worker._apply_slot, box, shard, 30, float('inf')) for shard in (0, 1)]
+        assert [future.result(timeout=5)[1] for future in futures] == [ApplyOutcome.SETTLED_NOW] * 2
+    assert workspace_turns == []
+
+
+def test_workspace_slots_setting_default_and_bounds():
+    assert config().settle_outbox_workspace_slots == 1
+    for slots in (1, 2, 4):
+        assert config(settle_outbox_workspace_slots=slots).settle_outbox_workspace_slots == slots
+    for slots in (0, 5):
+        with pytest.raises(ValueError):
+            config(settle_outbox_workspace_slots=slots)
+
+
+@pytest.mark.parametrize('slots', [2, 4])
+def test_drain_pass_threads_workspace_slots(fake_store, monkeypatch, slots):
+    _workspace_rows(fake_store, ['hot'])
+    seen = []
+    original = worker._apply_slot
+
+    def slot(outbox, shard, lease, deadline, stop=None, workspace_slots=1):
+        seen.append(workspace_slots)
+        return original(outbox, shard, lease, deadline, stop, workspace_slots)
+
+    monkeypatch.setattr(worker, '_apply_slot', slot)
+    monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: ApplyOutcome.SETTLED_NOW)
+    assert worker.drain_pass(1, settings=config(settle_outbox_workspace_slots=slots))['claimed'] == 1
+    assert seen == [slots]
+
+
+def test_workspace_wait_timing_excludes_wait_and_capacity_parser_accepts_it(
+        fake_store, monkeypatch, workspace_turns, caplog):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from scripts.async_settle.drain_capacity import parse_lines
+
+    box = _workspace_rows(fake_store, ['hot'])
+    clock = [0.]
+    monkeypatch.setattr(worker, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=lambda: 123.))
+    original_resolve = drain._resolve_row
+
+    def apply(row):
+        clock[0] += .5
+        return ApplyOutcome.SETTLED_NOW
+
+    def resolve(*args, **kwargs):
+        clock[0] += .125
+        return original_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
+    monkeypatch.setattr(drain, '_resolve_row', resolve)
+    assert worker._WORKSPACES.enter('hot', 2)
+    with caplog.at_level(logging.INFO), ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            with worker._WORKSPACES.applying('hot'):
+                future = pool.submit(worker._apply_slot, box, 0, 30, 100., None, 2)
+                assert workspace_turns[0].waiting.wait(5)
+                clock[0] = 3.
+            assert future.result(timeout=5)[1] == ApplyOutcome.SETTLED_NOW
+        finally:
+            worker._WORKSPACES.leave('hot')
+    [message] = [m for m in caplog.messages if m.startswith('async_drain.timing ')]
+    assert message.endswith(' wait_seconds=3.000000')
+    [parsed] = parse_lines(message)
+    assert parsed['service_seconds'] == .625
+    assert parsed['observed_at'] == 123.
+    assert parsed['wait_seconds'] == '3.000000'

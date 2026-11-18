@@ -1183,11 +1183,11 @@ def test_shutdown_after_claim_leaves_row_leased(fake_store, monkeypatch, concurr
     stop = threading.Event()
     original = SpannerSettleOutbox.claim_candidates
     original_slot = worker._apply_slot
-    def slot(outbox, shard, lease, deadline, event):
+    def slot(outbox, shard, lease, deadline, event, workspace_slots=1):
         # Hold other slots at their entry until the first claim sets stop.
         if shard != 0:
             assert stop.wait(2)
-        return original_slot(outbox, shard, lease, deadline, event)
+        return original_slot(outbox, shard, lease, deadline, event, workspace_slots)
     monkeypatch.setattr(worker, '_apply_slot', slot)
     claims, applies = [], []
     def claim(self, candidates, **kw):

@@ -72,52 +72,84 @@ class _ObservedOutbox(SpannerSettleOutbox):
         return result
 
 
+@dataclass
+class _WorkspaceState:
+    holders: int = 0
+    turn: Any = field(default_factory=threading.Lock)
+
+
 class _WorkspaceGate:
     """At most one in-flight apply per workspace in this process.
 
     Every apply writes its workspace's credit row and key-limit row. Parallel
     slots on one hot workspace (a backlog catch-up) queue on those same rows,
     and the live authorizes for that workspace wait behind them. Slots skip a
-    busy workspace's rows instead; they stay due for the next pass. The worker
+    workspace's rows once its slots are full; they stay due for the next pass.
+    Claims and resolves can overlap, but applies always take turns. The worker
     runs as one instance, so a process-local gate covers the whole drain.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._busy: set[str] = set()
+        self._busy: dict[str, _WorkspaceState] = {}
 
-    def enter(self, workspace_id: str | None) -> bool:
+    def enter(self, workspace_id: str | None, slots: int = 1) -> bool:
         if workspace_id is None:
             return True
         with self._lock:
-            if workspace_id in self._busy:
+            state = self._busy.get(workspace_id)
+            if state is not None and state.holders >= slots:
                 return False
-            self._busy.add(workspace_id)
+            if state is None:
+                state = self._busy[workspace_id] = _WorkspaceState()
+            state.holders += 1
             return True
 
     def leave(self, workspace_id: str | None) -> None:
         if workspace_id is None:
             return
         with self._lock:
-            self._busy.discard(workspace_id)
+            state = self._busy[workspace_id]
+            state.holders -= 1
+            if state.holders == 0:
+                del self._busy[workspace_id]
+
+    @contextmanager
+    def applying(self, workspace_id: str | None) -> Iterator[float]:
+        """Serialize money applies for entered slots; yield time waiting only."""
+        if workspace_id is None:
+            yield 0.
+            return
+        with self._lock:
+            turn = self._busy[workspace_id].turn
+        wait_seconds = 0.
+        if not turn.acquire(blocking=False):
+            started = time.monotonic()
+            turn.acquire()
+            wait_seconds = time.monotonic() - started
+        try:
+            yield wait_seconds
+        finally:
+            turn.release()
 
 
 _WORKSPACES = _WorkspaceGate()
 
 
 def _apply_slot(outbox: SpannerSettleOutbox, shard: int, lease: int,
-                deadline: float, stop: threading.Event | None = None) -> tuple[int, str, int]:
-    return _apply_slot_inner(outbox, shard, lease, deadline, stop)
+                deadline: float, stop: threading.Event | None = None,
+                workspace_slots: int = 1) -> tuple[int, str, int]:
+    return _apply_slot_inner(outbox, shard, lease, deadline, stop, workspace_slots)
 
 
 def _claim_ungated(outbox: SpannerSettleOutbox, candidates: list[SettleOutboxRow],
-                   lease: int) -> SettleOutboxRow | None:
+                   lease: int, workspace_slots: int = 1) -> SettleOutboxRow | None:
     """Claim the first candidate whose workspace this process can enter.
 
     The returned row's workspace stays entered; the caller leaves it.
     """
     for candidate in candidates:
-        if not _WORKSPACES.enter(candidate.workspace_id):
+        if not _WORKSPACES.enter(candidate.workspace_id, workspace_slots):
             continue
         claimed = False
         try:
@@ -131,7 +163,8 @@ def _claim_ungated(outbox: SpannerSettleOutbox, candidates: list[SettleOutboxRow
 
 
 def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
-                      deadline: float, stop: threading.Event | None) -> tuple[int, str, int]:
+                      deadline: float, stop: threading.Event | None,
+                      workspace_slots: int = 1) -> tuple[int, str, int]:
     # The slot has already started. There is no claimed executor queue tail.
     # Stop prevents new claims and new applies; already running applies finish.
     if (stop is not None and stop.is_set()) or time.monotonic() >= deadline:
@@ -144,7 +177,7 @@ def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
     candidates = outbox.due_shard(shard=shard)
     prior_leases = {id(candidate): (candidate.lease_owner, candidate.leased_until)
                     for candidate in candidates}
-    row = _claim_ungated(outbox, candidates, lease)
+    row = _claim_ungated(outbox, candidates, lease, workspace_slots)
     claim_seconds = time.monotonic() - claim_started
     if row is None:
         return 0, "", 0
@@ -178,31 +211,33 @@ def _apply_claimed(outbox: SpannerSettleOutbox, row: SettleOutboxRow,
                "async_drain.claim ref=%s prior_owner=%s prior_leased_until=%s owner=%s leased_until=%s",
                ref, prior_owner or "none", prior_leased_until or "none",
                row.lease_owner or "none", row.leased_until or "none")
-    # Claim RPCs can consume the lease/budget. Never start expired work, even
-    # though the reservation fence would still prevent double billing.
-    now = dt.datetime.now(dt.UTC)
+    # Claims and waiting for a turn can consume the lease/budget. Check only
+    # after taking the turn, even though the reservation fence prevents rebilling.
     reason = None
-    if stop is not None and stop.is_set():
-        reason = "stop"
-    elif time.monotonic() >= deadline:
-        reason = "deadline"
-    elif (row.leased_until is None
-          or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):
-        reason = "lease"
+    error_note = None
+    apply_error = None
+    with _WORKSPACES.applying(row.workspace_id) as wait_seconds:
+        now = dt.datetime.now(dt.UTC)
+        if stop is not None and stop.is_set():
+            reason = "stop"
+        elif time.monotonic() >= deadline:
+            reason = "deadline"
+        elif (row.leased_until is None
+              or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):
+            reason = "lease"
+        if reason is None:
+            started = time.monotonic()
+            try:
+                outcome = drain.apply_frozen_settle(row)
+            except Exception as exc:
+                _audit_log(logging.WARNING, "async_drain.apply_failed error_class=%s", type(exc).__name__)
+                outcome, apply_error = ApplyOutcome.ERROR, exc
+                error_note = f"{type(exc).__name__}: {exc}"
     if reason is not None:
         released = _release_deadline_claim(outbox, row) if reason == "deadline" else "none"
         _audit_log(logging.INFO, "async_drain.deferred ref=%s owner=%s reason=%s released=%s",
                    ref, row.lease_owner or "none", reason, released)
         return 1, "deferred", 0
-    started = time.monotonic()
-    error_note = None
-    apply_error = None
-    try:
-        outcome = drain.apply_frozen_settle(row)
-    except Exception as exc:
-        _audit_log(logging.WARNING, "async_drain.apply_failed error_class=%s", type(exc).__name__)
-        outcome, apply_error = ApplyOutcome.ERROR, exc
-        error_note = f"{type(exc).__name__}: {exc}"
     observed = _ObservedOutbox(outbox._database, outbox._pt, async_fence=outbox._async_fence)
     observed.ref = ref
     resolve_started = time.monotonic()
@@ -223,8 +258,8 @@ def _apply_claimed(outbox: SpannerSettleOutbox, row: SettleOutboxRow,
     elapsed = time.monotonic() - started
     _audit_log(logging.INFO,
                "async_drain.timing outcome=%s service_seconds=%.6f observed_at=%.6f "
-               "ref=%s claim_seconds=%.6f resolve_seconds=%.6f",
-               outcome, elapsed, time.time(), ref, claim_seconds, resolve_seconds)
+               "ref=%s claim_seconds=%.6f resolve_seconds=%.6f wait_seconds=%.6f",
+               outcome, elapsed, time.time(), ref, claim_seconds, resolve_seconds, wait_seconds)
     return 1, outcome, int(row.actual_cost_micro) if outcome == ApplyOutcome.SETTLED_NOW else 0
 
 
@@ -315,7 +350,8 @@ def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0,
                and not (stop is not None and stop.is_set())):
             # At most one row per running slot, even when claim_batch is large.
             width = min(concurrency, limit - claimed)
-            futures = [pool.submit(_observed_slot, cadence, outbox, (shard + i) % 16, lease, deadline, stop)
+            futures = [pool.submit(_observed_slot, cadence, outbox, (shard + i) % 16, lease, deadline, stop,
+                                   settings.settle_outbox_workspace_slots)
                        for i in range(width)]
             shard = (shard + width) % 16
             for future in as_completed(futures):

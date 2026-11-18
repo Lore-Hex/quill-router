@@ -885,6 +885,7 @@ Worker-only pins (prefix `TR_SETTLE_OUTBOX_`):
 | `LEASE_SECONDS` | `30` |
 | `WORKER_CONCURRENCY` | `4` |
 | `CLAIM_BATCH` | `4` |
+| `WORKSPACE_SLOTS` | `2` |
 | `HEALTH_PUBLISH_INTERVAL_SECONDS` | `1` |
 | `STALL_SECONDS` | `26` |
 
@@ -896,6 +897,12 @@ or ClickHouse credentials are mounted. No analytics drains, auto-refill,
 shadows, startup harness, routing/edge publishers or synthetic starters run.
 **No purge or reaping runs on the worker.** The legacy scheduler retains its
 existing purge and limit-200 reaper, once per pass.
+
+The worker holds at most two rows of one workspace at a time. Their claims and
+done-marks overlap and their applies take turns, serving one workspace at about
+eight settles a second instead of six. `wait_seconds` on `async_drain.timing`
+is the time a row waited for its workspace's turn. Setting the pin to 1
+restores one row at a time.
 
 Completed scan/apply units service due publication of
 `settle_drain_control / fleet-v1`. The existing bounded snapshot includes all
