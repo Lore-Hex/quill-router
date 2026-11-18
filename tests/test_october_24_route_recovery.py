@@ -10,50 +10,96 @@ import json
 
 import pytest
 
+from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
-from scripts.pricing.providers import _direct_openai, nextbit, nvidia_nim, pearl, sambanova
+from scripts.pricing.providers import _direct_openai, pearl, sambanova
 from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.provider_contracts import (
+    PEARL_GEMMA_4_31B_HOLD_REASON,
+    PEARL_GEMMA_4_31B_MODEL_ID,
+)
+
+# Every test here states the provider rows it needs. Which routes a provider
+# lists, which canaries pass and which tombstones exist change with each hourly
+# refresh, so these rules are checked on fixture manifests fed through the
+# catalog's own ingest and serving filter, never on today's catalog.
+_HELD = {"routable": False, "routable_reason": "provider-canary-failed"}
+_DELISTED = {"routable": False, "routable_reason": "delisted-upstream", "missing_since": "2026-10-24"}
 
 
-@pytest.mark.parametrize("provider,model", [
-    (nextbit, "bsc-lt/alia-40b-instruct-2601"),
-    (nvidia_nim, "google/gemma-4-31b-it"),
-    (nvidia_nim, "nvidia/nemotron-3-super-120b-a12b"),
-    (sambanova, "deepseek/deepseek-v3.2"),
-    (sambanova, "deepseek/deepseek-v3.1"),
-    (sambanova, "google/gemma-4-31b-it"),
+def _row(model_id, native=None, **state):
+    return {
+        "id": model_id, "upstream_id": native or model_id, "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        "input_token_price_per_m": 600_000, "output_token_price_per_m": 1_200_000, **state,
+    }
+
+
+def _served(monkeypatch, tmp_path, manifests=None):
+    """The prepaid (provider, model) routes the catalog serves from tmp_path's
+    manifests, after writing any given here."""
+    for slug, rows in (manifests or {}).items():
+        (tmp_path / f"{slug}.json").write_text(json.dumps({"provider": slug, "models": rows}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    return {
+        (e.provider, e.model_id)
+        for e in catalog_ingest._filter_unserved_provider_endpoints(endpoints).values()
+        if e.usage_type == "Credits"
+    }
+
+
+@pytest.mark.parametrize("slug,model,native", [
+    ("nextbit", "bsc-lt/alia-40b-instruct-2601", "alia-salamandra:40b"),
+    ("nvidia-nim", "google/gemma-4-31b-it", "google/gemma-4-31b-it"),
+    ("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-super-120b-a12b"),
+    ("sambanova", "deepseek/deepseek-v3.2", "DeepSeek-V3.2"),
+    ("sambanova", "deepseek/deepseek-v3.1", "DeepSeek-V3.1"),
+    ("sambanova", "google/gemma-4-31b-it", "gemma-4-31B-it"),
 ])
-def test_unavailable_route_can_recover_only_after_canary(provider, model, tmp_path):
-    row = next(row for row in json.loads(provider.MANIFEST_PATH.read_text())["models"] if row["id"] == model)
-    if row.get("routable") is False:
-        assert not any(e.provider == provider.SLUG and e.model_id == model for e in MODEL_ENDPOINTS.values())
-    # A successful future refresh is allowed to revive the production row.
-    row.update(routable=False, routable_reason="provider-canary-failed")
-    manifest = tmp_path / "provider.json"
-    manifest.write_text(json.dumps({"models": [row]}))
-    assert models_requiring_canary(manifest, {model}) == {model}
+def test_unavailable_route_can_recover_only_after_canary(slug, model, native, monkeypatch, tmp_path):
+    held = _row(model, native, **_HELD)
+    assert (slug, model) not in _served(monkeypatch, tmp_path, {slug: [held]})
+    assert models_requiring_canary(tmp_path / f"{slug}.json", {model}) == {model}
     for healthy in (False, True):
-        candidate = {model: dict(row)}
+        candidate = {model: dict(held)}
         apply_canary_results(candidate, checked_model_ids={model}, healthy_model_ids={model} if healthy else set())
         assert candidate[model]["routable"] is healthy
+        assert ((slug, model) in _served(monkeypatch, tmp_path, {slug: [candidate[model]]})) is healthy
 
 
-@pytest.mark.parametrize("model", [
+# October 24: Atlas Cloud's feed stopped listing these routes and the refresh
+# tombstoned them. A tombstone recovers if Atlas relists the model, so what is
+# checked is that a tombstoned Atlas row is not advertised, not that Atlas
+# never lists these models again.
+_ATLAS_RETIRED = (
     "deepseek/deepseek-v3.1", "deepseek/deepseek-v3.1-terminus",
     "kwaipilot/kat-coder-pro-v2.5", "openai/gpt-4.1-mini",
     "openai/gpt-5.2-codex", "openai/gpt-5.3-codex", "openai/gpt-5.4",
     "openai/gpt-5.4-mini", "openai/gpt-5.4-nano", "qwen/qwen3-235b-a22b-2507",
     "qwen/qwen3-vl-235b-a22b-thinking", "z-ai/glm-4.6", "z-ai/glm-4.7",
     "deepseek/deepseek-v4-flash-vision-exp",
-])
-def test_retired_atlas_routes_are_not_advertised(model):
-    assert not any(e.provider == "atlas-cloud" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+)
+_ATLAS_LIVE = _row("z-ai/glm-5.2", "zai-org/glm-5.2")
+
+
+@pytest.mark.parametrize("model", _ATLAS_RETIRED)
+def test_retired_atlas_routes_are_not_advertised(model, monkeypatch, tmp_path):
+    served = _served(monkeypatch, tmp_path, {"atlas-cloud": [_row(model, **_DELISTED), _ATLAS_LIVE]})
+    assert ("atlas-cloud", model) not in served
+    # Control: the fixture manifest is ingested, and its listed route is served.
+    assert ("atlas-cloud", _ATLAS_LIVE["id"]) in served
 
 
 @pytest.mark.parametrize("model", ["openai/gpt-4.1-mini", "openai/gpt-5.4-mini"])
-def test_atlas_retirement_does_not_remove_openai_direct(model):
-    assert any(e.provider == "openai" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+def test_atlas_retirement_does_not_remove_openai_direct(model, monkeypatch, tmp_path):
+    served = _served(monkeypatch, tmp_path, {
+        "atlas-cloud": [_row(model, **_DELISTED), _ATLAS_LIVE],
+        "openai": [_row(model, model.removeprefix("openai/"), routable=True)],
+    })
+    assert ("openai", model) in served
+    assert ("atlas-cloud", model) not in served
 
 
 # October 24: SambaNova's operator account answered HTTP 402 for three routes
@@ -76,24 +122,14 @@ _SAMBANOVA_WORKING = {
 _SAMBANOVA_DELISTED = {f"fixture/delisted-{n}": f"Delisted-{n}" for n in range(5)}
 
 
-def _sambanova_row(model_id, native, **state):
-    return {
-        "id": model_id, "upstream_id": native, "model_type": "chat",
-        "endpoints": ["chat/completions"],
-        "input_token_price_per_m": 600_000, "output_token_price_per_m": 1_200_000, **state,
-    }
-
-
 @pytest.mark.parametrize("model", list(_SAMBANOVA_WORKING))
 def test_sambanova_account_hold_does_not_disable_working_models(model, monkeypatch, tmp_path):
     routes = {**_SAMBANOVA_CREDIT_HELD, **_SAMBANOVA_WORKING}
     manifest = tmp_path / "sambanova.json"
     manifest.write_text(json.dumps({"provider": "sambanova", "models": [
-        *(_sambanova_row(m, n, routable=False, routable_reason="provider-canary-failed")
-          for m, n in _SAMBANOVA_CREDIT_HELD.items()),
-        *(_sambanova_row(m, n, routable=True) for m, n in _SAMBANOVA_WORKING.items()),
-        *(_sambanova_row(m, n, routable=False, routable_reason="delisted-upstream",
-                         missing_since="2026-10-25") for m, n in _SAMBANOVA_DELISTED.items()),
+        *(_row(m, n, **_HELD) for m, n in _SAMBANOVA_CREDIT_HELD.items()),
+        *(_row(m, n, routable=True) for m, n in _SAMBANOVA_WORKING.items()),
+        *(_row(m, n, **_DELISTED) for m, n in _SAMBANOVA_DELISTED.items()),
     ]}))
     # The next refresh lists every route (by the native ids that
     # sambanova.EXPLICIT_MODEL_MAP maps) and re-canaries the held ones; the
@@ -124,59 +160,93 @@ def test_sambanova_account_hold_does_not_disable_working_models(model, monkeypat
     }
 
     # The refreshed manifest through the catalog's own ingest and serving filter.
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
-    _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
-    served = catalog_ingest._filter_unserved_provider_endpoints(endpoints).values()
-    sambanova_routes = {(e.model_id, e.usage_type) for e in served if e.provider == "sambanova"}
-    assert (model, "Credits") in sambanova_routes
-    assert not {model_id for model_id, _usage in sambanova_routes} & _SAMBANOVA_CREDIT_HELD.keys()
+    served = _served(monkeypatch, tmp_path)
+    assert ("sambanova", model) in served
+    assert not {("sambanova", m) for m in _SAMBANOVA_CREDIT_HELD} & served
 
 
-def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold():
+def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold(monkeypatch, tmp_path):
     # SambaNova's public /v1/models dropped MiniMax-M3 (MiniMax-M3.1-Flash took its
-    # place) and the 2026-10-25 refreshes missed it twice, so the row is a
-    # recoverable feed tombstone. The three 402 credit holds are untouched.
-    rows = {row["id"]: row for row in json.loads(sambanova.MANIFEST_PATH.read_text())["models"]}
-    retired = rows["minimax/minimax-m3"]
-    assert retired["upstream_id"] == "MiniMax-M3"
-    assert retired["routable"] is False
-    assert retired["routable_reason"] == "delisted-upstream"
-    assert retired["missing_since"] == "2026-10-25"
-    assert not any(
-        e.provider == "sambanova" and e.model_id == "minimax/minimax-m3" for e in MODEL_ENDPOINTS.values()
+    # place) and the 2026-10-25 refreshes missed it twice. Two refreshes whose
+    # feed omits it must leave a recoverable feed tombstone, never a credit
+    # hold, and leave the 402 credit holds and the working routes as they were.
+    retired, retired_native = "minimax/minimax-m3", "MiniMax-M3"
+    listed = {**_SAMBANOVA_CREDIT_HELD, **_SAMBANOVA_WORKING}
+    manifest = tmp_path / "sambanova.json"
+    manifest.write_text(json.dumps({"provider": "sambanova", "models": [
+        *(_row(m, n, **_HELD) for m, n in _SAMBANOVA_CREDIT_HELD.items()),
+        *(_row(m, n, routable=True) for m, n in _SAMBANOVA_WORKING.items()),
+        _row(retired, retired_native, routable=True),
+        *(_row(m, n, **_DELISTED) for m, n in _SAMBANOVA_DELISTED.items()),
+    ]}))
+    monkeypatch.setenv("SAMBANOVA_API_KEY", "fixture-key")
+    monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_a, **_k: {"data": [
+        {"id": native, "pricing": {"prompt": "0.0000006", "completion": "0.0000012"}}
+        for native in listed.values()
+    ]})
+    monkeypatch.setattr(
+        _direct_openai, "probe_openai_chat",
+        lambda **kwargs: kwargs["model"] not in _SAMBANOVA_CREDIT_HELD.values(),
     )
-    assert "minimax/minimax-m3" not in sambanova.CATALOG.spec.expected_models
-    # Other routes can recover independently on the next authenticated canary.
-    # Their live health is not part of MiniMax-M3's tombstone contract.
-    assert retired["routable_reason"] != "provider-canary-failed"
+
+    def refresh():
+        adapter = _direct_openai.DirectOpenAIProvider(sambanova.CATALOG.spec, manifest_path=manifest)
+        notes = adapter.write_provider_manifest(adapter.fetch())
+        assert not [note for note in notes if "mass-prune" in note]
+        return {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+
+    first = refresh()[retired]
+    assert first["routable"] is True and first["missing_since"]
+    rows = refresh()
+    assert rows[retired]["upstream_id"] == retired_native
+    assert (rows[retired]["routable"], rows[retired]["routable_reason"]) == (False, "delisted-upstream")
+    assert rows[retired]["missing_since"] == first["missing_since"]
+    assert {m: (rows[m]["routable"], rows[m].get("routable_reason")) for m in listed} == {
+        **{m: (False, "provider-canary-failed") for m in _SAMBANOVA_CREDIT_HELD},
+        **{m: (True, None) for m in _SAMBANOVA_WORKING},
+    }
+    served = _served(monkeypatch, tmp_path)
+    assert ("sambanova", retired) not in served
+    assert {("sambanova", m) for m in _SAMBANOVA_WORKING} <= served
+    assert retired not in sambanova.CATALOG.spec.expected_models
 
 
-def test_nvidia_unavailable_function_is_held_without_disabling_working_route():
-    assert not any(
-        e.provider == "nvidia-nim" and e.model_id == "nvidia/nemotron-3-super-120b-a12b"
-        for e in MODEL_ENDPOINTS.values()
-    )
-    assert any(
-        e.provider == "nvidia-nim" and e.model_id == "nvidia/nemotron-3.5-lightning-30b-a3b"
-        for e in MODEL_ENDPOINTS.values()
-    )
+def test_nvidia_unavailable_function_is_held_without_disabling_working_route(monkeypatch, tmp_path):
+    held, working = "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"
+    served = _served(monkeypatch, tmp_path, {"nvidia-nim": [_row(held, **_HELD), _row(working, routable=True)]})
+    assert ("nvidia-nim", held) not in served
+    assert ("nvidia-nim", working) in served
 
 
 def test_ended_union_preview_is_not_silently_replaced():
     assert not any(e.model_id == "stealth/union-alpha" for e in MODEL_ENDPOINTS.values())
 
 
-def test_pearl_gemma_relist_does_not_override_confirmed_inference_hold():
+def test_pearl_gemma_relist_does_not_override_confirmed_inference_hold(monkeypatch, tmp_path):
     # Discovery relisted the exact ID, but October 28 authenticated inference
     # still returned model_not_found. A listing alone cannot release the hold.
-    row = next(
-        row for row in json.loads(pearl.MANIFEST_PATH.read_text())["models"]
-        if row["id"] == "google/gemma-4-31b-it"
-    )
-    assert row["upstream_id"] == "google/gemma-4-31B-it"
-    assert row["routable"] is False
-    assert row["routable_reason"] == "provider-model-not-found"
-    assert (row["input_token_price_per_m"], row["output_token_price_per_m"]) == (90_000, 340_000)
-    routes = [e for e in MODEL_ENDPOINTS.values() if e.model_id == "google/gemma-4-31b-it"]
-    assert not [e for e in routes if e.provider == "pearl"]
-    assert {e.provider for e in routes} - {"pearl"}
+    model, native = PEARL_GEMMA_4_31B_MODEL_ID, "google/gemma-4-31B-it"
+    manifest = tmp_path / "pearl.json"
+    manifest.write_text(json.dumps({"provider": "pearl", "models": [
+        _row(model, native, routable=False, routable_reason=PEARL_GEMMA_4_31B_HOLD_REASON),
+    ]}))
+    monkeypatch.setattr(pearl, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(pearl, "UPSTREAM_ID_MAP", {})
+    prices, relisted = pearl._parse_catalog({"data": [
+        {"id": native, "pricing": {"prompt": "0.00000009", "completion": "0.00000034"}},
+    ]})
+    relisted[model]["routable"] = True
+    monkeypatch.setattr(pearl, "_DISCOVERED_MANIFEST_ROWS", relisted)
+    pearl.write_provider_manifest(ProviderPricingResult(
+        slug="pearl", prices=prices, source="api", fetched_url=pearl.URL,
+    ))
+    row = json.loads(manifest.read_text())["models"][0]
+    assert (row["routable"], row["routable_reason"]) == (False, PEARL_GEMMA_4_31B_HOLD_REASON)
+    # Even a manifest that calls the relisted route routable does not serve it
+    # on Pearl, and the hold does not take the model from its other hosts.
+    served = _served(monkeypatch, tmp_path, {
+        "pearl": [_row(model, native, routable=True)],
+        "deepinfra": [_row(model, native, routable=True)],
+    })
+    assert ("pearl", model) not in served
+    assert ("deepinfra", model) in served
