@@ -404,7 +404,9 @@ func (sh *fullShadow) release(n int64) {
 // to the answer's end. rateLimit are its RateLimit-Limit, -Remaining and
 // -Reset headers, Python's window decision in its own words (key-windows
 // section 8.2), "" where absent; windowReadAt its WindowReadTimestampHeader,
-// the instant the rows behind that decision are as of.
+// the instant the rows behind that decision are as of; creditRead its
+// CreditRefusalReadHeader, the read of the credit rows a credit refusal
+// stands on.
 type pyAnswer struct {
 	status       int
 	encoding     string
@@ -413,6 +415,7 @@ type pyAnswer struct {
 	latency      time.Duration
 	rateLimit    [3]string
 	windowReadAt string
+	creditRead   string
 }
 
 // fullJob is one followed request: what the pipeline reads, held at its
@@ -508,7 +511,7 @@ func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	status, encoding := resp.StatusCode, resp.Header.Get("Content-Encoding")
 	rateLimit := [3]string{resp.Header.Get("RateLimit-Limit"), resp.Header.Get("RateLimit-Remaining"),
 		resp.Header.Get("RateLimit-Reset")}
-	windowReadAt := resp.Header.Get(WindowReadTimestampHeader)
+	windowReadAt, creditRead := resp.Header.Get(WindowReadTimestampHeader), resp.Header.Get(CreditRefusalReadHeader)
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	if job.abandoned {
@@ -517,7 +520,7 @@ func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	job.tap = &tap{rc: resp.Body, sh: sh, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
 		raw, complete, spent := t.bytes()
 		a := pyAnswer{status: status, encoding: encoding, body: raw, latency: time.Since(job.arrived),
-			rateLimit: rateLimit, windowReadAt: windowReadAt}
+			rateLimit: rateLimit, windowReadAt: windowReadAt, creditRead: creditRead}
 		switch {
 		case spent:
 			a.why, a.body = "budget", nil
@@ -601,8 +604,9 @@ func (sh *fullShadow) follow(job *fullJob) {
 	sh.evict(decided, a, job.in.Request.Body)
 	// Python's credit refusal of a request Go would have answered: the
 	// workspace's rows say whether its balance ran out or a debt mark was
-	// missed.
-	sh.confirmFunding(decided.ForShadow(), &r)
+	// missed, and the read Python's refusal names whether rows that cover
+	// now were short when Python read them.
+	sh.confirmFunding(decided.ForShadow(), a.creditRead, &r)
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
 		if r.warm != nil {

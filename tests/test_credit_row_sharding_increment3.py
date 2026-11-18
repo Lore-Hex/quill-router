@@ -233,10 +233,14 @@ def test_rebalance_negative_headroom_insufficient_returns_normal_outcome() -> No
 
     result = _rebalance(store, shard_count=3, target_shard=0, estimate=10)
 
+    # With what its locked read saw: the read a refusal stands on.
     assert result == {
         "outcome": RebalanceOutcome.INSUFFICIENT,
         "moved_micro": 0,
         "target_shard": 0,
+        "rows": 3,
+        "available_micro": -10,
+        "most_micro": 15,
     }
     assert database.typed[CREDIT_BALANCE_TABLE] == before
 
@@ -261,6 +265,9 @@ def test_rebalance_bystander_negative_shard_counts_against_affordability() -> No
         "outcome": RebalanceOutcome.INSUFFICIENT,
         "moved_micro": 0,
         "target_shard": 0,
+        "rows": 4,
+        "available_micro": 60,
+        "most_micro": 60,
     }
     assert database.typed[CREDIT_BALANCE_TABLE] == before
 

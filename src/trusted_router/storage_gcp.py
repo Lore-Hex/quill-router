@@ -16,6 +16,9 @@ from typing import Any, TypeVar, cast
 from trusted_router import phone_verification
 from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfer
 from trusted_router.creator_identity import local_creator_username, validate_creator_username
+from trusted_router.credit_refusal_read import HEAL as HEAL_READ
+from trusted_router.credit_refusal_read import REBALANCE as REBALANCE_READ
+from trusted_router.credit_refusal_read import CreditRefusalRead
 from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
@@ -2016,7 +2019,12 @@ class SpannerStore(OperationalAnalyticsReads):
         )
         return randomized_credit_shards(count)
 
-    def _heal_stale_debt_mark(self, workspace_id: str) -> bool:
+    def _heal_stale_debt_mark(
+        self,
+        workspace_id: str,
+        *,
+        on_read: Callable[[list[int], int | None], None] | None = None,
+    ) -> bool:
         """Clear a debt mark the workspace's balance no longer bears out.
 
         A mark is stale when code that does not know it credited the workspace
@@ -2025,9 +2033,16 @@ class SpannerStore(OperationalAnalyticsReads):
         the negative rows are covered from the others and the mark is cleared
         on every row. A snapshot finds it first, so a refusal of an unmarked
         workspace pays one read and takes no lock. True if a mark was cleared.
+
+        `on_read`, if given, is handed the snapshot's rows (each one's
+        headroom) and its read timestamp: the read a one-row workspace's
+        refusal stands on (credit_refusal_read.py). The snapshot is multi-use
+        only so that the client keeps that timestamp; it makes one read.
         """
+        from trusted_router.storage_gcp_authorize import snapshot_read_timestamp_ns
+
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        with self._database.snapshot(multi_use=True) as snapshot:
             rows = list(
                 snapshot.execute_sql(
                     "SELECT total_credits - total_usage - reserved, COALESCE(in_debt, FALSE) "
@@ -2036,6 +2051,9 @@ class SpannerStore(OperationalAnalyticsReads):
                     param_types={"pk": pt.STRING},
                 )
             )
+            read_timestamp_ns = snapshot_read_timestamp_ns(snapshot)
+        if on_read is not None:
+            on_read([int(row[0]) for row in rows], read_timestamp_ns)
         if not any(bool(row[1]) for row in rows) or sum(int(row[0]) for row in rows) < 0:
             return False
 
@@ -5999,8 +6017,14 @@ class SpannerStore(OperationalAnalyticsReads):
             if credit_verdict == EXHAUSTED:
                 from trusted_router.storage_gcp_authorize import AuthorizeVerdict
 
+                # With the snapshot the refusal stands on, for the edge's
+                # decide shadow (credit_refusal_read.py).
                 return (
-                    AuthorizeVerdict(AuthorizeOutcome.INSUFFICIENT_CREDITS, rate_limit=window_decision),
+                    AuthorizeVerdict(
+                        AuthorizeOutcome.INSUFFICIENT_CREDITS,
+                        rate_limit=window_decision,
+                        credit_read=getattr(credit_verdict, "credit_read", None),
+                    ),
                     None,
                 )
             if credit_verdict == LEASE_HELD:
@@ -6069,9 +6093,21 @@ class SpannerStore(OperationalAnalyticsReads):
         # request into a retryable 503.
         last_credit_candidates = credit_shard_candidates
 
+        # The read of the credit rows a final insufficient_credits stands on
+        # (credit_refusal_read.py): the last one made after the last
+        # authorize transaction, so a read from before a retried transaction
+        # never speaks for that transaction's refusal. None when the last
+        # refusal was followed by none, and then the 402 names no read.
+        credit_read: CreditRefusalRead | None = None
+
+        def note_credit_read(read: CreditRefusalRead | None) -> None:
+            nonlocal credit_read
+            credit_read = read
+
         def run_tracked(candidates: tuple[int, ...]) -> dict[str, Any]:
             nonlocal last_credit_candidates
             last_credit_candidates = candidates
+            note_credit_read(None)
             return run_authorize(candidates)
 
         aggregate_exhaustion_proven = False
@@ -6095,7 +6131,15 @@ class SpannerStore(OperationalAnalyticsReads):
                 # before anything below reads the shards.
                 debt_mark_checked = True
                 try:
-                    healed = self._heal_stale_debt_mark(workspace_id)
+                    # Its snapshot, every row, is the read a one-row
+                    # workspace's refusal stands on: that refusal is a
+                    # conditional UPDATE, which reads nothing.
+                    healed = self._heal_stale_debt_mark(
+                        workspace_id,
+                        on_read=lambda headroom, read_timestamp_ns: note_credit_read(
+                            CreditRefusalRead.of(HEAL_READ, hold, headroom, read_timestamp_ns)
+                        ),
+                    )
                 except Exception:
                     log.warning(
                         "credit debt-mark heal failed; keeping the refusal workspace=%s",
@@ -6138,7 +6182,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 result = run_tracked(credit_shard_candidates)
 
             def rebalance(candidates: tuple[int, ...]) -> dict[str, int | str]:
-                return rebalance_mod.rebalance_credit_for_estimate(
+                rebalanced = rebalance_mod.rebalance_credit_for_estimate(
                     self._database,
                     self._param_types,
                     workspace_id=workspace_id,
@@ -6147,6 +6191,14 @@ class SpannerStore(OperationalAnalyticsReads):
                     # The credit shards are consolidated for the credit hold.
                     estimate=hold,
                 )
+                if rebalanced.get("outcome") == rebalance_mod.RebalanceOutcome.INSUFFICIENT and "rows" in rebalanced:
+                    # Its locked read proves the balance exhausted: the
+                    # read the refusal stands on, with no read timestamp.
+                    note_credit_read(CreditRefusalRead(
+                        REBALANCE_READ, hold, int(rebalanced["rows"]), int(rebalanced["available_micro"]),
+                        int(rebalanced["most_micro"]),
+                    ))
+                return rebalanced
 
             # A concurrent request can consume the newly consolidated target
             # between rebalance commit and our retry. Retry this cold path a
@@ -6169,6 +6221,9 @@ class SpannerStore(OperationalAnalyticsReads):
                 )
                 verdict = precheck.outcome
                 if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
+                    # Its snapshot proves the balance exhausted: the read
+                    # the refusal stands on.
+                    note_credit_read(getattr(precheck, "credit_read", None))
                     aggregate_exhaustion_proven = True
                     break
                 if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
@@ -6352,6 +6407,7 @@ class SpannerStore(OperationalAnalyticsReads):
         verdict = AuthorizeVerdict(
             outcome,
             rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
+            credit_read=credit_read if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS else None,
         )
         return verdict, authorization
 

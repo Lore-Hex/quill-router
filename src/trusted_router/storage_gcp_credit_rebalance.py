@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from trusted_router.credit_refusal_read import HEADROOM, CreditRefusalRead
 from trusted_router.storage_gcp_counter_dml import transfer_credit_budget
 from trusted_router.storage_gcp_counters import credit_shard_count
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
@@ -29,6 +30,9 @@ class CreditHeadroomPrecheck:
     # order. A peer can take one between this snapshot and the retry; the
     # retry tries the rest in the same transaction.
     funded_shards: tuple[int, ...] = ()
+    # The snapshot an INSUFFICIENT verdict stands on, for the internal
+    # authorize route's X-TR-Credit-Refusal-Read (credit_refusal_read.py).
+    credit_read: CreditRefusalRead | None = None
 
 
 class _RebalanceInvariantError(RuntimeError):
@@ -44,14 +48,21 @@ def credit_headroom_precheck(
     shard_candidates: tuple[int, ...],
     estimate: int,
 ) -> CreditHeadroomPrecheck:
-    """Find a directly usable shard before considering an all-shard rebalance."""
+    """Find a directly usable shard before considering an all-shard rebalance.
+
+    An INSUFFICIENT verdict carries the snapshot it stands on (credit_read).
+    The snapshot is multi-use only so that the client keeps its read
+    timestamp (storage_gcp_authorize.snapshot_read_timestamp_ns); it makes
+    one read."""
+    from trusted_router.storage_gcp_authorize import snapshot_read_timestamp_ns
+
     count = credit_shard_count({"shard_count": shard_count})
     candidates = tuple(shard_candidates)
     if len(candidates) != count or set(candidates) != set(range(count)):
         raise ValueError("credit precheck requires every configured shard exactly once")
     pt = param_types
 
-    with database.snapshot() as snapshot:
+    with database.snapshot(multi_use=True) as snapshot:
         rows = list(
             snapshot.execute_sql(
                 "SELECT shard, total_credits, total_usage, reserved "
@@ -61,6 +72,7 @@ def credit_headroom_precheck(
                 param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             )
         )
+        read_timestamp_ns = snapshot_read_timestamp_ns(snapshot)
     observed = [int(row[0]) for row in rows]
     if observed != list(range(count)):
         return CreditHeadroomPrecheck(RebalanceOutcome.INCOMPLETE)
@@ -71,7 +83,10 @@ def credit_headroom_precheck(
         headroom[int(shard)] = available
 
     if sum(headroom.values()) < estimate:
-        return CreditHeadroomPrecheck(RebalanceOutcome.INSUFFICIENT)
+        return CreditHeadroomPrecheck(
+            RebalanceOutcome.INSUFFICIENT,
+            credit_read=CreditRefusalRead.of(HEADROOM, estimate, list(headroom.values()), read_timestamp_ns),
+        )
     funded = tuple(candidate for candidate in candidates if headroom[candidate] >= estimate)
     if funded:
         return CreditHeadroomPrecheck(RebalanceOutcome.NOT_NEEDED, funded[0], funded)
@@ -166,10 +181,16 @@ def rebalance_credit_for_estimate(
         # provably >= `needed`, so the plan always completes.
         signed_headroom = sum(headroom.values())
         if signed_headroom < estimate:
+            # With what the locked read saw, the read the refusal stands on
+            # (the authorize's X-TR-Credit-Refusal-Read): no read timestamp
+            # exists before a read-write transaction commits.
             return {
                 "outcome": RebalanceOutcome.INSUFFICIENT,
                 "moved_micro": 0,
                 "target_shard": target_shard,
+                "rows": len(headroom),
+                "available_micro": signed_headroom,
+                "most_micro": max(headroom.values()),
             }
 
         target_available = headroom[target_shard]
