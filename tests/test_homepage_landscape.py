@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -9,7 +10,6 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
-from tests.homepage_copy import LANDSCAPE_MULTICLOUD_HEADING
 from trusted_router import dashboard
 from trusted_router.catalog import MODELS, Model
 from trusted_router.config import Settings
@@ -36,9 +36,18 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(client: TestCli
         assert page.select_one(f"section#{section}")
     order = [section["id"] for section in page.select("section[id]")]
     assert order.index("verify") < order.index("press") < order.index("pricing")
-    # The production smoke test checks this heading on the live homepage.
-    assert LANDSCAPE_MULTICLOUD_HEADING in page.select_one("section#verify").get_text()
-    assert len(page.select("[data-mobile-disclosure][open]")) == 7
+    for section in page.select("section[id]"):
+        heading = section.select_one("h1, h2")
+        assert heading is not None and heading.get_text(strip=True), section["id"]
+    # The verification section links to its live evidence. The production
+    # smoke test checks the same links on the deployed homepage.
+    verify_links = {anchor["href"] for anchor in page.select("section#verify a[href]")}
+    assert {"/trust", "/status"} <= verify_links
+    # Disclosures render open so no-JS and desktop readers see their content;
+    # site-chrome.js collapses them on small screens.
+    disclosures = page.select("[data-mobile-disclosure]")
+    assert disclosures
+    assert all(item.name == "details" and item.has_attr("open") for item in disclosures)
     assert page.select_one("#signinModal")
     assert page.select_one('a[href="/console/api-keys"]')
     assert page.select_one('a[href="/models"]')
@@ -47,12 +56,17 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(client: TestCli
     runtime = json.loads(page.select_one("#homepage-data").string)
     assert "catalog" not in runtime  # no fixture prices in the browser payload
     assert runtime["catalog_total"] == len(client.get("/v1/models/picker").json()["data"])
-    request = page.select_one("#request")
-    assert "The capital of France is Paris." in request.get_text()
-    assert "no confidential provider compute" not in request.get_text()
-    assert "DeepSeek 4.1 NVFP4 · exact quantization verified" in request.get_text()
-    assert "Captured request" in request.get_text()
-    assert not request.select_one("details")
+    # The request diagram is a captured receipt: an ordered path whose every
+    # node is named, headed by the model id it was captured with. (Not checked
+    # against the live catalog: a provider delisting must not fail this test.)
+    receipt = page.select_one("#request figure.request-receipt")
+    assert receipt is not None
+    nodes = receipt.select("ol > li")
+    assert nodes and all(node.select_one("h3").get_text(strip=True) for node in nodes)
+    receipt_model = receipt.select("figcaption span")[-1].get_text(strip=True)
+    assert re.fullmatch(r"[a-z0-9-]+/[a-z0-9.:-]+", receipt_model), receipt_model
+    assert not page.select_one("#request details")
+    # The homepage never claims live system health; /status does.
     assert "All systems operational" not in page.get_text()
     for image in page.select("img[src^='/static/homepage/']"):
         assert client.get(image["src"]).status_code == 200

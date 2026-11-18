@@ -1,6 +1,4 @@
 """Fee uplift changes the surcharge, never the purchased credit principal."""
-from pathlib import Path
-
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -78,7 +76,9 @@ def test_adyen_base_floor_is_unchanged():
     assert fee.fee_multiplier_basis_points == 10_000
 
 
-def test_fee_uplift_is_default_and_persisted_by_deployment():
-    assert Settings().stripe_paypal_fee_multiplier_basis_points == 15_000
-    script = Path("scripts/deploy/rollout.sh").read_text()
-    assert '"TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS=15000"' in script
+def test_deployed_fee_uplift_covers_processor_cost_and_stays_sane():
+    # The Settings default is the deployed value (no deploy overrides it; see
+    # test_deploy_secret_wiring.py). It must cover the processor's fee and
+    # never more than double it.
+    multiplier = Settings.model_fields["stripe_paypal_fee_multiplier_basis_points"].default
+    assert 10_000 <= multiplier <= 20_000

@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from fastapi.testclient import TestClient
@@ -1145,23 +1146,38 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
         "the raw API key must appear in the direct reveal and the visible "
         "Claude Code / Codex message"
     )
-    assert 'data-copy-secret="welcome-api-key"' in resp.text
-    assert 'data-copy-template-target="welcome-agent-message"' in resp.text
-    assert 'data-secret-source="welcome-api-key"' in resp.text
-    assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    agent_message = re.search(r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL)
+    page = BeautifulSoup(resp.text, "html.parser")
+    assert page.select_one("code#welcome-api-key").get_text(strip=True) == fake_raw_key
+    assert page.select_one('button[data-copy-secret="welcome-api-key"][aria-label="Copy API key"]')
+    assert page.select_one(
+        'button[data-copy-template-target="welcome-agent-message"][data-secret-source="welcome-api-key"]'
+    )
+    agent_message = page.select_one("pre#welcome-agent-message[data-copy-lines]")
     assert agent_message is not None
-    assert fake_raw_key in agent_message.group(0)
-    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert fake_raw_key in agent_message.get_text()
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.get_text()
     assert resp.text.index('id="welcome-agent-message"') < resp.text.index('id="welcome-api-key"')
-    assert "Run my first API request" in resp.text
-    assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
-    assert "Claude Code, Codex" in resp.text
-    assert "Python" in resp.text
-    assert "JavaScript" in resp.text
-    assert "curl" in resp.text
-    assert "https://trust.trustedrouter.com" in resp.text
-    assert "already been displayed" not in resp.text
+    # The page marks the reveal as one time only, and shows no "already
+    # displayed" fallback while the key is on screen.
+    assert page.select_one(".activation-key-panel [data-one-time-reveal]")
+    assert not page.select_one("[data-key-already-revealed]")
+    # The live first call goes through the session-scoped chat proxy.
+    flow = page.select_one("[data-first-call-flow]")
+    assert flow is not None
+    assert flow["data-endpoint"] == "/chat-proxy/v1/chat/completions"
+    assert flow["data-key-source"] == "welcome-api-key"
+    assert page.select_one('button[data-action="run-first-call"]')
+    # Each setup tab controls a panel whose copy button inserts this key, and
+    # every snippet targets the configured API base URL.
+    tabs = page.select('[role="tab"][data-setup-tab]')
+    assert tabs
+    api_base_url = client.app.state.settings.api_base_url
+    for tab in tabs:
+        panel = page.select_one(f'[data-setup-panel]#{tab["aria-controls"]}')
+        assert panel is not None, tab["aria-controls"]
+        assert panel.select_one('button[data-secret-source="welcome-api-key"]')
+        assert api_base_url in panel.select_one("pre").get_text()
+    assert page.select_one('a[href="https://trust.trustedrouter.com"]')
     # One-shot: cookie must be cleared on the response so a refresh
     # doesn't re-reveal the key.
     set_cookie = resp.headers.get("set-cookie", "")
@@ -1175,7 +1191,7 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
     refreshed = client.get("/console/welcome?first=1")
     assert fake_raw_key not in refreshed.text
-    assert "already been displayed" in refreshed.text
+    assert BeautifulSoup(refreshed.text, "html.parser").select_one("[data-key-already-revealed]")
     assert "data-rewards-key-card" not in resp.text
 
 
@@ -1204,7 +1220,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     # later legitimate `?first=1` request to consume.
     assert fake_raw_key not in resp.text
     assert 'id="welcome-agent-message"' not in resp.text
-    assert "already been displayed" in resp.text
+    assert "data-key-already-revealed" in resp.text
     # Cookie not cleared — the response should NOT include a delete-cookie
     # header for tr_pending_reveal.
     set_cookie = resp.headers.get("set-cookie", "")
@@ -1228,19 +1244,19 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
+    # Shown twice on this one response (the key itself and the agent
+    # message), with the one-time warning, and never again.
     assert resp.text.count(match.group(0)) == 2
-    assert 'id="created-api-key"' in resp.text
-    assert 'aria-label="Copy API key"' in resp.text
-    agent_message = re.search(r'<div class="agent-message" id="created-agent-message".*?</div>', resp.text, re.DOTALL)
+    page = BeautifulSoup(resp.text, "html.parser")
+    assert page.select_one("code#created-api-key").get_text(strip=True) == match.group(0)
+    assert page.select_one('button[data-copy-secret="created-api-key"][aria-label="Copy API key"]')
+    assert page.select_one("[data-one-time-reveal]")
+    agent_message = page.select_one("#created-agent-message[data-copy-lines]")
     assert agent_message is not None
-    assert match.group(0) in agent_message.group(0)
-    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert match.group(0) in agent_message.get_text()
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.get_text()
     assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
-    assert "stream the answer into this chat as it arrives" not in resp.text
-    assert "Keep this agent's model" not in resp.text
-    assert "Use it in memory for this request" not in resp.text
-    assert "stream=true" not in resp.text
-    assert "Copied to clipboard." not in resp.text
+    assert match.group(0) not in client.get("/console/api-keys").text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
     assert len(keys) == 1
@@ -1261,12 +1277,14 @@ def test_console_welcome_without_credits_routes_to_funding(
     assert response.status_code == 200
     assert fake_raw_key in response.text
     assert 'data-copy-secret="welcome-api-key"' in response.text
-    assert "Add credits before the live check" in response.text
+    page = BeautifulSoup(response.text, "html.parser")
+    # With no spendable balance the live check is replaced by a route to
+    # funding; the key is still revealed so it is not lost.
+    assert page.select_one('.activation-credit-needed a[href="/console/credits"]')
     assert 'class="console-balance is-empty"' in response.text
     assert "data-rewards-key-card" not in response.text
     assert "data-key-onboarding" not in response.text
     assert "key-list-panel" not in response.text
-    assert 'href="/console/credits"' in response.text
     assert 'data-action="run-first-call"' not in response.text
 
 
