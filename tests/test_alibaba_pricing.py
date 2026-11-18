@@ -7,6 +7,7 @@ from pathlib import Path
 from scripts.pricing import refresh
 from scripts.pricing.providers import alibaba
 from trusted_router import provider_lifecycle
+from trusted_router.catalog import MODEL_ENDPOINTS
 
 
 class FakeResponse:
@@ -31,6 +32,7 @@ def _expected_model_rows() -> list[dict[str, object]]:
         {"id": "qwen3.7-flash-2026-07-15", "created": 7},
         {"id": "qwen3.7-max", "created": 8},
         {"id": "qwen3.7-plus", "created": 9},
+        {"id": "qwen4-max", "created": 10},
     ]
 
 
@@ -66,6 +68,29 @@ def test_deepseek_v4_flash_family_uses_published_ga_price() -> None:
         assert price.prompt_micro_per_m == 138_000
         assert price.completion_micro_per_m == 275_000
         assert price.tiers[0].prompt_cached_micro_per_m == 28_000
+
+
+def test_qwen4_max_price_is_for_the_exact_frankfurt_sku() -> None:
+    price = alibaba._price("qwen4-max")
+    assert price is not None
+    assert [
+        (t.max_prompt_tokens, t.prompt_micro_per_m, t.completion_micro_per_m, t.prompt_cached_micro_per_m)
+        for t in price.tiers
+    ] == [
+        (None, 1_413_000, 4_240_000, 71_000),
+    ]
+    for unreviewed in ("qwen4-max-preview", "qwen4-max-latest", "qwen4-max-us"):
+        assert alibaba._price(unreviewed) is None
+
+
+def test_committed_qwen4_max_prepaid_route_applies_standard_markup_once() -> None:
+    route = MODEL_ENDPOINTS["qwen/qwen4-max@alibaba/prepaid"]
+    assert route.upstream_id == "qwen4-max"
+    tier, = route.price_tiers
+    assert tier.max_prompt_tokens is None
+    assert tier.prompt_price_microdollars_per_million_tokens == 1_490_715
+    assert tier.completion_price_microdollars_per_million_tokens == 4_473_200
+    assert tier.prompt_cached_price_microdollars_per_million_tokens == 74_905
 
 
 def test_deepseek_preview_manifest_rows_name_the_dated_replacements() -> None:
@@ -187,7 +212,14 @@ def test_manifest_refresh_appends_new_models_with_tiered_prices(
                                 "output_token_price_per_m": 4_800_000,
                             },
                         ],
-                    }
+                    },
+                    {
+                        "id": "qwen/qwen4-max",
+                        "upstream_id": "qwen4-max",
+                        "routable": False,
+                        "routable_reason": "price-unavailable",
+                        "unresolved_since": "2026-11-11",
+                    },
                 ],
             }
         )
@@ -217,7 +249,7 @@ def test_manifest_refresh_appends_new_models_with_tiered_prices(
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
     flash = by_id["qwen/qwen3.7-flash"]
-    existing_priced_ids = {"qwen/qwen3.7-plus"}
+    existing_priced_ids = {"qwen/qwen3.7-plus", "qwen/qwen4-max"}
     appended_count = len(set(result.prices) - existing_priced_ids)
     assert notes == [
         "alibaba: refreshed provider_models/alibaba.json "
@@ -234,6 +266,12 @@ def test_manifest_refresh_appends_new_models_with_tiered_prices(
     }
     assert by_id["qwen/qwen3.7-plus"]["display_name"] == "Qwen3.7 Plus"
     assert len(by_id["qwen/qwen3.7-plus"]["price_tiers"]) == 2
+    recovered = by_id["qwen/qwen4-max"]
+    assert recovered.get("routable", True) is True
+    assert "routable_reason" not in recovered and "unresolved_since" not in recovered
+    assert recovered["input_token_price_per_m"] == 1_413_000
+    assert recovered["output_token_price_per_m"] == 4_240_000
+    assert recovered["cached_input_token_price_per_m"] == 71_000
 
 
 def test_unknown_live_model_is_discovered_but_held_until_priced(

@@ -2563,9 +2563,9 @@
         "chat/completions"
       ],
       "created": 1794957657,
-      "routable": false,
-      "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-11-11"
+      "input_token_price_per_m": 1413000,
+      "output_token_price_per_m": 4240000,
+      "cached_input_token_price_per_m": 71000
     }
   ]
 }
