@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from scripts.check_price_coverage import (
     _DISCOVERABLE_MANIFEST_PROVIDERS,
@@ -13,6 +14,7 @@ from scripts.check_price_coverage import (
     _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS,
 )
 from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, summarise
+from trusted_router.config import Settings
 from trusted_router.enclave_regions import (
     ENCLAVE_REGIONS,
     ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE,
@@ -130,10 +132,33 @@ def test_legacy_combined_rollout_requires_and_emits_the_workflow_opt_in() -> Non
     assert "#712" in workflow
 
 
-def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
-    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+def test_deploys_take_the_signup_credit_and_fee_uplift_from_settings() -> None:
+    """The Settings defaults are the only copy of these money values. A deploy
+    that restated one could drift from the default every other cloud and
+    surface runs, so no deploy script or workflow may set either variable."""
+    money_defaults = (
+        "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS",
+        "TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS",
+    )
+    deploy_files = [
+        *sorted((ROOT / "scripts").rglob("*.sh")),
+        *sorted((ROOT / ".github" / "workflows").glob("*.yml")),
+        *sorted((ROOT / "infra").rglob("*.tf")),
+    ]
+    assert ROOT / "scripts/deploy/rollout.sh" in deploy_files
+    overrides = [
+        f"{path.relative_to(ROOT)}: {name}"
+        for path in deploy_files
+        for name in money_defaults
+        if name in path.read_text(encoding="utf-8")
+    ]
+    assert overrides == [], "change the Settings default (config.py / money.py), not a deploy"
 
-    assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
+
+def test_signup_credit_default_is_a_non_negative_grant() -> None:
+    assert Settings.model_fields["signup_trial_credit_microdollars"].default >= 0
+    with pytest.raises(ValidationError, match="cannot be negative"):
+        Settings(_env_file=None, signup_trial_credit_microdollars=-1)  # type: ignore[call-arg]
 
 
 def test_deploy_renders_only_the_kept_spend_lease_settings() -> None:

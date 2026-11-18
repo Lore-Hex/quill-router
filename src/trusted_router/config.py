@@ -22,6 +22,7 @@ from pydantic_settings import (
 )
 
 from trusted_router.enclave_regions import ENCLAVE_REGIONS
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.trust_ownership import (
     TRUST_OWNER_MUTATION_BUDGET,
     TRUST_REPLICATED_COLUMN_COUNT,
@@ -589,8 +590,11 @@ class Settings(BaseSettings):
 
     # Starter credit granted exactly once with a new email/social OAuth account's
     # first workspace. Wallet-only and secondary workspaces receive no grant.
-    # $0.30 = 300,000 microdollars.
-    signup_trial_credit_microdollars: int = 300_000
+    # This default is the deployed value in every cloud (rollout.sh does not
+    # override it). It is the base allowance when social rewards do not apply;
+    # enrolled accounts receive $0.15 plus fixed rewards, at most $0.30 total.
+    # The value lives in money.py, which the stores' default grant also reads.
+    signup_trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
     # Enabled explicitly in the primary deployment configuration.
     # Only the explicitly named issuing plane can enroll or pay claims.
     social_rewards_enabled: bool = False
@@ -771,6 +775,8 @@ class Settings(BaseSettings):
     stripe_ach_fee_max_cents: int = 500
     # Customer surcharge is 1.5x the grossed-up fee, including its floor/cap.
     # Keep processor schedules unchanged; Adyen does not use this multiplier.
+    # This default is the deployed value in every cloud (rollout.sh does not
+    # override it).
     stripe_paypal_fee_multiplier_basis_points: int = 15_000
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None

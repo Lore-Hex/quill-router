@@ -519,9 +519,11 @@ ENV_VARS=(
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
   "TR_TRUSTED_DOMAIN_ALIASES=allyrouter.com,uptimerouter.com"
   "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
-  # Base signup allowance when rewards do not apply. Enrolled accounts receive
-  # $0.15 plus fixed rewards, at most $0.30 total. Wallet-only accounts stay at $0.
-  "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
+  # The signup credit and the Stripe/PayPal fee uplift are not set here: every
+  # cloud and surface runs the Settings defaults in src/trusted_router/config.py
+  # (signup_trial_credit_microdollars, from money.py's
+  # DEFAULT_SIGNUP_CREDIT_MICRODOLLARS, and
+  # stripe_paypal_fee_multiplier_basis_points). Change a money value there, once.
   # Primary issuer campaign is enabled; disable through a code rollout if needed.
   "TR_SOCIAL_REWARDS_ENABLED=true"
   "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
@@ -625,7 +627,6 @@ ENV_VARS=(
   "TR_ROUTABLE_ENABLED=false"
   "TR_ROUTABLE_API_BASE_URL=https://api.routable.com"
   "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
-  "TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS=15000"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
   # is send-only and effectively a black hole.

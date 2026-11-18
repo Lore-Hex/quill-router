@@ -358,13 +358,32 @@ def test_invalid_locked_terms_do_not_record_position(client: TestClient, reserva
     reservation_mail.assert_not_called()
 
 
-def test_approved_rollout_discount(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rollout_turns_on_reserved_checkout_within_the_app_terms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """rollout.sh is where production turns reserved-token checkout on. Its
+    values go through Settings' own validation (discount below 100%, the
+    terms-locked exchange fee, at least one lot) and must yield a working
+    quote, at or below list price plus fees, for every grade."""
+    import re
     from pathlib import Path
 
     rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
-    assert '"TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true"' in rollout
-    assert '"TR_RESERVED_TOKENS_DISCOUNT_BPS=1000"' in rollout
-    assert '"TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS=10"' in rollout
+    env_vars = rollout.split("ENV_VARS=(", 1)[1].split("\n)", 1)[0]
+    rendered = dict(re.findall(r'^\s*"TR_(RESERVED_TOKENS_[A-Z0-9_]+)=([^"]*)"\s*$', env_vars, flags=re.MULTILINE))
+    assert {"RESERVED_TOKENS_CHECKOUT_ENABLED", "RESERVED_TOKENS_DISCOUNT_BPS",
+            "RESERVED_TOKENS_EXCHANGE_FEE_BPS"} <= rendered.keys()
+    deployed = Settings(  # type: ignore[call-arg]
+        _env_file=None, environment="test", stripe_secret_key="sk_test_reserve",  # noqa: S106
+        **{name.lower(): value for name, value in rendered.items()},
+    )
+    assert deployed.reserved_tokens_checkout_enabled
+    for grade, value in (("AAA", 1794), ("A", 863), ("B", 187), ("C", 27)):
+        monkeypatch.setitem(token_index.QUOTES, grade, {"value": value})
+        quote = reserve.reservation_quote(deployed, grade, 1)
+        assert 0 < quote["per_lot_cents"] <= quote["list_price_cents"]
+        assert quote["total_cents"] > quote["subtotal_cents"]
+
+
+def test_reservation_quote_discounts_then_adds_exchange_and_card_fees(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
     settings.reserved_tokens_discount_bps = 1000
     monkeypatch.setitem(token_index.QUOTES, "B", {"value": 187})
     quote = reserve.reservation_quote(settings, "B", 2)
