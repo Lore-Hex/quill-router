@@ -18,6 +18,7 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import (
     apply_canary_results,
     models_requiring_canary,
+    routable_models_to_recheck,
     write_discovered_chat_manifest,
 )
 from scripts.pricing.openai_catalog import probe_openai_chat
@@ -109,6 +110,16 @@ TASK_DOCUMENTATION = {
     },
 }
 TOOL_CHOICE_MODELS = frozenset({"neurometric/tool-choice"})
+# Neurometric's task models run on its own backend model groups, and a broken
+# group leaves the task listed in /v1/models while every request for it 404s
+# (neurometric/classification-router and neurometric/tool-choice from
+# 2026-11-18 05:00Z, Sentry QUILL-ROUTER-HF and QUILL-ROUTER-HC). The canary
+# alone used to run only for new and held routes, so a route that passed once
+# stayed live while it failed. Every refresh therefore also re-canaries live
+# routes: a failure holds the route as provider-canary-failed and the next
+# passing canary lifts it. The cap bounds the probes one hourly refresh adds;
+# past it the window rotates so each live route is still rechecked.
+MAX_LIVE_RECHECKS_PER_RUN = 16
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _LIVE_CANARY_OK = False
@@ -146,7 +157,11 @@ def fetch() -> ProviderPricingResult:
             discovered[model_id].setdefault("documentation", documentation)
     for model_id in TOOL_CHOICE_MODELS & discovered.keys():
         discovered[model_id]["supported_parameters"] = ["tool_choice"]
-    checked = models_requiring_canary(MANIFEST_PATH, discovered)
+    checked = models_requiring_canary(MANIFEST_PATH, discovered) | routable_models_to_recheck(
+        MANIFEST_PATH,
+        discovered,
+        limit=MAX_LIVE_RECHECKS_PER_RUN,
+    )
     healthy = {
         model_id
         for model_id in checked
@@ -174,7 +189,7 @@ def fetch() -> ProviderPricingResult:
         fetched_url=URL,
         notes=[
             f"validated canonical provider contract with {len(discovered)} active chat models",
-            f"canaried {len(checked)} new or unhealthy routes; {len(healthy)} passed",
+            f"canaried {len(checked)} new, held or live routes; {len(healthy)} passed",
         ],
     )
 
