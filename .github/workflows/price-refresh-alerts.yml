@@ -16,7 +16,13 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
+  # write, not read: GitHub drops scheduled refresh-prices runs (two of 24 on
+  # 2026-11-18), so this observer dispatches refresh-prices.yml on main when
+  # no refresh run was created, queued or running for 90 minutes, at most once
+  # per 90 minutes (scripts/price_refresh_alerts.py, --dispatch-stalled). The
+  # job checks out main without persisting the token and runs no code from the
+  # triggering run, so the token cannot be steered to another workflow or ref.
+  actions: write
   issues: write
 
 jobs:
@@ -37,11 +43,11 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - name: Report refresh failures and freshness to Sentry
+      - name: Report refresh failures and freshness to Sentry; kick a dropped schedule
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TR_SENTRY_DSN: ${{ secrets.PRICE_REFRESH_SENTRY_DSN }}
           TR_REFRESH_RUN_ID: ${{ github.event.workflow_run.id }}
         # The independent systemd observer owns the watchdog heartbeat.
         # Completion events must not hide an outage of that observer.
-        run: python3 scripts/price_refresh_alerts.py --no-heartbeat
+        run: python3 scripts/price_refresh_alerts.py --no-heartbeat --dispatch-stalled

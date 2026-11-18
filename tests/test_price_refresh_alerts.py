@@ -142,6 +142,17 @@ def observer(monkeypatch, emitted):
     data = {"runs": [run()], "jobs": jobs()}
     def fake_gh(path, payload=None):
         calls.append((path, payload))
+        if path.endswith("/dispatches"):
+            if data.get("dispatch_error"):
+                raise RuntimeError("GitHub monitoring API request failed")
+            return None
+        if path.startswith("actions/workflows/") and "status=completed" not in path:
+            wanted = path.split("&status=", 1)[1] if "&status=" in path else None
+            # "beyond_page" marks a run older than the 20 newest: only a
+            # status-filtered query returns it.
+            return {"workflow_runs": [item for item in data.get("recent", [])
+                                      if (wanted is None and not item.get("beyond_page"))
+                                      or wanted == item["status"]]}
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": data["runs"]}
         if path.endswith("/jobs?per_page=100"):
@@ -153,6 +164,110 @@ def observer(monkeypatch, emitted):
         raise AssertionError(path)
     monkeypatch.setattr(alerts, "gh", fake_gh)
     return state, data, calls
+
+
+def recent(status="completed", *, created=NOW - timedelta(hours=3), started=None, run_id=200):
+    return {**run(run_id, "success" if status == "completed" else None), "status": status,
+            "created_at": created.isoformat(),
+            "run_started_at": (started or created).isoformat()}
+
+
+def dispatches(calls):
+    return [(path, payload) for path, payload in calls if path.endswith("/dispatches")]
+
+
+def test_stalled_schedule_dispatches_refresh_on_main_and_records_it(observer, emitted):
+    state, data, calls = observer
+    state["last_validated_at"] = (NOW - timedelta(hours=2)).isoformat()
+    data["runs"] = []
+    data["recent"] = [recent(created=NOW - timedelta(minutes=91))]
+    alerts.main(dispatch=True)
+    assert dispatches(calls) == [("actions/workflows/refresh-prices.yml/dispatches", {"ref": "main"})]
+    assert f'"refresh_dispatch": "{NOW.isoformat()}"' in calls[-1][1]["body"]
+    # Fresh enough: dispatching alone is not an alert.
+    assert [kind for kind, _ in emitted] == ["check_in", "check_in"]
+
+
+def test_stale_catalog_dispatches_and_still_alerts(observer, emitted):
+    _, data, calls = observer
+    data["runs"] = []
+    alerts.main(dispatch=True)
+    assert len(dispatches(calls)) == 1
+    assert [payload["fingerprint"] for kind, payload in emitted if kind == "event"] == [
+        ["price-refresh", "catalog_stale"]]
+    assert calls[-1][1]["state"] == "open"
+
+
+@pytest.mark.parametrize("status,beyond_page", [
+    ("queued", True), ("in_progress", True),
+    ("waiting", False), ("requested", False), ("pending", False),
+])
+def test_no_dispatch_while_a_refresh_is_active(observer, status, beyond_page):
+    _, data, calls = observer
+    data["runs"] = []
+    # A rerun of an old run keeps its created_at, so it can fall outside the
+    # newest page; refresh_runs asks for queued and in_progress runs too.
+    data["recent"] = [{**recent(status, created=NOW - timedelta(days=2)), "beyond_page": beyond_page}]
+    alerts.main(dispatch=True)
+    assert not dispatches(calls)
+
+
+def test_no_dispatch_after_a_recent_start_or_rerun(observer):
+    _, data, calls = observer
+    data["runs"] = []
+    data["recent"] = [recent(created=NOW - timedelta(days=1), started=NOW - timedelta(minutes=89))]
+    alerts.main(dispatch=True)
+    assert not dispatches(calls)
+
+
+def test_no_second_dispatch_inside_the_cooldown(observer):
+    state, data, calls = observer
+    data["runs"] = []
+    state["sent"]["refresh_dispatch"] = (NOW - timedelta(minutes=89)).isoformat()
+    alerts.main(dispatch=True)
+    assert not dispatches(calls)
+    state["sent"]["refresh_dispatch"] = (NOW - timedelta(minutes=90)).isoformat()
+    alerts.main(dispatch=True)
+    assert len(dispatches(calls)) == 1
+
+
+def test_dispatch_is_opt_in(observer):
+    _, data, calls = observer
+    data["runs"] = []
+    alerts.main()
+    assert not dispatches(calls)
+    assert not any("status=queued" in path for path, _ in calls)
+
+
+def test_dispatch_dry_run_makes_no_writes(observer, emitted, capsys):
+    _, data, calls = observer
+    data["runs"] = []
+    alerts.main(dry_run=True, dispatch=True)
+    assert not emitted
+    assert all(payload is None for _, payload in calls)
+    assert json.loads(capsys.readouterr().out)["dispatch"] == "dispatch"
+
+
+def test_dispatch_failure_is_reported_and_freshness_alert_still_fires(observer, emitted, capsys):
+    state, data, calls = observer
+    data["runs"] = []
+    data["dispatch_error"] = True
+    alerts.main(dispatch=True)
+    fingerprints = [payload["fingerprint"] for kind, payload in emitted if kind == "event"]
+    assert fingerprints == [["price-refresh", "catalog_stale"],
+                            ["price-refresh", "refresh_dispatch_failed"]]
+    assert emitted[-1] == ("check_in", emitted[-1][1]) and emitted[-1][1]["status"] == "ok"
+    body = calls[-1][1]["body"]
+    assert '"refresh_dispatch":' not in body  # a failed attempt is not a dispatch
+    assert calls[-1][1]["state"] == "open"
+    assert "Price refresh dispatch failed (RuntimeError)" in capsys.readouterr().err
+
+
+def test_anonymous_host_observer_cannot_dispatch(monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_REPOSITORY", alerts.REPOSITORY)
+    monkeypatch.setenv("TR_PRICE_REFRESH_PUBLIC_API", "1")
+    with pytest.raises(ValueError, match="cannot dispatch"):
+        alerts.main(state_path=tmp_path / "state.json", dispatch=True)
 
 
 def test_failed_refresh_and_absent_freshness_report_and_persist(observer, emitted):
@@ -328,11 +443,12 @@ def test_independent_workflow_always_runs_trusted_main_without_dependencies():
     }
     assert triggers["schedule"]
     assert workflow["concurrency"]["cancel-in-progress"] is False
-    assert workflow["permissions"] == {"contents": "read", "actions": "read", "issues": "write"}
+    # actions: write only so the observer can dispatch a dropped refresh-prices run.
+    assert workflow["permissions"] == {"contents": "read", "actions": "write", "issues": "write"}
     steps = workflow["jobs"]["report"]["steps"]
     assert steps[0]["with"]["ref"] == "main"
     assert steps[0]["with"]["persist-credentials"] is False
-    assert steps[1]["run"] == "python3 scripts/price_refresh_alerts.py --no-heartbeat"
+    assert steps[1]["run"] == "python3 scripts/price_refresh_alerts.py --no-heartbeat --dispatch-stalled"
     assert "PRICE_REFRESH_SENTRY_DSN" in steps[1]["env"]["TR_SENTRY_DSN"]
 
 

@@ -153,7 +153,8 @@ def test_no_heartbeat_mode_still_observes_and_reports(monkeypatch):
     monkeypatch.setattr(alerts, "observe", lambda **kwargs: observations.append(kwargs))
     monkeypatch.setattr(alerts, "heartbeat", lambda *args: pytest.fail("workflow must not mask external observer outage"))
     alerts.main(heartbeat_enabled=False)
-    assert observations == [{"state_path": None}]
+    # Dispatching a stalled refresh is opt-in (--dispatch-stalled), never implied.
+    assert observations == [{"state_path": None, "dispatch": False}]
 
 
 def test_dry_run_does_not_write_state_or_send_heartbeats(tmp_path, monkeypatch):
@@ -178,6 +179,8 @@ def test_service_is_restricted_and_independent_of_github():
         assert required in service
     assert "GH_TOKEN" not in service
     assert "--no-heartbeat" not in service
+    # Anonymous reads only: the host has no token to dispatch a refresh with.
+    assert "--dispatch-stalled" not in service
     timer = (root / "scripts/ops/price-refresh-observer.timer").read_text()
     assert "OnCalendar=*-*-* *:23:00 UTC" in timer
     assert "Persistent=true" in timer

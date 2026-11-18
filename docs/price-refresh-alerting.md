@@ -21,6 +21,24 @@ unchanged.
   schedules recomputation because main moved does not count. A no-change run
   counts because it validated the current catalog. This measures publication,
   not deployment health, which remains covered by the release checks.
+* **Dropped schedule, self-healed:** GitHub drops scheduled runs (the hourly
+  `:37` cron started only twice on 2026-11-18, and the last validated refresh
+  that day was 15:52Z until a manual dispatch). When no `refresh-prices.yml`
+  run on main was created or started in the last 90 minutes and none is
+  queued, waiting or in progress, the workflow observer (`--dispatch-stalled`)
+  dispatches `refresh-prices.yml` on main itself, so a dropped cron recovers
+  within about an hour instead of paging after six. It never dispatches while
+  a run is active: the refresh keeps one pending run per concurrency group, so
+  a dispatch then could cancel the queued run. At most one dispatch per 90
+  minutes, recorded as `refresh_dispatch` in the durable ledger; a crash
+  before the ledger write is still bounded because the dispatched run itself
+  counts as a recent start. `--dry-run` prints the decision without
+  dispatching. A failed dispatch sends a separate `refresh_dispatch_failed`
+  error (same six-hour cooldown) and never stops the failure and freshness
+  checks: the stale alert still fires when dispatching does not restore
+  publication. The job needs `actions: write` for this. The independent host
+  observer reads GitHub anonymously, has no GitHub token, and does not
+  dispatch; giving it one would be a new credential.
 * **Watchdog missing:** the observer sends paired Sentry Cron check-ins on start
   and completion, reporting OK only after all reads, delivery and state writes.
   An observer error or ten-minute timeout also raises a Cron issue.

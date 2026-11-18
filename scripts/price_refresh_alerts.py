@@ -27,6 +27,12 @@ MARKER_STEP = "Catalog refresh validated"
 ISSUE_TITLE = "[bot] Price refresh monitoring"
 STATE_MARKER = "<!-- price-refresh-monitor-v1 "
 INTERVAL = timedelta(hours=6)
+# GitHub drops scheduled runs (the :37 hourly cron started only twice on
+# 2026-11-18), so the observer dispatches the refresh itself once no run has
+# been created or started for this long. One dispatch per window at most,
+# recorded in the ledger's "refresh_dispatch" cooldown.
+DISPATCH_AFTER = timedelta(minutes=90)
+ACTIVE = {"queued", "in_progress", "waiting", "requested", "pending"}
 FAILURES = {"failure", "timed_out", "action_required", "startup_failure"}
 STAGES = {
     "Install dependencies": "dependency_install",
@@ -66,7 +72,8 @@ def gh(path: str, data: dict[str, Any] | None = None) -> Any:
     if result.returncode:
         # Never echo CLI output: it can contain request headers or credentials.
         raise RuntimeError("GitHub monitoring API request failed")
-    return json.loads(result.stdout)
+    # A workflow dispatch answers 204 No Content.
+    return json.loads(result.stdout) if result.stdout.strip() else None
 
 
 def public_gh(path: str) -> Any:
@@ -286,7 +293,8 @@ def report(kind: str, details: dict[str, Any], state: dict[str, Any], now: datet
         "event_id": event_id, "timestamp": now.isoformat(), "platform": "python",
         "level": "error", "logger": "price_refresh_monitor", "environment": "production",
         "message": {"refresh_failed": "Price/catalog refresh failed",
-                    "catalog_stale": "No validated catalog refresh within six hours"}[kind],
+                    "catalog_stale": "No validated catalog refresh within six hours",
+                    "refresh_dispatch_failed": "Could not dispatch a stalled price refresh"}[kind],
         "fingerprint": ["price-refresh", kind],
         "tags": {"component": "price-refresh", "failure_kind": kind},
         "extra": details,
@@ -295,7 +303,52 @@ def report(kind: str, details: dict[str, Any], state: dict[str, Any], now: datet
     return True
 
 
-def observe(*, dry_run: bool = False, state_path: Path | None = None) -> None:
+def refresh_runs() -> list[dict[str, Any]]:
+    """Recently created runs plus any queued or running rerun of an older one."""
+    runs: dict[int, dict[str, Any]] = {}
+    for query in ("", "&status=queued", "&status=in_progress"):
+        for candidate in gh(f"actions/workflows/{WORKFLOW}/runs?branch=main&per_page=20{query}")["workflow_runs"]:
+            if candidate.get("path") == f".github/workflows/{WORKFLOW}":
+                runs[int(candidate["id"])] = candidate
+    return list(runs.values())
+
+
+def dispatch_decision(runs: list[dict[str, Any]], state: dict[str, Any],
+                      now: datetime) -> str:
+    """Why the observer would ("dispatch") or would not kick the refresh."""
+    if any(candidate.get("status") in ACTIVE for candidate in runs):
+        # refresh-prices keeps one pending run per concurrency group, so a
+        # dispatch now could cancel the queued run instead of adding one.
+        return "active"
+    starts = [timestamp(value) for candidate in runs
+              for value in (candidate.get("created_at"), candidate.get("run_started_at")) if value]
+    if starts and now - max(starts) < DISPATCH_AFTER:
+        return "recent"
+    last = state["sent"].get("refresh_dispatch")
+    if last is not None and now - timestamp(last) < DISPATCH_AFTER:
+        return "cooldown"
+    return "dispatch"
+
+
+def dispatch_refresh(state: dict[str, Any], now: datetime) -> str:
+    """Dispatch refresh-prices.yml on main when GitHub dropped its schedule.
+
+    Returns the decision; a failed dispatch returns "failed" and never raises,
+    so the freshness alert below still runs.
+    """
+    try:
+        decision = dispatch_decision(refresh_runs(), state, now)
+        if decision == "dispatch":
+            gh(f"actions/workflows/{WORKFLOW}/dispatches", {"ref": "main"})
+            state["sent"]["refresh_dispatch"] = now.isoformat()
+    except Exception as exc:  # noqa: BLE001 - reported below; never blocks alerts
+        print(f"::warning::Price refresh dispatch failed ({type(exc).__name__})", file=sys.stderr)
+        return "failed"
+    return decision
+
+
+def observe(*, dry_run: bool = False, state_path: Path | None = None,
+            dispatch: bool = False) -> None:
     number, state = read_state()
     if state_path is not None:
         state = read_local_state(state_path, state)
@@ -335,9 +388,15 @@ def observe(*, dry_run: bool = False, state_path: Path | None = None) -> None:
     stale = (state["last_validated_at"] is None
              or now - timestamp(state["last_validated_at"]) >= INTERVAL)
     if dry_run:
-        print(json.dumps({"failure": failure, "stale": stale,
-                          "last_validated_at": state["last_validated_at"]}, sort_keys=True))
+        preview: dict[str, Any] = {"failure": failure, "stale": stale,
+                                   "last_validated_at": state["last_validated_at"]}
+        if dispatch:
+            preview["dispatch"] = dispatch_decision(refresh_runs(), state, now)
+        print(json.dumps(preview, sort_keys=True))
         return
+    # Kick a dropped schedule before alerting; the stale alert still fires
+    # below if publication stays stale despite the dispatch.
+    dispatched = dispatch_refresh(state, now) if dispatch else None
     if failure:
         report("refresh_failed", failure, state, now)
     if stale:
@@ -345,10 +404,17 @@ def observe(*, dry_run: bool = False, state_path: Path | None = None) -> None:
             "last_validated_at": state["last_validated_at"], "threshold_hours": 6,
             "workflow_url": f"https://github.com/{REPOSITORY}/actions/workflows/{WORKFLOW}",
         }, state, now)
+    if dispatched == "failed":
+        report("refresh_dispatch_failed", {
+            "threshold_minutes": int(DISPATCH_AFTER.total_seconds() // 60),
+            "workflow_url": f"https://github.com/{REPOSITORY}/actions/workflows/{WORKFLOW}",
+        }, state, now)
     if failure_key:
         state["last_failure"] = failure_key
-    unhealthy = bool(current_failure) or stale
+    unhealthy = bool(current_failure) or stale or dispatched == "failed"
     status = "Attention required" if unhealthy else "Recovered"
+    if dispatched == "dispatch":
+        print(f"Dispatched {WORKFLOW} on main: no refresh run for {DISPATCH_AFTER}")
     if state_path is not None:
         write_local_state(state_path, state)
         print(f"Price refresh monitoring: {status}; durable local ledger")
@@ -367,13 +433,15 @@ def observe(*, dry_run: bool = False, state_path: Path | None = None) -> None:
 
 
 def main(*, dry_run: bool = False, state_path: Path | None = None,
-         heartbeat_enabled: bool = True) -> None:
+         heartbeat_enabled: bool = True, dispatch: bool = False) -> None:
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise ValueError("Monitoring is restricted to the production repository")
     if os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1" and state_path is None:
         raise ValueError("Public observer requires local state")
+    if dispatch and os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1":
+        raise ValueError("The anonymous observer cannot dispatch workflows")
     if dry_run:
-        observe(dry_run=True, state_path=state_path)
+        observe(dry_run=True, state_path=state_path, dispatch=dispatch)
         return
     with local_state_lock(state_path) if state_path else nullcontext(True) as acquired:
         if not acquired:
@@ -384,7 +452,7 @@ def main(*, dry_run: bool = False, state_path: Path | None = None,
         if heartbeat_enabled:
             heartbeat("in_progress", check_in_id)
         try:
-            observe(state_path=state_path)
+            observe(state_path=state_path, dispatch=dispatch)
         except Exception:
             if heartbeat_enabled:
                 heartbeat("error", check_in_id, time.monotonic() - started)
@@ -401,6 +469,8 @@ if __name__ == "__main__":
         parser.add_argument("--state-file", type=Path)
         parser.add_argument("--dsn-file", type=Path)
         parser.add_argument("--no-heartbeat", action="store_true")
+        parser.add_argument("--dispatch-stalled", action="store_true",
+                            help="dispatch refresh-prices.yml when no run started recently")
         args = parser.parse_args()
         if args.dsn_file is not None:
             with args.dsn_file.open() as handle:
@@ -409,7 +479,7 @@ if __name__ == "__main__":
                 raise ValueError("Invalid ingestion credential")
             os.environ["TR_SENTRY_DSN"] = dsn
         main(dry_run=args.dry_run, state_path=args.state_file,
-             heartbeat_enabled=not args.no_heartbeat)
+             heartbeat_enabled=not args.no_heartbeat, dispatch=args.dispatch_stalled)
     except Exception as exc:
         # Suppress exception strings/tracebacks: URLs can contain the DSN.
         print(f"::error::Price refresh monitoring failed ({type(exc).__name__}); inspect configuration and delivery", file=sys.stderr)
