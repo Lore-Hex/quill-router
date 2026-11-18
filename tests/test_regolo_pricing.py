@@ -43,6 +43,9 @@ def test_unpriced_unknown_limit_and_non_direct_chat_rows_are_excluded(changes):
 
 def test_discovery_preserves_exact_names_and_allows_future_models():
     assert regolo.CATALOG.model_id("gemma4-31b") == "google/gemma-4-31b-it"
+    # Regolo hosts other labs' open weights. Its undated DeepSeek name is the
+    # public model every other host serves, not a Regolo-only model.
+    assert regolo.CATALOG.model_id("deepseek-v4.1-flash") == "deepseek/deepseek-v4.1-flash"
     assert regolo.CATALOG.model_id("new-chat-2027") == "regolo/new-chat-2027"
     with pytest.raises(RuntimeError, match="duplicate"):
         regolo.normalize_catalog({"data": [row(), row()]}, Decimal("1.1"))
