@@ -14,6 +14,7 @@ refusal was followed by no read.
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -268,6 +269,60 @@ def test_the_header_is_the_read_in_one_fixed_form() -> None:
     assert credit_refusal_read_headers(locked) == {
         CREDIT_REFUSAL_READ_HEADER: "read=rebalance hold=82074 rows=2 sum=-40 most=10"
     }
+    # Never a snapshot the shadow cannot re-read, a locked read with an
+    # instant it does not have, or a read of no known name: no header.
+    for unnamed in (
+        CreditRefusalRead("remembered", 1, 1, 0, 0),
+        CreditRefusalRead("heal", 1, 1, 0, 0),
+        CreditRefusalRead("headroom", 1, 1, 0, 0),
+        CreditRefusalRead("rebalance", 1, 1, 0, 0, 1_792_000_000_000_000_007),
+        CreditRefusalRead("lease", 1, 1, 0, 0, 1_792_000_000_000_000_007),
+        CreditRefusalRead("lease", 1, 1, 0, 0),
+    ):
+        assert credit_refusal_read_headers(unnamed) == {}, unnamed
+
+
+@pytest.mark.usefixtures("fixed_operation_catalog")
+def test_a_snapshot_with_no_read_timestamp_names_no_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The client keeps a multi-use snapshot's read timestamp in a private
+    # field; should it stop, every path names no read rather than figures
+    # the shadow cannot re-read. The rebalance's locked read never had one.
+    from trusted_router import storage_gcp_authorize
+
+    monkeypatch.setattr(storage_gcp_authorize, "snapshot_read_timestamp_ns", lambda _snapshot: None)
+    _, _, key = _store(monkeypatch, [50_000])
+    assert _read_header(_refused(key)) is None  # heal
+    assert _read_header(_refused(key)) is None  # remembered
+    _, _, key = _store(monkeypatch, [30_000, 30_000, 20_000])
+    assert _read_header(_refused(key)) is None  # headroom
+
+
+def test_the_snapshots_a_402_names_are_multi_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake keeps no read timestamp for a single-use snapshot, as
+    production code must not rely on one: each snapshot a 402 names is
+    multi-use, or the route tests above lose their header."""
+    store, database, _key = _store(monkeypatch, [30_000, 30_000, 20_000])
+    database.snapshot_calls.clear()
+    store._heal_stale_debt_mark(WS, on_read=lambda _rows, _at: None)
+    rebalance_mod.credit_headroom_precheck(
+        store._database, store._param_types, workspace_id=WS, shard_count=3, shard_candidates=(0, 1, 2),
+        estimate=HOLD,
+    )
+    assert database.snapshot_calls == [{"multi_use": True}, {"multi_use": True}]
+
+
+def test_a_raising_read_note_never_stops_the_heal(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, database, _key = _store(monkeypatch, [50_000], marked=True)
+
+    def note(_rows: list[int], _at: int | None) -> None:
+        raise RuntimeError("synthetic note failure")
+
+    with caplog.at_level(logging.WARNING):
+        assert store._heal_stale_debt_mark(WS, on_read=note) is True
+    assert not database.typed[CREDIT_BALANCE_TABLE][(WS, 0)]["in_debt"]
+    assert "credit refusal read not noted; the heal goes on" in caplog.text
 
 
 def test_the_go_vectors_are_what_python_writes_now() -> None:

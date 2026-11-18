@@ -7,6 +7,7 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
@@ -110,6 +111,12 @@ const readAtLayout = "2006-01-02T15:04:05.000000000Z07:00"
 var creditReadForm = regexp.MustCompile(`^read=([a-z_]{1,32})(?: read_at=(\S+))? hold=(-?\d{1,19}) ` +
 	`rows=(\d{1,9}) sum=(-?\d{1,19}) most=(-?\d{1,19})$`)
 
+// creditReads are the reads Python's 402 can name (credit_refusal_read.py),
+// each true for a snapshot, which Python names only with its read timestamp,
+// and false for the rebalance's locked read, which has none. A read of any
+// other name is not one the shadow knows how to settle.
+var creditReads = map[string]bool{"remembered": true, "heal": true, "headroom": true, "rebalance": false}
+
 // creditRefusalRead is CreditRefusalReadHeader read: which read, its read
 // timestamp (zero for a read inside a read-write transaction, which has
 // none), the hold Python held it to, and the rows' count, signed sum and
@@ -122,8 +129,11 @@ type creditRefusalRead struct {
 }
 
 // parseCreditRefusalRead reads Python's CreditRefusalReadHeader: the read,
-// or why there is none (raceNone when absent, raceMalformed for anything but
-// exactly the form Python writes, a figure past int64 or no rows).
+// or why there is none (raceNone when absent; raceMalformed for anything but
+// exactly the form Python writes, a read of a name it does not write, a
+// locked read with a read timestamp, a figure past int64 or no rows;
+// raceReadAtNone for a snapshot named without its read timestamp, which the
+// shadow cannot re-read).
 func parseCreditRefusalRead(h string) (*creditRefusalRead, string) {
 	if h == "" {
 		return nil, raceNone
@@ -131,6 +141,13 @@ func parseCreditRefusalRead(h string) (*creditRefusalRead, string) {
 	m := creditReadForm.FindStringSubmatch(h)
 	if m == nil {
 		return nil, raceMalformed
+	}
+	snapshot, known := creditReads[m[1]]
+	switch {
+	case !known || (!snapshot && m[2] != ""):
+		return nil, raceMalformed
+	case snapshot && m[2] == "":
+		return nil, raceReadAtNone
 	}
 	c := &creditRefusalRead{read: m[1]}
 	if m[2] != "" {
@@ -161,6 +178,12 @@ const (
 	// a refusal no read followed); raceMalformed: one not in Python's form.
 	raceNone      = "none"
 	raceMalformed = "malformed"
+	// raceReadAtNone: a snapshot named with no read timestamp to re-read at.
+	raceReadAtNone = "read_at_none"
+	// raceRows: Python's read counted other rows than the shadow's reads
+	// found (a cached shard count behind the rows, rows left past it), so
+	// its figures are not of the rows the shadow read.
+	raceRows = "rows"
 	// raceHold: Python held its read to another hold than Go's decision.
 	raceHold = "hold"
 	// racePythonCovers: Python's own read reached the hold, a row or the
@@ -316,20 +339,25 @@ func (sh *fullShadow) confirmFunding(dec *Decision, readHeader string, r *fullRe
 
 // confirmFundingRace settles a credit refusal whose rows, read after it,
 // were unmarked and covered the hold (f), by the read Python's refusal names
-// (header): the race is confirmed when Python held that read to Go's hold
-// and neither a row nor the sum Python read reached it, and, when the read
-// was a snapshot, the same rows re-read at its exact read timestamp (within
-// the funding limiter and rowReadTimeout) are unmarked and short of the hold
-// too. A read with no timestamp (the rebalance's locked read, inside a
-// read-write transaction) is confirmed on Python's figures alone; it does
-// not read the debt mark, which the shadow's own read found unset. Anything
-// else leaves the would-admit, with the reason in f.race.
+// (header): the race is confirmed when Python's read counted the rows the
+// shadow's read found, Python held it to Go's hold and neither a row nor the
+// sum Python read reached it, and, when the read was a snapshot, the same
+// rows re-read at its exact read timestamp (within the funding limiter and
+// rowReadTimeout) are as many, unmarked and short of the hold too. The
+// rebalance's locked read (no read timestamp, inside a read-write
+// transaction) is confirmed on Python's figures alone; it does not read the
+// debt mark, which the shadow's own read found unset. Anything else leaves
+// the would-admit, with the reason in f.race. A read of fewer rows than
+// there are is how a cached shard count behind the rows shows: Python's
+// headroom and rebalance reads cover rows 0 to n-1 of the count it holds.
 func (sh *fullShadow) confirmFundingRace(dec *Decision, header string, f *fundingRead) bool {
 	py, why := parseCreditRefusalRead(header)
 	f.python = py
 	switch {
 	case why != "":
 		f.race = why
+	case py.rows != f.rows:
+		f.race = raceRows
 	case py.hold != f.hold:
 		f.race = raceHold
 	case py.most >= f.hold || py.sum >= f.hold:
@@ -349,6 +377,8 @@ func (sh *fullShadow) confirmFundingRace(dec *Decision, header string, f *fundin
 		covers, sum, most := creditCovers(standing.Headroom, f.hold)
 		f.reread = &creditTotals{rows: len(standing.Headroom), sum: sum, most: most}
 		switch {
+		case len(standing.Headroom) != py.rows:
+			f.race = raceRows
 		case standing.Marked:
 			f.race = raceRereadMarked
 		case covers:
@@ -377,4 +407,70 @@ func (sh *fullShadow) fundingSample() bool {
 	}
 	l.tokens--
 	return true
+}
+
+// AlertFundingRace is the alert kind of funding races past what a race
+// explains: over the last hour, confirmed races (ClassFundingRace) above
+// FundingRaceShare of the credit refusals whose rows the shadow read (at
+// least FundingRaceMin races). Not the critical page each would-admit is:
+// each race was confirmed by the read Python's refusal names. It is the
+// backstop for a defect that passes the race test every time, such as a read
+// of Go's that sees credit Python's does not, which would otherwise turn
+// every credit refusal of a workspace into a quiet race.
+const AlertFundingRace = "edge_funding_race"
+
+// The rolling hour of AlertFundingRace (raceWindow).
+const (
+	FundingRaceShare = 0.05
+	FundingRaceMin   = 5
+)
+
+// fundingWatch is the rolling hour AlertFundingRace reads: each past
+// period's credit refusals whose rows were read and its confirmed races,
+// and this period's. Held under the shadow's mu.
+type fundingWatch struct {
+	periods      []racePeriod
+	reads, races int
+}
+
+// count adds a comparison: a credit read made (its rows read, short, marked
+// or covering), a confirmed race.
+func (w *fundingWatch) count(r fullResult) {
+	f := r.funding
+	if f == nil {
+		return
+	}
+	switch f.outcome {
+	case fundingShort, fundingMarked, fundingCovered:
+		w.reads++
+	}
+	if strings.HasPrefix(r.class, ClassFundingRace+".") {
+		w.races++
+	}
+}
+
+// fundingRaceAlerts closes the period at now and raises AlertFundingRace for
+// the hour to now.
+func (sh *fullShadow) fundingRaceAlerts(now time.Time) {
+	w := &sh.fundingRaces
+	w.periods = append(w.periods, racePeriod{now, w.reads, w.races})
+	w.reads, w.races = 0, 0
+	since := now.Add(-raceWindow)
+	for len(w.periods) > 0 && !w.periods[0].at.After(since) {
+		w.periods = w.periods[1:]
+	}
+	reads, races := 0, 0
+	for _, p := range w.periods {
+		reads, races = reads+p.reads, races+p.races
+	}
+	if races < FundingRaceMin || float64(races) <= FundingRaceShare*float64(reads) {
+		return
+	}
+	message := fmt.Sprintf("the edge's decide shadow confirmed %d funding races of %d credit refusals whose rows it "+
+		"read in the last hour, above %.0f%%", races, reads, FundingRaceShare*100)
+	if sh.cfg.Alert != nil {
+		sh.cfg.Alert(AlertFundingRace, "edge decide shadow", message)
+		return
+	}
+	sh.logf("fastpath edge decide shadow ALERT %s: %s", AlertFundingRace, message)
 }

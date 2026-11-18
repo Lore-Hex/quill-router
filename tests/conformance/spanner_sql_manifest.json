@@ -4522,7 +4522,7 @@
       ]
     },
     "storage_gcp:_heal_stale_debt_mark:1": {
-      "fingerprint": "4f4704d194cb8f1ea32b143ed496f4d1528bbc0c73c7c67d0fa436bba6278d03",
+      "fingerprint": "f25e9f5272f81014a7d1d3f43d530268d81f3e9f30a9da9f2eafccd7f4aa4d6c",
       "scenarios": [
         {
           "bindings": {},
@@ -5103,7 +5103,7 @@
     "storage_gcp:SpannerStore._existing_operator_abuse": "b7ad0120effa20c724416cdce618fd88bcf212407c47006c9d0d667e360dbb88",
     "storage_gcp:SpannerStore.backfill_owner_inventory.txn": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
     "storage_gcp:SpannerStore.process_trust_demotion_remainders": "2eaa77fe0f06dab5095648f2052cea02247fa3723f6e207ed1abda8ebcae2e20",
-    "storage_gcp:SpannerStore._heal_stale_debt_mark": "4f4704d194cb8f1ea32b143ed496f4d1528bbc0c73c7c67d0fa436bba6278d03",
+    "storage_gcp:SpannerStore._heal_stale_debt_mark": "f25e9f5272f81014a7d1d3f43d530268d81f3e9f30a9da9f2eafccd7f4aa4d6c",
     "storage_gcp:SpannerStore._demote_owner_trust_tx": "3735ec2b15cfed0435caf727abd7634a1d8041ee62f5354ff07a06e26b2f9c53",
     "storage_gcp:SpannerStore.gateway_api_key_auth_context": "b98a51cb809aae9d4c187a84d4f800b34560d4795f93093997202cc4eb972d9c",
     "storage_gcp:SpannerStore.api_key_auth_context": "00bbec2cdc8b0d46e1f86a2db2b9014f2c5add8829401d276cb83a74db08f996",

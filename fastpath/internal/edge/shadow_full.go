@@ -260,9 +260,11 @@ type fullShadow struct {
 	// raceLogs bounds the race lines a period logs; races is the rolling
 	// hour AlertWindowRace reads.
 	raceLogs int
-	// fundingLogs bounds the credit read lines a period logs.
-	fundingLogs int
-	races       raceWatch
+	// fundingLogs bounds the credit read lines a period logs;
+	// fundingRaces is the rolling hour AlertFundingRace reads.
+	fundingLogs  int
+	races        raceWatch
+	fundingRaces fundingWatch
 	// cacheAt is the cache's counts at the last line, which logs the
 	// period's: the cache keeps running totals.
 	cacheAt gwstate.Counters
@@ -1670,6 +1672,7 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		sh.logf("fastpath edge decide shadow window race: class=%s key=%s window=%s go=%d reread=%d python=%d gap=%d %s",
 			r.class, c.keyHashPrefix, c.window, c.first, c.reread, c.python, c.first-c.python, digest)
 	}
+	sh.fundingRaces.count(r)
 	if f := r.funding; f != nil && sh.fundingLogs < maxDifferLogs {
 		sh.fundingLogs++
 		sh.logf("fastpath edge decide shadow funding: class=%s %s %s", r.class, f.line(), digest)
@@ -1766,6 +1769,7 @@ func (sh *fullShadow) flush() {
 	}
 	sh.logf(line, args...)
 	sh.raceAlerts(time.Now())
+	sh.fundingRaceAlerts(time.Now())
 	sh.tallies, sh.critical, sh.differs, sh.raceLogs, sh.fundingLogs = map[string]*fullTally{}, 0, 0, 0, 0
 }
 

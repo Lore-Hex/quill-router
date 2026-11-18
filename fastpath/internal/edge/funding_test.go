@@ -525,6 +525,28 @@ func TestACoveredCreditRefusalIsSettledByPythonsRead(t *testing.T) {
 			raceMalformed, 0},
 		{"a hold past int64", "read=rebalance hold=9223372036854775808 rows=2 sum=900 most=600", short, nil, 1e9,
 			fundingCandidate, raceMalformed, 0},
+		{"a snapshot of fewer rows than the shadow's read", snapshot(hold, 1, 900, 900), short, nil, 1e9,
+			fundingCandidate, raceRows, 0},
+		{"a snapshot of more rows than the shadow's read", snapshot(hold, 3, 900, 600), short, nil, 1e9,
+			fundingCandidate, raceRows, 0},
+		{"a locked read of fewer rows than the shadow's read", locked(hold, 1, 900, 900), short, nil, 1e9,
+			fundingCandidate, raceRows, 0},
+		{"a snapshot whose rows re-read at its timestamp are more", snapshot(hold, 2, 900, 600),
+			store.CreditStanding{Headroom: []int64{600, 300, 0}}, nil, 1e9, fundingCandidate, raceRows, 1},
+		{"a remembered read with no read timestamp", "read=remembered hold=1000 rows=2 sum=900 most=600", short, nil,
+			1e9, fundingCandidate, raceReadAtNone, 0},
+		{"a heal read with no read timestamp", "read=heal hold=1000 rows=2 sum=900 most=600", short, nil, 1e9,
+			fundingCandidate, raceReadAtNone, 0},
+		{"a headroom read with no read timestamp", "read=headroom hold=1000 rows=2 sum=900 most=600", short, nil, 1e9,
+			fundingCandidate, raceReadAtNone, 0},
+		{"a locked read with a read timestamp",
+			"read=rebalance read_at=2026-11-18T07:42:14.000000007Z hold=1000 rows=2 sum=900 most=600", short, nil, 1e9,
+			fundingCandidate, raceMalformed, 0},
+		{"a read of a name Python does not write", "read=lease hold=1000 rows=2 sum=900 most=600", short, nil, 1e9,
+			fundingCandidate, raceMalformed, 0},
+		{"a read of a name Python does not write, with a read timestamp",
+			"read=lease read_at=2026-11-18T07:42:14.000000007Z hold=1000 rows=2 sum=900 most=600", short, nil, 1e9,
+			fundingCandidate, raceMalformed, 0},
 	} {
 		credit := &fakeCredit{standing: store.CreditStanding{Headroom: []int64{1000, 500}}, standingAt: x.at,
 			errAt: x.errAt}
@@ -661,6 +683,87 @@ func TestPythonsCreditRefusalReadVectorsParse(t *testing.T) {
 		if got.read != c.Read || !got.at.Equal(wantAt) || got.at.IsZero() != wantAt.IsZero() || got.hold != c.Hold ||
 			got.rows != c.Rows || got.sum != c.Sum || got.most != c.Most {
 			t.Errorf("%q read as %+v", c.Header, *got)
+		}
+	}
+}
+
+// TestALockedReadOfFewerRowsPages is the review's probe: Python's rebalance
+// read rows 0 to 15 of a count it held while the workspace has 32 rows, and
+// the 16 it read are short of the hold while the 32 the shadow read cover
+// it. Python's figures are not of the rows there are, so nothing is
+// confirmed: it pages race=rows. The same read of all 32 rows is the race.
+func TestALockedReadOfFewerRowsPages(t *testing.T) {
+	covering := make([]int64, 32)
+	for i := range covering {
+		covering[i] = 40
+	}
+	for _, x := range []struct {
+		name, header, class, race string
+		alerts                    int
+	}{
+		{"16 of 32 rows", "read=rebalance hold=1000 rows=16 sum=640 most=40", fundingCandidate, raceRows, 1},
+		{"all 32 rows", "read=rebalance hold=1000 rows=32 sum=640 most=40", ClassFundingRace + ".402." + creditRefusal,
+			raceConfirmed, 0},
+	} {
+		credit := &fakeCredit{standing: store.CreditStanding{Headroom: covering}}
+		sh, alerts, _ := fundingShadow(t, credit, 1e9)
+		r := fullResult{class: fundingCandidate}
+		sh.confirmFunding(&Decision{Workspace: "ws-made-up", Reservation: 1000}, x.header, &r)
+		sh.record("digest", r)
+		if r.class != x.class || r.funding.race != x.race || len(alerts.taken()[AlertWouldAdmit]) != x.alerts {
+			t.Errorf("%s: class %s race %s alerts %v", x.name, r.class, r.funding.race, alerts.taken())
+		}
+	}
+}
+
+// TestTheFundingRaceRateIsWatched: confirmed races past FundingRaceShare of
+// the hour's credit refusals whose rows were read, and at least
+// FundingRaceMin of them, raise AlertFundingRace; a share at or under it, too
+// few races, or races older than the hour raise nothing. Refusals with no
+// read (the limiter, no reader) are not in the share.
+func TestTheFundingRaceRateIsWatched(t *testing.T) {
+	race := fullResult{class: ClassFundingRace + ".402." + creditRefusal,
+		funding: &fundingRead{outcome: fundingCovered, race: raceConfirmed}}
+	short := fullResult{class: ClassFundingUnchecked + ".402." + creditRefusal, funding: &fundingRead{outcome: fundingShort}}
+	unread := fullResult{class: fundingCandidate, funding: &fundingRead{outcome: fundingLimiter}}
+	t0 := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	for _, x := range []struct {
+		name                  string
+		races, shorts, unread int
+		alerts                int
+	}{
+		{"6 races of 100 reads", 6, 94, 0, 1},
+		{"5 races of 100 reads, at the share", 5, 95, 0, 0},
+		{"4 races of 4 reads, too few", 4, 0, 0, 0},
+		{"5 races of 5 reads beside refusals with no read", 5, 0, 500, 1},
+	} {
+		sh, alerts, _ := fundingShadow(t, &fakeCredit{}, 1e9)
+		for i := 0; i < x.races; i++ {
+			sh.record("digest", race)
+		}
+		for i := 0; i < x.shorts; i++ {
+			sh.record("digest", short)
+		}
+		for i := 0; i < x.unread; i++ {
+			sh.record("digest", unread)
+		}
+		sh.mu.Lock()
+		sh.fundingRaceAlerts(t0)
+		sh.mu.Unlock()
+		got := alerts.taken()[AlertFundingRace]
+		if len(got) != x.alerts {
+			t.Errorf("%s: alerts %q", x.name, got)
+		}
+		if x.alerts == 1 && !strings.Contains(got[0], "confirmed "+strconv.Itoa(x.races)+" funding races of "+
+			strconv.Itoa(x.races+x.shorts)+" credit refusals") {
+			t.Errorf("%s: the alert %q", x.name, got[0])
+		}
+		// An hour on, with nothing new, the races have left the window.
+		sh.mu.Lock()
+		sh.fundingRaceAlerts(t0.Add(raceWindow + time.Minute))
+		sh.mu.Unlock()
+		if again := alerts.taken()[AlertFundingRace]; len(again) != 0 {
+			t.Errorf("%s: alerts once the hour passed: %q", x.name, again)
 		}
 	}
 }

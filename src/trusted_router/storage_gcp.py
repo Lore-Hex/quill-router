@@ -2036,9 +2036,11 @@ class SpannerStore(OperationalAnalyticsReads):
         workspace pays one read and takes no lock. True if a mark was cleared.
 
         `on_read`, if given, is handed the snapshot's rows (each one's
-        headroom) and its read timestamp: the read a one-row workspace's
-        refusal stands on (credit_refusal_read.py). The snapshot is multi-use
-        only so that the client keeps that timestamp; it makes one read.
+        headroom) and its read timestamp, the read a one-row workspace's 402
+        names (credit_refusal_read.py). It is only told: a callback that
+        raises is logged and the heal goes on as if it had not been given.
+        The snapshot is multi-use only so that the client keeps that
+        timestamp; it makes one read.
         """
         from trusted_router.storage_gcp_authorize import snapshot_read_timestamp_ns
 
@@ -2054,7 +2056,14 @@ class SpannerStore(OperationalAnalyticsReads):
             )
             read_timestamp_ns = snapshot_read_timestamp_ns(snapshot)
         if on_read is not None:
-            on_read([int(row[0]) for row in rows], read_timestamp_ns)
+            try:
+                on_read([int(row[0]) for row in rows], read_timestamp_ns)
+            except Exception:
+                log.warning(
+                    "credit refusal read not noted; the heal goes on workspace=%s",
+                    workspace_id,
+                    exc_info=True,
+                )
         if not any(bool(row[1]) for row in rows) or sum(int(row[0]) for row in rows) < 0:
             return False
 
@@ -6094,11 +6103,13 @@ class SpannerStore(OperationalAnalyticsReads):
         # request into a retryable 503.
         last_credit_candidates = credit_shard_candidates
 
-        # The read of the credit rows a final insufficient_credits stands on
+        # The read of the credit rows a final insufficient_credits names
         # (credit_refusal_read.py): the last one made after the last
         # authorize transaction, so a read from before a retried transaction
         # never speaks for that transaction's refusal. None when the last
-        # refusal was followed by none, and then the 402 names no read.
+        # refusal was followed by none, and then the 402 names no read. The
+        # lease read after a final refusal (_lease_held_after_refusal) is not
+        # one it names.
         credit_read: CreditRefusalRead | None = None
 
         def note_credit_read(read: CreditRefusalRead | None) -> None:
@@ -6145,8 +6156,9 @@ class SpannerStore(OperationalAnalyticsReads):
                 debt_mark_checked = True
                 try:
                     # Its snapshot, every row, is the read a one-row
-                    # workspace's refusal stands on: that refusal is a
-                    # conditional UPDATE, which reads nothing.
+                    # workspace's 402 names: that refusal's conditional
+                    # UPDATE decided at its own instant and read nothing,
+                    # and this snapshot, after it, corroborates it.
                     healed = self._heal_stale_debt_mark(
                         workspace_id,
                         on_read=lambda headroom, read_timestamp_ns: note_credit_read(

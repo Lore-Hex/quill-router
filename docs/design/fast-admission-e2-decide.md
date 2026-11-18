@@ -1805,34 +1805,50 @@ counts, per snapshot and policy digest:
   no row marked.
 - `funding_race.402.insufficient_credits`: the same refusal whose rows,
   read by the shadow after it, are unmarked and cover the hold, while the
-  read Python's refusal stands on did not (`confirmFundingRace`). Python's
-  internal 402 names that read in `X-TR-Credit-Refusal-Read`
+  read Python's refusal names did not (`confirmFundingRace`). Python's
+  internal 402 names it in `X-TR-Credit-Refusal-Read`
   (`trusted_router/credit_refusal_read.py`): the last read of the
   workspace's credit rows after its last authorize transaction, or the
-  one it refused on without a transaction (`remembered`, the lock-free
-  snapshot of a workspace the process remembers as exhausted; `heal`, the
-  debt-mark snapshot after a one-row workspace's refused conditional
-  UPDATE, which reads nothing; `headroom`, the snapshot that proves
-  several rows exhausted, each with its read timestamp; `rebalance`, the
-  rebalance's locked read, which has none), the hold it was held to, and
-  the rows' count, signed sum and largest row. The race is confirmed when
-  Python held that read to the hold the decision takes and neither a row
-  nor the sum reached it, and, for a snapshot, the rows re-read at
-  exactly its read timestamp (`store.ReadCreditStandingAt`, within the
-  funding limiter) are unmarked and short too, as the window race is
-  confirmed at Python's read timestamp: a hold released or credit added
-  between Python's read and the shadow's. Counted, never paged. A locked
-  read is taken on Python's figures alone; it reads no mark, which the
-  shadow's own read found unset. Anything else stays the would-admit
-  and pages with `race=<why>`: no read named (`none`, a Python without
-  the header or a refusal no read followed), `malformed`, another hold
-  (`hold`), Python's own read reaching the hold (`python_covers`), no
-  re-read (`limiter`, `unread`), or rows re-read at Python's instant that
-  are marked or reach the hold (`reread_marked`, `reread_covers`). On
-  2026-11-18 at 07:42Z a 32-row workspace nearly out of credit, whose
-  concurrent requests' settles swung its sum by tens of thousands of
-  microdollars a second, paged `funding=covered` (a hold of 82,074, the
-  shadow's sum 87,331): this.
+  one it refused on without a transaction. `remembered` is the lock-free
+  snapshot that refuses a workspace the process remembers as exhausted,
+  `headroom` the snapshot that proves several rows exhausted, and
+  `rebalance` the rebalance's locked read: each decides the refusal.
+  `heal` is the debt-mark snapshot after a one-row workspace's refused
+  transaction: that refusal's conditional UPDATE decided at its own
+  instant and read nothing, so this read, after the decision and before
+  the answer, corroborates it rather than decided it. The snapshots are
+  named with their read timestamp (a multi-use snapshot's, which the
+  client keeps; without it Python names no read), the locked read with
+  none; the header carries the hold the read was held to and the rows'
+  count, signed sum and largest row. The later lease read after a final
+  refusal (`_lease_held_after_refusal`, `fastpath_lease_headroom_503`)
+  is not named. The race is confirmed when Python's read counted the rows
+  the shadow's read found, Python held it to the hold the decision takes
+  and neither a row nor the sum reached it, and, for a snapshot, the rows
+  re-read at exactly its read timestamp (`store.ReadCreditStandingAt`,
+  within the funding limiter, a second token) are as many, unmarked and
+  short too, as the window race is confirmed at Python's read timestamp:
+  a hold released or credit added between Python's read and the shadow's.
+  Counted, never paged. The locked read is taken on Python's figures
+  alone, its row count checked; it reads no debt mark (selecting it would
+  lock every row's mark inside the rebalance's transaction), which the
+  shadow's own read found unset. Anything else stays the would-admit and
+  pages with `race=<why>`: no read named (`none`), `malformed` (another
+  form, a read name Python does not write, a locked read with a read
+  timestamp), a snapshot without its read timestamp (`read_at_none`),
+  other rows than the shadow's (`rows`: Python's `headroom` and
+  `rebalance` reads cover shards 0 to n-1 of the count it holds, so a
+  cached count behind the rows shows here), another hold (`hold`),
+  Python's own read reaching the hold (`python_covers`), no re-read
+  (`limiter`, `unread`), or rows re-read at Python's instant that are
+  marked or reach the hold (`reread_marked`, `reread_covers`).
+  `edge_funding_race` alerts, apart from the critical page, when the last
+  hour's races pass 5% of the credit refusals whose rows the shadow read
+  (at least 5): a defect that passed the race test every time would turn
+  most refusals into races. On 2026-11-18 at 07:42Z a 32-row workspace
+  nearly out of credit, whose concurrent requests' settles swung its sum
+  by tens of thousands of microdollars a second, paged `funding=covered`
+  (a hold of 82,074, the shadow's sum 87,331): this.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
   `python_error.<status>` (any other 5xx): not refusals on the facts.
