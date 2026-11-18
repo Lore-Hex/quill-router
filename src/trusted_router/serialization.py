@@ -92,6 +92,7 @@ def key_shape(key: ApiKey, *, window_usage: dict[str, int] | None = None) -> dic
         "limit_remaining_microdollars": limit_remaining_microdollars,
         "limit_reset": key.limit_reset,
         "include_byok_in_limit": key.include_byok_in_limit,
+        "lenient": key.lenient,
         "tags": dict(key.tags),
         # False (default) = hard-limit; True explicitly opts into email-only alerts.
         "budget_alert_only": key.budget_alert_only,

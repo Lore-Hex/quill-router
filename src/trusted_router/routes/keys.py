@@ -76,6 +76,7 @@ def self_key_shape(key: ApiKey) -> dict[str, Any]:
             "limit",
             "reserved_microdollars",
             "include_byok_in_limit",
+            "lenient",
             "budget_alert_only",
             "budget_strict",
         }
@@ -202,6 +203,10 @@ def register_key_routes(router: APIRouter) -> None:
             tags=tags,
             scopes=scopes,
         )
+        if body.lenient:
+            # Not yet returned to anyone, so setting it right after create is
+            # indistinguishable from creating it lenient.
+            k = STORE.update_key(k.hash, {"lenient": True}) or k
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 
     @router.get("/keys/{hash}")
