@@ -5,11 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import wafer
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
 
 _CUTOFF = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 _RETIRING = {
@@ -23,21 +20,9 @@ _REPLACEMENTS = {
 }
 
 
-def test_wafer_routes_retire_at_announced_date() -> None:
-    for model_id, upstream_id in _RETIRING.items():
-        assert not provider_lifecycle.provider_model_retired(
-            "wafer",
-            model_id,
-            upstream_id,
-            at=_CUTOFF - timedelta(microseconds=1),
-        )
-        assert provider_lifecycle.provider_model_retired(
-            "wafer",
-            model_id,
-            upstream_id,
-            at=_CUTOFF,
-        )
-
+def test_wafer_august_retirement_spares_the_replacements() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     for model_id, upstream_id in _REPLACEMENTS.items():
         assert not provider_lifecycle.provider_model_retired(
             "wafer",
@@ -45,53 +30,6 @@ def test_wafer_routes_retire_at_announced_date() -> None:
             upstream_id,
             at=_CUTOFF,
         )
-
-
-def test_wafer_retirements_are_provider_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
-    for model_id in _RETIRING:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert "wafer" not in providers
-        assert not provider_lifecycle.provider_model_retired(
-            "another-provider",
-            model_id,
-            _RETIRING[model_id],
-            at=_CUTOFF,
-        )
-
-
-def test_hourly_refresh_cannot_restore_retired_wafer_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prices = {
-        model_id: ModelPrice(1_000_000, 3_000_000)
-        for model_id in {*_RETIRING, *_REPLACEMENTS}
-    }
-    result = ProviderPricingResult(
-        slug="wafer",
-        prices=prices,
-        source="api",
-        fetched_url=wafer.URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"wafer": result})
-    for model_id in _RETIRING:
-        assert "wafer" in before[model_id]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"wafer": result})
-    for model_id in _RETIRING:
-        assert model_id not in after
-    for model_id in _REPLACEMENTS:
-        assert "wafer" in after[model_id]
 
 
 def test_wafer_parser_filters_retired_rows_from_stale_feed(

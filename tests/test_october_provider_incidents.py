@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from trusted_router import catalog_ingest, provider_contracts, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
@@ -113,71 +111,19 @@ def test_lightning_fresh_discovery_cannot_bypass_operator_hold(
     ) == {"BYOK": endpoints["BYOK"]}
 
 
-@pytest.mark.parametrize("native", ["kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5"])
-def test_streamlake_confirmed_retirements_are_provider_scoped(native: str) -> None:
-    cutoff = datetime(2026, 10, 3, 20, tzinfo=UTC)
-    model = f"kwaipilot/{native}"
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("streamlake", model, native, at=cutoff - timedelta(microseconds=1))
-    assert retired("streamlake", model, at=cutoff)
-    assert retired("streamlake", "other-canonical-alias", native, at=cutoff)
-    assert not retired("novita", model, native, at=cutoff)
-    assert not retired("streamlake", "kwaipilot/future-model", "future-model", at=cutoff)
-
-
-def test_stale_streamlake_prices_cannot_reenable_deprecated_models(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: datetime(2026, 10, 4, tzinfo=UTC))
-    models = ["kwaipilot/kat-coder-pro-v2", "kwaipilot/kat-coder-air-v2.5", "kwaipilot/kat-coder-pro-v2.5"]
-    result = ProviderPricingResult(
-        slug="streamlake", source="stale_snapshot", fetched_url="https://www.streamlake.ai",
-        prices={model: ModelPrice(300_000, 1_200_000) for model in models},
-    )
-    assert refresh._index_provider_prices({"streamlake": result}) == {}
-
-
-@pytest.mark.parametrize("usage", ["Credits", "BYOK"])
-def test_retired_streamlake_endpoint_is_removed_without_model_substitution(
-    monkeypatch: pytest.MonkeyPatch, usage: str,
-) -> None:
-    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
-    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
-    model = "kwaipilot/kat-coder-pro-v2.5"
-    endpoints = {
-        provider: ModelEndpoint(
-            id=provider, provider=provider, model_id=model,
-            usage_type=usage, upstream_id="kat-coder-pro-v2.5",
-        )
-        for provider in ("streamlake", "novita")
-    }
-    filtered = catalog_ingest._filter_unserved_provider_endpoints(
-        endpoints, at=datetime(2026, 10, 4, tzinfo=UTC),
-    )
-    assert filtered == {"novita": endpoints["novita"]}
-
-
-def test_streamlake_qwen_retirement_is_observation_dated_and_provider_scoped() -> None:
+def test_streamlake_qwen3_coder_next_retirement_spares_qwen_3_8_flash() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     cutoff = provider_lifecycle.STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT
-    retired = provider_lifecycle.provider_model_retired
-    model, native = "qwen/qwen3-coder-next", "qwen3-coder-next"
-    assert not retired("streamlake", model, native, at=cutoff - timedelta(microseconds=1))
-    assert retired("streamlake", model, at=cutoff)
-    assert retired("streamlake", "other-canonical-alias", native, at=cutoff)
-    assert not retired("novita", model, native, at=cutoff)
-    assert not retired("streamlake", "qwen/qwen3.8-flash", "qwen3.8-flash", at=cutoff)
+    assert not provider_lifecycle.provider_model_retired(
+        "streamlake", "qwen/qwen3.8-flash", "qwen3.8-flash", at=cutoff,
+    )
 
 
-def test_streamlake_qwen3_235b_instruct_retirement_is_observation_dated_and_scoped() -> None:
+def test_streamlake_qwen3_235b_instruct_retirement_is_observation_dated() -> None:
     cutoff = provider_lifecycle.STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT
     assert cutoff == datetime(2026, 10, 10, 19, 39, tzinfo=UTC)
     retired = provider_lifecycle.provider_model_retired
-    model, native = "qwen/qwen3-235b-a22b-instruct-2507", "Qwen3-235B-A22B-Instruct-2507"
-    assert not retired("streamlake", model, native, at=cutoff - timedelta(microseconds=1))
-    assert retired("streamlake", model, at=cutoff)
-    assert retired("streamlake", "other-canonical-alias", native, at=cutoff)
-    assert not retired("novita", model, native, at=cutoff)
     # StreamLake still serves the Thinking variant.
     assert not retired(
         "streamlake",
@@ -185,39 +131,3 @@ def test_streamlake_qwen3_235b_instruct_retirement_is_observation_dated_and_scop
         "Qwen3-235B-A22B-Thinking-2507",
         at=cutoff,
     )
-
-
-@pytest.mark.parametrize("usage", ["Credits", "BYOK"])
-@pytest.mark.parametrize("model,native,cutoff", [
-    ("qwen/qwen3-coder-next", "qwen3-coder-next", datetime(2026, 10, 12, 16, 4, tzinfo=UTC)),
-    ("qwen/qwen3-30b-a3b-thinking-2507", "Qwen3-30B-A3B-Thinking-2507",
-     datetime(2026, 10, 25, 17, 17, tzinfo=UTC)),
-])
-def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
-    monkeypatch: pytest.MonkeyPatch, usage: str, model: str, native: str, cutoff: datetime,
-) -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "streamlake", model, native, at=cutoff - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired("streamlake", model, at=cutoff)
-    assert provider_lifecycle.provider_model_retired("streamlake", "other-alias", native, at=cutoff)
-    assert not provider_lifecycle.provider_model_retired("control-provider", model, native, at=cutoff)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
-    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
-    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
-    result = ProviderPricingResult(
-        slug="streamlake", source="stale_snapshot", fetched_url="https://www.streamlake.ai",
-        prices={model: ModelPrice(200_000, 1_000_000)},
-    )
-    assert refresh._index_provider_prices({"streamlake": result}) == {}
-    endpoints = {
-        provider: ModelEndpoint(
-            id=provider, provider=provider, model_id=model,
-            usage_type=usage, upstream_id=native,
-        )
-        for provider in ("streamlake", "control-provider")
-    }
-    assert catalog_ingest._filter_unserved_provider_endpoints(endpoints, at=cutoff) == {
-        "control-provider": endpoints["control-provider"],
-    }

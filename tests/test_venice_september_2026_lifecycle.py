@@ -10,46 +10,18 @@ from scripts.pricing import refresh
 from scripts.pricing.providers import venice
 from tests.lifecycle_clock import catalog_predates
 from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
 
 _CUTOFF = datetime(2026, 9, 15, tzinfo=UTC)
 _OLD = "deepseek/deepseek-v4-flash"
 _NEW = "deepseek/deepseek-v4-1-flash"
 
 
-def test_venice_retirement_boundary_and_scope() -> None:
+def test_venice_retirement_spares_newer_deepseek_and_glm() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     retired = provider_lifecycle.provider_model_retired
-    assert not retired("venice", _OLD, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("venice", _OLD, at=_CUTOFF)
-    assert retired("venice", "another-id", "deepseek-v4-flash", at=_CUTOFF)
-    assert not retired("novita", _OLD, "deepseek-v4-flash", at=_CUTOFF)
     for model in (_NEW, _OLD + "-0731", _OLD + "-0731-fast", "z-ai/glm-5.3-flash"):
         assert not retired("venice", model, model.split("/", 1)[1], at=_CUTOFF)
-
-
-def test_venice_runtime_cutoff_never_substitutes_new_weights(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    old_endpoints = [
-        ModelEndpoint(
-            id=f"{_OLD}@{provider}/prepaid", model_id=_OLD, provider=provider,
-            upstream_id="deepseek-v4-flash", usage_type="Credits",
-        ) for provider in ("venice", "novita")
-    ]
-    replacement = ModelEndpoint(
-        id=f"{_NEW}@venice/prepaid", model_id=_NEW, provider="venice",
-        upstream_id="deepseek-v4-1-flash", usage_type="Credits",
-    )
-    monkeypatch.setattr(
-        catalog, "MODEL_ENDPOINTS", {e.id: e for e in [*old_endpoints, replacement]},
-    )
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    assert catalog.endpoints_for_model(_OLD) == old_endpoints
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    assert catalog.endpoints_for_model(_OLD) == [old_endpoints[1]]
-    assert catalog.endpoints_for_model(_NEW) == [replacement]
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])

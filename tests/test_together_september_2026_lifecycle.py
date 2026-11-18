@@ -7,11 +7,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import together
-from trusted_router import catalog, catalog_ingest, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import catalog_ingest, provider_lifecycle
 
 _CUTOFF = datetime(2026, 9, 14, tzinfo=UTC)
 _RETIRING = (
@@ -37,50 +34,13 @@ def test_together_manifest_records_migrations_and_verified_replacement() -> None
     assert rows[_REPLACEMENT]["upstream_id"] == _REPLACEMENT_NATIVE
 
 
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING)
-def test_together_september_cutoff_and_provider_scope(model_id: str, native_id: str) -> None:
+def test_together_september_cutoff_spares_the_replacements() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     assert provider_lifecycle.TOGETHER_SEPTEMBER_2026_RETIREMENT_AT == _CUTOFF
     retired = provider_lifecycle.provider_model_retired
-    assert not retired("together", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("together", model_id, at=_CUTOFF)
-    assert retired("together", "unknown-canonical-id", native_id, at=_CUTOFF)
-    assert not retired("deepinfra", model_id, native_id, at=_CUTOFF)
     assert not retired("together", _REPLACEMENT, _REPLACEMENT_NATIVE, at=_CUTOFF)
     assert not retired("together", "qwen/qwen3.5-9b", "Qwen/Qwen3.5-9B", at=_CUTOFF)
-
-
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING)
-def test_together_runtime_cutoff_preserves_model_identity(
-    monkeypatch: pytest.MonkeyPatch, model_id: str, native_id: str,
-) -> None:
-    endpoints = {}
-    for provider in ("together", "deepinfra"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{model_id}@{provider}/{usage}", model_id=model_id,
-                provider=provider, usage_type=usage, upstream_id=native_id,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 4
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = catalog.endpoints_for_model(model_id)
-    assert len(after) == 2
-    assert {endpoint.provider for endpoint in after} == {"deepinfra"}
-    assert {endpoint.model_id for endpoint in after} == {model_id}
-
-
-def test_together_stale_prices_cannot_restore_retired_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    retired = {model_id for model_id, _ in _RETIRING}
-    result = ProviderPricingResult(
-        slug="together", source="api", fetched_url=together.URL,
-        prices={model_id: ModelPrice(150_000, 500_000) for model_id in retired | {_REPLACEMENT}},
-    )
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert set(refresh._index_provider_prices({"together": result})) == retired | {_REPLACEMENT}
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    assert set(refresh._index_provider_prices({"together": result})) == {_REPLACEMENT}
 
 
 @pytest.mark.parametrize("manifest", [None, "broken", '{"models": []}'])

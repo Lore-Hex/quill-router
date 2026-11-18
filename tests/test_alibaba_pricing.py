@@ -158,28 +158,6 @@ def test_parser_filters_retired_deepseek_preview_from_stale_feed(
     assert "deepseek/deepseek-v4-flash-0731" in after.prices
 
 
-def test_hourly_refresh_cannot_restore_retired_deepseek_preview(
-    monkeypatch,
-) -> None:  # noqa: ANN001
-    preview = "deepseek/deepseek-v4-flash"
-    replacement = "deepseek/deepseek-v4-flash-0731"
-    price = alibaba._price("deepseek-v4-flash-0731")  # noqa: SLF001
-    assert price is not None
-    result = alibaba.ProviderPricingResult(
-        slug="alibaba",
-        prices={preview: price, replacement: price},
-        source="api",
-        fetched_url=alibaba.URL,
-    )
-    cutoff = provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
-
-    indexed = refresh._index_provider_prices({"alibaba": result})
-
-    assert preview not in indexed
-    assert "alibaba" in indexed[replacement]
-
-
 def test_manifest_refresh_appends_new_models_with_tiered_prices(
     tmp_path: Path,
     monkeypatch,

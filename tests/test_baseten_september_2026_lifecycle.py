@@ -8,11 +8,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _CUTOFF = datetime(2026, 9, 26, 0, tzinfo=UTC)
 _RETIRING = {
@@ -41,57 +38,9 @@ def test_baseten_september_cutoff_matches_pacific_notice() -> None:
     assert provider_lifecycle.BASETEN_SEPTEMBER_2026_RETIREMENT_AT == _CUTOFF
 
 
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING.items())
-def test_baseten_september_exact_cutoff_and_provider_scope(
-    model_id: str, native_id: str,
-) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("baseten", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("baseten", model_id, at=_CUTOFF)
-    assert retired("baseten", "other-canonical-id", native_id, at=_CUTOFF)
-    assert retired("baseten", model_id, native_id, at=_CUTOFF + timedelta(days=1))
-    assert not retired("novita", model_id, native_id, at=_CUTOFF)
-
-
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING.items())
-def test_baseten_september_runtime_cutoff_without_catalog_reload(
-    monkeypatch: pytest.MonkeyPatch, model_id: str, native_id: str,
-) -> None:
-    # Keep the clock test independent of live discovery and earlier retirements.
-    endpoints = {}
-    for provider in ("baseten", "novita"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{model_id}@{provider}/{usage}", model_id=model_id,
-                provider=provider, usage_type=usage, upstream_id=native_id,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 4
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = catalog.endpoints_for_model(model_id)
-    assert len(after) == 2
-    assert {endpoint.provider for endpoint in after} == {"novita"}
-    assert {endpoint.model_id for endpoint in after} == {model_id}
-
-
 @pytest.mark.parametrize(("model_id", "native_id"), _RETAINED.items())
 def test_baseten_september_preserves_unannounced_models(model_id: str, native_id: str) -> None:
     assert not provider_lifecycle.provider_model_retired("baseten", model_id, native_id, at=_CUTOFF)
-
-
-def test_baseten_september_refresh_cannot_restore_retired_prices(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = ProviderPricingResult(
-        slug="baseten", source="api", fetched_url=baseten.URL,
-        prices={model: ModelPrice(1_000_000, 2_000_000) for model in _RETIRING | _RETAINED},
-    )
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert set(refresh._index_provider_prices({"baseten": result})) == set(_RETIRING | _RETAINED)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    assert set(refresh._index_provider_prices({"baseten": result})) == set(_RETAINED)
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])

@@ -7,13 +7,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import near_ai
 from tests.lifecycle_clock import catalog_predates
 from tests.test_near_ai_provider import _catalog_row, _endpoints
 from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
 
 _CUTOFF = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
 _DEEPSEEK_CUTOFF = datetime(2026, 9, 17, 13, 0, tzinfo=UTC)
@@ -27,35 +24,20 @@ _SURVIVOR = "google/gemma-4-31B-it"
 _SURVIVOR_MODEL = "google/gemma-4-31b-it"
 
 
-@pytest.mark.parametrize(("model_id", "native_id", "cutoff"), _RETIRING)
-def test_near_ai_exact_cutoff_and_provider_scope(
-    model_id: str, native_id: str, cutoff: datetime,
-) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("near-ai", model_id, native_id, at=cutoff - timedelta(microseconds=1))
-    assert retired("near-ai", model_id, at=cutoff)
-    assert retired("near-ai", "other-canonical-id", native_id, at=cutoff)
-    assert not retired("deepinfra", model_id, native_id, at=cutoff)
-    assert not retired("near-ai", "z-ai/glm-5.3-flash", at=cutoff)
-    assert not retired("near-ai", model_id + "-other", at=cutoff)
+@pytest.mark.parametrize("cutoff", sorted({cutoff for _model, _native, cutoff in _RETIRING}))
+def test_near_ai_retirements_spare_glm_5_3_flash(cutoff: datetime) -> None:
+    # The cutoffs themselves, scope and the refresh and catalog paths are
+    # checked for every retirement in tests/test_provider_retirements_generic.py.
+    assert not provider_lifecycle.provider_model_retired("near-ai", "z-ai/glm-5.3-flash", at=cutoff)
 
 
 @pytest.mark.parametrize(("model_id", "native_id", "cutoff"), _RETIRING)
-def test_near_ai_runtime_cutoff_without_catalog_reload(
+def test_near_ai_native_id_stops_resolving_at_cutoff(
     monkeypatch: pytest.MonkeyPatch, model_id: str, native_id: str, cutoff: datetime,
 ) -> None:
-    endpoints = {
-        provider: ModelEndpoint(
-            id=f"{model_id}@{provider}/prepaid", model_id=model_id,
-            provider=provider, upstream_id=native_id, usage_type="Credits",
-        ) for provider in ("near-ai", "deepinfra")
-    }
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {e.id: e for e in endpoints.values()})
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 2
     assert near_ai.canonical_model_id(native_id) == model_id
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
-    assert catalog.endpoints_for_model(model_id) == [endpoints["deepinfra"]]
     assert near_ai.canonical_model_id(native_id) is None
 
 
@@ -132,20 +114,6 @@ def test_near_ai_refresh_cutoff_and_missing_price_guard(
             assert row["routable"] is False
             assert row["routable_reason"] == "price-unavailable"
             assert "input_token_price_per_m" not in row
-
-
-def test_near_ai_stale_price_result_cannot_restore_retired_deepseek(monkeypatch) -> None:
-    model = "deepseek/deepseek-v4-flash"
-    result = ProviderPricingResult(
-        slug="near-ai", source="api", fetched_url=near_ai.CATALOG_URL,
-        prices={m: ModelPrice(170_000, 350_000) for m in (model, _SURVIVOR_MODEL)},
-    )
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now", lambda: _DEEPSEEK_CUTOFF - timedelta(microseconds=1),
-    )
-    assert model in refresh._index_provider_prices({"near-ai": result})
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _DEEPSEEK_CUTOFF)
-    assert set(refresh._index_provider_prices({"near-ai": result})) == {_SURVIVOR_MODEL}
 
 
 def test_near_ai_manifest_records_deepseek_migration() -> None:

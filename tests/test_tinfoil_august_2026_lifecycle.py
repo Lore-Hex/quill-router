@@ -4,11 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import tinfoil
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
 
 _CUTOFF = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 _K26 = "moonshotai/kimi-k2.6"
@@ -17,63 +14,15 @@ _K3 = "moonshotai/kimi-k3"
 _K3_UPSTREAM = "kimi-k3"
 
 
-def test_tinfoil_kimi_k26_retires_at_announced_date() -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "tinfoil",
-        _K26,
-        _K26_UPSTREAM,
-        at=_CUTOFF - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "tinfoil",
-        _K26,
-        _K26_UPSTREAM,
-        at=_CUTOFF,
-    )
+def test_tinfoil_kimi_k26_retirement_spares_kimi_k3() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     assert not provider_lifecycle.provider_model_retired(
         "tinfoil",
         _K3,
         _K3_UPSTREAM,
         at=_CUTOFF,
     )
-
-
-def test_tinfoil_kimi_k26_retirement_is_provider_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
-    providers = {endpoint.provider for endpoint in endpoints_for_model(_K26)}
-
-    assert "tinfoil" not in providers
-    assert providers
-
-
-def test_hourly_refresh_cannot_restore_retired_tinfoil_kimi_k26(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = ProviderPricingResult(
-        slug="tinfoil",
-        prices={
-            _K26: ModelPrice(1_500_000, 5_250_000),
-            _K3: ModelPrice(3_000_000, 15_000_000),
-        },
-        source="api",
-        fetched_url=tinfoil.URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"tinfoil": result})
-    assert "tinfoil" in before[_K26]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"tinfoil": result})
-    assert _K26 not in after
-    assert "tinfoil" in after[_K3]
 
 
 def test_tinfoil_feed_discovers_kimi_k3_only_when_published(

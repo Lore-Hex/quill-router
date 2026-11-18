@@ -8,11 +8,9 @@ from typing import Any
 
 from pytest import MonkeyPatch
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
+from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import cerebras
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
 
 _CUTOFF = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 _GEMMA = "google/gemma-4-31b-it"
@@ -210,31 +208,9 @@ def test_cerebras_qwen38_is_discovered_only_from_a_live_priced_feed(
     assert row["upstream_id"] == "qwen-3.8-27b"
 
 
-def test_cerebras_gemma_shared_route_retires_at_announced_cutover() -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "cerebras",
-        _GEMMA,
-        _GEMMA_UPSTREAM,
-        at=_CUTOFF - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "cerebras",
-        _GEMMA,
-        _GEMMA_UPSTREAM,
-        at=_CUTOFF,
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "cerebras",
-        _GEMMA_ALIAS,
-        _GEMMA_UPSTREAM,
-        at=_CUTOFF,
-    )
-    assert not provider_lifecycle.provider_model_retired(
-        "another-provider",
-        _GEMMA,
-        _GEMMA_UPSTREAM,
-        at=_CUTOFF,
-    )
+def test_cerebras_gemma_retirement_spares_qwen() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     assert not provider_lifecycle.provider_model_retired(
         "cerebras",
         _QWEN,
@@ -262,43 +238,6 @@ def test_cerebras_parser_filters_retired_gemma_from_a_stale_feed(
     assert _GEMMA_ALIAS not in after.prices
     assert _GEMMA not in cerebras._DISCOVERED_MANIFEST_ROWS
     assert "openai/gpt-oss-120b" in after.prices
-
-
-def test_hourly_refresh_cannot_restore_retired_cerebras_gemma(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    result = ProviderPricingResult(
-        slug="cerebras",
-        prices={
-            _GEMMA: ModelPrice(990_000, 1_490_000),
-            _QWEN: ModelPrice(400_000, 1_200_000),
-        },
-        source="api",
-        fetched_url=cerebras.URL,
-    )
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"cerebras": result})
-    assert "cerebras" in before[_GEMMA]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"cerebras": result})
-    assert _GEMMA not in after
-    assert "cerebras" in after[_QWEN]
-
-
-def test_cerebras_gemma_retirement_is_visible_and_provider_scoped(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
-    providers = {endpoint.provider for endpoint in endpoints_for_model(_GEMMA)}
-
-    assert "cerebras" not in providers
-    assert providers
 
 
 def test_cerebras_manifest_records_shared_tier_replacement() -> None:

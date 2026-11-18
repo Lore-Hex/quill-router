@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import parasail
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.synthetic.probes import rotation_candidates
 
@@ -30,17 +29,9 @@ _REPLACEMENTS = (
 )
 
 
-def test_parasail_retirements_switch_at_announced_date() -> None:
-    before = _CUTOFF - timedelta(microseconds=1)
-
-    for model_id, upstream_id in _RETIRING:
-        assert not provider_lifecycle.provider_model_retired(
-            "parasail", model_id, upstream_id, at=before
-        )
-        assert provider_lifecycle.provider_model_retired(
-            "parasail", model_id, upstream_id, at=_CUTOFF
-        )
-
+def test_parasail_august_retirement_spares_the_replacements() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     for model_id, upstream_id in _REPLACEMENTS:
         assert not provider_lifecycle.provider_model_retired(
             "parasail", model_id, upstream_id, at=_CUTOFF
@@ -74,67 +65,6 @@ def _serve_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
             upstream_id=upstream_id,
         )
         monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
-
-
-def test_parasail_retirements_are_provider_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _serve_on_fixture_routes(monkeypatch)
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    for model_id, _upstream_id in _RETIRING:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert providers == {"parasail", "another-provider"}
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
-    for model_id, _upstream_id in _RETIRING:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert providers == {"another-provider"}, (
-            f"{model_id} should remain available outside Parasail"
-        )
-
-    for model_id, upstream_id in _REPLACEMENTS:
-        parasail_routes = [
-            endpoint
-            for endpoint in endpoints_for_model(model_id)
-            if endpoint.provider == "parasail"
-        ]
-        assert parasail_routes
-        assert {endpoint.upstream_id for endpoint in parasail_routes} == {upstream_id}
-
-
-def test_hourly_refresh_cannot_restore_retired_parasail_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prices = {
-        model_id: ModelPrice(100_000, 200_000) for model_id, _upstream_id in _RETIRING
-    }
-    prices.update(
-        {model_id: ModelPrice(300_000, 1_200_000) for model_id, _ in _REPLACEMENTS}
-    )
-    result = ProviderPricingResult(
-        slug="parasail",
-        prices=prices,
-        source="api",
-        fetched_url=parasail.PRICING_URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"parasail": result})
-    assert all("parasail" in before[model_id] for model_id, _ in _RETIRING)
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"parasail": result})
-    assert all(model_id not in after for model_id, _ in _RETIRING)
-    assert all("parasail" in after[model_id] for model_id, _ in _REPLACEMENTS)
 
 
 def test_parasail_parser_drops_retired_models_from_stale_feeds(

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
 from scripts.pricing.providers import scaleway, upstage
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 
 @dataclass(frozen=True)
@@ -35,35 +34,10 @@ _MANIFESTS = {"scaleway": scaleway.MANIFEST_PATH, "upstage": upstage.MANIFEST_PA
 
 
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: f"{case.provider}:{case.model}")
-def test_public_docs_retirement_boundary_and_provider_scope(case: Case) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    before = case.cutoff - timedelta(microseconds=1)
-    assert not retired(case.provider, case.model, case.native, at=before)
-    assert retired(case.provider, case.model, at=case.cutoff)
-    assert retired(case.provider, "different-canonical-id", case.native, at=case.cutoff)
-    assert not retired("unaffected-provider", case.model, case.native, at=case.cutoff)
-    assert not retired(case.provider, case.retained, at=case.cutoff)
-
-
-@pytest.mark.parametrize("case", _CASES, ids=lambda case: f"{case.provider}:{case.model}")
-def test_public_docs_retirement_filters_existing_routes_without_substitution(
-    monkeypatch: pytest.MonkeyPatch, case: Case,
-) -> None:
-    endpoints = {}
-    for provider in (case.provider, "unaffected-provider"):
-        endpoint = ModelEndpoint(
-            id=f"{case.model}@{provider}/Credits", model_id=case.model,
-            provider=provider, usage_type="Credits", upstream_id=case.native,
-        )
-        endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(case.model)) == 2
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff)
-    assert [(row.provider, row.model_id, row.upstream_id)
-            for row in catalog.endpoints_for_model(case.model)] == [
-        ("unaffected-provider", case.model, case.native),
-    ]
+def test_public_docs_retirement_spares_the_retained_model(case: Case) -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
+    assert not provider_lifecycle.provider_model_retired(case.provider, case.retained, at=case.cutoff)
 
 
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: f"{case.provider}:{case.model}")

@@ -70,27 +70,6 @@ def _write_manifest(path: Path) -> None:
     )
 
 
-def test_tinfoil_glm52_retires_at_announced_cutoff() -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "tinfoil",
-        _GLM52,
-        _GLM52_UPSTREAM,
-        at=_CUTOFF - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "tinfoil",
-        _GLM52,
-        _GLM52_UPSTREAM,
-        at=_CUTOFF,
-    )
-    assert not provider_lifecycle.provider_model_retired(
-        "parasail",
-        _GLM52,
-        _GLM52_UPSTREAM,
-        at=_CUTOFF,
-    )
-
-
 def test_tinfoil_catalog_matches_glm52_cutover_state() -> None:
     prepaid_id = f"{_GLM52}@tinfoil/prepaid"
     byok_id = f"{_GLM52}@tinfoil/byok"

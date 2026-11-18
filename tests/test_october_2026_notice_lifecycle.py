@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
 from scripts.pricing.providers import deepinfra, google_vertex
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 
 @dataclass(frozen=True)
@@ -47,39 +46,6 @@ def test_cutoffs_are_conservative_for_date_only_notices() -> None:
     assert provider_lifecycle.DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT == _CASES[0].cutoff
     assert provider_lifecycle.GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT == _CASES[1].cutoff
     assert provider_lifecycle.GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT == _CASES[2].cutoff
-
-
-def test_retirement_boundary_and_provider_scope(retirement: RetirementCase) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    case = retirement
-    assert not retired(case.provider, case.model, case.native, at=case.cutoff - timedelta(microseconds=1))
-    assert retired(case.provider, case.model, at=case.cutoff)
-    assert retired(case.provider, case.model, case.native, at=case.cutoff + timedelta(days=1))
-    # AI Studio has its own, earlier 3.7 retirement and is not a negative control.
-    for other in ("gmi", "unaffected-provider"):
-        assert not retired(other, case.model, case.native, at=case.cutoff)
-
-
-def test_routed_before_cutover_retired_after_without_substitution(
-    monkeypatch: pytest.MonkeyPatch, retirement: RetirementCase,
-) -> None:
-    case = retirement
-    endpoints = {}
-    for provider in (case.provider, "unaffected-provider"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{case.model}@{provider}/{usage}", model_id=case.model,
-                provider=provider, usage_type=usage, upstream_id=case.native,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(case.model)) == 4
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff)
-    remaining = catalog.endpoints_for_model(case.model)
-    assert {endpoint.provider for endpoint in remaining} == {"unaffected-provider"}
-    assert {endpoint.model_id for endpoint in remaining} == {case.model}
-    assert {endpoint.upstream_id for endpoint in remaining} == {case.native}
 
 
 def test_replacements_are_quoted_not_substituted(retirement: RetirementCase) -> None:
