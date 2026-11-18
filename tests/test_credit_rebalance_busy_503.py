@@ -39,6 +39,7 @@ from trusted_router.main import _ApplicationConsoleFormatter, create_app
 from trusted_router.routes.internal import gateway
 from trusted_router.services import settle_outbox_apply
 from trusted_router.storage_errors import (
+    CreditHeadroomRaced,
     CreditRebalanceBusy,
     StoreConflict,
     StoreUnavailable,
@@ -214,11 +215,12 @@ def _lookup_body_for(key: Any) -> Any:
 
 
 @pytest.mark.usefixtures("fixed_operation_catalog")
-def test_the_concurrent_headroom_503_stays_a_plain_store_unavailable(
+def test_the_concurrent_headroom_503_is_not_a_rebalance_busy_503(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The store's other retryable 503 (a funded shard lost to peers on every
-    bounded retry) is not this one: it keeps the base type and gets no mark."""
+    bounded retry) is not this one: it has its own type and its own mark
+    (tests/test_credit_headroom_raced_503.py), and never this one's."""
     from trusted_router import storage_gcp_authorize as authorize_mod
 
     _store, database, key = _seed(cooldown_held=False, monkeypatch=monkeypatch)
@@ -235,9 +237,11 @@ def test_the_concurrent_headroom_503_stays_a_plain_store_unavailable(
 
     assert response.status_code == 503
     (warning,) = _messages(caplog, "billing.authorize_storage_unavailable")
-    assert "error_class=StoreUnavailable" in warning.getMessage()
+    assert "error_class=CreditHeadroomRaced" in warning.getMessage()
+    assert "credit rebalance cooldown exhausted" not in caplog.text
     assert not _messages(caplog, EVENT)
     assert EVENT not in caplog.text
+    assert len(_messages(caplog, "billing.credit_headroom_raced")) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +363,7 @@ class _FailingTypedStore:
         StoreUnavailable("backend down"),
         StoreUnavailable(BUSY_MESSAGE),  # the type marks it, never the text
         StoreUnavailable("credit headroom changed concurrently; retry"),
+        CreditHeadroomRaced("credit headroom changed concurrently; retry"),
         StrictBudgetBusy("Strict budget authorization is busy; retry with backoff"),
         DeadlineExceeded("spanner deadline"),
         ServiceUnavailable("no instance"),

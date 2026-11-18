@@ -66,6 +66,28 @@ class CreditRebalanceBusy(StoreUnavailable):
     """
 
 
+class CreditHeadroomRaced(StoreUnavailable):
+    """The workspace's credit is spread across shards, and its own concurrent
+    requests took the headroom from every bounded repair of the typed
+    authorize's credit recovery.
+
+    Raised only when that recovery ran out of attempts and each one ended
+    with its repair (a retry on the funded shards, a rebalance and
+    re-authorize, a forced shard-count reload, or a wait for the rebalance
+    cooldown), without proof that the aggregate balance is exhausted. A
+    designed, retryable answer, not a storage failure: a 402 would be an
+    accounting lie, so the caller is asked to retry. A recovery that stopped
+    early (the forced reload failed, or a rebalance gave an outcome it does
+    not handle) raises the plain StoreUnavailable, unmarked.
+
+    A subclass, so every handler of `StoreUnavailable` answers it as before
+    (the same 503, message and Retry-After). Not a `CreditRebalanceBusy`,
+    whose mark is the held cooldown's alone. The type exists so the
+    authorize route can write the one line that tells this 503 apart from a
+    storage outage (billing.credit_headroom_raced, routes/internal/gateway.py).
+    """
+
+
 class LeasedOutcomeUnknown(StoreError):
     """A leased authorization's insert answered with a transient error and
     no read-back proved the row landed: it may have, or may still land. The

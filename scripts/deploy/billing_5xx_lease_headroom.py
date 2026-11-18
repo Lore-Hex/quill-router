@@ -2,7 +2,7 @@
 """Pair a revision's authorize 503s with the lines the app marks them with,
 by trace.
 
-Used by scripts/deploy/assert_no_billing_5xx.sh. Authorize answers three
+Used by scripts/deploy/assert_no_billing_5xx.sh. Authorize answers four
 503s by design, all retryable (Retry-After: 1), none router-core impact, and
 none may roll a canary back:
 
@@ -11,16 +11,20 @@ none may roll a canary back:
 * rebalance busy: a workspace's credit covers the hold but is spread across
   credit shards, and the rebalance cooldown is held by its other requests;
 * strict budget busy: a key with a strict budget cannot get its per-process
-  admission slot (strict_budget.py).
+  admission slot (strict_budget.py);
+* headroom raced: a workspace's credit is spread across credit shards, and
+  its own concurrent requests took the headroom from every bounded repair
+  ("credit headroom changed concurrently").
 
 Cloud Run's request log records only the status and the URL, so each 503 is
 told apart by the line the app writes for it (routes/internal/gateway.py,
-_lease_headroom_error, _log_credit_rebalance_busy and
-_log_strict_budget_busy):
+_lease_headroom_error, _log_credit_rebalance_busy, _log_strict_budget_busy
+and _log_credit_headroom_raced):
 
     INFO trusted_router.routes.internal.gateway billing.lease_headroom_unavailable ... trace=<32 hex>
     INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy ... trace=<32 hex>
     INFO trusted_router.routes.internal.gateway billing.strict_budget_busy ... trace=<32 hex>
+    INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced ... trace=<32 hex>
 
 The app's handler also writes "WARNING trusted_router.main
 billing.strict_budget_busy ..." for the strict 503, without a trace; it does
@@ -52,11 +56,13 @@ from typing import Any
 LINE_PREFIX = "INFO trusted_router.routes.internal.gateway billing.lease_headroom_unavailable "
 REBALANCE_BUSY_LINE_PREFIX = "INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy "
 STRICT_BUDGET_BUSY_LINE_PREFIX = "INFO trusted_router.routes.internal.gateway billing.strict_budget_busy "
+HEADROOM_RACED_LINE_PREFIX = "INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced "
 #: The lines that excuse an authorize 503, by the name the report gives each.
 LINE_PREFIXES = {
     "lease headroom": LINE_PREFIX,
     "rebalance busy": REBALANCE_BUSY_LINE_PREFIX,
     "strict budget busy": STRICT_BUDGET_BUSY_LINE_PREFIX,
+    "headroom raced": HEADROOM_RACED_LINE_PREFIX,
 }
 _LINE_TRACE = re.compile(r"(?:^|\s)trace=([0-9a-f]{32})(?:\s|$)")
 _REQUEST_TRACE = re.compile(r"^projects/[^/]+/traces/([0-9a-fA-F]{32})$")

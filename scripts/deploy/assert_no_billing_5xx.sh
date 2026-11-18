@@ -2,16 +2,19 @@
 # Fail a rollout when its candidate revision emitted a billing-path 5xx after
 # the supplied timestamp. Cloud Run readiness cannot detect exhausted retries.
 #
-# Three 5xx are excused, and only these, all authorize 503s the app answers
+# Four 5xx are excused, and only these, all authorize 503s the app answers
 # by design and the enclave retries after Retry-After: the one
 # TR_FASTPATH_LEASE_HEADROOM_503 answers when a workspace's shortfall is held
 # in fast-path leases, the one answered when a workspace's credit is spread
-# across shards while its rebalance cooldown is held, and the one answered
-# when a strict-budget key cannot get its per-process admission slot.
+# across shards while its rebalance cooldown is held, the one answered when
+# a strict-budget key cannot get its per-process admission slot, and the one
+# answered when a workspace's own concurrent requests took its spread credit
+# from every bounded repair ("credit headroom changed concurrently").
 # The request log records only status and URL, so each such 503 must be
 # paired, by trace, with the line the app writes for it,
-# billing.lease_headroom_unavailable, billing.credit_rebalance_busy or
-# billing.strict_budget_busy (billing_5xx_lease_headroom.py). Every other
+# billing.lease_headroom_unavailable, billing.credit_rebalance_busy,
+# billing.strict_budget_busy or billing.credit_headroom_raced
+# (billing_5xx_lease_headroom.py). Every other
 # 5xx fails at once, and an authorize 503 with no line fails after the line
 # has had time to arrive.
 set -euo pipefail
@@ -41,7 +44,7 @@ resource.labels.service_name=\"${SERVICE}\"
 resource.labels.location=\"${REGION}\"
 resource.labels.revision_name=\"${REVISION}\"
 timestamp>=\"${SINCE}\""
-# The request-log shape of the three designed 503s. It alone is set aside
+# The request-log shape of the four designed 503s. It alone is set aside
 # below; the alert (gateway-alerts/billing-5xx.yaml) sets aside the same shape.
 lease_503_shape='httpRequest.status=503
 httpRequest.requestUrl=~"/internal/gateway/authorize([?].*)?$"'
@@ -82,10 +85,10 @@ if [ "${count}" -ge "${LEASE_503_LIMIT}" ]; then
   exit 1
 fi
 
-# Any of the app's three lines. The parentheses keep the ORs inside this one
+# Any of the app's four lines. The parentheses keep the ORs inside this one
 # term.
 line_query="${revision_scope}
-(textPayload:\"INFO trusted_router.routes.internal.gateway billing.lease_headroom_unavailable \" OR textPayload:\"INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy \" OR textPayload:\"INFO trusted_router.routes.internal.gateway billing.strict_budget_busy \")"
+(textPayload:\"INFO trusted_router.routes.internal.gateway billing.lease_headroom_unavailable \" OR textPayload:\"INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy \" OR textPayload:\"INFO trusted_router.routes.internal.gateway billing.strict_budget_busy \" OR textPayload:\"INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced \")"
 
 attempt=0
 while :; do
@@ -100,12 +103,12 @@ while :; do
   set -e
   if [ "${status}" -eq 0 ]; then
     echo "${report}"
-    echo "billing-path 5xx gate passed for ${REGION} revision ${REVISION} (authorize 503s all lease headroom, rebalance busy or strict budget busy)"
+    echo "billing-path 5xx gate passed for ${REGION} revision ${REVISION} (authorize 503s all lease headroom, rebalance busy, strict budget busy or headroom raced)"
     exit 0
   fi
   if [ "${status}" -ne 1 ] || [ "${attempt}" -ge "${LINE_RETRIES}" ]; then
     echo "${report}"
-    echo "billing-path 5xx detected in ${REGION} revision ${REVISION} after ${SINCE}: authorize 503 not paired with a lease-headroom, rebalance-busy or strict-budget-busy line"
+    echo "billing-path 5xx detected in ${REGION} revision ${REVISION} after ${SINCE}: authorize 503 not paired with a lease-headroom, rebalance-busy, strict-budget-busy or headroom-raced line"
     exit 1
   fi
   attempt=$((attempt + 1))

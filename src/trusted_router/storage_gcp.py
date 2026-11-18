@@ -104,6 +104,7 @@ from trusted_router.storage import (
 )
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_errors import (
+    CreditHeadroomRaced,
     CreditRebalanceBusy,
     LeasedOutcomeUnknown,
     StoreConflict,
@@ -6079,13 +6080,20 @@ class SpannerStore(OperationalAnalyticsReads):
         forced_reload_done = False
         cooldown_passed = False
         debt_mark_checked = False
+        # Whether the last entry's bounded loop below ran out of attempts,
+        # each ended by its repair: the designed race the multi-shard 503
+        # further down is marked for.
+        credit_headroom_raced = False
 
         def recover_credit(
             result: dict[str, Any], *, after_key_repair: bool = False,
         ) -> dict[str, Any]:
             nonlocal credit_shard_candidates, aggregate_exhaustion_proven
             nonlocal proactive_reload_done, forced_reload_done, cooldown_passed
-            nonlocal debt_mark_checked
+            nonlocal debt_mark_checked, credit_headroom_raced
+            # Per entry: after a key repair the second entry's loop alone
+            # decides how the final refusal is answered.
+            credit_headroom_raced = False
             # run_tracked shares last_credit_candidates across both entries too.
             if result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS or not has_credit_candidate:
                 return result
@@ -6264,6 +6272,14 @@ class SpannerStore(OperationalAnalyticsReads):
                     # concurrent final-credit race into a spurious 503.
                     aggregate_exhaustion_proven = True
                 break
+            else:
+                # Every attempt ended in `continue` after its repair (a retry
+                # on the funded shards, a rebalance and re-authorize, a forced
+                # reload, a cooldown wait) and the workspace's own concurrent
+                # requests took the headroom each time. A loop that broke out
+                # early (proven exhaustion, a failed forced reload, a
+                # rebalance outcome not handled above) is not this race.
+                credit_headroom_raced = True
             return result
 
         # The strict budget's deadline, kept for the lease read after a
@@ -6310,6 +6326,12 @@ class SpannerStore(OperationalAnalyticsReads):
             # the customer's aggregate balance is exhausted. Preserve the
             # accounting contract by returning retryable unavailability;
             # only proven aggregate exhaustion above may return a 402.
+            if credit_headroom_raced:
+                # The race the loop is bounded for, lost on every attempt.
+                # Its own type, a StoreUnavailable to every handler: the
+                # route marks this 503 so the authorize-503 alert and the
+                # deploy gate can tell it from a storage outage.
+                raise CreditHeadroomRaced("credit headroom changed concurrently; retry")
             raise StoreUnavailable("credit headroom changed concurrently; retry")
         outcome = result["outcome"]
         if outcome == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and not skip_key_limit:

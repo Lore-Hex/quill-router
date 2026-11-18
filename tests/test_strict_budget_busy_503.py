@@ -42,7 +42,12 @@ from trusted_router.config import Settings
 from trusted_router.main import _ApplicationConsoleFormatter, create_app
 from trusted_router.routes.internal import gateway
 from trusted_router.storage import InMemoryStore, configure_store
-from trusted_router.storage_errors import CreditRebalanceBusy, StoreConflict, StoreUnavailable
+from trusted_router.storage_errors import (
+    CreditHeadroomRaced,
+    CreditRebalanceBusy,
+    StoreConflict,
+    StoreUnavailable,
+)
 from trusted_router.strict_budget import StrictBudgetBusy, strict_budget_slot
 
 AUTHORIZE = "/v1/internal/gateway/authorize"
@@ -298,6 +303,7 @@ def test_the_type_is_marked_wherever_the_typed_store_raises_it(
         StoreUnavailable("backend down"),
         StoreUnavailable("Strict budget authorization is busy; retry with backoff"),  # the type marks it
         StoreUnavailable("credit headroom changed concurrently; retry"),
+        CreditHeadroomRaced("credit headroom changed concurrently; retry"),
         CreditRebalanceBusy("credit escrow rebalance is busy; retry"),
         DeadlineExceeded("spanner deadline"),
         ServiceUnavailable("no instance"),

@@ -17,24 +17,39 @@ ALERT_CHANNEL_DISPLAY_NAME="${TR_GATEWAY_ALERT_CHANNEL_DISPLAY_NAME:-TrustedRout
 SLOW_METRIC_NAME="trustedrouter_gateway_billing_slow"
 # The counters "TR Gateway: authorize 503 not lease headroom" compares
 # (gateway-alerts/billing-authorize-503.yaml): every authorize 503 against
-# the sum of the three the app marks as designed and retryable. The second
+# the sum of the four the app marks as designed and retryable. The second
 # is also the rate of lease-headroom 503s (TR_FASTPATH_LEASE_HEADROOM_503);
 # the third is the rate of rebalance-busy 503s, which
 # gateway-alerts/billing-rebalance-busy.yaml bounds; the fourth is the rate
 # of strict-budget-busy 503s, which gateway-alerts/billing-strict-budget-busy.yaml
-# bounds.
+# bounds; the fifth is the rate of headroom-raced 503s, which
+# gateway-alerts/billing-headroom-raced.yaml bounds.
 AUTHORIZE_503_METRIC_NAME="trustedrouter_gateway_authorize_503"
 LEASE_HEADROOM_METRIC_NAME="trustedrouter_gateway_lease_headroom_503"
 REBALANCE_BUSY_METRIC_NAME="trustedrouter_gateway_rebalance_busy_503"
 STRICT_BUDGET_BUSY_METRIC_NAME="trustedrouter_gateway_strict_budget_busy_503"
-# Applied first, before the policy below stops counting rebalance-busy and
-# strict-budget-busy 503s as unmarked: from then on these two alone page on
-# them, each on more than two in ten minutes or more than five in an hour.
+HEADROOM_RACED_METRIC_NAME="trustedrouter_gateway_headroom_raced_503"
+# Applied first, before the policy below stops counting rebalance-busy,
+# strict-budget-busy and headroom-raced 503s as unmarked: from then on these
+# three alone page on them, each on more than two in ten minutes or more
+# than five in an hour.
 REBALANCE_BUSY_POLICY="billing-rebalance-busy.yaml"
 STRICT_BUDGET_BUSY_POLICY="billing-strict-budget-busy.yaml"
+HEADROOM_RACED_POLICY="billing-headroom-raced.yaml"
 # Applied before every remaining policy: billing-5xx.yaml sets authorize 503s
 # aside for it, so it must page before that filter narrows.
 AUTHORIZE_503_POLICY="billing-authorize-503.yaml"
+# The counters this run created. Cloud Monitoring can refuse a policy whose
+# query names a log-based counter created seconds before ("metric invalid"):
+# the counter is not yet known to it. A policy that reads one is therefore
+# applied up to NEW_COUNTER_POLICY_ATTEMPTS times, NEW_COUNTER_RETRY_SECONDS
+# apart, and the next policy waits for it: its own create or update is the
+# check that the counter is known, and needs no permission beyond the
+# reconciler role (gateway_reliability_iam.sh). Every other policy gets one
+# attempt, so a real refusal still stops the script at once.
+CREATED_METRICS=()
+NEW_COUNTER_POLICY_ATTEMPTS="${TR_GATEWAY_NEW_COUNTER_POLICY_ATTEMPTS:-10}"
+NEW_COUNTER_RETRY_SECONDS="${TR_GATEWAY_NEW_COUNTER_RETRY_SECONDS:-30}"
 APPLY=0
 
 if [ "${1:-}" = "--apply" ]; then
@@ -69,7 +84,8 @@ ensure_log_metric() {
   else
     run source_gc logging metrics create "$name" \
       --description="$description" \
-      --log-filter="$filter"
+      --log-filter="$filter" || return
+    CREATED_METRICS+=("$name")
   fi
 }
 
@@ -82,8 +98,9 @@ ensure_slow_metric() {
 # Required, unlike the slow counter: without the first two the authorize-503
 # policy reads nothing and, with billing-5xx.yaml setting authorize 503s
 # aside, no authorize 503 would page; without the third the rebalance-busy
-# policy reads nothing, and without the fourth the strict-budget-busy
-# policy. A failure here stops the script before any policy.
+# policy reads nothing, without the fourth the strict-budget-busy policy,
+# and without the fifth the headroom-raced policy. A failure here stops the
+# script before any policy.
 ensure_authorize_503_metrics() {
   ensure_log_metric "$AUTHORIZE_503_METRIC_NAME" \
     "Every TrustedRouter internal gateway authorize 503 in Cloud Run's request log, marked by the app or not." \
@@ -108,6 +125,12 @@ ensure_authorize_503_metrics() {
   ensure_log_metric "$STRICT_BUDGET_BUSY_METRIC_NAME" \
     "Authorize 503s answered when a strict-budget key cannot get its per-process admission slot: the app's billing.strict_budget_busy line." \
     'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"INFO trusted_router.routes.internal.gateway billing.strict_budget_busy "'
+  # The app's line for each headroom-raced 503 (routes/internal/gateway.py,
+  # _log_credit_headroom_raced): textPayload
+  # "INFO <logger> billing.credit_headroom_raced ...".
+  ensure_log_metric "$HEADROOM_RACED_METRIC_NAME" \
+    "Authorize 503s answered when a workspace's own concurrent requests took its spread credit from every bounded repair: the app's billing.credit_headroom_raced line." \
+    'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced "'
 }
 
 ensure_channel() {
@@ -138,37 +161,73 @@ ensure_channel() {
     --format='value(name)'
 }
 
+# Whether a policy reads a counter this run created: its PromQL name
+# (logging_googleapis_com:user_<name>) or its metric type
+# (logging.googleapis.com/user/<name>).
+policy_reads_created_counter() {
+  local policy_file="$1" metric
+  for metric in ${CREATED_METRICS[@]+"${CREATED_METRICS[@]}"}; do
+    if grep -Eq "user[_/]${metric}([^a-z0-9_]|\$)" "$policy_file"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+apply_policy() {
+  local policy_file="$1" channel="$2"
+  local display_name policy_name attempt=1 attempts=1
+  display_name="$(sed -n 's/^displayName: "\(.*\)"$/\1/p' "$policy_file")"
+  if policy_reads_created_counter "$policy_file"; then
+    attempts="$NEW_COUNTER_POLICY_ATTEMPTS"
+  fi
+  while :; do
+    # Looked up on every attempt, so a retry updates a policy an earlier
+    # attempt did create rather than creating a second one.
+    policy_name="$(source_gc monitoring policies list \
+      --filter="displayName=\"${display_name}\"" \
+      --format='value(name)' | head -1)"
+    if [ -z "$policy_name" ]; then
+      if run source_gc monitoring policies create \
+        --policy-from-file="$policy_file" \
+        --notification-channels="$channel"; then
+        return 0
+      fi
+    elif run source_gc monitoring policies update "$policy_name" \
+      --policy-from-file="$policy_file" \
+      --set-notification-channels="$channel"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$attempts" ]; then
+      log "ERROR: could not apply \"${display_name}\" after ${attempt} attempt(s); stopping before the next policy"
+      return 1
+    fi
+    log "\"${display_name}\" reads a counter created by this run; retrying in ${NEW_COUNTER_RETRY_SECONDS}s while Cloud Monitoring learns it (attempt ${attempt} of ${attempts})"
+    sleep "$NEW_COUNTER_RETRY_SECONDS"
+    attempt=$((attempt + 1))
+  done
+}
+
 ensure_policies() {
   local channel="$1"
-  local policy_file display_name policy_name
+  local policy_file
   local policy_files=(
     "${SCRIPT_DIR}/gateway-alerts/${REBALANCE_BUSY_POLICY}"
     "${SCRIPT_DIR}/gateway-alerts/${STRICT_BUDGET_BUSY_POLICY}"
+    "${SCRIPT_DIR}/gateway-alerts/${HEADROOM_RACED_POLICY}"
     "${SCRIPT_DIR}/gateway-alerts/${AUTHORIZE_503_POLICY}"
   )
 
   for policy_file in "${SCRIPT_DIR}"/gateway-alerts/*.yaml; do
     case "$(basename "$policy_file")" in
-      "$REBALANCE_BUSY_POLICY" | "$STRICT_BUDGET_BUSY_POLICY" | "$AUTHORIZE_503_POLICY") ;;
+      "$REBALANCE_BUSY_POLICY" | "$STRICT_BUDGET_BUSY_POLICY" | "$HEADROOM_RACED_POLICY" | "$AUTHORIZE_503_POLICY") ;;
       *) policy_files+=("$policy_file") ;;
     esac
   done
 
   log "ensuring customer-facing gateway alert policies"
   for policy_file in "${policy_files[@]}"; do
-    display_name="$(sed -n 's/^displayName: "\(.*\)"$/\1/p' "$policy_file")"
-    policy_name="$(source_gc monitoring policies list \
-      --filter="displayName=\"${display_name}\"" \
-      --format='value(name)' | head -1)"
-    if [ -z "$policy_name" ]; then
-      run source_gc monitoring policies create \
-        --policy-from-file="$policy_file" \
-        --notification-channels="$channel"
-    else
-      run source_gc monitoring policies update "$policy_name" \
-        --policy-from-file="$policy_file" \
-        --set-notification-channels="$channel"
-    fi
+    apply_policy "$policy_file" "$channel"
   done
 }
 

@@ -62,8 +62,8 @@ policy:
 - An authorize `503` is counted rather than paged at once. "TR Gateway:
   authorize 503 not lease headroom" compares the authorize 503s in Cloud
   Run's request log (`trustedrouter_gateway_authorize_503`) with the lines
-  the app writes for the three 503s it answers by design, and opens an
-  incident when the two counts differ for three minutes. All three are
+  the app writes for the four 503s it answers by design, and opens an
+  incident when the two counts differ for three minutes. All four are
   retryable, carry `Retry-After: 1` and are retried by the enclave:
   - lease headroom, `billing.lease_headroom_unavailable`
     (`trustedrouter_gateway_lease_headroom_503`): the workspace's shortfall
@@ -82,14 +82,20 @@ policy:
     existed the 503 had no mark and paged
     as storage impact (one false page on 2026-11-17). The handler's own
     `WARNING trusted_router.main billing.strict_budget_busy` line for the
-    same 503 has no trace and is not counted.
+    same 503 has no trace and is not counted;
+  - headroom raced, `billing.credit_headroom_raced`
+    (`trustedrouter_gateway_headroom_raced_503`): the workspace's credit is
+    spread across credit shards, and its own concurrent requests took the
+    headroom from every bounded repair of the credit recovery (`credit
+    headroom changed concurrently`). Until this line existed the 503 had no
+    mark and paged as storage impact (one false page on 2026-11-18).
 
   Every other authorize 503 writes none of these lines and pages: a Spanner
-  outage or deadline, no instance, a crash, a paused workspace, and the
-  retryable answer that has no mark, `credit headroom changed
-  concurrently`. More lines than 503s pages too, because a line written
-  without its 503 could hide a real one. The deploy gate
-  (`scripts/deploy/assert_no_billing_5xx.sh`) draws the same line per
+  outage or deadline, no instance, a crash, a paused workspace, and `credit
+  headroom changed concurrently` from a recovery that stopped early (its
+  forced shard-count reload failed). More lines than 503s pages too,
+  because a line written without its 503 could hide a real one. The deploy
+  gate (`scripts/deploy/assert_no_billing_5xx.sh`) draws the same line per
   request, by trace.
 - "TR Gateway: credit rebalance busy" opens an incident when more than two
   rebalance-busy 503s land in ten minutes, or more than five in an hour. The
@@ -98,6 +104,9 @@ policy:
 - "TR Gateway: strict budget busy" opens an incident when more than two
   strict-budget-busy 503s land in ten minutes, or more than five in an hour,
   for the same reason. See "Strict budget busy" below.
+- "TR Gateway: credit headroom raced" opens an incident when more than two
+  headroom-raced 503s land in ten minutes, or more than five in an hour,
+  for the same reason. See "Credit headroom raced" below.
 - A run of `503`s from one instance id, each with tens of seconds of latency
   and "connection to the instance had an error", while that instance's own
   output stops and its CPU stays flat, is a process whose event loop stopped
@@ -402,17 +411,11 @@ Known and left for later:
   funded-shard retry does not take a wait away and a request outlasts one
   stamp. That is money code and needs its own change, with a regression for
   that schedule.
-- One other authorize 503 is deliberate and retryable and has no mark:
-  `credit headroom changed concurrently` (a funded shard lost to peers on
-  every bounded retry). It still counts as unmarked and pages as a core
-  failure. Three of the four 503s in the burst of 2026-11-04 16:08Z were
-  this kind. (A strict key's busy answer was the other until 2026-11-17; it
-  now has its mark, see "Strict budget busy" below.)
 - A line can be written without its 503. The route writes the line and the
   app answers afterwards, so a caller that disconnects mid-authorize leaves
   the line and no 503 in the request log. That is more lines than 503s and
-  pages in the other direction. The lease-headroom and strict-budget-busy
-  lines have the same exposure.
+  pages in the other direction. The lease-headroom, strict-budget-busy and
+  headroom-raced lines have the same exposure.
 
 ### Strict budget busy
 
@@ -460,6 +463,61 @@ Do not lengthen the wait, raise the limits or change a key's strict mode to
 quiet the alert: the slot bounds the harm one strict key can do to an
 instance, and the database's conditional updates, not the slot, keep the
 budget correct across the fleet.
+
+### Credit headroom raced
+
+"TR Gateway: credit headroom raced" means authorize answered more than two
+headroom-raced 503s in ten minutes (its fast bound) or more than five in an
+hour (its slow bound), the same two bounds as "Credit rebalance busy" and
+for the same reason. Storage is healthy and nothing was held. For each of
+those requests the workspace's credit was spread across credit shards, no
+shard in the request's write set covered the hold, and the typed
+authorize's credit recovery (`storage_gcp.py`, see "Credit rebalance busy"
+above for its passes) used all three of its passes, each one ended by its
+repair:
+
+- a lock-free snapshot found funded shards, and the retry on them lost them;
+- a rebalance consolidated credit onto one shard (or found it already
+  there), and the re-authorize lost it;
+- the one forced reload of the shard count after an incomplete snapshot;
+- a wait for the rebalance cooldown on the first or second pass.
+
+The workspace's own concurrent requests took the headroom each time, and no
+pass proved the aggregate balance exhausted, so a 402 would be an
+accounting lie: the answer is the storage 503, `credit headroom changed
+concurrently; retry`, and the route writes `billing.credit_headroom_raced`
+for it. The same message from a recovery that stopped early, because its
+forced reload of the shard count failed (`credit shard-count forced reload
+failed after incomplete precheck`), gets no line: it is not this race, and
+it pages as an unmarked authorize 503. Before 2026-11-18 every one of these
+503s counted that way: three of the four 503s in the burst of 2026-11-04
+16:08Z, one on 2026-11-16 02:38Z, and the one that paged on 2026-11-18
+07:41Z (a workspace with 32 credit shards, nearly out of credit, bursting
+concurrent requests: three `credit rebalance ... outcome=moved` lines, then
+the 503 after 39 Spanner RPCs in 0.83 seconds).
+
+1. Read the window's `billing.credit_headroom_raced` lines. Each carries
+   the workspace id, the request id and the trace of its 503, and nothing
+   else. The route's `billing.authorize_storage_unavailable` and the
+   handler's `storage.unavailable` warnings carry the same request id and
+   `error_class=CreditHeadroomRaced`.
+2. For each workspace, read what its requests logged on
+   `trusted_router.storage_gcp` around them: `credit rebalance workspace=...
+   outcome=... attempt=...` for every rebalance that ran. Then read its
+   credit shard count and its `tr_credit_balance` rows by primary key (the
+   workspace id and each shard), never by a scan, against its estimates and
+   how many requests it sends at once.
+3. One workspace points at its own burst: many concurrent requests over a
+   balance cut into many small shares, often near the end of its credit,
+   where each request takes the headroom another has just consolidated.
+   Once the balance is really exhausted the snapshot proves it and the
+   answer is an honest 402. A shard count that follows the balance is the
+   operator's repair. Many workspaces at once point at Spanner latency,
+   which widens every race, or at a recent deploy.
+
+Do not answer these requests 402, or add passes, to quiet the alert: the
+funds may exist, and the three passes bound how much Spanner work one
+refused request can cost.
 
 ### One instance loses Spanner
 
