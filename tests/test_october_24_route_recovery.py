@@ -13,8 +13,9 @@ import pytest
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
 from scripts.pricing.providers import _direct_openai, pearl, sambanova
+from tests.pinned_manifests import OPENROUTER_SEED_2_1_TURBO, OPENROUTER_UNION_ALPHA
 from trusted_router import catalog_ingest
-from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.model_aliases import canonical_openrouter_model_id, canonical_router_model_id
 from trusted_router.provider_contracts import (
     PEARL_GEMMA_4_31B_HOLD_REASON,
     PEARL_GEMMA_4_31B_MODEL_ID,
@@ -36,9 +37,10 @@ def _row(model_id, native=None, **state):
     }
 
 
-def _served(monkeypatch, tmp_path, manifests=None):
-    """The prepaid (provider, model) routes the catalog serves from tmp_path's
-    manifests, after writing any given here."""
+def _served(monkeypatch, tmp_path, manifests=None, *, usage_type="Credits"):
+    """The (provider, model) routes the catalog serves from tmp_path's
+    manifests, after writing any given here: prepaid only, or every usage type
+    when usage_type is None."""
     for slug, rows in (manifests or {}).items():
         (tmp_path / f"{slug}.json").write_text(json.dumps({"provider": slug, "models": rows}))
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
@@ -46,7 +48,7 @@ def _served(monkeypatch, tmp_path, manifests=None):
     return {
         (e.provider, e.model_id)
         for e in catalog_ingest._filter_unserved_provider_endpoints(endpoints).values()
-        if e.usage_type == "Credits"
+        if usage_type is None or e.usage_type == usage_type
     }
 
 
@@ -193,7 +195,13 @@ def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold(mo
         adapter = _direct_openai.DirectOpenAIProvider(sambanova.CATALOG.spec, manifest_path=manifest)
         notes = adapter.write_provider_manifest(adapter.fetch())
         assert not [note for note in notes if "mass-prune" in note]
-        return {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+        rows = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+        # Every refresh, not just the last, leaves the listed routes as they were.
+        assert {m: (rows[m]["routable"], rows[m].get("routable_reason")) for m in listed} == {
+            **{m: (False, "provider-canary-failed") for m in _SAMBANOVA_CREDIT_HELD},
+            **{m: (True, None) for m in _SAMBANOVA_WORKING},
+        }
+        return rows
 
     first = refresh()[retired]
     assert first["routable"] is True and first["missing_since"]
@@ -201,10 +209,6 @@ def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold(mo
     assert rows[retired]["upstream_id"] == retired_native
     assert (rows[retired]["routable"], rows[retired]["routable_reason"]) == (False, "delisted-upstream")
     assert rows[retired]["missing_since"] == first["missing_since"]
-    assert {m: (rows[m]["routable"], rows[m].get("routable_reason")) for m in listed} == {
-        **{m: (False, "provider-canary-failed") for m in _SAMBANOVA_CREDIT_HELD},
-        **{m: (True, None) for m in _SAMBANOVA_WORKING},
-    }
     served = _served(monkeypatch, tmp_path)
     assert ("sambanova", retired) not in served
     assert {("sambanova", m) for m in _SAMBANOVA_WORKING} <= served
@@ -218,8 +222,21 @@ def test_nvidia_unavailable_function_is_held_without_disabling_working_route(mon
     assert ("nvidia-nim", working) in served
 
 
-def test_ended_union_preview_is_not_silently_replaced():
-    assert not any(e.model_id == "stealth/union-alpha" for e in MODEL_ENDPOINTS.values())
+def test_ended_union_preview_is_not_silently_replaced(monkeypatch, tmp_path):
+    # OpenRouter ended its Union Alpha preview and the refresh tombstoned the
+    # row instead of pointing the ID at another model. A relisting revives the
+    # tombstone, so the rule is checked on pinned rows: the tombstoned preview
+    # has no route on any usage type, and no alias sends its ID elsewhere.
+    union, seed = OPENROUTER_UNION_ALPHA["id"], OPENROUTER_SEED_2_1_TURBO["id"]
+    served = _served(monkeypatch, tmp_path, {"openrouter": [
+        dict(OPENROUTER_SEED_2_1_TURBO),
+        {**OPENROUTER_UNION_ALPHA, "routable": False, "routable_reason": "delisted-upstream"},
+    ]}, usage_type=None)
+    assert not [route for route in served if route[1] == union]
+    # Control: the fixture manifest is ingested, and its listed route is served.
+    assert ("openrouter", seed) in served
+    assert canonical_openrouter_model_id(union) == union
+    assert canonical_router_model_id(union) == union
 
 
 def test_pearl_gemma_relist_does_not_override_confirmed_inference_hold(monkeypatch, tmp_path):
