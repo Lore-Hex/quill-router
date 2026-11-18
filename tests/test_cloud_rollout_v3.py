@@ -1494,3 +1494,68 @@ def test_interleavings_table_release_while_the_other_lane_rolls(v3):
     v3.component_health[("gcp", "gateway")] = False
     v3.coordinator.release("gcp", cp["operation_id"], True)
     assert v3.coordinator.check("gcp", gw["operation_id"])["component"] == "gateway"
+
+
+AWS_PLANE_HEALTH = "https://aws.trustedrouter.com/health"
+AWS_GATEWAY_HEALTH = "https://api-aws.trustedrouter.com/health"
+
+
+@pytest.mark.parametrize(("aws_evidence", "answers", "cause"), [
+    (None, {AWS_GATEWAY_HEALTH: (200, b'{"status": "down"}')},
+     "(gateway health: gateway unhealthy (status 'down'))"),
+    (None, {AWS_PLANE_HEALTH: (200, b'{}')}, "(control-plane health: control plane unhealthy (no status))"),
+    (None, {AWS_PLANE_HEALTH: (200, b'{"status": "##[set-output name=proceed;]false"}')},
+     "(control-plane health: control plane unhealthy (status of type str))"),
+    (None, {AWS_GATEWAY_HEALTH: (200, b'{"status": 7}')}, "(gateway health: gateway unhealthy (status of type int))"),
+    (None, {AWS_PLANE_HEALTH: (500, b"{}")}, "(control-plane health: HTTP 500)"),
+    (None, {AWS_GATEWAY_HEALTH: urllib.error.URLError("connection reset")},
+     "(gateway health: URLError: <urlopen error connection reset>)"),
+    ((200, b"<html>"), None, "(control-plane evidence: JSONDecodeError: "),
+    ((301, b"", "https://elsewhere.example/trust"), None,
+     "(control-plane evidence: cloud-local health must not redirect to another cloud)"),
+    ([(200, evidence_document("aws")), (200, evidence_document("aws", release="b" * 40))], None,
+     "(release evidence: cloud-local release evidence missing, changing, or wrong cloud (changed between reads))"),
+    ((200, evidence_document("aws", api_base_url="https://api.trustedrouter.com/v1")), None,
+     "(release evidence: cloud-local release evidence missing, changing, or wrong cloud)"),
+], ids=["gateway-down", "plane-no-status", "plane-command-marker", "gateway-int-status", "plane-500", "network", "not-json", "redirect", "changing",
+        "wrong-cloud"])
+def test_a_holdback_refusal_says_which_step_failed_and_why(monkeypatch, aws_evidence, answers, cause):
+    # 2026-11-18: a deploy stopped at "azure is not a verified healthy holdback" and left a blocked
+    # lease, with nothing to tell a down cloud from a bad answer or one changing under the probe.
+    canned_planes(monkeypatch, aws_evidence=aws_evidence, answers=answers)
+    with pytest.raises(rollout.Refused) as caught:
+        rollout.probe_cloud("aws")
+    message = str(caught.value)
+    assert message.startswith("aws is not a verified healthy holdback (")
+    assert cause in message
+    assert "rollout_check" not in message and "\n" not in message and len(message) < 400
+    assert "##[" not in message  # the public Actions log's legacy parser acts on it anywhere in a line
+
+
+def test_a_healthy_holdback_still_answers_its_release(monkeypatch):
+    canned_planes(monkeypatch)
+    assert rollout.probe_cloud("aws") == "a" * 40
+
+
+@pytest.mark.parametrize(("answers", "cause"), [
+    ({AWS_GATEWAY_HEALTH: (200, b'{"status": "down"}')}, "(gateway unhealthy)"),
+    ({AWS_GATEWAY_HEALTH: (503, b"{}")}, "(HTTP 503)"),
+])
+def test_a_component_refusal_carries_its_cause(monkeypatch, answers, cause):
+    canned_planes(monkeypatch, answers=answers)
+    with pytest.raises(rollout.Refused, match=r"aws/gateway is not verified healthy") as caught:
+        rollout.probe_component("aws", "gateway")
+    assert str(caught.value).endswith(cause)
+
+
+@pytest.mark.parametrize(("exc", "reason"), [
+    (urllib.error.HTTPError("https://x/health?rollout_check=ab12", 502, "Bad Gateway", None, None), "HTTP 502"),
+    (TimeoutError("timed out"), "TimeoutError: timed out"),
+    (OSError(), "OSError"),
+    (urllib.error.URLError("https://x/health?rollout_check=ab12 failed"), "URLError: <urlopen error https://x/health failed>"),
+    (rollout.Refused("x" * 500), "x" * 157 + "..."),
+    (rollout.Refused("a ##[error]b ###[c"), "a # #[error]b ## #[c"),
+    (ValueError("##[add-mask]secret"), "ValueError: # #[add-mask]secret"),
+], ids=["http", "timeout", "bare", "query-dropped", "bounded", "refused-command-marker", "other-command-marker"])
+def test_probe_failure_is_short_and_stable(exc, reason):
+    assert rollout.probe_failure(exc) == reason
