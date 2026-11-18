@@ -1,0 +1,80 @@
+name: Provider check sync
+
+# The public Lore-Hex/trustedrouter-provider-check package vendors this
+# repository's provider-check contract (src/trusted_router/data/
+# provider_check_contract.json), and its README and CONTRIBUTING tell
+# maintainers to run test_optional_public_provider_check_snapshot against a
+# checkout. This runs that test every day, OFF the deploy gate: ci.yml never
+# reads the public repository, so a contract change here merges and deploys
+# before the public copy follows. A failure, or a check that could not run,
+# opens the sync issue or comments on the open one (scripts/ci/
+# provider_check_sync.py); the next pass closes it.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: provider-check-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: public snapshot
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # issues: write for the two issue steps, the only ones given the token.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          # The job token carries issues: write; keep it out of git config,
+          # where every later step (the check included) could read it.
+          persist-credentials: false
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+        timeout-minutes: 5
+      - name: Sync
+        timeout-minutes: 5
+        run: uv sync --frozen
+      - name: Check out the public provider-check contract snapshot
+        timeout-minutes: 3
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Lore-Hex/trustedrouter-provider-check
+          ref: main
+          path: .security/trustedrouter-provider-check
+          sparse-checkout: src/tr_provider_check/data
+          persist-credentials: false
+      - name: The public snapshot matches this repository's contract
+        id: check
+        timeout-minutes: 5
+        env:
+          PROVIDER_CHECK_REPO_PATH: ${{ github.workspace }}/.security/trustedrouter-provider-check
+        # A skip is a failure here: only "1 passed" passes the step.
+        run: |
+          set -o pipefail
+          uv run pytest -q -rs -p no:cacheprovider \
+            "tests/test_provider_check_contract_parity.py::test_optional_public_provider_check_snapshot" \
+            2>&1 | tee provider-check-sync.txt
+          grep -Eq "^1 passed" provider-check-sync.txt
+      - name: Open or update the provider-check sync issue
+        # Also when the check never ran (a checkout or the sync failed): a
+        # check that cannot run is a failure, never silence.
+        if: failure() && steps.check.outcome != 'success'
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/provider_check_sync.py --outcome failure --report provider-check-sync.txt
+      - name: Close the provider-check sync issue
+        if: success()
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/provider_check_sync.py --outcome success
