@@ -1,60 +1,43 @@
-"""Opt-in native GoogleSQL validation; never connects to a cloud database."""
+"""Strict key windows on the native Spanner emulator, on the production schema.
+
+tests/test_strict_budget_typed.py checks reserve_strict_key over the fake,
+which matches its SQL by substring. These run the real GoogleSQL: Spanner
+evaluates the strict-window conditional UPDATE (IF(include_byok, ...), the
+`{prefix}_start` window floor, holds counted against each window), the lock
+manager arbitrates concurrent reservations, and a BYOK request on a key that
+excludes BYOK writes no hold. Ids are synthetic.
+"""
+from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
-from google.api_core.exceptions import AlreadyExists
-from google.auth.credentials import AnonymousCredentials
-from google.cloud import spanner
 from google.cloud.spanner_v1 import param_types
 
+from tests.conformance.spanner_ddl import DDL
 from trusted_router.spend_windows import KeyWindowLimitExceeded, utcnow
 from trusted_router.storage_gcp_authorize import key_window_limit_decision
 from trusted_router.storage_gcp_strict_budget import reserve_strict_key
 
+pytestmark = pytest.mark.xdist_group("conformance-spanner-emulator")
 
-@pytest.fixture
-def database(monkeypatch):
-    import os
 
-    host = os.environ.get("TR_STRICT_SPANNER_EMULATOR_HOST", "")
-    if not host:
-        pytest.skip("native Spanner emulator not configured")
-    assert host.startswith(("127.0.0.1:", "localhost:")), "local emulator only"
-    monkeypatch.setenv("SPANNER_EMULATOR_HOST", host)
-    client = spanner.Client(project="tr-strict-tests", credentials=AnonymousCredentials())
-    instance = client.instance(
-        "strict-tests", configuration_name="projects/tr-strict-tests/instanceConfigs/emulator-config"
+@pytest.fixture(params=["spanner-emulator"], ids=lambda backend: f"backend={backend}")
+def database(request, native_emulator_resources):
+    assert request.param == "spanner-emulator"
+    schema = tuple(DDL)
+    # The SDK Database exposes its Instance only as `_instance` (no public accessor).
+    database = native_emulator_resources[0]._instance.database(  # noqa: SLF001 - SDK has no public accessor
+        "strict-" + uuid4().hex[:12], ddl_statements=schema[:20],
     )
-    if not instance.exists():
-        try:
-            instance.create().result(timeout=30)
-        except AlreadyExists:
-            pass
-    columns = [
-        "key_hash STRING(128) NOT NULL",
-        "shard INT64 NOT NULL",
-        "limit_micro INT64",
-        "usage INT64 NOT NULL",
-        "byok_usage INT64 NOT NULL",
-        "reserved INT64 NOT NULL",
-        "include_byok BOOL NOT NULL",
-    ]
-    for prefix in ("day", "week", "month"):
-        columns.extend(
-            [f"{prefix}_limit_micro INT64", f"{prefix}_usage INT64", f"{prefix}_start TIMESTAMP"]
-        )
-    database = instance.database(
-        "strict-" + uuid4().hex[:12],
-        ddl_statements=[
-            "CREATE TABLE tr_key_limit (" + ",".join(columns) + ") PRIMARY KEY (key_hash, shard)",
-        ],
-    )
-    database.create().result(timeout=30)
+    database.create().result(timeout=120)
     try:
+        for offset in range(20, len(schema), 20):
+            database.update_ddl(schema[offset:offset + 20]).result(timeout=120)
         yield database
     finally:
+        database.close()
         database.drop()
 
 

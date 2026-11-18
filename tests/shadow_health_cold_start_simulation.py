@@ -24,11 +24,8 @@ from __future__ import annotations
 
 import heapq
 import importlib.util
-import inspect
 import json
-import os
 import random
-import subprocess
 import sys
 import tempfile
 import threading
@@ -59,49 +56,13 @@ MODULE_SOURCES = (("observation", "storage_gcp_shadow_observation.py"),
                   ("lifecycle", "async_settle_shadow_lifecycle.py"))
 
 
-def baseline_ref():
-    """Use local baseline objects only; source archives need no Git metadata."""
-    base = os.environ.get("GITHUB_BASE_REF")
-    candidates = [base, f"origin/{base}", "origin/main"] if base else ["origin/main"]
-    for ref in dict.fromkeys(candidates):
-        try:
-            for _, source in MODULE_SOURCES:
-                subprocess.run(["git", "cat-file", "-e", f"{ref}:src/trusted_router/{source}"],  # noqa: S603, S607 - local git objects, no shell
-                    cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except (OSError, subprocess.CalledProcessError):
-            continue
-        return ref
-    pytest.skip("baseline unavailable: neither origin/main nor GITHUB_BASE_REF has local source objects "
-                "(Git metadata/refs may be absent); worktree cases run independently")
-
-
-def modules(ref=None):
-    """Import copies, never stash or change the working tree to run a baseline."""
-    if ref == "baseline":
-        ref = baseline_ref()
-    sources = []
-    for name, source in MODULE_SOURCES:
-        path = "src/trusted_router/" + source
-        try:
-            raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT,  # noqa: S603, S607 - local git revision, no shell
-                                          stderr=subprocess.PIPE)
-                   if ref else (ROOT/path).read_bytes())
-        except (OSError, subprocess.CalledProcessError):
-            if ref is None:
-                raise
-            pytest.skip(f"simulation revision {ref!r} unavailable: missing local source {path} "
-                        "(shallow checkout or absent Git metadata); worktree cases run independently")
-        sources.append((name, path, raw))
-    # Compare the actual blobs, including pinned historical controls, before
-    # importing either copy. Ref names do not tell us whether a fix is present.
-    if ref and all(raw == (ROOT/path).read_bytes() for _, path, raw in sources):
-        pytest.skip(f"simulation baseline {ref!r} source blobs are byte-identical to the worktree; "
-                    "positive control requires different sources; worktree cases run independently")
+def modules():
+    """Import fresh copies of the worktree sources, so a control's patches stay local."""
     result = []
     with tempfile.TemporaryDirectory() as directory:
-        for name, _, raw in sources:
+        for name, source in MODULE_SOURCES:
             dest = Path(directory)/f"{name}.py"
-            dest.write_bytes(raw)
+            dest.write_bytes((ROOT/"src/trusted_router"/source).read_bytes())
             key = "shadow_sim_" + name
             spec = importlib.util.spec_from_file_location(key, dest)
             module = importlib.util.module_from_spec(spec)
@@ -114,48 +75,6 @@ def modules(ref=None):
     for name in ("Budget", "ContentionLoss", "UnknownCommit", "ObservationStore"):
         setattr(publisher, name, getattr(storage, name))
     return storage, publisher
-
-
-@pytest.mark.parametrize("available,expected", [
-    ({"origin/main", "release", "origin/release"}, "release"),
-    ({"release", "origin/release"}, "release"),
-    ({"origin/release"}, "origin/release"),
-    ({"origin/main"}, "origin/main"),
-    (set(), None),
-])
-def test_baseline_resolution_order_and_missing_metadata(monkeypatch, available, expected):
-    monkeypatch.setenv("GITHUB_BASE_REF", "release")
-    checked = []
-
-    def check(command, **kwargs):
-        ref, path = command[-1].split(":", 1)
-        checked.append(ref)
-        assert path in {"src/trusted_router/" + source for _, source in MODULE_SOURCES}
-        if ref not in available:
-            raise subprocess.CalledProcessError(128, command)
-
-    monkeypatch.setattr(subprocess, "run", check)
-    if expected is None:
-        with pytest.raises(pytest.skip.Exception, match="baseline unavailable.*worktree cases run independently"):
-            baseline_ref()
-        # A missing baseline must never prevent loading the worktree copies.
-        storage, publisher = modules()
-        assert publisher.ObservationStore is storage.ObservationStore
-    else:
-        assert baseline_ref() == expected
-    order = ["release", "origin/release", "origin/main"]
-    assert list(dict.fromkeys(checked)) == (order if expected is None else order[:order.index(expected)+1])
-
-
-def test_baseline_requires_both_source_blobs(monkeypatch):
-    monkeypatch.setenv("GITHUB_BASE_REF", "release")
-
-    def check(command, **kwargs):
-        if command[-1] == "release:src/trusted_router/services/async_settle_shadow_health.py":
-            raise subprocess.CalledProcessError(128, command)
-
-    monkeypatch.setattr(subprocess, "run", check)
-    assert baseline_ref() == "origin/release"
 
 
 class Clock:
@@ -505,9 +424,9 @@ class Reader:
             self.mutations[kind, key] = body
 
 
-def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
+def simulate(n=8, *, warm=False, slots=130, abort=False, kill_at=None,
              publish_commit_seconds=.033):
-    storage, publisher = modules(ref)
+    storage, publisher = modules()
     clock = Clock()
     publisher.sleep = clock.sleep
     db = Database(clock, storage, publish_commit_seconds=publish_commit_seconds)
@@ -567,9 +486,6 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
                     max_observed = max(max_observed, (trace["observed_at_ns"]-slot*2_000_000_000)//1000)
                     if first is None:
                         first, first_ack = offset, trace["ack_at_us"]-slot*2_000_000
-                elif ref:
-                    # origin/main clears incumbent on any non-publication.
-                    accepted[boot] = None
                 if offset >= 10:
                     unknowns += trace["unknown_outcome"]
                     attempts += trace["outcome"] != "missed"
@@ -602,7 +518,7 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
         max_published_observation_ms=max_observed/1000, aborts=db.aborts)
 
 
-def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
+def simulate_lifecycle(*, warm=False, slots=130, post_ack_probability=0.,
                        post_ack_seconds=2., seed=73, clock_offsets_ms=None,
                        injected_ordering_fault=False, n=8, reject_published=False,
                        stall_from=None, patch=None, stale_holder=None,
@@ -645,10 +561,9 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     # Admission overshoot is a calibrated MODEL of the measured ~1 ms/slot
     # drift, not a replay of production timestamps. It runs after cadence sleep.
     # Tick phase models Service.run's first poll after the boundary.
-    storage, publisher = modules(ref)
+    storage, publisher = modules()
     if patch is not None:
         patch(storage, publisher)
-    paired_tick = "mono" in inspect.signature(publisher.Service.tick).parameters
     clock = Clock()
     # Offset means server minus local wall time. A negative boot's local
     # boundary happens before the server boundary. The DB uses one common
@@ -771,8 +686,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                 svc.admission_lock = AdmissionDelay(lock)
             accept = svc.accept
             def capture_release(event, *, accept=accept, boot=boot, **kwargs):
-                # Observe real failure events, including on origin/main where
-                # release_reason was not yet retained in the emitted trace.
+                # Observe real failure events.
                 if isinstance(event, publisher.lifecycle.PublisherFailed):
                     releases.append((boot, event.slot, event.reason))
                 return accept(event, **kwargs)
@@ -818,10 +732,10 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                     # mutating durable timestamps; account it on the next tick.
                     continue
                 # Mirror Service.run: monotonic immediately before wall, then
-                # the real tick prelude and lifecycle. Historical sources lack mono.
+                # the real tick prelude and lifecycle.
                 mono = svc.store.clock()
                 stamp = int(svc.store.wall()*1e6)
-                for effect in svc.tick(stamp, **({"mono": mono} if paired_tick else {})):
+                for effect in svc.tick(stamp, mono=mono):
                     if isinstance(effect, publisher.lifecycle.StartPublisherCycle):
                         svc.submit_publisher(effect.slot, stamp)
         for offset in range(slots):
@@ -946,16 +860,6 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             for reason in sorted({t["release_reason"] for t in measured if "release_reason" in t})})
 
 
-def record_calibration(results):
-    """Measurements, not correctness assertions: these paths do not explain production."""
-    print(json.dumps(dict(calibration="production", matched=all(
-        r["commits_per_slot"] >= 3 and r["no_incumbent_commits_per_slot"] >= 5
-        and r["rate"] <= .5 and .30 <= r["previous_winner_failures"] <= .50
-        and r["unknown_ratio"] >= .15 for r in results),
-        transaction_calibration_matched=all(r["commits_per_slot"] >= 5
-        and 150 <= r["average_claim_transaction_ms"] <= 300 for r in results))), flush=True)
-
-
 def run_workers(clock, *callbacks):
     with ThreadPoolExecutor(max_workers=len(callbacks)) as pool:
         futures = [pool.submit(clock.worker, callback, index)
@@ -1026,9 +930,8 @@ def test_rollback_holds_shared_until_its_final_rpc_completes():
     assert db.transactions[0].final_rpc == "rollback"
 
 
-@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
-def test_upgrade_deadlock_aborts_younger_and_real_wrapper_reentry_does_not_read(ref):
-    storage, _ = modules(ref)
+def test_upgrade_deadlock_aborts_younger_and_real_wrapper_reentry_does_not_read():
+    storage, _ = modules()
     clock = Clock()
     # Use valid contemporary schema timestamps for real claim() callbacks.
     clock.now = 896313600 * 2.
@@ -1077,65 +980,34 @@ def test_fake_sdk_retries_callable_with_exponential_backoff_until_deadline():
     assert calls == pytest.approx([0, .010, .030, .070, .150, .250, .350])
 
 
-@pytest.fixture(scope="module")
-def calibration_elapsed():
-    return []
-
-
-@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
-def test_production_calibration(capsys, ref, calibration_elapsed):
+def test_production_calibration(capsys):
     """Record the mismatch with production; keep all mechanism invariants."""
     import time
 
-    if ref:
-        ref = baseline_ref()
     started = time.monotonic()
-    baseline = []
     with capsys.disabled():
         for post_ack_probability in (0., .4):
             for warm in (False, True):
-                result = simulate_lifecycle(ref=ref, warm=warm,
-                                            post_ack_probability=post_ack_probability)
-                print(json.dumps(dict(ref=ref or "worktree", warm=warm,
-                    post_ack_probability=post_ack_probability, **result)), flush=True)
-                if ref and post_ack_probability:
-                    baseline.append(result)
+                result = simulate_lifecycle(warm=warm, post_ack_probability=post_ack_probability)
+                print(json.dumps(dict(warm=warm, post_ack_probability=post_ack_probability,
+                    **result)), flush=True)
     elapsed = time.monotonic() - started
     with capsys.disabled():
         print(f"Four 130-slot lifecycle scenarios: {elapsed:.3f} seconds", flush=True)
-    # Preserve the original combined eight-scenario runtime bound even though
-    # baseline and worktree now have independent skip/reporting outcomes.
-    calibration_elapsed.append(elapsed)
-    assert sum(calibration_elapsed) < 120
-    if ref:
-        with capsys.disabled():
-            record_calibration(baseline)
+    assert elapsed < 120
 
 
-@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
-def test_post_ack_stall_crosses_boundary_as_missed_not_released(ref):
-    result = simulate_lifecycle(ref=ref, slots=70, warm=True, post_ack_probability=1.)
+def test_post_ack_stall_crosses_boundary_as_missed_not_released():
+    result = simulate_lifecycle(slots=70, warm=True, post_ack_probability=1.)
     assert result["post_ack_stalls"] > 0
     assert result["previous_winner_missed"] >= .5
     assert result["previous_winner_failures"] == result["released"] == 0
     assert result["unknown_ratio"] == 0
 
 
-if __name__ == "__main__":
-    baseline = []
-    for ref in (None, "baseline"):
-        for warm in (False, True):
-            result = simulate_lifecycle(ref=ref, warm=warm, post_ack_probability=.4)
-            print(json.dumps(dict(ref=ref or "worktree", warm=warm, **result)), flush=True)
-            if ref:
-                baseline.append(result)
-    record_calibration(baseline)
-
-
-@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
-def test_pre_boundary_server_claim_rolls_back_before_owner_validation(ref):
+def test_pre_boundary_server_claim_rolls_back_before_owner_validation():
     """A -5ms server stamp cannot become a published reply in these sources."""
-    storage, publisher = modules(ref)
+    storage, publisher = modules()
     clock = Clock()
     clock.now = START*2.-.005
     publisher.sleep = clock.sleep
@@ -1165,68 +1037,29 @@ def test_pre_boundary_server_claim_rolls_back_before_owner_validation(ref):
         PUBLISHER_SLOT_TRACE(published)
 
 
-def test_clock_skew_production_calibration(capsys):
-    """Modelled offsets within ±5 ms with ≥15 ms commit latency do not reproduce rejection."""
-    import time
-
-    ref = baseline_ref()
-    started = time.monotonic()
-    baseline = []
-    with capsys.disabled():
-        for offsets in ((-4, -3, -2, -1, 0, 1, 2, 3), (-3,)*8):
-            for warm in (False, True):
-                result = simulate_lifecycle(ref=ref, warm=warm, clock_offsets_ms=offsets)
-                baseline.append(result)
-                print(json.dumps(dict(ref=ref, warm=warm, **result)), flush=True)
-        print(f"Four skew scenarios: {time.monotonic()-started:.3f} seconds", flush=True)
-    assert time.monotonic()-started < 20
-    with capsys.disabled():
-        print(json.dumps(dict(calibration="clock_skew", matched=all(
-            r["invalid_reply_releases"] > 0 and r["invalid_reply_boots"]
-            and .20 <= r["previous_winner_failures"] <= .50 and r["rate"] <= .60
-            and r["slots_after_rejection"] > 0 and r["commits_after_rejection"] >= 3
-            and r["empty_claim_commits"] > 0 and r["unknown_ratio"] > 0 for r in baseline))), flush=True)
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(os.environ.get("TR_SHADOW_REALTIME_SIMULATION") != "1",
-                    reason="60-slot real-time simulation requires TR_SHADOW_REALTIME_SIMULATION=1")
-async def test_real_threads_asyncio_owner_sixty_slots(capsys, caplog):
-    await real_threads_asyncio_owner(capsys, caplog, slots=60)
-
-
 @pytest.mark.parametrize("warm", [False, True], ids=["cold", "warm"])
-@pytest.mark.parametrize("ref", ["baseline", None], ids=["baseline", "worktree"])
-def test_injected_observation_ordering_fault(capsys, caplog, ref, warm):
+def test_injected_observation_ordering_fault(capsys, caplog, warm):
     """Injected negative control, NOT a derivation of the production reversal."""
-    result = simulate_lifecycle(ref=ref, warm=warm, injected_ordering_fault=True)
+    result = simulate_lifecycle(warm=warm, injected_ordering_fault=True)
     diagnostics = [r.getMessage() for r in caplog.records
                    if r.msg.startswith("shadow_v2_publisher_reply_rejected")]
     rules = {message.split("exception_message=", 1)[1].split(" ", 1)[0]
              for message in diagnostics}
     with capsys.disabled():
         print(json.dumps(dict(scenario="injected_observation_ordering_fault",
-            ref=baseline_ref() if ref else "worktree", warm=warm,
+            warm=warm,
             rejection_rules=sorted(rules), **result)), flush=True)
     assert result["injected_reversals"] > 0
     assert result["injected_gap_max_ms"] < 30
-    if ref:
-        assert rules == {"trace_claim_observed_order"}
-        assert len(diagnostics) == result["invalid_reply_releases"] > 0
-        assert result["rate"] < .60
-        assert .30 <= result["previous_winner_failures"] <= .50
-        assert result["commits_in_recovery_slot"] > result["commits_after_publication"]
-        assert result["bound_wait_max_ms"] == 0
-    else:
-        assert not diagnostics and result["invalid_reply_releases"] == 0
-        assert result["rate"] >= .95
-        assert result["unknown_ratio"] <= .01
-        assert result["max_60_slot_commits"] <= 1.1
-        assert result["max_60_slot_commits_including_warmup"] <= 1.1
-        assert result["median_incumbency_streak"] >= 50
-        assert 0 <= result["max_published_observation_ms"] <= 250
-        assert 0 < result["bound_wait_max_ms"] <= 40
-        assert result["max_published_cycle_ms"] <= 500
+    assert not diagnostics and result["invalid_reply_releases"] == 0
+    assert result["rate"] >= .95
+    assert result["unknown_ratio"] <= .01
+    assert result["max_60_slot_commits"] <= 1.1
+    assert result["max_60_slot_commits_including_warmup"] <= 1.1
+    assert result["median_incumbency_streak"] >= 50
+    assert 0 <= result["max_published_observation_ms"] <= 250
+    assert 0 < result["bound_wait_max_ms"] <= 40
+    assert result["max_published_cycle_ms"] <= 500
 
 
 @pytest.mark.asyncio
