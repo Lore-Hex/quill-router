@@ -1009,19 +1009,35 @@ def test_the_map_records_ci_yml_s_test_selection_in_eight_shards_and_merges_only
 
 
 def test_the_heavy_check_of_each_map_is_a_job_of_its_own_after_the_upload() -> None:
-    # A red check names what the heavy lane's scope misses, and leaves the
-    # map usable: testmap.py's run_problem accepts a run whose only failed
-    # job is this one, after the merge job (which uploads the map) passed.
+    # The heavy lane's drift check: each new map of main against the lane's
+    # scope at the same commit. A red check names what the scope misses and
+    # leaves the map usable (testmap.py's run_problem accepts a run whose only
+    # failed job is this one, after the merge job that uploads the map). On
+    # main it opens or updates the heavy lane's scope issue, and a pass closes
+    # it, so the drift is seen without anyone watching this workflow.
     from scripts.ci import testmap
 
-    jobs = _testmap()["jobs"]
+    workflow = _testmap()
+    jobs = workflow["jobs"]
     merge, check = jobs["merge"], jobs["heavy-scope"]
     assert merge["name"] == testmap.MAP_JOB and check["name"] == testmap.HEAVY_CHECK_JOB
     assert check["needs"] == "merge" and check["if"] == "needs.merge.result == 'success'"
     assert not any("testmap.py heavy" in step.get("run", "") for step in merge["steps"])
     download = next(step for step in check["steps"] if "download-artifact" in step.get("uses", ""))
     assert download["with"] == {"name": testmap.ARTIFACT}
-    assert [step["run"] for step in check["steps"] if "run" in step] == [
-        "python3 scripts/ci/testmap.py heavy --map testmap.json.gz"]
+    # Only this job may write issues; the workflow reads contents only.
+    assert workflow["permissions"] == {"contents": "read"}
+    assert check["permissions"] == {"contents": "read", "issues": "write"}
+    assert check["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    runs = {step["name"]: step for step in check["steps"] if "run" in step}
+    assert list(runs) == ["The heavy lane's scope covers what its tests ran",
+                          "Open or update the heavy lane's scope issue", "Close the heavy lane's scope issue"]
+    the_check, opens, closes = runs.values()
+    assert the_check["run"] == "python3 scripts/ci/testmap.py heavy --map testmap.json.gz --report heavy-scope.md"
+    assert the_check["id"] == "check" and "if" not in the_check
+    assert opens["run"] == "python3 scripts/ci/testmap.py heavy-issue --outcome failure --report heavy-scope.md"
+    assert opens["if"] == "failure() && steps.check.outcome == 'failure' && github.ref == 'refs/heads/main'"
+    assert closes["run"] == "python3 scripts/ci/testmap.py heavy-issue --outcome success"
+    assert closes["if"] == "success() && github.ref == 'refs/heads/main'"
     # Nothing else may fail a run and keep its map.
     assert set(jobs) == {"changes", "record", "merge", "heavy-scope"}

@@ -166,10 +166,11 @@ later push until a run passes it again, and its red holds every deploy.
       (their split weights) and the Python toolchain.
   A glob or listing of a directory the file computes some other way (a
   parameter, an attribute) is taken to list one the file names, or one
-  outside the repository; that is the gap testmap.py's `heavy` check closes
-  against what the tests actually ran and opened: on every new per-test
-  footprint map, and in the default suite through the snapshot
-  scripts/ci/heavy_footprint.json.
+  outside the repository. That gap, and any read the rules miss, is what
+  testmap.py's `heavy` check closes: on every new per-test footprint map of
+  main, every file the lane's tests ran or opened must be a change that runs
+  the lane, at the same commit; a failure opens (or updates) an issue, and
+  the next pass closes it.
 """
 
 from __future__ import annotations
@@ -1106,30 +1107,10 @@ def _parse(source: str, path: str) -> ast.AST | None:
         return None
 
 
-@dataclass(frozen=True)
-class HeavyWalk:
-    """heavy_closure() and, for each file in it, the file the walk reached
-    it from first ("" for a starting file): a path from a heavy test to it."""
-    closure: frozenset[str]
-    parents: dict[str, str]
-
-    def path_to(self, path: str) -> list[str]:
-        """The files from a starting file down to `path`, both included."""
-        chain = [path]
-        while self.parents.get(chain[-1]):
-            chain.append(self.parents[chain[-1]])
-        return chain[::-1]
-
-
-_WALKS: dict[tuple[str, int], HeavyWalk] = {}  # (root, what the walk reads) -> walk
+_CLOSURES: dict[tuple[str, int], frozenset[str]] = {}  # (root, what the closure reads) -> closure
 
 
 def heavy_closure(root: Path, tree: Tree | None = None) -> frozenset[str]:
-    """Every repository file the heavy tests can load or read: heavy_walk()."""
-    return heavy_walk(root, tree).closure
-
-
-def heavy_walk(root: Path, tree: Tree | None = None) -> HeavyWalk:
     """Every repository file the heavy tests can load or read, by these rules,
     from HEAD's sources: start at HEAVY_TESTS and tests/conftest.py; from each
     Python file, follow the modules it imports and the package __init__.py of
@@ -1149,11 +1130,10 @@ def heavy_walk(root: Path, tree: Tree | None = None) -> HeavyWalk:
     key = (str(root.resolve()), hash((HEAVY_TESTS, TEST_HARNESS, tuple(tree.files), tuple(
         (lambda stat: (stat.st_size, stat.st_mtime_ns))((root / path).stat())
         for path in tree.files if path.endswith(".py")))))
-    if key in _WALKS:
-        return _WALKS[key]
+    if key in _CLOSURES:
+        return _CLOSURES[key]
     heavy = frozenset(HEAVY_TESTS)
     seen: set[str] = set()
-    parents: dict[str, str] = dict.fromkeys((*HEAVY_TESTS, *TEST_HARNESS), "")
     emptied: dict[str, set[str]] = {}  # test module -> the tests whose bodies were left out
     kept: dict[str, frozenset[str]] = {}  # test module -> the tests something calls
     identifiers: dict[str, set[str]] = {}
@@ -1184,10 +1164,8 @@ def heavy_walk(root: Path, tree: Tree | None = None) -> HeavyWalk:
         identifiers[path] = referenced_identifiers(parsed)
         return targets
 
-    def reached(path: str, targets: set[str]) -> None:
-        for target in sorted(targets - seen):
-            parents.setdefault(target, path)
-            pending.append(target)
+    def reached(targets: set[str]) -> None:
+        pending.extend(sorted(targets - seen))
 
     pending = [*HEAVY_TESTS, *TEST_HARNESS]
     while pending:
@@ -1201,16 +1179,16 @@ def heavy_walk(root: Path, tree: Tree | None = None) -> HeavyWalk:
                 # fixture), not one they run: its tests do not run, unless
                 # something calls one by name or reads the file as a path.
                 partial = is_test_file(path) and path not in heavy and path not in named_as_paths
-                reached(path, read(path, frozenset() if partial else None))
+                reached(read(path, frozenset() if partial else None))
         called = set().union(*identifiers.values()) if identifiers else set()
         for path, names in list(emptied.items()):
             if path in named_as_paths:
-                reached(path, read(path, None))
+                reached(read(path, None))
             elif names & called:
                 kept[path] = kept.get(path, frozenset()) | (names & called)
-                reached(path, read(path, kept[path]))
-    _WALKS[key] = HeavyWalk(frozenset(seen), {path: parents[path] for path in seen})
-    return _WALKS[key]
+                reached(read(path, kept[path]))
+    _CLOSURES[key] = frozenset(seen)
+    return _CLOSURES[key]
 
 
 def empty_test_bodies(tree: ast.Module, keep: frozenset[str]) -> set[str]:
