@@ -260,22 +260,55 @@ def probe_cloud(cloud: str) -> str:
     not a substitute for those gates or proof of an inference request.
     """
     plane, gateway = PLANES[cloud]
+    step = "control-plane evidence"
     try:
         before = fetch(f"{plane}/trust/control-plane.json")
-        if fetch(f"{plane}/health").get("status") != "ok":
-            raise Refused("control plane unhealthy")
-        if fetch(f"{gateway}/health").get("status") != "ok":
-            raise Refused("gateway unhealthy")
+        step = "control-plane health"
+        status = fetch(f"{plane}/health").get("status")
+        if status != "ok":
+            raise Refused(f"control plane unhealthy (status {_bounded(repr(status))})")
+        step = "gateway health"
+        status = fetch(f"{gateway}/health").get("status")
+        if status != "ok":
+            raise Refused(f"gateway unhealthy (status {_bounded(repr(status))})")
+        step = "control-plane evidence, second read"
         after = fetch(f"{plane}/trust/control-plane.json")
+        step = "release evidence"
         release = before.get("release")
         api_base = before.get("api_base_url")
         if (before != after or not isinstance(release, str)
                 or not SHA.fullmatch(release)
                 or not isinstance(api_base, str) or api_base.rstrip("/") != f"{gateway}/v1"):
-            raise Refused("cloud-local release evidence missing, changing, or wrong cloud")
+            raise Refused("cloud-local release evidence missing, changing, or wrong cloud"
+                          + (" (changed between reads)" if before != after else ""))
         return release
     except (OSError, ValueError, Refused) as exc:
-        raise Refused(f"{cloud} is not a verified healthy holdback") from exc
+        # The cause is printed with the refusal: a deploy that stops here
+        # leaves a blocked lease, and the operator recovering it needs to know
+        # whether the holdback was down, answered badly, or was changing.
+        raise Refused(f"{cloud} is not a verified healthy holdback ({step}: {probe_failure(exc)})") from exc
+
+
+def _bounded(text: str, limit: int = 160) -> str:
+    """TEXT on one line, at most LIMIT characters."""
+
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 3] + "..."
+
+
+def probe_failure(exc: BaseException) -> str:
+    """A short, single-line reason a probe step failed, for the refusal message.
+
+    It names the error type and, for an HTTP error, the status. The cache-busting
+    query fetch() adds is dropped so the text is stable across retries.
+    """
+
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(exc, Refused):
+        return _bounded(str(exc))
+    detail = re.sub(r"\?rollout_check=[0-9a-f]+", "", str(exc))
+    return _bounded(f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__)
 
 
 # A route the URL map sends to the API service (trusted-router-control-backend
@@ -383,7 +416,7 @@ def probe_component(cloud: str, component: str) -> None:
                 or not isinstance(api_base, str) or api_base.rstrip("/") != f"{gateway}/v1"):
             raise Refused("cloud-local release evidence missing, changing, or wrong cloud")
     except (OSError, ValueError, Refused) as exc:
-        raise Refused(f"{cloud}/{component} is not verified healthy") from exc
+        raise Refused(f"{cloud}/{component} is not verified healthy ({probe_failure(exc)})") from exc
 
 
 def observed_releases(cloud: str) -> list[str]:
