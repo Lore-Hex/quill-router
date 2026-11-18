@@ -41,6 +41,14 @@ is still on main (the compare is `identical` or `ahead`), 1 otherwise or when
 unknown. Main is protected against force-pushes, but a lease wait lasts hours
 and this is the last point before production changes.
 
+    superseded_deploy.py --mode main-head --repo OWNER/NAME
+
+Prints main's head commit, the MAIN_SHA both checks above compare against,
+and exits 0; exits 1 with the reason on stderr when it cannot be read. The
+read goes through the same transient-error retry as every other lookup here,
+so one GitHub 502 no longer fails confirm-current-main or, worse,
+confirm-still-on-main after the lease is held.
+
     superseded_deploy.py --mode cancel-older --repo OWNER/NAME --base SHA
 
 deploy.yml's cancel-superseded job runs this for its own commit. An older push's
@@ -312,6 +320,22 @@ def _gh_json(args: list[str], deadline: float | None = None) -> object | None:
             return None
 
 
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def main_head(repo: str) -> str | None:
+    """Main's head commit SHA, or None (with the reason on stderr) when it cannot be read."""
+
+    ref = _gh_json(["api", f"repos/{repo}/git/ref/heads/{MAIN_BRANCH}"])
+    target = ref.get("object") if isinstance(ref, dict) else None
+    sha = target.get("sha") if isinstance(target, dict) else None
+    if not isinstance(sha, str) or not _COMMIT_SHA.fullmatch(sha):
+        if ref is not None:
+            print(f"superseded_deploy: {MAIN_BRANCH} ref answered without a commit SHA", file=sys.stderr)
+        return None
+    return sha
+
+
 def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
     """Whether a main-tracking run can deploy at once, and why.
 
@@ -530,10 +554,20 @@ def cancel_older(repo: str, this: str, now: float) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--base", required=True)
+    parser.add_argument("--base")
     parser.add_argument("--head")
-    parser.add_argument("--mode", choices=("supersede", "ancestry", "cancel-older"), default="supersede")
+    parser.add_argument(
+        "--mode", choices=("supersede", "ancestry", "cancel-older", "main-head"), default="supersede"
+    )
     args = parser.parse_args(argv)
+    if args.mode == "main-head":
+        head = main_head(args.repo)
+        if head is None:
+            return 1
+        print(head)
+        return 0
+    if not args.base:
+        parser.error("--base is required for every mode but --mode main-head")
     if args.mode == "cancel-older":
         try:
             cancelled = cancel_older(args.repo, args.base, time.time())

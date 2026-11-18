@@ -441,7 +441,7 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     # The check precedes the lease (2026-10-22): a superseded run skips before
     # it waits for or holds the production mutex.
     assert confirm < admit < deploy < mutation
-    assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
+    assert "superseded_deploy.py --mode main-head" in workflow[confirm:admit]
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
     assert (
         "if: ${{ github.repository == 'Lore-Hex/quill-router' && "
