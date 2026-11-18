@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -14,9 +15,18 @@ from trusted_router.storage_models import (
 from trusted_router.store_protocol import Store
 from trusted_router.synthetic.probes import rotation_candidates
 
+logger = logging.getLogger(__name__)
+
 _SAMPLES_PER_ROUTE_LIMIT = 48
 _BATCH_SAMPLE_LIMIT = 100_000
 _DEGRADATION_WINDOW_HOURS = 24
+# Partial degradation (a flaky route: >=25% failures, not a full outage) is
+# reported once a day as one grouped digest, not every hourly pass. Chronic
+# flappers (near-ai, fortanix glm-5.3-flash at 25-30% for days) paged hourly
+# with nothing to act on. Full outages (kind="availability") still page every
+# pass. The digest fingerprint carries the date, so each day's digest is one
+# new Sentry issue (one email) and every pass in the digest hour folds into it.
+DEGRADATION_DIGEST_HOUR_UTC = 14
 _CONFIGURATION_ERROR_TYPES = frozenset({
     "provider_auth_config", "unsupported_route", "probe_config_error",
 })
@@ -431,10 +441,62 @@ def _availability_cause(flag: RouteHealthFlag) -> str:
     return f" (latest: {', '.join(parts)})" if parts else ""
 
 
-def report_route_health(flags: list[RouteHealthFlag]) -> None:
-    """Emit one grouped Sentry message for each unhealthy route."""
+def _degradation_detail(flag: RouteHealthFlag) -> str:
+    return (
+        f"failed {flag.failures}/{flag.samples} probes ({flag.failure_rate:.0%}) "
+        f"over at least 30 minutes within the last {_DEGRADATION_WINDOW_HOURS} hours"
+    )
+
+
+def report_degradation_digest(
+    flags: list[RouteHealthFlag], *, now: dt.datetime | None = None,
+) -> bool:
+    """Log degraded routes every pass; page them as one daily digest.
+
+    Returns True when this pass sent the digest to Sentry.
+    """
+    degraded = sorted(
+        (flag for flag in flags if flag.kind == "degradation"),
+        key=lambda flag: (flag.provider, flag.model),
+    )
+    if not degraded:
+        return False
+    for flag in degraded:
+        logger.warning(
+            "route-degradation: %s/%s %s%s",
+            flag.provider, flag.model, _degradation_detail(flag), _availability_cause(flag),
+        )
+    now = now or dt.datetime.now(dt.UTC)
+    if now.astimezone(dt.UTC).hour != DEGRADATION_DIGEST_HOUR_UTC:
+        return False
+    from trusted_router.synthetic.alerts import ops_alert
+
+    day = now.astimezone(dt.UTC).date().isoformat()
+    lines = "; ".join(
+        f"{flag.provider}/{flag.model} {flag.failures}/{flag.samples} "
+        f"({flag.failure_rate:.0%}){_availability_cause(flag)}"
+        for flag in degraded
+    )
+    ops_alert(
+        f"route-degradation daily digest {day}: {len(degraded)} flaky route"
+        f"{'' if len(degraded) == 1 else 's'} failed at least 25% of probes within the last "
+        f"{_DEGRADATION_WINDOW_HOURS} hours: {lines}",
+        fingerprint=["route-degradation-digest", day],
+        tags={"degraded_routes": str(len(degraded))},
+    )
+    return True
+
+
+def report_route_health(
+    flags: list[RouteHealthFlag], *, now: dt.datetime | None = None,
+) -> None:
+    """Emit one grouped Sentry message for each unhealthy route.
+
+    Partial degradation goes to the daily digest instead (report_degradation_digest).
+    """
     if not flags:
         return
+    report_degradation_digest(flags, now=now)
     try:
         import sentry_sdk
     except ImportError:
@@ -454,15 +516,12 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
                 tags={"route_provider": flag.provider, "route_model": flag.model},
             )
             continue
-        if flag.kind in {"availability", "degradation"}:
+        if flag.kind == "degradation":
+            continue  # reported by report_degradation_digest above
+        if flag.kind == "availability":
             from trusted_router.synthetic.alerts import ops_alert
 
-            detail = (
-                f"failed {flag.failures} consecutive probes over at least 30 minutes"
-                if flag.kind == "availability"
-                else f"failed {flag.failures}/{flag.samples} probes ({flag.failure_rate:.0%}) "
-                f"over at least 30 minutes within the last {_DEGRADATION_WINDOW_HOURS} hours"
-            )
+            detail = f"failed {flag.failures} consecutive probes over at least 30 minutes"
             ops_alert(
                 f"route-{flag.kind}: {flag.provider}/{flag.model} {detail}"
                 + _availability_cause(flag),
