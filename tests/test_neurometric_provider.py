@@ -403,6 +403,74 @@ def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
     assert second_rows[target_id]["routable_reason"] == "delisted-upstream"
 
 
+def test_neurometric_refresh_recanaries_live_routes_and_holds_until_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A live task route that starts answering 404 while still listed
+    # (QUILL-ROUTER-HF) is held by the next refresh and lifted once it serves.
+    manifest_path = tmp_path / "neurometric.json"
+    raw = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
+    raw["models"] = copy.deepcopy(PINNED_ROWS)
+    manifest_path.write_text(json.dumps(raw) + "\n", encoding="utf-8")
+    live_ids = {
+        row["id"] for row in PINNED_ROWS if row.get("routable", True) is not False
+    }
+    target_id = neurometric.CLASSIFICATION_ROUTER_MODEL
+    assert target_id in live_ids
+    assert len(live_ids) <= neurometric.MAX_LIVE_RECHECKS_PER_RUN
+    payload = _payload(*(_model_row(row["id"]) for row in PINNED_ROWS))
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return copy.deepcopy(payload)
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    failing = {target_id}
+    canaried: list[str] = []
+
+    def fake_probe(**kwargs: Any) -> bool:
+        canaried.append(str(kwargs["model"]))
+        return kwargs["model"] not in failing
+
+    monkeypatch.setenv("NEUROMETRIC_API_KEY", "test-key")
+    monkeypatch.setattr(neurometric, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(neurometric.httpx, "Client", FakeClient)
+    monkeypatch.setattr(neurometric, "probe_openai_chat", fake_probe)
+
+    neurometric.write_provider_manifest(neurometric.fetch())
+    # Every live route was canaried, not only new or held ones.
+    assert live_ids <= set(canaried)
+    held = {row["id"]: row for row in json.loads(manifest_path.read_text())["models"]}
+    assert held[target_id]["routable"] is False
+    assert held[target_id]["routable_reason"] == "provider-canary-failed"
+    for model_id in live_ids - {target_id}:
+        assert held[model_id].get("routable") is not False, model_id
+
+    failing.clear()
+    canaried.clear()
+    neurometric.write_provider_manifest(neurometric.fetch())
+    assert target_id in canaried
+    lifted = {row["id"]: row for row in json.loads(manifest_path.read_text())["models"]}
+    assert lifted[target_id].get("routable") is not False
+    assert "routable_reason" not in lifted[target_id]
+
+
 @pytest.mark.usefixtures("neurometric_routes")
 def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
     provider = PROVIDERS["neurometric"]
