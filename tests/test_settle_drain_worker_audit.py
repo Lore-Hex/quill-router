@@ -101,7 +101,7 @@ def test_exact_claim_timing_completed_resolution_and_privacy(monkeypatch, caplog
         f'async_drain.resolution status=done fence_miss=0 ref={ref}',
         f'async_drain.completed latency_seconds=1.000000 ref={ref}',
         'async_drain.timing outcome=settled_now service_seconds=0.625000 observed_at=123.000000 '
-        f'ref={ref} claim_seconds=0.250000 resolve_seconds=0.125000',
+        f'ref={ref} claim_seconds=0.250000 resolve_seconds=0.125000 wait_seconds=0.000000',
     ]
     assert len(calls) == 1
     assert all(r.name == WORKER_LOGGER and WorkerLogFilter().filter(r) is r for r in caplog.records)

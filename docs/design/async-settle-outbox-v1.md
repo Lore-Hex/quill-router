@@ -1133,6 +1133,7 @@ admission rollback, through the same frozen-money apply and resolution helpers.
 | `settle_outbox_health_publish_interval_seconds` | 2 | Fleet publisher cadence; validated positive and at most `CACHE_SECONDS=5`. Fast mode only. |
 | `settle_outbox_claim_batch` | 500 | Upper bound on a claim wave; fast mode further clamps to available worker slots. Unused in legacy mode, which retains the caller's limit and 500 clamp. |
 | `settle_outbox_worker_concurrency` | 1 | Maximum independent running apply slots per pass, validated 1–32; fast mode only. |
+| `settle_outbox_workspace_slots` | 1 | Rows held per workspace by fast-drain slots, validated 1–4; their applies run one at a time. |
 | `settle_outbox_lease_seconds` | 300 | Fast-slot lease; watchdog async recovery clamps it to at most 30 s. |
 | `settle_outbox_stall_seconds` | 26 | Worker process exit/HTTP liveness threshold; validated 26–30 s. |
 | `settle_outbox_pass_budget_seconds` | 240 | Deadline for starting new work; must be below the lease in fast mode. Does not cancel in-flight money transactions. |

@@ -1285,6 +1285,8 @@ class Settings(BaseSettings):
     settle_outbox_health_publish_interval_seconds: float = Field(default=2, gt=0, le=5)
     settle_outbox_claim_batch: int = Field(default=500, ge=1, le=500)
     settle_outbox_worker_concurrency: int = Field(default=1, ge=1, le=32)
+    # Rows held per workspace in the fast drain; their money applies take turns.
+    settle_outbox_workspace_slots: int = Field(default=1, ge=1, le=4)
     settle_outbox_lease_seconds: int = Field(default=300, ge=2, le=300)
     settle_outbox_pass_budget_seconds: float = Field(default=240, gt=0, le=240)
     settle_outbox_enabled: bool = False

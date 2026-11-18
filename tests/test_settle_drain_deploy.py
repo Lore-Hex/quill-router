@@ -49,6 +49,7 @@ def test_worker_plan_validates_with_only_sentry_and_does_not_mutate_router():
     assert cfg.settle_outbox_lease_seconds == 30
     assert cfg.settle_outbox_pass_budget_seconds == 2
     assert cfg.settle_outbox_poll_interval_seconds == cfg.settle_outbox_health_publish_interval_seconds == 1
+    assert cfg.settle_outbox_workspace_slots == 2
     assert cfg.settle_outbox_claim_batch == cfg.settle_outbox_worker_concurrency == 4
     assert original == before
     assert not any("SECRET" in k or "TOKEN" in k or "PASSWORD" in k or "PRIVATE_KEY" in k for k in plan["env"])
