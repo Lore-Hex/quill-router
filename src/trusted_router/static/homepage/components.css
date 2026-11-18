@@ -128,7 +128,10 @@
 #migrate pre.mcode .cm{color:var(--tr-code-muted)}
 #migrate pre.mcode.prompt{width:auto;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(min-width:601px){#migrate .migration-disclosure{background:var(--nyte-ink,#151311)}}
-#migrate .val code{overflow-wrap:anywhere}
+/* Base URL stays on one line: the text scales with its box (14px max), never wraps. */
+#migrate .val{container-type:inline-size}
+#migrate .val code{font-size:clamp(11px,calc((100cqi - 50px) / 19.4),14px)}
+@media(max-width:440px){#migrate .val{padding:0 0 0 10px;gap:4px}#migrate .val .icon-button{border:0}}
 @media(max-width:600px){
  #migrate .ph2{padding-left:8px}
  #migrate .mode-switch{width:auto}
