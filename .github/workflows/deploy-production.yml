@@ -1105,7 +1105,8 @@ jobs:
           # directly. Private origins intentionally return Google's platform
           # 404 outside the load balancer, so retain the staged regional
           # canaries above and require exact revision/config convergence here.
-          for region in us-central1 us-east4 europe-west4 southamerica-east1; do
+          verify_region() {
+            local region="$1"
             service_json=$(gcloud run services describe "${SERVICE}" \
               --project="${PROJECT_ID}" --region="${region}" \
               --format=json)
@@ -1164,7 +1165,24 @@ jobs:
               echo "release=${active_release} expected=${SHA} retired_secret_count=${retired_secret_count}" >&2
               exit 1
             fi
+          }
+
+          # Independent, read-only checks after all ramps. Run each as a
+          # standalone background command (not in an if/|| that disables
+          # errexit inside the function). Every child's exit status is gated.
+          pids=()
+          for region in us-central1 us-east4 europe-west4 southamerica-east1; do
+            verify_region "$region" &
+            pids+=("$!")
           done
+          failed=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || failed=1
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Regional smoke verification failed"
+            exit 1
+          fi
 
           python3 - <<'PY'
           import json

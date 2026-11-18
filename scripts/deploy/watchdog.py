@@ -462,6 +462,18 @@ def write_baseline(path: str, baseline: dict[str, str]) -> None:
     temporary.replace(destination)
 
 
+def wait_baseline_grace(seconds: int, start_ns: int | None) -> None:
+    remaining = float(seconds)
+    if start_ns is not None:
+        now = time.monotonic_ns()
+        if not 0 < start_ns <= now:
+            raise ValueError("invalid local monotonic start for baseline grace")
+        remaining -= (now - start_ns) / 1_000_000_000
+        print(f"watchdog: pre-cutover baseline grace: {max(0.0, remaining):.2f}s remaining of {seconds}s", flush=True)
+    if remaining > 0:
+        time.sleep(remaining)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duration-min", type=int, default=10)
@@ -539,7 +551,15 @@ def main() -> int:
             "Use --duration-min 0 for a baseline-only invocation."
         ),
     )
+    parser.add_argument(
+        "--baseline-grace-start-ns", type=int,
+        help="Same-host monotonic timestamp after the 50%% shift, for the pre-cutover baseline only.",
+    )
     args = parser.parse_args()
+    if args.baseline_grace_start_ns is not None and (
+        args.duration_min != 0 or not args.baseline_output or args.skip_baseline or args.start_gate_file
+    ):
+        parser.error("--baseline-grace-start-ns requires a standalone pre-cutover baseline capture")
     if args.baseline_input and args.baseline_output:
         parser.error("--baseline-input and --baseline-output are mutually exclusive")
 
@@ -564,8 +584,7 @@ def main() -> int:
                 write_output("rollback_regions", ",".join(sorted(regions)))
                 return 1
         else:
-            if args.baseline_grace_sec > 0:
-                time.sleep(args.baseline_grace_sec)
+            wait_baseline_grace(args.baseline_grace_sec, args.baseline_grace_start_ns)
             baseline_snapshot = fetch_per_region(
                 args.status_url,
                 regions,

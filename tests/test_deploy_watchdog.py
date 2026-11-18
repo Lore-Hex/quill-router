@@ -31,6 +31,20 @@ class _FakeResponse(io.BytesIO):
         self.close()
 
 
+@pytest.mark.parametrize(("start", "expected"), [
+    (None, [30.0]), (95_000_000_000, [25.0]), (40_000_000_000, []),
+])
+def test_final_baseline_credits_only_elapsed_settling_time(monkeypatch, start, expected) -> None:
+    watchdog = _load_watchdog()
+    sleeps: list[float] = []
+    monkeypatch.setattr(watchdog.time, "monotonic_ns", lambda: 100_000_000_000)
+    monkeypatch.setattr(watchdog.time, "sleep", sleeps.append)
+    watchdog.wait_baseline_grace(30, start)
+    assert sleeps == expected
+    with pytest.raises(ValueError):
+        watchdog.wait_baseline_grace(30, 101_000_000_000)
+
+
 PROBE_PATHS = {"gateway_authorize": "authorize", "gateway_settle": "settle",
                "provider_fallback": "settle", "gateway_authorize_settle": "authorize-settle"}
 
@@ -774,6 +788,10 @@ def test_secondary_handoff_keeps_the_entire_drain_and_bound_fence(tmp_path: Path
     assert len(drains) == 1
     assert "--rollback-after 1" in drains[0]
     assert "--baseline-input" in drains[0]
+    capture, = [i for i, line in enumerate(calls) if "--baseline-grace-start-ns" in line]
+    assert max(i for i, line in enumerate(calls) if "watchdog-stub: gate-released" in line) < capture
+    assert next(i for i, line in enumerate(calls) if "--update-tags=staged-drain=old-rev" in line) < capture
+    assert capture < next(i for i, line in enumerate(calls) if "--to-revisions=new-rev=100" in line)
     assert calls.index(drains[0]) < next(i for i, line in enumerate(calls) if "--remove-tags=staged-drain" in line)
 
 
