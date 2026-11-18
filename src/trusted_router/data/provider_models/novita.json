@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-17T23:23:13Z",
-  "model_count": 181,
+  "generated_at": "2026-11-18T15:01:40Z",
+  "model_count": 188,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -1211,7 +1211,8 @@
         "completions"
       ],
       "status": 1,
-      "upstream_id": "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
+      "upstream_id": "meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
+      "missing_since": "2026-11-18"
     },
     {
       "id": "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -3490,7 +3491,8 @@
       ],
       "endpoints": [
         "chat/completions",
-        "anthropic"
+        "anthropic",
+        "responses"
       ],
       "status": 1,
       "created": 1780282959,
@@ -5096,7 +5098,8 @@
       "context_length": 262144,
       "max_output_tokens": 262144,
       "routable": false,
-      "routable_reason": "zero-price-unbillable"
+      "routable_reason": "zero-price-unbillable",
+      "missing_since": "2026-11-18"
     },
     {
       "id": "stepfun/step-5-preview",
@@ -5482,6 +5485,231 @@
       "max_output_tokens": 131072,
       "routable": false,
       "routable_reason": "zero-price-unbillable"
+    },
+    {
+      "id": "openai/gpt-6.1-terra",
+      "upstream_id": "openai/gpt-6.1-terra",
+      "display_name": "openai/gpt-6.1-terra",
+      "title": "openai/gpt-6.1-terra",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "anthropic",
+        "compact"
+      ],
+      "status": 1,
+      "created": 1793084063,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 50000,
+      "cached_input_token_price_per_m": 500
+    },
+    {
+      "id": "openai/gpt-6.2-astra",
+      "upstream_id": "openai/gpt-6.2-astra",
+      "display_name": "openai/gpt-6.2-astra",
+      "title": "openai/gpt-6.2-astra",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "compact"
+      ],
+      "status": 1,
+      "created": 1794968498,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 4000
+    },
+    {
+      "id": "openai/gpt-6.2-astra-azure-dst",
+      "upstream_id": "openai/gpt-6.2-astra-azure-dst",
+      "display_name": "openai/gpt-6.2-astra-azure-dst",
+      "title": "openai/gpt-6.2-astra-azure-dst",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "compact"
+      ],
+      "status": 1,
+      "created": 1794973518,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 4000
+    },
+    {
+      "id": "openai/gpt-6.2-astra-es",
+      "upstream_id": "openai/gpt-6.2-astra-es",
+      "display_name": "openai/gpt-6.2-astra-es",
+      "title": "openai/gpt-6.2-astra-es",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "compact"
+      ],
+      "status": 1,
+      "created": 1794979994,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 4000
+    },
+    {
+      "id": "openai/gpt-6.2-sol",
+      "upstream_id": "openai/gpt-6.2-sol",
+      "display_name": "openai/gpt-6.2-sol",
+      "title": "openai/gpt-6.2-sol",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "anthropic"
+      ],
+      "status": 1,
+      "created": 1794967732,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 100000,
+      "cached_input_token_price_per_m": 1000
+    },
+    {
+      "id": "openai/gpt-6.2-sol-azure-dst",
+      "upstream_id": "openai/gpt-6.2-sol-azure-dst",
+      "display_name": "openai/gpt-6.2-sol-azure-dst",
+      "title": "openai/gpt-6.2-sol-azure-dst",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "anthropic"
+      ],
+      "status": 1,
+      "created": 1794973590,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 100000,
+      "cached_input_token_price_per_m": 1000
+    },
+    {
+      "id": "openai/gpt-6.2-sol-es",
+      "upstream_id": "openai/gpt-6.2-sol-es",
+      "display_name": "openai/gpt-6.2-sol-es",
+      "title": "openai/gpt-6.2-sol-es",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "responses",
+        "chat/completions",
+        "anthropic"
+      ],
+      "status": 1,
+      "created": 1794979914,
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 100000,
+      "cached_input_token_price_per_m": 1000
     }
   ]
 }

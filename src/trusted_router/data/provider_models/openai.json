@@ -85,11 +85,12 @@
       "upstream_id": "gpt-4.1-nano",
       "retirement_at": "2026-10-23T00:00:00Z",
       "created": 1744321707,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 25000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-4o",
@@ -285,11 +286,12 @@
       "id": "openai/o1",
       "upstream_id": "o1",
       "created": 1734375816,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 15000000,
       "output_token_price_per_m": 60000000,
       "cached_input_token_price_per_m": 7500000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "o3",
@@ -332,11 +334,12 @@
       "id": "openai/o3-mini",
       "upstream_id": "o3-mini",
       "created": 1737146383,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 550000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "o4-mini",
@@ -355,11 +358,12 @@
       "id": "openai/o4-mini",
       "upstream_id": "o4-mini",
       "created": 1744225351,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 275000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-5.4",
@@ -564,10 +568,11 @@
       "id": "openai/gpt-3.5-turbo",
       "upstream_id": "gpt-3.5-turbo",
       "created": 1677610602,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1500000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-3.5-turbo-0125",
@@ -587,10 +592,11 @@
       "upstream_id": "gpt-3.5-turbo-0125",
       "retirement_at": "2026-10-23T00:00:00Z",
       "created": 1706048358,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1500000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-3.5-turbo-1106",
@@ -660,10 +666,11 @@
       "upstream_id": "gpt-4-0613",
       "retirement_at": "2026-10-23T00:00:00Z",
       "created": 1686588896,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 30000000,
       "output_token_price_per_m": 60000000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-5",
@@ -847,7 +854,7 @@
       "upstream_id": "o1-pro",
       "created": 1742251791,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 150000000,
       "output_token_price_per_m": 600000000,
       "missing_since": "2026-11-17"
@@ -1234,7 +1241,7 @@
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-11-17T23:23:13Z",
+  "generated_at": "2026-11-18T15:01:40Z",
   "price_scale": "microdollars_per_million",
   "model_count": 44
 }

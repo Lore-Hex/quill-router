@@ -215,7 +215,8 @@
         "account_quota_error_codes": [
           "account_quota_exceeded"
         ]
-      }
+      },
+      "missing_since": "2026-11-18"
     },
     {
       "display_name": "gemma-4-E2B-it",
@@ -335,7 +336,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 100000,
       "supported_parameters": [
@@ -360,7 +361,8 @@
           "account_quota_exceeded"
         ]
       },
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Document Structured Extraction",
@@ -478,7 +480,8 @@
         "account_quota_error_codes": [
           "account_quota_exceeded"
         ]
-      }
+      },
+      "missing_since": "2026-11-18"
     },
     {
       "display_name": "Conversation Summary",
@@ -718,6 +721,6 @@
       "routable_reason": "delisted-upstream"
     }
   ],
-  "generated_at": "2026-11-17T23:23:13Z",
+  "generated_at": "2026-11-18T15:01:40Z",
   "model_count": 13
 }

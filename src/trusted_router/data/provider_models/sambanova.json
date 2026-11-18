@@ -89,10 +89,11 @@
       "upstream_id": "Meta-Llama-3.3-70B-Instruct",
       "context_length": 131072,
       "max_output_tokens": 3072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 1200000,
-      "missing_since": "2026-11-17"
+      "missing_since": "2026-11-17",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMax-M2.7",
@@ -168,7 +169,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-11-17T23:23:13Z",
+  "generated_at": "2026-11-18T15:01:40Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }
