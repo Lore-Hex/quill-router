@@ -841,8 +841,11 @@ def test_inline_grace_not_read_past_the_row_bound(fake_store, monkeypatch):
     assert len(reads) == 2
     reads.clear()
     monkeypatch.setattr(adapter, 'GRACE_ROW_LIMIT', 1)
-    value = publish_health(db)  # two rows in range, bound one: no base rows read, creation ages stand
-    assert len(reads) == 1 and value['p95_age_seconds'] >= 31
+    value = publish_health(db)  # two rows in range, bound one: no grace rows read, creation ages stand
+    # The gate is then closed, so the rows parked for the fast path are looked for (none here).
+    assert [sql.split(' FROM ')[0] for sql in reads] == [
+        'SELECT unresolved_at, actual_cost_micro, status', 'SELECT next_attempt_at, unresolved_at']
+    assert value['p95_age_seconds'] >= 31
 
 
 def test_inline_grace_not_read_from_a_truncated_backlog(fake_store, monkeypatch):
@@ -856,7 +859,11 @@ def test_inline_grace_not_read_from_a_truncated_backlog(fake_store, monkeypatch)
     monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
     monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 2)
     value = publish_health(db)  # exactly at the bound and complete: read, and the grace row recounted
-    assert len(reads) == 2 and value['complete'] is True and value['p50_age_seconds'] == 0
+    # The 90-s row keeps the gate closed, so the rows parked for the fast path are looked for too.
+    assert [sql.split(' FROM ')[0] for sql in reads] == [
+        'SELECT unresolved_at, actual_cost_micro, status', 'SELECT unresolved_at, next_attempt_at',
+        'SELECT next_attempt_at, unresolved_at']
+    assert value['complete'] is True and value['p50_age_seconds'] == 0
     reads.clear()
     monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 1)
     value = publish_health(db)  # the covering read is truncated: its count of the range proves nothing
@@ -891,18 +898,233 @@ def test_inline_grace_read_only_when_a_row_could_turn_the_gate(fake_store, monke
         return original(self, sql, **kwargs)
     monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
     publish_health(db)
-    assert len(reads) == 1  # the backlog alone: no row between 5 s and 66 s old
+    # No row between 5 s and 66 s old: no grace read. The 90-s row closes the gate, so the
+    # rows parked for the fast path are looked for.
+    assert [sql.split(' FROM ')[0] for _, sql, _ in reads] == [
+        'SELECT unresolved_at, actual_cost_micro, status', 'SELECT next_attempt_at, unresolved_at']
     reads.clear()
     created = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=30)
     db.settle_outbox[('fast-0', 'settle')].update(
         created_at=created.isoformat(), next_attempt_at=(created + dt.timedelta(seconds=60)).isoformat())
     value = publish_health(db)
-    assert len(reads) == 2 and reads[0][0] is reads[1][0]  # one snapshot for both reads
+    assert len(reads) == 3 and reads[0][0] is reads[1][0] is reads[2][0]  # one snapshot for every read
     assert reads[1][1].startswith('SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox')
     since, until = (dt.datetime.fromisoformat(reads[1][2][k].replace('Z', '+00:00')).timestamp()
                     for k in ('since', 'until'))
     assert (since, until) == pytest.approx((value['observed_at'] - 66, value['observed_at'] - 5), abs=1e-3)
     assert value['p50_age_seconds'] == 0 and value['p95_age_seconds'] >= 90  # the 90-s row still counts
+
+
+WAITING = 'fast path undecided'  # the drain's note on a leased intent the fast path has not decided
+BACKLOG_READ, GRACE_READ, WAIT_READ = ('SELECT unresolved_at, actual_cost_micro, status',
+                                       'SELECT unresolved_at, next_attempt_at',
+                                       'SELECT next_attempt_at, unresolved_at')
+
+
+def wait_rows(fake_store, *specs, frozen=None):
+    """One row per (age, due_in, note[, status[, async_version]]): created `age` seconds ago,
+    next_attempt_at `due_in` seconds from now (None: NULL), last_error `note`. With `frozen`
+    (a monkeypatch), the publisher's clock stays at that now, so an age is exact."""
+    store, db = fake_store
+    seed(store, len(specs))
+    now = dt.datetime.now(dt.UTC)
+    if frozen is not None:
+        frozen.setattr(time, 'time', now.timestamp)
+    for i, (age, due_in, note, *rest) in enumerate(specs):
+        status, version = rest[0] if rest else 'pending', rest[1] if len(rest) > 1 else 1
+        db.settle_outbox[(f'fast-{i}', 'settle')].update(
+            created_at=(now - dt.timedelta(seconds=age)).isoformat(), attempts=0, async_version=version,
+            status=status, last_error=note,
+            next_attempt_at=None if due_in is None else (now + dt.timedelta(seconds=due_in)).isoformat())
+    return db
+
+
+def read_spy(monkeypatch):
+    reads = []
+    original = _FakeSnapshot.execute_sql
+    def spy(self, sql, **kwargs):
+        reads.append((sql.split(' FROM ')[0], kwargs.get('params')))
+        return original(self, sql, **kwargs)
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
+    return reads
+
+
+@pytest.mark.parametrize('spec, closed', [
+    ((30, 200, WAITING), False),             # parked, not yet due: the fast path's time
+    ((3600, 250, WAITING), False),           # an owner gone for an hour
+    ((3 * 3600 + 200, 100, WAITING), False), # parked just before three hours old, mid-park
+    ((3 * 3600 + 302, 10, WAITING), True),   # older than the drain still parks
+    ((30, -2, WAITING), False),              # due 2 s ago: the drain's lag in asking again
+    ((30, -6, WAITING), True),               # due 6 s ago: drain lag over the limit
+    ((30, 400, WAITING), True),              # parked for longer than the drain parks such a row
+    ((30, -40, WAITING), True),              # due before it was written
+    ((30, None, WAITING), True),             # no due time to read
+    ((30, 200, WAITING, 'dead'), True),
+    ((30, 200, PARKED), True),               # any other park is drain lag, as before
+    ((30, 200, None), True),                 # not parked at all
+    ((30, 200, WAITING + ' '), True),        # the note exactly
+], ids=['parked', 'owner-gone', 'near-three-hours', 'past-three-hours', 'just-due', 'overdue', 'parked-too-long',
+        'due-before-creation', 'no-due-time', 'dead', 'other-park', 'no-note', 'other-note'])
+def test_leased_wait_is_left_out_until_its_park_falls_due(fake_store, monkeypatch, spec, closed):
+    db = wait_rows(fake_store, spec, frozen=monkeypatch)
+    value = publish_health(db)
+    assert (value['p95_age_seconds'] > 5) is closed
+    # Left out of the percentiles only: the row is still counted, and its creation age is the oldest.
+    assert value['backlog_count'] == value['sample_count'] == 1 and value['frozen_micro'] > 0
+    assert value['oldest_unresolved_age_seconds'] >= spec[0]
+    assert (decode_health(read_health(db), now=time.monotonic(), wall=time.time()) is None) is closed
+
+
+def test_leased_wait_cannot_lower_the_percentile_other_rows_set(fake_store):
+    # Nineteen parked rows and one lagging async row. Counted as zero, the nineteen would put
+    # both percentiles at zero; left out, the lagging row sets them.
+    db = wait_rows(fake_store, *[(30, 200, WAITING)] * 19, (20, 0, None))
+    value = publish_health(db)
+    assert value['p50_age_seconds'] >= 20 and value['p95_age_seconds'] >= 20
+    assert value['backlog_count'] == 20
+    assert decode_health(read_health(db), now=time.monotonic(), wall=time.time()) is None
+
+
+def test_leased_wait_counts_from_when_its_park_fell_due(fake_store, monkeypatch):
+    value = publish_health(wait_rows(fake_store, (600, -3, WAITING), (1, 0, None), frozen=monkeypatch))
+    assert value['p95_age_seconds'] == pytest.approx(3) and value['p50_age_seconds'] == pytest.approx(1)
+    assert value['oldest_unresolved_age_seconds'] == pytest.approx(600)
+
+
+def test_leased_wait_takes_only_its_share_of_equal_ages(fake_store):
+    # Written in the same instant as an async row: only the parked row is left out.
+    store, db = fake_store
+    wait_rows(fake_store, (30, 200, WAITING), (30, 0, None))
+    same = db.settle_outbox[('fast-0', 'settle')]['created_at']
+    db.settle_outbox[('fast-1', 'settle')]['created_at'] = same
+    value = publish_health(db)
+    assert value['p50_age_seconds'] >= 30 and value['p95_age_seconds'] >= 30
+    # ... and beside a row in its inline grace written in that instant, each is recounted once.
+    db.settle_outbox[('fast-1', 'settle')].update(
+        async_version=None, next_attempt_at=(dt.datetime.fromisoformat(same) + dt.timedelta(seconds=60)).isoformat())
+    assert publish_health(db)['p95_age_seconds'] == 0
+
+
+def test_leased_wait_not_read_past_the_row_bound(fake_store, monkeypatch):
+    from trusted_router import storage_gcp_async_admission as adapter
+    db = wait_rows(fake_store, (31, 200, WAITING), (30, 200, WAITING))
+    reads = read_spy(monkeypatch)
+    monkeypatch.setattr(adapter, 'LEASED_WAIT_ROW_LIMIT', 2)
+    assert publish_health(db)['p95_age_seconds'] == 0  # exactly at the bound: read
+    assert [sql for sql, _ in reads] == [BACKLOG_READ, GRACE_READ, WAIT_READ] and reads[2][1]['limit'] == 2
+    reads.clear()
+    monkeypatch.setattr(adapter, 'LEASED_WAIT_ROW_LIMIT', 1)
+    value = publish_health(db)  # two rows in range, bound one: not read, every age stands
+    assert [sql for sql, _ in reads] == [BACKLOG_READ, GRACE_READ] and value['p95_age_seconds'] >= 31
+
+
+def test_leased_wait_bound_counts_every_row_in_the_range(fake_store, monkeypatch):
+    # The bound is on the backlog's rows in the range, whatever they are: with a fast path
+    # deciding nothing beside other work, every age stands.
+    from trusted_router import storage_gcp_async_admission as adapter
+    db = wait_rows(fake_store, (30, 200, WAITING), (3600, 0, None), (7200, 0, None))
+    monkeypatch.setattr(adapter, 'LEASED_WAIT_ROW_LIMIT', 2)
+    reads = read_spy(monkeypatch)
+    value = publish_health(db)
+    assert WAIT_READ not in [sql for sql, _ in reads] and value['p50_age_seconds'] >= 3600
+
+
+def test_leased_wait_not_read_from_a_truncated_backlog(fake_store, monkeypatch):
+    from trusted_router import storage_gcp_async_admission as adapter
+    db = wait_rows(fake_store, (90, 200, WAITING), (30, 200, WAITING))
+    reads = read_spy(monkeypatch)
+    monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 2)
+    value = publish_health(db)  # exactly at the bound and complete: read
+    assert WAIT_READ in [sql for sql, _ in reads] and value['complete'] is True and value['p95_age_seconds'] == 0
+    reads.clear()
+    monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 1)
+    value = publish_health(db)  # the covering read is truncated: its count of the range proves nothing
+    assert [sql for sql, _ in reads] == [BACKLOG_READ] and value['complete'] is False
+
+
+def test_leased_wait_read_failure_publishes_the_ages_as_counted(fake_store, monkeypatch, caplog):
+    import logging
+
+    from trusted_router import storage_gcp_async_admission as adapter
+    db = wait_rows(fake_store, (30, 200, WAITING))
+    original = _FakeSnapshot.execute_sql
+    def failing(self, sql, **kwargs):
+        if sql.startswith(WAIT_READ):
+            raise RuntimeError('leased wait read failed')
+        return original(self, sql, **kwargs)
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', failing)
+    monkeypatch.setattr(adapter, '_read_failure_logs', {})
+    with caplog.at_level(logging.WARNING):
+        value = publish_health(db)
+    assert value['p95_age_seconds'] >= 30 and read_health(db) == value  # a record still goes out
+    assert [r.getMessage().split(' elapsed_ms=')[0] for r in caplog.records] == [
+        'async admission read failed operation=drain_leased_wait reason=other']
+
+
+def test_leased_wait_read_only_when_the_gate_is_closed_without_it(fake_store, monkeypatch):
+    from trusted_router import storage_gcp_async_admission as adapter
+    # A young row and a row in its inline grace: the gate is open, nothing more is read.
+    db = wait_rows(fake_store, (2, 0, None), (30, 30, None, 'pending', None), frozen=monkeypatch)
+    reads = read_spy(monkeypatch)
+    assert publish_health(db)['p95_age_seconds'] == pytest.approx(2)
+    assert [sql for sql, _ in reads] == [BACKLOG_READ, GRACE_READ]
+    reads.clear()
+    # The young row is parked for the fast path and ages: now the gate would close.
+    now = dt.datetime.fromtimestamp(time.time(), dt.UTC)  # the frozen clock
+    db.settle_outbox[('fast-0', 'settle')].update(
+        created_at=(now - dt.timedelta(seconds=40)).isoformat(), last_error=WAITING,
+        next_attempt_at=(now + dt.timedelta(seconds=20)).isoformat())
+    value = publish_health(db)
+    assert [sql for sql, _ in reads] == [BACKLOG_READ, GRACE_READ, WAIT_READ]
+    params = reads[2][1]
+    since, until = (dt.datetime.fromisoformat(params[k].replace('Z', '+00:00')).timestamp()
+                    for k in ('since', 'until'))
+    span = adapter.LEASED_WAIT_MAX_AGE_SECONDS + adapter.LEASED_WAIT_PARK_SECONDS + 1
+    assert (since, until) == pytest.approx((value['observed_at'] - span, value['observed_at'] - 5), abs=1e-3)
+    assert params['note'] == WAITING and params['limit'] == adapter.LEASED_WAIT_ROW_LIMIT
+    assert value['p95_age_seconds'] == 0 and value['oldest_unresolved_age_seconds'] == pytest.approx(40)
+
+
+def test_leased_wait_bound_counts_creation_ages_in_the_range_only(fake_store, monkeypatch):
+    from trusted_router import storage_gcp_async_admission as adapter
+    monkeypatch.setattr(adapter, 'LEASED_WAIT_ROW_LIMIT', 1)
+    # Rows younger than the limit are outside the range and do not count toward the bound:
+    # one parked row and two young ones are read, and the parked row is left out.
+    db = wait_rows(fake_store, (30, 200, WAITING), (1, 0, None), (2, 0, None), frozen=monkeypatch)
+    reads = read_spy(monkeypatch)
+    value = publish_health(db)
+    assert WAIT_READ in [sql for sql, _ in reads] and value['p95_age_seconds'] == pytest.approx(2)
+    # A row in its inline grace is in the range by its creation age, though it counts as zero:
+    # with the parked row that is two, over the bound of one, so every age stands.
+    db.settle_outbox[('fast-1', 'settle')].update(
+        created_at=(dt.datetime.fromtimestamp(time.time(), dt.UTC) - dt.timedelta(seconds=20)).isoformat(),
+        async_version=None,
+        next_attempt_at=(dt.datetime.fromtimestamp(time.time(), dt.UTC) + dt.timedelta(seconds=40)).isoformat())
+    reads.clear()
+    value = publish_health(db)
+    assert WAIT_READ not in [sql for sql, _ in reads] and value['p95_age_seconds'] == pytest.approx(30)
+
+
+def test_leased_wait_reads_what_the_drain_parks(fake_store, monkeypatch):
+    """The note and the bounds are the drain's own, and a row parked by the real park is found."""
+    from trusted_router import storage_gcp_async_admission as adapter
+    from trusted_router.services import settle_outbox_apply
+    assert adapter.LEASED_WAIT_NOTE == drain._LEASED_UNDECIDED_PARK_NOTE == WAITING
+    assert adapter.LEASED_WAIT_MAX_AGE_SECONDS == settle_outbox_apply._LEASED_UNDECIDED_MAX_AGE_SECONDS
+    assert adapter.LEASED_WAIT_PARK_SECONDS == drain._LEASED_UNDECIDED_PARK_SECONDS
+    store, db = fake_store
+    box = seed(store, 1)
+    row = db.settle_outbox[('fast-0', 'settle')]
+    row['created_at'] = (dt.datetime.now(dt.UTC) - dt.timedelta(seconds=3600)).isoformat()
+    assert publish_health(db)['p95_age_seconds'] >= 3600
+    assert box.park('fast-0', 'settle', lease_owner=None,
+                    retry_after_seconds=drain._LEASED_UNDECIDED_PARK_SECONDS, note=drain._LEASED_UNDECIDED_PARK_NOTE)
+    value = publish_health(db)
+    assert value['p95_age_seconds'] == 0 and value['oldest_unresolved_age_seconds'] >= 3600
+    assert decode_health(read_health(db), now=time.monotonic(), wall=time.time()) is not None
+    # Parked again for another reason, its age stands.
+    assert box.park('fast-0', 'settle', lease_owner=None, retry_after_seconds=300)
+    assert publish_health(db)['p95_age_seconds'] >= 3600
 
 
 def test_admission_read_emits_no_workspace_diagnostic(monkeypatch, caplog):

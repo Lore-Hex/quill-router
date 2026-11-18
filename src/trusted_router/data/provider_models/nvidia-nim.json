@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-11-16T09:21:39Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "model_count": 130,
   "models": [
     {
@@ -11,7 +11,7 @@
       "display_name": "01-ai/yi-large",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -32,7 +32,7 @@
       "display_name": "adept/fuyu-8b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text",
@@ -54,7 +54,7 @@
       "display_name": "ai21labs/jamba-1.5-large-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -75,7 +75,7 @@
       "display_name": "aisingapore/sea-lion-7b-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -131,7 +131,7 @@
       "display_name": "databricks/dbrx-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -172,7 +172,7 @@
       "display_name": "google/codegemma-1.1-7b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -193,7 +193,7 @@
       "display_name": "google/codegemma-7b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -244,7 +244,7 @@
       "display_name": "google/gemma-2b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -304,7 +304,7 @@
       "upstream_id": "google/gemma-4-31b-it",
       "display_name": "google/gemma-4-31b-it",
       "model_type": "chat",
-      "routable": false,
+      "routable": true,
       "status": 1,
       "input_modalities": [
         "text"
@@ -316,8 +316,7 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/recurrentgemma-2b",
@@ -325,7 +324,7 @@
       "display_name": "google/recurrentgemma-2b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -346,7 +345,7 @@
       "display_name": "ibm/granite-3.0-3b-a800m-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -367,7 +366,7 @@
       "display_name": "ibm/granite-3.0-8b-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -388,7 +387,7 @@
       "display_name": "ibm/granite-34b-code-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -409,7 +408,7 @@
       "display_name": "ibm/granite-8b-code-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -540,7 +539,7 @@
       "display_name": "microsoft/kosmos-2",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text",
@@ -562,7 +561,7 @@
       "display_name": "microsoft/phi-3-vision-128k-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text",
@@ -584,7 +583,7 @@
       "display_name": "microsoft/phi-3.5-moe-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -615,7 +614,7 @@
       "display_name": "mistralai/codestral-22b-instruct-v0.1",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -636,7 +635,7 @@
       "display_name": "mistralai/mistral-7b-instruct-v0.3",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -657,7 +656,7 @@
       "display_name": "mistralai/mistral-large",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -678,7 +677,7 @@
       "display_name": "mistralai/mistral-large-2-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -720,7 +719,7 @@
       "display_name": "mistralai/mixtral-8x22b-v0.1",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -741,7 +740,7 @@
       "display_name": "moonshotai/kimi-k2.6",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -884,7 +883,7 @@
       "display_name": "nvidia/llama-3.1-nemotron-51b-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -905,7 +904,7 @@
       "display_name": "nvidia/llama-3.1-nemotron-70b-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -983,7 +982,7 @@
       "display_name": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1110,7 +1109,7 @@
       "display_name": "nvidia/llama3-chatqa-1.5-70b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1131,7 +1130,7 @@
       "display_name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1221,7 +1220,7 @@
       "display_name": "nvidia/nemotron-3-super-120b-a12b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1294,7 +1293,7 @@
       "display_name": "nvidia/nemotron-4-340b-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1373,7 +1372,7 @@
       "display_name": "nvidia/nemotron-nano-3-30b-a3b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1409,7 +1408,7 @@
       "display_name": "nvidia/neva-22b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text",
@@ -1558,7 +1557,7 @@
       "display_name": "nvidia/vila",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text",
@@ -1696,7 +1695,7 @@
       "display_name": "writer/palmyra-creative-122b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1717,7 +1716,7 @@
       "display_name": "writer/palmyra-fin-70b-32k",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1738,7 +1737,7 @@
       "display_name": "writer/palmyra-med-70b",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1759,7 +1758,7 @@
       "display_name": "writer/palmyra-med-70b-32k",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1780,7 +1779,7 @@
       "display_name": "zyphra/zamba2-7b-instruct",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -1812,7 +1811,7 @@
       "id": "deepseek/deepseek-coder-6.7b-instruct",
       "upstream_id": "deepseek-ai/deepseek-coder-6.7b-instruct",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "missing_since": "2026-11-16"
@@ -1856,7 +1855,7 @@
       "id": "meta-llama/codellama-70b",
       "upstream_id": "meta/codellama-70b",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "missing_since": "2026-11-16"
@@ -1989,10 +1988,11 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-90b-vision-instruct",
       "upstream_id": "meta/llama-3.2-90b-vision-instruct",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-11-16"
+      "missing_since": "2026-11-16",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta/llama-3.3-70b-instruct",
@@ -2032,10 +2032,12 @@
       "status": 1,
       "id": "meta-llama/llama-guard-4-12b",
       "upstream_id": "meta/llama-guard-4-12b",
-      "routable": true,
+      "retirement_at": "2026-11-16T09:00:00Z",
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-11-16"
+      "missing_since": "2026-11-16",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta/llama2-70b",
@@ -2054,7 +2056,7 @@
       "id": "meta-llama/llama2-70b",
       "upstream_id": "meta/llama2-70b",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "missing_since": "2026-11-16"
@@ -2113,7 +2115,7 @@
       "id": "mistralai/mistral-nemo-12b-instruct",
       "upstream_id": "nv-mistralai/mistral-nemo-12b-instruct",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "missing_since": "2026-11-16"
@@ -2240,7 +2242,8 @@
       "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "routable_reason": "provider-canary-failed",
+      "missing_since": "2026-11-17"
     },
     {
       "display_name": "stepfun-ai/step-5-preview",
@@ -2370,10 +2373,9 @@
       "status": 1,
       "id": "mistralai/mistral-large-4-1t-a52b",
       "upstream_id": "mistralai/mistral-large-4-1t-a52b",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     }
   ],
   "price_scale": "microdollars_per_million"

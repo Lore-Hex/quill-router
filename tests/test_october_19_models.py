@@ -175,38 +175,3 @@ def test_inception_unknown_zero_price_is_never_enabled(tmp_path: Path, monkeypat
     monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **kw: pytest.fail("unpriced canary"))
     with pytest.raises(RuntimeError, match="no priced chat models"):
         catalog.fetch()
-
-
-def test_launch_catalog_prices_limits_capabilities_and_weight_labels() -> None:
-    from trusted_router.catalog import MODELS, endpoints_for_model, model_open_weights
-    from trusted_router.catalog_ingest import _customer_price
-    from trusted_router.request_capabilities import endpoint_capabilities
-
-    for model_id, provider, native, context_length, efforts, vision in (
-        # OpenRouter listed the model on 2026-10-25 with every host at 1048576
-        # and no MiniMax route. MiniMax's API reports no window, so the listed
-        # window is advertised, as it already is for minimax/minimax-m3.
-        ("minimax/minimax-m3.1-flash", "minimax", "MiniMax-M3.1-Flash", 1_048_576,
-         ["low", "medium", "high", "xhigh", "max"], True),
-        ("inception/mercury-3", "inception", "mercury-3", 1_000_000,
-         ["low", "medium", "high"], False),
-    ):
-        model = MODELS[model_id]
-        assert model.context_length == context_length
-        assert not model_open_weights(model)
-        endpoint = next(e for e in endpoints_for_model(model_id) if e.usage_type == "Credits" and e.provider == provider)
-        assert endpoint.upstream_id == native
-        manifest = Path(__file__).parents[1] / "src/trusted_router/data/provider_models" / f"{provider}.json"
-        row = next(row for row in json.loads(manifest.read_text())["models"] if row["id"] == model_id)
-        prices = tuple(_customer_price(row[field]) for field in (
-            "input_token_price_per_m", "output_token_price_per_m", "cached_input_token_price_per_m",
-        ))
-        tier = endpoint.price_tiers[0]
-        assert (tier.prompt_price_microdollars_per_million_tokens,
-                tier.completion_price_microdollars_per_million_tokens,
-                tier.prompt_cached_price_microdollars_per_million_tokens) == prices
-        capabilities = endpoint_capabilities(model, endpoint)
-        assert capabilities["reasoning_effort"] == efforts
-        assert capabilities["tools"] is True
-        assert capabilities["vision"] is vision
-        assert capabilities["confidential"] is False

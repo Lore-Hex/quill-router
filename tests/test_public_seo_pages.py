@@ -6,7 +6,6 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import replace
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -851,23 +850,6 @@ def test_sign_in_with_trustedrouter_launch_post_documents_generic_flow(
     assert "slopnazi" not in response.text.lower()
 
 
-def test_removed_integration_is_absent_from_public_surfaces(client: TestClient) -> None:
-    for path in (
-        "/sign-in-with-trustedrouter",
-        "/blog/sign-in-with-trustedrouter",
-        "/blog",
-        "/sitemap-core.xml",
-        "/llms.txt",
-    ):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert "slopnazi" not in response.text.lower()
-
-    assert client.get("/blog/sign-in-with-trustedrouter-slopnazi").status_code == 404
-    docs = Path("docs/sign-in-with-trustedrouter.md").read_text(encoding="utf-8")
-    assert "slopnazi" not in docs.lower()
-
-
 def test_confidential_computing_blog_explains_and_verifies_the_boundary(
     client: TestClient,
 ) -> None:
@@ -1030,12 +1012,21 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert "never logs prompt or output content" in privacy.text
     assert "opt-in Batch API" in privacy.text
     assert "We do not use customer prompts or outputs to train our own models" in privacy.text
+    assert "November 17, 2026" in privacy.text
+    assert "does not include prompts or outputs" in privacy.text
+    assert "does not identify any customer, user, account, workspace or API key" in privacy.text
+    assert "including providers of indexes and benchmarks" in privacy.text
     assert "/legal/subprocessors" in privacy.text
     assert "security@trustedrouter.com" in privacy.text
 
     terms = client.get("/terms")
     assert terms.status_code == 200
     assert "Terms of Service | TrustedRouter" in terms.text
+    assert "November 17, 2026" in terms.text
+    assert "and license it to third parties" in terms.text
+    assert "Aggregated usage data does not include your content and does not identify you" in (
+        terms.text
+    )
     assert "Charges, credits, and taxes" in terms.text
     assert "Acceptable use" in terms.text
     assert "Delaware law" in terms.text

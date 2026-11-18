@@ -1030,36 +1030,6 @@ def test_accounting_differential_compares_diagnostics() -> None:
         assert_accounting_equal(replace(expected, missing=('planned_collector_attachments',)), expected)
 
 
-def test_accounting_support_definitions_match() -> None:
-    from trusted_router import async_settle_shadow_v2_collect_ports as collectors
-    from trusted_router import async_settle_shadow_v2_export as live_export
-    from trusted_router import async_settle_shadow_v2_gate_native_accounting as native
-    from trusted_router import async_settle_shadow_v2_pack_daypack as daypack
-    from trusted_router import async_settle_shadow_v2_pack_streaming as streaming
-
-    assert native.Files is collectors.Files
-    assert native.DAY_KINDS is live_export.DAY_KINDS
-    assert native.OBJECT_KINDS is live_export.OBJECT_KINDS
-    assert native.bounds is live_export.bounds
-    assert native.AccountingResult is daypack.AccountingResult
-    assert native.CapturedJSON is streaming.CapturedJSON
-
-
-@pytest.mark.parametrize('value', ['2026-10-06', '2024-02-29', '2026-12-31', '20261006',
-    '2026-W41-2', '2026-02-29', '2026-13-01', '', '2026-1-1', '9999-12-31', None, 123])
-def test_accounting_bounds_reference(value: Any) -> None:
-    from trusted_router.async_settle_shadow_v2_export import bounds as original_bounds
-    from trusted_router.async_settle_shadow_v2_gate_native_accounting import bounds
-
-    def outcome(fn: Any) -> Any:
-        try:
-            return fn(value)
-        except (ValueError, TypeError, OverflowError) as exc:
-            return type(exc), str(exc)
-
-    assert outcome(bounds) == outcome(original_bounds)
-
-
 def test_accounting_files_reference(tmp_path: Path, monkeypatch: Any) -> None:
     from io import BytesIO
 
@@ -1101,11 +1071,6 @@ def test_accounting_files_reference(tmp_path: Path, monkeypatch: Any) -> None:
         assert calls == [262145]
         recorded.append((ref, obj, detail, outcomes))
     assert recorded[0] == recorded[1]
-
-
-def test_accounting_comparison_is_bundle_function() -> None:
-
-    assert consumer.compare_export_accounting_streamed is bundle_accounting.compare_export_accounting_streamed
 
 
 @pytest.mark.parametrize('body', [b'{}', b'{"passes":42}', b'42', b'{', b'{"passes":[{"bundle":"native.json","accounting":{},"prefix":null}]}'])

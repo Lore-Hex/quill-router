@@ -206,7 +206,7 @@ def test_a_skipped_job_outside_the_list_fails_even_on_a_data_only_commit() -> No
 
 @pytest.mark.parametrize(("job", "flag"), sorted(PATH_SCOPED_JOBS.items()))
 def test_a_path_scoped_job_may_skip_only_when_its_own_flag_is_false(job: str, flag: str) -> None:
-    assert PATH_FLAGS == ("run_fastpath", "run_post_cutover", "run_proof_oracle", "run_proofs")
+    assert PATH_FLAGS == ("run_fastpath", "run_heavy", "run_post_cutover", "run_proof_oracle", "run_proofs")
     assert summarize(needs({flag: "false"}, **{job: "skipped"}), "false") == []
     for value in ("true", "", "FALSE", "False", "no", "0"):
         assert summarize(needs({flag: value}, **{job: "skipped"}), "false") == [f"{job}: skipped"], value
@@ -691,9 +691,11 @@ def test_a_rule_that_cannot_read_its_inputs_runs_its_jobs(tree: Path) -> None:
     (tree / "src/trusted_router/provider_lifecycle.py").write_text("_RETIREMENTS = load()\n")
     (tree / "tests/oracle_helper.py").write_text("def broken(:\n")
     flags, notes, _ = scope_jobs([raw("docs/a.md")], root=tree, event="push", lines=patch("docs/a.md", "+x"), now=NOW)
-    assert flags == {"run_fastpath": False, "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
+    assert flags == {"run_fastpath": False, "run_heavy": True, "run_post_cutover": True, "run_proof_oracle": True,
+                     "run_proofs": True}
     warnings = [note for note in notes if note.startswith("::warning")]
-    assert len(warnings) == 3 and all("could not be derived" in note for note in warnings)
+    assert len(warnings) == 4 and all("could not be derived" in note for note in warnings)
+    assert any("run_heavy" in note and "oracle_helper.py does not parse" in note for note in warnings)
 
 
 def test_scheduled_entities_are_retirements_still_ahead_and_date_switched_prices() -> None:
@@ -775,10 +777,12 @@ def test_the_real_tree_scopes_typical_changes() -> None:
     assert flags_ == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}
     assert test in tests and 0 < len(tests) <= 10
     assert flags(raw("fastpath/internal/store/commit.go")) == {
-        "run_fastpath": True, "run_post_cutover": False, "run_proof_oracle": False, "run_proofs": True}
+        "run_fastpath": True, "run_heavy": False, "run_post_cutover": False, "run_proof_oracle": False,
+        "run_proofs": True}
     assert flags(raw("src/trusted_router/services/auto_refill.py")) == dict.fromkeys(PATH_FLAGS, False) | {
-        "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
-    assert flags(raw(SNAPSHOT), raw(MANIFEST)) == dict.fromkeys(PATH_FLAGS, False) | {"run_post_cutover": True}
+        "run_heavy": True, "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
+    assert flags(raw(SNAPSHOT), raw(MANIFEST)) == dict.fromkeys(PATH_FLAGS, False) | {
+        "run_heavy": True, "run_post_cutover": True}
     assert flags(raw("tests/test_billing_snapshot.py"))["run_proof_oracle"]
     assert flags(raw("tests/fakes/frozen_main/execution-inventory.json"))["run_proof_oracle"]
     assert flags(raw("scripts/deploy/migrate_typed_counters.sh"))["run_fastpath"]
@@ -1044,3 +1048,144 @@ def test_tests_reaching_against_this_repository() -> None:
     # This file names the script too, so it is reached by name.
     assert set(tests_reaching(ROOT, ["scripts/check_enclave_sentry.py"])) == {
         "tests/test_enclave_security_guard.py", "tests/test_stubs_and_security.py", "tests/test_commit_scope.py"}
+
+
+# ---------------------------------------------------------------------------
+# The heavy lane (run_heavy)
+
+HEAVY = "tests/test_heavy_lane.py"
+HEAVY_SOURCE = '''\
+import importlib
+from pathlib import Path
+
+from tests.test_helpers import make
+from tests import imported_helper
+
+ROOT = Path(__file__).parents[1]
+TABLE = ROOT / "scripts/data/table.csv"
+BASE = ROOT / "scripts" / "basedir"
+CONF = ROOT / "scripts" / "conf"
+
+
+def scan(directory):
+    return sorted(directory.glob("*.cfg"))
+
+
+def test_reads():
+    for name in ("alpha", "beta"):
+        importlib.import_module("tests.plugins." + name)
+    assert (ROOT / "docs" / "named.md").read_text()
+    assert (BASE / "one.txt").read_text()
+    for path in (ROOT / "scripts" / "globbed").glob("*.py"):
+        path.read_text()
+    program = """
+import sys
+import tests.in_code
+"""
+    assert program and make()
+'''
+
+
+@pytest.fixture
+def heavy_tree(tmp_path: Path, monkeypatch) -> Path:
+    import scripts.ci.commit_scope as commit_scope
+
+    monkeypatch.setattr(commit_scope, "HEAVY_TESTS", (HEAVY,))
+    write(tmp_path, {
+        "tests/__init__.py": "", "tests/conftest.py": "import tests.harness\n", "tests/harness.py": "",
+        HEAVY: HEAVY_SOURCE,
+        # A test module the lane imports a helper from: its own tests do not
+        # run there, so what only their bodies read is not the lane's.
+        "tests/test_helpers.py": "def make():\n    return 1\n\n\ndef test_helper_reads():\n"
+                                 "    open('docs/test_only.md').read()\n    import tests.test_only_import\n",
+        "tests/imported_helper.py": "", "tests/in_code.py": "", "tests/test_only_import.py": "",
+        "tests/plugins/__init__.py": "", "tests/plugins/alpha.py": "", "tests/plugins/beta.py": "",
+        "tests/plugins/gamma.py": "", "tests/unrelated.py": "",
+        "scripts/data/table.csv": "a,b\n", "scripts/basedir/one.txt": "1\n", "scripts/basedir/two.txt": "2\n",
+        "scripts/globbed/x.py": "", "scripts/globbed/y.py": "", "scripts/conf/a.cfg": "", "scripts/conf/b.txt": "",
+        "scripts/other.py": "", "docs/named.md": "x\n", "docs/test_only.md": "x\n", "docs/other.md": "x\n",
+        "src/trusted_router/x.py": "", "tests/fixtures/case.json": "{}\n",
+    })
+    return tmp_path
+
+
+def test_the_heavy_closure_follows_imports_strings_and_named_paths(heavy_tree: Path) -> None:
+    from scripts.ci.commit_scope import heavy_closure
+
+    closure = heavy_closure(heavy_tree)
+    for path in (HEAVY, "tests/conftest.py", "tests/harness.py", "tests/__init__.py", "tests/test_helpers.py",
+                 "tests/imported_helper.py", "tests/in_code.py", "tests/plugins/alpha.py", "tests/plugins/beta.py",
+                 "tests/plugins/__init__.py", "scripts/data/table.csv", "docs/named.md", "scripts/basedir/one.txt",
+                 "scripts/globbed/x.py", "scripts/globbed/y.py", "scripts/conf/a.cfg"):
+        assert path in closure, path
+    # Only the plugins the loop names; a directory used as a base is not all
+    # of its files; an unplaced glob lists the directories the file names;
+    # nothing names the rest.
+    for path in ("tests/plugins/gamma.py", "scripts/basedir/two.txt", "scripts/conf/b.txt", "tests/unrelated.py",
+                 "scripts/other.py", "docs/other.md",
+                 # Read only in the body of a test the lane does not run.
+                 "docs/test_only.md", "tests/test_only_import.py"):
+        assert path not in closure, path
+
+
+def test_a_test_body_counts_once_something_in_the_lane_names_it(heavy_tree: Path) -> None:
+    from scripts.ci.commit_scope import heavy_closure
+
+    write(heavy_tree, {HEAVY: HEAVY_SOURCE.replace("import make", "import make, test_helper_reads")})
+    closure = heavy_closure(heavy_tree)
+    assert {"docs/test_only.md", "tests/test_only_import.py"} <= closure
+    # Read as a file (not imported), the module is read whole too.
+    write(heavy_tree, {HEAVY: HEAVY_SOURCE + "\nSOURCE = ROOT / 'tests/test_helpers.py'\n"})
+    assert {"docs/test_only.md", "tests/test_only_import.py"} <= heavy_closure(heavy_tree)
+
+
+def test_the_heavy_lane_runs_on_src_its_closure_fixtures_and_toolchain(heavy_tree: Path) -> None:
+    def runs(*paths: str) -> bool:
+        return scope([raw(path) for path in paths], heavy_tree)["run_heavy"]
+
+    for path in ("src/trusted_router/x.py", "src/trusted_router/data/openrouter_snapshot.json", "src/other/y.txt",
+                 HEAVY, "tests/conftest.py", "tests/harness.py", "tests/test_helpers.py", "tests/plugins/beta.py",
+                 "scripts/data/table.csv", "docs/named.md", "tests/fixtures/case.json", "tests/fakes/x.txt",
+                 ".test_durations", "pyproject.toml", "uv.lock", ".python-version"):
+        assert runs(path), path
+    for path in ("docs/other.md", "docs/test_only.md", "tests/unrelated.py", "tests/plugins/gamma.py",
+                 "scripts/other.py", "tests/test_new.py", ".test_durations-post-cutover", "fastpath/main.go"):
+        assert not runs(path), path
+    # A deleted module the lane imports is a change to it.
+    assert scope([deleted("tests/imported_helper.py")], heavy_tree)["run_heavy"]
+
+
+def test_deleting_or_renaming_a_file_the_lane_reads_runs_it(heavy_tree: Path) -> None:
+    # HEAD's sources still name the file a change deleted or moved away: its
+    # deletion record runs the lane, wherever in the repository it was.
+    (heavy_tree / "docs/named.md").unlink()
+    for changes in ([deleted("docs/named.md")], [deleted("docs/named.md"), added("docs/renamed.md")]):
+        assert scope(changes, heavy_tree)["run_heavy"], changes
+    (heavy_tree / "scripts/data/table.csv").unlink()
+    assert scope([deleted("scripts/data/table.csv")], heavy_tree)["run_heavy"]
+    # A document nothing names still runs nothing.
+    assert not scope([deleted("docs/other.md")], heavy_tree)["run_heavy"]
+
+
+def test_a_heavy_file_that_does_not_parse_runs_the_lane(heavy_tree: Path) -> None:
+    write(heavy_tree, {"tests/imported_helper.py": "def broken(:\n"})
+    flags, notes, _ = scope_jobs([raw("docs/other.md")], root=heavy_tree, event="push", lines="", now=NOW)
+    assert flags["run_heavy"]
+    assert any("run_heavy" in note and "does not parse" in note for note in notes)
+
+
+def test_the_real_heavy_closure_reaches_what_the_lane_imports_and_reads() -> None:
+    from scripts.ci.commit_scope import HEAVY_TESTS, heavy_closure, heavy_covers
+
+    closure = heavy_closure(ROOT)
+    assert set(HEAVY_TESTS) <= closure
+    for path in ("tests/conftest.py", "tests/test_async_settle_handler.py", "tests/test_billing_snapshot.py",
+                 "tests/shadow_v2_gate_fixture_generator.py", "tests/shadow_v2_import_guard.py",
+                 "scripts/async_settle/shadow_report.py", "tests/test_resold_claude_cache_accounting.py",
+                 "tests/fixtures/async_settlement/p4a_lifecycle_recorder.py"):
+        assert path in closure, path
+    assert all(heavy_covers(path, closure) for path in ("src/trusted_router/main.py", ".test_durations",
+                                                         "tests/fixtures/async_settlement/billing_v1.json"))
+    for path in ("tests/test_ci_workflow.py", "tests/test_decide_models.py", "docs/design/ci-deploy-latency.md",
+                 "scripts/pricing/parsers/fireworks.py", "fastpath/internal/store/ids.go"):
+        assert not heavy_covers(path, closure), path

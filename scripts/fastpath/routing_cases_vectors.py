@@ -453,7 +453,83 @@ def cases() -> list[dict[str, Any]]:
     for prompt, output in ((100, 128), (100, 16000), (5000, 128), (32768, 128), (32769, 128)):
         add(f"workload:{prompt}:{output}", {"model": FLASH, "estimated_input_tokens": prompt,
             "max_tokens": output, "output_tokens": output, "provider": {"usage": "credits"}})
+    _max_price_cases(add)
     return out
+
+
+def _max_price_cases(add: Any) -> None:
+    """provider.max_price (routing._max_token_prices): USD per million tokens
+    as integer microdollars, each limit against every route's headline price
+    at the instant, equal kept. GLM 5.3's hosts: Tinfoil 0.80/2.80, Chutes
+    0.85/2.70, Together 0.95/3.30, Wafer 1.00/3.20, Fireworks 1.10/3.00.
+    DeepSeek V4 Flash is 0.3165/1.266 at peak and half that off peak.
+
+    The file holds each request as json.dumps writes it, a float as its
+    repr: 0.0000005 is 5e-07 there, as Python's str() hands it to Decimal.
+    Go reads a limit written with at most nine digits before the point and
+    six after it, and passes any other spelling (the Go test lists each with
+    its reason); Python answers some of those and refuses the rest."""
+    for name, limits in (
+        ("prompt_at_a_price", {"prompt": 0.95}),
+        ("prompt_a_microdollar_below", {"prompt": 0.949999}),
+        ("completion_at_a_price", {"completion": 3}),
+        ("completion_integral_float", {"completion": 3.0}),
+        ("both_at_their_prices", {"prompt": 1, "completion": 3.2}),
+        ("both_mixed", {"prompt": 0.9, "completion": 3.25}),
+        ("excludes_every_route", {"prompt": 0.5}),
+        ("zero", {"prompt": 0}),
+        ("zero_float", {"completion": 0.0}),
+        ("null_limits", {"prompt": None, "completion": None}),
+        ("one_null", {"prompt": None, "completion": 2.8}),
+        ("empty", {}),
+        ("six_places", {"prompt": 0.850001}),
+        ("largest_go_reads", {"prompt": 999999999.999999}),
+        # Spellings Go passes.
+        ("seventh_place", {"prompt": 0.9500001}),
+        ("half_microdollar", {"prompt": 0.0000005}),
+        ("one_microdollar_as_exponent", {"prompt": 0.000001}),
+        ("exponent", {"prompt": 1e300}),
+        ("ten_digits", {"prompt": 1234567890}),
+        ("string", {"prompt": "0.95"}),
+        ("boolean", {"prompt": True}),
+        ("negative", {"prompt": -1}),
+        ("negative_zero", {"prompt": -0.0}),
+        ("list", {"prompt": [1]}),
+        ("other_member", {"prompt": 1, "image": 1}),
+    ):
+        add(f"max_price:{name}", {"model": GLM, "provider": {"max_price": limits}})
+    for name, max_price in (("number", 1), ("list", [1]), ("string", "1")):
+        add(f"max_price:not_object:{name}", {"model": GLM, "provider": {"max_price": max_price}})
+    add("max_price:null", {"model": GLM, "provider": {"max_price": None}})
+    # The price at the instant: Flash's is over the limit at peak, under it
+    # off peak.
+    for at in INSTANTS:
+        add(f"max_price:flash@{at}", {"model": FLASH, "provider": {"max_price": {"prompt": 0.2}}}, at=at)
+    # Beside the other filters, the order and the refusals.
+    add("max_price:fallback_models", {"model": FLASH, "models": [GLM, GEMINI],
+                                      "provider": {"max_price": {"completion": 3}}})
+    add("max_price:no_fallbacks", {"model": GLM, "provider": {"max_price": {"prompt": 0.9}, "allow_fallbacks": False}})
+    add("max_price:sort_price", {"model": GLM, "provider": {"max_price": {"completion": 3}, "sort": "price"}})
+    add("max_price:order", {"model": GLM, "provider": {"max_price": {"prompt": 0.95}, "order": ["together"]}})
+    add("max_price:privacy", {"model": GLM, "provider": {"max_price": {"prompt": 0.95}, "min_privacy": "zdr"}})
+    add("max_price:deny_relaxed", {"model": FLASH, "provider": {"max_price": {"prompt": 0.5}, "data_collection": "deny"}})
+    add("max_price:deny_and_price_empty", {"model": FLASH,
+                                           "provider": {"max_price": {"prompt": 0.1}, "data_collection": "deny"}})
+    add("max_price:gemini_tiers", {"model": GEMINI, "provider": {"max_price": {"prompt": 2.11, "completion": 12.66}}})
+    add("max_price:gemini_a_microdollar_below", {"model": GEMINI, "provider": {"max_price": {"completion": 12.659999}}})
+    add("max_price:capability_parameter", {"model": GLM, "requested_parameters": ["tools"],
+                                           "provider": {"max_price": {"prompt": 0.95}, "only": ["together"]}})
+    add("max_price:empties_before_capability", {"model": GLM, "requested_parameters": ["tools"],
+                                                "provider": {"max_price": {"prompt": 0.9}, "only": ["together"]}})
+    add("max_price:context", {"model": GLM, "models": [FLASH], "estimated_input_tokens": 70_000,
+                              "provider": {"max_price": {"prompt": 0.9}}})
+    # Python reads max_price after these refusals, and a performance
+    # preference, which Go passes first, after max_price.
+    add("max_price:router_name_first", {"model": GLM, "provider": {"only": ["openrouter"], "max_price": {"prompt": "x"}}})
+    add("max_price:min_privacy_first", {"model": GLM, "provider": {"min_privacy": "secret", "max_price": 1}})
+    add("max_price:require_parameters_first", {"model": GLM, "provider": {"require_parameters": "yes",
+                                                                          "max_price": {"prompt": -1}}})
+    add("max_price:before_perf", {"model": GLM, "provider": {"max_price": {"prompt": -1}, "preferred_max_latency": 2}})
 
 
 def render() -> str:

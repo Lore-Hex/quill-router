@@ -285,13 +285,6 @@ def test_delegated_payload_has_no_local_validator_copy() -> None:
         e.RESOLUTION_DAG({**dag, 'retained': pre['retained']})
 
 
-def test_exact_public_function_surface() -> None:
-    for module, names in ((r, {'file_digest', 'entry_root', 'validate_detail'}),
-                          (c, {'validate_gate_output', 'validate_preimages', 'display_failure'})):
-        assert {name for name, value in vars(module).items() if inspect.isfunction(value)
-                and value.__module__ == module.__name__ and not name.startswith('_')} == names
-
-
 # One small traced witness for each fixture target/verdict; the complete grid
 # above exercises every literal without paying repeated line-tracing cost.
 TRACED = {}

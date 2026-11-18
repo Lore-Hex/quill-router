@@ -128,8 +128,7 @@
       "model_type": "chat",
       "input_modalities": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -297,6 +296,6 @@
       "cached_input_token_price_per_m": 140000
     }
   ],
-  "generated_at": "2026-11-16T09:21:39Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "model_count": 10
 }

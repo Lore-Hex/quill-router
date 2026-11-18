@@ -1379,8 +1379,33 @@ def cases() -> list[dict[str, Any]]:
         ("sort_latency", {"sort": "latency"}), ("sort_throughput", {"sort": "throughput"}),
         ("zdr", {"zdr": True}), ("deny_collection", {"data_collection": "deny"}),
         ("credits_only", {"usage": "credits"}), ("max_price", {"max_price": {"prompt": 1, "completion": 4}}),
+        # Python answers it; Go's evaluator passes it (evaluate.pass), the
+        # goldens' one answer Go passes.
+        ("preferred_max_latency", {"preferred_max_latency": 2}),
     ):
         add(f"answer:provider:{option}", body={"provider": provider})
+    # provider.max_price with floats, which Go reads from their literals (at
+    # most nine digits before the point and six after it): GLM 5.3's hosts
+    # are Tinfoil 0.80/2.80, Chutes 0.85/2.70, Together 0.95/3.30, Wafer
+    # 1.00/3.20 and Fireworks 1.10/3.00, so each limit leaves another set of
+    # candidates, and the estimate and the reservation are the largest
+    # survivor's. The fingerprint holds each float as Python's repr.
+    for name, limits in (
+        ("float_at_a_price", {"prompt": 0.95}),
+        ("floats_at_their_prices", {"prompt": 1.0, "completion": 3.2}),
+        ("null_and_float", {"prompt": None, "completion": 2.8}),
+        ("largest_go_reads", {"prompt": 999999999.999999}),
+    ):
+        add(f"answer:provider:max_price:{name}", body={"provider": {"max_price": limits}})
+    add("answer:provider:max_price:hold_cap", body={"max_output_tokens": HOLD_OUTPUT_TOKENS + 1,
+                                                    "provider": {"max_price": {"completion": 3.0}}})
+    add("answer:provider:max_price:flash@off_peak", at="off_peak",
+        body={"model": FLASH, "provider": {"max_price": {"prompt": 0.2}}})
+    # A spelling json.dumps does not write: trailing zeros (0.950000 and
+    # 3.30), which the fingerprint holds as Python's repr, 0.95 and 3.3.
+    add("answer:provider:max_price:trailing_zeros", body=raw_body(
+        lookup_hash(DEFAULT_KEY["hash"]), f'"model":"{GLM}"', '"estimated_input_tokens":1000',
+        '"provider":{"max_price":{"prompt":0.950000,"completion":3.30}}', PLAIN_TAIL))
     add("answer:top_level_no_fallbacks", body={"allow_fallbacks": False})
     add("answer:variant_floor", body={"model": f"{GLM}:floor"})
     add("answer:variant_nitro", body={"model": f"{FLASH}:nitro"})
@@ -1458,6 +1483,33 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.float", "body.float", body={"metadata": {"temperature": 0.7}})
     add("pass:body.float:integral_spelling", "body.float",
         raw_body(lookup, f'"model":"{GLM}"', '"estimated_input_tokens":1000.0', PLAIN_TAIL))
+    # A float beside a max_price Go reads, or inside a limit, still passes.
+    add("pass:body.float:beside_max_price", "body.float",
+        body={"provider": {"max_price": {"prompt": 0.95}}, "metadata": {"temperature": 0.7}})
+    add("pass:body.float:inside_a_limit", "body.float", body={"provider": {"max_price": {"prompt": [0.5]}}})
+    # The provider.max_price spellings Go does not read, each with its
+    # reason: Python answers the string, the exponent and the trailing zeros
+    # past the sixth place, and refuses the rest with a 400.
+    add("pass:evaluate.max_price.not_object", "evaluate.max_price.not_object", body={"provider": {"max_price": 1.5}})
+    add("pass:evaluate.max_price.option", "evaluate.max_price.option",
+        body={"provider": {"max_price": {"prompt": 1, "image": 0.5}}})
+    add("pass:evaluate.max_price.type", "evaluate.max_price.type", body={"provider": {"max_price": {"prompt": "0.95"}}})
+    add("pass:evaluate.max_price.type:boolean", "evaluate.max_price.type",
+        body={"provider": {"max_price": {"completion": True}}})
+    add("pass:evaluate.max_price.negative", "evaluate.max_price.negative",
+        body={"provider": {"max_price": {"completion": -1.5}}})
+    add("pass:evaluate.max_price.exponent", "evaluate.max_price.exponent", raw_body(
+        lookup, f'"model":"{GLM}"', '"estimated_input_tokens":1000', '"provider":{"max_price":{"prompt":1E0}}',
+        PLAIN_TAIL))
+    add("pass:evaluate.max_price.digits", "evaluate.max_price.digits",
+        body={"provider": {"max_price": {"prompt": 0.9500001}}})
+    add("pass:evaluate.max_price.digits:trailing_zeros", "evaluate.max_price.digits", raw_body(
+        lookup, f'"model":"{GLM}"', '"estimated_input_tokens":1000',
+        '"provider":{"max_price":{"prompt":0.95000000}}', PLAIN_TAIL))
+    add("pass:evaluate.refused:max_price_excludes_every_route", "evaluate.refused",
+        body={"provider": {"max_price": {"prompt": 0.5}}})
+    add("pass:evaluate.refused:max_price_at_peak", "evaluate.refused",
+        body={"model": FLASH, "provider": {"max_price": {"prompt": 0.2}}})
     add("pass:body.lax_type", "body.lax_type",
         raw_body(lookup, f'"model":"{GLM}"', '"estimated_input_tokens":"1000"', PLAIN_TAIL))
     add("pass:body.lax_type:bool", "body.lax_type", body={"stream": 0})
@@ -2239,9 +2291,45 @@ _DECLARED_STRINGS = ("model", "models", "region", "service_tier", "route_type", 
 _SENT_WITH_EVERY_BODY = [("x-trustedrouter-internal-token", INTERNAL_TOKEN), ("accept-encoding", "identity")]
 
 
+# A provider.max_price limit Go reads from its literal
+# (fastpath/internal/routingsnapshot/max_price.go, plainLimit): no sign, no
+# exponent, at most nine digits before the point and six after it.
+MAX_PRICE_LIMIT = re.compile(r"(0|[1-9][0-9]{0,8})(\.[0-9]{1,6})?")
+
+
+class _Literal(float):
+    """A float that keeps the literal json.loads read it from."""
+
+    literal: str
+
+
+def _max_price_limit_floats(raw: str) -> int:
+    """How many of the body's floats are provider.max_price limits Go reads:
+    the value of prompt or completion in a provider.max_price object, written
+    as MAX_PRICE_LIMIT. Go does not pass for those (max_price_float); it
+    passes for every other float (float_present)."""
+
+    def literal(token: str) -> _Literal:
+        number = _Literal(token)
+        number.literal = token
+        return number
+
+    value = json.loads(raw.removeprefix("﻿"), parse_float=literal)
+    provider = value.get("provider") if isinstance(value, dict) else None
+    limits = provider.get("max_price") if isinstance(provider, dict) else None
+    if not isinstance(limits, dict):
+        return 0
+    return sum(
+        1 for name, number in limits.items()
+        if name in ("prompt", "completion") and isinstance(number, _Literal)
+        and MAX_PRICE_LIMIT.fullmatch(number.literal)
+    )
+
+
 def _decoded(raw: str) -> tuple[Any, set[str]]:
     """json.loads as the route's body parser runs it, and what the text holds."""
     found: set[str] = set()
+    floats = 0
 
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         if len({k for k, _v in items}) != len(items):
@@ -2249,7 +2337,8 @@ def _decoded(raw: str) -> tuple[Any, set[str]]:
         return dict(items)
 
     def parse_float(token: str) -> float:
-        found.add("float_present")
+        nonlocal floats
+        floats += 1
         return float(token)
 
     def parse_int(token: str) -> int:
@@ -2271,6 +2360,11 @@ def _decoded(raw: str) -> tuple[Any, set[str]]:
         raw = raw[1:]
     value = json.loads(raw, object_pairs_hook=pairs, parse_float=parse_float, parse_int=parse_int,
                        parse_constant=parse_constant)
+    limits = _max_price_limit_floats(raw) if floats else 0
+    if limits:
+        found.add("max_price_float")
+    if floats > limits:
+        found.add("float_present")
     return value, found
 
 
@@ -2620,6 +2714,20 @@ def fingerprint_bodies() -> list[dict[str, Any]]:
         raw_body(lookup, f'"model":"{GLM}"', '"gateway_request_id":""'),
         raw_body(lookup, f'"model":"{GLM}"', '"gateway_request_id":7'),
         raw_body(lookup, f'"model":"{GLM}"', f'"gateway_request_id":["{REQUEST_LOG_ID}"]'),
+        # provider.max_price limits in spellings the draws do not make. Go
+        # reads the first four (the fingerprint holds Python's repr: 0.95,
+        # 3.3, 1.0, 2.8, 999999999.999999) and the fifth, whose one
+        # microdollar no route meets (Python refuses it); it passes the
+        # exponents, the eighth place and the float beside the limit.
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":0.950000,"completion":3.30}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":1.0}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"completion":2.800000}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":999999999.999999,"completion":null}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":0.000001}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":1e-6}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":1E0}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":0.95000000}}'),
+        raw_body(lookup, f'"model":"{GLM}"', '"provider":{"max_price":{"prompt":0.95},"preferred_max_latency":2.5}'),
     ):
         out.append({"body": raw, "headers": json_only})
     return out

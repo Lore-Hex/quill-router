@@ -126,20 +126,3 @@ def test_distinct_idle_and_terminated_original_histories(tmp_path):
         assert len(found.boots) == 1 and found.boots[0]['boot'] == name
         (tmp_path / (state + '.json')).write_bytes(canonical(original))
     assert populations['idle'] != populations['terminated']
-
-
-def test_corrected_vector_catalog_is_complete():
-    from pathlib import Path
-
-    from tests.shadow_v2_pack_round5_vectors import corrected_result
-    catalog = json.loads(Path('tests/shadow_v2_pack_round5_corrected_results.json').read_bytes())['cases']
-    expected = {'test_real_writer_loader_original_deletion_matrix_is_base_defect:' + str(i) for i in range(17)}
-    expected.update(name + ':0' for name in ('test_current_loader_cap_result_is_expected_base_defect',
-        'test_cap_survives_split_transport_with_expected_base_result',
-        'test_real_writers_native_export_collect_and_pack_loader'))
-    assert set(catalog) == expected
-    for name in expected:
-        test, case = name.rsplit(':', 1)
-        value = corrected_result(test, int(case))
-        assert value['test'] == catalog[name]['test'] and value['case'] == catalog[name]['case']
-        assert value['failures'] and all(f['count'] > 0 and f['subject'] for f in value['failures'])

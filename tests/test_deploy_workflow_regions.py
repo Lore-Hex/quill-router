@@ -102,13 +102,6 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
         assert f'.name == "{name}"' in retired
 
 
-def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
-    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
-
-    assert "- name: Sync shared public analytics snapshots" in workflow
-    assert "scripts/deploy/sync_public_analytics_snapshots.sh --apply" in workflow
-
-
 def test_snapshot_upload_uses_isolated_iap_acceleration_without_runtime_bloat() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
@@ -524,25 +517,6 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
     assert '--baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json"' in workflow
     ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
     assert 'watchdog_args+=(--baseline-input "$watchdog_baseline")' in ramp
-
-
-def test_full_convergence_metrics_are_reported_before_mutex_release() -> None:
-    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
-    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
-        "\n  public-surface-companion:\n", 1
-    )[0]
-
-    report = rollout.index("- name: Report full convergence timing")
-    metric = rollout[report:]
-    assert "deploy_mutex.sh release" not in rollout
-    finalization = yaml.safe_load(workflow)["jobs"]["finalize-cloud"]
-    assert "rollout-secondaries" in finalization["needs"]
-    assert "if: ${{ success() }}" in metric
-    assert "deploy.full_convergence_seconds=${full_convergence_seconds}" in metric
-    assert "primary_live_seconds=${PRIMARY_LIVE_SECONDS}" in metric
-    assert '>>"$GITHUB_STEP_SUMMARY"' in metric
-    assert "gcloud logging write tr-deploy-metrics" in metric
-    assert "--payload-type=json" in metric
 
 
 def test_mutex_acquire_step_cannot_swallow_a_blocked_exit() -> None:

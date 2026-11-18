@@ -29,7 +29,7 @@ from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
 from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "openai"
-URL = "https://developers.openai.com/api/docs/pricing"
+URL = "https://developers.openai.com/api/docs/pricing.md"
 BASE_URL = "https://api.openai.com/v1"
 MODELS_URL = f"{BASE_URL}/models"
 MANIFEST_PATH = (
@@ -65,7 +65,7 @@ _MODEL_METADATA_OVERRIDES: dict[str, dict[str, Any]] = {
             "structured-output",
         ],
     }
-    for model in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")
+    for model in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.2-sol")
 }
 
 _NON_CHAT_MARKERS = (

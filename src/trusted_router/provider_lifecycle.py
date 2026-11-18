@@ -112,6 +112,9 @@ SAIL_GPT_OSS_120B_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
 # Atlas Cloud's November 13 notice takes MiniMax M3 and M2.7 offline at the
 # end of Friday 2026-11-13 Pacific Time, i.e. midnight PST (08:00 UTC Nov 14).
 ATLAS_MINIMAX_RETIREMENT_AT = datetime(2026, 11, 14, 8, 0, tzinfo=UTC)
+# NVIDIA NIM's HTTP 410 for meta/llama-guard-4-12b states its exact end of
+# life, 2026-11-16T09:00:00Z (first seen by the route probe 2026-11-17).
+NVIDIA_NIM_LLAMA_GUARD_4_RETIREMENT_AT = datetime(2026, 11, 16, 9, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1482,6 +1485,16 @@ _RETIREMENTS = (
         model_ids=frozenset({"minimax/minimax-m3", "minimax/minimax-m2.7"}),
         upstream_ids=frozenset({"minimaxai/minimax-m3", "minimaxai/minimax-m2.7"}),
         effective_at=ATLAS_MINIMAX_RETIREMENT_AT,
+    ),
+    # NVIDIA NIM answers HTTP 410 for meta/llama-guard-4-12b: "has reached its
+    # end of life on 2026-11-16T09:00:00Z and is no longer available". The
+    # error names no successor, so none is quoted. Retire only NIM's route;
+    # the same model stays available from the other providers that serve it.
+    _Retirement(
+        provider="nvidia-nim",
+        model_ids=frozenset({"meta-llama/llama-guard-4-12b"}),
+        upstream_ids=frozenset({"meta/llama-guard-4-12b"}),
+        effective_at=NVIDIA_NIM_LLAMA_GUARD_4_RETIREMENT_AT,
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.

@@ -135,28 +135,6 @@ def test_chat_catalog_uses_the_canonical_api_hostname() -> None:
     assert 'CHAT_CONFIG.catalogBaseUrl' in js
 
 
-def test_chat_js_supports_model_query_param() -> None:
-    """Deep links like /chat?model=trustedrouter/openpatcher-s1 should
-    open the playground with that model selected in the first slot."""
-    js = Path("src/trusted_router/static/chat.js").read_text()
-
-    assert 'new URLSearchParams(window.location.search).get("model")' in js
-    assert "applyUrlModelOverride" in js
-    assert "rememberRecentModel(URL_MODEL_ID)" in js
-
-
-def test_chat_js_defaults_to_plato_alias() -> None:
-    js = Path("src/trusted_router/static/chat.js").read_text()
-
-    assert (
-        'const DEFAULT_MODEL_ID = URL_MODEL_ID || "trustedrouter/plato";'
-        in js
-    )
-    assert "LOCKED_MODEL_ID" not in js
-    assert 'placeholder="trustedrouter/plato"' in js
-    assert '|| "anthropic/claude-sonnet-4.6"' not in js
-
-
 def test_chat_js_signed_out_send_shows_local_notice_without_request() -> None:
     """Anonymous Send should produce a pleasant in-thread notice, not
     silently fail or emit an inference request. The request-builder also

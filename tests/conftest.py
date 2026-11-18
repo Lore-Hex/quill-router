@@ -10,6 +10,12 @@ if os.environ.get("TR_TESTMAP_OUT"):
 
     pytest_plugins = ["scripts.ci.testmap_recorder"]
 
+# In GitHub Actions, the session records its failed test IDs for the shadow
+# selection's comparison (scripts/ci/failure_record.py; ci.yml's test job
+# uploads the record whatever the outcome).
+if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_TEMP"):
+    pytest_plugins = [*globals().get("pytest_plugins", []), "scripts.ci.failure_record"]
+
 import functools
 from collections.abc import Callable, Iterator
 

@@ -159,7 +159,7 @@ def test_worker_uses_same_release_hotfix_decision_as_parent(hotfix: bool) -> Non
     parent = jobs["gate-on-ci"]["steps"][0]["run"]
     # Execute the parent's decision prefix: hotfix exits before CI; normal
     # releases fall through to CI. The script harness covers pending CI in both.
-    prefix = parent[:parent.index('echo "waiting for CI')]
+    prefix = parent[:parent.index('echo "checking CI')]
     script = prefix.replace("${{ inputs.hotfix }}", str(hotfix).lower()) + "echo CI_REQUIRED\n"
     script = script.replace("${{ inputs.track_main }}", "false")
     result = subprocess.run(  # noqa: S603 - local workflow decision, no cloud commands

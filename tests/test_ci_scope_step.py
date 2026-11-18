@@ -39,8 +39,11 @@ LIFECYCLE = (
     "                effective_at=datetime(2099, 1, 1, tzinfo=UTC)),\n"
     ")\n"
 )
-ALL = {"run_fastpath": True, "run_post_cutover": True, "run_proof_oracle": True, "run_proofs": True}
+ALL = {"run_fastpath": True, "run_heavy": True, "run_post_cutover": True, "run_proof_oracle": True,
+       "run_proofs": True}
 NONE = dict.fromkeys(ALL, False)
+# Catalog data: the post-cutover suite, and the heavy lane (all of src/).
+CATALOG = NONE | {"run_heavy": True, "run_post_cutover": True}
 
 
 def scope_script() -> str:
@@ -221,8 +224,8 @@ def test_a_data_only_push_on_a_validated_base_is_data_only(scope_repo: ScopeRepo
     assert scope_repo.run(event="push", head=c, before=a, runs=[run_record(a)]) == "true"
     assert "changed paths" in scope_repo.last.stdout
     assert any(f"runs?head_sha={a}" in arg for call in scope_repo.gh_calls for arg in call)
-    # Catalog data runs the post-cutover suite and nothing else path-scoped.
-    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    # Catalog data runs the post-cutover suite and the heavy lane, nothing else path-scoped.
+    assert scope_repo.flags == CATALOG
 
 
 @pytest.mark.parametrize("runs", [
@@ -267,9 +270,9 @@ def test_a_code_change_is_not_data_only_and_runs_the_jobs_that_read_it(scope_rep
     a = scope_repo.shas["A"]
     cases: list[tuple[str, dict[str, str | None], dict[str, bool]]] = [
         ("C1", {SNAPSHOT: '{"v": 2}\n', GO: "package store // x\n"},
-         NONE | {"run_fastpath": True, "run_post_cutover": True}),
+         CATALOG | {"run_fastpath": True}),
         ("C2", {"src/trusted_router/static/og/providers/new.js": "x\n"},
-         NONE | {"run_post_cutover": True, "run_proof_oracle": True}),
+         CATALOG | {"run_proof_oracle": True}),
         ("C3", {"scripts/pricing/parsers/fireworks.py": "def parse(h): ...\n"}, NONE | {"run_post_cutover": True}),
         ("C4", {"fastpath/testdata/model_alias_vectors_v1.json": "[]\n"},
          NONE | {"run_fastpath": True, "run_post_cutover": True}),
@@ -456,7 +459,7 @@ def test_a_dispatch_without_scope_paths_runs_the_complete_matrix(scope_repo: Sco
     d = scope_repo.commit("D", {SNAPSHOT: '{"v": 2}\n'})
     scope_repo.push("automation/price-refresh-42")
     assert scope_repo.run(event="workflow_dispatch", head=d, runs=[run_record(a)], dispatch_scope="paths") == "true"
-    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert scope_repo.flags == CATALOG
     assert scope_repo.run(event="workflow_dispatch", head=d, runs=[run_record(a)],
                           dispatch_scope=dispatch_scope) == "false"
     assert scope_repo.flags == ALL
@@ -467,13 +470,13 @@ def test_the_ci_full_label_runs_the_complete_matrix(scope_repo: ScopeRepo) -> No
     a = scope_repo.shas["A"]
     c = scope_repo.commit("C", {SNAPSHOT: '{"v": 2}\n'})
     assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)]) == "true"
-    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert scope_repo.flags == CATALOG
     assert any("issues/42/labels" in arg for call in scope_repo.gh_calls for arg in call)
     # Another label changes nothing; ci:full, among others, runs everything,
     # the data-only skips included.
     assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)],
                           labels=["bug", "ci:fullish", "full"]) == "true"
-    assert scope_repo.flags == NONE | {"run_post_cutover": True}
+    assert scope_repo.flags == CATALOG
     assert scope_repo.run(event="pull_request", head=c, pr_base=a, runs=[run_record(a)],
                           labels=["bug", "ci:full"]) == "false"
     assert scope_repo.flags == ALL

@@ -34,10 +34,11 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'head' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  queue: ${{ github.ref == 'refs/heads/main' && 'max' || 'single' }}
 
 # Independent jobs instead of one serial pipeline: wall time becomes the
 # slowest job, not the sum. deploy.yml's gate and refresh-prices.yml's
-# publication gate poll this WORKFLOW RUN's conclusion for the SHA. GitHub
+# publication gate require this WORKFLOW RUN's conclusion for the SHA. GitHub
 # concludes a run success when every job succeeded OR was skipped, so the
 # `ci` summary job at the end re-derives the conclusion from each job's
 # result and accepts a skipped job only in the two cases below.
@@ -67,8 +68,8 @@ concurrency:
 # job turns into a failed run.
 #
 # Path-scoped jobs. The heavy jobs that read a known part of the tree (the
-# TLA+ model checks, the proof oracle, the post-cutover suite and the three
-# fast path jobs) also carry
+# TLA+ model checks, the proof oracle, the post-cutover suite, the heavy test
+# lane and the three fast path jobs) also carry
 #   needs.scope.outputs.<flag> != 'false'
 # and run, on every event, only when a file their flag names changed
 # (commit_scope.py's docstring lists each flag's files and why): for a pull
@@ -86,7 +87,8 @@ concurrency:
 # drives this step against local repositories and a fake gh.
 jobs:
   scope:
-    runs-on: ubuntu-24.04
+    # GitHub-hosted Ubuntu 24.04; the group allows only this workflow on main.
+    runs-on: &short-runner ${{ github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'tr-ci-short' || 'ubuntu-24.04' }}
     permissions:
       contents: read
       actions: read         # the ci.yml runs of the base and of its ancestors
@@ -94,6 +96,7 @@ jobs:
     outputs:
       data_only: ${{ steps.scope.outputs.data_only }}
       run_fastpath: ${{ steps.scope.outputs.run_fastpath }}
+      run_heavy: ${{ steps.scope.outputs.run_heavy }}
       run_post_cutover: ${{ steps.scope.outputs.run_post_cutover }}
       post_cutover_tests: ${{ steps.scope.outputs.post_cutover_tests }}
       run_proof_oracle: ${{ steps.scope.outputs.run_proof_oracle }}
@@ -480,6 +483,14 @@ jobs:
       # concurrent schema changes -- measured 14 setup errors under plain -n 4,
       # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
       # order-independent; grouping is what serializes the DDL.
+      - name: Leave the heavy lane's files to test-heavy
+        # One line of --ignore=<path> arguments (commit_scope.py lists only
+        # paths of [A-Za-z0-9_./-]); the suite step reads it from the
+        # environment, as the post-cutover suite reads its selection.
+        run: |
+          set -euo pipefail
+          ignored=$(python3 scripts/ci/commit_scope.py heavy-tests --ignore)
+          echo "HEAVY_IGNORE=${ignored}" >> "$GITHUB_ENV"
       - name: Copy split weights for this shard
         # --durations-path is both the split input and the recording output.
         run: cp .test_durations durations-${{ matrix.shard }}.json
@@ -506,9 +517,14 @@ jobs:
         # collected per shard with NO fail-under: a shard sees only its own
         # slice, so enforcing 70% there would fail on a perfectly covered
         # suite. The `coverage` job below combines them and enforces once.
+        #
+        # ${HEAVY_IGNORE}: the heavy lane's files, which test-heavy runs. An
+        # ignored file is never collected, so the split weighs only what
+        # these shards run, and the two jobs partition the suite.
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           -m "not provider_health and not proof_oracle"
+          ${HEAVY_IGNORE}
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
@@ -520,6 +536,19 @@ jobs:
           name: durations-default-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
           retention-days: 7
+      # The shard's failed test IDs (scripts/ci/failure_record.py, loaded by
+      # tests/conftest.py in GitHub Actions), for the coverage job's report
+      # only shadow comparison. Whatever the outcome; it can never fail the job.
+      - name: Upload this shard's failed tests
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-failures-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-failures/failures.json
+          retention-days: 1
+          if-no-files-found: ignore
       - name: Stash this shard's coverage
         # Renamed off the dotfile before upload. `.coverage` is hidden, and
         # upload-artifact only stopped skipping hidden files behind an opt-in
@@ -531,6 +560,91 @@ jobs:
         with:
           name: coverage-${{ matrix.shard }}
           path: coverage-${{ matrix.shard }}.dat
+          retention-days: 1
+
+  # The heavy lane: the default suite's slowest test files (commit_scope.py's
+  # HEAVY_TESTS, 28% of its recorded weight), which the `test` shards ignore.
+  # Path-scoped (run_heavy): it runs, on every event, when a change can reach
+  # them (any file under src/; anything their imports, string-named modules
+  # and named paths reach from them and tests/conftest.py; a test fixture;
+  # their split weights; the Python toolchain: commit_scope.py's docstring
+  # has the rule), and skips otherwise, which in the last 100 merged pull
+  # requests was about half of them. Optional, like proof-oracle:
+  # not a required check, but the CI summary needs it, so a red lane fails
+  # the run and a skip passes only when the scope job set run_heavy=false.
+  # Its coverage joins the `coverage` job's when it runs.
+  #
+  # No service containers and no enclave source: none of these files reads a
+  # database DSN, TR_ENCLAVE_SOURCE_ROOT or TEST_SHARDS. The same checkout,
+  # markers, xdist grouping (gate_window's xdist_group) and split weights
+  # (.test_durations) as `test`, so each test runs as it did there.
+  test-heavy:
+    needs: scope
+    if: needs.scope.outputs.run_heavy != 'false'
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        # Three shards each carry about as much recorded weight as one of the
+        # eight `test` shards after the move, so the lane is not the slowest
+        # job of a run that runs it.
+        shard: [1, 2, 3]
+    runs-on: ubuntu-24.04
+    env:
+      TEST_SHARDS: "3"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+      - name: Sync
+        run: uv sync --frozen
+      - name: Select the heavy lane's files
+        # One line of paths (commit_scope.py lists only [A-Za-z0-9_./-]);
+        # it fails rather than print nothing, which would run the whole suite.
+        run: |
+          set -euo pipefail
+          files=$(python3 scripts/ci/commit_scope.py heavy-tests --files)
+          echo "HEAVY_FILES=${files}" >> "$GITHUB_ENV"
+      - name: Copy split weights for this shard
+        # --durations-path is both the split input and the recording output.
+        run: cp .test_durations durations-${{ matrix.shard }}.json
+      - name: Heavy lane tests and coverage
+        run: >-
+          uv run pytest -q -n 4 --dist loadgroup
+          -m "not provider_health and not proof_oracle"
+          --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration
+          --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+          --cov=trusted_router --cov-report=
+          ${HEAVY_FILES}
+      - name: Upload this shard's durations
+        # Named under durations-default-*, so merge_shard_durations.py's
+        # default profile reads the lane with the eight shards.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: durations-default-heavy-${{ matrix.shard }}
+          path: durations-${{ matrix.shard }}.json
+          retention-days: 7
+      # The lane's failed test IDs (scripts/ci/failure_record.py), for the
+      # coverage job's report-only shadow comparison, which counts them
+      # against this job's result. Whatever the outcome; it can never fail
+      # the job.
+      - name: Upload this shard's failed tests
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-failures-heavy-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-failures/failures.json
+          retention-days: 1
+          if-no-files-found: ignore
+      - name: Stash this shard's coverage
+        run: mv .coverage coverage-heavy-${{ matrix.shard }}.dat
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-heavy-${{ matrix.shard }}
+          path: coverage-heavy-${{ matrix.shard }}.dat
           retention-days: 1
 
   coverage:
@@ -549,12 +663,30 @@ jobs:
     # job queued after superseding PR runs, blocking the replacement's CI.
     # The floor measures the code's coverage; a data-only commit changes no
     # code and skips it (its shards still ran and still gate the run).
-    needs: [test, scope]
+    #
+    # The heavy lane (test-heavy) holds part of the suite. When it ran, its
+    # shards' coverage is combined with the eight and must all be there; a
+    # lane that failed fails this job like a failed shard. When it skipped
+    # (run_heavy=false, which the CI summary holds it to), the floor is
+    # measured on the eight alone. That is a lower bound of the suite's
+    # coverage (the lane only adds lines), so a pass is a true pass and the
+    # floor cannot pass on lines nobody ran; it fails spuriously only if the
+    # eight alone fall under 70% while the lane would lift them over. On
+    # 2026-11-17 the eight alone covered 89% (run 44174820655) and all eleven
+    # 91% (run 44179448721), as main's eight did before the lane. A pull
+    # request that lands there is labeled ci:full, which runs the lane and
+    # counts it.
+    needs: [test, test-heavy, scope]
     if: ${{ !cancelled() && needs.scope.outputs.data_only != 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: *short-runner
+    env:
+      # The two shard counts the floor expects: ci.yml's test and test-heavy
+      # matrices (tests/test_ci_workflow.py holds them equal).
+      TEST_SHARDS: "8"
+      HEAVY_SHARDS: "3"
     # The shadow test selection reads the per-test footprint map (an artifact
-    # of the "Test map" workflow), the pull request's labels and this run's
-    # failed shard logs.
+    # of the "Test map" workflow's runs) and the pull request's labels; its
+    # comparison reads the test shards' failure records (this run's artifacts).
     permissions:
       contents: read
       actions: read
@@ -587,13 +719,26 @@ jobs:
         run: >-
           python3 scripts/ci/testmap.py shadow --base "${PR_BASE_SHA}" --head "${GITHUB_SHA}"
           --pr "${PR_NUMBER}" --out selection.json.gz
+      # Every test shard's failure record. A missing one (a cancelled or
+      # timed-out shard) makes the comparison say "unavailable", not zero.
+      - name: Collect every shard's failed tests
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: test-failures-*
+          path: test-failures
       - name: Failures outside the shadow selection (report only)
         if: github.event_name == 'pull_request'
         continue-on-error: true
         timeout-minutes: 5
+        # The heavy lane's records (test-failures-heavy-*) count against its
+        # own result: a skipped lane failed nothing.
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/testmap.py compare --selection selection.json.gz
+          TEST_RESULT: ${{ needs.test.result }}
+          HEAVY_RESULT: ${{ needs.test-heavy.result }}
+        run: python3 scripts/ci/testmap.py compare --selection selection.json.gz --failures test-failures
       - name: Upload the shadow test selection
         if: github.event_name == 'pull_request'
         continue-on-error: true
@@ -612,16 +757,31 @@ jobs:
             echo "a measurement of this commit"
             exit 1
           fi
+          case "${{ needs.test-heavy.result }}" in
+            success) heavy="${HEAVY_SHARDS}" ;;
+            skipped) heavy=0 ;;
+            *)
+              echo "the heavy lane did not pass (${{ needs.test-heavy.result }}); coverage"
+              echo "without it is not a measurement of this commit"
+              exit 1 ;;
+          esac
           # download-artifact gives one directory per artifact; coverage
           # combine wants distinct file names in one place.
           i=0
+          shards=0
+          lane=0
           for f in shards/coverage-*/coverage-*.dat; do
             [ -f "$f" ] || continue
             i=$((i + 1))
             cp "$f" ".coverage.${i}"
+            case "$(basename "$f")" in
+              coverage-heavy-*) lane=$((lane + 1)) ;;
+              *) shards=$((shards + 1)) ;;
+            esac
           done
-          echo "combining ${i} shard(s)"
-          test "$i" -gt 0 || { echo "no coverage artifacts found"; exit 1; }
+          echo "combining ${shards} test shard(s) and ${lane} heavy lane shard(s)"
+          test "${shards}" -eq "${TEST_SHARDS}" || { echo "expected ${TEST_SHARDS} test shards' coverage"; exit 1; }
+          test "${lane}" -eq "${heavy}" || { echo "expected ${heavy} heavy lane shards' coverage"; exit 1; }
           uv run coverage combine
           uv run coverage report --show-missing --skip-covered --fail-under=70
 
@@ -1086,6 +1246,7 @@ jobs:
       - frontend
       - production-import
       - test
+      - test-heavy
       - coverage
       - test-post-cutover
       - proof-oracle
@@ -1096,7 +1257,7 @@ jobs:
       - fastpath-walks
       - proofs
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
+    runs-on: *short-runner
     env:
       NEEDS: ${{ toJSON(needs) }}
       DATA_ONLY: ${{ needs.scope.outputs.data_only }}

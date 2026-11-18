@@ -189,7 +189,15 @@ locals {
   # again. The other fastpath/ changes since b1d3dbcf9 are tests and test
   # data (#2670, #2677, #2661). The nodes take it one at a time in either
   # order.
-  fastpath_release        = "2918dbbcff831e82600ba23c0546cfeec49f70bd"
+  # fab9cd893: the edge decides authorize requests that carry
+  # provider.max_price (#2689). A prompt and/or completion limit with no
+  # sign or exponent, at most 9 integer and 6 fraction digits, filters
+  # routes the way Python's _endpoint_matches_parameter_and_price_filters
+  # does, read from the literal's digits; every other max_price shape still
+  # passes to Python with its own evaluate.max_price.* reason. The other
+  # fastpath/ changes since 2918dbbcf are catalog test vectors (#2675,
+  # #2687). Off switch: pin 2918dbbcf again. One node at a time.
+  fastpath_release        = "fab9cd893826ae6476e8ca407f7d3c5cfbf51ee3"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -218,6 +226,10 @@ locals {
     "2918dbbcff831e82600ba23c0546cfeec49f70bd" = {
       fastpath   = "41f56868d8b3cce320da2ef14a1fcab28f159288d60d0e41a76215313d741c17"
       sha256sums = "b4af0b6b0f1c2272cdc74d94311af804537f1a8fbaf1e54b35bd01d2bcd68642"
+    }
+    "fab9cd893826ae6476e8ca407f7d3c5cfbf51ee3" = {
+      fastpath   = "f2837b7c443c0319829fa17fa8c0097f01543064196d61c39e88e114dc18c304"
+      sha256sums = "8b1aa4e1cd992421faa1ea37d6603c17590f51d613166b220b327eeabd808e4e"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")

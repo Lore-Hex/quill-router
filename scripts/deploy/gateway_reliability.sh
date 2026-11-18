@@ -17,17 +17,21 @@ ALERT_CHANNEL_DISPLAY_NAME="${TR_GATEWAY_ALERT_CHANNEL_DISPLAY_NAME:-TrustedRout
 SLOW_METRIC_NAME="trustedrouter_gateway_billing_slow"
 # The counters "TR Gateway: authorize 503 not lease headroom" compares
 # (gateway-alerts/billing-authorize-503.yaml): every authorize 503 against
-# the sum of the two the app marks as designed and retryable. The second is
-# also the rate of lease-headroom 503s (TR_FASTPATH_LEASE_HEADROOM_503); the
-# third is the rate of rebalance-busy 503s, which
-# gateway-alerts/billing-rebalance-busy.yaml bounds.
+# the sum of the three the app marks as designed and retryable. The second
+# is also the rate of lease-headroom 503s (TR_FASTPATH_LEASE_HEADROOM_503);
+# the third is the rate of rebalance-busy 503s, which
+# gateway-alerts/billing-rebalance-busy.yaml bounds; the fourth is the rate
+# of strict-budget-busy 503s, which gateway-alerts/billing-strict-budget-busy.yaml
+# bounds.
 AUTHORIZE_503_METRIC_NAME="trustedrouter_gateway_authorize_503"
 LEASE_HEADROOM_METRIC_NAME="trustedrouter_gateway_lease_headroom_503"
 REBALANCE_BUSY_METRIC_NAME="trustedrouter_gateway_rebalance_busy_503"
-# Applied first, before the policy below stops counting rebalance-busy 503s
-# as unmarked: from then on this one alone pages on them, on more than two
-# in ten minutes or more than five in an hour.
+STRICT_BUDGET_BUSY_METRIC_NAME="trustedrouter_gateway_strict_budget_busy_503"
+# Applied first, before the policy below stops counting rebalance-busy and
+# strict-budget-busy 503s as unmarked: from then on these two alone page on
+# them, each on more than two in ten minutes or more than five in an hour.
 REBALANCE_BUSY_POLICY="billing-rebalance-busy.yaml"
+STRICT_BUDGET_BUSY_POLICY="billing-strict-budget-busy.yaml"
 # Applied before every remaining policy: billing-5xx.yaml sets authorize 503s
 # aside for it, so it must page before that filter narrows.
 AUTHORIZE_503_POLICY="billing-authorize-503.yaml"
@@ -78,7 +82,8 @@ ensure_slow_metric() {
 # Required, unlike the slow counter: without the first two the authorize-503
 # policy reads nothing and, with billing-5xx.yaml setting authorize 503s
 # aside, no authorize 503 would page; without the third the rebalance-busy
-# policy reads nothing. A failure here stops the script before any policy.
+# policy reads nothing, and without the fourth the strict-budget-busy
+# policy. A failure here stops the script before any policy.
 ensure_authorize_503_metrics() {
   ensure_log_metric "$AUTHORIZE_503_METRIC_NAME" \
     "Every TrustedRouter internal gateway authorize 503 in Cloud Run's request log, marked by the app or not." \
@@ -95,6 +100,14 @@ ensure_authorize_503_metrics() {
   ensure_log_metric "$REBALANCE_BUSY_METRIC_NAME" \
     "Authorize 503s answered while a workspace's credit rebalance cooldown is held: the app's billing.credit_rebalance_busy line." \
     'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"INFO trusted_router.routes.internal.gateway billing.credit_rebalance_busy "'
+  # The app's line for each strict-budget-busy 503 (routes/internal/gateway.py,
+  # _log_strict_budget_busy): textPayload
+  # "INFO <logger> billing.strict_budget_busy ...". The handler's WARNING
+  # line for the same 503 ("WARNING trusted_router.main
+  # billing.strict_budget_busy ...") does not contain this text.
+  ensure_log_metric "$STRICT_BUDGET_BUSY_METRIC_NAME" \
+    "Authorize 503s answered when a strict-budget key cannot get its per-process admission slot: the app's billing.strict_budget_busy line." \
+    'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND textPayload:"INFO trusted_router.routes.internal.gateway billing.strict_budget_busy "'
 }
 
 ensure_channel() {
@@ -130,12 +143,13 @@ ensure_policies() {
   local policy_file display_name policy_name
   local policy_files=(
     "${SCRIPT_DIR}/gateway-alerts/${REBALANCE_BUSY_POLICY}"
+    "${SCRIPT_DIR}/gateway-alerts/${STRICT_BUDGET_BUSY_POLICY}"
     "${SCRIPT_DIR}/gateway-alerts/${AUTHORIZE_503_POLICY}"
   )
 
   for policy_file in "${SCRIPT_DIR}"/gateway-alerts/*.yaml; do
     case "$(basename "$policy_file")" in
-      "$REBALANCE_BUSY_POLICY" | "$AUTHORIZE_503_POLICY") ;;
+      "$REBALANCE_BUSY_POLICY" | "$STRICT_BUDGET_BUSY_POLICY" | "$AUTHORIZE_503_POLICY") ;;
       *) policy_files+=("$policy_file") ;;
     esac
   done

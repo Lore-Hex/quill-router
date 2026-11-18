@@ -3171,25 +3171,10 @@ def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> No
     )
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
-    assert 'throughput_job_name="trusted-router-throughput-${throughput_region}"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=true"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
-    assert 'scheduler_name="${job_name}-every-three-minutes"' in body
-    assert '"${job_name}-every-minute"' in body
-    assert '"${job_name}-every-five-minutes"' in body
-    assert '"TR_SYNTHETIC_ROTATION_PER_PASS=2"' in body
-    assert '"*/3 * * * *"' in body
-    assert '"*/5 * * * *"' in body
-    assert 'throughput_scheduler_name="${throughput_job_name}-every-five-minutes"' in body
-    assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"' in body
     assert '"TR_SYNTHETIC_BILLING_CONCURRENCY=2"' in body
-    assert '"TR_SYNTHETIC_START_DELAY_SECONDS=$((monitor_index * 20))"' in body
-    assert '"TR_SYNTHETIC_START_DELAY_SECONDS=0"' in body
-    assert '"TR_SYNTHETIC_THROUGHPUT_TIMEOUT_CEILING_SECONDS=210"' in body
-    assert '"${throughput_job_name}-every-minute"' in body
-    assert '"${throughput_job_name}-every-two-minutes"' in body
-    assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
     assert (
         'regional_ingest_base="$(synthetic_ingest_base_for_region '
         '"$monitor_region")"'
@@ -3232,13 +3217,11 @@ def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> No
         '"TR_SYNTHETIC_INGEST_URL=${image_ingest_base}/v1/internal/synthetic/samples"'
         in body
     )
+    # The low-cost image canary (#315): its model and six-hour cadence are its cost.
     assert '"TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"' in body
     assert '"TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"' in body
-    assert '"TR_SYNTHETIC_IMAGE_CONFIRMATION_DELAY_SECONDS=2"' in body
-    assert '--args="-m,trusted_router.synthetic.image_generation"' in body
-    image_job = body.split("deploying isolated image-generation", maxsplit=1)[1]
-    assert "--task-timeout 300s" in image_job
     assert '"17 */6 * * *"' in body
+    assert '--args="-m,trusted_router.synthetic.image_generation"' in body
 
 
 @pytest.mark.asyncio

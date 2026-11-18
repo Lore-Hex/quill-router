@@ -17,8 +17,19 @@ Stdlib only, like commit_scope.py, so a job can run it before `uv sync`.
             diff can reach, write the selection (gzipped JSON) and a job
             summary. Report only: nothing reads the selection to decide what
             runs.
-  compare   after the test shards: this run's failed tests against the shadow
-            selection, "failures outside selection: N (IDs)".
+  compare   after the test shards: the failures every shard recorded
+            (scripts/ci/failure_record.py) against the shadow selection,
+            "failures outside selection: N (IDs)"; "comparison unavailable:
+            <why>" when a red run's failures were not all recorded.
+  heavy     the map workflow's "heavy lane scope" job, after a map is
+            merged: every repository file a test of commit_scope.HEAVY_TESTS
+            ran or opened in it must be a change that runs the heavy lane
+            (run_heavy) at the map's commit; exit 1 naming each one that is
+            not.
+  heavy-issue
+            after that check on main: on a failure, open the heavy lane's
+            scope issue (HEAVY_ISSUE_TITLE) or comment on the open one with
+            the report; on a pass, close the open one.
 
 What a footprint holds (the recorder's docstring has how it is recorded):
   f  functions that started or resumed ("path:qualname"), and calls of a
@@ -50,7 +61,8 @@ changed since the map selects what ran it like one the pull request changed.
       (commit_scope's FULL_MATRIX_PATHS, any .gitattributes) or to the
       Python toolchain; the pull request labeled ci:full.
    F2 no map; a map that is not this repository's own "Test map" run
-      (MAP_WORKFLOW, a MAP_EVENTS event on main, head repository ours, green)
+      (MAP_WORKFLOW, a MAP_EVENTS event on main, head repository ours, green,
+      or red only in HEAVY_CHECK_JOB after MAP_JOB passed)
       at a commit on the base's first-parent history (git rev-list, not
       dates) within MAX_DISTANCE commits, uploaded within MAX_AGE_HOURS by
       the server's clock; a map that is unreadable, of another schema or
@@ -136,12 +148,16 @@ SCHEMA_VERSION = 1
 # The recorder writes this into every file it produces; a map from another
 # recorder version is not used (F2). Bump it with any change to what the
 # recorder records or how.
-RECORDER_VERSION = "3"
+RECORDER_VERSION = "7"
 SHARDS = 8
 MAX_DISTANCE = 40
 MAX_AGE_HOURS = 48
 # The map comes from this workflow's own runs on main, nothing else (F2).
 MAP_WORKFLOW = ".github/workflows/testmap.yml"
+# Its job that uploads the map, and the heavy lane's check against the map,
+# which may fail without making the map unusable (run_problem).
+MAP_JOB = "merge map"
+HEAVY_CHECK_JOB = "heavy lane scope"
 MAP_EVENTS = frozenset({"push", "schedule", "workflow_dispatch"})
 # What the map is built from: the map workflow records again when one changed.
 MAP_INPUTS = ("src", "tests", "scripts/ci", "pyproject.toml", "uv.lock", ".python-version", "conftest.py",
@@ -719,9 +735,11 @@ def command_is_narrow(cmd: str) -> bool:
         return True
     if exe == "git":
         # A repository path among its words (--work-tree=src: an option's
-        # value counts) means it reads the repository.
+        # value counts) means it reads the repository. A word the recorder
+        # hid (<value>, <program>) may be one; only <outside> is known not.
         values = [tok.split("=", 1)[-1] for tok in toks[1:]]
-        return cwd == "-" and not any(v == "." or "/" in v and not v.startswith("<") for v in values)
+        return cwd == "-" and not any(
+            v == "." or ("<value>" in v or "<program>" in v) or "/" in v and not v.startswith("<") for v in values)
     return False
 
 
@@ -1009,8 +1027,11 @@ def first_parents(root: Path, base: str, count: int) -> list[str]:
 
 
 def gh_api(path: str, raw: bool = False) -> object:
-    out = subprocess.run(["gh", "api", path], capture_output=True, check=True).stdout  # noqa: S603,S607 -- git and gh, fixed argv
-    return out if raw else json.loads(out)
+    done = subprocess.run(["gh", "api", path], capture_output=True)  # noqa: S603,S607 -- git and gh, fixed argv
+    if done.returncode:  # gh's own message (HTTP status, missing scope) is the useful part
+        raise RuntimeError(f"gh api {path}: exit {done.returncode}: "
+                           f"{done.stderr.decode('utf-8', 'replace').strip()[:500]}")
+    return done.stdout if raw else json.loads(done.stdout)
 
 
 def repository_id(repo: str, api: Callable[..., object] | None = None) -> int:
@@ -1065,8 +1086,18 @@ def run_problem(repo: str, repo_id: int, art: dict, sha: str, api: Callable[...,
         return f"its run is on {run.get('head_branch')} at {str(run.get('head_sha'))[:12]}"
     if (run.get("repository") or {}).get("id") != repo_id or (run.get("head_repository") or {}).get("id") != repo_id:
         return "its run is from another repository"
-    if run.get("status") != "completed" or run.get("conclusion") != "success":
-        return f"its run is {run.get('status')}/{run.get('conclusion')}"
+    problem = f"its run is {run.get('status')}/{run.get('conclusion')}"
+    if run.get("status") != "completed" or run.get("conclusion") not in ("success", "failure"):
+        return problem
+    if run.get("conclusion") == "failure":
+        # Red only because the heavy lane's check against the new map failed:
+        # the map is as good as a green run's.
+        jobs = api(f"repos/{repo}/actions/runs/{run.get('id')}/jobs?per_page=100")
+        listed = jobs.get("jobs", []) if isinstance(jobs, dict) else []
+        failed = {job.get("name") for job in listed if job.get("conclusion") not in ("success", "skipped")}
+        merged = any(job.get("name") == MAP_JOB and job.get("conclusion") == "success" for job in listed)
+        if not (merged and failed == {HEAVY_CHECK_JOB}):
+            return problem
     return None
 
 
@@ -1154,10 +1185,32 @@ def summary_lines(sel: Selection, total_tests: int) -> list[str]:
     return lines
 
 
-SUMMARY_LINE = re.compile(r"(?:^|\s)(?:FAILED|ERROR) (tests/.*)$")
-COLLECTION_ERROR = re.compile(r"(?:^|\s)ERROR (tests/\S+\.py)(?: - .*)?$")
+SUMMARY_LINE = re.compile(r"^(?:FAILED|ERROR) (tests/.*)$")
+COLLECTION_ERROR = re.compile(r"^ERROR (tests/(?:(?!::).)+?\.py)(?: - .*)?$")
+SUMMARY_HEADER = re.compile(r"^=+ short test summary info =+$")
+LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")  # a GitHub Actions job log's line prefix
 UNKNOWN = "unknown:"
 MODULE = "module:"
+
+
+def short_summary(log: str) -> list[str]:
+    """The lines of the run's own short test summary: the last "short test
+    summary info" section (a test that runs pytest inside it can print a
+    summary of its own earlier, in its failure report), to the next "="
+    rule. GitHub's timestamps are dropped. Without such a section (a log
+    cut short), every line that starts with the status: that still counts a
+    nested run's lines that pytest printed flush left, as captured stdout
+    is, though not the indented or "E"-prefixed ones of an assertion."""
+    lines = [LOG_TIMESTAMP.sub("", line.rstrip("\r")) for line in log.splitlines()]
+    starts = [i for i, line in enumerate(lines) if SUMMARY_HEADER.match(line)]
+    if not starts:
+        return lines
+    section = []
+    for line in lines[starts[-1] + 1:]:
+        if line.startswith("="):
+            break
+        section.append(line)
+    return section
 
 
 def failed_ids(log: str, known: Iterable[str]) -> set[str]:
@@ -1174,8 +1227,7 @@ def failed_ids(log: str, known: Iterable[str]) -> set[str]:
     for ids in by_file.values():
         ids.sort(key=len, reverse=True)
     out: set[str] = set()
-    for line in log.splitlines():
-        line = line.rstrip("\r")
+    for line in short_summary(log):
         collection = COLLECTION_ERROR.search(line)
         if collection:
             out.add(MODULE + collection.group(1))
@@ -1253,6 +1305,65 @@ def shadow(args: argparse.Namespace, root: Path) -> Selection:
     return sel
 
 
+# The heavy lane's failure records (ci.yml's test-heavy uploads them under
+# this prefix): its own shards, counted against its own result.
+HEAVY_FAILURES = "test-failures-heavy-"
+
+
+def load_failure_records(directory: Path, *, heavy: bool = False) -> list[dict]:
+    """Every test shard's scripts/ci/failure_record.py output under
+    `directory` (one artifact directory per shard): the eight shards', or
+    with heavy=True the heavy lane's."""
+    records = []
+    for path in sorted(directory.rglob("failures.json")):
+        if path.parent.name.startswith(HEAVY_FAILURES) != heavy:
+            continue
+        try:
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            records.append({"complete": False, "unreadable": path.parent.name})
+    return records
+
+
+def recorded_failures(records: list[dict], test_result: str | None) -> tuple[set[str], str | None]:
+    """The tests this run failed ("module:<path>" for a module or directory
+    that did not collect), and why they cannot be compared, if they cannot.
+    A green test job failed nothing. A red one is comparable only when every
+    shard left a complete record (it ran every test it collected: see
+    scripts/ci/failure_record.py) and the records hold a failure: otherwise a
+    shard stopped early (cancelled, timed out, interrupted, crashed, out of
+    xdist worker restarts) or a step outside pytest failed, and nothing
+    measured which tests failed."""
+    if test_result == "success":
+        return set(), None
+
+    def ran_everything(r: dict) -> bool:  # what the record says, checked again
+        def count(value: object) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool)
+
+        status, collected, reported = r.get("exitstatus"), r.get("collected"), r.get("reported")
+        return (r.get("complete") is True and count(status) and status in (0, 1) and count(collected)
+                and count(reported) and collected == reported)
+
+    complete = [r for r in records if ran_everything(r)]
+    failed = {t for r in complete for t in r.get("failed", ())}
+    failed |= {MODULE + path for r in complete for path in r.get("collection_errors", ())}
+    if not records:
+        return failed, f"the test job's result is {test_result or 'unknown'} and no shard left a failure record"
+    splits = next((r["splits"] for r in records if isinstance(r.get("splits"), int)), None)
+    groups = {r.get("group") for r in complete}
+    stopped = sorted({str(r.get("group") or r.get("unreadable") or "?") for r in records if not ran_everything(r)}
+                     | ({str(g) for g in range(1, splits + 1) if g not in groups} if splits else set()))
+    if stopped:
+        return failed, (f"shards {', '.join(stopped)} left no complete failure record (cancelled, timed out,"
+                        " interrupted, or stopped before every test it collected ran)")
+    if not failed:
+        statuses = sorted({str(r.get("exitstatus")) for r in complete})
+        return failed, (f"the test job's result is {test_result or 'unknown'} but no shard recorded a failing"
+                        f" test (pytest exit statuses {', '.join(statuses)}: a step outside the tests failed)")
+    return failed, None
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     lines = ["### Shadow selection against this run's failures", ""]
     try:
@@ -1261,34 +1372,186 @@ def cmd_compare(args: argparse.Namespace) -> int:
         except OSError:
             selection = {"full": True, "reasons": ["no shadow selection for this run"]}
         known = [*selection.get("selected", ()), *selection.get("not_selected", ())]
-        failed: set[str] = set()
+        unavailable: str | None = None
         if args.failed:
             failed = failed_ids(Path(args.failed).read_text(encoding="utf-8"), known)
         else:
-            jobs = gh_api(f"repos/{args.repo}/actions/runs/{args.run_id}/jobs?per_page=100")
-            for job in (jobs or {}).get("jobs", []):  # type: ignore[union-attr]
-                if job.get("name", "").startswith("test (") and job.get("conclusion") == "failure":
-                    log = gh_api(f"repos/{args.repo}/actions/jobs/{job['id']}/logs", raw=True)
-                    failed |= failed_ids(log.decode("utf-8", "replace"), known)  # type: ignore[union-attr]
+            failed, unavailable = recorded_failures(load_failure_records(Path(args.failures)), args.test_result)
+            # The heavy lane: a skipped lane failed nothing; otherwise its
+            # records count as the shards' do, against its own result.
+            lane = load_failure_records(Path(args.failures), heavy=True)
+            if args.heavy_result != "skipped" or lane:
+                lane_failed, lane_unavailable = recorded_failures(lane, args.heavy_result)
+                failed |= lane_failed
+                if lane_unavailable and not unavailable:
+                    unavailable = f"heavy lane: {lane_unavailable}"
+            known_ids = {XDIST_GROUP.sub("", t) for t in known}
+            failed = {t if t.startswith(MODULE) or XDIST_GROUP.sub("", t) in known_ids else UNKNOWN + t
+                      for t in failed}
         runs = membership(selection)
         unknown = sorted(t for t in failed if t.startswith(UNKNOWN))
         modules = sorted(t for t in failed if t.startswith(MODULE))
         outside = sorted(t for t in failed if not t.startswith((UNKNOWN, MODULE)) and not runs(t))
         # A collection error is outside the selection when the selection runs
-        # no test of that file (pytest would not collect it). A file the map
-        # does not know runs (S11).
+        # no test of that file, of any file under that directory (a failing
+        # conftest.py: pytest reports the directory), or of that class (see
+        # missed), so pytest would not meet it. A file the map does not know
+        # runs (S11).
         runs_file = {t.split("::")[0] for t in known if runs(t)} | set(selection.get("whole_files", ()))
         known_files = {t.split("::")[0] for t in known}
-        outside += [m for m in modules if not selection.get("full")
-                    and m[len(MODULE):] in known_files and m[len(MODULE):] not in runs_file]
+
+        def files_under(path: str) -> set[str]:
+            if path.endswith(".py"):
+                return {path} & known_files
+            prefix = path.rstrip("/") + "/"
+            return {f for f in known_files if f.startswith(prefix)}
+
+        def missed(path: str) -> bool:
+            if "::" in path:
+                # A class that failed to collect (tests/x.py::TestK): pytest
+                # meets it only when a test of that class is selected, or the
+                # file runs whole; a class the map does not know runs (S11).
+                if path.split("::", 1)[0] in selection.get("whole_files", ()):
+                    return False
+                tests = [t for t in known if XDIST_GROUP.sub("", t).startswith(path + "::")]
+                return bool(tests) and not any(runs(t) for t in tests)
+            files = files_under(path)
+            return bool(files) and files.isdisjoint(runs_file)
+
+        outside += [m for m in modules if not selection.get("full") and missed(m[len(MODULE):])]
         if selection.get("full"):
             lines.append(f"The shadow selection ran the full suite ({'; '.join(selection.get('reasons', [])[:1])}).")
-        lines.append(f"failures outside selection: {len(outside)}" + (f" ({', '.join(outside[:50])})" if outside else ""))
-        lines.append(f"failures in this run: {len(failed)}, of which {len(modules)} are collection errors and"
-                     f" {len(unknown)} are tests the map does not know (the selection runs those)")
+        counts = (f"{len(failed)}, of which {len(modules)} are collection errors and {len(unknown)} are"
+                  f" tests the map does not know (the selection runs those)")
+        if unavailable:
+            # Never a zero that measured nothing.
+            lines.append(f"comparison unavailable: {unavailable}")
+            if failed:
+                # No count of what is outside: the missing shards' failures are unknown.
+                lines.append(f"failures recorded all the same: {counts}"
+                             + (f"; at least {len(outside)} outside the selection ({', '.join(outside[:50])})"
+                                if outside else ""))
+        else:
+            lines.append(f"failures outside selection: {len(outside)}"
+                         + (f" ({', '.join(outside[:50])})" if outside else ""))
+            lines.append(f"failures in this run: {counts}" + (f" ({', '.join(sorted(failed)[:20])})" if failed else ""))
     except Exception as error:  # report only
-        lines.append(f"the comparison failed ({type(error).__name__}: {error})")
+        lines.append(f"comparison unavailable: the comparison failed ({type(error).__name__}: {error})")
     _write_summary(args.summary, lines)
+    return 0
+
+
+# ---------------------------------------------------------------- heavy lane
+
+# The heavy lane's check against reality (commit_scope.py's run_heavy): every
+# repository file a heavy test ran a function of or opened, in a map of main,
+# must be a change that runs the lane, at the map's commit. The map
+# workflow's "heavy lane scope" job runs it on each new map; a failure opens
+# or updates the issue titled HEAVY_ISSUE_TITLE, and the next pass closes it.
+HEAVY_ISSUE_TITLE = "The heavy lane's scope misses files its tests use"
+# Functions a map records in heavy tests' windows that cannot run in the lane:
+# what another module leaves behind in the shards' shared processes. Keyed by
+# the map's function key, so the rest of each file still counts.
+HEAVY_LEAKS: dict[str, str] = {
+    "tests/conformance/test_shadow_observation_native.py:native_liveness.<locals>.Reports.pytest_runtest_makereport": (
+        "a pytest plugin the native_liveness fixture registers, which stays registered for every later test in the "
+        "same worker; test-heavy does not run that module"),
+    "tests/shadow_observation_diagnostics.py:NativeLiveness.report": (
+        "called only by that leaked plugin in heavy tests' windows"),
+    "tests/test_async_settle_shadow_owner_stall.py:harness.<locals>.<lambda>": (
+        "the store clock the owner stall harness installs, which the services its tests start (svc.start()) keep "
+        "calling after they end, in later tests in the same worker (map run 44192448102: "
+        "test_async_settle_shadow_v2_gates.py's fixtures); test-heavy does not run that module"),
+}
+
+
+def heavy_footprint(tmap: TestMap, test_files: Iterable[str]) -> set[str]:
+    """The repository paths the map's tests in `test_files` ran a function of
+    or opened: each test's own window, the setup of the fixtures it requests
+    and its module's collection, apart from HEAVY_LEAKS. Not a memoized
+    function's misses (`cached`: every miss of the function in the process,
+    whichever test's window it was) and not `global` (imports and session
+    hooks every test shares)."""
+    wanted = set(test_files)
+    paths: set[str] = set()
+    for nodeid, own, fixtures in tmap.tests:
+        module = nodeid.split("::")[0]
+        if module not in wanted:
+            continue
+        for index in [own, *fixtures, *([tmap.collect[module]] if module in tmap.collect else [])]:
+            funcs, opened = tmap.fps[index][0], tmap.fps[index][1]
+            paths.update(key.split(":", 1)[0] for key in (tmap.keys[i] for i in funcs)
+                         if key.removesuffix(MEMO) not in HEAVY_LEAKS)
+            paths.update(tmap.keys[key] for key in opened)
+    return paths
+
+
+def heavy_outside(root: Path, paths: Iterable[str]) -> list[str]:
+    """The paths, of files that exist, whose change would not run the lane."""
+    closure = cs.heavy_closure(root)
+    return sorted(path for path in set(paths) if (root / path).is_file()
+                  and not cs.heavy_covers(path, closure) and not cs.matches_any(path, cs.FULL_MATRIX_PATHS))
+
+
+def cmd_heavy(args: argparse.Namespace) -> int:
+    root = Path.cwd()
+    data = read_gz(Path(args.map))
+    problem = validate_map(data)
+    if problem:
+        print(f"::error title=Heavy lane scope::{problem}")
+        return 1
+    tmap = TestMap(data)
+    mapped = {nodeid.split("::")[0] for nodeid, _, _ in tmap.tests}
+    absent = sorted(set(cs.HEAVY_TESTS) - mapped)
+    paths = heavy_footprint(tmap, cs.HEAVY_TESTS)
+    outside = heavy_outside(root, paths)
+    lines = [f"### Heavy lane scope against map {str(data.get('commit'))[:12]}", "",
+             f"{len(paths)} paths the lane's tests ran or opened; outside the lane's scope: {len(outside)}"]
+    lines += [f"- {path}" for path in outside]
+    if absent:
+        lines.append(f"not in the map (newer than it): {', '.join(absent)}")
+    if outside:
+        lines += ["", "Each is a file the heavy lane's tests ran or opened at this commit whose change would not run "
+                  "test-heavy (commit_scope.py's run_heavy): teach heavy_closure() to reach it, or list it in "
+                  "HEAVY_INPUTS. A function another module leaves running in the shards' shared processes goes in "
+                  "testmap.py's HEAVY_LEAKS, with the reason."]
+    _write_summary(args.summary, lines)
+    if args.report:
+        Path(args.report).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for path in outside:
+        print(f"::error title=Heavy lane scope::{path} is in a heavy test's footprint but outside run_heavy")
+    return 1 if outside else 0
+
+
+def heavy_issue(outcome: str, report: str, *, repo: str, run_url: str,
+                gh: Callable[[list[str], str | None], str]) -> str:
+    """What `heavy-issue` did about the heavy lane's scope issue: on a
+    failure, comment the report on the open issue or open one; on a pass,
+    close the open one. `gh` runs the gh command line (argv, stdin)."""
+    listed = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open", "--search",
+                            f'in:title "{HEAVY_ISSUE_TITLE}"', "--json", "number,title"], None) or "[]")
+    numbers = sorted(issue["number"] for issue in listed if issue.get("title") == HEAVY_ISSUE_TITLE)
+    if outcome == "failure":
+        body = f"{report.rstrip()}\n\nRun: {run_url}\n"
+        if numbers:
+            gh(["issue", "comment", str(numbers[0]), "--repo", repo, "--body-file", "-"], body)
+            return f"commented on #{numbers[0]}"
+        gh(["issue", "create", "--repo", repo, "--title", HEAVY_ISSUE_TITLE, "--body-file", "-"], body)
+        return "opened an issue"
+    for number in numbers:
+        gh(["issue", "close", str(number), "--repo", repo, "--comment",
+            f"The heavy lane's scope covers what its tests ran again: {run_url}"], None)
+    return f"closed {', '.join(f'#{n}' for n in numbers)}" if numbers else "no open issue"
+
+
+def _gh(argv: list[str], stdin: str | None) -> str:
+    return subprocess.run(["gh", *argv], input=stdin, capture_output=True, text=True, check=True).stdout  # noqa: S603,S607
+
+
+def cmd_heavy_issue(args: argparse.Namespace) -> int:
+    report = Path(args.report).read_text(encoding="utf-8") if args.report else ""
+    run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{args.repo}/actions/runs/{args.run_id}"
+    print(heavy_issue(args.outcome, report, repo=args.repo, run_url=run_url, gh=_gh))
     return 0
 
 
@@ -1333,12 +1596,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     p = sub.add_parser("compare", help="this run's failed tests against the shadow selection")
+    p.add_argument("--selection", required=True)
+    p.add_argument("--failures", default="test-failures",
+                   help="the test shards' failure records (scripts/ci/failure_record.py), one directory each")
+    p.add_argument("--test-result", default=os.environ.get("TEST_RESULT"),
+                   help="the test job's result (success, failure, cancelled)")
+    p.add_argument("--heavy-result", default=os.environ.get("HEAVY_RESULT", "skipped"),
+                   help="the heavy lane's (test-heavy's) result; skipped when it did not run")
+    p.add_argument("--failed", help="a pytest log to read failures from instead of the failure records")
+    p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
+    p = sub.add_parser("heavy", help="the heavy lane's footprint in a map against its scope (exit 1 outside)")
+    p.add_argument("--map", required=True, help="a map file (testmap.json.gz)")
+    p.add_argument("--report", help="also write the report to this file (for heavy-issue)")
+    p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
+    p = sub.add_parser("heavy-issue", help="open, update or close the heavy lane's scope issue")
+    p.add_argument("--outcome", choices=("failure", "success"), required=True)
+    p.add_argument("--report", help="the heavy check's report (on a failure)")
     p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     p.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", ""))
-    p.add_argument("--selection", required=True)
-    p.add_argument("--failed", help="a pytest log to read failures from instead of the run's shard logs")
-    p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     args = parser.parse_args(argv)
+    if args.command == "heavy":
+        return cmd_heavy(args)
+    if args.command == "heavy-issue":
+        return cmd_heavy_issue(args)
     if args.command == "compact":
         fragment = compact(args.raw, args.shard)
         write_gz(fragment, args.out)

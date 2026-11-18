@@ -118,10 +118,20 @@ def _nested_function(
 
 def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     routes = _console_route_functions()
-    assert len(routes) == 53, "guard must inspect every decorated console route"
+    # The guard must inspect every console route the app serves. Compare with
+    # the app's own routes rather than a pinned count, which every new console
+    # page had to bump.
+    app = create_app(Settings(environment="test"), init_observability=False)
+    served = {
+        route.endpoint.__name__
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/console") and hasattr(route, "endpoint")
+    }
+    assert served and {node.name for node in routes} == served, (
+        "guard must inspect every decorated console route"
+    )
     async_routes = {node.name for node in routes if isinstance(node, ast.AsyncFunctionDef)}
     assert async_routes == _ASYNC_CONSOLE_HANDLERS
-    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 52
 
     by_name = {node.name: node for node in routes}
     for name in (

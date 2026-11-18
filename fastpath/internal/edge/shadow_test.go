@@ -192,8 +192,8 @@ func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 			t.Errorf("%s: %+v", c.Name, r)
 		}
 	}
-	if classes[ClassAgree] != 251 || classes[ClassPassed] != 19 {
-		t.Fatalf("classes %v, want 251 agree and 19 passed", classes)
+	if classes[ClassAgree] != 288 || classes[ClassPassed] != 30 {
+		t.Fatalf("classes %v, want 288 agree and 30 passed", classes)
 	}
 	// BYOK presence decides some cases (Gemini's BYOK endpoint) and not others.
 	if byok["determined"] == 0 || byok["consistent"] == 0 {

@@ -77,8 +77,11 @@ The flow, per request, in this order:
    applied is `Failed`. No scope pre-read: the
    unique index `tr_reservation_by_idemp` arbitrates. No key presented:
    mint a uuid4, as Python does (`gateway.py:1119-1120`).
-4. **Fingerprint.** Pass any body with a JSON float or exponent anywhere, a
-   declared field whose JSON type pydantic would coerce, duplicate keys,
+4. **Fingerprint.** Pass any body with a JSON float or exponent anywhere
+   but a `provider.max_price` limit (the evaluator reads those from their
+   literals and passes, as `evaluate.max_price.<shape>`, any it does not
+   take; [`routing-snapshot-v1.md`](routing-snapshot-v1.md), "What Go
+   evaluates"), a declared field whose JSON type pydantic would coerce, duplicate keys,
    non-ASCII tags, an `http_referer` without `app` that fails the strict
    ASCII URL rule, a model or models entry `canonical_router_model_id`
    rewrites, or a native-batch or partner idempotency key. G10's row
@@ -333,7 +336,7 @@ the schema excludes it).
 | `body.content_type` | not exactly one `Content-Type` whose media type is `application/json`, optionally with `charset=utf-8`; a missing header fails FastAPI's `strict_content_type`, which the app's `RequestValidationError` handler answers 400 `bad_request` (`main.py:632-639`) |
 | `body.unparseable` | not one JSON object; not UTF-8, or a UTF-8 BOM (Python's `json.loads` accepts one); nesting deeper than 128 (Python's decoder or validation recursion is a 400); an integer literal over 4,000 digits (Python refuses over 4,300, a 400); over 4 MiB (Python's `max_request_body_bytes`, `config.py:1353`, a 413; the edge reads up to its own 16 MiB `maxBody`, `edge.go:58`) |
 | `body.duplicate_key` | any object with a repeated key, at any depth |
-| `body.float` | any number with a fraction or exponent, at any depth |
+| `body.float` | any number with a fraction or exponent, at any depth, but `provider.max_price` itself or the value of one of its members, which the evaluator reads (a float inside a limit's list or object still passes here) |
 | `body.lax_type` | a declared field whose JSON type is not the schema's exact type (`"5"` for an int, `1` for a bool, a non-list for a list) |
 | `body.strip_ambiguous` | a declared string (or list-of-strings entry) with any byte outside printable ASCII, where Python's and Go's whitespace could differ (`input_modalities` is a `Literal` list and is not stripped: `" text"` is a validation error, a 400, so `body.refused`) |
 | `body.dict_key_strip` | a top-level key of `provider`, `trace`, `metadata` or `tags` that `str_strip_whitespace` would change (leading or trailing whitespace) or that has a byte outside printable ASCII. Pydantic strips those keys, last value winning on a collision (§7); Go passes rather than reproduce it |
@@ -392,9 +395,17 @@ the workspace, which the front door would answer `Off`;
 `evaluate.refused` for an evaluator refusal (Python refuses it too) and
 `evaluate.pass` for any other evaluator pass (a
 provider preference or snapshot input Go does not reproduce, such as
-`provider.max_price` or `provider.preferred_max_latency`; P1's goldens label
+`provider.preferred_max_latency`; P1's goldens label
 a refusal Go passes this way `evaluate.refused`, and either goes to
-Python), `evaluate.estimate_overflow` (the estimate
+Python), the `provider.max_price` spellings the evaluator does not read,
+each its own reason (`routingsnapshot/max_price.go`; Python answers some and
+refuses the rest with a 400): `evaluate.max_price.not_object`,
+`evaluate.max_price.option` (a member other than `prompt` and
+`completion`), `evaluate.max_price.type` (a limit that is not a number: a
+string, which Python reads, or a boolean, list or object),
+`evaluate.max_price.negative`, `evaluate.max_price.exponent`,
+`evaluate.max_price.digits` (more than nine digits before the point or six
+after it), `evaluate.estimate_overflow` (the estimate
 in microdollars is beyond int64: Python's leased path would write a value
 the `INT64` columns cannot store, so Spanner refuses the commit; Go
 passes), `candidates.byok`,
@@ -845,7 +856,13 @@ None presented: Go mints `str(uuid4())`, hyphenated.
 The cohort has no video, native-batch or partner key, so neither of the
 fingerprint's dynamic-key removals applies. Go's canonical encoder (G1)
 works over an order-preserving decoded tree with integers of any size
-(`big.Int`) and `-0` as `0`; a float anywhere passes before encoding.
+(`big.Int`) and `-0` as `0`; a float anywhere but a `provider.max_price`
+limit passes before encoding. A limit Go reads has at most 15 significant
+digits, so the double json.loads makes of it reads back as the literal's own
+value, and the encoder writes it as repr does (0.950000 as 0.95, 0.00005 as
+5e-05); `gwauth`'s tests hold that spelling, worked from the literal's digits
+with no float, over two million such literals, and the goldens'
+fingerprints hold it to Python's.
 
 ## 8. Go packages and structs
 
@@ -1517,7 +1534,8 @@ CASE = {
   | {"outcome": "refused", "status": INT, "type": STR}}
 ```
 
-Labels that require Go to pass (decision 4 and §3): `float_present`,
+Labels that require Go to pass (decision 4 and §3): `float_present` (a
+float that is not a `provider.max_price` limit Go reads),
 `lax_coercion`, `duplicate_key`, `strip_ambiguous`, `dict_key_strip`,
 `non_ascii_tag`, `referer_not_strict`, `canonical_model_rewrite`,
 `native_batch_key`, `partner_key`, `idempotency_key_too_long`,
@@ -1531,7 +1549,10 @@ Descriptive labels: `null_extra` (a top-level extra `null`, dropped),
 `nested_provider`, `nested_trace`, `nested_metadata`, `unicode_extra`,
 `int_near_2_63`, `int_beyond_2_63`, `attribution`, `tags`, `tags_empty`,
 `whitespace`, `models_list`, `allow_fallbacks_spelling`,
-`idempotency_header`, `idempotency_body`, `invocation_nonce`, `defaults`.
+`idempotency_header`, `idempotency_body`, `invocation_nonce`, `defaults`,
+`max_price_float` (a float that is a `provider.max_price` limit Go reads:
+the value of `prompt` or `completion`, at most nine digits before the point
+and six after it, no sign or exponent).
 
 The test's rule: a `fingerprint` case with no pass-required label must be
 answered with exactly that fingerprint and scope; one with such a label
