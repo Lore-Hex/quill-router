@@ -37,6 +37,7 @@ WATCHDOG_PID=""
 WATCHDOG_GATE_DIR=""
 WATCHDOG_GATE_FILE=""
 FINAL_BASELINE_PID=""
+FINAL_GRACE_START_NS=""
 DRAIN_TAG="staged-drain"
 DRAIN_TAG_OWNED=0
 DRAIN_PENDING=0
@@ -371,6 +372,11 @@ shift_and_watch() {
   fi
   : >"$WATCHDOG_GATE_FILE"
   probe_legacy_surface_or_rollback "$stage_pct"
+  if [ "$stage_pct" = 50 ] && [ -n "${TR_STAGED_WATCHDOG_BASELINE_FILE:-}" ]; then
+    # Only the settling timer overlaps. No baseline sample until BOTH the 50%
+    # watchdog and the old-revision drain-tag readback have succeeded.
+    FINAL_GRACE_START_NS="$(python3 -c 'import time; print(time.monotonic_ns())')"
+  fi
   log "watching ${REGION} for 1 min after ${stage_pct}% shift"
   if wait "$WATCHDOG_PID"; then
     watchdog_status=0
@@ -402,10 +408,15 @@ start_final_baseline() {
       --skip-baseline \
       --baseline-grace-sec 0 &
   else
+    local grace_args=()
+    if [ -n "$FINAL_GRACE_START_NS" ]; then
+      grace_args=(--baseline-grace-start-ns "$FINAL_GRACE_START_NS")
+    fi
     python3 "${SCRIPT_DIR}/watchdog.py" \
       --regions "$REGION" \
       --duration-min 0 \
       --slo-class "$WATCHDOG_SLO_CLASS" \
+      "${grace_args[@]}" \
       --baseline-output "$output_file" &
   fi
   FINAL_BASELINE_PID=$!

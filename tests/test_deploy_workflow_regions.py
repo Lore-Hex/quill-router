@@ -1,4 +1,5 @@
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -62,6 +63,50 @@ def test_every_rollout_step_receives_the_repository_stripe_account_pin() -> None
             "${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}"
         ) in metadata, metadata
     assert invocations == ["name: Warm all four regions in parallel (no traffic)"]
+
+
+@pytest.mark.parametrize("bad_region", ["none", "us-central1", "southamerica-east1"])
+def test_regional_smoke_overlaps_and_joins_all_verdicts(tmp_path: Path, bad_region: str) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    steps = workflow["jobs"]["rollout-secondaries"]["steps"]
+    smoke = next(step["run"] for step in steps if step.get("name") == "Smoke test prod")
+    regional = smoke[smoke.index("verify_region() {"):smoke.index("python3 - <<'PY'")]
+    # A serial launcher cannot cross the barrier. A failed ingress read in the
+    # middle of a worker must not be masked by its successful final checks.
+    stubs = """
+set -euo pipefail
+SERVICE=router PROJECT_ID=test SHA=release
+cloud_run_service_ingress() {
+  [ "$2" != "$BAD" ] || return 7
+  echo private
+}
+gcloud() {
+  local target="" arg i
+  for arg in "$@"; do
+    case "$arg" in --region=*) target="${arg#--region=}";; esac
+  done
+  if [ "$2" = services ]; then
+    touch "start-$target"
+    for ((i=0; i<150; i++)); do
+      local seen=(start-*)
+      [ "${#seen[@]}" -lt 4 ] || break
+      sleep .02
+    done
+    [ "${#seen[@]}" -eq 4 ] || return 9
+    echo '{"status":{"latestReadyRevisionName":"r","latestCreatedRevisionName":"r","traffic":[{"percent":100,"revisionName":"r"}]}}'
+  else
+    touch "checked-$target"
+    echo '{"spec":{"containers":[{"env":[{"name":"TR_RELEASE","value":"release"}]}]}}'
+  fi
+}
+"""
+    run = subprocess.run(  # noqa: S603 - local workflow fragment with fixed service stubs
+        ["/bin/bash", "-c", 'BAD="$1"\n' + stubs + regional, "smoke", bad_region],
+        cwd=tmp_path, capture_output=True, text=True, timeout=15, check=False,
+    )
+    regions = {"us-central1", "us-east4", "europe-west4", "southamerica-east1"}
+    assert {p.name.removeprefix("checked-") for p in tmp_path.glob("checked-*")} == regions - {bad_region}
+    assert run.returncode == (0 if bad_region == "none" else 1), run.stderr
 
 
 def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> None:
