@@ -272,7 +272,7 @@ def test_nvidia_nim_live_route_failing_recanary_is_held_and_passing_stays_live(
     assert "routable_reason" not in by_id["vendor/model-0"]
 
 
-def test_live_route_recanary_is_an_explicit_nvidia_only_opt_in(tmp_path) -> None:
+def test_live_route_recanary_is_an_explicit_per_provider_opt_in(tmp_path) -> None:
     from scripts.pricing.manifest import models_requiring_canary
 
     manifest = tmp_path / "other.json"
@@ -286,7 +286,9 @@ def test_live_route_recanary_is_an_explicit_nvidia_only_opt_in(tmp_path) -> None
         for path in providers_dir.glob("*.py")
         if "routable_models_to_recheck" in path.read_text(encoding="utf-8")
     }
-    assert opted_in == {"nvidia_nim.py"}
+    # Each opt-in is deliberate: NVIDIA NIM (flaky trial endpoint, #2627) and
+    # Neurometric (task routes 404 while still listed, QUILL-ROUTER-HF).
+    assert opted_in == {"nvidia_nim.py", "neurometric.py"}
 
 
 def test_nvidia_nim_live_recanary_cap_rotates_over_every_live_route(monkeypatch, tmp_path) -> None:
