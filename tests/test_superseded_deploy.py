@@ -1073,3 +1073,43 @@ def test_ci_names_its_test_shards_as_cancel_older_reads_them():
     assert superseded._PREPARATION_JOBS == set(yaml.safe_load(WORKFLOW.read_text())["jobs"]) - {"rollout", "public-docs"}
     # A public publisher can mutate production; never cancel it as preparation.
     assert not superseded.preparing([{"name": "public-docs / deploy-public-docs", "conclusion": None}])
+
+
+def _scripted_gh(monkeypatch: pytest.MonkeyPatch, answers: list[tuple[int, str, str]]) -> list[list[str]]:
+    """Make each gh call return the next (returncode, stdout, stderr); return the calls made."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        code, out, err = answers[len(calls) - 1]
+        return subprocess.CompletedProcess(cmd, code, stdout=out, stderr=err)
+
+    monkeypatch.setattr(superseded.subprocess, "run", fake_run)
+    monkeypatch.setattr(superseded, "_sleep", lambda _seconds: None)
+    return calls
+
+
+def test_gh_json_retries_a_github_server_error_then_answers(monkeypatch):
+    calls = _scripted_gh(monkeypatch, [(1, "", "gh: Server Error (HTTP 502)"), (0, '{"ok": true}', "")])
+    assert superseded._gh_json(["api", "repos/o/r/actions/runs/1/jobs"]) == {"ok": True}
+    assert len(calls) == 2
+
+
+def test_gh_json_gives_up_after_bounded_server_error_attempts(monkeypatch):
+    calls = _scripted_gh(monkeypatch, [(1, "", "gh: Server Error (HTTP 503)")] * 5)
+    assert superseded._gh_json(["api", "x"]) is None
+    assert len(calls) == superseded.GH_SERVER_ERROR_ATTEMPTS
+
+
+def test_gh_json_does_not_retry_a_client_error(monkeypatch):
+    calls = _scripted_gh(monkeypatch, [(1, "", "gh: Not Found (HTTP 404)"), (0, "{}", "")])
+    assert superseded._gh_json(["api", "x"]) is None
+    assert len(calls) == 1
+
+
+def test_gh_json_server_error_retry_stops_at_the_deadline(monkeypatch):
+    calls = _scripted_gh(monkeypatch, [(1, "", "gh: Server Error (HTTP 502)")] * 3)
+    clock = iter([0.0, 100.0])
+    monkeypatch.setattr(superseded, "_monotonic", lambda: next(clock))
+    assert superseded._gh_json(["api", "x"], deadline=50.0) is None
+    assert len(calls) == 1
