@@ -51,16 +51,53 @@ class FailureAttribution:
     capacity_rejected: bool = False
 
 
+# An upstream account that ran out of money. Providers word this freely and
+# not always with a 402 (Anthropic answers 400 "credit balance is too low",
+# OpenAI 429 insufficient_quota, Venice 402 "Insufficient USD or Diem
+# balance ... add credits"), so the wording is matched as well as the status.
+# On a TrustedRouter-funded route the account is ours; on BYOK it is the
+# customer's.
+_ACCOUNT_FUNDING_MARKERS = (
+    "account balance",
+    "add credits",
+    "add more credits",
+    "balance is too low",
+    "balance too low",
+    "billing hard limit",
+    "credit balance",
+    "credits exhausted",
+    "diem balance",
+    "exceeded your current quota",
+    "insufficient balance",
+    "insufficient credit",
+    "insufficient funds",
+    "insufficient usd",
+    "insufficient_quota",
+    "not enough credits",
+    "out of credits",
+    "payment required",
+    "prepaid credit",
+    "top up your",
+    "top-up",
+)
+_ACCOUNT_FUNDING_TYPES = frozenset(
+    {
+        "billing_hard_limit_reached",
+        "insufficient_balance",
+        "insufficient_quota",
+        "payment_required",
+        "prepaid_credit_exhausted",
+        # What the attested gateway reports for a funding failure on a
+        # TrustedRouter-funded route once it has hidden the provider's text.
+        "provider_funding",
+    }
+)
 _ACCOUNT_QUOTA_MARKERS = (
     "account quota",
     "billing quota",
-    "credit balance",
-    "credits exhausted",
-    "insufficient credit",
-    "insufficient funds",
     "monthly spend",
-    "payment required",
     "quota exceeded for quota metric",
+    *_ACCOUNT_FUNDING_MARKERS,
 )
 _CUSTOMER_QUOTA_TYPES = frozenset(
     {
@@ -92,12 +129,35 @@ _TIMEOUT_MARKERS = ("timeout", "timed_out", "deadline", "readtimeout", "connectt
 _STREAM_MARKERS = ("empty_stream", "stream_error", "stream_interrupted", "incomplete_stream")
 
 
+def is_provider_funding_failure(
+    *,
+    error_status: int | None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Whether a provider failure says the upstream account is out of funds.
+
+    TrustedRouter's own customer refusals (insufficient_credits and the other
+    customer quota types) and router-origin failures are never provider
+    funding: the provider was not asked.
+    """
+
+    kind = (error_type or "").strip().casefold()
+    if kind in _CUSTOMER_QUOTA_TYPES or is_router_origin_error(error_type):
+        return False
+    if error_status == 402 or kind in _ACCOUNT_FUNDING_TYPES:
+        return True
+    message = (error_message or "").strip().casefold()
+    return any(marker in message for marker in _ACCOUNT_FUNDING_MARKERS)
+
+
 def classify_provider_failure(
     *,
     status: str,
     error_type: str | None,
     error_status: int | None,
     error_message: str | None = None,
+    usage_type: str | None = None,
 ) -> FailureAttribution:
     """Classify one metadata-only provider observation.
 
@@ -105,6 +165,10 @@ def classify_provider_failure(
     enough provider capacity is our responsibility. A generic 429/503 remains
     provider capacity unless the provider explicitly identifies an account
     quota. Router-origin errors never lower a provider's availability.
+
+    An out-of-funds provider account (a 402, or funding wording under any
+    status) is TrustedRouter's on a prepaid route and the customer's on a
+    BYOK route (``usage_type`` "BYOK"); neither is provider unavailability.
     """
 
     if status == "success":
@@ -125,6 +189,17 @@ def classify_provider_failure(
             FailureClass.ROUTER_FAULT,
             False,
         )
+    if is_provider_funding_failure(
+        error_status=error_status, error_type=error_type, error_message=error_message,
+    ):
+        if (usage_type or "").strip().casefold() == "byok":
+            return FailureAttribution(FailureOwner.CUSTOMER, FailureClass.CUSTOMER_QUOTA, False)
+        return FailureAttribution(
+            FailureOwner.TRUSTEDROUTER,
+            FailureClass.TRUSTEDROUTER_CAPACITY,
+            False,
+            capacity_rejected=True,
+        )
     if status == "unsupported" or kind in _CONFIG_TYPES or error_status in {400, 404, 422}:
         failure_class = (
             FailureClass.PROVIDER_AUTH_CONFIG
@@ -140,7 +215,7 @@ def classify_provider_failure(
             FailureClass.PROVIDER_AUTH_CONFIG,
             False,
         )
-    if error_status == 402 or any(marker in message for marker in _ACCOUNT_QUOTA_MARKERS):
+    if any(marker in message for marker in _ACCOUNT_QUOTA_MARKERS):
         return FailureAttribution(
             FailureOwner.TRUSTEDROUTER,
             FailureClass.TRUSTEDROUTER_CAPACITY,
