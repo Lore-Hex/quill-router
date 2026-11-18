@@ -31,7 +31,10 @@ MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/p
 MANIFEST_STALE_FALLBACK = True
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
+_ABLITERATED_SKU = "boundless/deepseek-v4.1-flash-1017-abliterated"
 _ALIASES = {
+    # The legacy product page explicitly names this canonical SKU in its JSON-LD.
+    "deepseek-v4.1-flash-abliterated": _ABLITERATED_SKU,
     "qwen3.6": "qwen/qwen3.6-35b-a3b",
     # The repository-wide ID, and the one Boundless's own rate card names
     # (sku nvidia/nemotron-3-super-120b-a12b) since 2026-11.
@@ -147,6 +150,13 @@ def discover(payload: object, html: str) -> tuple[dict[str, ModelPrice], dict[st
     rows: dict[str, dict[str, Any]] = {}
     for model_id, sources in by_model.items():
         card = cards.get(model_id)
+        if model_id == _ABLITERATED_SKU:
+            # Access is granted on the dated SKU. Never switch inference to
+            # the legacy discovery ID when the priced SKU is absent or held.
+            qualified = [source for source in sources if source["id"] == _ABLITERATED_SKU]
+            if not qualified or card is None or card[2] != _ABLITERATED_SKU:
+                card = None
+            sources = qualified or sources
         if len(sources) > 1:
             # Boundless lists a legacy short identifier beside the qualified
             # one its served rate card names (2026-11: dsv4 beside

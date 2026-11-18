@@ -1256,6 +1256,21 @@ def test_provider_glm_discovery_warns_on_unpublished_route(monkeypatch, tmp_path
     )
 
 
+@pytest.mark.parametrize("published, gap", [
+    ("z-ai/glm-5-3-flash-uncensored", False),
+    ("z-ai/glm-5.3-flash", True),
+])
+def test_venice_uncensored_glm_requires_its_own_callable_route(monkeypatch, published, gap):
+    monkeypatch.setattr(check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS", (("venice", "fixture:venice", ()),))
+    monkeypatch.setattr(check_price_coverage, "_manifest_provider_model_ids", lambda slug: {published} if slug == "venice" else set())
+    warnings, _ = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "",
+        fetch_json=lambda url, _env: {"data": [{"id": "glm-5-3-flash-uncensored"}]} if url == "fixture:venice" else {"data": []},
+        published_model_ids={"z-ai/glm-5.3-flash-uncensored"},
+    )
+    assert any(w.startswith("venice: live GLM current model API lists unpublished") for w in warnings) is gap
+
+
 def test_provider_glm_discovery_warns_when_live_catalog_is_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

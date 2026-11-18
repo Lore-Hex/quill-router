@@ -11,6 +11,7 @@ _OPENROUTER_MODEL_ID_ALIASES = {
 
 _ROUTER_MODEL_ID_ALIASES = {
     "minimax/minimax-m3-1-flash": "minimax/minimax-m3.1-flash",
+    "z-ai/glm-5.3-flash-uncensored": "z-ai/glm-5-3-flash-uncensored",
 }
 
 

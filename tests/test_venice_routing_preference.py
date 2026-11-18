@@ -13,6 +13,7 @@ from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routing import (
     _sort_endpoint_candidates,
+    canonical_model_id,
     chat_route_endpoint_candidates,
     provider_route_preferences,
 )
@@ -192,3 +193,17 @@ def test_gateway_authorization_preserves_venice_as_fallback(
     data = response.json()["data"]
     assert data["provider"] == "parasail"
     assert [row["provider"] for row in data["route_candidates"]] == ["parasail", "telnyx", "venice"]
+
+
+def test_uncensored_glm_spelling_resolves_to_its_own_venice_endpoint(client, monkeypatch):
+    existing = "z-ai/glm-5-3-flash-uncensored"
+    dotted = "z-ai/glm-5.3-flash-uncensored"
+    native = "glm-5-3-flash-uncensored"
+    serve_on_fixture_route(monkeypatch, existing, "venice", author="zai", upstream_id=native)
+    assert canonical_model_id(dotted) == existing
+    assert canonical_model_id(dotted + ":nitro") == existing
+    assert canonical_model_id("z-ai/glm-5.3-flash") != existing
+    routes = client.get(f"/v1/models/{dotted}/endpoints")
+    assert routes.status_code == 200
+    assert routes.json() == client.get(f"/v1/models/{existing}/endpoints").json()
+    assert {r["upstream_id"] for r in routes.json()["data"] if r["provider"] == "venice"} == {native}

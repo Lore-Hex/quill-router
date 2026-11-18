@@ -203,5 +203,6 @@ func canonicalRouterModelID(id string) string {
 
 // routerModelIDAliases is model_aliases._ROUTER_MODEL_ID_ALIASES.
 var routerModelIDAliases = map[string]string{
-	"minimax/minimax-m3-1-flash": "minimax/minimax-m3.1-flash",
+	"minimax/minimax-m3-1-flash":    "minimax/minimax-m3.1-flash",
+	"z-ai/glm-5.3-flash-uncensored": "z-ai/glm-5-3-flash-uncensored",
 }
