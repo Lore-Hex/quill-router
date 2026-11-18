@@ -6080,6 +6080,11 @@ class SpannerStore(OperationalAnalyticsReads):
         forced_reload_done = False
         cooldown_passed = False
         debt_mark_checked = False
+        # Request-wide, like the heal itself: a heal that raised may have left
+        # a stale debt mark, which refuses every shard while the precheck
+        # (which does not read the mark) still sees them funded. A refusal
+        # after it cannot be called the race.
+        debt_mark_heal_failed = False
         # Whether the last entry's bounded loop below ran out of attempts,
         # each ended by its repair: the designed race the multi-shard 503
         # further down is marked for.
@@ -6090,7 +6095,7 @@ class SpannerStore(OperationalAnalyticsReads):
         ) -> dict[str, Any]:
             nonlocal credit_shard_candidates, aggregate_exhaustion_proven
             nonlocal proactive_reload_done, forced_reload_done, cooldown_passed
-            nonlocal debt_mark_checked, credit_headroom_raced
+            nonlocal debt_mark_checked, debt_mark_heal_failed, credit_headroom_raced
             # Per entry: after a key repair the second entry's loop alone
             # decides how the final refusal is answered.
             credit_headroom_raced = False
@@ -6110,6 +6115,7 @@ class SpannerStore(OperationalAnalyticsReads):
                         workspace_id,
                         exc_info=True,
                     )
+                    debt_mark_heal_failed = True
                     healed = False
                 if healed:
                     result = run_tracked(credit_shard_candidates)
@@ -6326,11 +6332,12 @@ class SpannerStore(OperationalAnalyticsReads):
             # the customer's aggregate balance is exhausted. Preserve the
             # accounting contract by returning retryable unavailability;
             # only proven aggregate exhaustion above may return a 402.
-            if credit_headroom_raced:
+            if credit_headroom_raced and not debt_mark_heal_failed:
                 # The race the loop is bounded for, lost on every attempt.
                 # Its own type, a StoreUnavailable to every handler: the
                 # route marks this 503 so the authorize-503 alert and the
-                # deploy gate can tell it from a storage outage.
+                # deploy gate can tell it from a storage outage. Not after a
+                # failed heal: a stale mark, not the race, may have refused.
                 raise CreditHeadroomRaced("credit headroom changed concurrently; retry")
             raise StoreUnavailable("credit headroom changed concurrently; retry")
         outcome = result["outcome"]

@@ -30,7 +30,8 @@ documentation:
     trustedrouter_gateway_headroom_raced_503 ("TR Gateway: credit headroom
     raced" pages on more than two of those in ten minutes or more than five
     in an hour). The same message from a recovery that stopped early (its
-    forced shard-count reload failed) gets no line and pages here. Cloud
+    forced shard-count reload failed) or followed a failed debt-mark heal
+    gets no line and pages here. Cloud
     Run's request log has only status and URL, so every authorize 503 (trustedrouter_gateway_authorize_503)
     without a line is router-core impact: Spanner unavailable, no instance,
     a crash. Treat it as "TR Gateway: billing path 5xx", which sets authorize

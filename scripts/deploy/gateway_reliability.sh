@@ -41,14 +41,19 @@ HEADROOM_RACED_POLICY="billing-headroom-raced.yaml"
 AUTHORIZE_503_POLICY="billing-authorize-503.yaml"
 # The counters this run created. Cloud Monitoring can refuse a policy whose
 # query names a log-based counter created seconds before ("metric invalid"):
-# the counter is not yet known to it. A policy that reads one is therefore
-# applied up to NEW_COUNTER_POLICY_ATTEMPTS times, NEW_COUNTER_RETRY_SECONDS
-# apart, and the next policy waits for it: its own create or update is the
-# check that the counter is known, and needs no permission beyond the
-# reconciler role (gateway_reliability_iam.sh). Every other policy gets one
-# attempt, so a real refusal still stops the script at once.
+# the counter is not yet known to it. A refused policy that reads one is
+# therefore applied again, NEW_COUNTER_RETRY_SECONDS later, and the next
+# policy waits for it: its own create or update is the check that the
+# counter is known, and needs no permission beyond the reconciler role
+# (gateway_reliability_iam.sh). The retries are one budget for the whole
+# run, NEW_COUNTER_RETRIES, because the wait is for counters created
+# together: ten 30-second retries bound it at five minutes however many
+# policies read them (gateway-reliability.yml allows the job 20). Every
+# other policy gets one attempt, so a real refusal still stops the script at
+# once. Any refusal is retried, not only "metric invalid": gcloud's exact
+# text for it is not pinned, and a real refusal costs at most the budget.
 CREATED_METRICS=()
-NEW_COUNTER_POLICY_ATTEMPTS="${TR_GATEWAY_NEW_COUNTER_POLICY_ATTEMPTS:-10}"
+NEW_COUNTER_RETRIES="${TR_GATEWAY_NEW_COUNTER_RETRIES:-10}"
 NEW_COUNTER_RETRY_SECONDS="${TR_GATEWAY_NEW_COUNTER_RETRY_SECONDS:-30}"
 APPLY=0
 
@@ -176,10 +181,10 @@ policy_reads_created_counter() {
 
 apply_policy() {
   local policy_file="$1" channel="$2"
-  local display_name policy_name attempt=1 attempts=1
+  local display_name policy_name attempt=1 reads_new=0
   display_name="$(sed -n 's/^displayName: "\(.*\)"$/\1/p' "$policy_file")"
   if policy_reads_created_counter "$policy_file"; then
-    attempts="$NEW_COUNTER_POLICY_ATTEMPTS"
+    reads_new=1
   fi
   while :; do
     # Looked up on every attempt, so a retry updates a policy an earlier
@@ -198,11 +203,12 @@ apply_policy() {
       --set-notification-channels="$channel"; then
       return 0
     fi
-    if [ "$attempt" -ge "$attempts" ]; then
+    if [ "$reads_new" -eq 0 ] || [ "$NEW_COUNTER_RETRIES" -le 0 ]; then
       log "ERROR: could not apply \"${display_name}\" after ${attempt} attempt(s); stopping before the next policy"
       return 1
     fi
-    log "\"${display_name}\" reads a counter created by this run; retrying in ${NEW_COUNTER_RETRY_SECONDS}s while Cloud Monitoring learns it (attempt ${attempt} of ${attempts})"
+    NEW_COUNTER_RETRIES=$((NEW_COUNTER_RETRIES - 1))
+    log "\"${display_name}\" reads a counter created by this run; retrying in ${NEW_COUNTER_RETRY_SECONDS}s while Cloud Monitoring learns it (attempt ${attempt}, ${NEW_COUNTER_RETRIES} retries left in this run)"
     sleep "$NEW_COUNTER_RETRY_SECONDS"
     attempt=$((attempt + 1))
   done

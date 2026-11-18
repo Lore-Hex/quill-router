@@ -93,7 +93,7 @@ policy:
   Every other authorize 503 writes none of these lines and pages: a Spanner
   outage or deadline, no instance, a crash, a paused workspace, and `credit
   headroom changed concurrently` from a recovery that stopped early (its
-  forced shard-count reload failed). More lines than 503s pages too,
+  forced shard-count reload failed) or followed a failed debt-mark heal. More lines than 503s pages too,
   because a line written without its 503 could hide a real one. The deploy
   gate (`scripts/deploy/assert_no_billing_5xx.sh`) draws the same line per
   request, by trace.
@@ -489,7 +489,10 @@ concurrently; retry`, and the route writes `billing.credit_headroom_raced`
 for it. The same message from a recovery that stopped early, because its
 forced reload of the shard count failed (`credit shard-count forced reload
 failed after incomplete precheck`), gets no line: it is not this race, and
-it pages as an unmarked authorize 503. Before 2026-11-18 every one of these
+it pages as an unmarked authorize 503. Nor does one that followed a failed
+debt-mark heal (`credit debt-mark heal failed; keeping the refusal`): a
+stale mark refuses every shard while the snapshot, which does not read the
+mark, still sees them funded, so its passes can look like the race. Before 2026-11-18 every one of these
 503s counted that way: three of the four 503s in the burst of 2026-11-04
 16:08Z, one on 2026-11-16 02:38Z, and the one that paged on 2026-11-18
 07:41Z (a workspace with 32 credit shards, nearly out of credit, bursting

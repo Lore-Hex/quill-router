@@ -78,7 +78,9 @@ class CreditHeadroomRaced(StoreUnavailable):
     designed, retryable answer, not a storage failure: a 402 would be an
     accounting lie, so the caller is asked to retry. A recovery that stopped
     early (the forced reload failed, or a rebalance gave an outcome it does
-    not handle) raises the plain StoreUnavailable, unmarked.
+    not handle), or ran after a debt-mark heal that failed (a stale mark,
+    not the race, may have refused), raises the plain StoreUnavailable,
+    unmarked.
 
     A subclass, so every handler of `StoreUnavailable` answers it as before
     (the same 503, message and Retry-After). Not a `CreditRebalanceBusy`,

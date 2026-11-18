@@ -2048,8 +2048,8 @@ def test_gate_hotfix_skip_is_unchanged(tmp_path: Path) -> None:
 # authorize-503 policy before the narrowed 5xx filter.
 
 # A stub gcloud. By default no counter exists (each is created); with
-# STUB_METRICS_EXIST every counter exists but STUB_NEW_METRIC. The policy
-# STUB_NOT_READY_POLICY is refused its first STUB_NOT_READY_TIMES applies, as
+# STUB_METRICS_EXIST every counter exists but STUB_NEW_METRIC. STUB_NOT_READY
+# lists "policy-file:N" pairs: each policy is refused its first N applies, as
 # Cloud Monitoring refuses a PromQL policy that names a counter it does not
 # know yet; with STUB_CREATE_LANDS a refused create lands all the same.
 STUB_RELIABILITY_GCLOUD = r"""#!/usr/bin/env bash
@@ -2064,14 +2064,20 @@ case "$args" in
     if [ -f "$STUB_LOG.landed" ]; then echo "projects/p/alertPolicies/9"; fi ;;
   *"monitoring policies list"*) echo "projects/p/alertPolicies/1" ;;
   *"monitoring policies "*"/${STUB_FAIL_POLICY:-none} "*) exit 1 ;;
-  *"monitoring policies "*"/${STUB_NOT_READY_POLICY:-none} "*)
-    n="$(cat "$STUB_LOG.not_ready" 2>/dev/null || echo 0)"
-    echo $((n + 1)) >"$STUB_LOG.not_ready"
-    if [ "$n" -lt "${STUB_NOT_READY_TIMES:-0}" ]; then
-      if [ "${STUB_CREATE_LANDS:-false}" = true ]; then : >"$STUB_LOG.landed"; fi
-      echo "ERROR: (gcloud.monitoring.policies) INVALID_ARGUMENT: metric invalid" >&2
-      exit 1
-    fi ;;
+  *"monitoring policies "*"--policy-from-file="*)
+    for spec in ${STUB_NOT_READY:-}; do
+      file="${spec%%:*}"
+      case "$args" in
+        *"/${file} "*)
+          n="$(cat "$STUB_LOG.${file}" 2>/dev/null || echo 0)"
+          echo $((n + 1)) >"$STUB_LOG.${file}"
+          if [ "$n" -lt "${spec##*:}" ]; then
+            if [ "${STUB_CREATE_LANDS:-false}" = true ]; then : >"$STUB_LOG.landed"; fi
+            echo "ERROR: (gcloud.monitoring.policies) INVALID_ARGUMENT: metric invalid" >&2
+            exit 1
+          fi ;;
+      esac
+    done ;;
 esac
 exit 0
 """
@@ -2079,8 +2085,8 @@ exit 0
 
 def _run_reliability(
     tmp_path: Path, *, fail_metric: str = "none", missing_policy: str = "none", fail_policy: str = "none",
-    metrics_exist: bool = False, new_metric: str = "none", not_ready_policy: str = "none",
-    not_ready_times: int = 0, create_lands: bool = False, attempts: int | None = None,
+    metrics_exist: bool = False, new_metric: str = "none", not_ready: dict[str, int] | None = None,
+    create_lands: bool = False, retries: int | None = None,
 ) -> tuple[int, list[str]]:
     stub = tmp_path / "bin"
     stub.mkdir()
@@ -2101,11 +2107,10 @@ def _run_reliability(
             "STUB_FAIL_POLICY": fail_policy,
             "STUB_METRICS_EXIST": "true" if metrics_exist else "false",
             "STUB_NEW_METRIC": new_metric,
-            "STUB_NOT_READY_POLICY": not_ready_policy,
-            "STUB_NOT_READY_TIMES": str(not_ready_times),
+            "STUB_NOT_READY": " ".join(f"{name}:{times}" for name, times in (not_ready or {}).items()),
             "STUB_CREATE_LANDS": "true" if create_lands else "false",
             "TR_GATEWAY_NEW_COUNTER_RETRY_SECONDS": "0",
-            **({"TR_GATEWAY_NEW_COUNTER_POLICY_ATTEMPTS": str(attempts)} if attempts is not None else {}),
+            **({"TR_GATEWAY_NEW_COUNTER_RETRIES": str(retries)} if retries is not None else {}),
             "TR_REGIONS": "us-central1",
         },
     )
@@ -2233,8 +2238,7 @@ def test_reliability_waits_for_a_new_counter_before_the_policies_that_read_it(tm
         metrics_exist=True,
         new_metric=RACED_COUNTER,
         missing_policy="TR Gateway: credit headroom raced",
-        not_ready_policy="billing-headroom-raced.yaml",
-        not_ready_times=2,
+        not_ready={"billing-headroom-raced.yaml": 2},
     )
     assert status == 0, calls
     creates = [call for call in calls if "logging metrics create" in call]
@@ -2263,14 +2267,58 @@ def test_reliability_stops_when_a_new_counter_is_never_accepted(tmp_path: Path) 
         metrics_exist=True,
         new_metric=RACED_COUNTER,
         missing_policy="TR Gateway: credit headroom raced",
-        not_ready_policy="billing-headroom-raced.yaml",
-        not_ready_times=99,
-        attempts=3,
+        not_ready={"billing-headroom-raced.yaml": 99},
+        retries=2,
     )
     assert status != 0
     assert len(_applies(calls, "billing-headroom-raced.yaml")) == 3
     assert not _applies(calls, "billing-authorize-503.yaml")
     assert not _applies(calls, "billing-5xx.yaml")
+
+
+def test_reliability_shares_one_retry_budget_across_the_run(tmp_path: Path) -> None:
+    """The wait is for counters created together, so its budget is the
+    run's, not each policy's: retries spent on the raced policy are not
+    there again for the authorize-503 policy, and the run stops when the
+    budget is gone, before the 5xx filter narrows."""
+    status, calls = _run_reliability(
+        tmp_path,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        not_ready={"billing-headroom-raced.yaml": 2, "billing-authorize-503.yaml": 2},
+        retries=3,
+    )
+    assert status != 0
+    assert len(_applies(calls, "billing-headroom-raced.yaml")) == 3  # two retries
+    assert len(_applies(calls, "billing-authorize-503.yaml")) == 2  # the last one
+    assert not _applies(calls, "billing-5xx.yaml")
+    # Two refusals and one: the same budget covers both, and the run goes on.
+    control = tmp_path / "control"
+    control.mkdir()
+    status, calls = _run_reliability(
+        control,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        not_ready={"billing-headroom-raced.yaml": 2, "billing-authorize-503.yaml": 1},
+        retries=3,
+    )
+    assert status == 0, calls
+    assert len(_applies(calls, "billing-authorize-503.yaml")) == 2
+
+
+def test_the_new_counter_wait_fits_the_workflows_timeout() -> None:
+    """The script's default retry budget, at its default spacing, is at most
+    a quarter of the time the workflow gives the job, leaving the rest for
+    its ordinary run and gcloud's own latency."""
+    script = RELIABILITY.read_text(encoding="utf-8")
+    (retries,) = re.findall(r'^NEW_COUNTER_RETRIES="\$\{TR_GATEWAY_NEW_COUNTER_RETRIES:-(\d+)\}"$', script, re.M)
+    (spacing,) = re.findall(
+        r'^NEW_COUNTER_RETRY_SECONDS="\$\{TR_GATEWAY_NEW_COUNTER_RETRY_SECONDS:-(\d+)\}"$', script, re.M
+    )
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "gateway-reliability.yml").read_text(encoding="utf-8"))
+    (job,) = workflow["jobs"].values()
+    assert "gateway_reliability.sh --apply" in json.dumps(job["steps"])
+    assert int(retries) * int(spacing) * 4 <= int(job["timeout-minutes"]) * 60
 
 
 def test_reliability_retry_updates_a_policy_an_earlier_attempt_created(tmp_path: Path) -> None:
@@ -2281,8 +2329,7 @@ def test_reliability_retry_updates_a_policy_an_earlier_attempt_created(tmp_path:
         metrics_exist=True,
         new_metric=RACED_COUNTER,
         missing_policy="TR Gateway: credit headroom raced",
-        not_ready_policy="billing-headroom-raced.yaml",
-        not_ready_times=1,
+        not_ready={"billing-headroom-raced.yaml": 1},
         create_lands=True,
     )
     assert status == 0, calls

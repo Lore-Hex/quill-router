@@ -317,6 +317,84 @@ def test_after_a_key_repair_the_second_entry_alone_decides(monkeypatch: pytest.M
     assert entries == ["invalidate", "invalidate"]
 
 
+def _mark_in_debt(db: Any, workspace_id: str) -> None:
+    """A stale debt mark: every row marked, the balance still positive."""
+    for row_key, row in db.typed[CREDIT_BALANCE_TABLE].items():
+        if row_key[0] == workspace_id:
+            row["in_debt"] = True
+
+
+def test_a_stale_debt_mark_whose_heal_failed_keeps_the_plain_store_unavailable(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The real authorize on a funded workspace whose rows carry a stale debt
+    mark, and the heal raising under the workspace's own burst. The precheck
+    does not read the mark, so every pass sees a funded shard and its retry
+    is refused by the mark: every pass ends in `continue`, but the mark, not
+    the race, refused. Plain StoreUnavailable, as before the type existed."""
+    store, db, key = _fragmented_store([12_000, 0], 20_000)
+    _mark_in_debt(db, key.workspace_id)
+    heals: list[str] = []
+
+    def heal_aborted(_ws: str) -> bool:
+        heals.append("heal")
+        raise Aborted("heal transaction wounded")
+
+    monkeypatch.setattr(store, "_heal_stale_debt_mark", heal_aborted)
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router"):
+        error = _raised(store, key)
+
+    assert type(error) is StoreUnavailable
+    assert heals == ["heal"]  # once per request
+    assert "credit debt-mark heal failed; keeping the refusal" in caplog.text
+    assert not db.reservations
+
+
+def test_the_same_stale_debt_mark_healed_is_served(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control for the case above: the mark is what refused. Healed, the
+    same request is served on the funded shard."""
+    store, db, key = _fragmented_store([12_000, 0], 20_000)
+    _mark_in_debt(db, key.workspace_id)
+
+    verdict, _authorization = _fragmented_authorize(store, key)
+
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert not any(row.get("in_debt") for row in db.typed[CREDIT_BALANCE_TABLE].values())
+
+
+def test_a_failed_heal_holds_for_the_whole_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The heal runs once per request. When it raised in the first entry, a
+    key repair's second entry, which does not heal again, faces the same
+    possible mark: losing all its passes there is not the race either."""
+    store, _db, key = _fragmented_store([12_000, 0], 20_000)
+    outcomes = iter([
+        billing.AuthorizeOutcome.INSUFFICIENT_CREDITS,  # the first answer
+        billing.AuthorizeOutcome.INSUFFICIENT_CREDITS,  # retry, pass 1
+        billing.AuthorizeOutcome.INSUFFICIENT_CREDITS,  # retry, pass 2
+        billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED,  # retry, pass 3
+    ])
+    monkeypatch.setattr(
+        billing, "authorize_atomic",
+        lambda *_a, **_k: {"outcome": next(outcomes, billing.AuthorizeOutcome.INSUFFICIENT_CREDITS)},
+    )
+    monkeypatch.setattr(
+        credit, "credit_headroom_precheck",
+        lambda *_a, **_k: credit.CreditHeadroomPrecheck(credit.RebalanceOutcome.NOT_NEEDED, 0, (0,)),
+    )
+    monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", lambda *_a, **_k: True)
+    heals: list[str] = []
+
+    def heal_aborted(_ws: str) -> bool:
+        heals.append("heal")
+        raise Aborted("heal transaction wounded")
+
+    monkeypatch.setattr(store, "_heal_stale_debt_mark", heal_aborted)
+
+    assert type(_raised(store, key)) is StoreUnavailable
+    assert heals == ["heal"]
+
+
 # ---------------------------------------------------------------------------
 # The route: one line for this 503, and the response it always had.
 
