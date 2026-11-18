@@ -1703,7 +1703,7 @@
       ]
     },
     "storage_gcp_credit_rebalance:credit_headroom_precheck:1": {
-      "fingerprint": "c6fdfb845fad7bf45a376a44aa302c722829a437d10c25b10399874d747be456",
+      "fingerprint": "a6c755acc27a1ac95b623b5515ebd7ed346141ad2beac34b3b3d9ebfab62eee0",
       "scenarios": [
         {
           "bindings": {},
@@ -1715,7 +1715,7 @@
       ]
     },
     "storage_gcp_credit_rebalance:txn:1": {
-      "fingerprint": "d971a743772de1e818491d53f55337900dc9a1434a0d686157bd811525020632",
+      "fingerprint": "6821ae3302810b87b9d82f450345d8acfd1f2de82f8e727d79603a6ddf0d5503",
       "scenarios": [
         {
           "bindings": {},
@@ -3852,7 +3852,7 @@
       ]
     },
     "storage_gcp_authorize:credit_exhaustion_precheck:1": {
-      "fingerprint": "dd782cdc89454e267727ab052f987d7e2b0fbbbf864aadacff97494e0b461591",
+      "fingerprint": "a8053e59666f589afdd515b93b101b367ba26d5d48cfcec78e0dbe6dd8460e1c",
       "scenarios": [
         {
           "bindings": {},
@@ -3863,7 +3863,7 @@
       ]
     },
     "storage_gcp_authorize:credit_exhaustion_precheck:2": {
-      "fingerprint": "dd782cdc89454e267727ab052f987d7e2b0fbbbf864aadacff97494e0b461591",
+      "fingerprint": "a8053e59666f589afdd515b93b101b367ba26d5d48cfcec78e0dbe6dd8460e1c",
       "scenarios": [
         {
           "bindings": {},
@@ -4522,7 +4522,7 @@
       ]
     },
     "storage_gcp:_heal_stale_debt_mark:1": {
-      "fingerprint": "c6e3e52d7699599f2d21d7aba9a5cdd13238e87e6251e66f6bb653b0829e3b85",
+      "fingerprint": "4f4704d194cb8f1ea32b143ed496f4d1528bbc0c73c7c67d0fa436bba6278d03",
       "scenarios": [
         {
           "bindings": {},
@@ -5103,7 +5103,7 @@
     "storage_gcp:SpannerStore._existing_operator_abuse": "b7ad0120effa20c724416cdce618fd88bcf212407c47006c9d0d667e360dbb88",
     "storage_gcp:SpannerStore.backfill_owner_inventory.txn": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
     "storage_gcp:SpannerStore.process_trust_demotion_remainders": "2eaa77fe0f06dab5095648f2052cea02247fa3723f6e207ed1abda8ebcae2e20",
-    "storage_gcp:SpannerStore._heal_stale_debt_mark": "c6e3e52d7699599f2d21d7aba9a5cdd13238e87e6251e66f6bb653b0829e3b85",
+    "storage_gcp:SpannerStore._heal_stale_debt_mark": "4f4704d194cb8f1ea32b143ed496f4d1528bbc0c73c7c67d0fa436bba6278d03",
     "storage_gcp:SpannerStore._demote_owner_trust_tx": "3735ec2b15cfed0435caf727abd7634a1d8041ee62f5354ff07a06e26b2f9c53",
     "storage_gcp:SpannerStore.gateway_api_key_auth_context": "b98a51cb809aae9d4c187a84d4f800b34560d4795f93093997202cc4eb972d9c",
     "storage_gcp:SpannerStore.api_key_auth_context": "00bbec2cdc8b0d46e1f86a2db2b9014f2c5add8829401d276cb83a74db08f996",
@@ -5132,7 +5132,7 @@
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:credit_exhaustion_precheck": "dd782cdc89454e267727ab052f987d7e2b0fbbbf864aadacff97494e0b461591",
+    "storage_gcp_authorize:credit_exhaustion_precheck": "a8053e59666f589afdd515b93b101b367ba26d5d48cfcec78e0dbe6dd8460e1c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "723d80374d0900f279e715644b2f048621f14f642d66e23a6bce7dcc2ee4d2c4",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
@@ -5170,8 +5170,8 @@
     "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8",
     "storage_gcp_credit_json_cleanup:_inspect_reader": "8e30b9701e22a9c56307bfecca369515b6693c3bc760830118d0532b31cff3b1",
     "storage_gcp_credit_json_cleanup:legacy_credit_workspace_ids": "31c5139361245bdf1d10f540c13ccd18d91aa1c79ccc0973aaca6b798aad59d2",
-    "storage_gcp_credit_rebalance:credit_headroom_precheck": "c6fdfb845fad7bf45a376a44aa302c722829a437d10c25b10399874d747be456",
-    "storage_gcp_credit_rebalance:rebalance_credit_for_estimate.txn": "d971a743772de1e818491d53f55337900dc9a1434a0d686157bd811525020632",
+    "storage_gcp_credit_rebalance:credit_headroom_precheck": "a6c755acc27a1ac95b623b5515ebd7ed346141ad2beac34b3b3d9ebfab62eee0",
+    "storage_gcp_credit_rebalance:rebalance_credit_for_estimate.txn": "6821ae3302810b87b9d82f450345d8acfd1f2de82f8e727d79603a6ddf0d5503",
     "storage_gcp_credit_shard_admin:_typed_state": "03f3c5d102c5aa80066c888daa1862cd2c35adefbe02dfd34663aac0583255a1",
     "storage_gcp_credit_shard_admin:reshard_credit_account.txn": "9c05541b6c3c2d41ae51f34f2ad429f477c0a54ed4cf1e61108f81e579f96a91",
     "storage_gcp_credit_transfer:_read_shard_headroom": "fce73a9120f77ab688a8293814e89257842d447c2cf36375c5c51b35fa12fa80",
