@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"cloud.google.com/go/spanner"
 )
@@ -31,12 +32,38 @@ func (s *Store) ReadCreditStanding(ctx context.Context, workspace string) (Credi
 	}
 	ro := s.client.Single()
 	defer ro.Close()
+	return readCreditStanding(ctx, ro, workspace, "read-credit-standing")
+}
+
+// ReadCreditStandingAt reads the same rows as ReadCreditStanding, as they
+// stood at exactly at: the read timestamp of the snapshot Python's credit
+// refusal stands on (its authorize's X-TR-Credit-Refusal-Read), for the
+// decide shadow's confirmation that a hold released between Python's read
+// and its own (edge, confirmFundingRace). Rows as of Python's instant are
+// the rows Python's refusal read. A timestamp older than the database's
+// version retention fails (FailedPrecondition), as does any read error; the
+// caller then confirms nothing.
+func (s *Store) ReadCreditStandingAt(ctx context.Context, workspace string, at time.Time) (CreditStanding, error) {
+	if workspace == "" {
+		return CreditStanding{}, errors.New("store: no workspace")
+	}
+	if at.IsZero() {
+		return CreditStanding{}, errors.New("store: no read timestamp")
+	}
+	ro := s.client.Single().WithTimestampBound(spanner.ReadTimestamp(at))
+	defer ro.Close()
+	return readCreditStanding(ctx, ro, workspace, "read-credit-standing-at")
+}
+
+// readCreditStanding is the one read both make, through ro, tagged operation.
+func readCreditStanding(ctx context.Context, ro *spanner.ReadOnlyTransaction, workspace, operation string) (
+	CreditStanding, error) {
 	var out CreditStanding
 	err := ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT shard, total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)
 		        FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": workspace},
-	}, lowPriority("read-credit-standing")).Do(func(row *spanner.Row) error {
+	}, lowPriority(operation)).Do(func(row *spanner.Row) error {
 		var shard, headroom int64
 		var marked bool
 		if err := row.Columns(&shard, &headroom, &marked); err != nil {

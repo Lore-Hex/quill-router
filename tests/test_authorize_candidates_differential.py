@@ -10,9 +10,11 @@ the refusals (status, body and headers), the stored authorization and the
 log lines must be identical, except for the explicitly checked reservation
 guidance and diagnostic added in #1926, and the idempotency-key-source
 observation line added in E4 R1 (exactly once, with its exact text, on every
-request that resolved its idempotency key; never otherwise), and the
+request that resolved its idempotency key; never otherwise), the
 authorize affinity measurement line (exactly once, with its exact text, on
-every 200; never otherwise). The frozen leg's
+every 200; never otherwise), and the typed store's X-TR-Credit-Refusal-Read
+on its insufficient_credits 402 (the only header, held to the reserve
+call's hold; never on the memory store's). The frozen leg's
 chat candidate hook applies an independent specification of the subsequently approved model
 and host context limits. Its provider hook independently requires an explicit upgraded origin
 for the new native adapters, without changing the frozen file. Reservation
@@ -51,6 +53,7 @@ from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_
 from trusted_router.catalog import META_MODEL_IDS, MODELS, NAMED_DECISION_MODEL_PROVIDERS
 from trusted_router.catalog_data import PRIVATE_PROXY_MODEL_TARGETS
 from trusted_router.config import Settings
+from trusted_router.credit_refusal_read import CREDIT_REFUSAL_READ_HEADER
 from trusted_router.errors import api_error
 from trusted_router.routes.internal import gateway
 from trusted_router.routing import (
@@ -259,6 +262,12 @@ def _reference_decide_refusal(exc: HTTPException, body: GatewayAuthorizeRequest)
     return api_error(exc.status_code, text, exc.detail["error"]["type"])
 
 
+# X-TR-Credit-Refusal-Read as the route writes it; group 1 is the hold.
+CREDIT_READ_FORM = re.compile(
+    r"read=[a-z_]+(?: read_at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z)? hold=(\d+) rows=\d+ sum=-?\d+ most=-?\d+"
+)
+
+
 def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
          monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> str:
     _deterministic_ids(monkeypatch)
@@ -429,6 +438,18 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
         assert outcome["logs"].count(diagnostic) == 1
         outcome["logs"].remove(diagnostic)
         error["message"] = "Insufficient credits"
+        # The typed store names the read of the credit rows its refusal
+        # stands on, for the edge's decide shadow (credit_refusal_read.py):
+        # the one header, held to the reserve call's own hold. The memory
+        # store reads no snapshot and names none.
+        headers = dict(outcome["headers"] or {})
+        read = headers.pop(CREDIT_REFUSAL_READ_HEADER, None)
+        if backend == "typed":
+            match = CREDIT_READ_FORM.fullmatch(read or "")
+            assert match and int(match.group(1)) == quote["estimate"], read
+        else:
+            assert read is None, read
+        outcome["headers"] = headers or None
     text = json.dumps(outcome, sort_keys=True, default=str)
     # The store's own clock and random key material differ per seeding.
     for volatile in (key.hash, key.lookup_hash, key.workspace_id):

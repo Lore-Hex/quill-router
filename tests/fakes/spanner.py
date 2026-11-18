@@ -357,10 +357,11 @@ class FakeSpannerDatabase:
         self.snapshot_execute_sql_calls = 0
         self.snapshot_sql: list[str] = []
         self.snapshot_sql_params: list[dict[str, Any]] = []
-        # Each snapshot's read timestamp, as the real client records it when
-        # the snapshot's first read begins its read-only transaction
+        # Each multi-use snapshot's read timestamp, as the real client records
+        # it when the snapshot's first read begins its read-only transaction
         # (Snapshot._transaction_read_timestamp): a distinct nanosecond
-        # instant per snapshot, in the order they began.
+        # instant per snapshot, in the order they began. A single-use
+        # snapshot keeps none here (_FakeSnapshot.execute_sql).
         self.snapshot_read_timestamps: list[Any] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
@@ -2494,7 +2495,11 @@ class _FakeSnapshot:
                 "(models real Spanner — see prod fix fa9f5d4)"
             )
         if self._reads == 1:
-            self._transaction_read_timestamp = _next_read_timestamp(self.db)
+            # Only a multi-use snapshot keeps a read timestamp here: whatever
+            # the client does for a single-use one, code that names a read
+            # timestamp must not rely on it (key_window_limit_decision,
+            # credit_refusal_read.py), so the fake gives it none.
+            self._transaction_read_timestamp = _next_read_timestamp(self.db) if self._multi_use else None
         self.db.snapshot_execute_sql_calls += 1
         self.db.snapshot_sql.append(sql)
         self.db.snapshot_sql_params.append(dict(params or {}))

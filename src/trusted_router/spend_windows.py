@@ -206,9 +206,16 @@ def key_window_read_timestamp_headers(decision: KeyWindowLimitDecision) -> dict[
     """
     if decision.read_timestamp_ns is None:
         return {}
-    seconds, nanos = divmod(decision.read_timestamp_ns, 1_000_000_000)
+    return {KEY_WINDOW_READ_TIMESTAMP_HEADER: read_timestamp_rfc3339(decision.read_timestamp_ns)}
+
+
+def read_timestamp_rfc3339(read_timestamp_ns: int) -> str:
+    """A snapshot's read timestamp (Unix nanoseconds) as RFC 3339 UTC with
+    exactly nine fractional digits and a Z: the one form the fast-path edge's
+    shadow accepts for a read timestamp it re-reads at."""
+    seconds, nanos = divmod(read_timestamp_ns, 1_000_000_000)
     instant = dt.datetime(1970, 1, 1, tzinfo=dt.UTC) + dt.timedelta(seconds=seconds)
-    return {KEY_WINDOW_READ_TIMESTAMP_HEADER: f"{instant:%Y-%m-%dT%H:%M:%S}.{nanos:09d}Z"}
+    return f"{instant:%Y-%m-%dT%H:%M:%S}.{nanos:09d}Z"
 
 
 def remember_spend_window_decision(

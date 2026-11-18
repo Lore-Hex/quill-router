@@ -87,6 +87,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings, in_v2_cohort
+from trusted_router.credit_refusal_read import CreditRefusalRead, credit_refusal_read_headers
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
     USER_MODEL_OWNER_SETTLE_FIELD,
@@ -1989,9 +1990,14 @@ def _authorize_gateway_sync_impl(
             )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             record_free_credit_exhausted_safely(workspace.id)
+            # With the read of the credit rows the refusal stands on, this
+            # internal route only: the edge's decide shadow tells a hold
+            # released since Python's read from a refusal to investigate
+            # (credit_refusal_read.py).
             raise _insufficient_credits_error(
                 workspace, reservation=reservation, estimate=estimate, body=body, input_tokens=input_tokens,
                 key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+                credit_read=getattr(outcome, "credit_read", None),
             )
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             # The window check runs after a lease admission and writes no
@@ -3422,6 +3428,7 @@ def _log_strict_budget_busy(
 def _insufficient_credits_error(
     workspace: Any, *, reservation: int, estimate: int, body: GatewayAuthorizeRequest,
     input_tokens: int, key_id: str, request_id: str | None,
+    credit_read: CreditRefusalRead | None = None,
 ) -> Exception:
     """402, but say WHICH plane the money is on when that is the real answer.
 
@@ -3448,6 +3455,12 @@ def _insufficient_credits_error(
 
     The message stays true whether the customer never transferred or
     transferred and then spent it, because both have the same fix.
+
+    `credit_read`, the typed store's read of the credit rows the refusal
+    stands on, rides on the insufficient_credits 402 as
+    X-TR-Credit-Refusal-Read for the fast-path edge's decide shadow
+    (credit_refusal_read.py); the enclave keeps only an error's status,
+    body and Retry-After, so it never reaches a customer.
     """
     # Do not read balances again here: a later snapshot would race other holds
     # and add database work to every denial. Log only known, content-free facts.
@@ -3474,6 +3487,7 @@ def _insufficient_credits_error(
         "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
         "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits.",
         ErrorType.INSUFFICIENT_CREDITS,
+        headers=credit_refusal_read_headers(credit_read) or None,
     )
 
 

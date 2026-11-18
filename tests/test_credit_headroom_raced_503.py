@@ -336,7 +336,7 @@ def test_a_stale_debt_mark_whose_heal_failed_keeps_the_plain_store_unavailable(
     _mark_in_debt(db, key.workspace_id)
     heals: list[str] = []
 
-    def heal_aborted(_ws: str) -> bool:
+    def heal_aborted(_ws: str, **_: object) -> bool:
         heals.append("heal")
         raise Aborted("heal transaction wounded")
 
@@ -385,7 +385,7 @@ def test_a_failed_heal_holds_for_the_whole_request(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", lambda *_a, **_k: True)
     heals: list[str] = []
 
-    def heal_aborted(_ws: str) -> bool:
+    def heal_aborted(_ws: str, **_: object) -> bool:
         heals.append("heal")
         raise Aborted("heal transaction wounded")
 

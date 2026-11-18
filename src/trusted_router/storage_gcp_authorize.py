@@ -38,6 +38,7 @@ from trusted_router.app_markup_billing import (
     app_markup_payout_event_id,
 )
 from trusted_router.catalog import PROVIDERS
+from trusted_router.credit_refusal_read import REMEMBERED, CreditRefusalRead
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
@@ -151,19 +152,36 @@ class AuthorizeOutcome:
 
 
 class AuthorizeVerdict(str):
-    """String-compatible typed-authorize outcome with its window decision."""
+    """String-compatible typed-authorize outcome with its window decision,
+    and, on an insufficient_credits refusal, the read of the credit rows it
+    stands on (credit_refusal_read.py), None when there was none."""
 
     rate_limit: KeyWindowLimitDecision | None
+    credit_read: CreditRefusalRead | None
 
     def __new__(
         cls,
         outcome: str,
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
+        credit_read: CreditRefusalRead | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
+        verdict.credit_read = credit_read
         return verdict
+
+
+class CreditPrecheckVerdict(str):
+    """credit_exhaustion_precheck's verdict, string-compatible, with the
+    snapshot an EXHAUSTED verdict stands on (None for any other)."""
+
+    credit_read: CreditRefusalRead | None
+
+    def __new__(cls, verdict: str, *, credit_read: CreditRefusalRead | None = None) -> CreditPrecheckVerdict:
+        made = super().__new__(cls, verdict)
+        made.credit_read = credit_read
+        return made
 
 
 class _Reject(Exception):
@@ -342,6 +360,10 @@ def credit_exhaustion_precheck(
     path stays lock-free and answers today's 402; a failed credit-row read
     is DEFER, as before. Without it, no lease is read and every verdict is as
     before.
+
+    An EXHAUSTED verdict carries the snapshot it stands on (its rows and read
+    timestamp, CreditPrecheckVerdict.credit_read), for the internal route's
+    X-TR-Credit-Refusal-Read.
     """
     pt = param_types
     try:
@@ -362,6 +384,12 @@ def credit_exhaustion_precheck(
                 int(total_credits) - int(total_usage) - int(reserved)
                 for _, total_credits, total_usage, reserved, _marked in rows
             ]
+            exhausted = CreditPrecheckVerdict(
+                EXHAUSTED,
+                credit_read=CreditRefusalRead.of(
+                    REMEMBERED, estimate, available, snapshot_read_timestamp_ns(snapshot),
+                ),
+            )
             if any(bool(row[4]) for row in rows):
                 if sum(available) >= 0:
                     return HEADROOM
@@ -401,11 +429,11 @@ def credit_exhaustion_precheck(
                         workspace_id,
                         exc_info=True,
                     )
-                    return EXHAUSTED
+                    return exhausted
                 lease_held = int(held[0][0]) if held and held[0][0] is not None else 0
                 if lease_held > 0 and sum(available) + lease_held >= estimate:
                     return LEASE_HELD
-            return EXHAUSTED
+            return exhausted
     except Exception:
         log.warning(
             "credit exhaustion snapshot failed; deferring to authorize transaction workspace=%s",

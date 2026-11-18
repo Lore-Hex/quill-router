@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -18,12 +19,18 @@ import (
 // mark when any row carries it; a write committed just before the read is in
 // it, as it is in Python's own. It is held so twice: by what the emulator
 // answers, and in the source, where the read takes Single() with no
-// timestamp bound, at low priority.
+// timestamp bound, at low priority (ReadCreditStandingAt, beside it, is the
+// one that pins a timestamp).
 func TestReadCreditStandingReadsEveryRowStrongly(t *testing.T) {
 	source := funcSource(t, "creditstanding.go", "func (s *Store) ReadCreditStanding(")
 	if !strings.Contains(source, "ro := s.client.Single()\n") || strings.Contains(source, "TimestampBound") ||
-		strings.Contains(source, "Staleness") || !strings.Contains(source, `lowPriority("read-credit-standing")`) {
+		strings.Contains(source, "Staleness") || !strings.Contains(source, `"read-credit-standing")`) ||
+		!strings.Contains(funcSource(t, "creditstanding.go", "func readCreditStanding("), "lowPriority(operation)") {
 		t.Fatal("ReadCreditStanding must be a strong single-use read at low priority")
+	}
+	if !strings.Contains(funcSource(t, "creditstanding.go", "func (s *Store) ReadCreditStandingAt("),
+		".WithTimestampBound(spanner.ReadTimestamp(at))") {
+		t.Fatal("ReadCreditStandingAt must read at exactly its timestamp")
 	}
 	s := spikeStore(t)
 	ctx := context.Background()
@@ -74,5 +81,74 @@ func TestReadCreditStandingRefusesRowsItCannotJudge(t *testing.T) {
 	setRow(t, past, 0, map[string]any{"total_usage": int64(math.MaxInt64), "reserved": int64(2)})
 	if got, err := s.ReadCreditStanding(ctx, past); err == nil {
 		t.Errorf("a headroom past int64 read as %+v", got)
+	}
+}
+
+// TestReadCreditStandingAtReadsTheRowsAsOfItsTimestamp: pinned to a write's
+// commit timestamp, the read sees that write and not the hold released after
+// it, which a strong read sees; at the later commit it sees the later one,
+// and a mark as it stood. Before the rows were written there are none. No
+// workspace and no timestamp read nothing.
+func TestReadCreditStandingAtReadsTheRowsAsOfItsTimestamp(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	seeded, err := shared.Apply(ctx, []*spanner.Mutation{
+		spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": int64(0),
+			"total_credits": int64(100), "trust_tier": int64(3)}),
+		spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": int64(1),
+			"total_credits": int64(50), "trust_tier": int64(3)}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropWorkspace(t, ws)
+	write := func(shard int64, column string, v any) time.Time {
+		t.Helper()
+		at, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{
+				SQL:    "UPDATE tr_credit_balance SET " + column + " = @v WHERE workspace_id = @w AND shard = @shard",
+				Params: map[string]any{"v": v, "w": ws, "shard": shard},
+			})
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	held := write(0, "reserved", int64(80))
+	released := write(0, "reserved", int64(0))
+	marked := write(1, "in_debt", true)
+	for _, x := range []struct {
+		name     string
+		at       time.Time
+		headroom []int64
+		marked   bool
+	}{
+		{"at the seed", seeded, []int64{100, 50}, false},
+		{"at the hold", held, []int64{20, 50}, false},
+		{"just before the release", released.Add(-time.Microsecond), []int64{20, 50}, false},
+		{"at the release", released, []int64{100, 50}, false},
+		{"at the mark", marked, []int64{100, 50}, true},
+	} {
+		got, err := s.ReadCreditStandingAt(ctx, ws, x.at)
+		if err != nil || !slices.Equal(got.Headroom, x.headroom) || got.Marked != x.marked {
+			t.Errorf("%s: %+v, %v; want %v marked %v", x.name, got, err, x.headroom, x.marked)
+		}
+	}
+	if got, err := s.ReadCreditStandingAt(ctx, ws, seeded.Add(-time.Microsecond)); !errors.Is(err,
+		ErrCreditRowsIncomplete) {
+		t.Errorf("before the rows were written: %+v, %v", got, err)
+	}
+	if got, err := s.ReadCreditStanding(ctx, ws); err != nil || !slices.Equal(got.Headroom, []int64{100, 50}) ||
+		!got.Marked {
+		t.Errorf("the strong read: %+v, %v", got, err)
+	}
+	if _, err := s.ReadCreditStandingAt(ctx, ws, time.Time{}); err == nil {
+		t.Error("a read with no timestamp")
+	}
+	if _, err := s.ReadCreditStandingAt(ctx, "", released); err == nil {
+		t.Error("a read of no workspace")
 	}
 }

@@ -37,6 +37,7 @@ from tests.test_gateway_authorize_spanner_operations import (
 )
 from trusted_router import storage_gcp_authorize as billing
 from trusted_router.config import Settings
+from trusted_router.credit_refusal_read import CREDIT_REFUSAL_READ_HEADER
 from trusted_router.routes.internal import gateway
 from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -758,7 +759,9 @@ def test_route_off_answers_todays_402_for_the_same_balance(monkeypatch: pytest.M
 
     assert error.status_code == 402
     assert error.detail["error"]["type"] == "insufficient_credits"
-    assert not error.headers
+    # No Retry-After: only the internal read the refusal stands on, which
+    # the enclave does not keep (credit_refusal_read.py).
+    assert set(error.headers or {}) == {CREDIT_REFUSAL_READ_HEADER}
     assert _enclave_caches(error.status_code, error.detail["error"]["type"])
     assert exhausted == [WS]
 
