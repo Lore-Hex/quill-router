@@ -74,11 +74,13 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
     rows = manifest["models"]
 
     assert rows
-    # A row is routable, awaiting a price, or tombstoned by the refresh after
-    # the provider delisted it.
+    # A row is routable, awaiting a price, held unroutable after the refresh's
+    # live canary failed (it recovers on a passing canary), or tombstoned by
+    # the refresh after the provider delisted it.
     assert all(
         row.get("routable") is True
         or row.get("routable_reason") == "awaiting-price"
+        or (row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed")
         or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
         for row in rows
     )
