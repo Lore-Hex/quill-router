@@ -1230,25 +1230,32 @@ table.content-reference,
 }
 
 /* Sideways scroll: one component for rows, code and tables (NYTE
-   sideways-scroll rule; content-layout.js TRScroll). A chevron in a 36px
-   square, Ink on light grounds and Cream on Ink, on a band of the ground
-   colour that the content slides under: never a gradient fade. 52 x 44 to
-   tap. Rows (chips, link rows): the band is sticky inside the row, full row
-   height, and takes no width, so the row's layout does not change. Code:
-   the band sits over the code area's edge, vertically centred. Tables: the
-   chevrons sit in a bar above the table. */
+   sideways-scroll rule; content-layout.js TRScroll). It hints, it does not
+   shout: a short fade into the ground colour at whichever edge has more,
+   and on rows and tables a small chevron in a hairline circle in the muted
+   text colour, 44px to tap. Code shows the fade only. Rows (chips, link
+   rows): the edge is sticky inside the row, full row height, and takes no
+   width, so the row's layout does not change. Code: the fade covers the
+   code area's own edge, never the strip, Copy or the expand control.
+   Tables: the chevrons sit in a bar above the table. */
+:root {
+  --tr-scroll-mark: var(--nyte-ink-2, #57514A);
+  --tr-scroll-hairline: var(--nyte-stone, #DEDAD0);
+}
+
 :root .tr-scroll-edge {
+  --tr-scroll-fade: var(--tr-scroll-ground, var(--nyte-cream, #FAF8F4));
+
   z-index: 1;
   display: flex;
   flex: none;
   align-items: center;
   box-sizing: border-box;
-  width: 52px;
+  width: 44px;
   min-height: 44px;
   margin: 0;
   padding: 0;
   list-style: none;
-  background: var(--tr-scroll-ground, var(--nyte-cream, #FAF8F4));
 }
 
 :root .tr-scroll-edge[hidden] {
@@ -1259,6 +1266,11 @@ table.content-reference,
   visibility: hidden;
 }
 
+:root .tr-scroll-edge.on-dark {
+  --tr-scroll-mark: var(--nyte-ink-2-dark, #B9B2A8);
+  --tr-scroll-hairline: var(--nyte-dark-rule, #3A3631);
+}
+
 :root .tr-scroll-edge.is-row {
   position: sticky;
   align-self: stretch;
@@ -1266,22 +1278,24 @@ table.content-reference,
 
 :root .tr-scroll-edge-prev.is-row {
   left: 0;
-  margin-right: calc(-52px - var(--tr-scroll-gap, 0px));
+  margin-right: calc(-44px - var(--tr-scroll-gap, 0px));
+  background: linear-gradient(to left, transparent, var(--tr-scroll-fade) 55%);
 }
 
 :root .tr-scroll-edge-next.is-row {
   right: 0;
-  margin-left: calc(-52px - var(--tr-scroll-gap, 0px));
+  margin-left: calc(-44px - var(--tr-scroll-gap, 0px));
+  background: linear-gradient(to right, transparent, var(--tr-scroll-fade) 55%);
 }
 
-/* A sticky band stops at the row's padding; this covers the padding too. */
+/* A sticky edge stops at the row's padding; this covers the padding too. */
 :root .tr-scroll-edge.is-row::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
   width: var(--tr-scroll-pad, 0px);
-  background: inherit;
+  background: var(--tr-scroll-fade);
 }
 
 :root .tr-scroll-edge-prev.is-row::after {
@@ -1292,20 +1306,30 @@ table.content-reference,
   left: 100%;
 }
 
+/* Code: a soft fade over the code area's edge; nothing to press. */
 :root .tr-scroll-host {
   position: relative;
 }
 
 :root .tr-scroll-edge.is-over {
   position: absolute;
-  height: 44px;
-  transform: translateY(-50%);
+  width: 36px;
+  min-height: 0;
+  pointer-events: none;
 }
 
-:root .tr-scroll-edge .tr-scroll-btn {
+:root .tr-scroll-edge-prev.is-over {
+  background: linear-gradient(to left, transparent, var(--tr-scroll-fade));
+}
+
+:root .tr-scroll-edge-next.is-over {
+  background: linear-gradient(to right, transparent, var(--tr-scroll-fade));
+}
+
+:root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn {
   display: flex;
   align-items: center;
-  width: 52px;
+  width: 44px;
   height: 100%;
   min-height: 44px;
   margin: 0;
@@ -1314,7 +1338,7 @@ table.content-reference,
   border-radius: 0;
   box-shadow: none;
   background: transparent;
-  color: var(--nyte-cream, #FAF8F4);
+  color: var(--tr-scroll-mark);
   cursor: pointer;
 }
 
@@ -1328,21 +1352,23 @@ table.content-reference,
 
 :root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn svg {
   box-sizing: border-box;
-  width: 36px;
-  height: 36px;
-  padding: 8px;
-  background: var(--nyte-ink, #151311);
+  width: 26px;
+  height: 26px;
+  padding: 6px;
+  border: 1px solid var(--tr-scroll-hairline);
+  border-radius: 50%;
+  background: var(--tr-scroll-ground, var(--nyte-cream, #FAF8F4));
   fill: none;
   stroke: currentcolor;
   stroke-width: 1.5;
 }
 
-:root .tr-scroll-edge.on-dark .tr-scroll-btn {
+:root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn:hover {
   color: var(--nyte-ink, #151311);
 }
 
-:root .tr-scroll-edge.on-dark .tr-scroll-btn svg {
-  background: var(--nyte-cream, #FAF8F4);
+:root .tr-scroll-edge.on-dark .tr-scroll-btn:hover {
+  color: var(--nyte-cream, #FAF8F4);
 }
 
 :root :is(.tr-scroll-edge, .tr-scroll-bar) .tr-scroll-btn:focus-visible {
@@ -1362,7 +1388,7 @@ table.content-reference,
 :root .tr-scroll-bar {
   display: flex;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 0;
 }
 
 :root .tr-scroll-bar[hidden],
@@ -1371,16 +1397,10 @@ table.content-reference,
 }
 
 :root .tr-scroll-bar .tr-scroll-btn {
-  display: flex;
-  align-items: center;
   justify-content: center;
-  width: 44px;
   height: 44px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
+}
+
+:root .tr-scroll-bar .tr-scroll-btn svg {
   background: transparent;
-  color: var(--nyte-cream, #FAF8F4);
-  cursor: pointer;
 }

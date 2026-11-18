@@ -1,7 +1,7 @@
 // Shared helpers for code blocks and sideways scrolling on public pages.
 // window.TRCode: the kit's copy and check icons and one copy behaviour.
-// window.TRScroll: one sideways-scroll component (chevron buttons that show
-// only while there is more to see). Page scripts load after this file, so
+// window.TRScroll: one sideways-scroll component (edge fades, with small
+// chevrons on rows and tables, that show only while there is more to see). Page scripts load after this file, so
 // they can call these; everything here also attaches on its own.
 (() => {
   "use strict";
@@ -92,18 +92,19 @@
   };
   window.TRCode = { icon, copyPaths, donePaths, wireCopy };
 
-  // Sideways scroll (NYTE sideways-scroll rule): one chevron button, three
+  // Sideways scroll (NYTE sideways-scroll rule): one edge hint, three
   // placements.
-  // - row: single-line rows (chips, link rows). A sticky band in the row's
-  //   own ground colour, inside the row, holds the chevron; the row's
-  //   content slides under it. The band takes no width of its own.
-  // - over: code. The chevron sits over the code area's edge, vertically
-  //   centred, on a band of the panel's Ink.
-  // - bar: tables. The chevrons sit in a bar above the table, so a tall
-  //   table's arrows are seen before its middle.
-  // The square is Ink on light grounds and Cream on Ink. No gradients. Each
-  // chevron scrolls about 80% of the visible width (instantly with reduced
-  // motion) and hides at its end; neither shows while the content fits.
+  // - row: single-line rows (chips, link rows). A sticky edge inside the row
+  //   fades the content into the row's ground and holds a small hairline
+  //   chevron; the edge takes no width of its own.
+  // - over: code. Only a soft fade in the panel's Ink over the code area's
+  //   edges; no button, so nothing covers the code, Copy or the expand
+  //   control. The code area itself takes keyboard focus.
+  // - bar: tables. Small hairline chevrons sit in a bar above the table, so
+  //   a tall table's arrows are seen before its middle.
+  // Each chevron scrolls about 80% of the visible width (instantly with
+  // reduced motion) and hides at its end; nothing shows while the content
+  // fits.
   const chevrons = { prev: "m15 5-7 7 7 7", next: "m9 5 7 7-7 7" };
   const groundOf = (element) => {
     for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
@@ -150,7 +151,15 @@
     if (attached.has(scroller)) return attached.get(scroller);
     const list = /^(UL|OL)$/.test(scroller.tagName);
     const host = place === "over" ? scroller.parentElement : null;
+    const fadeOnly = place === "over";
     const make = (side) => {
+      if (fadeOnly) {
+        const edge = document.createElement("span");
+        edge.className = `tr-scroll-edge tr-scroll-edge-${side} is-over`;
+        edge.setAttribute("aria-hidden", "true");
+        edge.hidden = true;
+        return { button: null, edge };
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.className = `tr-scroll-btn tr-scroll-${side}`;
@@ -166,7 +175,7 @@
         button.hidden = true;
         return { button, edge: button };
       }
-      // Rows and code: the button sits on a band of the ground colour.
+      // Rows: the button sits on a fade into the ground colour.
       const edge = document.createElement(list ? "li" : "span");
       edge.className = `tr-scroll-edge tr-scroll-edge-${side} is-${place}`;
       if (list) edge.setAttribute("role", "none");
@@ -180,6 +189,7 @@
     const show = (part, on) => {
       if (place === "bar") part.button.hidden = !on;
       else part.edge.classList.toggle("is-off", !on);
+      if (!part.button) return;
       part.button.tabIndex = on ? 0 : -1;
       part.button.setAttribute("aria-hidden", String(!on));
     };
@@ -198,15 +208,16 @@
           state.padStart = parseFloat(style.paddingLeft) || 0;
           state.padEnd = parseFloat(style.paddingRight) || 0;
         } else {
-          // Over code: line up with the code area inside its panel.
-          state.top = scroller.offsetTop + scroller.clientHeight / 2;
+          // Over code: cover the code area's own box inside its panel.
+          state.top = scroller.offsetTop;
+          state.height = scroller.clientHeight;
           state.left = scroller.offsetLeft;
           state.right = host.clientWidth - scroller.offsetLeft - scroller.clientWidth;
         }
         return state;
       },
       // Writes only. The buttons are added the first time there is more to
-      // see; a row's band takes no width, so adding it changes nothing.
+      // see; a row's edge takes no width, so adding it changes nothing.
       apply: (state) => {
         const { overflow, max, x } = state;
         if (!prev && (overflow || place === "bar")) {
@@ -233,15 +244,17 @@
             }
             if (place === "row" && overflow) {
               edge.style.setProperty("--tr-scroll-gap", `${state.gap}px`);
-              // A sticky band stops at the row's padding; it covers that too.
+              // A sticky edge stops at the row's padding; it covers that too.
               edge.style.setProperty("--tr-scroll-pad", `${edge === prev.edge ? state.padStart : state.padEnd}px`);
             }
           });
           if (state.ground) ground = state.ground;
           if (place === "over" && overflow) {
-            prev.edge.style.top = `${state.top}px`;
+            [prev.edge, next.edge].forEach((edge) => {
+              edge.style.top = `${state.top}px`;
+              edge.style.height = `${state.height}px`;
+            });
             prev.edge.style.left = `${state.left}px`;
-            next.edge.style.top = `${state.top}px`;
             next.edge.style.right = `${state.right}px`;
           }
         }
@@ -276,7 +289,7 @@
   };
 
   // Code areas (.tr-code-body) in the quickstart box and homepage panel.
-  const attachCode = (body) => attach(body, { place: "over", label: "code" });
+  const attachCode = (body) => attach(body, { place: "over", label: "code", focusLabel: "Code" });
   // Rows: anything marked data-scroll-row, plus the existing row classes.
   const rows = [
     "[data-scroll-row]",
@@ -681,7 +694,7 @@
       ? { source, status, done: "Copied. Ready for your agent chat.", fallback: "Prompt selected. Use your device's copy command." }
       : { source, status });
 
-    // Lines never wrap; wide code scrolls in the panel with the shared chevrons.
+    // Lines never wrap; wide code scrolls in the panel under the shared fade.
     const scroll = window.TRScroll.attach(pre, { place: "over", label: "code", focusLabel: title || label });
 
     // Docs pages: long examples show their first lines on phones; copying
