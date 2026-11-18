@@ -98,6 +98,7 @@ from scripts.pricing.video_sources import (
     VIDEO_PRICE_PROVIDER_SLUGS,
     audit_video_price_sources,
 )
+from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.provider_manifest_policy import (
     EXPIRED_PROVIDER_MANIFEST,
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
@@ -1097,7 +1098,10 @@ def _model_discovery_audit(
         if not discovered:
             info.append(f"{slug}: live model catalog currently lists no GLM routes ✓")
             continue
-        missing = sorted(discovered - published)
+        # Only accept aliases the request router actually recognizes, and only
+        # against this provider's manifest (not another host or the stock GLM).
+        published_routes = {canonical_router_model_id(model_id) for model_id in published}
+        missing = sorted(model_id for model_id in discovered if canonical_router_model_id(model_id) not in published_routes)
         required_missing = [
             model_id for model_id in missing if _is_required_provider_glm_model_id(model_id, slug)
         ]

@@ -1,4 +1,4 @@
-{"aliases":{"minimax/minimax-m3-1-flash":"minimax/minimax-m3.1-flash"},"generator":"scripts/fastpath/model_alias_vectors.py",
+{"aliases":{"minimax/minimax-m3-1-flash":"minimax/minimax-m3.1-flash","z-ai/glm-5.3-flash-uncensored":"z-ai/glm-5-3-flash-uncensored"},"generator":"scripts/fastpath/model_alias_vectors.py",
  "cases": [
   {"canonical":"","id":""},
   {"canonical":"/","id":"/"},
@@ -5821,6 +5821,10 @@
   {"canonical":"z-ai/glm-5.3-fast:free","id":"z-ai/glm-5.3-fast:free"},
   {"canonical":"z-ai/glm-5.3-fast:nitro","id":"z-ai/glm-5.3-fast:nitro"},
   {"canonical":"z-ai/glm-5.3-flash","id":"z-ai/glm-5.3-flash"},
+  {"canonical":"z-ai/glm-5-3-flash-uncensored","id":"z-ai/glm-5.3-flash-uncensored"},
+  {"canonical":"z-ai/glm-5.3-flash-uncensored:floor","id":"z-ai/glm-5.3-flash-uncensored:floor"},
+  {"canonical":"z-ai/glm-5.3-flash-uncensored:free","id":"z-ai/glm-5.3-flash-uncensored:free"},
+  {"canonical":"z-ai/glm-5.3-flash-uncensored:nitro","id":"z-ai/glm-5.3-flash-uncensored:nitro"},
   {"canonical":"z-ai/glm-5.3-flash:floor","id":"z-ai/glm-5.3-flash:floor"},
   {"canonical":"z-ai/glm-5.3-flash:free","id":"z-ai/glm-5.3-flash:free"},
   {"canonical":"z-ai/glm-5.3-flash:nitro","id":"z-ai/glm-5.3-flash:nitro"},

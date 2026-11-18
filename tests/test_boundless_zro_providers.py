@@ -462,3 +462,22 @@ def test_boundless_gemma_short_alias_collapses_onto_its_card():
     prices, rows = boundless.discover(boundless_catalog_for(cards, ("gemma4-31b",)), html)
     assert rows["google/gemma-4-31b-it"]["upstream_id"] == "google/gemma-4-31b-it"
     assert "boundless/gemma4-31b" not in rows
+
+
+@pytest.mark.parametrize("listed_sku", [True, False])
+def test_boundless_abliterated_legacy_id_never_becomes_the_inference_target(listed_sku):
+    sku = "boundless/deepseek-v4.1-flash-1017-abliterated"
+    legacy = "deepseek-v4.1-flash-abliterated"
+    cards = [boundless_product(), boundless_product(sku)]
+    payload = boundless_catalog_for(cards, (legacy,))
+    if not listed_sku:
+        payload["data"] = [row for row in payload["data"] if row["id"] != sku]
+    prices, rows = boundless.discover(payload, boundless_html(*cards))
+    assert boundless.canonical_model_id(legacy) == sku
+    assert legacy not in rows
+    if listed_sku:
+        assert sku in prices
+        assert rows[sku]["upstream_id"] == sku
+    else:
+        assert sku not in prices
+        assert rows[sku]["routable"] is False
