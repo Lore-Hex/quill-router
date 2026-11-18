@@ -11,7 +11,8 @@ import json
 import pytest
 
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
-from scripts.pricing.providers import nextbit, nvidia_nim, pearl, sambanova
+from scripts.pricing.providers import _direct_openai, nextbit, nvidia_nim, pearl, sambanova
+from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS
 
 
@@ -55,9 +56,65 @@ def test_atlas_retirement_does_not_remove_openai_direct(model):
     assert any(e.provider == "openai" and e.model_id == model for e in MODEL_ENDPOINTS.values())
 
 
-@pytest.mark.parametrize("model", ["openai/gpt-oss-120b", "meta-llama/llama-3.3-70b-instruct"])
-def test_sambanova_account_hold_does_not_disable_working_models(model):
-    assert any(e.provider == "sambanova" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+# October 24: SambaNova's operator account answered HTTP 402 for three routes
+# while its other routes kept serving. Pinned rows, not today's manifest: which
+# models SambaNova lists changes hour to hour (Llama 3.3 70B left its feed on
+# 2026-11-17), and that is not what this rule is about.
+_SAMBANOVA_CREDIT_HELD = {
+    "deepseek/deepseek-v3.1": "DeepSeek-V3.1",
+    "deepseek/deepseek-v3.2": "DeepSeek-V3.2",
+    "google/gemma-4-31b-it": "gemma-4-31B-it",
+}
+_SAMBANOVA_WORKING = {
+    "openai/gpt-oss-120b": "gpt-oss-120b",
+    "meta-llama/llama-3.3-70b-instruct": "Meta-Llama-3.3-70B-Instruct",
+}
+
+
+@pytest.mark.parametrize("model", list(_SAMBANOVA_WORKING))
+def test_sambanova_account_hold_does_not_disable_working_models(model, monkeypatch, tmp_path):
+    routes = {**_SAMBANOVA_CREDIT_HELD, **_SAMBANOVA_WORKING}
+    manifest = tmp_path / "sambanova.json"
+    manifest.write_text(json.dumps({"provider": "sambanova", "models": [
+        {
+            "id": model_id, "upstream_id": native, "model_type": "chat",
+            "endpoints": ["chat/completions"],
+            "input_token_price_per_m": 600_000, "output_token_price_per_m": 1_200_000,
+            **({"routable": False, "routable_reason": "provider-canary-failed"}
+               if model_id in _SAMBANOVA_CREDIT_HELD else {"routable": True}),
+        }
+        for model_id, native in routes.items()
+    ]}))
+    # The next refresh lists every route and re-canaries the held ones; the
+    # account still answers 402 for exactly those.
+    monkeypatch.setenv("SAMBANOVA_API_KEY", "fixture-key")
+    monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_a, **_k: {"data": [
+        {"id": native, "pricing": {"prompt": "0.0000006", "completion": "0.0000012"}}
+        for native in routes.values()
+    ]})
+    probed = []
+
+    def probe(**kwargs):
+        probed.append(kwargs["model"])
+        return kwargs["model"] not in _SAMBANOVA_CREDIT_HELD.values()
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    refresh = _direct_openai.DirectOpenAIProvider(sambanova.CATALOG.spec, manifest_path=manifest)
+    refresh.write_provider_manifest(refresh.fetch())
+    assert sorted(probed) == sorted(_SAMBANOVA_CREDIT_HELD.values())
+    rows = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert {model_id: (row["routable"], row.get("routable_reason")) for model_id, row in rows.items()} == {
+        **{model_id: (False, "provider-canary-failed") for model_id in _SAMBANOVA_CREDIT_HELD},
+        **{model_id: (True, None) for model_id in _SAMBANOVA_WORKING},
+    }
+
+    # The refreshed manifest through the catalog's own ingest and serving filter.
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    served = catalog_ingest._filter_unserved_provider_endpoints(endpoints).values()
+    sambanova_routes = {(e.model_id, e.usage_type) for e in served if e.provider == "sambanova"}
+    assert (model, "Credits") in sambanova_routes
+    assert not {model_id for model_id, _usage in sambanova_routes} & _SAMBANOVA_CREDIT_HELD.keys()
 
 
 def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold():
