@@ -310,10 +310,14 @@ function applyAuthAwareChrome() {
             replacement.setAttribute("data-homepage-cta", "");
         el.replaceWith(replacement);
     });
-    // The hero note ("No card required...") is for visitors. Keep its space so
-    // the hero does not shift for signed-in people.
-    document.querySelectorAll(".cta-note").forEach((note) => {
-        note.style.visibility = "hidden";
+    // Sign-up notes ("No card required...", free tokens, starter credit) are for
+    // visitors. Hide them for signed-in people, keeping their space so the
+    // page does not shift.
+    const signupNote = /no card required|free tokens|starter credit/i;
+    document.querySelectorAll(".cta-note, .md-no-card, .compare-cta-note, .microcopy, [data-signup-note]").forEach((note) => {
+        if (note.matches(".cta-note, [data-signup-note]") || signupNote.test(note.textContent || "")) {
+            note.style.visibility = "hidden";
+        }
     });
 }
 function init() {

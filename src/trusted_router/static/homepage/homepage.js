@@ -81,8 +81,6 @@ function renderCode(){
  pre.setAttribute('aria-labelledby',agent?'mode-tab-agent':'mode-tab-code');
  if(agent){pre.className='mcode prompt';pre.textContent=AGENT;}
  else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
- $('.pf .hint').textContent=agent?DATA.migration.agent_hint:'';
- $('.pf .hint').hidden=!agent;
  $('[data-copycode]').setAttribute('aria-label',agent?'Copy agent prompt':'Copy code');
  $('[data-copycode]').title=agent?'Copy agent prompt':'Copy code';
 }

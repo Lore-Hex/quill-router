@@ -5,13 +5,16 @@
 {% block hero %}
 <section class="models-page-hero">
   <div>
-    <div class="kicker">{{ total_model_count }} models · {{ total_provider_count }} providers</div>
     <h1>Find the right model.</h1>
-    <p>Search by name, family or provider, and compare prices across every route.</p>
-    <div class="models-page-hero-cta">
+    <p>{{ total_model_count }} models from {{ total_provider_count }} providers, with prices for every route.</p>
+    <div class="models-page-hero-search">
+      <label class="models-hero-search">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+        <input type="search" data-model-hero-search aria-label="Search models" aria-controls="model-results" placeholder="Search models, families or providers" autocomplete="off" spellcheck="false">
+      </label>
       <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
-      <p class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</p>
     </div>
+    <p class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</p>
   </div>
   <div class="models-page-hero-links">
     <a href="/choose">Guided model chooser</a>

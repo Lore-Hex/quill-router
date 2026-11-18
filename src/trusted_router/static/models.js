@@ -25,6 +25,19 @@
   };
 
   search.value = params.get("q") || "";
+  // The hero box is the first place to search. Typing there hands off to the
+  // sticky header box, which stays in view while the results update.
+  const heroSearch = document.querySelector("[data-model-hero-search]");
+  if (heroSearch) {
+    heroSearch.value = search.value;
+    heroSearch.addEventListener("input", () => {
+      search.value = heroSearch.value;
+      search.focus({ preventScroll: true });
+      const end = search.value.length;
+      try { search.setSelectionRange(end, end); } catch (_) { /* type=search may refuse */ }
+      search.dispatchEvent(new Event("input"));
+    });
+  }
   if ([...sort.options].some((option) => option.value === params.get("sort"))) {
     sort.value = params.get("sort");
   }
@@ -54,6 +67,7 @@
   }
 
   function render() {
+    if (heroSearch && heroSearch !== document.activeElement) heroSearch.value = search.value;
     const query = normalize(search.value);
     const matches = sortCards(cards.filter((card) => window.TRModelSearch.matches(card.dataset.searchText || "", query)));
 
