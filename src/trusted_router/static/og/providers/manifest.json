@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 90,
+    "model_count": 91,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 172,
+    "route_count": 174,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -640,10 +640,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 84,
+    "model_count": 85,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 163,
+    "route_count": 165,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -667,10 +667,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 30,
+    "model_count": 40,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 55,
+    "route_count": 69,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -964,10 +964,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 66,
+    "model_count": 67,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 114,
+    "route_count": 116,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },
@@ -1000,10 +1000,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 22,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 18,
+    "route_count": 22,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },
@@ -1027,10 +1027,10 @@
   },
   "zero-g": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "0G Private Computer",
     "privacy": "Provider TEE claim",
-    "route_count": 3,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "zero-g"
   },

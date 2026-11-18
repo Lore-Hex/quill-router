@@ -2214,6 +2214,102 @@
       ],
       "default_effort": "medium"
     },
+    "openai/gpt-6.2-astra": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-astra-pro": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-astra-pro:batch": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-astra:batch": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-sol": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-sol-pro": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-sol-pro:batch": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.2-sol:batch": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
     "openai/gpt-oss-120b": {
       "mandatory": true,
       "default_enabled": false,
@@ -2706,6 +2802,12 @@
       ],
       "default_effort": "high"
     },
+    "tencent/hy4-flash": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "tencent/hy4-preview": {
       "mandatory": false,
       "default_enabled": true,
@@ -2997,6 +3099,16 @@
       "default_effort": null
     },
     "z-ai/glm-5.2": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "none"
+      ],
+      "default_effort": "high"
+    },
+    "z-ai/glm-5.2:batch": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [

@@ -1,11 +1,31 @@
-from trusted_router.catalog import MODELS
+import json
+from pathlib import Path
+
+import pytest
+
+from trusted_router import catalog_ingest
 from trusted_router.routes.catalog import _public_catalog_payload
 
 
-def test_a_window_stated_on_any_route_reaches_the_model() -> None:
-    # Created from a provider row with no window while another provider's
-    # row states one; the model used to publish 0.
-    assert MODELS["google/gemma-4-12b-it"].context_length == 32768
+@pytest.mark.parametrize("window", [16_384, 32_768])
+@pytest.mark.parametrize("stated_by", ["novita", "deepinfra"])
+def test_a_window_stated_on_any_route_reaches_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, window: int, stated_by: str,
+) -> None:
+    model_id = "fixture/context-window"
+    for host in ("novita", "deepinfra"):
+        row = {
+            "id": model_id, "endpoints": ["chat/completions"],
+            "input_token_price_per_m": 1, "output_token_price_per_m": 2,
+            **({"context_length": window} if host == stated_by else {}),
+        }
+        (tmp_path / f"{host}.json").write_text(json.dumps({"models": [row]}), encoding="utf-8")
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    for host in ("novita", "deepinfra"):
+        assert endpoints[f"{model_id}@{host}/prepaid"].context_length == (window if host == stated_by else 0)
+    assert models[model_id].context_length == window
 
 
 def test_published_catalog_never_states_a_zero_window() -> None:

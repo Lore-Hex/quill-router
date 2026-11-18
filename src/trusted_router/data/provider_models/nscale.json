@@ -49,7 +49,7 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 131072,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 50000,
       "missing_since": "2026-11-07"
@@ -97,7 +97,7 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 131072,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 150000,
       "missing_since": "2026-11-07"
@@ -147,7 +147,7 @@
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 890000,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 290000,
       "missing_since": "2026-11-07"
@@ -195,7 +195,7 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 65536,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 1200000,
       "missing_since": "2026-11-07"
@@ -514,7 +514,7 @@
       "retirement_at": "2026-11-02T00:00:00Z",
       "context_length": 262144,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 30000,
       "missing_since": "2026-11-07"
@@ -539,7 +539,7 @@
       "replacement_model_id": "qwen/qwen3.8-27b",
       "context_length": 40960,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 70000,
       "output_token_price_per_m": 180000,
       "missing_since": "2026-11-07"
@@ -656,7 +656,7 @@
   ],
   "source": "https://inference.api.nscale.com/v1/models",
   "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
-  "generated_at": "2026-11-07T19:38:02Z",
+  "generated_at": "2026-11-17T23:23:13Z",
   "price_scale": "microdollars_per_million",
   "model_count": 27
 }
