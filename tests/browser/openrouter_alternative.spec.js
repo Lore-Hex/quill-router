@@ -56,29 +56,28 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
   });
 }
 
-test('Tables and code scroll sideways with the shared chevrons, no edge fade', async ({ page }) => {
+test('Tables and code scroll sideways with a soft edge fade', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/openrouter-alternative');
   await expect(page.locator('.table-scroll-tools')).toHaveCount(0);
+  await expect(page.locator('.tr-scroll-bar')).toHaveCount(0);
   const table = page.locator('.model-table-wrap').first();
   const code = page.locator('.copy-terminal pre');
-  for (const [viewport, scope] of [[table, table.locator('xpath=preceding-sibling::*[1]')], [code, code.locator('xpath=..')]]) {
-    expect(await viewport.evaluate(el => getComputedStyle(el).maskImage)).toBe('none');
-    const next = scope.locator('.tr-scroll-next');
-    const prev = scope.locator('.tr-scroll-prev');
+  for (const viewport of [table, code]) {
+    await viewport.scrollIntoViewIfNeeded();
+    const host = viewport.locator('xpath=..');
+    const next = host.locator(':scope > .tr-scroll-edge-next');
+    const prev = host.locator(':scope > .tr-scroll-edge-prev');
     await expect(next).toBeVisible();
-    await expect(next).toHaveAttribute('aria-hidden', 'false');
-    await expect(prev).toHaveAttribute('aria-hidden', 'true');
-    await next.click();
-    await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
-    await expect(prev).toHaveAttribute('aria-hidden', 'false');
+    await expect(next).not.toHaveClass(/is-off/);
+    await expect(prev).toHaveClass(/is-off/);
+    await viewport.evaluate(el => { el.scrollLeft = 40; });
+    await expect(prev).not.toHaveClass(/is-off/);
     await viewport.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-    await expect(next).toHaveAttribute('aria-hidden', 'true');
+    await expect(next).toHaveClass(/is-off/);
     await viewport.focus();
     expect(await viewport.evaluate(el => el.tabIndex)).toBe(0);
   }
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(page.locator('.model-table-wrap').first().locator('xpath=preceding-sibling::*[1]')).toBeHidden();
 });
 
 test('FAQ pricing has no stale as-of date in visible text or structured data', async ({ page }) => {

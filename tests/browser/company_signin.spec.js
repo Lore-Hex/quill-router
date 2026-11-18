@@ -172,6 +172,7 @@ test("cached trust pages can still load the old copy asset", async ({ page }) =>
     const replacement = button.cloneNode(true);
     replacement.removeAttribute("data-copy-prompt-target");
     replacement.removeAttribute("data-copy-prompt-status");
+    replacement.removeAttribute("data-copy-wired");
     replacement.hidden = true;
     button.replaceWith(replacement);
     // Simulate an older cached document loading the compatibility entry point.

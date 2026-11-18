@@ -156,6 +156,7 @@ html:root .models-tools-links a:hover { text-decoration-color: currentColor; }
 html:root[data-brand="nyte"] .models-page-hero.has-price-bars .kicker { align-items: flex-start; text-align: left; }
 html:root .models-page-hero.has-price-bars .kicker + h1 { margin-top: 18px; }
 html:root .models-page-hero.has-price-bars .models-hero-count { max-width: 40ch; font-size: 18px; }
+
 @media (max-width: 760px) {
   html:root .models-page-hero.has-price-bars .kicker + h1 { margin-top: 12px; }
   html:root .models-page-hero.has-price-bars .models-hero-count { font-size: 16px; }

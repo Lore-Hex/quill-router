@@ -1294,7 +1294,7 @@ table.content-reference,
   position: absolute;
   top: 0;
   bottom: 0;
-  width: var(--tr-scroll-pad, 0px);
+  width: var(--tr-scroll-pad, 0);
   background: var(--tr-scroll-fade);
 }
 

@@ -10,7 +10,7 @@ test("copies exactly the prompt shown under the hero, under the real page CSP", 
   await page.getByRole("button", { name: "Copy prompt" }).click();
   const prompt = (await page.locator("#trust-agent-prompt").textContent()).trim();
   expect(await page.evaluate(() => window.copiedTrustPrompt)).toBe(prompt);
-  await expect(page.getByRole("status")).toHaveText("Copied. Ready for your agent chat.");
+  await expect(page.locator("#trust-copy-status")).toHaveText("Copied. Ready for your agent chat.");
   await expect(page.getByRole("button", { name: "Copy prompt" })).toBeEnabled();
 });
 
@@ -27,7 +27,7 @@ for (const mode of ["denied", "unavailable"]) {
     await page.getByRole("button", { name: "Copy prompt" }).click();
     const prompt = (await page.locator("#trust-agent-prompt").textContent()).trim();
     expect(await page.evaluate(() => window.getSelection().toString())).toBe(prompt);
-    await expect(page.getByRole("status")).toContainText("Prompt selected");
+    await expect(page.locator("#trust-copy-status")).toContainText("Prompt selected");
     await expect(page.getByRole("button", { name: "Copy prompt" })).toBeEnabled();
   });
 }

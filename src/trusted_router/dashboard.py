@@ -4007,7 +4007,7 @@ def _models_hero_price_bars(all_models: list[dict[str, Any]]) -> list[dict[str, 
         price = int(model["completion_price_sort"])
         href = str(model.get("detail_href") or "")
         is_offer = offer is not None and model["id"] == LAUNCH_OFFER_BASE_MODEL_ID and offer.output_microdollars < price
-        if is_offer:
+        if is_offer and offer is not None:
             price = offer.output_microdollars
             href = f"/models/{LAUNCH_OFFER_MODEL_ID}"
         if price <= 0 or not href:

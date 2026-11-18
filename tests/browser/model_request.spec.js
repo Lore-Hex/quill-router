@@ -9,7 +9,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
   test(`anonymous model request from an empty search at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     await page.goto("/models");
-    const heroLink = page.locator(".models-page-hero [data-model-request]");
+    const heroLink = page.locator(".models-tools [data-model-request]");
     await expect(heroLink).toBeVisible();
     await expect(heroLink).toHaveAttribute("href", "/support?category=model#support-inquiry");
 
