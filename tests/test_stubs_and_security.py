@@ -385,10 +385,13 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     # together; the gateway itself is not an upstream provider and gets no card.
     providers_page = client.get("/providers", headers={"accept": "text/html"})
     assert providers_page.status_code == 200
-    cards = {
-        card["data-provider-id"]: card
-        for card in BeautifulSoup(providers_page.text, "html.parser").select("[data-provider-row]")
-    }
+    providers_html = BeautifulSoup(providers_page.text, "html.parser")
+    # The page states that its labels describe the upstream provider, not the
+    # gateway, ahead of the cards.
+    disclaimer = providers_html.select_one("[data-upstream-provider-disclaimer]")
+    assert disclaimer is not None and disclaimer.get_text(strip=True)
+    assert providers_page.text.index("data-upstream-provider-disclaimer") < providers_page.text.index("data-provider-row")
+    cards = {card["data-provider-id"]: card for card in providers_html.select("[data-provider-row]")}
     published = {row["id"]: row for row in provider_rows}
     assert set(cards) == set(published) - {"trustedrouter"}
     for provider_id, card in cards.items():

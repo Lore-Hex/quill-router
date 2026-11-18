@@ -142,10 +142,12 @@ def test_deploys_take_the_signup_credit_and_fee_uplift_from_settings() -> None:
     )
     deploy_files = [
         *sorted((ROOT / "scripts").rglob("*.sh")),
+        *sorted((ROOT / "scripts").rglob("*.py")),
         *sorted((ROOT / ".github" / "workflows").glob("*.yml")),
         *sorted((ROOT / "infra").rglob("*.tf")),
     ]
-    assert ROOT / "scripts/deploy/rollout.sh" in deploy_files
+    for helper in ("rollout.sh", "cloud_rollout.py", "prepare_ecs_release.py"):
+        assert ROOT / "scripts" / "deploy" / helper in deploy_files, helper
     overrides = [
         f"{path.relative_to(ROOT)}: {name}"
         for path in deploy_files

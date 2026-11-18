@@ -23,6 +23,12 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 KIND = "reserved_tokens_2027"
+# The owner-approved reserved-token discount off the NYTE Index list price
+# (10%). It is a customer price: production deploys it as
+# TR_RESERVED_TOKENS_DISCOUNT_BPS in scripts/deploy/rollout.sh, and
+# tests/test_reserved_tokens.py holds that value equal to this one and pins
+# both, so changing the price is a deliberate, reviewed edit of both.
+APPROVED_DISCOUNT_BPS = 1_000
 TERMS_VERSION = "2026-10-28-v6"
 LEGACY_TERMS_VERSIONS = {"2026-10-27-v3", "2026-10-27-v4", "2026-10-27-v5"}
 FEE_FIELDS = (

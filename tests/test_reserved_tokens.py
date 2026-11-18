@@ -358,11 +358,16 @@ def test_invalid_locked_terms_do_not_record_position(client: TestClient, reserva
     reservation_mail.assert_not_called()
 
 
-def test_rollout_turns_on_reserved_checkout_within_the_app_terms(monkeypatch: pytest.MonkeyPatch) -> None:
-    """rollout.sh is where production turns reserved-token checkout on. Its
-    values go through Settings' own validation (discount below 100%, the
-    terms-locked exchange fee, at least one lot) and must yield a working
-    quote, at or below list price plus fees, for every grade."""
+def test_the_approved_reserved_token_discount_is_ten_percent() -> None:
+    # A customer price the owner approved. Changing it must be a reviewed edit
+    # of this pin, the constant and rollout.sh together.
+    assert reserve.APPROVED_DISCOUNT_BPS == 1_000
+
+
+def _rollout_reserved_settings() -> Settings:
+    """Settings built from the TR_RESERVED_TOKENS_* values rollout.sh deploys,
+    so they go through Settings' own validation (discount below 100%, the
+    terms-locked exchange fee, at least one lot)."""
     import re
     from pathlib import Path
 
@@ -371,22 +376,35 @@ def test_rollout_turns_on_reserved_checkout_within_the_app_terms(monkeypatch: py
     rendered = dict(re.findall(r'^\s*"TR_(RESERVED_TOKENS_[A-Z0-9_]+)=([^"]*)"\s*$', env_vars, flags=re.MULTILINE))
     assert {"RESERVED_TOKENS_CHECKOUT_ENABLED", "RESERVED_TOKENS_DISCOUNT_BPS",
             "RESERVED_TOKENS_EXCHANGE_FEE_BPS"} <= rendered.keys()
-    deployed = Settings(  # type: ignore[call-arg]
+    return Settings(  # type: ignore[call-arg]
         _env_file=None, environment="test", stripe_secret_key="sk_test_reserve",  # noqa: S106
         **{name.lower(): value for name, value in rendered.items()},
     )
+
+
+def test_rollout_deploys_the_approved_discount_and_its_exact_prices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """rollout.sh turns reserved-token checkout on in production. It must
+    deploy exactly the approved discount, and the deployed configuration must
+    charge the exact approved prices."""
+    deployed = _rollout_reserved_settings()
     assert deployed.reserved_tokens_checkout_enabled
-    for grade, value in (("AAA", 1794), ("A", 863), ("B", 187), ("C", 27)):
+    assert deployed.reserved_tokens_discount_bps == reserve.APPROVED_DISCOUNT_BPS
+    monkeypatch.setitem(token_index.QUOTES, "B", {"value": 187})
+    quote = reserve.reservation_quote(deployed, "B", 2)
+    assert (quote["per_lot_cents"], quote["subtotal_cents"], quote["total_cents"]) == (16830, 33660, 34732)
+    for grade, value in (("AAA", 1794), ("A", 863), ("C", 27)):
         monkeypatch.setitem(token_index.QUOTES, grade, {"value": value})
         quote = reserve.reservation_quote(deployed, grade, 1)
-        assert 0 < quote["per_lot_cents"] <= quote["list_price_cents"]
+        assert 0 < quote["per_lot_cents"] < quote["list_price_cents"]
         assert quote["total_cents"] > quote["subtotal_cents"]
 
 
 def test_reservation_quote_discounts_then_adds_exchange_and_card_fees(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
-    settings.reserved_tokens_discount_bps = 1000
+    settings.reserved_tokens_discount_bps = reserve.APPROVED_DISCOUNT_BPS
     monkeypatch.setitem(token_index.QUOTES, "B", {"value": 187})
     quote = reserve.reservation_quote(settings, "B", 2)
+    # 10% off $187.00 is $168.30 a lot; two lots; plus the 0.1% exchange fee
+    # and the at-cost card fee.
     assert quote["per_lot_cents"] == 16830
     assert quote["subtotal_cents"] == 33660
     assert quote["total_cents"] == 34732

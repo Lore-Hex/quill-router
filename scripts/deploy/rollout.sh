@@ -492,6 +492,8 @@ ENV_VARS=(
   "TR_RESALE_FEE_BPS=500"
   "TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true"
   "TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT=100"
+  # The approved customer discount: must equal APPROVED_DISCOUNT_BPS in
+  # src/trusted_router/services/reserved_tokens.py (tests hold them equal).
   "TR_RESERVED_TOKENS_DISCOUNT_BPS=1000"
   "TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS=10"
   # PR3 binary deploys OFF. Migration and reviewed cohort evidence precede enable.

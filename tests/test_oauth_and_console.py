@@ -1148,7 +1148,7 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     )
     page = BeautifulSoup(resp.text, "html.parser")
     assert page.select_one("code#welcome-api-key").get_text(strip=True) == fake_raw_key
-    assert page.select_one('button[data-copy-secret="welcome-api-key"]')
+    assert page.select_one('button[data-copy-secret="welcome-api-key"][aria-label="Copy API key"]')
     assert page.select_one(
         'button[data-copy-template-target="welcome-agent-message"][data-secret-source="welcome-api-key"]'
     )
@@ -1249,7 +1249,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     assert resp.text.count(match.group(0)) == 2
     page = BeautifulSoup(resp.text, "html.parser")
     assert page.select_one("code#created-api-key").get_text(strip=True) == match.group(0)
-    assert page.select_one('button[data-copy-secret="created-api-key"]')
+    assert page.select_one('button[data-copy-secret="created-api-key"][aria-label="Copy API key"]')
     assert page.select_one("[data-one-time-reveal]")
     agent_message = page.select_one("#created-agent-message[data-copy-lines]")
     assert agent_message is not None

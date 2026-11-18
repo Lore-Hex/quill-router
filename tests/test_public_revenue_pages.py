@@ -122,10 +122,15 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
 
 
 def test_receipts_page_states_the_fees_billing_charges(client: TestClient) -> None:
-    # The page's fee claims must be the rates the billing code applies.
+    # The page's fee claims must be the rates the billing code applies: every
+    # percentage it states is one of them, and it states both.
     text = BeautifulSoup(client.get("/docs/receipts").text, "html.parser").get_text(" ", strip=True)
-    for basis_points in (SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS, STANDARD_PRICE_MARKUP_BASIS_POINTS):
-        assert f"{basis_points / 100:g}%" in text, basis_points
+    billed = {
+        f"{basis_points / 100:g}%"
+        for basis_points in (SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS, STANDARD_PRICE_MARKUP_BASIS_POINTS)
+    }
+    stated = re.findall(r"\d+(?:\.\d+)?\s?%", text)
+    assert {percentage.replace(" ", "") for percentage in stated} == billed, stated
 
 
 def test_rrh_customer_story_scopes_privacy_claims_and_uses_tailored_og(
