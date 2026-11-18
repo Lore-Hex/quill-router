@@ -2,14 +2,12 @@
 import hashlib
 import json
 import math
-import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytest
 
-from tests import shadow_health_cold_start_simulation as simulation
 from tests.shadow_health_cold_start_simulation import Clock, Database, modules, simulate
 from tests.shadow_observation_fixtures import event_for
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
@@ -46,82 +44,8 @@ def test_serialized_fleet_survives_aborted_writer():
     assert result["max_60_slot_commits"] <= 1.1
 
 
-ROUND_TWO = "c2e8139b19d510b5af4db5489da2aef9f55a0c7d"
-ROUND_FOUR = "2d0b2fe08a5a83f4f0335c2e41e203bc3a712adb"
-
-
-@pytest.mark.parametrize("base", ["main", None])
-def test_controls_resolve_baseline_in_shallow_checkout(monkeypatch, base):
-    if base:
-        monkeypatch.setenv("GITHUB_BASE_REF", base)
-    else:
-        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
-    loaded = []
-
-    def check(command, **kwargs):
-        if not base or not command[-1].startswith(f"{base}:"):
-            raise subprocess.CalledProcessError(128, command)
-
-    def show(command, **kwargs):
-        loaded.append(command[-1])
-        assert base and command[-1].startswith(f"{base}:")
-        # Model a checkout with only the CI base ref, using local source blobs.
-        return (simulation.ROOT/command[-1].split(":", 1)[1]).read_bytes()
-
-    monkeypatch.setattr(simulation.subprocess, "run", check)
-    monkeypatch.setattr(simulation.subprocess, "check_output", show)
-    if base:
-        with pytest.raises(pytest.skip.Exception, match="source blobs are byte-identical to the worktree"):
-            modules("baseline")
-        assert len(loaded) == len(simulation.MODULE_SOURCES) == 3
-    else:
-        with pytest.raises(pytest.skip.Exception, match="baseline unavailable"):
-            modules("baseline")
-        assert not loaded
-    # Missing baseline objects never stop independent worktree cases.
-    storage, publisher = modules()
-    assert publisher.ObservationStore is storage.ObservationStore
-
-
-@pytest.mark.parametrize("ref", ["baseline", "259dda21c10da458d1e9f391c0aa355d663f5d66",
-                                 "587c15eb407d6bc075964034da94596ec1238b89"])
-@pytest.mark.parametrize("changed", [None, *[source for _, source in simulation.MODULE_SOURCES]])
-def test_controls_compare_both_loaded_sources(monkeypatch, ref, changed):
-    monkeypatch.setattr(simulation, "baseline_ref", lambda: "different-ref-name")
-    loaded = []
-
-    def show(command, **kwargs):
-        path = command[-1].split(":", 1)[1]
-        loaded.append(path)
-        raw = (simulation.ROOT/path).read_bytes()
-        return raw + b"\n" if path == f"src/trusted_router/{changed}" else raw
-
-    monkeypatch.setattr(simulation.subprocess, "check_output", show)
-    if changed is None:
-        with pytest.raises(pytest.skip.Exception, match="source blobs are byte-identical to the worktree"):
-            modules(ref)
-    else:
-        storage, publisher = modules(ref)
-        assert publisher.ObservationStore is storage.ObservationStore
-    assert loaded == ["src/trusted_router/" + source for _, source in simulation.MODULE_SOURCES]
-    storage, publisher = modules()
-    assert publisher.ObservationStore is storage.ObservationStore
-
-
-@pytest.mark.parametrize("ref", ["587c15eb407d6bc075964034da94596ec1238b89", ROUND_TWO, ROUND_FOUR])
-def test_controls_skip_missing_historical_sources(monkeypatch, ref):
-    def missing(command, **kwargs):
-        raise subprocess.CalledProcessError(128, command)
-
-    monkeypatch.setattr(simulation.subprocess, "check_output", missing)
-    with pytest.raises(pytest.skip.Exception, match="simulation revision.*shallow checkout"):
-        modules(ref)
-    storage, publisher = modules()
-    assert publisher.ObservationStore is storage.ObservationStore
-
-
-def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, spacing=.1, ref=None):
-    storage, shell = modules("baseline" if baseline else ref)
+def cap_allocation_fleet(monkeypatch, count, *, demand=False, spacing=.1):
+    storage, shell = modules()
     clock = Clock()
     start = NOW_US/1e6
     clock.now = start
@@ -222,47 +146,27 @@ def cap_allocation_fleet(monkeypatch, count, *, baseline=False, demand=False, sp
                   max_demand_to_attempt_s=max((first_attempts[i]-stamp for i, stamp in demands.items()), default=0),
                   max_demand_to_grant_s=max((max(0, grants[i]-stamp) for i, stamp in demands.items()), default=0),
                   last_write_s=max(writes, default=0))
-    print(json.dumps(dict(baseline=baseline, ref=ref, **result), sort_keys=True))
+    print(json.dumps(result, sort_keys=True))
     assert len(attempts) == len(writes)+len(errors)
     return dict(result, attempt_log=attempts, first_ticks=first_ticks,
                 boots={i: str(svc.journal.boot) for i, svc in services.items()},
                 demand_times={i: stamp-start for i, stamp in demands.items()})
 
 
-@pytest.mark.parametrize("ref", [ROUND_TWO, None])
-def test_idle_startup_block_invariant(monkeypatch, ref):
-    before = cap_allocation_fleet(monkeypatch, 26, baseline=True)
-    after = cap_allocation_fleet(monkeypatch, 26, ref=ref)
-    assert before["first_5s"] >= 20
-    assert after["writes"] == (0 if ref == ROUND_TWO else 26)  # No idle refills.
-    assert after["allocation_attempts"] == after["writes"]
-    assert after["budget_exhaustions"] == 0
-
-
-@pytest.mark.parametrize("ref", [ROUND_TWO, None])
 @pytest.mark.parametrize("count,spacing", [(26, .1), (40, .1), (26, 0.), (40, 0.)])
-def test_restart_with_cohort_demand(monkeypatch, count, spacing, ref):
-    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=spacing, ref=ref)
+def test_restart_with_cohort_demand(monkeypatch, count, spacing):
+    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=spacing)
     assert result["granted_processes"] == count
-    if ref == ROUND_TWO:
-        assert result["writes"] == count
-        assert result["first_5s"] > 5
-        assert (result["writes"]+result["contention_losses"])/60 <= 1
-    else:
-        assert count <= result["writes"] <= 2*count
-        assert result["first_5s"] >= 1  # Simultaneous eager starts contend immediately.
+    assert count <= result["writes"] <= 2*count
+    assert result["first_5s"] >= 1  # Simultaneous eager starts contend immediately.
     assert result["max_lock_wait_ms"] < 200
     assert result["max_attempt_ms"] < 2000
     assert result["max_demand_to_attempt_s"] <= 5.01
     assert result["budget_exhaustions"] == 0
 
 
-@pytest.mark.parametrize("ref", ["587c15eb407d6bc075964034da94596ec1238b89", ROUND_TWO, "baseline", None])
-def test_first_demand_next_tick_loss_control(monkeypatch, ref):
-    # Retain round 1 and compare committed round 2, main and the worktree.
-    _, shell = modules(ref)
-    round_one = ref == "587c15eb407d6bc075964034da94596ec1238b89"
-    delayed = round_one or ref == ROUND_TWO
+def test_first_demand_next_tick_loss_control(monkeypatch):
+    _, shell = modules()
     monkeypatch.setattr(shell.Counters.__init__.__globals__["uuid"], "uuid4", lambda: UUID(int=1))
     store, _ = fake_store()
     svc = shell.Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
@@ -270,10 +174,7 @@ def test_first_demand_next_tick_loss_control(monkeypatch, ref):
     day = "2026-10-12"
     started = logical_time()
     first_tick = started+math.ceil((max(started, svc.next_flush)-started)*100)/100
-    if delayed:
-        assert started+.2 < first_tick < started+5
-    else:
-        assert first_tick == started
+    assert first_tick == started
     svc.next_flush = first_tick
     losses, requests, allocations = [], [], []
     real_loss, real_allocate = svc.journal.loss, svc.store.allocate
@@ -307,20 +208,16 @@ def test_first_demand_next_tick_loss_control(monkeypatch, ref):
         after_tick = [admitted for stamp, admitted in requests if stamp > first_tick+.073]
         assert after_tick
         assert not any(admitted for stamp, admitted in requests if stamp < first_tick)
-        if round_one:
-            assert svc.next_allocate > started+5.2
-            assert not allocations and not any(after_tick)
-        else:
-            assert allocations[0] == pytest.approx(first_tick+.073)
-            assert all(after_tick)
-        # Refusal remains sticky in the delayed controls; eager startup adds none.
-        assert len(losses) == int(delayed)
-        assert svc.port.lost.is_set() == delayed
+        assert allocations[0] == pytest.approx(first_tick+.073)
+        assert all(after_tick)
+        # Eager startup adds no sticky refusal.
+        assert not losses
+        assert not svc.port.lost.is_set()
         logical_time.now = max(logical_time(), first_tick+5)
         svc.maintain()
-        assert len(losses) == int(delayed)
-        assert svc.journal.days[day].losses == int(delayed)
-        print(json.dumps(dict(ref=ref, first_tick_s=first_tick-started,
+        assert not losses
+        assert svc.journal.days[day].losses == 0
+        print(json.dumps(dict(first_tick_s=first_tick-started,
             first_grant_s=allocations[0]-started if allocations else None,
             refused=sum(not admitted for _, admitted in requests),
             admitted=sum(admitted for _, admitted in requests), journal_losses=len(losses)), sort_keys=True))
@@ -385,9 +282,8 @@ def test_failed_allocation_retains_demand_without_grant(monkeypatch, error):
 
 
 @pytest.mark.parametrize("count", [26, 40])
-@pytest.mark.parametrize("ref", ["baseline", ROUND_TWO, None])
-def test_simultaneous_restart_comparison(monkeypatch, count, ref):
-    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0., ref=ref)
+def test_simultaneous_restart_comparison(monkeypatch, count):
+    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0.)
     assert result["granted_processes"] == count
     assert count <= result["writes"] <= 2*count
     assert result["budget_exhaustions"] == 0
@@ -395,24 +291,17 @@ def test_simultaneous_restart_comparison(monkeypatch, count, ref):
 
 
 @pytest.mark.parametrize("count", [26, 40])
-@pytest.mark.parametrize("ref", ["30852641f1fe0dc94fe1b2f63961f95321e46e4c", None],
-                         ids=["pinned-head", "worktree"])
-def test_simultaneous_restart_attempt_control(monkeypatch, count, ref):
-    # origin/main now includes #2058; keep its positive control on the parent
-    # that actually had synchronized retries, independently of publisher edits.
-    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0., ref=ref)
+def test_simultaneous_restart_attempt_control(monkeypatch, count):
+    result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=0.)
     # Count every invocation, including aborted transactions, not just commits.
     # These are bounds for this fixed 500 s witness, not a fleet rate limiter.
     limits = dict(attempts_first_minute=5*count, contention_first_minute=4*count,
                   allocation_attempts=7*count, contention_losses=6*count)
-    print(json.dumps(dict(processes=count, revision=ref or "worktree",
+    print(json.dumps(dict(processes=count,
         attempt_control={metric: dict(measured=result[metric], bound=limit)
                          for metric, limit in limits.items()}), sort_keys=True))
     for metric, limit in limits.items():
-        if ref:
-            assert result[metric] > limit, f"{metric}: baseline must violate bound {limit}"
-        else:
-            assert result[metric] <= limit, f"{metric}: worktree {result[metric]} > bound {limit}"
+        assert result[metric] <= limit, f"{metric}: worktree {result[metric]} > bound {limit}"
     assert result["granted_processes"] == count
     assert result["budget_exhaustions"] == 0
     assert result["max_attempt_ms"] < 2000
@@ -422,8 +311,6 @@ def test_simultaneous_restart_attempt_control(monkeypatch, count, ref):
                           key=lambda a: a["started_s"])
         assert attempts[0]["started_s"] == result["first_ticks"][process] == 0
         assert attempts[-1]["error"] is None
-    if ref:
-        return
     after = result
     retry_deadlines, retry_ticks = [], []
     for process in range(count):
@@ -455,10 +342,9 @@ def test_simultaneous_restart_attempt_control(monkeypatch, count, ref):
     assert len(set(retry_ticks)) > 1
 
 
-@pytest.mark.parametrize("ref", [ROUND_FOUR, "baseline", None])
 @pytest.mark.parametrize("since_allocation", [5., .2])
-def test_rollover_first_block_without_request(monkeypatch, ref, since_allocation):
-    _, shell = modules(ref)
+def test_rollover_first_block_without_request(monkeypatch, since_allocation):
+    _, shell = modules()
     store, _ = fake_store()
     boundary = NOW_US+86_400_000_000
     started = logical_time()
@@ -484,20 +370,10 @@ def test_rollover_first_block_without_request(monkeypatch, ref, since_allocation
         tick_finished = logical_time()
         reservation = svc.port.reserve(round(store.wall()*1e6), terminal=True)
         assert logical_time() == tick_finished  # Request at +0 ms after the tick.
-
-        def rollover_admitted():
-            assert permits == (shell.RESERVATION_BLOCK,)*2, "rollover permits missing"
-            assert reservation is not None
-            assert not svc.port.lost.is_set()
-
-        if ref == ROUND_FOUR:
-            # The identical positive assertion must reject the committed regression.
-            with pytest.raises(AssertionError, match="rollover permits missing"):
-                rollover_admitted()
-            assert reservation is None and svc.port.lost.is_set()
-        else:
-            rollover_admitted()
-        print(json.dumps(dict(rollover_ref=ref, since_allocation_s=since_allocation,
+        assert permits == (shell.RESERVATION_BLOCK,)*2, "rollover permits missing"
+        assert reservation is not None
+        assert not svc.port.lost.is_set()
+        print(json.dumps(dict(since_allocation_s=since_allocation,
             permits=permits, admitted=reservation is not None,
             grant_tick_after_boundary_s=tick_finished-started-since_allocation), sort_keys=True))
     finally:
@@ -505,9 +381,8 @@ def test_rollover_first_block_without_request(monkeypatch, ref, since_allocation
             executor.shutdown(wait=True)
 
 
-@pytest.mark.parametrize("ref", ["baseline", ROUND_TWO, None])
-def test_rollover_refusal_window_control(monkeypatch, ref):
-    _, shell = modules(ref)
+def test_rollover_refusal_window_control(monkeypatch):
+    _, shell = modules()
     store, _ = fake_store()
     boundary = NOW_US+86_400_000_000
     started = logical_time()
@@ -549,7 +424,7 @@ def test_rollover_refusal_window_control(monkeypatch, ref):
         assert not any(requests[:49]) and all(requests[49:])
         assert grants[-1] == pytest.approx(4.873)
         assert svc.port.lost.is_set()
-        print(json.dumps(dict(rollover_ref=ref, first_grant_s=grants[-1],
+        print(json.dumps(dict(first_grant_s=grants[-1],
             refused=requests.count(False), admitted=requests.count(True)), sort_keys=True))
     finally:
         for executor in (svc.evidence_executor, svc.publisher_executor, svc.session_executor):

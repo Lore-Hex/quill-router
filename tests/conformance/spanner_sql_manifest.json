@@ -5310,7 +5310,7 @@
     },
     "operational_analytics:routing_traffic:1": {
       "fingerprint": "24143e3a3eefcc7a3bf9a0af91a2fc5f5b20ad2ce93d995901b204a795e78db5",
-      "reason": "Bounded read-only ClickHouse route aggregates, proven against replicated and standalone schemas in test_clickhouse_replay_functional"
+      "reason": "Bounded read-only ClickHouse route aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:client_reliability_summary:1": {
       "fingerprint": "626ec3bb7eb8e4e06f6e1c77d66629df32cd5320d947499e54d8f847d1dcb1a5",

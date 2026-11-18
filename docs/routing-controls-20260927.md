@@ -73,11 +73,9 @@ budget busy").
 There is no schema migration. Never reshard a strict key: validation rejects it.
 Keep the flag immutable so in-flight requests cannot cross accounting modes.
 
-Native GoogleSQL checks can run locally with
-`TR_STRICT_SPANNER_EMULATOR_HOST=127.0.0.1:19010 uv run pytest -q tests/test_strict_budget_spanner_emulator.py`.
-The fixture requires a loopback emulator, uses anonymous credentials, and
-creates and drops its own temporary database. It tests each UTC window,
-concurrent reservations and BYOK exclusion using the exact production DML.
+The native GoogleSQL checks are `tests/conformance/test_strict_spend_windows.py`,
+which CI's spanner-emulator job runs against the Spanner emulator: window holds,
+refunds and BYOK exclusion, and concurrent strict admission.
 
 ## Precision evidence
 

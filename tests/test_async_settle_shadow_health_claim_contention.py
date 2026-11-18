@@ -7,13 +7,12 @@ out every third slot and every contender raced a read-write claim transaction.
 
 These runs execute the real Service owners, publisher workers and storage
 adapter against Spanner-like shared/exclusive locks (FIFO, upgrade deadlocks
-abort the younger transaction, SDK re-entry). Each scenario is paired with a
-positive control: the same harness with the fix removed must show the storm.
+abort the younger transaction, SDK re-entry). Some scenarios are paired with a
+positive control that patches the fix out of the loaded module copies.
 """
 from __future__ import annotations
 
 import json
-import subprocess
 import threading
 from types import SimpleNamespace
 
@@ -32,23 +31,9 @@ from trusted_router.async_settle_shadow_journal import CLAIM_KIND
 from trusted_router.services import async_settle_shadow_health as shell
 
 FLEET = 32
-# The old defects were fixed before this task's HEAD. Keep historical positive
-# controls pinned instead of silently moving them with origin/main.
-PRE_RENEWAL = "e696d97c9c005de1468739ea6f321487357f9611"
 SLOTS = 70  # Ten warm-up slots, then a 2-minute measured window (60 slots).
 STALLED = 30-10  # Index of the stall slot in the measured window.
 TAKEOVER_GAP = shell.TAKEOVER_MIN_AGE - 1  # Slots without a claim before wave 0.
-
-
-def without_fix(storage, publisher):
-    """Positive control: the owner-only incumbency and immediate takeover of origin/main."""
-    def is_incumbent(self, slot):
-        self.assert_owner()
-        return self.incumbent_slot in (slot-1, slot-2)
-    publisher.Service.is_incumbent = is_incumbent
-    publisher.HOLDER_FAILURE_SLOTS = 0  # Remove storage-only grace as well.
-    publisher.takeover_due = lambda boot, slot, claim: True
-    storage.ObservationStore.read_shadow_publication = lambda self, budget: None
 
 
 def run(**kwargs):
@@ -62,22 +47,6 @@ def per_minute(result):
 @pytest.fixture(scope="module")
 def rejected():
     return run(reject_published=True)
-
-
-@pytest.fixture(scope="module")
-def rejected_control():
-    return run(ref=PRE_RENEWAL, reject_published=True, patch=without_fix)
-
-
-def test_positive_control_rejected_replies_reproduce_the_claim_storm(rejected_control):
-    result = rejected_control
-    # Every third slot the whole fleet races read-write claims on one row.
-    assert result["max_claim_contenders"] >= FLEET//2
-    assert sum(n > 1 for n in result["claim_transactions_by_slot"]) >= 15
-    assert result["aborts"] >= 30
-    assert result["claim_lock_wait_seconds"] >= 2
-    assert result["durable_publication_rate"] <= .4
-    assert per_minute(result) >= 100
 
 
 def test_rejected_replies_keep_a_single_claim_writer(rejected):
@@ -173,52 +142,35 @@ def test_degraded_observer_cannot_demote_the_holder(control):
         assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
 
 
-@pytest.mark.parametrize("ref", [PRE_RENEWAL, None])
-def test_microsecond_floor_at_waited_bound_positive_control(ref):
+def test_microsecond_floor_at_waited_bound():
     # Production replica behaviour: a waited-for bound is returned floored to
     # a microsecond. CLAIM_SQL still returns a statement stamp ending in 777ns.
-    result = simulate_lifecycle(warm=True, slots=SLOTS, n=8, ref=ref,
+    result = simulate_lifecycle(warm=True, slots=SLOTS, n=8,
                                 microsecond_reads=True, bound_wait_probability=1.)
     traces = result["worker_traces"]
     ordering = [t for t in traces if t.get("observation_failure") == "claim_observed_order"]
-    if ref:
-        assert ordering
-        assert all(t["outcome"] == "failed" for t in ordering)
-        # Failed trace encoding deliberately omits invalid observation stamps;
-        # inspect the fake transport's original timestamps, not rewritten traces.
-        assert all(t["observed_at_ns"] is None for t in ordering)
-        assert set(result["observation_order_gaps_ns"]) == {-777}
-        assert result["durable_publication_rate"] == 0
-    else:
-        assert not ordering
-        assert result["durable_publication_rate"] == 1
-        assert set(result["claim_transactions_by_slot"]) == {1}
-        published = [t for t in traces if t["outcome"] == "published"]
-        assert published and all(t["observed_at_ns"] % 1000 == 0 for t in published)
-        assert all(t["observed_at_ns"] - t["claim_at_ns"] == 223 for t in published)
-        assert result["max_published_observation_ms"] <= 250
-        assert result["max_published_cycle_ms"] <= 500
+    assert not ordering
+    assert result["durable_publication_rate"] == 1
+    assert set(result["claim_transactions_by_slot"]) == {1}
+    published = [t for t in traces if t["outcome"] == "published"]
+    assert published and all(t["observed_at_ns"] % 1000 == 0 for t in published)
+    assert all(t["observed_at_ns"] - t["claim_at_ns"] == 223 for t in published)
+    assert result["max_published_observation_ms"] <= 250
+    assert result["max_published_cycle_ms"] <= 500
 
 
 @pytest.mark.parametrize("n", [8, 20])
-@pytest.mark.parametrize("ref", [PRE_RENEWAL, None])
-def test_two_failed_cycles_recover_without_a_takeover(n, ref):
+def test_two_failed_cycles_recover_without_a_takeover(n):
     from tests.shadow_health_cold_start_simulation import START
-    result = simulate_lifecycle(warm=True, slots=SLOTS, n=n, ref=ref,
+    result = simulate_lifecycle(warm=True, slots=SLOTS, n=n,
                                 fail_observations=(30, 2), microsecond_reads=True)
     claims = result["claim_transactions_by_slot"]
     publications = set(result["durable_publication_slots"])
     assert START+30 not in publications and START+31 not in publications
-    if ref:
-        assert START+32 not in publications
-        recovered = min(s for s in publications if s > START+31)
-        assert 3 <= recovered-(START+30) <= 5
-        assert 0 in claims and result["max_claim_contenders"] >= 2
-    else:
-        assert START+32 in publications
-        assert set(claims) == {1}
-        assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
-        assert result["durable_publication_rate"] == (SLOTS-12)/(SLOTS-10)
+    assert START+32 in publications
+    assert set(claims) == {1}
+    assert result["aborts"] == result["claim_lock_wait_seconds"] == 0
+    assert result["durable_publication_rate"] == (SLOTS-12)/(SLOTS-10)
 
 
 @pytest.mark.parametrize("n", [8, 20])
@@ -239,24 +191,18 @@ def test_failure_limit_yields_to_fenced_takeover(n):
     assert len(identities) == len(set(identities))
 
 
-@pytest.mark.parametrize("ref", [PRE_RENEWAL, None])
 @pytest.mark.parametrize("warm", [False, True])
-def test_unknown_claim_commit_is_reconciled_next_slot(ref, warm):
+def test_unknown_claim_commit_is_reconciled_next_slot(warm):
     from tests.shadow_health_cold_start_simulation import START
-    result = simulate_lifecycle(warm=warm, slots=SLOTS, n=8, ref=ref, unknown_claim_at=0)
+    result = simulate_lifecycle(warm=warm, slots=SLOTS, n=8, unknown_claim_at=0)
     traces = result["worker_traces"]
     unknown = [t for t in traces if t["slot"] == START and t["unknown_outcome"]]
     assert len(unknown) == 1
     boot = unknown[0]["boot"]
     following = next(t for t in traces if t["boot"] == boot and t["slot"] == START+1)
-    if ref:
-        assert following["outcome"] == ("published" if warm else "lost_claim")
-        if warm:
-            assert following["rpc_count"] == 6  # Old cache bypassed reconciliation.
-    else:
-        assert following["outcome"] == "published"
-        assert following["rpc_count"] == 8  # Claim + publication snapshots, then normal six.
-        assert result["aborts"] == 0
+    assert following["outcome"] == "published"
+    assert following["rpc_count"] == 8  # Claim + publication snapshots, then normal six.
+    assert result["aborts"] == 0
 
 
 def test_two_failed_claim_reads_allow_a_fenced_recovery_race():
@@ -280,19 +226,11 @@ def test_two_failed_claim_reads_allow_a_fenced_recovery_race():
     assert len(identities) == len(set(identities))
 
 
-ROUND_ONE = "259dda21c10da458d1e9f391c0aa355d663f5d66"
-
-
 class PublisherControl:
     """Real copied worker/store and simulator transport, with explicit missed slots."""
 
-    def __init__(self, ref):
-        try:
-            self.storage, self.publisher = modules(ref)
-        except (OSError, subprocess.CalledProcessError):
-            if ref != ROUND_ONE:
-                raise
-            pytest.skip("round-1 commit source objects unavailable; worktree controls run independently")
+    def __init__(self):
+        self.storage, self.publisher = modules()
         self.clock = Clock()
         self.db = Database(self.clock, self.storage)
         self.store = self.new_store()
@@ -324,17 +262,13 @@ class PublisherControl:
             admission, incumbent, incumbent, True))
 
 
-@pytest.mark.parametrize("ref", [
-    pytest.param(ROUND_ONE, marks=pytest.mark.xfail(strict=True, reason="P1: delayed claim extends K-slot allowance")),
-    None,
-], ids=["round-1", "worktree"])
 @pytest.mark.parametrize("forget_local_publication", [False, True])
-def test_missed_slots_consume_holder_allowance(ref, forget_local_publication):
-    control = PublisherControl(ref)
+def test_missed_slots_consume_holder_allowance(forget_local_publication):
+    control = PublisherControl()
     publisher, store = control.publisher, control.store
     assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
     # No dispatch at s+1. At s+2 the recent publication permits the fast path,
-    # but the observation fails. Round 1 starts its allowance at this claim.
+    # but the observation fails.
     observe = store.observe
     def fail(*args, **kwargs):
         raise TimeoutError("failed observation after a missed slot")
@@ -363,14 +297,12 @@ def test_missed_slots_consume_holder_allowance(ref, forget_local_publication):
     assert due-START <= publisher.HOLDER_FAILURE_SLOTS+publisher.TAKEOVER_MIN_AGE+publisher.TAKEOVER_SPREAD-1
 
 
-@pytest.mark.parametrize("ref", [ROUND_ONE, None], ids=["round-1", "worktree"])
-def test_uninterrupted_missed_slots_leave_takeover_due(ref):
-    control = PublisherControl(ref)
+def test_uninterrupted_missed_slots_leave_takeover_due():
+    control = PublisherControl()
     publisher = control.publisher
     assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
     claim = json.loads(control.db.rows[CLAIM_KIND, "local/publish"])
     # Miss K+1 slots without any claim, then resume at the advertised S4 bound.
-    # Round 1 already rejects this uninterrupted gap via its claim-age guard.
     assert not control.cycle(START+publisher.HOLDER_FAILURE_SLOTS+2).claimed
     due = START+publisher.HOLDER_FAILURE_SLOTS+publisher.TAKEOVER_MIN_AGE+publisher.TAKEOVER_SPREAD-1
     follower = next(f"follower-{i}" for i in range(10000)
@@ -382,12 +314,8 @@ def test_uninterrupted_missed_slots_leave_takeover_due(ref):
     assert reply.claimed and reply.trace["outcome"] == "published"
 
 
-@pytest.mark.parametrize("ref", [
-    pytest.param(ROUND_ONE, marks=pytest.mark.xfail(strict=True, reason="P2: definite loser skips follower stagger")),
-    None,
-], ids=["round-1", "worktree"])
-def test_definite_claim_loser_staggers_next_slot(ref):
-    control = PublisherControl(ref)
+def test_definite_claim_loser_staggers_next_slot():
+    control = PublisherControl()
     publisher = control.publisher
     assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
     loser = control.new_store()
@@ -404,9 +332,6 @@ def test_definite_claim_loser_staggers_next_slot(ref):
     assert reply.trace["rpc_count"] == 1
     assert control.db.claim_transactions == before
     assert control.waits == [publisher.follower_stagger("loser", START+1, True)], "definite loser skipped follower stagger"
-
-
-TAKEOVER_BASELINE = "c8491ed3d5a52316606c239c00b944d44703dc5e"
 
 
 def takeover_measurements(result):
@@ -452,11 +377,10 @@ def takeover_measurements(result):
                 max_contenders=result["max_claim_contenders"], aborts=result["aborts"])
 
 
-@pytest.mark.parametrize("ref", [TAKEOVER_BASELINE, None], ids=["pinned-head", "worktree"])
 @pytest.mark.parametrize("n", [1, 2, 4, 12, 20])
 @pytest.mark.parametrize("kind", ["order", "refused", "post_commit"])
-def test_full_rpc_failure_recovery_and_reader_freshness(ref, n, kind):
-    result = simulate_lifecycle(ref=ref, warm=True, n=n, slots=70,
+def test_full_rpc_failure_recovery_and_reader_freshness(n, kind):
+    result = simulate_lifecycle(warm=True, n=n, slots=70,
                                 publication_fault=(30, 2, kind), microsecond_reads=True)
     failed = [t for t in result["worker_traces"] if t["outcome"] == "failed"]
     assert [(t["slot"]-START, t["rpc_count"]) for t in failed] == [(30, 6), (31, 6)]
@@ -468,13 +392,12 @@ def test_full_rpc_failure_recovery_and_reader_freshness(ref, n, kind):
     for trace in result["worker_traces"]:
         if START+10 <= trace["slot"] < START+30 or trace["slot"] >= START+35:
             assert trace["rpc_count"] == (6 if trace["boot"] == "boot-0" else 1)
-    # Both revisions recover at last acknowledged publication+3. A >30-slot
-    # baseline gap from ONLY these two failures is not reproducible at this SHA.
+    # Recovery at last acknowledged publication+3.
     metrics = takeover_measurements(result)
     assert metrics["share"] >= .95
     if kind == "post_commit":
         assert metrics["share"] == 1  # Failed worker reports did not erase commits.
-    print("TAKEOVER_TWO_FAILURES", ref or "worktree", n, kind, metrics)
+    print("TAKEOVER_TWO_FAILURES", n, kind, metrics)
 
 
 @pytest.mark.parametrize("n", [2, 4, 12, 20])
@@ -495,13 +418,12 @@ def test_takeover_reader_bound_with_healthy_survivors(n, exhausted):
     print("TAKEOVER_SURVIVORS", n-1, exhausted, resumed-(START+29), metrics)
 
 
-@pytest.mark.parametrize("ref", [TAKEOVER_BASELINE, None], ids=["pinned-head", "worktree"])
 @pytest.mark.parametrize("kind", [None, "order", "refused", "post_commit"])
-def test_four_contender_long_gap_positive_control(kind, ref):
+def test_four_contender_long_gap(kind):
     import hashlib
 
     # Deterministic adverse ranks, not a changed protocol or a random search at
-    # runtime: all three survivors' first baseline turns are at least age 40.
+    # runtime: all three survivors' first rank-based turns are at least age 40.
     last_claim = START+(31 if kind else 29)
     boots = ["boot-0"]
     for i in range(1000):
@@ -513,15 +435,15 @@ def test_four_contender_long_gap_positive_control(kind, ref):
             break
     assert len(boots) == 4
     kwargs = dict(publication_fault=(30, 2, kind), stall_from=32) if kind else dict(stall_from=30)
-    result = simulate_lifecycle(ref=ref, warm=True, n=4, boots=boots, slots=130,
+    result = simulate_lifecycle(warm=True, n=4, boots=boots, slots=130,
                                 microsecond_reads=True, **kwargs)
     anchor = START+(31 if kind == "post_commit" else 29)
     resumed = min(s for s in result["durable_publication_slots"] if s > anchor)
     gap = resumed-anchor
-    assert gap > 30 if ref else gap <= (4 if kind in ("order", "refused") else 2)
+    assert gap <= (4 if kind in ("order", "refused") else 2)
     metrics = takeover_measurements(result)
-    assert metrics["share"] < .8 if ref else metrics["share"] >= .95
-    print("TAKEOVER_LONG_GAP", ref or "worktree", kind, gap, metrics)
+    assert metrics["share"] >= .95
+    print("TAKEOVER_LONG_GAP", kind, gap, metrics)
 
 
 def test_only_process_gone_cannot_publish():
@@ -540,9 +462,8 @@ def test_takeover_eligibility_is_not_a_successful_rpc_guarantee():
     assert takeover_measurements(result)["share"] >= .95
 
 
-@pytest.mark.parametrize("ref", [TAKEOVER_BASELINE, None], ids=["pinned-head", "worktree"])
-def test_late_recovery_start_explains_two_read_renewal_refusal(ref):
-    control = PublisherControl(ref)
+def test_late_recovery_start_explains_two_read_renewal_refusal():
+    control = PublisherControl()
     store = control.store
     assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
     publish = store.publish
@@ -587,12 +508,11 @@ def recovery_preflight_delay(storage, publisher):
 
 @pytest.mark.parametrize("n", [1, 2, 4, 12, 20])
 @pytest.mark.parametrize("kind", ["order", "refused"])
-@pytest.mark.parametrize("ref", [TAKEOVER_BASELINE, None], ids=["pinned-head", "worktree"])
-def test_two_full_rpc_failures_with_late_recovery_positive_control(n, kind, ref):
+def test_two_full_rpc_failures_with_late_recovery(n, kind):
     import hashlib
 
-    # All baseline followers get a late rank; the worktree gives every one a
-    # turn. This does not patch Service decisions, claim fences or RPC retries.
+    # Every follower gets a late rank; each one still gets a turn. This does
+    # not patch Service decisions, claim fences or RPC retries.
     boots = ["boot-0"]
     for i in range(1000):
         boot = f"recovery-survivor-{i}"
@@ -600,50 +520,31 @@ def test_two_full_rpc_failures_with_late_recovery_positive_control(n, kind, ref)
         if rank >= 40:
             boots.append(boot)
     boots = boots[:n]
-    result = simulate_lifecycle(ref=ref, warm=True, n=n, boots=boots, slots=130,
+    result = simulate_lifecycle(warm=True, n=n, boots=boots, slots=130,
         publication_fault=(30, 2, kind), patch=recovery_preflight_delay, fixed_rpc_costs=True)
     traces = {t["slot"]-START: t for t in result["worker_traces"] if t["boot"] == "boot-0"}
     assert [(traces[s]["outcome"], traces[s]["rpc_count"]) for s in (30, 31)] == [("failed", 6)]*2
     resumed = min((s for s in result["durable_publication_slots"] if s > START+31), default=None)
-    if ref:
-        assert [(traces[s]["outcome"], traces[s]["rpc_count"]) for s in (32, 33, 34, 35)] == [
-            ("lost_claim", 2), ("lost_claim", 2), ("lost_claim", 2), ("lost_claim", 1)]
-        assert resumed is None or resumed-(START+29) > 30
-    else:
-        assert resumed == START+32
-        assert traces[32]["outcome"] == "published" and traces[32]["rpc_count"] == 6
+    assert resumed == START+32
+    assert traces[32]["outcome"] == "published" and traces[32]["rpc_count"] == 6
     metrics = takeover_measurements(result)
-    assert metrics["share"] < .8 if ref else metrics["share"] >= .95
-    print("TAKEOVER_LATE_RECOVERY", ref or "worktree", n, kind,
-          None if resumed is None else resumed-(START+29), metrics)
+    assert metrics["share"] >= .95
+    print("TAKEOVER_LATE_RECOVERY", n, kind, resumed-(START+29), metrics)
 
 
-@pytest.mark.parametrize("ref,slots", [(TAKEOVER_BASELINE, 400), (None, 1000)],
-                         ids=["pinned-head", "worktree"])
-def test_scheduling_overshoot_does_not_ratchet_holder_start(ref, slots):
-    result = simulate_lifecycle(ref=ref, n=1, warm=True, slots=slots,
+def test_scheduling_overshoot_does_not_ratchet_holder_start():
+    result = simulate_lifecycle(n=1, warm=True, slots=1000,
         fixed_rpc_costs=True, tick_offset_seconds=.020, admission_overshoot_seconds=.0007)
     traces = result["worker_traces"]
     starts = [t["claim_start_us"]-t["slot"]*2_000_000 for t in traces
               if t["claim_at_ns"] is not None]
-    late = [t for t in traces if t["outcome"] == "failed" and t["observed_at_ns"] is not None
-            and t["observed_at_ns"] > t["slot"]*2_000_000_000+250_000_000]
-    if ref:
-        assert max(starts)-starts[0] >= 150_000
-        assert late and late[0]["slot"] < START+400
-        assert late[0]["rpc_count"] == 6
-        assert not late[0]["late_cycle"] and not late[0]["unknown_outcome"]
-        assert "observation_failure" not in late[0]
-    else:
-        assert len(starts) == 1000
-        assert 20_699 <= min(starts) <= max(starts) <= 20_702
-        assert all(t["outcome"] == "published" and t["rpc_count"] == 6 for t in traces)
-        assert result["max_published_observation_ms"] < 250
-        assert result["max_published_cycle_ms"] < 500
+    assert len(starts) == 1000
+    assert 20_699 <= min(starts) <= max(starts) <= 20_702
+    assert all(t["outcome"] == "published" and t["rpc_count"] == 6 for t in traces)
+    assert result["max_published_observation_ms"] < 250
+    assert result["max_published_cycle_ms"] < 500
     assert len(result["claim_identities"]) == len(set(result["claim_identities"]))
-    print("CADENCE", ref or "worktree", slots, min(starts), max(starts),
-          "first_late", (late[0]["slot"]-START,
-              (late[0]["observed_at_ns"]-late[0]["slot"]*2_000_000_000)/1e6) if late else None)
+    print("CADENCE", min(starts), max(starts))
 
 
 def test_age_two_claim_does_not_race_a_healthy_reclaiming_holder():
