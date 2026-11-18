@@ -541,6 +541,104 @@ def test_prepared_artifact_provenance_and_inherited_attempt(monkeypatch):
         api.artifact(source, "prepared")
 
 
+def gh_error(stderr):
+    return subprocess.CalledProcessError(1, ["gh"], output=b"", stderr=stderr.encode())
+
+
+SERVER_ERROR = gh_error("gh: Server Error (HTTP 502)\n")
+PREPARED = {"schema_version": 1, "release": asdict(release())}
+
+
+def scripted_gh(monkeypatch, *answers):
+    """Answer each gh call with the next stdout, or fail with it; return the calls and retry waits.
+
+    A CalledProcessError raises under check=True and is an exit code otherwise.
+    The deadline's clock starts at 0 and moves only with the waits.
+    """
+    calls, waits, queue = [], [], list(answers)
+
+    def fake(argv, **kwargs):
+        calls.append(argv)
+        answer = queue.pop(0)
+        if isinstance(answer, subprocess.CalledProcessError):
+            if kwargs.get("check"):
+                raise subprocess.CalledProcessError(answer.returncode, argv, b"", answer.stderr)
+            return subprocess.CompletedProcess(argv, answer.returncode, "", answer.stderr.decode())
+        if isinstance(answer, Exception):
+            raise answer
+        return subprocess.CompletedProcess(argv, 0, answer, "")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setattr(superseded_deploy, "_monotonic", lambda: sum(waits))
+    monkeypatch.setattr(superseded_deploy, "_sleep", waits.append)
+    return calls, waits
+
+
+def prepared_download(monkeypatch, *answers, deadline=600.0):
+    api = train.GitHub(deadline=deadline)
+    metadata = {"total_count": 1, "artifacts": [{"id": 99, "name": "prepared-release-1",
+                "expired": False, "size_in_bytes": 500, "workflow_run": {"id": 1, "head_sha": A}}]}
+    monkeypatch.setattr(api, "json", lambda *args: metadata)
+    return (api, *scripted_gh(monkeypatch, *answers))
+
+
+def test_artifact_download_retries_a_transient_server_error(monkeypatch):
+    api, calls, waits = prepared_download(monkeypatch, SERVER_ERROR, zipped(PREPARED))
+    assert api.artifact(run(), "prepared") == PREPARED
+    assert calls == [["gh", "api", f"repos/{train.REPO}/actions/artifacts/99/zip"]] * 2 and waits == [1.0]
+
+
+def test_artifact_download_fails_closed_after_bounded_retries(monkeypatch):
+    # A fourth download would succeed: only the bound stops the retries.
+    api, calls, waits = prepared_download(monkeypatch, *[SERVER_ERROR] * 3, zipped(PREPARED))
+    with pytest.raises(train.Refused, match="download failed"):
+        api.artifact(run(), "prepared")
+    assert len(calls) == 3 and waits == [1.0, 2.0]
+
+
+@pytest.mark.parametrize("failure", [
+    gh_error("gh: API rate limit exceeded for installation ID 1. (HTTP 403)"),
+    gh_error("gh: Too Many Requests (HTTP 429)"),
+    gh_error("gh: Not Found (HTTP 404)"),
+    subprocess.TimeoutExpired(["gh"], 60),
+    OSError("gh missing"),
+], ids=["rate-limit", "429", "404", "timeout", "no-gh"])
+def test_artifact_download_never_retries_anything_but_a_server_error(monkeypatch, failure):
+    api, calls, waits = prepared_download(monkeypatch, failure, zipped(PREPARED))
+    with pytest.raises(train.Refused, match="download failed"):
+        api.artifact(run(), "prepared")
+    assert len(calls) == 1 and waits == []
+
+
+def test_artifact_download_never_retries_an_unreadable_archive(monkeypatch):
+    api, calls, waits = prepared_download(monkeypatch, b"<html>502 Bad Gateway</html>", zipped(PREPARED))
+    with pytest.raises(train.Refused, match="unreadable release artifact"):
+        api.artifact(run(), "prepared")
+    assert len(calls) == 1 and waits == []
+
+
+def test_artifact_download_retry_needs_time_before_the_deadline(monkeypatch):
+    # 0.5 s past one call's timeout leaves no room for the 1 s wait and a whole call.
+    api, calls, waits = prepared_download(monkeypatch, SERVER_ERROR, zipped(PREPARED),
+                                          deadline=superseded_deploy.GH_TIMEOUT_SECONDS + 0.5)
+    with pytest.raises(train.Refused, match="download failed"):
+        api.artifact(run(), "prepared")
+    assert len(calls) == 1 and waits == []
+
+
+@pytest.mark.parametrize(("failures", "answers"), [(1, True), (3, False)])
+def test_release_evidence_lookup_retries_a_transient_server_error(monkeypatch, failures, answers):
+    api = train.GitHub(deadline=600.0)
+    calls, waits = scripted_gh(monkeypatch, *[SERVER_ERROR] * failures, json.dumps({"object": {"sha": D}}))
+    ref = f"repos/{train.REPO}/git/ref/heads/main"
+    if answers:
+        assert api.json("api", ref) == {"object": {"sha": D}}
+    else:
+        with pytest.raises(train.Refused, match="evidence unavailable"):
+            api.json("api", ref)
+    assert len(calls) == min(failures + 1, 3) and waits == [1.0, 2.0][:min(failures, 2)]
+
+
 def test_all_release_jobs_use_one_frozen_full_commit():
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     jobs = workflow["jobs"]

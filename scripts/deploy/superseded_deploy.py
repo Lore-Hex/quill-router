@@ -88,6 +88,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 import subprocess
 import sys
 import time
@@ -143,6 +144,17 @@ CANCEL_WINDOW_SECONDS = 4 * 3600
 CANCEL_DEADLINE_SECONDS: float = 8 * 60
 # The deadline's clock (patched in tests; subprocess keeps time.monotonic).
 _monotonic = time.monotonic
+# A read that GitHub answers with a transient server error runs again after
+# each of these waits: one 502 refused three release selections on 2026-11-18.
+# A retry needs time for its wait and a whole call before the deadline.
+GH_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 2.0)
+# gh's stderr for a 500/502/503/504: `gh api` prints "Server Error (HTTP 502)",
+# other commands "HTTP 502: Bad Gateway (URL)". A 4xx never retries, rate
+# limits (403, 429) included, so nothing here hammers GitHub.
+_TRANSIENT_GH_ERROR = re.compile(r"\bHTTP 50[0234]\b|Server Error|Bad Gateway|Service Unavailable|Gateway Timeout")
+_CLIENT_GH_ERROR = re.compile(r"\bHTTP 4\d\d\b|rate limit", re.IGNORECASE)
+# The retry's wait (patched in tests).
+_sleep = time.sleep
 
 
 def touches_deploy_paths(files: Iterable[str]) -> bool:
@@ -241,35 +253,63 @@ def _call_timeout(deadline: float | None) -> float | None:
     return min(GH_TIMEOUT_SECONDS, left) if left > 0 else None
 
 
-def _gh_json(args: list[str], deadline: float | None = None) -> object | None:
-    """One `gh` call parsed as JSON; None (with the reason on stderr) for any failure, including a timeout."""
+def _retry_transient(what: str, stderr: str, retries: int, deadline: float | None) -> bool:
+    """Whether a read that failed with STDERR after RETRIES retries runs again; waits first if so.
 
-    timeout = _call_timeout(deadline)
-    if timeout is None:
-        print(f"superseded_deploy: out of time before gh {args[0]}", file=sys.stderr)
-        return None
-    try:
-        result = subprocess.run(  # noqa: S603 - fixed gh invocation; arguments are commit SHAs and names
-            ["gh", *args],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        print(f"superseded_deploy: gh {args[0]} timed out after {timeout} s", file=sys.stderr)
-        return None
-    except OSError as exc:
-        print(f"superseded_deploy: cannot run gh: {exc}", file=sys.stderr)
-        return None
-    if result.returncode != 0:
-        print(f"superseded_deploy: gh {args[0]} failed: {result.stderr.strip()[:300]}", file=sys.stderr)
-        return None
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print(f"superseded_deploy: gh {args[0]} answered with something other than JSON", file=sys.stderr)
-        return None
+    Only a transient GitHub server error does, at most len(GH_RETRY_BACKOFF_SECONDS)
+    times, and only while the wait and a whole call fit before DEADLINE.
+    """
+
+    if (retries >= len(GH_RETRY_BACKOFF_SECONDS) or not _TRANSIENT_GH_ERROR.search(stderr)
+            or _CLIENT_GH_ERROR.search(stderr)):
+        return False
+    wait = GH_RETRY_BACKOFF_SECONDS[retries]
+    if deadline is not None and deadline - _monotonic() < wait + GH_TIMEOUT_SECONDS:
+        print(f"superseded_deploy: no time left to retry {what}", file=sys.stderr)
+        return False
+    print(f"superseded_deploy: retrying {what} in {wait:g} s (retry {retries + 1})", file=sys.stderr)
+    _sleep(wait)
+    return True
+
+
+def _gh_json(args: list[str], deadline: float | None = None) -> object | None:
+    """One `gh` read parsed as JSON; None (with the reason on stderr) for any failure, including a timeout.
+
+    Every caller passes a read (a GET), so a transient GitHub server error is
+    asked again (_retry_transient); nothing else is.
+    """
+
+    retries = 0
+    while True:
+        timeout = _call_timeout(deadline)
+        if timeout is None:
+            print(f"superseded_deploy: out of time before gh {args[0]}", file=sys.stderr)
+            return None
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed gh invocation; arguments are commit SHAs and names
+                ["gh", *args],  # noqa: S607
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"superseded_deploy: gh {args[0]} timed out after {timeout} s", file=sys.stderr)
+            return None
+        except OSError as exc:
+            print(f"superseded_deploy: cannot run gh: {exc}", file=sys.stderr)
+            return None
+        if result.returncode != 0:
+            print(f"superseded_deploy: gh {args[0]} failed: {result.stderr.strip()[:300]}", file=sys.stderr)
+            if _retry_transient(f"gh {args[0]}", result.stderr, retries, deadline):
+                retries += 1
+                continue
+            return None
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            print(f"superseded_deploy: gh {args[0]} answered with something other than JSON", file=sys.stderr)
+            return None
 
 
 def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
