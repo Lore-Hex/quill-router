@@ -74,9 +74,3 @@ updates:
         update-types:
           - "minor"
           - "patch"
-
-  - package-ecosystem: "docker"
-    directory: "/experiments/lightning_router"
-    schedule:
-      interval: "daily"
-    open-pull-requests-limit: 3

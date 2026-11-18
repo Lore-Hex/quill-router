@@ -5396,10 +5396,6 @@
       "fingerprint": "857d7e00b26cc521eec130efefa3e4f3520c9eb07c86475dab37cbb9ee059479",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
-    "storage_lightning:txn:1": {
-      "fingerprint": "3f21f37524b670b987cefd5bbb5b01f67016654e28bf9cc79bfe4fa74acef5f6",
-      "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
-    },
     "storage_postgres_operational_analytics_outbox:constants:1": {
       "fingerprint": "4797b3f52032721197fba6c5d6a547523779ef1cc8ebb7e9e9d55f8075d27802",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"

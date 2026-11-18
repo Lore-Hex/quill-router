@@ -338,12 +338,6 @@
         "reason": "Cutover duplicate of the infra.sh tr_entities base table, including the commit-timestamp option and primary key."
       }
     },
-    "scripts/lightning/activate_web.py": {
-      "operator.gc(\"sql\", \"databases\", \"create\", \"funding\", \"--instance=\" + INSTANCE)": {
-        "count": 1,
-        "reason": "Creates the standalone Lightning PostgreSQL database via gcloud sql, not a Spanner database."
-      }
-    },
     "src/trusted_router/storage_gcp_authorize.py": {
       "# Pre-DDL rows read NULL usage; a NULL/stale start means the window rolled": {
         "count": 1,

@@ -1063,12 +1063,12 @@ def test_guard_clears_shared_typing_cache_between_legs():
     import typing
     from typing import Annotated
 
-    from trusted_router.routes.internal.lightning import Credit
+    from trusted_router.routes.internal.fastpath_async_ticket import EdgeTicketRequest
 
     # This exact shared stdlib cache caused a second-case false positive after
-    # the live HTTP app registered its Credit response schema.
+    # the live HTTP app registered a route body schema.
     module('billing_snapshot')
-    Annotated[Credit, 'f1-review-typing-cache']
+    Annotated[EdgeTicketRequest, 'f1-review-typing-cache']
     # This is an explicit shared-runtime registry control, not a traversal of
     # every module reachable through typing's interpreter-global namespace.
     cache = next(cleanup.__self__ for cleanup in typing._cleanups
@@ -1225,9 +1225,9 @@ def test_guard_explicit_typing_cache_root_is_inspected():
     import typing
     from typing import Annotated
 
-    from trusted_router.routes.internal.lightning import Credit
+    from trusted_router.routes.internal.fastpath_async_ticket import EdgeTicketRequest
 
-    Annotated[Credit, 'f1-explicit-cache-root']
+    Annotated[EdgeTicketRequest, 'f1-explicit-cache-root']
     # This is an explicit shared-runtime registry control, not a traversal of
     # every module reachable through typing's interpreter-global namespace.
     cache = next(cleanup.__self__ for cleanup in typing._cleanups
