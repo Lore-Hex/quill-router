@@ -1,14 +1,8 @@
 /* /pricing: one reading column, plain rules instead of cards and numbers.
-   Loaded from the page body so it follows the theme sheet. */
+   Loaded before the theme sheet, so selectors start with html:root to win. */
 
-/* Hero: the example bill takes the place of the quick facts. */
-.pricing-page main > .public-hero {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 64px;
-  align-items: center;
-}
 
-.pricing-bill {
+html:root .pricing-bill {
   margin: 0;
   padding: 28px 28px 22px;
   border: 1px solid var(--nyte-dark-rule, #3A3631);
@@ -18,16 +12,16 @@
   gap: 14px;
 }
 
-.pricing-bill figcaption {
+html:root .pricing-bill figcaption {
   font: 500 12px/1.4 var(--tr-font-family-mono);
   letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--nyte-ink-2-dark, #B9B2A8);
 }
 
-.pricing-bill dl { margin: 0; display: grid; }
+html:root .pricing-bill dl { margin: 0; display: grid; }
 
-.pricing-bill dl > div {
+html:root .pricing-bill dl > div {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -36,18 +30,18 @@
   border-bottom: 1px solid var(--nyte-dark-rule, #3A3631);
 }
 
-.pricing-bill dt { font-size: 17px; font-weight: 450; color: var(--nyte-cream, #FAF8F4); }
-.pricing-bill dd { margin: 0; font: 400 18px/1.3 var(--tr-font-family-mono); color: var(--nyte-cream, #FAF8F4); }
-.pricing-bill .pricing-bill-total { border-bottom: 0; padding-top: 16px; }
-.pricing-bill .pricing-bill-total dt { font-weight: 550; }
-.pricing-bill .pricing-bill-total dd {
+html:root .pricing-bill dt { font-size: 17px; font-weight: 450; color: var(--nyte-cream, #FAF8F4); }
+html:root .pricing-bill dd { margin: 0; font: 400 18px/1.3 var(--tr-font-family-mono); color: var(--nyte-cream, #FAF8F4); }
+html:root .pricing-bill .pricing-bill-total { border-bottom: 0; padding-top: 16px; }
+html:root .pricing-bill .pricing-bill-total dt { font-weight: 550; }
+html:root .pricing-bill .pricing-bill-total dd {
   font: 300 34px/1 var(--tr-font-family-sans);
   letter-spacing: -.02em;
   color: var(--nyte-lead, #FFC800);
 }
 
 /* Sections */
-.pricing-page .pricing-section {
+html:root .pricing-page .pricing-section {
   width: 100%;
   max-width: 1040px;
   margin: 0 auto;
@@ -55,15 +49,15 @@
   box-sizing: border-box;
 }
 
-.pricing-page .pricing-section h2,
-.pricing-page #minimum-charges h2 {
+html:root .pricing-page .pricing-section h2,
+html:root .pricing-page #minimum-charges h2 {
   margin: 0 0 28px;
   font-size: 36px;
   font-weight: 300;
   letter-spacing: -.02em;
 }
 
-.pricing-page .pricing-section-head {
+html:root .pricing-page .pricing-section-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -71,9 +65,9 @@
   margin-bottom: 28px;
 }
 
-.pricing-page .pricing-section-head h2 { margin: 0; }
+html:root .pricing-page .pricing-section-head h2 { margin: 0; }
 
-.pricing-page .pricing-section-lead {
+html:root .pricing-page .pricing-section-lead {
   max-width: 62ch;
   margin: -8px 0 28px;
   font-size: 18px;
@@ -82,7 +76,7 @@
   color: var(--nyte-ink, #151311);
 }
 
-.pricing-page .pricing-ways {
+html:root .pricing-page .pricing-ways {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 40px;
@@ -90,17 +84,17 @@
   border-top: 1.5px solid var(--nyte-ink, #151311);
 }
 
-.pricing-page .pricing-ways h3 { margin: 0 0 10px; font-size: 21px; font-weight: 550; letter-spacing: -.01em; }
-.pricing-page .pricing-ways p { margin: 0; font-size: 17px; line-height: 1.6; font-weight: 450; color: var(--nyte-ink, #151311); }
+html:root .pricing-page .pricing-ways h3 { margin: 0 0 10px; font-size: 21px; font-weight: 550; letter-spacing: -.01em; }
+html:root .pricing-page .pricing-ways p { margin: 0; font-size: 17px; line-height: 1.6; font-weight: 450; color: var(--nyte-ink, #151311); }
 
-.pricing-page .pricing-rules {
+html:root .pricing-page .pricing-rules {
   list-style: none;
   margin: 0 0 32px;
   padding: 0;
   border-top: 1.5px solid var(--nyte-ink, #151311);
 }
 
-.pricing-page .pricing-rules li {
+html:root .pricing-page .pricing-rules li {
   padding: 18px 0;
   border-bottom: 1px solid var(--nyte-stone, #DEDAD0);
   font-size: 17px;
@@ -109,14 +103,14 @@
   color: var(--nyte-ink, #151311);
 }
 
-.pricing-page .pricing-rules-two {
+html:root .pricing-page .pricing-rules-two {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 40px;
 }
 
 /* Minimum charges: the same words; the exact rules open on request. */
-.pricing-page #minimum-charges {
+html:root .pricing-page #minimum-charges {
   width: 100%;
   max-width: 1040px;
   min-width: 0;
@@ -127,10 +121,10 @@
   border: 0 !important;
 }
 
-.pricing-page #minimum-charges h3 { font-size: 24px; font-weight: 450; margin: 40px 0 16px; }
+html:root .pricing-page #minimum-charges h3 { font-size: 24px; font-weight: 450; margin: 40px 0 16px; }
 
-.pricing-page #minimum-charges p,
-.pricing-page #minimum-charges li {
+html:root .pricing-page #minimum-charges p,
+html:root .pricing-page #minimum-charges li {
   max-width: 72ch;
   font-size: 17px;
   line-height: 1.65;
@@ -138,11 +132,11 @@
   color: var(--nyte-ink, #151311);
 }
 
-.pricing-page #minimum-charges .mc-summary { max-width: 46ch; font-size: 20px; line-height: 1.5; margin: 0 0 24px; }
+html:root .pricing-page #minimum-charges .mc-summary { max-width: 46ch; font-size: 20px; line-height: 1.5; margin: 0 0 24px; }
 
-.pricing-page #minimum-charges .mc-rules { border-block: 1px solid var(--nyte-stone, #DEDAD0); }
+html:root .pricing-page #minimum-charges .mc-rules { border-block: 1px solid var(--nyte-stone, #DEDAD0); }
 
-.pricing-page #minimum-charges .mc-rules summary {
+html:root .pricing-page #minimum-charges .mc-rules summary {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -154,14 +148,14 @@
   font-weight: 550;
 }
 
-.pricing-page #minimum-charges .mc-rules summary::-webkit-details-marker { display: none; }
-.pricing-page #minimum-charges .mc-rules summary::after { content: "+"; font-size: 24px; font-weight: 300; }
-.pricing-page #minimum-charges .mc-rules[open] summary::after { content: "–"; }
-.pricing-page #minimum-charges .mc-rules[open] { padding-bottom: 12px; }
+html:root .pricing-page #minimum-charges .mc-rules summary::-webkit-details-marker { display: none; }
+html:root .pricing-page #minimum-charges .mc-rules summary::after { content: "+"; font-size: 24px; font-weight: 300; }
+html:root .pricing-page #minimum-charges .mc-rules[open] summary::after { content: "–"; }
+html:root .pricing-page #minimum-charges .mc-rules[open] { padding-bottom: 12px; }
 
-.pricing-page #minimum-charges ol { list-style: none; counter-reset: mc; display: grid; gap: 20px; margin: 28px 0; padding: 0; }
-.pricing-page #minimum-charges ol li { counter-increment: mc; position: relative; padding-left: 52px; }
-.pricing-page #minimum-charges ol li::before {
+html:root .pricing-page #minimum-charges ol { list-style: none; counter-reset: mc; display: grid; gap: 20px; margin: 28px 0; padding: 0; }
+html:root .pricing-page #minimum-charges ol li { counter-increment: mc; position: relative; padding-left: 52px; }
+html:root .pricing-page #minimum-charges ol li::before {
   content: counter(mc);
   position: absolute;
   top: -2px;
@@ -170,9 +164,9 @@
   color: var(--nyte-ink, #151311);
 }
 
-.pricing-page #minimum-charges .model-table-wrap { max-width: 100%; margin: 8px 0 20px; }
-.pricing-page #minimum-charges table { width: 100%; border-collapse: collapse; font-size: 16px; }
-.pricing-page #minimum-charges th {
+html:root .pricing-page #minimum-charges .model-table-wrap { max-width: 100%; margin: 8px 0 20px; }
+html:root .pricing-page #minimum-charges table { width: 100%; border-collapse: collapse; font-size: 16px; }
+html:root .pricing-page #minimum-charges th {
   padding: 12px 16px 12px 0 !important;
   border-bottom: 1.5px solid var(--nyte-ink, #151311) !important;
   background: transparent !important;
@@ -184,7 +178,7 @@
   color: var(--nyte-ink-2, #57514A) !important;
 }
 
-.pricing-page #minimum-charges td {
+html:root .pricing-page #minimum-charges td {
   padding: 16px 16px 16px 0 !important;
   border-bottom: 1px solid var(--nyte-stone, #DEDAD0) !important;
   vertical-align: top;
@@ -192,27 +186,26 @@
 }
 
 @media (max-width: 760px) {
-  .pricing-page main > .public-hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
-  .pricing-bill { padding: 20px 18px 16px; }
-  .pricing-bill dt { font-size: 15px; }
-  .pricing-bill .pricing-bill-total dd { font-size: 28px; }
-  .pricing-page .pricing-section { padding-top: 56px; }
-  .pricing-page .pricing-section h2,
-  .pricing-page #minimum-charges h2 { font-size: 30px; }
-  .pricing-page .pricing-ways { grid-template-columns: minmax(0, 1fr); gap: 24px; }
-  .pricing-page .pricing-section-head { flex-direction: column; align-items: flex-start; gap: 16px; }
-  .pricing-page .pricing-rules-two { grid-template-columns: minmax(0, 1fr); }
-  .pricing-page #minimum-charges { margin: 56px auto 72px !important; }
-  .pricing-page #minimum-charges .mc-summary { font-size: 18px; }
-  .pricing-page #minimum-charges ol li { padding-left: 36px; }
-  .pricing-page #minimum-charges ol li::before { font-size: 24px; }
+    html:root .pricing-bill { padding: 20px 18px 16px; }
+  html:root .pricing-bill dt { font-size: 15px; }
+  html:root .pricing-bill .pricing-bill-total dd { font-size: 28px; }
+  html:root .pricing-page .pricing-section { padding-top: 56px; }
+  html:root .pricing-page .pricing-section h2,
+html:root .pricing-page #minimum-charges h2 { font-size: 30px; }
+  html:root .pricing-page .pricing-ways { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  html:root .pricing-page .pricing-section-head { flex-direction: column; align-items: flex-start; gap: 16px; }
+  html:root .pricing-page .pricing-rules-two { grid-template-columns: minmax(0, 1fr); }
+  html:root .pricing-page #minimum-charges { margin: 56px auto 72px !important; }
+  html:root .pricing-page #minimum-charges .mc-summary { font-size: 18px; }
+  html:root .pricing-page #minimum-charges ol li { padding-left: 36px; }
+  html:root .pricing-page #minimum-charges ol li::before { font-size: 24px; }
 
   /* Tiny-call examples: one card per example. */
-  .pricing-page #minimum-charges :is(table, tbody, tr, td) { display: block; width: auto !important; }
-  .pricing-page #minimum-charges thead { display: none; }
-  .pricing-page #minimum-charges tr { padding: 16px 0; border-bottom: 1px solid var(--nyte-stone, #DEDAD0); }
-  .pricing-page #minimum-charges tr:first-child { border-top: 1.5px solid var(--nyte-ink, #151311); }
-  .pricing-page #minimum-charges td {
+  html:root .pricing-page #minimum-charges :is(table, tbody, tr, td) { display: block; width: auto !important; }
+  html:root .pricing-page #minimum-charges thead { display: none; }
+  html:root .pricing-page #minimum-charges tr { padding: 16px 0; border-bottom: 1px solid var(--nyte-stone, #DEDAD0); }
+  html:root .pricing-page #minimum-charges tr:first-child { border-top: 1.5px solid var(--nyte-ink, #151311); }
+  html:root .pricing-page #minimum-charges td {
     display: grid !important;
     grid-template-columns: 118px minmax(0, 1fr);
     gap: 12px;
@@ -220,18 +213,20 @@
     border: 0 !important;
     font-size: 15px;
   }
-  .pricing-page #minimum-charges td::before {
+  html:root .pricing-page #minimum-charges td::before {
     padding-top: 2px;
     font: 500 11px/1.6 var(--tr-font-family-mono);
     letter-spacing: .05em;
     text-transform: uppercase;
     color: var(--nyte-ink-2, #57514A);
   }
-  .pricing-page #minimum-charges td:nth-child(1) { font-weight: 550; }
-  .pricing-page #minimum-charges td:nth-child(1)::before { content: "Usage"; }
-  .pricing-page #minimum-charges td:nth-child(2)::before { content: "Retail rates"; }
-  .pricing-page #minimum-charges td:nth-child(3)::before { content: "Raw cost"; }
-  .pricing-page #minimum-charges td:nth-child(4)::before { content: "Rounded"; }
-  .pricing-page #minimum-charges td:nth-child(5)::before { content: "Billed"; }
-  .pricing-page #minimum-charges td:nth-child(6)::before { content: "Multiple"; }
+  html:root .pricing-page #minimum-charges td:nth-child(1) { font-weight: 550; }
+  html:root .pricing-page #minimum-charges td:nth-child(1)::before { content: "Usage"; }
+  html:root .pricing-page #minimum-charges td:nth-child(2)::before { content: "Retail rates"; }
+  html:root .pricing-page #minimum-charges td:nth-child(3)::before { content: "Raw cost"; }
+  html:root .pricing-page #minimum-charges td:nth-child(4)::before { content: "Rounded"; }
+  html:root .pricing-page #minimum-charges td:nth-child(5)::before { content: "Billed"; }
+  html:root .pricing-page #minimum-charges td:nth-child(6)::before { content: "Multiple"; }
 }
+
+html:root .pricing-what .pricing-bill { max-width: 560px; }

@@ -91,7 +91,8 @@ def test_homepage_banner_shows_the_live_glm_offer() -> None:
     assert page.select_one("[data-token-exchange-banner]") is None
     assert banner["href"] == "/models/fortanix/glm-5.3-flash"
     assert "GLM 5.3 Flash" in banner.get_text()
-    assert "Basically free, at 1¢ per million tokens." in banner.get_text()
+    assert "is basically free" in banner.get_text()
+    assert "1¢ per million tokens" in banner.get_text()
     assert banner.find_next_sibling("section")["id"] == "top"
 
 

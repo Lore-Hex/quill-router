@@ -2,13 +2,13 @@
 {% block promotion %}{% include "public/_fortanix_promo.html" %}{% endblock %}
 {% set catalog_header_search = true %}
 {% from "public/_catalog_privacy.html" import privacy_badges, serving_provider_chip %}
-{% block head_extra %}<link rel="alternate" type="application/atom+xml" title="TrustedRouter model route changes" href="/v1/models/changes.atom">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/models-hero.css?v={{ static_version|default('local') }}"><link rel="alternate" type="application/atom+xml" title="TrustedRouter model route changes" href="/v1/models/changes.atom">{% endblock %}
 {% block hero %}
-<link rel="stylesheet" href="/static/models-hero.css?v={{ static_version|default('local') }}">
 <section class="models-page-hero{% if hero_price_bars %} has-price-bars{% endif %}">
   <div class="models-hero-copy">
+    <div class="kicker">Public catalog · {{ total_model_count }} models · {{ total_provider_count }} providers</div>
     <h1>Find the right model.</h1>
-    <p class="models-hero-count">{{ total_model_count }} models from {{ total_provider_count }} providers, with prices for every route.</p>
+    <p class="models-hero-count">Hundreds of models, searchable by name, family, or provider. Compare input and output prices, inspect cached-input rates, and open every provider route without leaving the page.</p>
     <div class="models-page-hero-cta">
       <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
       <p class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</p>

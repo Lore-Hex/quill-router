@@ -1,8 +1,12 @@
 {% extends "public/_base.html" %}
+{% set hero_offer_metric = true %}
 {% block body_attributes %}class="pricing-page"{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/pricing-page.css?v={{ static_version|default('local') }}">{% endblock %}
 {% block promotion %}{% include "public/_fortanix_promo.html" %}{% endblock %}
-{% block hero_aside %}
-<figure class="pricing-bill" aria-label="What you pay">
+{% block body %}
+<section class="pricing-section pricing-what" aria-labelledby="pricing-what">
+  <h2 id="pricing-what">What you pay</h2>
+<figure class="pricing-bill">
   <figcaption>Example price per 1M tokens</figcaption>
   <dl>
     <div><dt>Provider cost</dt><dd>$1.00</dd></div>
@@ -10,9 +14,7 @@
     <div class="pricing-bill-total"><dt>Customer price</dt><dd>$1.055</dd></div>
   </dl>
 </figure>
-{% endblock %}
-{% block body %}
-<link rel="stylesheet" href="/static/pricing-page.css?v={{ static_version|default('local') }}">
+</section>
 
 <section class="pricing-section" aria-labelledby="pricing-ways">
   <h2 id="pricing-ways">Ways to pay</h2>
@@ -38,7 +40,7 @@
     <a class="btn secondary" href="/models">Browse model prices</a>
   </div>
   <ul class="pricing-rules">
-    <li>Input, cached-input, output, and provider-specific prices are listed on the <a href="/models">Models page</a>.</li>
+    <li>Input, cached-input, output, and provider-specific prices are listed on the Models page.</li>
     <li>Prepaid text and embedding prices are provider cost + 5.5%, with a $0.01 per million token floor</li>
     <li>Video generation is the direct provider quote + 20%, billed as exact integer microdollars</li>
     <li>The same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% pay as you go fee on credit purchases</a></li>
