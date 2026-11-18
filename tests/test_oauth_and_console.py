@@ -229,11 +229,23 @@ def test_oauth_provider_unreachable_is_retryable_without_session(
         httpx_mock.add_response(method="POST", url=token_url, json={"access_token": "provider-token"})
         httpx_mock.add_exception(exc, method="GET", url=user_url)
 
+    from trusted_router.errors import ExpectedHTTPException
+    from trusted_router.routes import oauth as oauth_routes
+
+    raised: list[Exception] = []
+    real_expected = oauth_routes.expected_api_error
+    def recording_expected(*args: Any, **kwargs: Any) -> Exception:
+        raised.append(real_expected(*args, **kwargs))
+        return raised[-1]
+    monkeypatch.setattr(oauth_routes, "expected_api_error", recording_expected)
+
     with caplog.at_level(logging.WARNING, logger="trusted_router.routes.oauth"):
         response = client.get(f"/{slug}_oauth_callback", params={"code": "spent-code", "state": state},
                               follow_redirects=False)
 
     assert response.status_code == 503
+    # The warning is the outage signal; the 503 is not a Sentry error (QUILL-ROUTER-H3).
+    assert len(raised) == 1 and isinstance(raised[0], ExpectedHTTPException)
     assert response.json()["error"]["message"] == f"{slug.title()} did not respond; please sign in again"
     assert response.json()["error"]["type"] == "service_unavailable"
     assert "tr_session=" not in response.headers.get("set-cookie", "")

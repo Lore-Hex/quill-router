@@ -506,3 +506,25 @@ def test_all_section_three_json_literals():
                      for name in ('pending', 'settled', 'refunded')})
     assert actual == expected
     assert [canonical(v) for v in actual] == [canonical(v) for v in expected]
+
+
+def test_the_storage_503_is_counted_and_not_a_sentry_error(caplog):
+    """QUILL-ROUTER-DV: the gateway retries this 503 on the same settlement
+    identity, so it is backpressure. The counted warning is the signal and the
+    response is unchanged; Sentry skips it."""
+    import logging
+
+    from trusted_router.errors import ExpectedHTTPException
+    from trusted_router.sentry_config import before_send
+    from trusted_router.services import async_settle_handler
+
+    storage = json.loads((ROOT/'error_envelopes_v1.json').read_text())['cases']['storage_unavailable']
+    with caplog.at_level(logging.INFO, logger=async_settle_handler.__name__):
+        exc = async_settle_handler.unavailable('deadline_exceeded')
+    assert isinstance(exc, ExpectedHTTPException)
+    assert (exc.status_code, exc.headers) == (storage['status'], {'Retry-After': storage['retry_after']})
+    assert exc.detail == {'error': json.loads(storage['body_exact'])['error']}
+    messages = [record.getMessage() for record in caplog.records]
+    assert 'async_settle.unavailable reason=deadline_exceeded' in messages
+    assert any(m.startswith('metric=async_settle_unavailable reason=deadline_exceeded') for m in messages)
+    assert before_send({'message': 'x'}, {'exc_info': (type(exc), exc, None)}) is None

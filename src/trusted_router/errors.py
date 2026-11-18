@@ -55,6 +55,33 @@ def api_error(
     )
 
 
+class ExpectedHTTPException(HTTPException):
+    """A retryable answer to a dependency outage the caller already handles.
+
+    The raise site logs the cause (or counts it), and the caller retries or
+    starts over by design. The response is identical to `api_error`'s; only
+    Sentry treats it differently: `sentry_config.before_send` drops it, so a
+    designed backpressure answer is not an error event. Use it only where a
+    log line or metric at the raise site keeps the outage visible.
+    """
+
+
+def expected_api_error(
+    code: int,
+    message: str,
+    type_: str,
+    *,
+    source: str | None = None,
+    headers: dict[str, str] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> ExpectedHTTPException:
+    return ExpectedHTTPException(
+        status_code=code,
+        detail=error_body(code, message, type_, source=source, extra=extra),
+        headers=headers,
+    )
+
+
 def assert_workspace_billing_active(workspace: Any) -> None:
     """Quiesce guard for the typed-billing migration (and a general billing kill
     switch): raise 503 + Retry-After if the workspace is billing-paused. Call at

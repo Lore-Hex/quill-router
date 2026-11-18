@@ -48,7 +48,7 @@ class AsyncSettlementRoute(APIRoute):
                             started=started, synchronous=modes == ["sync"],
                         )
             except TimeoutError as exc:
-                raise unavailable() from exc
+                raise unavailable("route_deadline") from exc
 
         return dispatch
 
