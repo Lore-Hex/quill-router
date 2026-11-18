@@ -266,11 +266,11 @@ def probe_cloud(cloud: str) -> str:
         step = "control-plane health"
         status = fetch(f"{plane}/health").get("status")
         if status != "ok":
-            raise Refused(f"control plane unhealthy (status {_bounded(repr(status))})")
+            raise Refused(f"control plane unhealthy ({_status_text(status)})")
         step = "gateway health"
         status = fetch(f"{gateway}/health").get("status")
         if status != "ok":
-            raise Refused(f"gateway unhealthy (status {_bounded(repr(status))})")
+            raise Refused(f"gateway unhealthy ({_status_text(status)})")
         step = "control-plane evidence, second read"
         after = fetch(f"{plane}/trust/control-plane.json")
         step = "release evidence"
@@ -289,10 +289,24 @@ def probe_cloud(cloud: str) -> str:
         raise Refused(f"{cloud} is not a verified healthy holdback ({step}: {probe_failure(exc)})") from exc
 
 
-def _bounded(text: str, limit: int = 160) -> str:
-    """TEXT on one line, at most LIMIT characters."""
+# A /health status printed verbatim. Anything else the remote server sends is
+# named by type only: the refusal lands in public Actions logs, whose legacy
+# command parser acts on "##[" anywhere in a line.
+_PRINTABLE_STATUS = re.compile(r"[A-Za-z0-9_.-]{1,32}")
 
-    flat = " ".join(text.split())
+
+def _status_text(status: object) -> str:
+    if status is None:
+        return "no status"
+    if isinstance(status, str) and _PRINTABLE_STATUS.fullmatch(status):
+        return f"status {status!r}"
+    return f"status of type {type(status).__name__}"
+
+
+def _bounded(text: str, limit: int = 160) -> str:
+    """TEXT on one line, at most LIMIT characters, with no Actions "##[" command marker."""
+
+    flat = " ".join(text.split()).replace("##[", "# #[")
     return flat if len(flat) <= limit else flat[: limit - 3] + "..."
 
 
