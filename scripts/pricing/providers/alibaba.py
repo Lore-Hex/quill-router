@@ -142,7 +142,12 @@ def _price(native_id: str) -> ModelPrice | None:
             ]
         )
     prompt = completion = cached = None
-    if model.startswith("glm-5."):
+    if model == "qwen4-max":
+        # model-pricing, Qwen-Max > Germany (Frankfurt) > Global:
+        # one rate through 1M input tokens; cached is a hit, not cache creation.
+        # https://www.alibabacloud.com/help/en/model-studio/model-pricing
+        prompt, completion, cached = 1.413, 4.24, 0.071
+    elif model.startswith("glm-5."):
         prompt, completion, cached = 1.40, 4.40, 0.26
     elif model == "kimi-k2.7-code":
         prompt, completion, cached = 0.894, 3.713, 0.18
