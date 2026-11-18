@@ -72,8 +72,8 @@
 #main>.trf-guides li{margin:0;font-size:16px;line-height:1.5}
 #main>.trf-guides li a{color:var(--tr-color-text-primary);font-weight:450;text-decoration:underline;text-decoration-color:var(--homepage-rule);text-underline-offset:4px}
 #main>.trf-guides li a:hover{text-decoration-color:currentColor}
-#main>.trf-guides .panel-body>p:last-of-type{grid-column:2;grid-row:3;margin:40px 0 0;max-width:66ch;font-size:15px;line-height:1.6;font-weight:450;color:var(--tr-color-text-primary)}
-#main>.trf-guides .panel-body>.button{grid-column:2;grid-row:4;justify-self:start;margin-top:20px}
+#main>.trf-guides .panel-body>.button{grid-column:2;grid-row:3;justify-self:start;margin-top:40px}
+#main>.trf-guides .panel-body>p.cta-note{grid-column:2;grid-row:4;margin:12px 0 0;max-width:66ch;font-size:15px;line-height:1.6;font-weight:450;color:var(--tr-color-text-secondary)}
 #faq>.trf{padding-bottom:56px}
 @media(max-width:880px){
  #main>.trf-guides ul{grid-template-columns:1fr}

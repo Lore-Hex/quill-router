@@ -1404,3 +1404,18 @@ table.content-reference,
 :root .tr-scroll-bar .tr-scroll-btn svg {
   background: transparent;
 }
+
+/* Fade only, everywhere (designer, 2026-11-17): rows keep their soft edge
+   fade but show no chevron, and tables show no chevron bar. The cut-off
+   chip or column is the hint. */
+:root .tr-scroll-edge.is-row {
+  pointer-events: none;
+}
+
+:root .tr-scroll-edge.is-row .tr-scroll-btn {
+  visibility: hidden;
+}
+
+:root .tr-scroll-bar {
+  display: none !important;
+}
