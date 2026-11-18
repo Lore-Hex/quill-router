@@ -2006,6 +2006,24 @@
   }
 }
 
+/* Phones: less empty space around the Band, so the next section starts soon
+   after the hero. Laptops and desktops keep the roomier spacing. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+    padding-bottom: 80px;
+  }
+
+  :root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .blog-index-head) + * {
+    margin-top: 24px;
+  }
+
+  /* /pricing spaces its sections with padding; the first one sits 24px
+     under the hero like every other page. */
+  :root[data-brand="nyte"] .pricing-page .public-hero + .pricing-section {
+    padding-top: 0;
+  }
+}
+
 /* The model page sets its colour names on its wrapper; the Ink hero
    re-points them at the dark values. */
 :root[data-brand="nyte"] .model-detail-page .md-hero {

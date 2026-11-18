@@ -147,7 +147,7 @@
  .trp .terms>span:nth-child(3){border-left:0;padding-left:0}
 }
 @media(max-width:700px){
- .page{--homepage-space:56px}
+ .page{--homepage-space:40px}
  .trc .chd,.trp .ph3{align-items:flex-start;gap:20px}
  .trc .catalog-actions{align-self:flex-end}
  .trc .fl{gap:20px}
