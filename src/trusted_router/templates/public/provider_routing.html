@@ -7,7 +7,7 @@
   <div class="content-prose">
     <span class="content-label">OpenRouter-compatible routing controls</span>
     <h2 data-toc-label="Overview">Pin, prefer, or exclude providers per request.</h2>
-    <p>Every Chat Completions and Responses request accepts a <code>provider</code> object that narrows which providers may serve it and in what order. Hard filters fail with <code>400</code> before inference when nothing matches. Unknown options also return <code>400</code>. OpenRouter options recognized but not implemented by this release return <code>501 not_supported_in_alpha</code>. Accepted router options never disappear silently.</p>
+    <p>Every Chat Completions and Responses request accepts a <code>provider</code> object that narrows which providers may serve it and in what order. Hard filters fail with <code>400</code> before inference when nothing matches. Unknown options also return <code>400</code>. OpenRouter options recognized but not implemented by this release return <code>501 not_supported_in_alpha</code>. Accepted router options never disappear silently. <a href="/docs/migrate-from-openrouter#lenient-mode">Lenient mode</a> drops unknown and unsupported options instead and names them in the <code>X-TrustedRouter-Ignored-Parameters</code> response header.</p>
     <p>Lists accept either a JSON array or one comma-separated string. Provider slugs are the ones on the <a href="/providers">providers page</a> and in <a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a>.</p>
   </div>
   <div class="content-examples">

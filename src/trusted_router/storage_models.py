@@ -414,6 +414,10 @@ class ApiKey:
     budget_strict: bool = False
     budget_alerted: dict[str, str] = field(default_factory=dict)
     include_byok_in_limit: bool = True
+    # Lenient request parsing: the gateway drops unknown and unsupported
+    # request parameters (naming them in a response header) instead of
+    # refusing the request. False keeps the strict contract.
+    lenient: bool = False
     usage_microdollars: int = 0
     byok_usage_microdollars: int = 0
     expires_at: str | None = None
@@ -2294,6 +2298,8 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         limit_monthly_microdollars=record.get("limit_monthly_microdollars"),
         budget_alert_only=bool(record.get("budget_alert_only", False)),
         budget_strict=bool(record.get("budget_strict", False)),
+        # A peer plane's gateway asks its own control plane for the setting.
+        lenient=bool(record.get("lenient", False)),
         include_byok_in_limit=bool(record.get("include_byok_in_limit", True)),
         expires_at=record.get("expires_at"),
         federated_home=str(record.get("revision") or "") or "federated",

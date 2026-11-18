@@ -252,6 +252,7 @@ def test_scoped_inference_key_passes_all_gateway_sites_including_media(
         "workspace_id": key.workspace_id,
         "api_key_hash": key.hash,
         "route_type": "images",
+        "lenient": False,
     }
     assert key_info.status_code == 200, key_info.text
     assert key_info.json()["data"]["hash"] == key.hash
@@ -472,6 +473,7 @@ def test_scoped_and_legacy_self_key_shapes(client: TestClient) -> None:
         "limit_remaining_microdollars",
         "limit_reset",
         "include_byok_in_limit",
+        "lenient",
         "tags",
         "budget_alert_only",
         "budget_strict",

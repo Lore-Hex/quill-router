@@ -318,6 +318,8 @@ class InMemoryApiKeys:
                     setattr(key, field, patch[field])
             if "include_byok_in_limit" in patch:
                 key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
+            if patch.get("lenient") is not None:
+                key.lenient = bool(patch["lenient"])
             if patch.get("budget_alert_only") is not None:
                 key.budget_alert_only = bool(patch["budget_alert_only"])
             if "budget_alerted" in patch:

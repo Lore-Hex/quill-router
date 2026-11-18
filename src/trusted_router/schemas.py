@@ -173,6 +173,8 @@ class CreateKeyRequest(_Lenient):
     budget_alert_only: bool = False
     budget_strict: bool = False
     include_byok_in_limit: bool = True
+    # Drop unknown and unsupported request parameters instead of refusing.
+    lenient: bool = False
     expires_at: str | None = None
     workspace_id: str | None = None
     management: bool = False
@@ -200,6 +202,7 @@ class PatchKeyRequest(_Lenient):
     limit_monthly: Decimal | None = None
     budget_alert_only: bool | None = None
     include_byok_in_limit: bool | None = None
+    lenient: bool | None = None
     tags: dict[str, Any] | None = None
 
     @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
@@ -578,6 +581,9 @@ class GatewayValidateRequest(_Lenient):
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     route_type: str | None = None
     contract_rejection: GatewayContractRejection | None = None
+    # The gateway asking whether the key is lenient before it drops a
+    # parameter, not a request that already failed.
+    lenience_probe: bool = False
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayValidateRequest:

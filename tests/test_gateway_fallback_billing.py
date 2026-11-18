@@ -1115,6 +1115,7 @@ def test_gateway_validate_checks_key_without_reserving_or_recording_usage() -> N
         "workspace_id": key["workspace_id"],
         "api_key_hash": key["hash"],
         "route_type": "responses.input_tokens",
+        "lenient": False,
     }
     refreshed_key = STORE.get_key_by_hash(key["hash"])
     money = STORE.credit_money[key["workspace_id"]]

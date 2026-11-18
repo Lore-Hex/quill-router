@@ -45,6 +45,27 @@ client = OpenAI(
   </div>
 </section>
 
+<section class="marketing-split" id="lenient-mode">
+  <div class="marketing-copy">
+    <span class="eyebrow">Lenient mode</span>
+    <h2>Keep requests built for other routers working.</h2>
+    <p>By default an unknown request parameter returns <code>400</code> and a recognized but unsupported one returns <code>501 not_supported_in_alpha</code>, so nothing you send is ignored without your knowledge.</p>
+    <p>Lenient mode drops those parameters instead and serves the request. Turn it on for one request with the <span class="mono">X-TrustedRouter-Lenient: true</span> header, or for every request on a key with <span class="mono">"lenient": true</span> when you create or update the key. Each response lists what was dropped in <span class="mono">X-TrustedRouter-Ignored-Parameters</span>.</p>
+    <p>Lenient mode only drops parameters. A supported parameter with a malformed value still returns <code>400</code>, and it never removes messages, input, or content parts.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Per request</span><span>header</span></div>
+    <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-...",
+    default_headers={"X-TrustedRouter-Lenient": "true"},
+)
+
+# Or once, for every request on a key:
+# PATCH /v1/keys/{hash}  {"lenient": true}</code></pre>
+  </div>
+</section>
+
 <section class="quote-feature">
   <div>
     <span class="eyebrow">Design partners</span>

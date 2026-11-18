@@ -2373,17 +2373,25 @@ def _gateway_validate_sync(
     assert_workspace_billing_active(workspace)
     from trusted_router.services.gateway_contract_warnings import report_gateway_contract_rejection
 
-    report_gateway_contract_rejection(
-        body.contract_rejection,
-        route=body.route_type,
-        workspace_id=workspace.id,
-        credential_id=api_key.hash,
-    )
+    # The gateway's lenience probe carries the refusal a strict parse would
+    # return. A lenient key drops that parameter and serves the request, so
+    # the probe is not a refusal. Any other report, from a lenient key or not,
+    # is a request that did fail.
+    if not (body.lenience_probe and api_key.lenient):
+        report_gateway_contract_rejection(
+            body.contract_rejection,
+            route=body.route_type,
+            workspace_id=workspace.id,
+            credential_id=api_key.hash,
+        )
     return {
         "data": {
             "workspace_id": workspace.id,
             "api_key_hash": api_key.hash,
             "route_type": body.route_type,
+            # The gateway asks only when a strict parse would refuse the
+            # request, then drops the offending parameters if this is true.
+            "lenient": bool(api_key.lenient),
         }
     }
 
