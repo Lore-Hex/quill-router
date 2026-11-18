@@ -6,10 +6,13 @@
 #
 # Adding a file: regenerate scripts/ci/heavy_footprint.json from a newer
 # per-test footprint map (python3 scripts/ci/testmap.py heavy --map
-# testmap.json.gz --write scripts/ci/heavy_footprint.json). A refactor that
-# stops a heavy test reaching a helper leaves a stale snapshot entry, which
-# the default suite lets pass; python3 scripts/ci/testmap.py heavy-prune
-# deletes such entries.
+# testmap.json.gz --write scripts/ci/heavy_footprint.json).
+# Renaming one: python3 scripts/ci/testmap.py heavy-prune --rename OLD=NEW
+# (no map needed). Removing one: nothing to do; its entries go stale.
+# A refactor that stops a heavy test reaching a helper leaves a stale
+# snapshot entry, which the default suite lets pass; python3
+# scripts/ci/testmap.py heavy-prune deletes stale entries and records again
+# the path to every entry the lane still reaches.
 tests/test_async_settle_proof_oracle.py
 tests/test_async_settle_shadow_cohort_differential.py
 tests/test_async_settle_shadow_cohort_http.py

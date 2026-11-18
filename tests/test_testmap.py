@@ -1041,12 +1041,30 @@ def test_needed_prints_only_github_output_lines_on_stdout(tmp_path: Path, monkey
 # ---------------------------------------------------------------- the heavy lane's footprint check
 
 HEAVY_FILE = "tests/test_heavy_lane.py"
+OWNER_STALL_CLOCK = "tests/test_async_settle_shadow_owner_stall.py:harness.<locals>.<lambda>"
+
+
+def without_alias_names(path: str, tree) -> set[str]:
+    """commit_scope.statement_imports without `from M import N` as M.N: the
+    second review's rule break (a submodule imported by name is lost)."""
+    import ast
+
+    package = (path[4:] if path.startswith("src/") else path).removesuffix(".py").split("/")[:-1]
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - node.level + 1] if node.level else []
+            names.add(".".join([*base, *([node.module] if node.module else [])]))
+    return names
 
 
 def test_heavy_footprint_is_the_tests_windows_fixtures_and_collection_not_shared_misses() -> None:
     tmap = tm.TestMap(build_map(
-        {f"{HEAVY_FILE}::test_a": {"f": ["src/app/a.py:run", "tests/helper.py:make@memo"], "o": ["tests/data.json"]},
-         f"{HEAVY_FILE}::test_b": {"f": ["src/app/b.py:run"]},
+        {f"{HEAVY_FILE}::test_a": {"f": ["src/app/a.py:run", "tests/helper.py:make@memo", OWNER_STALL_CLOCK],
+                                   "o": ["tests/data.json"]},
+         f"{HEAVY_FILE}::test_b": {"f": ["src/app/b.py:run", "tests/shadow_observation_diagnostics.py:status"]},
          "tests/test_other.py::test_c": {"f": ["src/app/c.py:run"], "o": ["docs/c.md"]}},
         fixtures={f"{HEAVY_FILE}::test_b": [{"f": ["tests/conftest.py:client"]}]},
         collect={HEAVY_FILE: {"o": ["tests/collected.json"]}, "tests/test_other.py": {"o": ["docs/other.md"]}},
@@ -1054,36 +1072,48 @@ def test_heavy_footprint_is_the_tests_windows_fixtures_and_collection_not_shared
         # and what runs outside every window, are not a heavy test's own.
         cached={"tests/helper.py:make": {"f": ["tests/test_other.py:fake_source"]}},
         glob={"f": ["src/app/boot.py:boot"], "o": ["docs/global.md"]}))
+    # A leaked function (HEAVY_LEAKS) does not count; the rest of a file a
+    # leak comes from does (diagnostics' status is no leak).
     assert tm.heavy_footprint(tmap, [HEAVY_FILE]) == {
         "src/app/a.py", "tests/helper.py", "tests/data.json", "src/app/b.py", "tests/conftest.py",
-        "tests/collected.json"}
+        "tests/collected.json", "tests/shadow_observation_diagnostics.py"}
 
 
 def test_the_heavy_check_names_each_file_outside_the_lane(tmp_path: Path, monkeypatch, capsys) -> None:
+    native = "tests/conformance/test_shadow_observation_native.py"
     for path, text in {"tests/__init__.py": "", "tests/conftest.py": "", HEAVY_FILE: "import tests.helper\n",
                        "tests/helper.py": "", "tests/unrelated.py": "", "src/app/a.py": "", "docs/c.md": "x\n",
-                       "tests/conformance/test_shadow_observation_native.py": ""}.items():
+                       native: ""}.items():
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / path).write_text(text)
     monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE,))
     monkeypatch.chdir(tmp_path)
-    footprint = {"f": ["src/app/a.py:run", "tests/helper.py:make", "tests/unrelated.py:leak",
-                       "tests/conformance/test_shadow_observation_native.py:native_liveness.<locals>.Reports.x"],
+    leak = f"{native}:native_liveness.<locals>.Reports.pytest_runtest_makereport"
+    assert leak in tm.HEAVY_LEAKS
+    footprint = {"f": ["src/app/a.py:run", "tests/helper.py:make", "tests/unrelated.py:leak", leak],
                  "o": ["docs/c.md", "relative-name-in-a-temporary-directory"]}
     tm.write_gz({**build_map({f"{HEAVY_FILE}::test_a": footprint}), "incomplete_memo": [], "unattributed_memo": []},
                 tmp_path / "map.json.gz")
     assert tm.main(["heavy", "--map", "map.json.gz", "--write", "snapshot.json"]) == 1
     out = capsys.readouterr().out
     # A file no rule reaches, and a document nothing names, are each named;
-    # the lane's own files, src/ and a known leak are not.
+    # the lane's own files, src/ and a known leaked function are not.
     assert "tests/unrelated.py is in a heavy test's footprint but outside run_heavy" in out
     assert "docs/c.md is in a heavy test's footprint" in out
     assert "helper" not in out and "src/app" not in out and "native" not in out
     snapshot = json.loads((tmp_path / "snapshot.json").read_text())
     assert snapshot["tests"] == [HEAVY_FILE] and snapshot["map"]["commit"] == "a" * 40
     assert "relative-name-in-a-temporary-directory" not in snapshot["files"] and "docs/c.md" in snapshot["files"]
-    # Once the lane names the document and imports the module, it passes.
-    (tmp_path / HEAVY_FILE).write_text("import tests.helper\nimport tests.unrelated\nDOC = 'docs/c.md'\n")
+    assert native not in snapshot["files"]
+    # Another function of the leak's file is no leak.
+    footprint["f"].append(f"{native}:shadow_emulator_resources")
+    tm.write_gz({**build_map({f"{HEAVY_FILE}::test_a": footprint}), "incomplete_memo": [], "unattributed_memo": []},
+                tmp_path / "map.json.gz")
+    assert tm.main(["heavy", "--map", "map.json.gz"]) == 1
+    assert f"{native} is in a heavy test's footprint" in capsys.readouterr().out
+    # Once the lane names the document and imports the modules, it passes.
+    (tmp_path / HEAVY_FILE).write_text("import tests.helper\nimport tests.unrelated\nDOC = 'docs/c.md'\n"
+                                       "import tests.conformance.test_shadow_observation_native\n")
     assert tm.main(["heavy", "--map", "map.json.gz"]) == 0
     # A map without the lane's tests cannot be its snapshot.
     monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE, "tests/test_newer.py"))
@@ -1094,30 +1124,31 @@ def test_the_heavy_check_names_each_file_outside_the_lane(tmp_path: Path, monkey
 def test_the_heavy_scope_covers_everything_the_map_saw_the_lane_use(monkeypatch) -> None:
     # scripts/ci/heavy_footprint.json: every file the heavy tests ran or
     # opened in a map (testmap.py heavy --write), with the path the walk took
-    # to each. Regenerate it from a newer map when HEAVY_TESTS gains a file.
-    # An entry a refactor made unreachable is stale and passes (testmap.py
-    # heavy-prune deletes it); the map workflow checks each new map whole.
+    # to each. A refactor that cuts a link (a changed file that no longer
+    # names the next one) makes an entry stale, which passes (testmap.py
+    # heavy-prune deletes it and records the rest again); the map workflow
+    # checks each new map whole.
     root = Path(__file__).resolve().parents[1]
     snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
-    assert set(cs.HEAVY_TESTS) <= set(snapshot["tests"])
+    assert tm.heavy_snapshot_tests_problem(snapshot) is None
     assert len(snapshot["files"]) > 1000 and snapshot["parents"] and snapshot["sha256"]
     regressions, stale = tm.heavy_snapshot_check(root, snapshot)
     assert regressions == [], f"run_heavy's rules no longer reach {regressions} (stale entries pass: {stale})"
-    # The check can fail: rules that stop following import statements lose
-    # what the lane still reaches by unchanged files (the same entries, with
-    # the paths and digests of this tree, so no file on them changed).
-    fresh = tm.heavy_snapshot(root, snapshot["map"], snapshot["files"])
+    # The check can fail, against the committed snapshot whatever changed
+    # since it: a rule that loses `from package import module` loses files
+    # the lane still reaches by links that are all still there.
     monkeypatch.setattr(cs, "_WALKS", {})
-    monkeypatch.setattr(cs, "statement_imports", lambda path, tree: set())
-    regressions, stale = tm.heavy_snapshot_check(root, fresh)
-    assert {"tests/shadow_v2_gate_totality.py", "tests/fakes/requested_model_extension.py"} <= set(regressions)
-    assert stale == {}
+    monkeypatch.setattr(cs, "statement_imports", without_alias_names)
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    assert regressions, stale
 
 
 def lane_tree(tmp_path: Path, monkeypatch) -> Path:
     """A heavy test that imports a helper directly and another through a
-    helper that is not a test."""
-    files = {"tests/__init__.py": "", "tests/conftest.py": "", "tests/fakes/__init__.py": "",
+    helper that is not a test, and a harness that imports a submodule by
+    name; the snapshot written from a map of them."""
+    files = {"tests/__init__.py": "", "tests/conftest.py": "from tests import harness_helper\n",
+             "tests/harness_helper.py": "", "tests/fakes/__init__.py": "",
              HEAVY_FILE: ("from tests.fakes.requested_model_extension import compare\n"
                           "from tests.middle import vectors\n\n\ndef test_a():\n    assert compare() and vectors\n"),
              "tests/fakes/requested_model_extension.py": "def compare():\n    return True\n",
@@ -1129,34 +1160,44 @@ def lane_tree(tmp_path: Path, monkeypatch) -> Path:
         (tmp_path / path).write_text(text)
     monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE,))
     monkeypatch.chdir(tmp_path)
-    data = build_map({f"{HEAVY_FILE}::test_a": {"f": ["tests/fakes/requested_model_extension.py:compare",
-                                                       "tests/middle.py:<module>", "tests/shadow_vectors.py:<module>"]}})
+    data = build_map({f"{HEAVY_FILE}::test_a": {"f": [
+        f"{HEAVY_FILE}:test_a", "tests/fakes/requested_model_extension.py:compare", "tests/middle.py:<module>",
+        "tests/shadow_vectors.py:<module>", "tests/harness_helper.py:<module>"]}})
     snapshot = tm.heavy_snapshot(tmp_path, data, tm.heavy_footprint(tm.TestMap(data), [HEAVY_FILE]))
     (tmp_path / tm.HEAVY_SNAPSHOT).parent.mkdir(parents=True, exist_ok=True)
     (tmp_path / tm.HEAVY_SNAPSHOT).write_text(json.dumps(snapshot))
     assert snapshot["parents"] == {"tests/fakes/requested_model_extension.py": HEAVY_FILE,
-                                   "tests/middle.py": HEAVY_FILE, "tests/shadow_vectors.py": "tests/middle.py"}
+                                   "tests/middle.py": HEAVY_FILE, "tests/shadow_vectors.py": "tests/middle.py",
+                                   "tests/harness_helper.py": "tests/conftest.py"}
+    assert HEAVY_FILE in snapshot["files"]
     assert tm.heavy_snapshot_check(tmp_path, snapshot) == ([], {})
     return tmp_path
 
 
+def snapshot_of(root: Path) -> dict:
+    return json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+
+
 def test_a_refactor_that_stops_using_a_helper_leaves_a_stale_entry_that_passes(tmp_path: Path, monkeypatch,
                                                                               capsys) -> None:
-    # The review's case: the heavy test stops importing a helper other tests
-    # still use. The helper leaves run_heavy (correctly), and its snapshot
-    # entry is stale, not a regression; heavy-prune deletes it.
+    # The first review's case: the heavy test stops importing a helper other
+    # tests still use. The helper leaves run_heavy (correctly), and its
+    # snapshot entry is stale, not a regression; heavy-prune deletes it.
     root = lane_tree(tmp_path, monkeypatch)
     (root / HEAVY_FILE).write_text("from tests.middle import vectors\n\n\ndef test_a():\n    assert vectors\n")
-    snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+    snapshot = snapshot_of(root)
     assert tm.heavy_outside(root, snapshot["files"]) == ["tests/fakes/requested_model_extension.py"]
     regressions, stale = tm.heavy_snapshot_check(root, snapshot)
     assert regressions == [] and list(stale) == ["tests/fakes/requested_model_extension.py"]
-    assert stale["tests/fakes/requested_model_extension.py"].startswith(f"{HEAVY_FILE} changed since the snapshot")
+    assert stale["tests/fakes/requested_model_extension.py"].startswith(
+        f"{HEAVY_FILE} changed and no longer names tests/fakes/requested_model_extension.py")
     assert tm.main(["heavy-prune"]) == 0
     assert "deleted tests/fakes/requested_model_extension.py" in capsys.readouterr().out
-    pruned = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
+    pruned = snapshot_of(root)
     assert "tests/fakes/requested_model_extension.py" not in pruned["files"]
     assert "tests/fakes/requested_model_extension.py" not in pruned["parents"]
+    # What is still reached is recorded again: the heavy test's digest now.
+    assert pruned["sha256"][HEAVY_FILE] == tm.file_digest(root / HEAVY_FILE) != snapshot["sha256"][HEAVY_FILE]
     assert tm.heavy_snapshot_check(root, pruned) == ([], {})
 
 
@@ -1165,28 +1206,72 @@ def test_a_change_to_a_helper_between_heavy_test_and_entry_is_stale_too(tmp_path
     # stops importing what the heavy test reached through it.
     root = lane_tree(tmp_path, monkeypatch)
     (root / "tests/middle.py").write_text("vectors = [2]\n")
-    regressions, stale = tm.heavy_snapshot_check(root, json.loads((root / tm.HEAVY_SNAPSHOT).read_text()))
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot_of(root))
     assert regressions == [] and list(stale) == ["tests/shadow_vectors.py"]
-    assert "tests/middle.py changed since the snapshot" in stale["tests/shadow_vectors.py"]
+    assert "tests/middle.py changed and no longer names tests/shadow_vectors.py" in stale["tests/shadow_vectors.py"]
 
 
-def test_rules_that_stop_reaching_an_unchanged_path_are_a_regression(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_a_rule_break_stays_a_regression_when_the_files_on_its_path_change(tmp_path: Path, monkeypatch,
+                                                                          capsys) -> None:
+    # The second review's probe: a rule stops following `from package import
+    # module`, and an unrelated comment lands in tests/conftest.py and in the
+    # heavy test. The links are all still there, so it is a regression.
+    root = lane_tree(tmp_path, monkeypatch)
+    monkeypatch.setattr(cs, "_WALKS", {})
+    monkeypatch.setattr(cs, "statement_imports", without_alias_names)
+    assert tm.heavy_snapshot_check(root, snapshot_of(root)) == (["tests/harness_helper.py"], {})
+    for path in ("tests/conftest.py", HEAVY_FILE):
+        (root / path).write_text((root / path).read_text() + "# an unrelated comment\n")
+    assert tm.heavy_snapshot_check(root, snapshot_of(root)) == (["tests/harness_helper.py"], {})
+    # heavy-prune keeps a regression with its path, names it, and fails; only
+    # a rule fix or a deliberate deletion by hand resolves it.
+    assert tm.main(["heavy-prune"]) == 1
+    assert "commit_scope's rules stopped reaching it" in capsys.readouterr().out
+    assert "tests/harness_helper.py" in snapshot_of(root)["files"]
+    assert tm.heavy_snapshot_check(root, snapshot_of(root)) == (["tests/harness_helper.py"], {})
+
+
+def test_rules_that_stop_reaching_unchanged_paths_are_regressions(tmp_path: Path, monkeypatch) -> None:
     root = lane_tree(tmp_path, monkeypatch)
     monkeypatch.setattr(cs, "_WALKS", {})
     monkeypatch.setattr(cs, "statement_imports", lambda path, tree: set())
-    snapshot = json.loads((root / tm.HEAVY_SNAPSHOT).read_text())
-    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot_of(root))
     assert set(regressions) == {"tests/fakes/requested_model_extension.py", "tests/middle.py",
-                                "tests/shadow_vectors.py"} and stale == {}
-    # heavy-prune keeps a regression and names it; only a rule fix or a
-    # deliberate deletion by hand resolves it.
+                                "tests/shadow_vectors.py", "tests/harness_helper.py"} and stale == {}
+
+
+def test_a_heavy_test_that_leaves_the_lane_is_stale_with_what_only_it_reached(tmp_path: Path, monkeypatch,
+                                                                             capsys) -> None:
+    root = lane_tree(tmp_path, monkeypatch)
+    monkeypatch.setattr(cs, "HEAVY_TESTS", ())
+    regressions, stale = tm.heavy_snapshot_check(root, snapshot_of(root))
+    assert regressions == []
+    assert stale[HEAVY_FILE] == f"{HEAVY_FILE} left the lane"
+    assert stale["tests/middle.py"] == f"{HEAVY_FILE} left the lane"
+    # What the harness reaches is still reached.
+    assert "tests/harness_helper.py" not in stale
+    assert tm.main(["heavy-prune"]) == 0
+    pruned = snapshot_of(root)
+    assert pruned["tests"] == [] and HEAVY_FILE not in pruned["files"] and "tests/harness_helper.py" in pruned["files"]
+    assert tm.heavy_snapshot_check(root, pruned) == ([], {})
+
+
+def test_a_renamed_heavy_test_is_carried_over_without_a_map(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = lane_tree(tmp_path, monkeypatch)
+    renamed = "tests/test_heavy_lane_renamed.py"
+    (root / HEAVY_FILE).rename(root / renamed)
+    monkeypatch.setattr(cs, "HEAVY_TESTS", (renamed,))
+    problem = tm.heavy_snapshot_tests_problem(snapshot_of(root))
+    assert problem is not None and renamed in problem and "heavy-prune --rename OLD=NEW" in problem
+    # Without --rename the snapshot still lacks it, and heavy-prune says so.
     assert tm.main(["heavy-prune"]) == 1
-    assert "commit_scope's rules stopped reaching it" in capsys.readouterr().out
-    assert json.loads((root / tm.HEAVY_SNAPSHOT).read_text())["files"] == snapshot["files"]
-    # A heavy test that left the lane makes what only it reached stale.
-    monkeypatch.setattr(cs, "_WALKS", {})
-    monkeypatch.undo()
-    monkeypatch.setattr(cs, "HEAVY_TESTS", ("tests/test_newer.py",))
-    monkeypatch.chdir(root)
-    regressions, stale = tm.heavy_snapshot_check(root, snapshot)
-    assert regressions == [] and stale["tests/middle.py"] == f"{HEAVY_FILE} is no longer in the lane"
+    assert renamed in capsys.readouterr().out
+    root = lane_tree(tmp_path / "again", monkeypatch)
+    (root / HEAVY_FILE).rename(root / renamed)
+    monkeypatch.setattr(cs, "HEAVY_TESTS", (renamed,))
+    assert tm.main(["heavy-prune", "--rename", f"{HEAVY_FILE}={renamed}"]) == 0
+    carried = snapshot_of(root)
+    assert carried["tests"] == [renamed] and renamed in carried["files"] and HEAVY_FILE not in carried["files"]
+    assert carried["parents"]["tests/middle.py"] == renamed
+    assert tm.heavy_snapshot_tests_problem(carried) is None
+    assert tm.heavy_snapshot_check(root, carried) == ([], {})

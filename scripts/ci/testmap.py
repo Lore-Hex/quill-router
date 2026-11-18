@@ -28,9 +28,12 @@ Stdlib only, like commit_scope.py, so a job can run it before `uv sync`.
             records them in HEAVY_SNAPSHOT, with the path the walk took to
             each, which the default suite holds the scope to.
   heavy-prune
-            deletes HEAVY_SNAPSHOT's stale entries: files no heavy test can
-            reach any more because a file on the path that reached them
-            changed (no map needed).
+            no map needed: carries renamed heavy tests over (--rename
+            OLD=NEW), deletes HEAVY_SNAPSHOT's stale entries (a link of the
+            path that reached them was cut: a file there changed and no
+            longer names the next one, or was deleted; or their heavy test
+            left the lane) and records again the path to every entry the
+            lane still reaches.
 
 What a footprint holds (the recorder's docstring has how it is recorded):
   f  functions that started or resumed ("path:qualname"), and calls of a
@@ -1432,27 +1435,29 @@ def cmd_compare(args: argparse.Namespace) -> int:
 # a change that runs the lane. A new map is checked by the map workflow; the
 # default suite holds the scope to HEAVY_SNAPSHOT, written from a map.
 HEAVY_SNAPSHOT = "scripts/ci/heavy_footprint.json"
-# Files a map records in heavy tests' windows that cannot run in the lane:
-# what another module leaves behind in the shards' shared processes.
+# Functions a map records in heavy tests' windows that cannot run in the lane:
+# what another module leaves behind in the shards' shared processes. Keyed by
+# the map's function key, so the rest of each file still counts.
 HEAVY_LEAKS: dict[str, str] = {
-    "tests/conformance/test_shadow_observation_native.py": (
-        "its native_liveness fixture registers a pytest plugin (Reports.pytest_runtest_makereport) that stays "
-        "registered for every later test in the same worker; test-heavy does not run that module"),
-    "tests/shadow_observation_diagnostics.py": (
-        "NativeLiveness.report, called only by that leaked plugin in heavy tests' windows"),
-    "tests/test_async_settle_shadow_owner_stall.py": (
-        "the store clock its harness installs (harness.<locals>.<lambda>) keeps being called by the services its "
-        "tests start (svc.start()), whose threads outlive them into later tests in the same worker (map run "
-        "44192448102: test_async_settle_shadow_v2_gates.py's fixtures); test-heavy does not run that module"),
+    "tests/conformance/test_shadow_observation_native.py:native_liveness.<locals>.Reports.pytest_runtest_makereport": (
+        "a pytest plugin the native_liveness fixture registers, which stays registered for every later test in the "
+        "same worker; test-heavy does not run that module"),
+    "tests/shadow_observation_diagnostics.py:NativeLiveness.report": (
+        "called only by that leaked plugin in heavy tests' windows"),
+    "tests/test_async_settle_shadow_owner_stall.py:harness.<locals>.<lambda>": (
+        "the store clock the owner stall harness installs, which the services its tests start (svc.start()) keep "
+        "calling after they end, in later tests in the same worker (map run 44192448102: "
+        "test_async_settle_shadow_v2_gates.py's fixtures); test-heavy does not run that module"),
 }
 
 
 def heavy_footprint(tmap: TestMap, test_files: Iterable[str]) -> set[str]:
     """The repository paths the map's tests in `test_files` ran a function of
     or opened: each test's own window, the setup of the fixtures it requests
-    and its module's collection. Not a memoized function's misses (`cached`:
-    every miss of the function in the process, whichever test's window it
-    was) and not `global` (imports and session hooks every test shares)."""
+    and its module's collection, apart from HEAVY_LEAKS. Not a memoized
+    function's misses (`cached`: every miss of the function in the process,
+    whichever test's window it was) and not `global` (imports and session
+    hooks every test shares)."""
     wanted = set(test_files)
     paths: set[str] = set()
     for nodeid, own, fixtures in tmap.tests:
@@ -1461,7 +1466,8 @@ def heavy_footprint(tmap: TestMap, test_files: Iterable[str]) -> set[str]:
             continue
         for index in [own, *fixtures, *([tmap.collect[module]] if module in tmap.collect else [])]:
             funcs, opened = tmap.fps[index][0], tmap.fps[index][1]
-            paths.update(tmap.keys[key].split(":", 1)[0] for key in funcs)
+            paths.update(key.split(":", 1)[0] for key in (tmap.keys[i] for i in funcs)
+                         if key.removesuffix(MEMO) not in HEAVY_LEAKS)
             paths.update(tmap.keys[key] for key in opened)
     return paths
 
@@ -1469,7 +1475,7 @@ def heavy_footprint(tmap: TestMap, test_files: Iterable[str]) -> set[str]:
 def heavy_outside(root: Path, paths: Iterable[str]) -> list[str]:
     """The paths, of files that exist, whose change would not run the lane."""
     closure = cs.heavy_closure(root)
-    return sorted(path for path in set(paths) if (root / path).is_file() and path not in HEAVY_LEAKS
+    return sorted(path for path in set(paths) if (root / path).is_file()
                   and not cs.heavy_covers(path, closure) and not cs.matches_any(path, cs.FULL_MATRIX_PATHS))
 
 
@@ -1481,12 +1487,34 @@ def file_digest(path: Path) -> str | None:
         return None
 
 
+GENERIC_FILE_NAMES = frozenset({"__init__.py", "conftest.py"})
+
+
+def names_of(path: str) -> set[str]:
+    """What a file that loads or reads `path` writes to do so: its repository
+    path, its file name, and for a module its dotted name (a package's, for an
+    __init__.py) and that name's last part (`from package import name`)."""
+    names = {path}
+    if path.rsplit("/", 1)[-1] not in GENERIC_FILE_NAMES:
+        names.add(path.rsplit("/", 1)[-1])
+    top = path.split("/", 1)[0]
+    if path.endswith(".py") and top in cs.MODULE_ROOTS:
+        module = (path[4:] if top == "src" else path).removesuffix(".py").removesuffix("/__init__").replace("/", ".")
+        names |= {module, module.rsplit(".", 1)[-1]}
+    return names
+
+
+def mentions(text: str, path: str) -> bool:
+    """Whether a file's text still names `path` (names_of), as a whole word."""
+    return any(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text) for name in names_of(path))
+
+
 def heavy_snapshot(root: Path, data: dict, paths: Iterable[str]) -> dict:
     """The snapshot of a map's heavy footprint (HEAVY_SNAPSHOT): its files that
-    exist, and for each the walk reached, the path that reached it (`parents`,
-    each file's parent up to a heavy test) with the digest of every file on
-    it (`sha256`), so a later check can tell an entry a change made
-    unreachable from one the scope's rules stopped reaching."""
+    exist, and for each one only the walk covers, the path that reached it
+    (`parents`, each file's parent up to a heavy test) with the digest of
+    every file on it (`sha256`), so a later check can tell an entry a change
+    made unreachable from one the scope's rules stopped reaching."""
     walk = cs.heavy_walk(root)
     files = sorted(path for path in set(paths) if (root / path).is_file())
     parents: dict[str, str] = {}
@@ -1504,22 +1532,29 @@ def heavy_snapshot(root: Path, data: dict, paths: Iterable[str]) -> dict:
 
 def heavy_snapshot_check(root: Path, snapshot: dict) -> tuple[list[str], dict[str, str]]:
     """The snapshot's entries outside the lane's scope, as (regressions,
-    stale). Stale: no heavy test can reach the entry any more because a file
-    on the path that reached it changed or went away since the snapshot, or
-    its heavy test left the lane: a refactor, which the check lets pass (and
-    `heavy-prune` deletes). A regression: every file on that path is as it
-    was, or no path was recorded, yet the scope no longer covers the entry:
-    commit_scope's rules stopped reaching it. A fresh map is what tells a
-    dynamic read a refactor added from a stale entry; the map workflow
-    checks every new one."""
+    stale). Each recorded path is judged link by link. A link is broken when
+    its file no longer exists, or changed since the snapshot and no longer
+    names the next file (names_of): a refactor took it out. An entry is stale
+    when a link on its path is broken, its heavy test left the lane, or it is
+    a heavy test that left the lane: the check lets it pass, and `heavy-prune`
+    deletes it. Otherwise every link is still there, unchanged or changed but
+    still naming the next file, and the entry is a regression: commit_scope's
+    rules stopped reaching it (so is an entry with no recorded path). A file
+    reached by a pattern (a glob, a listing) counts as named only by its name.
+    A dynamic read a refactor added needs a fresh map, which the map workflow
+    checks each time."""
     walk = cs.heavy_walk(root)
     parents: dict[str, str] = snapshot.get("parents", {})
     digests: dict[str, str] = snapshot.get("sha256", {})
+    lane = (*cs.HEAVY_TESTS, *cs.TEST_HARNESS)
     regressions: list[str] = []
     stale: dict[str, str] = {}
     for path in snapshot["files"]:
-        if not (root / path).is_file() or path in HEAVY_LEAKS or cs.matches_any(path, cs.FULL_MATRIX_PATHS) \
+        if not (root / path).is_file() or cs.matches_any(path, cs.FULL_MATRIX_PATHS) \
                 or cs.heavy_covers(path, walk.closure):
+            continue
+        if path in snapshot.get("tests", ()) and path not in lane:
+            stale[path] = f"{path} left the lane"
             continue
         chain = [path]
         while chain[-1] in parents and len(chain) <= len(parents):
@@ -1527,13 +1562,34 @@ def heavy_snapshot_check(root: Path, snapshot: dict) -> tuple[list[str], dict[st
         chain.reverse()
         if len(chain) < 2:
             regressions.append(path)
-        elif chain[0] not in (*cs.HEAVY_TESTS, *cs.TEST_HARNESS):
-            stale[path] = f"{chain[0]} is no longer in the lane"
-        elif changed := next((step for step in chain[:-1] if file_digest(root / step) != digests.get(step)), None):
-            stale[path] = f"{changed} changed since the snapshot (the walk reached it by {' -> '.join(chain)})"
+            continue
+        if chain[0] not in lane:
+            stale[path] = f"{chain[0]} left the lane"
+            continue
+        broken = None
+        for here, there in zip(chain, chain[1:], strict=False):
+            if not (root / here).is_file():
+                broken = f"{here} no longer exists"
+            elif file_digest(root / here) != digests.get(here) and not mentions(
+                    (root / here).read_text(encoding="utf-8", errors="replace"), there):
+                broken = f"{here} changed and no longer names {there}"
+            if broken:
+                break
+        if broken:
+            stale[path] = f"{broken} (the walk reached it by {' -> '.join(chain)})"
         else:
             regressions.append(path)
     return regressions, stale
+
+
+def heavy_snapshot_tests_problem(snapshot: dict) -> str | None:
+    """Why the snapshot does not cover the lane's tests, or None."""
+    absent = sorted(set(cs.HEAVY_TESTS) - set(snapshot.get("tests", ())))
+    if not absent:
+        return None
+    return (f"{', '.join(absent)} in the heavy lane but not in {HEAVY_SNAPSHOT}: for a file added to the lane, "
+            "write the snapshot from a map that has its tests (testmap.py heavy --map M --write); for a renamed "
+            "one, testmap.py heavy-prune --rename OLD=NEW")
 
 
 def cmd_heavy(args: argparse.Namespace) -> int:
@@ -1568,31 +1624,48 @@ def cmd_heavy(args: argparse.Namespace) -> int:
 
 
 def cmd_heavy_prune(args: argparse.Namespace) -> int:
-    """Delete the snapshot's stale entries (heavy_snapshot_check); exit 1
-    naming each regression, which only a fix to commit_scope's rules (or, if
-    the change is intended, a deletion by hand) resolves."""
+    """Carry renamed heavy tests over (--rename OLD=NEW), delete the stale
+    entries (heavy_snapshot_check), and record again the path and digests of
+    every entry the walk still reaches, so the snapshot keeps up with the
+    tree. Exit 1 naming each regression, which keeps its old path: only a fix
+    to commit_scope's rules (or, if the change is intended, a deletion by
+    hand) resolves it."""
     root = Path.cwd()
     target = root / args.snapshot
     snapshot = json.loads(target.read_text(encoding="utf-8"))
+    renames = dict(pair.split("=", 1) for pair in args.rename or ())
+    if renames:
+        def renamed(path: str) -> str:
+            return renames.get(path, path)
+
+        snapshot["tests"] = sorted({renamed(path) for path in snapshot.get("tests", ())})
+        snapshot["files"] = sorted({renamed(path) for path in snapshot["files"]})
+        snapshot["parents"] = {renamed(path): renamed(parent) for path, parent in snapshot.get("parents", {}).items()}
+        snapshot["sha256"] = {renamed(path): digest for path, digest in snapshot.get("sha256", {}).items()}
     regressions, stale = heavy_snapshot_check(root, snapshot)
     for path, why in sorted(stale.items()):
         print(f"deleted {path}: {why}")
-    files = [path for path in snapshot["files"] if path not in stale]
-    parents: dict[str, str] = snapshot.get("parents", {})
-    kept: dict[str, str] = {}
-    for path in files:
-        while path in parents and path not in kept:
-            kept[path] = parents[path]
-            path = parents[path]
-    on_paths = set(kept.values())
-    snapshot.update(files=files, parents=dict(sorted(kept.items())),
-                    sha256={path: digest for path, digest in snapshot.get("sha256", {}).items() if path in on_paths})
-    target.write_text(json.dumps(snapshot, indent=1) + "\n", encoding="utf-8")
+    refreshed = heavy_snapshot(root, snapshot["map"], [path for path in snapshot["files"] if path not in stale])
+    old_parents: dict[str, str] = snapshot.get("parents", {})
+    for path in regressions:  # their recorded paths stay, to be judged again
+        while path in old_parents and path not in refreshed["parents"]:
+            refreshed["parents"][path] = old_parents[path]
+            refreshed["sha256"].setdefault(old_parents[path], snapshot.get("sha256", {}).get(old_parents[path]))
+            path = old_parents[path]
+    refreshed["parents"] = dict(sorted(refreshed["parents"].items()))
+    refreshed["sha256"] = dict(sorted(refreshed["sha256"].items()))
+    # The tests the map recorded, renamed; never a file it did not record.
+    refreshed["tests"] = sorted(path for path in snapshot.get("tests", ()) if path in cs.HEAVY_TESTS)
+    target.write_text(json.dumps(refreshed, indent=1) + "\n", encoding="utf-8")
     for path in regressions:
-        print(f"::error title=Heavy lane scope::{path} is no longer in run_heavy although every file on the path "
-              "that reached it is unchanged: commit_scope's rules stopped reaching it. Fix the rule, or delete the "
-              f"entry from {args.snapshot} by hand if that is intended.")
-    return 1 if regressions else 0
+        print(f"::error title=Heavy lane scope::{path} is no longer in run_heavy although every link of the path "
+              "that reached it is still there (unchanged, or changed but naming the next file): commit_scope's "
+              f"rules stopped reaching it. Fix the rule, or delete the entry from {args.snapshot} by hand if that is "
+              "intended.")
+    problem = heavy_snapshot_tests_problem(refreshed)
+    if problem:
+        print(f"::error title=Heavy lane scope::{problem}")
+    return 1 if regressions or problem else 0
 
 
 def cmd_needed(args: argparse.Namespace) -> int:
@@ -1649,8 +1722,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--map", required=True, help="a map file (testmap.json.gz)")
     p.add_argument("--write", help=f"also write the footprint snapshot ({HEAVY_SNAPSHOT})")
     p.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
-    p = sub.add_parser("heavy-prune", help="delete the footprint snapshot's stale entries (no map needed)")
+    p = sub.add_parser("heavy-prune", help="refresh the footprint snapshot and delete its stale entries (no map)")
     p.add_argument("--snapshot", default=HEAVY_SNAPSHOT)
+    p.add_argument("--rename", action="append", metavar="OLD=NEW", help="a heavy test file renamed from OLD to NEW")
     args = parser.parse_args(argv)
     if args.command == "heavy":
         return cmd_heavy(args)
