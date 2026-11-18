@@ -199,6 +199,7 @@ LONG_VALUE_FLAG = re.compile(r"--header|--user|--pw|--?[\w.-]*(?:pass|token|secr
 # option (-c, --format): a secret may start with "-" (redis-cli -a -Zk3y).
 OPTION_LIKE = re.compile(r"-[A-Za-z]|--[a-z][a-z0-9-]*(?:=.*)?", re.DOTALL)
 GLUED_VALUE = re.compile(r"-([A-Za-z]*?[upHak]).+", re.DOTALL)  # -phunter2, -uroot, -ahunter2, -vpX: glued to its flag
+KEYWORD = re.compile(r"pass|token|secret|key|auth|cred|cookie|bearer", re.IGNORECASE)
 PLACEHOLDERS = frozenset({"<value>", "<program>", "<outside>"})  # the recorder's own; any other "<..." is data
 OPTION_VALUE = re.compile(r"(--?[A-Za-z0-9][\w.-]*)=.*", re.DOTALL)  # --password=x, -Dname=x
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*=.*", re.DOTALL)  # env NAME=value, helm --set db.password=x
@@ -797,9 +798,10 @@ class Recorder:
             # -phunter2, -uroot. It may be a cluster whose last flag takes
             # the next word (-up x, openssl's -passin x), or perl's -pe: hide
             # that word too. A keyword past the first letter (-tTokenAbc,
-            # -ckeyZq) means the letters before the value letter may be the
-            # value already: hide the whole word.
-            if LONG_VALUE_FLAG.fullmatch(word) and len(glued.group(1)) > 1:
+            # -ckeyZq), or a keyword after a leading -a/-k (-aToken), means the
+            # letters before the value letter may be the value already: hide
+            # the whole word.
+            if KEYWORD.search(word) and (len(glued.group(1)) > 1 or glued.group(1) in "ak"):
                 return "-<value>", program or "<value>"
             return "-" + glued.group(1) + "<value>", program or ("<value>" if takes_next else "")
         if program:

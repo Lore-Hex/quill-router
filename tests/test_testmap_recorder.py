@@ -966,6 +966,13 @@ def test_keeps_cache_windows_private_module_state_but_not_resets_or_counters() -
     (["openssl", "-khunter2Zq"], "openssl -k<value>"),
     # A single-dash word holding a keyword past its first letter: all of it.
     (["tool", "-tTokenAbc"], "tool -<value>"),
+    # A keyword after a leading -a or -k, and keyword words carrying a
+    # punctuation character, are hidden whole too; the word after a wholly
+    # hidden value flag is still its value.
+    (["tool", "-aToken"], "tool -<value>"),
+    (["tool", "-keyZq"], "tool -<value>"),
+    (["tool", "-tToken:Zq"], "tool -<value>"),
+    (["tool", "-tToken", "Zqv"], "tool -<value> <value>"),
     (["tool", "-tmysecrettoken"], "tool -<value>"),
     (["tool", "-sbearerXYZ"], "tool -<value>"),
     (["tool", "-Ccookie_val"], "tool -<value>"),
