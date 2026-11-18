@@ -1449,6 +1449,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
 # workflow's "heavy lane scope" job runs it on each new map; a failure opens
 # or updates the issue titled HEAVY_ISSUE_TITLE, and the next pass closes it.
 HEAVY_ISSUE_TITLE = "The heavy lane's scope misses files its tests use"
+# Who opens it: the workflow's GITHUB_TOKEN, which gh's issue JSON shows as
+# this bot login (a search qualifier takes the same spelling; `--author`
+# would need github-actions[bot]). Anyone can open an issue with the title,
+# so only the bot's own count.
+HEAVY_ISSUE_AUTHOR = "app/github-actions"
 # Functions a map records in heavy tests' windows that cannot run in the lane:
 # what another module leaves behind in the shards' shared processes. Keyed by
 # the map's function key, so the rest of each file still counts.
@@ -1493,13 +1498,14 @@ def heavy_outside(root: Path, paths: Iterable[str]) -> list[str]:
                   and not cs.heavy_covers(path, closure) and not cs.matches_any(path, cs.FULL_MATRIX_PATHS))
 
 
-def cmd_heavy(args: argparse.Namespace) -> int:
-    root = Path.cwd()
-    data = read_gz(Path(args.map))
+def heavy_report(root: Path, map_path: Path) -> tuple[list[str], list[str], bool]:
+    """The heavy check's report, the files outside the lane's scope, and
+    whether the check ran (False: the map was refused). Raises when the map
+    cannot be read or the scope cannot be computed."""
+    data = read_gz(map_path)
     problem = validate_map(data)
     if problem:
-        print(f"::error title=Heavy lane scope::{problem}")
-        return 1
+        return ["### Heavy lane scope", "", f"The check could not run: {problem}."], [], False
     tmap = TestMap(data)
     mapped = {nodeid.split("::")[0] for nodeid, _, _ in tmap.tests}
     absent = sorted(set(cs.HEAVY_TESTS) - mapped)
@@ -1515,12 +1521,27 @@ def cmd_heavy(args: argparse.Namespace) -> int:
                   "test-heavy (commit_scope.py's run_heavy): teach heavy_closure() to reach it, or list it in "
                   "HEAVY_INPUTS. A function another module leaves running in the shards' shared processes goes in "
                   "testmap.py's HEAVY_LEAKS, with the reason."]
+    return lines, outside, True
+
+
+def cmd_heavy(args: argparse.Namespace) -> int:
+    """Exit 0 only when the scope covers the map's heavy footprint. Every
+    outcome writes the report (heavy-issue reads it), a refused map and an
+    error included: a check that cannot run is a failure, never silence."""
+    try:
+        lines, outside, ran = heavy_report(Path.cwd(), Path(args.map))
+    except Exception as error:  # the report says so, and the step fails
+        lines, outside, ran = ["### Heavy lane scope", "", "The check errored before it finished: "
+                               f"{type(error).__name__}: {error}."], [], False
+    failed = bool(outside) or not ran
     _write_summary(args.summary, lines)
     if args.report:
         Path(args.report).write_text("\n".join(lines) + "\n", encoding="utf-8")
     for path in outside:
         print(f"::error title=Heavy lane scope::{path} is in a heavy test's footprint but outside run_heavy")
-    return 1 if outside else 0
+    if failed and not outside:
+        print(f"::error title=Heavy lane scope::{lines[-1]}")
+    return 1 if failed else 0
 
 
 def heavy_issue(outcome: str, report: str, *, repo: str, run_url: str,
@@ -1529,8 +1550,13 @@ def heavy_issue(outcome: str, report: str, *, repo: str, run_url: str,
     failure, comment the report on the open issue or open one; on a pass,
     close the open one. `gh` runs the gh command line (argv, stdin)."""
     listed = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open", "--search",
-                            f'in:title "{HEAVY_ISSUE_TITLE}"', "--json", "number,title"], None) or "[]")
-    numbers = sorted(issue["number"] for issue in listed if issue.get("title") == HEAVY_ISSUE_TITLE)
+                            f'in:title "{HEAVY_ISSUE_TITLE}" author:{HEAVY_ISSUE_AUTHOR}',
+                            "--json", "number,title,author", "--limit", "100"], None) or "[]")
+    # The bot's own, by exact title, oldest first (issue numbers only grow);
+    # never an issue someone else opened with the same title.
+    numbers = sorted(issue["number"] for issue in listed if issue.get("title") == HEAVY_ISSUE_TITLE
+                     and (issue.get("author") or {}).get("login") == HEAVY_ISSUE_AUTHOR
+                     and (issue.get("author") or {}).get("is_bot") is True)
     if outcome == "failure":
         body = f"{report.rstrip()}\n\nRun: {run_url}\n"
         if numbers:
@@ -1549,7 +1575,10 @@ def _gh(argv: list[str], stdin: str | None) -> str:
 
 
 def cmd_heavy_issue(args: argparse.Namespace) -> int:
-    report = Path(args.report).read_text(encoding="utf-8") if args.report else ""
+    try:
+        report = Path(args.report).read_text(encoding="utf-8") if args.report else ""
+    except OSError:
+        report = "The heavy lane's scope check errored before writing a report; see the run."
     run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{args.repo}/actions/runs/{args.run_id}"
     print(heavy_issue(args.outcome, report, repo=args.repo, run_url=run_url, gh=_gh))
     return 0

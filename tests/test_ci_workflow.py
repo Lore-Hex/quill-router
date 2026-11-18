@@ -1021,23 +1021,35 @@ def test_the_heavy_check_of_each_map_is_a_job_of_its_own_after_the_upload() -> N
     jobs = workflow["jobs"]
     merge, check = jobs["merge"], jobs["heavy-scope"]
     assert merge["name"] == testmap.MAP_JOB and check["name"] == testmap.HEAVY_CHECK_JOB
-    assert check["needs"] == "merge" and check["if"] == "needs.merge.result == 'success'"
+    # Main only: a map recorded on another branch is no map the selection
+    # uses, and a run that skips this job keeps its own conclusion.
+    assert check["needs"] == "merge"
+    assert check["if"] == "needs.merge.result == 'success' && github.ref == 'refs/heads/main'"
     assert not any("testmap.py heavy" in step.get("run", "") for step in merge["steps"])
     download = next(step for step in check["steps"] if "download-artifact" in step.get("uses", ""))
     assert download["with"] == {"name": testmap.ARTIFACT}
     # Only this job may write issues; the workflow reads contents only.
     assert workflow["permissions"] == {"contents": "read"}
     assert check["permissions"] == {"contents": "read", "issues": "write"}
-    assert check["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    # The token reaches the two issue steps only: not the check, which runs
+    # the repository's code.
+    assert "env" not in check
+    # actions/checkout persists the job token in git config by default, where
+    # the check could read it: this checkout must not.
+    checkouts = [step for step in check["steps"] if "actions/checkout" in step.get("uses", "")]
+    assert len(checkouts) == 1 and checkouts[0].get("with", {}).get("persist-credentials") is False
     runs = {step["name"]: step for step in check["steps"] if "run" in step}
+    assert {name for name, step in runs.items() if "GH_TOKEN" in json.dumps(step)} == {
+        "Open or update the heavy lane's scope issue", "Close the heavy lane's scope issue"}
+    assert all(step.get("env") in (None, {"GH_TOKEN": "${{ github.token }}"}) for step in check["steps"])
     assert list(runs) == ["The heavy lane's scope covers what its tests ran",
                           "Open or update the heavy lane's scope issue", "Close the heavy lane's scope issue"]
     the_check, opens, closes = runs.values()
     assert the_check["run"] == "python3 scripts/ci/testmap.py heavy --map testmap.json.gz --report heavy-scope.md"
     assert the_check["id"] == "check" and "if" not in the_check
     assert opens["run"] == "python3 scripts/ci/testmap.py heavy-issue --outcome failure --report heavy-scope.md"
-    assert opens["if"] == "failure() && steps.check.outcome == 'failure' && github.ref == 'refs/heads/main'"
+    assert opens["if"] == "failure() && steps.check.outcome != 'success'"
     assert closes["run"] == "python3 scripts/ci/testmap.py heavy-issue --outcome success"
-    assert closes["if"] == "success() && github.ref == 'refs/heads/main'"
+    assert closes["if"] == "success()"
     # Nothing else may fail a run and keep its map.
     assert set(jobs) == {"changes", "record", "merge", "heavy-scope"}

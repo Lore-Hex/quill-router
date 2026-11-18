@@ -177,23 +177,28 @@ jobs:
   # this commit: the lane's drift check. A job of its own, after the upload:
   # when it fails, the run is red but the map stays usable (testmap.py's
   # run_problem accepts a run whose only failed job is this one and whose
-  # merge job passed). On main, a failure opens the heavy lane's scope issue,
-  # or comments on the open one, and the next pass closes it, so the drift
-  # is seen without anyone watching this workflow.
+  # merge job passed). A failure opens the heavy lane's scope issue, or
+  # comments on the open one, and the next pass closes it, so the drift is
+  # seen without anyone watching this workflow. Main only: a map recorded
+  # on another branch (a dispatch that validates a change to the recorder)
+  # is no map the selection uses, and nothing about it needs an issue.
   heavy-scope:
     name: heavy lane scope
     needs: merge
-    if: needs.merge.result == 'success'
+    if: needs.merge.result == 'success' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # issues: write for the two issue steps, the only ones given the token.
     permissions:
       contents: read
       issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
+        with:
+          # The job token carries issues: write; keep it out of git config,
+          # where every later step (the check included) could read it.
+          persist-credentials: false
       - name: Download the map
         timeout-minutes: 3
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -204,10 +209,16 @@ jobs:
         timeout-minutes: 5
         run: python3 scripts/ci/testmap.py heavy --map testmap.json.gz --report heavy-scope.md
       - name: Open or update the heavy lane's scope issue
-        if: failure() && steps.check.outcome == 'failure' && github.ref == 'refs/heads/main'
+        # Also when the check never ran (the map download failed): a check
+        # that cannot run is a failure, never silence.
+        if: failure() && steps.check.outcome != 'success'
         timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/testmap.py heavy-issue --outcome failure --report heavy-scope.md
       - name: Close the heavy lane's scope issue
-        if: success() && github.ref == 'refs/heads/main'
+        if: success()
         timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/testmap.py heavy-issue --outcome success
