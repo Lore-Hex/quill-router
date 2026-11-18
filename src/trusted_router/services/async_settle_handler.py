@@ -15,7 +15,7 @@ from trusted_router import async_settle_timing as timing
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import TicketClaims, verify_lookup_ticket, verify_ticket
 from trusted_router.config import Settings
-from trusted_router.errors import api_error
+from trusted_router.errors import api_error, expected_api_error
 from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.services.async_settle import CACHE_SECONDS, Runtime, admission_cap
 from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
@@ -73,9 +73,17 @@ def admission_reason(runtime: Runtime, workspace_id: str, pilot_cap: int, *,
         cache.lock.release()
 
 
-def unavailable() -> HTTPException:
-    return api_error(503, "Persistent storage is temporarily unavailable; retry.",
-                     "service_unavailable", headers={"Retry-After": "1"})
+def unavailable(reason: str) -> HTTPException:
+    """503 + Retry-After: the gateway retries the same settlement identity.
+
+    Its intent stays with the gateway (and the outbox, once written) until a
+    200, so this is backpressure, not a lost settlement. The counted warning
+    is the signal; Sentry skips the response (errors.ExpectedHTTPException).
+    """
+    metric("unavailable", reason=reason)
+    logger.warning("async_settle.unavailable reason=%s", reason)
+    return expected_api_error(503, "Persistent storage is temporarily unavailable; retry.",
+                              "service_unavailable", headers={"Retry-After": "1"})
 
 
 @dataclass(frozen=True)
@@ -254,7 +262,7 @@ def finish(row: SettleOutboxRow, outbox: SpannerSettleOutbox | None) -> JSONResp
             result = response(row, duplicate=True)
             if result.status_code == 200:
                 return result
-            raise unavailable()
+            raise unavailable("done_row_unreadable")
     outcome = apply_frozen_settle(row)
     # A direct synchronous fallback can race a new INSERT after its first read.
     # Never let its resolution mark/park a different accepted payload.
@@ -264,7 +272,7 @@ def finish(row: SettleOutboxRow, outbox: SpannerSettleOutbox | None) -> JSONResp
     _resolve_row(outbox, row, outcome, error_note=None)
     result = response(row, duplicate=True)
     if result.status_code != 200:
-        raise unavailable()
+        raise unavailable("finish_unconfirmed")
     return result
 
 
@@ -378,7 +386,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                     return result
                 typed = typed_billing_store()
                 if typed is None or row.reservation_id is None:
-                    raise unavailable() from None
+                    raise unavailable("reservation_unreadable") from None
                 winner = typed.read_typed_reservation(row.reservation_id)
                 authorization = STORE.get_gateway_authorization(row.authorization_id)
                 if winner is not None:
@@ -386,7 +394,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                         raise api_error(401, "Invalid settlement ticket", "unauthorized") from None
                     if not winner.get("settled"):
                         # Do not turn an inconsistent observation into admission.
-                        raise unavailable() from None
+                        raise unavailable("reservation_unsettled") from None
                 if authorization is not None and (authorization.workspace_id != claims.workspace_id
                                                   or authorization.key_hash != claims.key_id):
                     raise api_error(401, "Invalid settlement ticket", "unauthorized") from None
@@ -404,7 +412,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                             assert existing is not None
                             return finish(existing, outbox)
                         return result
-                    raise unavailable() from exc
+                    raise unavailable("duplicate_unresolved") from exc
                 # The class only (e.g. DeadlineExceeded): never exception text,
                 # which can carry request or row identifiers.
                 timing.outcome("unknown")
@@ -420,7 +428,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 result = find_duplicate(row)
                 if result is not None and time.monotonic() < deadline:
                     return result
-                raise unavailable() from exc
+                raise unavailable("enqueue_unconfirmed") from exc
             metric("accepted")
             finished = time.monotonic()
             timing.save_total(finished)
@@ -443,7 +451,7 @@ def handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Settings
             result = _handle(raw, kind=kind, runtime=runtime, settings=settings,
                              started=started, synchronous=synchronous)
             if time.monotonic() >= started + 2:
-                raise unavailable()
+                raise unavailable("deadline_exceeded")
             return result
         except transient_store_error_types() as exc:
-            raise unavailable() from exc
+            raise unavailable("transient_store_error") from exc

@@ -106,7 +106,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_owner_share_microdollars,
     custom_model_markup_payout_event_id,
 )
-from trusted_router.errors import api_error, assert_workspace_billing_active
+from trusted_router.errors import api_error, assert_workspace_billing_active, expected_api_error
 from trusted_router.gateway_boot import (
     BootAuthHeader,
     GatewayBoot,
@@ -797,7 +797,9 @@ def _forward_leased_heartbeat(
         return fastpath_heartbeat.epoch_millis(forwarded.deadline)
     if forwarded.reason is not None:
         raise _heartbeat_rejection(forwarded.reason)
-    raise api_error(
+    # fastpath_heartbeat.forward logged why the owner did not answer; the
+    # enclave retries this 503 within its budget. It is not a Sentry error.
+    raise expected_api_error(
         503,
         "Stage D heartbeat owner unavailable; retry",
         ErrorType.SERVICE_UNAVAILABLE,

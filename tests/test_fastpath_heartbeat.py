@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from tests.fakes.spanner import FakeSpannerDatabase, _ParamTypes, make_fake_store
 from tests.test_stage_d_heartbeat import NOW, _boot, _boot_auth_header, _json, _literal, _request
 from trusted_router.config import Settings
+from trusted_router.errors import ExpectedHTTPException
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayHeartbeatRequest
 from trusted_router.services import fastpath_frontdoor as fd
@@ -294,6 +295,8 @@ def test_a_front_door_that_always_answers_retry_is_503_after_one_resend_within_t
     elapsed = time.monotonic() - began
     assert raised.value.status_code == 503 and raised.value.headers == {"Retry-After": "1"}
     assert raised.value.detail["error"]["message"] == "Stage D heartbeat owner unavailable; retry"
+    # forward() logged why; the enclave retries. Not a Sentry error (QUILL-ROUTER-EE).
+    assert isinstance(raised.value, ExpectedHTTPException)
     assert len(door.seen) == 2 and door.seen[0] == door.seen[1]
     assert elapsed < 1.5
 

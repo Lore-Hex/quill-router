@@ -286,7 +286,7 @@ def _running_under_pytest(settings: Settings) -> bool:
 
 
 def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    if _is_dropped_noise(event):
+    if _is_dropped_noise(event) or _is_expected_http_exception(hint):
         return None
     event = _scrub(event)
     _fingerprint_method_not_allowed(event)
@@ -298,6 +298,18 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
     if not _floodgate.allow(event):
         return None
     return event
+
+
+def _is_expected_http_exception(hint: dict[str, Any] | None) -> bool:
+    """A designed retryable answer whose raise site logs the cause.
+
+    See `errors.ExpectedHTTPException`: the caller retries or starts over by
+    design, so the event would be noise; the log line is the signal.
+    """
+    from trusted_router.errors import ExpectedHTTPException
+
+    info = hint.get("exc_info") if hint else None
+    return isinstance(info, tuple) and len(info) == 3 and isinstance(info[1], ExpectedHTTPException)
 
 
 def _fingerprint_router_error(event: dict[str, Any], hint: dict[str, Any] | None) -> None:

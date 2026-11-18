@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from trusted_router.auth import get_authorization_bearer, require_inference_key
 from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.config import Settings
-from trusted_router.errors import api_error
+from trusted_router.errors import api_error, expected_api_error
 from trusted_router.routes.helpers import enforce_rate_limit, read_json_body_bounded
 from trusted_router.storage import STORE
 from trusted_router.storage_operational_analytics import build_client_events_payload
@@ -190,7 +190,9 @@ def register_client_events_routes(router: APIRouter) -> None:
                     "error_class": type(exc).__name__,
                 },
             )
-            raise api_error(
+            # Logged above with its class; the SDK retries after Retry-After.
+            # Not a Sentry error event (QUILL-ROUTER-FA).
+            raise expected_api_error(
                 503,
                 "Client events storage is unavailable",
                 ErrorType.SERVICE_UNAVAILABLE,

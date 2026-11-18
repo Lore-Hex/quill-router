@@ -38,7 +38,7 @@ from trusted_router.acquisition import (
 from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
 from trusted_router.domains import configured_control_domains, request_hostname
-from trusted_router.errors import api_error
+from trusted_router.errors import api_error, expected_api_error
 from trusted_router.oauth_provider import (
     OAUTH_PROVIDERS,
     OAuthCodeRejected,
@@ -337,9 +337,10 @@ async def _handle_callback(
     except httpx.TransportError as exc:
         # A timeout or dropped connection to the provider. The code is single
         # use and may already be spent, so the user starts over rather than
-        # retrying this callback. The warning keeps a provider outage visible.
+        # retrying this callback. The warning keeps a provider outage visible;
+        # the user-facing 503 itself is not a Sentry error event.
         log.warning("oauth provider unreachable provider=%s error_class=%s", provider.slug, type(exc).__name__)
-        raise api_error(
+        raise expected_api_error(
             503,
             f"{provider.slug.title()} did not respond; please sign in again",
             ErrorType.SERVICE_UNAVAILABLE,

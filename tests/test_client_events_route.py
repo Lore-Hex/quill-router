@@ -434,11 +434,22 @@ def test_client_events_returns_503_when_store_raises(
         raise RuntimeError("outbox unavailable")
 
     monkeypatch.setattr(InMemoryStore, "record_client_events_batch", fail)
+    from trusted_router.errors import ExpectedHTTPException
+    from trusted_router.routes import client_events as client_events_routes
+
+    raised: list[Exception] = []
+    real_expected = client_events_routes.expected_api_error
+    def recording_expected(*args: Any, **kwargs: Any) -> Exception:
+        raised.append(real_expected(*args, **kwargs))
+        return raised[-1]
+    monkeypatch.setattr(client_events_routes, "expected_api_error", recording_expected)
 
     response = client.post("/v1/client-events", headers=headers, json=_batch())
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "60"
+    # Logged with its class at the raise site; not a Sentry error (QUILL-ROUTER-FA).
+    assert len(raised) == 1 and isinstance(raised[0], ExpectedHTTPException)
 
 
 def test_client_events_replay_is_accepted_once_and_route_is_registered_twice(
