@@ -7,6 +7,7 @@ import subprocess
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -249,6 +250,50 @@ def test_unreadable_history_fails_closed(monkeypatch):
     delivered(api)
     monkeypatch.setattr(api, "jobs", lambda _: (_ for _ in ()).throw(train.Refused("unknown")))
     with pytest.raises(train.Refused, match="history is incomplete"):
+        train.select(api, api.runs[1], release())
+
+
+def test_history_reads_overlap_but_results_keep_listing_order(monkeypatch):
+    api = Evidence()
+    width = train.HISTORY_WORKERS
+    assert width == 4
+    barrier = Barrier(width, timeout=5)
+    later_read = Event()
+    guard = Lock()
+    active = peak = 0
+    seen = []
+    for offset, sha in enumerate([A, B, C, D] * 2):
+        delivered(api, controller=sha, selected=sha, run_id=10 + offset)
+    original = api.jobs
+
+    def overlap(run_id):
+        nonlocal active, peak
+        with guard:
+            seen.append(run_id)
+            active += 1
+            peak = max(peak, active)
+        barrier.wait()
+        if run_id == 10:
+            assert later_read.wait(5)
+        if run_id == 13:
+            later_read.set()
+        with guard:
+            active -= 1
+        return original(run_id)
+
+    monkeypatch.setattr(api, "jobs", overlap)
+    history = [{"databaseId": i} for i in range(10, 18)]
+    assert train.read_deliveries(api, history, D) == ([A, B, C, D] * 2, [])
+    assert sorted(seen) == list(range(10, 18)) and peak == width
+
+
+def test_one_bad_receipt_among_successes_blocks_selection_before_refresh():
+    api = Evidence()
+    for i in range(10, 18):
+        delivered(api, run_id=i)
+    api.artifacts[12, "selected"] = train.Refused("missing receipt")
+    api.after_refresh = lambda: pytest.fail("must not promote with incomplete history")
+    with pytest.raises(train.Refused, match="missing receipt"):
         train.select(api, api.runs[1], release())
 
 

@@ -15,8 +15,10 @@ import re
 import subprocess
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from scripts.deploy import superseded_deploy as superseded
@@ -33,6 +35,7 @@ COMPATIBILITY_PATHS = (
 FULL_SHA = re.compile(r"[a-f0-9]{40}")
 MAX_ARTIFACT_BYTES = 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024
+HISTORY_WORKERS = 4
 
 
 class Refused(RuntimeError):
@@ -92,16 +95,20 @@ class GitHub:
     def __init__(self, deadline: float | None = None):
         self.deadline = deadline or time.monotonic() + 240
         self.cache: dict[tuple[str, ...], Any] = {}
+        self.cache_lock = Lock()
 
     def refresh(self) -> None:
-        self.cache.clear()
+        with self.cache_lock:
+            self.cache.clear()
 
     def json(self, *args: str) -> Any:
-        if args not in self.cache:
-            result = superseded._gh_json(list(args), self.deadline)
-            require(result is not None, "GitHub release evidence unavailable")
-            self.cache[args] = result
-        return self.cache[args]
+        with self.cache_lock:
+            if args in self.cache:
+                return self.cache[args]
+        result = superseded._gh_json(list(args), self.deadline)
+        require(result is not None, "GitHub release evidence unavailable")
+        with self.cache_lock:
+            return self.cache.setdefault(args, result)
 
     def run(self, run_id: int) -> dict:
         require(type(run_id) is int and run_id > 0, "invalid run ID")
@@ -249,6 +256,44 @@ def public_delivered(jobs: list[dict]) -> bool:
     return markers[0]["conclusion"] == "success"
 
 
+def read_deliveries(api: GitHub, history: list[dict], head: str) -> tuple[list[str], list[Release]]:
+    """Verify every completed success, before choosing a successor or refreshing evidence."""
+    def read(listed: dict) -> str | Release | None:
+        try:
+            jobs = api.jobs(listed["databaseId"])
+        except (Refused, KeyError, TypeError, ValueError):
+            raise Refused("release history is incomplete") from None
+        if superseded.delivered(jobs):
+            run = api.run(listed["databaseId"])
+            shipped = delivered_commit(api, run, jobs)
+            require(api.relation(shipped, head) in {"ahead", "identical"},
+                    "a delivered release is no longer on main")
+            return shipped
+        if public_delivered(jobs):
+            run = api.run(listed["databaseId"])
+            public = Release.parse(api.artifact(run, "public")["release"])
+            require(api.relation(public.commit, head) in {"ahead", "identical"},
+                    "a public release is no longer on main")
+            return public
+        return None
+
+    delivered: list[str] = []
+    public_deliveries: list[Release] = []
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=HISTORY_WORKERS) as pool:
+        # Bound outstanding work even on failure. map preserves listing order,
+        # including the order in which public no-downgrade floors are applied.
+        for i in range(0, len(history), HISTORY_WORKERS):
+            for receipt in pool.map(read, history[i:i + HISTORY_WORKERS]):
+                if isinstance(receipt, Release):
+                    public_deliveries.append(receipt)
+                elif receipt is not None:
+                    delivered.append(receipt)
+    print(f"release history: checked={len(history)} api={len(delivered)} public={len(public_deliveries)} "
+          f"elapsed_seconds={time.monotonic() - started:.1f}")
+    return delivered, public_deliveries
+
+
 def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False) -> dict:
     require(base.commit == controller["head_sha"] and base.build_run == controller["id"],
             "base release does not belong to this workflow")
@@ -262,31 +307,11 @@ def select(api: GitHub, controller: dict, base: Release, *, hotfix: bool = False
                         "--limit", "100", "--json",
                         "databaseId,status,conclusion,headSha,headBranch,event,displayTitle")
         require(isinstance(runs, list), "release train queue unavailable")
-        delivered = []
-        public_deliveries: list[Release] = []
-        for listed in runs:
-            if listed.get("databaseId") == controller["id"]:
-                continue
-            if listed.get("status") == "completed" and listed.get("conclusion") == "success":
-                # History is fail-closed; unknown successors, unlike unknown
-                # deliveries, can simply wait. Ignore cancelled/failed builds.
-                try:
-                    jobs = api.jobs(listed["databaseId"])
-                except (Refused, KeyError, TypeError, ValueError):
-                    raise Refused("release history is incomplete") from None
-                if superseded.delivered(jobs):
-                    run = api.run(listed["databaseId"])
-                    shipped = delivered_commit(api, run, jobs)
-                    require(api.relation(shipped, head) in {"ahead", "identical"},
-                            "a delivered release is no longer on main")
-                    delivered.append(shipped)
-                elif public_delivered(jobs):
-                    run = api.run(listed["databaseId"])
-                    public = Release.parse(api.artifact(run, "public")["release"])
-                    require(api.relation(public.commit, head) in {"ahead", "identical"},
-                            "a public release is no longer on main")
-                    public_deliveries.append(public)
-                continue
+        others = [r for r in runs if r.get("databaseId") != controller["id"]]
+        delivered, public_deliveries = read_deliveries(api, [
+            r for r in others if r.get("status") == "completed" and r.get("conclusion") == "success"
+        ], head)
+        for listed in others:
             try:
                 if not superseded.tracks_main(listed) or listed.get("status") == "completed":
                     continue
