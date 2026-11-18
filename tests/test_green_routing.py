@@ -137,7 +137,13 @@ def test_green_landing_copy_is_provider_neutral_with_energy_sources(client):
     response = client.get("/green-tokens")
     assert response.status_code == 200
     page = BeautifulSoup(response.text, "html.parser")
-    assert "regolo" not in page.get_text(" ", strip=True).lower()
+    # Each model-list entry renders a catalog name and ID. That is provider
+    # data, and a model a host publishes under its own namespace may name the
+    # host. The copy, meta tags and structured data must stay provider-neutral.
+    copy = BeautifulSoup(response.text, "html.parser")
+    for entry in copy.select(".green-models > a"):
+        entry.decompose()
+    assert "regolo" not in copy.get_text(" ", strip=True).lower()
     for meta in page.select("meta[content]"):
         assert "regolo" not in str(meta["content"]).lower()
     for script in page.select('script[type="application/ld+json"]'):

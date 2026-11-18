@@ -29,6 +29,7 @@ DECISION_MODEL_ID = "cloudflare/clef-flash"
 MODEL_MAP = {
     "clef-flash": DECISION_MODEL_ID,
     "apertus-70b": "swiss-ai/apertus-70b-instruct",
+    "deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
     "gemma4-31b": "google/gemma-4-31b-it",
     "glm5.2": "z-ai/glm-5.2",
     "gpt-oss-120b": "openai/gpt-oss-120b",
