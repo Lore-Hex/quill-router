@@ -1,78 +1,65 @@
 {% extends "public/_base.html" %}
-{% set hero_offer_metric = true %}
+{% block body_attributes %}class="pricing-page"{% endblock %}
 {% block promotion %}{% include "public/_fortanix_promo.html" %}{% endblock %}
+{% block hero_aside %}
+<figure class="pricing-bill" aria-label="What you pay">
+  <figcaption>Example price per 1M tokens</figcaption>
+  <dl>
+    <div><dt>Provider cost</dt><dd>$1.00</dd></div>
+    <div><dt>TrustedRouter markup (5.5%)</dt><dd>$0.055</dd></div>
+    <div class="pricing-bill-total"><dt>Customer price</dt><dd>$1.055</dd></div>
+  </dl>
+</figure>
+{% endblock %}
 {% block body %}
+<link rel="stylesheet" href="/static/pricing-page.css?v={{ static_version|default('local') }}">
 
-<section class="cta-band" aria-label="Per-model pricing" style="margin-bottom:24px">
-  <div>
-    <strong>Per-model pricing</strong>
-    <span>Input, cached-input, output, and provider-specific prices are listed on the Models page.</span>
-  </div>
-  <a class="btn secondary" href="/models">Browse model prices</a>
-</section>
-
-<section class="marketing-grid three" aria-label="Ways to pay">
-  <div class="marketing-card">
-    <span class="card-icon">01</span>
-    <h3>Pay as you go</h3>
-    <p>Add prepaid credits and pay only for what you route. Text and embedding routes are provider cost plus 5.5%. Video jobs are the direct provider quote plus 20%. Auto-refill keeps prepaid routes flowing.</p>
-  </div>
-  <div class="marketing-card">
-    <span class="card-icon">02</span>
-    <h3>Bring your own key</h3>
-    <p>BYOK for any provider where you already have committed spend or enterprise rate limits. Keep your discounts; gain the attested prompt path, failover, and one unified API.</p>
-  </div>
-  <div class="marketing-card">
-    <span class="card-icon">03</span>
-    <h3>Migration credits</h3>
-    <p>Teams already spending more than $100/month on LLMs can request migration credits by approval. Move your workloads over with one base_url change and keep your runway.</p>
+<section class="pricing-section" aria-labelledby="pricing-ways">
+  <h2 id="pricing-ways">Ways to pay</h2>
+  <div class="pricing-ways">
+    <div>
+      <h3>Pay as you go</h3>
+      <p>Add prepaid credits and pay only for what you route. Text and embedding routes are provider cost plus 5.5%. Video jobs are the direct provider quote plus 20%. Auto-refill keeps prepaid routes flowing.</p>
+    </div>
+    <div>
+      <h3>Bring your own key</h3>
+      <p>BYOK for any provider where you already have committed spend or enterprise rate limits. Keep your discounts; gain the attested prompt path, failover, and one unified API.</p>
+    </div>
+    <div>
+      <h3>Migration credits</h3>
+      <p>Teams already spending more than $100/month on LLMs can request migration credits by approval. Move your workloads over with one base_url change and keep your runway.</p>
+    </div>
   </div>
 </section>
 
-<section class="marketing-split" style="margin-top:40px">
-  <div class="marketing-copy">
-    <h2>Cheaper. Smarter. More reliable. More secure.</h2>
-    <p>5.5% prepaid markup for text and embeddings. Twenty percent for asynchronous video generation. No subscription. One API with measured routing, provider fallback, and a prompt path you can verify.</p>
-    <ul class="check-list">
-      <li>No monthly plan or seat fees — you pay for tokens you route</li>
-      <li>Prepaid text and embedding prices are provider cost + 5.5%, with a $0.01 per million token floor</li>
-      <li>Video generation is the direct provider quote + 20%, billed as exact integer microdollars</li>
-      <li>The same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% pay as you go fee on credit purchases</a></li>
-      <li>Per-model prices are published on the <a href="/models">models page</a></li>
-      <li>Prepaid credits, BYOK, and usage-based billing all supported</li>
-      <li>Metadata-only billing records — no prompt or output bodies stored</li>
-      <li>Card, ACH bank, PayPal, and stablecoin checkout for prepaid credits</li>
-    </ul>
-    <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Get an API key</button>
+<section class="pricing-section" aria-labelledby="pricing-per-model">
+  <div class="pricing-section-head">
+    <h2 id="pricing-per-model">Per-model pricing</h2>
+    <a class="btn secondary" href="/models">Browse model prices</a>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>What you pay</span><span>per request</span></div>
-    <pre><code># Text and embeddings bill the provider's token
-# price plus 5.5%. A $0.01/M floor applies to free
-# and near-zero-cost routes.
-#
-# Example price per 1M tokens:
-#
-#   Provider cost                 $1.00
-#   TrustedRouter markup (5.5%)   $0.055
-#   Customer price                $1.055
-#
-# Video generation bills the provider's exact
-# per-job quote plus 20%.
-#
-# Exact prompt and completion prices are listed
-# on /models for every route.
-#
-# trustedrouter/auto picks a healthy route and
-# bills at the selected provider's price.</code></pre>
-  </div>
+  <ul class="pricing-rules">
+    <li>Input, cached-input, output, and provider-specific prices are listed on the <a href="/models">Models page</a>.</li>
+    <li>Prepaid text and embedding prices are provider cost + 5.5%, with a $0.01 per million token floor</li>
+    <li>Video generation is the direct provider quote + 20%, billed as exact integer microdollars</li>
+    <li>The same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% pay as you go fee on credit purchases</a></li>
+  </ul>
 </section>
 
+<section class="pricing-section" aria-labelledby="pricing-plan">
+  <h2 id="pricing-plan">Cheaper. Smarter. More reliable. More secure.</h2>
+  <p class="pricing-section-lead">5.5% prepaid markup for text and embeddings. Twenty percent for asynchronous video generation. No subscription. One API with measured routing, provider fallback, and a prompt path you can verify.</p>
+  <ul class="pricing-rules pricing-rules-two">
+    <li>No monthly plan or seat fees — you pay for tokens you route</li>
+    <li>Prepaid credits, BYOK, and usage-based billing all supported</li>
+    <li>Privacy is structural, not a paid add-on — every plan routes through the attested, no-log gateway.</li>
+    <li>Provider failover with <code>trustedrouter/auto</code> is included on every plan.</li>
+    <li>Metadata-only billing records — no prompt or output bodies stored</li>
+    <li>Card, ACH bank, PayPal, and stablecoin checkout for prepaid credits</li>
+  </ul>
+  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Get an API key</button>
+</section>
+
+{% set minimum_charges_collapsed = true %}
 {% include "public/_minimum_charges.html" %}
-
-<section class="marketing-grid two" style="margin-top:40px">
-  <div class="check-card"><span class="card-icon">01</span><span>Privacy is structural, not a paid add-on — every plan routes through the attested, no-log gateway.</span></div>
-  <div class="check-card"><span class="card-icon">02</span><span>Provider failover with <code>trustedrouter/auto</code> is included on every plan.</span></div>
-</section>
 
 {% endblock %}
