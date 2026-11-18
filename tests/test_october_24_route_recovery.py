@@ -69,6 +69,19 @@ _SAMBANOVA_WORKING = {
     "openai/gpt-oss-120b": "gpt-oss-120b",
     "meta-llama/llama-3.3-70b-instruct": "Meta-Llama-3.3-70B-Instruct",
 }
+# Production's manifest also carries delisted tombstones (five on 2026-11-18).
+# They count toward the mass-prune guard's baseline, so a refresh that darkens
+# working routes is published, not discarded by the guard as it would be if the
+# working routes were the whole baseline.
+_SAMBANOVA_DELISTED = {f"fixture/delisted-{n}": f"Delisted-{n}" for n in range(5)}
+
+
+def _sambanova_row(model_id, native, **state):
+    return {
+        "id": model_id, "upstream_id": native, "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        "input_token_price_per_m": 600_000, "output_token_price_per_m": 1_200_000, **state,
+    }
 
 
 @pytest.mark.parametrize("model", list(_SAMBANOVA_WORKING))
@@ -76,16 +89,14 @@ def test_sambanova_account_hold_does_not_disable_working_models(model, monkeypat
     routes = {**_SAMBANOVA_CREDIT_HELD, **_SAMBANOVA_WORKING}
     manifest = tmp_path / "sambanova.json"
     manifest.write_text(json.dumps({"provider": "sambanova", "models": [
-        {
-            "id": model_id, "upstream_id": native, "model_type": "chat",
-            "endpoints": ["chat/completions"],
-            "input_token_price_per_m": 600_000, "output_token_price_per_m": 1_200_000,
-            **({"routable": False, "routable_reason": "provider-canary-failed"}
-               if model_id in _SAMBANOVA_CREDIT_HELD else {"routable": True}),
-        }
-        for model_id, native in routes.items()
+        *(_sambanova_row(m, n, routable=False, routable_reason="provider-canary-failed")
+          for m, n in _SAMBANOVA_CREDIT_HELD.items()),
+        *(_sambanova_row(m, n, routable=True) for m, n in _SAMBANOVA_WORKING.items()),
+        *(_sambanova_row(m, n, routable=False, routable_reason="delisted-upstream",
+                         missing_since="2026-10-25") for m, n in _SAMBANOVA_DELISTED.items()),
     ]}))
-    # The next refresh lists every route and re-canaries the held ones; the
+    # The next refresh lists every route (by the native ids that
+    # sambanova.EXPLICIT_MODEL_MAP maps) and re-canaries the held ones; the
     # account still answers 402 for exactly those.
     monkeypatch.setenv("SAMBANOVA_API_KEY", "fixture-key")
     monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_a, **_k: {"data": [
@@ -100,10 +111,14 @@ def test_sambanova_account_hold_does_not_disable_working_models(model, monkeypat
 
     monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
     refresh = _direct_openai.DirectOpenAIProvider(sambanova.CATALOG.spec, manifest_path=manifest)
-    refresh.write_provider_manifest(refresh.fetch())
-    assert sorted(probed) == sorted(_SAMBANOVA_CREDIT_HELD.values())
+    notes = refresh.write_provider_manifest(refresh.fetch())
+    assert set(_SAMBANOVA_CREDIT_HELD.values()) <= set(probed)
+    # The rebuild was published, not discarded by the mass-prune guard.
+    assert [note for note in notes if "mass-prune" in note] == []
+    assert any(note.startswith("sambanova: refreshed provider_models/sambanova.json") for note in notes)
     rows = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
-    assert {model_id: (row["routable"], row.get("routable_reason")) for model_id, row in rows.items()} == {
+    assert {model_id: (rows[model_id]["routable"], rows[model_id].get("routable_reason"))
+            for model_id in routes} == {
         **{model_id: (False, "provider-canary-failed") for model_id in _SAMBANOVA_CREDIT_HELD},
         **{model_id: (True, None) for model_id in _SAMBANOVA_WORKING},
     }
