@@ -1,12 +1,13 @@
 "use strict";
 
-// Shared quickstart box and chip row (templates/public/_quickstart_box.html):
-// tabs, copy, the phone prompt fold, and the chip row's scroll arrow, for
-// every box and row on the page. Without script every quickstart panel and
-// the full prompt show, and the chips stay a plain scrollable row.
+// Shared quickstart box (templates/public/_quickstart_box.html and the
+// compare kit): tabs and the phone prompt fold for every box on the page.
+// Copy uses the shared code block's behaviour (window.TRCode from
+// content-layout.js), and the code area and chip row get the shared scroll
+// chevrons from content-layout.js. Without script every quickstart panel
+// and the full prompt show.
 (() => {
   const phone = window.matchMedia("(max-width: 639px)");
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   document.querySelectorAll("[data-md-code]").forEach((code) => {
     const tabs = Array.from(code.querySelectorAll("[data-md-tab]"));
@@ -17,7 +18,6 @@
     const body = code.querySelector(".md-code-body");
     if (!tabs.length) return;
     let active = code.dataset.mdFirst || tabs[0].dataset.mdTab;
-    let copiedTimer = 0;
 
     const activePanel = () => panels.find((panel) => panel.dataset.mdPanel === active);
 
@@ -73,58 +73,16 @@
       });
     }
 
-    if (copy && status) {
+    if (copy && status && window.TRCode) {
       copy.hidden = false;
-      // Clear the live region before each message so a repeat copy is
-      // announced again, and empty it once the tick fades.
-      const announce = (message) => {
-        status.textContent = "";
-        window.setTimeout(() => { status.textContent = message; }, 50);
-      };
-      copy.addEventListener("click", async () => {
-        const source = activePanel()?.querySelector("code");
-        if (!source) return;
-        try {
-          await navigator.clipboard.writeText(source.textContent.trim());
-          announce("Copied.");
-          copy.setAttribute("data-copied", "");
-          window.clearTimeout(copiedTimer);
-          copiedTimer = window.setTimeout(() => {
-            copy.removeAttribute("data-copied");
-            status.textContent = "";
-          }, 1600);
-        } catch {
-          const selection = window.getSelection();
-          if (selection) {
-            const range = document.createRange();
-            range.selectNodeContents(source);
-            selection.removeAllRanges();
-            selection.addRange(range);
-            announce("Text selected. Use your device's copy command.");
-          }
-        }
+      window.TRCode.wireCopy(copy, {
+        source: () => activePanel()?.querySelector("code"),
+        status,
+        fallback: "Text selected. Use your device's copy command.",
+        resetAfter: 1600,
       });
     }
 
     select(active, false);
-  });
-
-  document.querySelectorAll("[data-md-chips]").forEach((chips) => {
-    const track = chips.querySelector("[data-md-chips-track]");
-    const arrow = chips.querySelector("[data-md-chips-next]");
-    if (!track) return;
-    const sync = () => {
-      const atEnd = track.scrollLeft + track.clientWidth >= track.scrollWidth - 4;
-      chips.toggleAttribute("data-at-end", atEnd);
-      if (arrow) arrow.hidden = atEnd;
-    };
-    if (arrow) {
-      arrow.addEventListener("click", () => {
-        track.scrollBy({ left: Math.max(160, track.clientWidth * 0.6), behavior: reduce.matches ? "auto" : "smooth" });
-      });
-    }
-    track.addEventListener("scroll", sync, { passive: true });
-    window.addEventListener("resize", sync);
-    sync();
   });
 })();

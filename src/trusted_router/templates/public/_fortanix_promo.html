@@ -1,8 +1,8 @@
-{% if fortanix_launch_offer() %}
+{% set promo_offer = launch_offer_facts() %}{% if promo_offer %}
 <aside class="model-promo" data-fortanix-promo aria-label="Fortanix introductory offer">
-  <a class="model-promo-inner" href="/models/fortanix/glm-5.3-flash">
-    <span class="model-promo-copy"><strong>GLM 5.3 Flash</strong> <span>$0.01 / 1M tokens</span> <small>Limited time, price may change</small></span>
-    <span class="model-promo-action">Try it<span class="model-promo-arrow" aria-hidden="true">&rarr;</span></span>
+  <a class="model-promo-inner" href="{{ promo_offer.path }}">
+    <span class="model-promo-copy"><strong>{{ promo_offer.model_name }} is basically free</strong> <span>{{ promo_offer.price_label }}</span></span>
+    <span class="model-promo-action"><span class="model-promo-arrow" aria-hidden="true">&rarr;</span></span>
   </a>
 </aside>
 {% endif %}

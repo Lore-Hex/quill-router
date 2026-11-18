@@ -26,7 +26,8 @@ for (const [slug, organization, matchedOrganization = organization] of pages) {
       await button.click();
       expect(await page.evaluate(() => window.copiedCompanyText)).toBe(text);
       await expect(page.locator(`#${id}-status`)).toHaveText("Copied. Ready for your agent chat.");
-      await expect(button.locator("img")).toBeVisible();
+      // Panel Copy buttons are the shared code block's icon-only button.
+      await expect(button.locator("svg.tr-code-icon, svg.tr-code-done").first()).toBeVisible();
     }
   });
 
@@ -171,6 +172,7 @@ test("cached trust pages can still load the old copy asset", async ({ page }) =>
     const replacement = button.cloneNode(true);
     replacement.removeAttribute("data-copy-prompt-target");
     replacement.removeAttribute("data-copy-prompt-status");
+    replacement.removeAttribute("data-copy-wired");
     replacement.hidden = true;
     button.replaceWith(replacement);
     // Simulate an older cached document loading the compatibility entry point.

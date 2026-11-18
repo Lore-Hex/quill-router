@@ -56,41 +56,28 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
   });
 }
 
-test('Tables and code use native scrolling with boundary-aware edge cues', async ({ page }) => {
+test('Tables and code scroll sideways with a soft edge fade', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/openrouter-alternative');
   await expect(page.locator('.table-scroll-tools')).toHaveCount(0);
-  for (const viewport of [page.locator('.model-table-wrap').first(), page.locator('.copy-terminal pre')]) {
-    await expect(viewport).toHaveClass(/can-scroll-right/);
-    await expect(viewport).not.toHaveClass(/can-scroll-left/);
-    await viewport.focus();
-    await page.keyboard.press('ArrowRight');
-    const ring = await viewport.evaluate(el => {
-      const frame = el.parentElement;
-      const style = getComputedStyle(frame, '::after');
-      return {
-        focusVisible: el.matches(':focus-visible'),
-        mask: getComputedStyle(frame).maskImage,
-        border: style.borderTopWidth,
-        color: style.borderTopColor,
-        hitTesting: style.pointerEvents,
-        width: frame.getBoundingClientRect().width,
-        viewportWidth: el.getBoundingClientRect().width,
-      };
-    });
-    expect(ring.focusVisible).toBe(true);
-    expect(ring.mask).toBe('none');
-    expect(ring.border).toBe('2px');
-    expect(ring.color).toBe('rgb(46, 51, 19)');
-    expect(ring.hitTesting).toBe('none');
-    expect(ring.width).toBe(ring.viewportWidth);
-    await expect.poll(() => viewport.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
-    await expect(viewport).toHaveClass(/can-scroll-left/);
+  await expect(page.locator('.tr-scroll-bar')).toHaveCount(0);
+  const table = page.locator('.model-table-wrap').first();
+  const code = page.locator('.copy-terminal pre');
+  for (const viewport of [table, code]) {
+    await viewport.scrollIntoViewIfNeeded();
+    const host = viewport.locator('xpath=..');
+    const next = host.locator(':scope > .tr-scroll-edge-next');
+    const prev = host.locator(':scope > .tr-scroll-edge-prev');
+    await expect(next).toBeVisible();
+    await expect(next).not.toHaveClass(/is-off/);
+    await expect(prev).toHaveClass(/is-off/);
+    await viewport.evaluate(el => { el.scrollLeft = 40; });
+    await expect(prev).not.toHaveClass(/is-off/);
     await viewport.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-    await expect(viewport).not.toHaveClass(/can-scroll-right/);
+    await expect(next).toHaveClass(/is-off/);
+    await viewport.focus();
+    expect(await viewport.evaluate(el => el.tabIndex)).toBe(0);
   }
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(page.locator('.model-table-wrap').first()).not.toHaveClass(/can-scroll/);
 });
 
 test('FAQ pricing has no stale as-of date in visible text or structured data', async ({ page }) => {

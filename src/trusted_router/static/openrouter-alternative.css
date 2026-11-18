@@ -65,7 +65,7 @@
 .openrouter-article .seo-evidence-head .eyebrow{padding:0}
 .openrouter-article .quote-feature{display:block}
 .openrouter-article .quote-feature>div:first-child{margin-bottom:24px}
-.openrouter-article main>section:has(>.model-table-wrap,>.horizontal-overflow-frame>.model-table-wrap){max-width:1112px}
+.openrouter-article main>section:has(>.model-table-wrap){max-width:1112px}
 .openrouter-article .model-table-wrap{border:1px solid var(--border-hairline);background:var(--surface-card)}
 .openrouter-article .v2-price-body{max-width:720px;margin:28px auto 0}
 .openrouter-article .v2-table-note{padding:16px 0 0;font-size:14px;line-height:1.6}
@@ -155,13 +155,6 @@
   line-height: 1.5;
   margin-top: 8px;
 }
-.openrouter-article .copy-terminal pre {
-  display: block;
-  margin: 0;
-  padding: 24px;
-  min-height: 0;
-  overflow-x: auto;
-}
 .openrouter-article .v2-price-body h3 {
   margin-bottom: 16px;
 }
@@ -175,14 +168,13 @@
   .openrouter-article main > .cta-band { padding: 24px; }
   .openrouter-article .cta-band :is(h2,h3) { font-size: 26px; }
   .openrouter-article .link-list li { padding: 20px; }
-  .openrouter-article .copy-terminal pre { padding: 20px; }
 }
 
 /* One gap per topic boundary; keep section titles attached to their content. */
 .openrouter-article main > .v2-head { margin-bottom: 24px; }
 .openrouter-article main > .v2-head + .marketing-grid { margin-top: 0; }
 .openrouter-article .quote-feature p:last-child { margin-bottom: 0; }
-.openrouter-article .v2-price-body + :is(.model-table-wrap,.horizontal-overflow-frame) { margin-top: 24px; }
+.openrouter-article .v2-price-body + .model-table-wrap { margin-top: 24px; }
 
 /* Quiet reading surfaces; reserve rules for comparing data. */
 .openrouter-article main :is(h1,h2,h3) { text-wrap: balance; }
@@ -336,36 +328,20 @@
   .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child { font-size: 21px; }
 }
 
-/* The clipped edge signals more content; the cue clears at the scroll boundary. */
+/* Wide tables scroll sideways; the shared scroll chevrons sit in a bar
+   above each one (openrouter-alternative.js). No edge fade. */
 .openrouter-article .horizontal-overflow {
-  --fade-left: 0px;
-  --fade-right: 0px;
-
   overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--tr-legacy-7caa90, #7caa90) var(--tr-legacy-10231b, #10231b);
-  mask-image: linear-gradient(to right, transparent, var(--tr-legacy-000000, #000) var(--fade-left), var(--tr-legacy-000000, #000) calc(100% - var(--fade-right)), transparent);
 }
-.openrouter-article .horizontal-overflow.can-scroll-left { --fade-left: 16px; }
-.openrouter-article .horizontal-overflow.can-scroll-right { --fade-right: 56px; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar { height: 8px; }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-track { background: var(--tr-color-surface-hover); }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-thumb { background: var(--tr-legacy-7caa90, #7caa90); border-radius: var(--tr-square, 4px); }
-/* Draw the keyboard focus ring outside the masked scroller, above sticky cells. */
-.openrouter-article .horizontal-overflow-frame { position: relative; min-width: 0; }
-.openrouter-article .horizontal-overflow:focus-visible { outline: none; }
-.openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 2px solid var(--tr-legacy-b7e4ca, #b7e4ca);
-  border-radius: inherit;
-  pointer-events: none;
-  z-index: 2;
-}
+.openrouter-article .horizontal-overflow:focus-visible { outline: 2px solid var(--tr-legacy-b7e4ca, #b7e4ca); outline-offset: -2px; }
 
 @media (forced-colors: active) {
-  .openrouter-article .horizontal-overflow-frame:has(> :focus-visible)::after { border-color: Highlight; }
+  .openrouter-article .horizontal-overflow:focus-visible { outline-color: Highlight; }
 }
 
 /* The comparison closes with an action, not a second full-width card. */

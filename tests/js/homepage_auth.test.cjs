@@ -21,9 +21,9 @@ function setup(cookie) {
   }
  }
  const classes = links.map(a => a.className);
- const note = {style: {}};
+ const note = {style: {}, textContent: 'No card required.', matches: selector => selector.includes('.cta-note')};
  const context = vm.createContext({document: {cookie,
-  querySelectorAll: selector => selector === '.cta-note' ? [note] : links,
+  querySelectorAll: selector => selector.includes('.cta-note') ? [note] : links,
   createElement: () => ({attrs: {}, setAttribute(name, value) {this.attrs[name] = value;}}),
  }});
  vm.runInContext(auth, context);

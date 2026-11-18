@@ -81,8 +81,6 @@ function renderCode(){
  pre.setAttribute('aria-labelledby',agent?'mode-tab-agent':'mode-tab-code');
  if(agent){pre.className='mcode prompt';pre.textContent=AGENT;}
  else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
- $('.pf .hint').textContent=agent?DATA.migration.agent_hint:'';
- $('.pf .hint').hidden=!agent;
  $('[data-copycode]').setAttribute('aria-label',agent?'Copy agent prompt':'Copy code');
  $('[data-copycode]').title=agent?'Copy agent prompt':'Copy code';
 }
@@ -102,11 +100,17 @@ tabKeys($$('.mode'),button=>setLang(modeLang(button)));
 $('#migration-language').addEventListener('change',e=>setLang(e.currentTarget.value));
 $('#migration-source').addEventListener('change',e=>{source=e.currentTarget.value;renderCode();track('home.migration_tab',{tab:lang,from:source});});
 $('[data-copy]').addEventListener('click',async e=>{if(await copyText(TRB,e.currentTarget))track('home.base_url_copied');});
-$('[data-copycode]').addEventListener('click',async e=>{
+// The panel's Copy is the shared code block's (window.TRCode, content-layout.js);
+// it copies the code as it reads after the change, without the diff marks.
+const migrationText=()=>{
+ if(lang==='agent')return AGENT;
  const clean=pre.cloneNode(true);$$('.del',clean).forEach(n=>n.remove());$$('.add',clean).forEach(n=>n.append('\n'));
- const text=lang==='agent'?AGENT:clean.textContent.split('\n').map(line=>line.replace(/^[+ ] /,'')).join('\n');
- if(await copyText(text,e.currentTarget))track(lang==='agent'?'home.agent_prompt_copied':'home.code_copied',{tab:lang,from:source});
-});
+ return clean.textContent.split('\n').map(line=>line.replace(/^[+ ] /,'')).join('\n');
+};
+// content-layout.js loads after this file; both are deferred, so wire up once the page is parsed.
+document.addEventListener('DOMContentLoaded',()=>window.TRCode?.wireCopy($('[data-copycode]'),{text:migrationText,source:()=>pre,status:$('.copy-feedback'),done:'Copied to clipboard',
+ fallback:'Clipboard unavailable. Select the text and copy it manually.',resetAfter:1600,
+ onCopy:()=>track(lang==='agent'?'home.agent_prompt_copied':'home.code_copied',{tab:lang,from:source})}));
 renderCode();
 // Hero migration shortcut: copy the prompt and reveal it in the migration block.
 const heroMigrate=$('[data-migrate-with-agent]');

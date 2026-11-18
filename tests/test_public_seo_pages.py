@@ -1769,11 +1769,6 @@ def test_new_york_token_exchange_page_and_discovery_links(client: TestClient) ->
     assert "New York Token Exchange, or NYTE" in landing.text
     assert "not a cryptocurrency, securities, or financial exchange" in landing.text
     assert landing.text.count('href="https://nytokenexchange.com/"') >= 2
-    assert "<strong>New York Token Exchange</strong>" in homepage.text
-    assert (
-        'data-token-exchange-banner href="https://nytokenexchange.com/?utm_source=trustedrouter.com'
-        in homepage.text
-    )
     assert 'href="https://nytokenexchange.com/">New York Token Exchange</a>' in resources.text
 
 

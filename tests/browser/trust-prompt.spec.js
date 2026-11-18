@@ -1,6 +1,6 @@
 const { test, expect } = require("@playwright/test");
 
-test("copies exactly the visible prompt under the real page CSP", async ({ page }) => {
+test("copies exactly the prompt shown under the hero, under the real page CSP", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: async (text) => { window.copiedTrustPrompt = text; } },
@@ -10,7 +10,7 @@ test("copies exactly the visible prompt under the real page CSP", async ({ page 
   await page.getByRole("button", { name: "Copy prompt" }).click();
   const prompt = (await page.locator("#trust-agent-prompt").textContent()).trim();
   expect(await page.evaluate(() => window.copiedTrustPrompt)).toBe(prompt);
-  await expect(page.getByRole("status")).toHaveText("Copied. Ready for your agent chat.");
+  await expect(page.locator("#trust-copy-status")).toHaveText("Copied. Ready for your agent chat.");
   await expect(page.getByRole("button", { name: "Copy prompt" })).toBeEnabled();
 });
 
@@ -27,7 +27,7 @@ for (const mode of ["denied", "unavailable"]) {
     await page.getByRole("button", { name: "Copy prompt" }).click();
     const prompt = (await page.locator("#trust-agent-prompt").textContent()).trim();
     expect(await page.evaluate(() => window.getSelection().toString())).toBe(prompt);
-    await expect(page.getByRole("status")).toContainText("Prompt selected");
+    await expect(page.locator("#trust-copy-status")).toContainText("Prompt selected");
     await expect(page.getByRole("button", { name: "Copy prompt" })).toBeEnabled();
   });
 }
@@ -42,7 +42,7 @@ test("the prompt remains readable without JavaScript", async ({ browser, baseURL
 });
 
 for (const width of [375, 1440]) {
-  test(`prompt fits the first viewport at ${width}px`, async ({ page }, testInfo) => {
+  test(`the copy prompt panel fits the first viewport at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/trust");
     const prompt = await page.locator(".agent-verify").boundingBox();

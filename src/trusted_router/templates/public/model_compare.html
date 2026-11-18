@@ -6,7 +6,7 @@
 {# Without a verdict the hero's lead already is hero_pitch, so the note under
    the hero button only carries the free-tokens line. #}
 {% set hero_note = "No card required. Start with 1 million free tokens." if free_to_start else ("" if not board.verdict else hero_pitch) %}
-{% block head_extra %}<link rel="stylesheet" href="/static/compare.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/compare.css?v={{ static_version|default('local') }}"><link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
 
 {% block hero %}
 <section class="compare-hero">
@@ -164,4 +164,4 @@ print(response.choices[0].message.content){% endset %}
 {% endblock %}
 
 {% block faq %}{% endblock %}
-{% block body_scripts %}<script src="/static/copy-prompt.js" defer></script><script src="/static/compare.js?v={{ static_version|default('local') }}" defer></script>{% endblock %}
+{% block body_scripts %}<script src="/static/copy-prompt.js" defer></script><script src="/static/quickstart.js?v={{ static_version|default('local') }}" defer></script>{% endblock %}

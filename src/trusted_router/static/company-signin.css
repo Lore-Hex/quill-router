@@ -128,29 +128,11 @@
   line-height: 1.65;
 }
 
+/* Code panels are the shared code block (content-layout.css); only their
+   place here. */
 .company-code {
   margin-top: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--tr-square, 6px);
-  overflow: hidden;
   min-width: 0;
-}
-
-.company-code-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
-}
-
-.company-code-head small {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .company-copy {
@@ -188,21 +170,6 @@
 .company-copy:focus-visible {
   outline: 2px solid currentcolor;
   outline-offset: 2px;
-}
-
-.company-code pre {
-  margin: 0;
-  padding: 20px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.7;
-  tab-size: 2;
-}
-
-.company-code code {
-  white-space: inherit;
-  font: inherit;
 }
 
 .company-copy-status {
@@ -349,11 +316,6 @@
 
   .company-integration {
     gap: 0;
-  }
-
-  .company-code pre {
-    padding: 16px;
-    font-size: 12px;
   }
 
   .company-crumbs {

@@ -388,10 +388,6 @@ table.content-reference,
     scroll-padding-inline-start: var(--scroll-table-pin);
   }
 
-  .scroll-table.can-scroll-right {
-    mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 24px), transparent);
-  }
-
   .scroll-table-controls {
     margin: 0 0 var(--tr-space-stack-xs);
   }
@@ -650,46 +646,6 @@ table.content-reference,
   margin-bottom: 0;
 }
 
-.content-code-frame {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.content-code-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--tr-space-stack-xs);
-  margin-top: 4px;
-}
-
-.content-code-controls[hidden] {
-  display: none;
-}
-
-.content-code-scroll {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--tr-color-line-rule);
-  border-radius: var(--tr-radius-panel);
-  background: var(--tr-color-surface-panel-inset);
-  color: var(--tr-color-link-base);
-  cursor: pointer;
-}
-
-.content-code-scroll:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.content-code-scroll svg {
-  width: 20px;
-  height: 20px;
-}
-
-.content-code-scroll:focus-visible,
 .content-disclosure summary:focus-visible {
   outline: 2px solid var(--tr-color-focus);
   outline-offset: 3px;
@@ -996,122 +952,365 @@ table.content-reference,
   }
 }
 
-/* Docs code blocks: Copy button in the header (or on its own line above the
-   code), and a fade on the right edge while code is hidden. */
-.docs-code-frame {
-  display: grid;
-  gap: var(--tr-space-stack-xs);
-  min-width: 0;
+/* Code blocks: one shared component (NYTE code block standard). This block
+   is the only place the panel, header strip, label, Copy button, scroll
+   chevrons and code colours are defined. content-layout.js builds it around
+   every <pre> on public pages (.tr-code); the quickstart box (.md-code) and
+   the homepage migration panel put the same classes in their markup:
+   .tr-code-head for the strip, .tr-code-tools for its button group,
+   .tr-code-copy for Copy and .tr-code-body for a scrolling code area.
+   Ink panel, square, no border or shadow; lines never wrap. Rules start at
+   :root so page sheets loaded later cannot restyle the parts. Colours fall
+   back to the kit values outside the NYTE theme. */
+:root {
+  --tr-code-ink: var(--nyte-ink, #151311);
+  --tr-code-cream: var(--nyte-cream, #FAF8F4);
+  --tr-code-lime: var(--nyte-lime, #C9E265);
+  --tr-code-muted: var(--nyte-ink-2-dark, #B9B2A8);
+  --tr-code-rule: var(--nyte-dark-rule, #3A3631);
+  --tr-code-sunken: var(--nyte-sunken, #221F1C);
+  --tr-code-pad-block: 24px;
+  --tr-code-pad-inline: 28px;
 }
 
-.docs-code-copy {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
+:root .tr-code {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   padding: 0;
-  border: 1px solid var(--tr-color-line-rule);
-  border-radius: var(--tr-radius-panel);
-  background: var(--tr-color-surface-panel-inset);
-  color: var(--tr-color-text-primary);
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
+}
+
+:root .tr-code-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  box-sizing: border-box;
+  height: 48px;
+  padding: 0 2px 0 var(--tr-code-pad-inline);
+  border-bottom: 1.5px solid var(--tr-code-rule);
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
+}
+
+:root .tr-code-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tr-code-muted);
+  font: 500 14px/1.2 "ABC Pelikan Condensed", "Arial Narrow", var(--tr-font-family-sans);
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+:root .tr-code-label.is-file {
+  font: 400 14px/1.2 var(--font-mono, var(--tr-font-family-mono));
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root .tr-code-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Copy: an icon-only button in the strip. */
+:root .tr-code-copy {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--tr-code-cream);
   cursor: pointer;
 }
 
-.docs-code-copy svg {
-  width: 16px;
-  height: 16px;
+:root .tr-code-copy[hidden] {
+  display: none;
+}
+
+:root .tr-code-copy svg {
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentcolor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
-[data-docs-code] pre,
-[data-docs-code] pre code {
-  font-size: 13px;
-  line-height: 1.5;
+:root .tr-code-copy .tr-code-done,
+:root .tr-code-copy.is-done .tr-code-icon {
+  display: none;
 }
 
-/* iPhone Safari enlarges text in blocks that scroll sideways; keep code at
-   the size set here. */
-[data-docs-code] pre {
+:root .tr-code-copy.is-done .tr-code-done {
+  display: block;
+}
+
+:root .tr-code-copy:hover {
+  background: var(--tr-code-sunken);
+}
+
+:root .tr-code-copy:focus-visible {
+  outline: 2px solid var(--tr-code-cream);
+  outline-offset: -4px;
+}
+
+/* The code itself. In .tr-code the <pre> scrolls; in a .tr-code-body the
+   body scrolls and the <pre> is as wide as its longest line. */
+:root :is(.tr-code pre, .tr-code-body pre) {
+  display: block;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: var(--tr-code-pad-block) var(--tr-code-pad-inline);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--tr-code-cream);
+  font: 400 14px/1.7 var(--font-mono, var(--tr-font-family-mono));
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  tab-size: 2;
+  mask-image: none;
   /* stylelint-disable-next-line property-no-vendor-prefix -- iOS Safari only reads the prefixed form. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-/* The collapse only applies on phones. */
-.docs-code-more {
+:root .tr-code-body {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  background: var(--tr-code-ink);
+  color: var(--tr-code-cream);
+}
+
+:root .tr-code-body pre {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  overflow: visible;
+}
+
+:root :is(.tr-code pre, .tr-code-body pre) code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+  overflow-wrap: inherit;
+}
+
+:root .tr-code pre:focus-visible,
+:root .tr-code-body:focus-visible,
+:root .tr-code-body:has(pre:focus-visible) {
+  outline: 2px solid var(--tr-code-cream);
+  outline-offset: -2px;
+}
+
+:root .tr-code-body pre:focus-visible {
+  outline: 0;
+}
+
+/* Strings and values lime, comments muted */
+:root :is(.tr-code, .tr-code-body) .tr-code-s {
+  color: var(--tr-code-lime);
+}
+
+:root :is(.tr-code, .tr-code-body) .tr-code-c {
+  color: var(--tr-code-muted);
+}
+
+/* The provider application is an email template: prose lines wrap. */
+:root .tr-code pre.provider-application-template {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+:root .tr-code-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Body text before or after a code block keeps paragraph spacing. */
+:root :is(p, ul, ol, dl, h3, h4, blockquote, .muted-copy) + .tr-code {
+  margin-top: 16px;
+}
+
+:root .tr-code + :is(p, ul, ol, dl, h3, h4, blockquote, .tr-code) {
+  margin-top: 16px;
+}
+
+/* Status sections inset their text; the panel lines up with it. */
+:root .status-section > .tr-code {
+  margin-inline: 18px;
+}
+
+/* The collapse for long docs examples only applies on phones. */
+:root .tr-code-more {
   display: none;
 }
 
-.docs-code-copy:focus-visible {
-  outline: 2px solid var(--tr-color-focus);
-  outline-offset: 3px;
-}
-
-.docs-code-frame > .docs-code-copy {
-  justify-self: end;
-}
-
-/* Keep the button closer to its own code than to the block above. */
-.docs-code-frame {
-  margin-top: var(--tr-space-stack-xs);
-}
-
-.docs-code-frame > pre {
-  padding-top: var(--tr-space-stack-xs);
-}
-
-[data-docs-code] pre.can-scroll-right {
-  mask-image: linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 56px), transparent);
+/* Inline code in body text: body colour, mono one pixel under body size,
+   no box. */
+:root body:not(.console) :is(p, li, dd) > code:not([class]) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--font-mono, var(--tr-font-family-mono));
+  font-size: calc(1em - 1px);
 }
 
 @media (max-width: 700px) {
-  .docs-code-copy {
-    width: 44px;
-    height: 44px;
+  :root {
+    --tr-code-pad-block: 20px;
+    --tr-code-pad-inline: 20px;
   }
 
-  [data-docs-code] pre,
-  [data-docs-code] pre code {
-    font-size: 11.5px;
+  :root .tr-code pre.is-collapsed {
+    max-height: calc(10 * 1.7 * 14px + 20px);
   }
 
-  [data-docs-code] pre.is-collapsed {
-    max-height: calc(10 * 1.5 * 11.5px + var(--tr-space-stack-md));
-    overflow-y: hidden;
-    mask-image: linear-gradient(to bottom, var(--tr-legacy-000000, #000) calc(100% - 40px), transparent);
-  }
-
-  [data-docs-code] pre.is-collapsed.can-scroll-right {
-    mask-image:
-      linear-gradient(to bottom, var(--tr-legacy-000000, #000) calc(100% - 40px), transparent),
-      linear-gradient(to right, var(--tr-legacy-000000, #000) calc(100% - 56px), transparent);
-    mask-composite: intersect;
-  }
-
-  .docs-code-more {
+  :root .tr-code-more {
     display: block;
     width: 100%;
     min-height: 44px;
+    margin: 0;
+    padding: 0 20px;
     border: 0;
-    border-top: 1px solid var(--tr-color-line-rule);
+    border-top: 1.5px solid var(--tr-code-rule);
+    border-radius: 0;
     background: transparent;
-    color: var(--tr-color-link-base);
-    font-family: var(--tr-font-family-sans);
-    font-size: 14px;
-    font-weight: var(--tr-font-weight-medium);
+    color: var(--tr-code-cream);
+    font: 500 14px/1.2 var(--tr-font-family-sans);
+    text-align: left;
     cursor: pointer;
   }
 
-  .docs-code-more:focus-visible {
-    outline: 2px solid var(--tr-color-focus);
-    outline-offset: -2px;
+  :root .tr-code-more:focus-visible {
+    outline: 2px solid var(--tr-code-cream);
+    outline-offset: -4px;
   }
+}
 
-  .copy-terminal .code-head:has(.docs-code-copy) {
-    padding-block: 6px;
-  }
+/* Sideways scroll: one component for rows, code and tables (NYTE
+   sideways-scroll rule; content-layout.js TRScroll). A short fade into the
+   ground colour at whichever edge has more; nothing to press. Rows (chips,
+   link rows): the edge is sticky inside the row, full row height, and takes
+   no width, so the row's layout does not change. Code and tables: the fade
+   covers the scroller's own edge, never a code strip, Copy or the expand
+   control. */
+:root .tr-scroll-edge {
+  --tr-scroll-fade: var(--tr-scroll-ground, var(--nyte-cream, #FAF8F4));
+
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  box-sizing: border-box;
+  width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:root .tr-scroll-edge[hidden] {
+  display: none;
+}
+
+:root .tr-scroll-edge.is-off {
+  visibility: hidden;
+}
+
+:root .tr-scroll-edge.is-row {
+  position: sticky;
+  pointer-events: none;
+  align-self: stretch;
+}
+
+:root .tr-scroll-edge-prev.is-row {
+  left: 0;
+  margin-right: calc(-44px - var(--tr-scroll-gap, 0px));
+  background: linear-gradient(to left, transparent, var(--tr-scroll-fade) 55%);
+}
+
+:root .tr-scroll-edge-next.is-row {
+  right: 0;
+  margin-left: calc(-44px - var(--tr-scroll-gap, 0px));
+  background: linear-gradient(to right, transparent, var(--tr-scroll-fade) 55%);
+}
+
+/* A sticky edge stops at the row's padding; this covers the padding too. */
+:root .tr-scroll-edge.is-row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--tr-scroll-pad, 0);
+  background: var(--tr-scroll-fade);
+}
+
+:root .tr-scroll-edge-prev.is-row::after {
+  right: 100%;
+}
+
+:root .tr-scroll-edge-next.is-row::after {
+  left: 100%;
+}
+
+/* Code: a soft fade over the code area's edge; nothing to press. */
+:root .tr-scroll-host {
+  position: relative;
+}
+
+:root .tr-scroll-edge.is-over {
+  position: absolute;
+  width: 36px;
+  min-height: 0;
+  pointer-events: none;
+}
+
+:root .tr-scroll-edge-prev.is-over {
+  background: linear-gradient(to left, transparent, var(--tr-scroll-fade));
+}
+
+:root .tr-scroll-edge-next.is-over {
+  background: linear-gradient(to right, transparent, var(--tr-scroll-fade));
 }

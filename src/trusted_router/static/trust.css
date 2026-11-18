@@ -14,14 +14,14 @@
 }
 
 /* Shared text sizes: the same reading size /docs uses. */
-.trust-page :is(.marketing-card, .quote-feature, .trust-hero-copy, .trust-notice) p {
+.trust-page :is(.marketing-card, .quote-feature, .trust-notice) p {
   margin: 0 0 var(--tr-space-stack-md);
   color: var(--text-body);
   font-size: 16px;
   line-height: 1.7;
 }
 
-.trust-page :is(.marketing-card, .quote-feature > div, .trust-hero-copy, .trust-notice) > :last-child {
+.trust-page :is(.marketing-card, .quote-feature > div, .trust-notice) > :last-child {
   margin-bottom: 0;
 }
 
@@ -37,47 +37,66 @@
   letter-spacing: -0.025em;
 }
 
-/* Agent prompt, first in main: the page's one action, in the kit's mint panel. */
+/* Hero: one left-aligned column on Ink, closed by the lime "Ask your agent"
+   panel. nyte-theme.css makes it fill the first screen with the Band below. */
+.trust-page .trust-hero {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 32px;
+  padding-top: 40px;
+}
+
+.trust-page .trust-hero > * {
+  width: 100%;
+  max-width: 960px;
+}
+
+.trust-hero-copy code {
+  font-size: 0.9em;
+}
+
+.trust-hero h1 {
+  max-width: 900px;
+  margin: 20px 0;
+}
+
+.trust-page .trust-hero-copy .lead {
+  max-width: 720px;
+  margin-bottom: 0;
+  color: var(--tr-color-text-primary);
+  font-size: 18px;
+  font-weight: 450;
+  line-height: 1.6;
+}
+
+/* The page's one action: Ink on lime, square, no border or shadow. */
 .agent-verify {
-  padding: 24px 28px 20px;
-  border-radius: var(--r-panel);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 32px;
+  align-items: center;
+  padding: 20px 24px;
+  border-radius: 0;
   background: var(--tr-color-panel-mint-bg);
   color: var(--tr-color-panel-mint-ink);
 }
 
-.agent-verify-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 24px;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 44px;
-  margin-bottom: 16px;
+/* Three classes deep so the theme's light display h2 does not win. */
+.trust-page .agent-verify .agent-verify-text h2 {
+  margin: 0 0 4px;
+  color: inherit;
+  font-family: var(--tr-font-family-sans);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
 }
 
-.agent-verify-head h2 {
+.trust-page .agent-verify-text p {
   margin: 0;
   color: inherit;
-  font-size: 22px;
-  font-weight: 550;
-  letter-spacing: -0.025em;
-}
-
-.agent-prompt {
-  margin: 0;
-  padding: 6px 0 6px 20px;
-  border-left: 3px solid var(--tr-color-panel-mint-divider);
-  color: var(--tr-color-panel-mint-ink);
-}
-
-.agent-prompt p {
-  max-width: 78ch;
-  margin: 0;
-  color: inherit;
-  font-size: 17px;
-  font-style: italic;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 450;
+  line-height: 1.5;
 }
 
 .copy-prompt {
@@ -86,10 +105,10 @@
   gap: 8px;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  padding: 10px 16px;
-  border: 1px solid var(--tr-color-panel-mint-ink);
-  border-radius: var(--r-control);
+  min-height: 48px;
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 0;
   background: var(--tr-color-panel-mint-ink);
   color: var(--tr-color-panel-mint-bg);
   font: inherit;
@@ -102,7 +121,6 @@
 }
 
 .copy-prompt:hover {
-  border-color: var(--tr-color-panel-mint-ink-2);
   background: var(--tr-color-panel-mint-ink-2);
 }
 
@@ -111,15 +129,19 @@
 }
 
 .copy-status {
+  grid-column: 1 / -1;
   display: block;
-  min-height: 24px;
-  margin-top: 8px;
-  color: var(--tr-color-panel-mint-ink-2);
+  color: inherit;
   font-size: 15px;
+  font-weight: 500;
   line-height: 1.5;
 }
 
-/* Release warning, second in main when the live record is stale or missing. */
+.copy-status:empty {
+  display: none;
+}
+
+/* Release warning, right under the hero when the live record is stale or missing. */
 .trust-page .trust-notice {
   padding: 20px 24px;
   border-color: var(--warn-border);
@@ -138,53 +160,40 @@
   color: var(--amber);
 }
 
-/* Title, lead copy and the links the page's own header used to carry. */
-.trust-page .trust-hero {
-  row-gap: 40px;
-  padding: 28px 0 48px;
+/* The full agent prompt under the hero uses the shared code block
+   (content-layout.js builds the strip and Copy). It is prose, so it wraps. */
+.trust-page .trust-prompt-block pre {
+  white-space: pre-wrap;
+  max-width: 80ch;
 }
 
-/* The hero's own rule draws the line under it; the first strip adds none. */
-.trust-page .trust-hero + section {
-  margin-top: var(--tr-space-stack-2xl);
-  border-top: 0;
+/* Under the prompt: the how-to paragraph, review link and source links
+   beside the current workload facts. */
+.trust-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 32px 56px;
+  align-items: start;
 }
 
-.trust-hero-copy code {
-  font-size: 0.9em;
-}
-
-.trust-hero h1 {
-  max-width: 640px;
-  margin: 20px 0;
-  font-size: 44px;
-  line-height: 1.08;
-}
-
-.trust-page .trust-hero-copy .lead {
+.trust-page .trust-overview-copy p {
   max-width: 600px;
-  margin-bottom: var(--tr-space-stack-md);
-  font-size: 18px;
-  line-height: 1.6;
-}
-
-.trust-hero-copy p {
-  max-width: 600px;
-}
-
-.trust-page .trust-hero-copy .trust-hero-aside {
-  color: var(--text-muted);
+  margin: 0 0 var(--tr-space-stack-md);
+  color: var(--text-display);
+  font-size: 17px;
+  font-weight: 450;
+  line-height: 1.65;
 }
 
 .trust-page .trust-links {
-  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin: 0;
+  margin: var(--tr-space-stack-lg) 0 0;
 }
 
 .trust-workload {
   min-width: 0;
-  padding-top: 6px;
 }
 
 .trust-workload h2 {
@@ -415,22 +424,8 @@
     margin-top: var(--tr-space-stack-2xl);
   }
 
-  .trust-page .trust-hero {
-    gap: 32px;
-    padding: 32px 0 36px;
-  }
-
-  .trust-hero h1 {
-    font-size: 34px;
-  }
-
-  .trust-page .trust-hero-copy .lead {
-    font-size: 17px;
-  }
-
-  /* One column: the link buttons follow the copy, the facts come after. */
-  .trust-workload {
-    order: 3;
+  .trust-overview {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /* One column: every cell becomes a ruled row across the page gutter. */
@@ -490,33 +485,33 @@
   }
 
   .agent-verify {
-    display: flex;
-    flex-direction: column;
-    padding: 20px 18px 16px;
-  }
-
-  .agent-verify-head {
-    display: contents;
-  }
-
-  .agent-verify-head h2 {
-    order: 1;
-    margin-bottom: 14px;
-    font-size: 20px;
-  }
-
-  .agent-prompt {
-    order: 2;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 16px;
   }
 
   .copy-prompt {
-    order: 3;
-    align-self: flex-start;
-    margin-top: 16px;
+    width: 100%;
+    min-height: 44px;
   }
 
   .copy-status {
-    order: 4;
+    margin-top: -4px;
+  }
+
+  /* Phones: tighter hero so the panel and the Band share the first screen. */
+  .trust-page .trust-hero {
+    row-gap: 20px;
+    padding-top: 16px;
+  }
+
+  .trust-hero h1 {
+    margin: 12px 0 10px;
+  }
+
+  .trust-page .trust-hero-copy .lead {
+    font-size: 16px;
+    line-height: 1.55;
   }
 
   .trust-hero h1 {
@@ -527,7 +522,13 @@
     font-size: 16px;
   }
 
-  .agent-prompt p {
-    font-size: 16px;
-  }
+}
+
+/* Phones get a shorter hero: one short lead, no panel subline. */
+.trust-page .trust-lead-short { display: none; }
+
+@media (max-width: 760px) {
+  .trust-page .trust-lead-full,
+  .trust-page .agent-verify-text p { display: none; }
+  .trust-page .trust-lead-short { display: block; }
 }

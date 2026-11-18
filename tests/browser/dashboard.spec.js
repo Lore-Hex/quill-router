@@ -63,7 +63,7 @@ test("paid search quickstart copies runnable code and opens key creation", async
   await expect(sample).toContainText("import os");
   await expect(sample).toContainText('model="trustedrouter/cheap"');
 
-  await page.getByRole("button", { name: "Copy", exact: true }).click();
+  await page.getByRole("button", { name: "Copy OpenAI SDK", exact: true }).click();
   await expect(page.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   expect(copied).toContain("import os");

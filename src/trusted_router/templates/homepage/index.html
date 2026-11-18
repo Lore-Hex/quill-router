@@ -35,10 +35,13 @@
 <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
 {% if brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ static_version|default('local') }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head><body><div class="page">{% include "public/_nav.html" %}
 <main id="main">
-<a class="exchange-banner" data-token-exchange-banner href="https://nytokenexchange.com/?utm_source=trustedrouter.com&amp;utm_medium=referral&amp;utm_campaign=token-exchange-launch&amp;utm_content=homepage-banner">
+{% set home_offer = launch_offer_facts() %}{% if home_offer %}<a class="exchange-banner" data-glm-offer-banner href="{{ home_offer.path }}">
+  <span class="exchange-banner-copy offer-banner-copy"><strong>{{ home_offer.model_name }} is basically free</strong><em class="offer-banner-price">{{ home_offer.price_label }}</em></span>
+  <span class="exchange-banner-action"><span class="exchange-banner-arrow" aria-hidden="true">&rarr;</span></span>
+</a>{% else %}<a class="exchange-banner" data-token-exchange-banner href="https://nytokenexchange.com/?utm_source=trustedrouter.com&amp;utm_medium=referral&amp;utm_campaign=token-exchange-launch&amp;utm_content=homepage-banner">
   <span class="exchange-banner-copy"><strong>New York Token Exchange</strong><span>The market built for Enterprise AI.</span></span>
   <span class="exchange-banner-action">Explore<span class="exchange-banner-arrow" aria-hidden="true">&rarr;</span></span>
-</a>
+</a>{% endif %}
 {% include "homepage/top.html" %}
 {% include "homepage/models.html" %}
 {% include "homepage/migrate.html" %}
@@ -48,7 +51,7 @@
 {% include "homepage/pricing.html" %}
 {% include "homepage/customers.html" %}
 {% include "homepage/faq.html" %}
-<div class="trf">{% include "public/_ai_guide_links.html" %}</div>
+{% set guide_heading = "Go deeper" %}{% set guide_short_signup = true %}<div class="trf trf-guides">{% include "public/_ai_guide_links.html" %}</div>
 {% include "homepage/closing.html" %}
 </main>{% include "public/_footer.html" %}
 </div><div class="copy-feedback" role="status" aria-live="polite"></div><script id="homepage-data" type="application/json" nonce="{{ csp_nonce() }}">{{ homepage_data|tojson }}</script>{% include "public/_signin.html" %}</body></html>
