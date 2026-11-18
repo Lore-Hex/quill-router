@@ -23,6 +23,12 @@ Thresholds = tuple[tuple[str, float], ...]
 SessionKey = tuple[str, str, str, str]
 Affinity = Literal["none", "cold", "warm_same", "warm_promoted"]
 PERCENTILES = {"p50": 0.50, "p75": 0.75, "p90": 0.90, "p99": 0.99}
+# How long one observed provider funding failure (an out-of-funds 402 on a
+# TrustedRouter-funded route) keeps that provider's prepaid routes behind every
+# other eligible candidate. Each new funding failure re-arms it; a served
+# prepaid request on the provider clears it at once, so a funded account
+# returns to rotation on its next success or, at the latest, after this long.
+PROVIDER_FUNDING_HOLD_SECONDS = 300.0
 
 
 def parse_thresholds(value: Any, field: str) -> Thresholds:
@@ -78,6 +84,8 @@ class RoutingState:
         )
         self._max_sessions = max_sessions
         self._max_routes = max_routes
+        # provider slug -> monotonic deadline of its funding hold.
+        self._funding_holds: dict[str, float] = {}
 
     @property
     def session_count(self) -> int:
@@ -111,6 +119,60 @@ class RoutingState:
             self._measurements.move_to_end(key)
             while len(self._measurements) > self._max_routes:
                 self._measurements.popitem(last=False)
+
+    def hold_provider_funding(
+        self,
+        provider: str,
+        *,
+        now: float | None = None,
+        seconds: float = PROVIDER_FUNDING_HOLD_SECONDS,
+    ) -> None:
+        """Our own account at ``provider`` ran out of funds: demote its prepaid routes."""
+        if not provider:
+            return
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._funding_holds[provider] = now + seconds
+            # Bounded by the provider catalog; drop expired entries as we go.
+            for slug, deadline in list(self._funding_holds.items()):
+                if deadline <= now:
+                    del self._funding_holds[slug]
+
+    def release_provider_funding(self, provider: str) -> None:
+        with self._lock:
+            self._funding_holds.pop(provider, None)
+
+    def provider_funding_held(self, provider: str, *, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            deadline = self._funding_holds.get(provider)
+            return deadline is not None and now < deadline
+
+    def demote_funding_held(
+        self,
+        candidates: list[tuple[Model, ModelEndpoint]],
+        *,
+        now: float | None = None,
+    ) -> list[tuple[Model, ModelEndpoint]]:
+        """Move prepaid routes of providers under a funding hold behind all others.
+
+        They stay last-resort candidates rather than being dropped: a model
+        served only by that provider still reaches it (the gateway hides the
+        provider's top-up text), and a refilled account serves again without
+        waiting for the hold to lapse. BYOK routes use the customer's own
+        provider account and are never demoted.
+        """
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            held = {slug for slug, deadline in self._funding_holds.items() if now < deadline}
+        if not held:
+            return candidates
+        kept: list[tuple[Model, ModelEndpoint]] = []
+        demoted: list[tuple[Model, ModelEndpoint]] = []
+        for model, endpoint in candidates:
+            prepaid = not endpoint.is_byok
+            (demoted if prepaid and endpoint.provider in held else kept).append((model, endpoint))
+        return kept + demoted
 
     def rank(
         self,

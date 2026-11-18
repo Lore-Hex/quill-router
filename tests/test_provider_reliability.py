@@ -7,6 +7,7 @@ from trusted_router.provider_reliability import (
     FailureClass,
     FailureOwner,
     classify_provider_failure,
+    is_provider_funding_failure,
     model_deadlines,
 )
 
@@ -131,3 +132,78 @@ def test_model_deadline_rejects_invalid_default() -> None:
         assert "positive" in str(exc)
     else:
         raise AssertionError("expected invalid timeout to fail")
+
+
+_VENICE_OUT_OF_FUNDS = (
+    "Insufficient USD or Diem balance to complete request. "
+    "Visit https://venice.ai/settings/api to add credits."
+)
+
+
+@pytest.mark.parametrize(
+    ("error_status", "error_type", "message"),
+    [
+        # Venice, incident 2026-11-18: a 402 in Venice's own words.
+        (402, "provider_error", _VENICE_OUT_OF_FUNDS),
+        # The same words with the status lost or rewritten on the way.
+        (None, "provider_error", _VENICE_OUT_OF_FUNDS),
+        (400, "invalid_request_error", _VENICE_OUT_OF_FUNDS),
+        # Anthropic answers an empty prepaid account with a 400.
+        (400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API."),
+        # OpenAI answers it with a 429 insufficient_quota.
+        (429, "insufficient_quota", "You exceeded your current quota, please check your plan."),
+        # What an updated gateway reports once it hid the provider's text.
+        (503, "provider_funding", None),
+    ],
+)
+def test_provider_out_of_funds_on_a_prepaid_route_is_owned_by_trustedrouter(
+    error_status: int | None, error_type: str, message: str | None,
+) -> None:
+    assert is_provider_funding_failure(
+        error_status=error_status, error_type=error_type, error_message=message,
+    )
+    result = classify_provider_failure(
+        status="error",
+        error_type=error_type,
+        error_status=error_status,
+        error_message=message,
+        usage_type="Credits",
+    )
+
+    assert result.owner is FailureOwner.TRUSTEDROUTER
+    assert result.failure_class is FailureClass.TRUSTEDROUTER_CAPACITY
+    assert result.counts_toward_provider_availability is False
+
+
+def test_provider_out_of_funds_on_byok_is_the_customers_account() -> None:
+    result = classify_provider_failure(
+        status="error",
+        error_type="provider_error",
+        error_status=402,
+        error_message=_VENICE_OUT_OF_FUNDS,
+        usage_type="BYOK",
+    )
+
+    assert result.owner is FailureOwner.CUSTOMER
+    assert result.failure_class is FailureClass.CUSTOMER_QUOTA
+    assert result.counts_toward_provider_availability is False
+
+
+@pytest.mark.parametrize(
+    ("error_status", "error_type", "message"),
+    [
+        # TrustedRouter's own refusal of a customer is never provider funding.
+        (402, "insufficient_credits", "Insufficient credits"),
+        # Nor is the monitor's own router account being unusable.
+        (None, "monitor_account_unavailable", "insufficient credits"),
+        (429, "rate_limit_error", "Too many requests"),
+        (503, "provider_error", "upstream overloaded"),
+        (400, "invalid_request_error", "max_tokens is too large"),
+    ],
+)
+def test_other_failures_are_not_provider_funding(
+    error_status: int | None, error_type: str, message: str,
+) -> None:
+    assert not is_provider_funding_failure(
+        error_status=error_status, error_type=error_type, error_message=message,
+    )

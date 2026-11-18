@@ -179,6 +179,16 @@ def reset_analytics_status_cache(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def fresh_routing_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Process-local routing hints (provider funding holds, affinity) never
+    outlive the test that created them."""
+    from trusted_router.routes.internal import gateway
+    from trusted_router.routing_state import RoutingState
+
+    monkeypatch.setattr(gateway, "ROUTING_STATE", RoutingState())
+
+
+@pytest.fixture(autouse=True)
 def auto_credit_test_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pre-credit every workspace created during a test with starter credit.
 

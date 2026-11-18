@@ -144,6 +144,7 @@ from trusted_router.provider_contracts import (
     provider_model_has_private_price_tier_basis,
 )
 from trusted_router.provider_locations import inference_location_metadata
+from trusted_router.provider_reliability import is_provider_funding_failure
 from trusted_router.receipt_keys import (
     AWS_ATTESTATION_KIND,
     AZURE_ATTESTATION_KIND,
@@ -1523,7 +1524,9 @@ def _authorize_gateway_sync_impl(
             session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
             if body.cache_affinity_key else None,
         )
-        return ranked
+        # A provider whose TrustedRouter account just ran out of funds keeps
+        # its prepaid routes behind every other eligible candidate.
+        return ROUTING_STATE.demote_funding_held(ranked)
 
     try:
         candidate_outcome = finish_candidates(
@@ -3793,6 +3796,74 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
         logger.warning("route fallback log failed", exc_info=True)
 
 
+def _route_failure_is_funding(failure_class: str) -> bool:
+    """A gateway route-failure class ("upstream_4xx;http=402;funding") says out of funds."""
+    tokens = {token.strip() for token in failure_class.split(";")}
+    return "funding" in tokens or "http=402" in tokens
+
+
+def _only_prepaid_provider(endpoint_ids: set[str], provider: str) -> bool:
+    for endpoint_id in endpoint_ids:
+        endpoint = _endpoint_for_id_compat(endpoint_id)
+        if endpoint is not None and not endpoint.is_byok and endpoint.provider != provider:
+            return False
+    return True
+
+
+def _observe_provider_funding(
+    authorization: Any,
+    body: GatewaySettleRequest,
+    selected_endpoint: ModelEndpoint,
+    *,
+    success: bool,
+) -> None:
+    """Feed provider funding failures on prepaid routes into the routing hold.
+
+    A refund whose selected prepaid route failed for lack of funds, or a
+    pre-output fallback away from one (route_failures), puts that provider's
+    prepaid routes behind every other candidate; a served prepaid request on
+    the provider takes them back. Only routes this authorization holds count.
+    Process-local and best effort: it must never fail a settlement.
+    """
+    try:
+        authorized = set(getattr(authorization, "candidate_endpoint_ids", None) or [])
+        endpoint_id = getattr(authorization, "endpoint_id", None)
+        if endpoint_id:
+            authorized.add(endpoint_id)
+        if not selected_endpoint.is_byok:
+            if success:
+                ROUTING_STATE.release_provider_funding(selected_endpoint.provider)
+            elif is_provider_funding_failure(
+                error_status=body.error_status, error_type=body.error_type,
+            ) and _only_prepaid_provider(authorized, selected_endpoint.provider):
+                # A gateway refund names the authorization's primary route,
+                # not the candidate whose error it carries; it identifies the
+                # dry provider only when no other prepaid provider was tried.
+                ROUTING_STATE.hold_provider_funding(selected_endpoint.provider)
+                logger.warning(
+                    "gateway.provider_funding_hold provider=%s endpoint=%s",
+                    _log_value(selected_endpoint.provider), _log_value(selected_endpoint.id),
+                )
+        for failure in (getattr(body, "route_failures", None) or [])[:8]:
+            if not isinstance(failure, str):
+                continue
+            parts = failure.split("|", 2)
+            if len(parts) != 3 or parts[1] not in authorized or not _route_failure_is_funding(parts[2]):
+                continue
+            endpoint = _endpoint_for_id_compat(parts[1])
+            if endpoint is None or endpoint.is_byok:
+                continue
+            if success and endpoint.provider == selected_endpoint.provider and not selected_endpoint.is_byok:
+                continue
+            ROUTING_STATE.hold_provider_funding(endpoint.provider)
+            logger.warning(
+                "gateway.provider_funding_hold provider=%s endpoint=%s",
+                _log_value(endpoint.provider), _log_value(endpoint.id),
+            )
+    except Exception:  # noqa: BLE001 - a routing hint must never break settlement
+        logger.warning("provider funding observation failed", exc_info=True)
+
+
 def _refund_benchmark_sample_safely(
     body: GatewaySettleRequest,
     authorization: GatewayAuthorization,
@@ -4120,6 +4191,7 @@ def _settle_gateway_authorization(
             "selected endpoint was not authorized for this gateway request",
             ErrorType.BAD_REQUEST,
         )
+    _observe_provider_funding(authorization, body, selected_endpoint, success=success)
     if (
         selected_endpoint.model_id == POLYPHEMUS_MODEL_ID
         and body.input_count == 0

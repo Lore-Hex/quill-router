@@ -64,6 +64,7 @@ class _Metrics:
             error_type=sample.error_type,
             error_status=sample.error_status,
             error_message=sample.error_message,
+            usage_type=getattr(sample, "usage_type", None),
         )
         if attribution.owner in _EXCLUDED_OWNERS:
             self.excluded_count += 1

@@ -381,6 +381,7 @@ def aggregate_leaderboard(
             error_type=sample.error_type,
             error_status=sample.error_status,
             error_message=sample.error_message,
+            usage_type=getattr(sample, "usage_type", None),
         )
         if attribution.owner not in {FailureOwner.NONE, FailureOwner.CONFIGURATION}:
             stats.failure_owners[attribution.owner.value] += 1
@@ -558,6 +559,7 @@ def _excluded_from_uptime(sample: ProviderBenchmarkSample) -> bool:
         error_type=sample.error_type,
         error_status=sample.error_status,
         error_message=sample.error_message,
+        usage_type=getattr(sample, "usage_type", None),
     )
     return attribution.owner in {
         FailureOwner.CONFIGURATION,

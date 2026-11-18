@@ -229,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "70f081db08b0a477dd0508b22418cc01c6faf7ce4d111f1e3becbab4271781bd",
+  "contract_version": "60aba6df26128211581032b77cb9d8b685de494674853005775b31bf36edeef5",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -1187,12 +1187,102 @@
         "owner": "trustedrouter"
       },
       "input": {
+        "error_message": "upstream reported account balance",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:account balance"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
         "error_message": "upstream reported account quota",
         "error_status": 429,
         "error_type": "rate_limit_error",
         "status": "error"
       },
       "name": "account_quota_markers:account quota"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported add credits",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:add credits"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported add more credits",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:add more credits"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported balance is too low",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:balance is too low"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported balance too low",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:balance too low"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported billing hard limit",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:billing hard limit"
     },
     {
       "attribution": {
@@ -1247,6 +1337,51 @@
         "owner": "trustedrouter"
       },
       "input": {
+        "error_message": "upstream reported diem balance",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:diem balance"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported exceeded your current quota",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:exceeded your current quota"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported insufficient balance",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:insufficient balance"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
         "error_message": "upstream reported insufficient credit",
         "error_status": 429,
         "error_type": "rate_limit_error",
@@ -1277,12 +1412,72 @@
         "owner": "trustedrouter"
       },
       "input": {
+        "error_message": "upstream reported insufficient usd",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:insufficient usd"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported insufficient_quota",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:insufficient_quota"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
         "error_message": "upstream reported monthly spend",
         "error_status": 429,
         "error_type": "rate_limit_error",
         "status": "error"
       },
       "name": "account_quota_markers:monthly spend"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported not enough credits",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:not enough credits"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported out of credits",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:out of credits"
     },
     {
       "attribution": {
@@ -1307,12 +1502,57 @@
         "owner": "trustedrouter"
       },
       "input": {
+        "error_message": "upstream reported prepaid credit",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:prepaid credit"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
         "error_message": "upstream reported quota exceeded for quota metric",
         "error_status": 429,
         "error_type": "rate_limit_error",
         "status": "error"
       },
       "name": "account_quota_markers:quota exceeded for quota metric"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported top up your",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:top up your"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported top-up",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:top-up"
     },
     {
       "attribution": {
@@ -3233,15 +3473,31 @@
   },
   "markers": {
     "account_quota_markers": [
+      "account balance",
       "account quota",
+      "add credits",
+      "add more credits",
+      "balance is too low",
+      "balance too low",
+      "billing hard limit",
       "billing quota",
       "credit balance",
       "credits exhausted",
+      "diem balance",
+      "exceeded your current quota",
+      "insufficient balance",
       "insufficient credit",
       "insufficient funds",
+      "insufficient usd",
+      "insufficient_quota",
       "monthly spend",
+      "not enough credits",
+      "out of credits",
       "payment required",
-      "quota exceeded for quota metric"
+      "prepaid credit",
+      "quota exceeded for quota metric",
+      "top up your",
+      "top-up"
     ],
     "config_types": [
       "bad_request",
@@ -4357,10 +4613,10 @@
     "components.is_router_origin_error": "ce3a226b41f03957f4ef43d2bdb51a1d5750db7ae2ad96b5b7c5fb1efee6f134",
     "leaderboard._aggregate_providers": "f7db7e28ddb6b00be1c58e421e209317765eb8baa8d93ababf5d85f0d80c5c19",
     "leaderboard._effective_throughput": "8d2a0df175cb0a7b986b0900f44f75fbe42e6b604e45127a2bdb0007d2b5e020",
-    "leaderboard._excluded_from_uptime": "6e673fe96aa8f6e317a2db774aa9f46de1a3c38ba958245e3d4e1527f2eb61a5",
+    "leaderboard._excluded_from_uptime": "3a6e0743ea938a9d1f4964f1e5016e70c91f86e0b52a8d04d0cbbb5a2e773a1a",
     "leaderboard._percentile": "f400388aa9334b49eef0e7005a79478c39c5c7868c2b0a6a3909b1f443f95742",
     "leaderboard._sort_key": "ce505ca4b7d577416f080b19c67feb6791f7f3e446374677e402f5f8a10891b4",
-    "leaderboard.aggregate_leaderboard": "650cbe204f0fd8302030fa7cb1929cb44816b3205f4f27e801b6b4f4d979257d",
+    "leaderboard.aggregate_leaderboard": "d0ebeefb7a6f9113e3e44a98f9559aa6a68367823f4b62a9125f3b263f5c7403",
     "probes._chat_text": "d93e2345277c7fc9f2f201a308768f3cc42b2d53a9715a5cfe7801e3a0f2a3bb",
     "probes._elapsed_ms_with_clock": "ffe5c0dcede88715e77c5e15672aee78b2b3eb40731a98cbce277642d82a22a4",
     "probes._first_int": "29a2c84649a74c53afb4bfe4d017f9b799908bcd08704a26d1e4d2b7ac46c64a",
@@ -4376,7 +4632,7 @@
     "probes._sse_line_has_content": "5e5e660c7a34a0f8ab529fc0462b9972a2b973723c05e4025c45bfa4c0201d64",
     "probes._sse_line_payload": "b1c471040fa210f1fafb8653c207989707ae0cdd014e9e31ed03cbc931d70e6e",
     "probes._sse_line_usage": "03d596eaae4e6875f2e58789d477987617c72f87ba23120503c101374d4063bc",
-    "provider_reliability.classify_provider_failure": "f8e1b14099827858028ec415bf78272616bc81f3aeafc04a0b83117efd2c9e37",
+    "provider_reliability.classify_provider_failure": "fcb2eb97cba480ec9e88e50c00894aa1d6b6a2e025275eb8ff74ebed1c15580b",
     "provider_reliability.model_deadlines": "7ba97c1b11a564e48c8b0029619fa42a5b3f0fe017fca1d552d4847e45adab45",
     "routes._classify": "e28308b685513256d3d6441d429e1896796f68cc1d131bb78832fad4633bf7f0"
   }
