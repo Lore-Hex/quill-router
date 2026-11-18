@@ -105,6 +105,11 @@ def test_a_retirement_starts_at_its_instant_for_its_provider_only(retirement: _R
     provider, cutover = retirement.provider, retirement.effective_at
     before = cutover - _TICK
     assert _named(retirement), f"{retirement.notice_id} names no route"
+    # Every route this record names is still in service just before its
+    # instant: no earlier record already retires it. Otherwise the record
+    # does nothing, e.g. an extension added while the old record still
+    # names the model, or a date mistyped later than an earlier record's.
+    assert _named(retirement) <= _expected(retirement, before), retirement.notice_id
     for model_id in retirement.model_ids:
         assert retired(provider, model_id, at=cutover), model_id
         assert retired(provider, model_id, at=before) is _records_retire(provider, model_id, None, before), model_id
