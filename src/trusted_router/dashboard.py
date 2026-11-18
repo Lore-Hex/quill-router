@@ -3989,7 +3989,7 @@ def _price_label(microdollars: int) -> str:
     dollars = microdollars / 1_000_000
     if dollars >= 1:
         return f"${dollars:,.2f}"
-    return "$" + f"{dollars:.3f}".rstrip("0").rstrip(".")
+    return "$" + f"{dollars:.4f}".rstrip("0").rstrip(".")
 
 
 def _models_hero_price_bars(all_models: list[dict[str, Any]]) -> list[dict[str, Any]]:

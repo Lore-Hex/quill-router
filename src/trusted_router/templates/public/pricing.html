@@ -1,7 +1,6 @@
 {% extends "public/_base.html" %}
 {% set hero_offer_metric = true %}
 {% block body_attributes %}class="pricing-page"{% endblock %}
-{% block head_extra %}<link rel="stylesheet" href="/static/pricing-page.css?v={{ static_version|default('local') }}">{% endblock %}
 {% block promotion %}{% include "public/_fortanix_promo.html" %}{% endblock %}
 {% block body %}
 <section class="pricing-section pricing-what" aria-labelledby="pricing-what">

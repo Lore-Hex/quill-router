@@ -1672,15 +1672,6 @@ body.auth.auth-shell {
   margin-top: 8px;
 }
 
-.models-page-hero-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  justify-content: flex-end;
-  padding-bottom: 2px;
-  font-size: 13px;
-}
-
 .model-explorer {
   min-width: 0;
 }
@@ -2328,7 +2319,6 @@ body.auth.auth-shell {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .models-page-hero-links,
   .model-card-providers {
     justify-content: flex-start;
   }
@@ -2396,11 +2386,6 @@ body.auth.auth-shell {
   .models-page-hero p {
     font-size: 14px;
     line-height: 1.42;
-  }
-
-  .models-page-hero-links {
-    gap: 6px 14px;
-    font-size: 12px;
   }
 
   .model-explorer-toolbar {

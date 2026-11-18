@@ -174,7 +174,7 @@
 .openrouter-article main > .v2-head { margin-bottom: 24px; }
 .openrouter-article main > .v2-head + .marketing-grid { margin-top: 0; }
 .openrouter-article .quote-feature p:last-child { margin-bottom: 0; }
-.openrouter-article .v2-price-body + :is(.model-table-wrap,.tr-scroll-bar) { margin-top: 24px; }
+.openrouter-article .v2-price-body + .model-table-wrap { margin-top: 24px; }
 
 /* Quiet reading surfaces; reserve rules for comparing data. */
 .openrouter-article main :is(h1,h2,h3) { text-wrap: balance; }
@@ -339,7 +339,6 @@
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-track { background: var(--tr-color-surface-hover); }
 .openrouter-article .horizontal-overflow::-webkit-scrollbar-thumb { background: var(--tr-legacy-7caa90, #7caa90); border-radius: var(--tr-square, 4px); }
 .openrouter-article .horizontal-overflow:focus-visible { outline: 2px solid var(--tr-legacy-b7e4ca, #b7e4ca); outline-offset: -2px; }
-.openrouter-article .tr-scroll-bar + .horizontal-overflow { margin-top: 4px; }
 
 @media (forced-colors: active) {
   .openrouter-article .horizontal-overflow:focus-visible { outline-color: Highlight; }

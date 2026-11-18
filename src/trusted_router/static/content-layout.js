@@ -1,8 +1,8 @@
 // Shared helpers for code blocks and sideways scrolling on public pages.
 // window.TRCode: the kit's copy and check icons and one copy behaviour.
-// window.TRScroll: one sideways-scroll component (edge fades, with small
-// chevrons on rows and tables, that show only while there is more to see). Page scripts load after this file, so
-// they can call these; everything here also attaches on its own.
+// window.TRScroll: one sideways-scroll hint, a soft edge fade that shows only
+// while there is more to see. Page scripts load after this file, so they can
+// call these; everything here also attaches on its own.
 (() => {
   "use strict";
   const svgNS = "http://www.w3.org/2000/svg";
@@ -22,7 +22,6 @@
   // The kit's copy and check shapes, as on the NYTE API page.
   const copyPaths = ["M9 9 L20 9 L20 20 L9 20 L9 9", "M15 7.25 L15 4 L4 4 L4 15 L7.25 15"];
   const donePaths = ["M4.5 12.5 L9.5 17.5 L19.5 7"];
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   // Copy: writes the text, swaps the icon for a check, says "Copied" in the
   // button's label and in a role=status line. Without clipboard access it
@@ -92,20 +91,13 @@
   };
   window.TRCode = { icon, copyPaths, donePaths, wireCopy };
 
-  // Sideways scroll (NYTE sideways-scroll rule): one edge hint, three
-  // placements.
+  // Sideways scroll (NYTE sideways-scroll rule): a soft fade into the ground
+  // colour at each edge that has more to see; nothing to press, and nothing
+  // shows while the content fits.
   // - row: single-line rows (chips, link rows). A sticky edge inside the row
-  //   fades the content into the row's ground and holds a small hairline
-  //   chevron; the edge takes no width of its own.
-  // - over: code. Only a soft fade in the panel's Ink over the code area's
-  //   edges; no button, so nothing covers the code, Copy or the expand
-  //   control. The code area itself takes keyboard focus.
-  // - bar: tables. Small hairline chevrons sit in a bar above the table, so
-  //   a tall table's arrows are seen before its middle.
-  // Each chevron scrolls about 80% of the visible width (instantly with
-  // reduced motion) and hides at its end; nothing shows while the content
-  // fits.
-  const chevrons = { prev: "m15 5-7 7 7 7", next: "m9 5 7 7-7 7" };
+  //   that takes no width of its own.
+  // - over: code and tables. The fade sits over the scroller's box inside its
+  //   parent, and the scroller itself takes keyboard focus.
   const groundOf = (element) => {
     for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
       const colour = getComputedStyle(node).backgroundColor;
@@ -113,10 +105,6 @@
       if (parts && (parts.length < 4 || Number(parts[3]) > 0.5)) return colour;
     }
     return "rgb(250, 248, 244)";
-  };
-  const isLight = (colour) => {
-    const [r, g, b] = colour.match(/[\d.]+/g).map(Number);
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 140;
   };
 
   // Rows are measured together once per frame (all reads, then all writes),
@@ -145,54 +133,22 @@
     attached.get(entry.target)?.start();
   }), { rootMargin: "400px 0px" });
 
-  // attach(scroller, { place: "row" | "over" | "bar", bar, label, focusLabel })
-  const attach = (scroller, { place = "row", bar = null, label = "", focusLabel = "" } = {}) => {
+  // attach(scroller, { place: "row" | "over", focusLabel })
+  const attach = (scroller, { place = "row", focusLabel = "" } = {}) => {
     if (!scroller) return null;
     if (attached.has(scroller)) return attached.get(scroller);
-    const list = /^(UL|OL)$/.test(scroller.tagName);
-    const host = place === "over" ? scroller.parentElement : null;
-    const fadeOnly = place === "over";
+    const over = place === "over";
+    const host = over ? scroller.parentElement : null;
     const make = (side) => {
-      if (fadeOnly) {
-        const edge = document.createElement("span");
-        edge.className = `tr-scroll-edge tr-scroll-edge-${side} is-over`;
-        edge.setAttribute("aria-hidden", "true");
-        edge.hidden = true;
-        return { button: null, edge };
-      }
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `tr-scroll-btn tr-scroll-${side}`;
-      const text = `Scroll ${label ? `${label} ` : ""}${side === "prev" ? "left" : "right"}`;
-      button.setAttribute("aria-label", text);
-      button.title = text;
-      button.append(icon("", [chevrons[side]]));
-      button.addEventListener("click", () => {
-        const step = scroller.clientWidth * 0.8 * (side === "prev" ? -1 : 1);
-        scroller.scrollBy({ left: step, behavior: reduceMotion.matches ? "instant" : "smooth" });
-      });
-      if (place === "bar") {
-        button.hidden = true;
-        return { button, edge: button };
-      }
-      // Rows: the button sits on a fade into the ground colour.
-      const edge = document.createElement(list ? "li" : "span");
+      const edge = document.createElement(!over && /^(UL|OL)$/.test(scroller.tagName) ? "li" : "span");
       edge.className = `tr-scroll-edge tr-scroll-edge-${side} is-${place}`;
-      if (list) edge.setAttribute("role", "none");
+      edge.setAttribute(edge.tagName === "LI" ? "role" : "aria-hidden", edge.tagName === "LI" ? "none" : "true");
       edge.hidden = true;
-      edge.append(button);
-      return { button, edge };
+      return edge;
     };
     let prev = null;
     let next = null;
     const ownsFocus = Boolean(focusLabel) && !scroller.hasAttribute("tabindex");
-    const show = (part, on) => {
-      if (place === "bar") part.button.hidden = !on;
-      else part.edge.classList.toggle("is-off", !on);
-      if (!part.button) return;
-      part.button.tabIndex = on ? 0 : -1;
-      part.button.setAttribute("aria-hidden", String(!on));
-    };
     let ground = "";
     const item = {
       // Reads only.
@@ -201,9 +157,9 @@
         const max = scroller.scrollWidth - scroller.clientWidth;
         const overflow = /auto|scroll/.test(style.overflowX) && max > 1;
         const state = { overflow, max, x: Math.abs(scroller.scrollLeft) };
-        if (!overflow || place === "bar") return state;
+        if (!overflow) return state;
         if (!ground) state.ground = groundOf(scroller);
-        if (place === "row") {
+        if (!over) {
           state.gap = parseFloat(style.columnGap) || 0;
           state.padStart = parseFloat(style.paddingLeft) || 0;
           state.padEnd = parseFloat(style.paddingRight) || 0;
@@ -216,56 +172,50 @@
         }
         return state;
       },
-      // Writes only. The buttons are added the first time there is more to
+      // Writes only. The edges are added the first time there is more to
       // see; a row's edge takes no width, so adding it changes nothing.
       apply: (state) => {
         const { overflow, max, x } = state;
-        if (!prev && (overflow || place === "bar")) {
+        if (!prev && overflow) {
           prev = make("prev");
           next = make("next");
-          if (place === "bar") bar.append(prev.button, next.button);
-          else if (place === "over") {
+          if (over) {
             host.classList.add("tr-scroll-host");
-            host.append(prev.edge, next.edge);
+            host.append(prev, next);
           } else {
-            scroller.prepend(prev.edge);
-            scroller.append(next.edge);
+            scroller.prepend(prev);
+            scroller.append(next);
           }
         }
-        if (bar) bar.hidden = !overflow;
         if (!prev) return;
-        if (place !== "bar") {
-          prev.edge.hidden = !overflow;
-          next.edge.hidden = !overflow;
-          [prev.edge, next.edge].forEach((edge) => {
-            if (state.ground) {
-              edge.style.setProperty("--tr-scroll-ground", state.ground);
-              edge.classList.toggle("on-dark", !isLight(state.ground));
-            }
-            if (place === "row" && overflow) {
-              edge.style.setProperty("--tr-scroll-gap", `${state.gap}px`);
-              // A sticky edge stops at the row's padding; it covers that too.
-              edge.style.setProperty("--tr-scroll-pad", `${edge === prev.edge ? state.padStart : state.padEnd}px`);
-            }
-          });
-          if (state.ground) ground = state.ground;
-          if (place === "over" && overflow) {
-            [prev.edge, next.edge].forEach((edge) => {
-              edge.style.top = `${state.top}px`;
-              edge.style.height = `${state.height}px`;
-            });
-            prev.edge.style.left = `${state.left}px`;
-            next.edge.style.right = `${state.right}px`;
+        [prev, next].forEach((edge) => {
+          edge.hidden = !overflow;
+          if (state.ground) edge.style.setProperty("--tr-scroll-ground", state.ground);
+          if (!overflow) return;
+          if (over) {
+            edge.style.top = `${state.top}px`;
+            edge.style.height = `${state.height}px`;
+          } else {
+            edge.style.setProperty("--tr-scroll-gap", `${state.gap}px`);
+            // A sticky edge stops at the row's padding; it covers that too.
+            edge.style.setProperty("--tr-scroll-pad", `${edge === prev ? state.padStart : state.padEnd}px`);
           }
+        });
+        if (state.ground) ground = state.ground;
+        if (over && overflow) {
+          prev.style.left = `${state.left}px`;
+          next.style.right = `${state.right}px`;
         }
-        show(prev, overflow && x > 1);
-        show(next, overflow && x < max - 1);
+        prev.classList.toggle("is-off", !(overflow && x > 1));
+        next.classList.toggle("is-off", !(overflow && x < max - 1));
         if (ownsFocus) {
           if (overflow) {
             scroller.tabIndex = 0;
+            scroller.setAttribute("role", "region");
             scroller.setAttribute("aria-label", `${focusLabel}, scroll sideways for more`);
           } else {
             scroller.removeAttribute("tabindex");
+            scroller.removeAttribute("role");
             scroller.removeAttribute("aria-label");
           }
         }
@@ -277,7 +227,7 @@
         scroller.addEventListener("scroll", () => schedule(item), { passive: true });
         resized.observe(scroller);
         // Code: tabs and pickers change the content, not the box.
-        if (place === "over") [...scroller.children].forEach((child) => resized.observe(child));
+        if (over) [...scroller.children].forEach((child) => resized.observe(child));
         document.fonts.ready.then(() => schedule(item));
         schedule(item);
       },
@@ -289,11 +239,10 @@
   };
 
   // Code areas (.tr-code-body) in the quickstart box and homepage panel.
-  const attachCode = (body) => attach(body, { place: "over", label: "code", focusLabel: "Code" });
+  const attachCode = (body) => attach(body, { place: "over", focusLabel: "Code" });
   // Rows: anything marked data-scroll-row, plus the existing row classes.
   const rows = [
     "[data-scroll-row]",
-    ".models-page-hero-links",
     ".model-explorer > .model-filter-row",
     ".model-result-card .catalog-privacy-summary",
     ".model-result-card .model-card-badges",
@@ -309,7 +258,7 @@
   };
   window.TRScroll = { attach, scan };
   scan(document);
-  // Cards and rows drawn later (filters, pagination) get the same arrows.
+  // Cards and rows drawn later (filters, pagination) get the same fade.
   new MutationObserver((records) => {
     records.forEach((record) => record.addedNodes.forEach((node) => {
       if (node.nodeType === 1 && !node.classList.contains("tr-scroll-edge")) scan(node);
@@ -395,25 +344,21 @@
     table.after(accordion);
     table.classList.add("has-reference-accordion");
   });
-  // Comparison tables: a soft fade at the edge that has more to see.
-  document.querySelectorAll(".scroll-table").forEach((wrap) => {
-    // Pinned names like "trustedrouter/trev-1.0" may wrap only after the slash.
-    wrap.querySelectorAll("tbody td:first-child").forEach((cell) => {
-      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-      const nodes = [];
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
-      nodes.forEach((node) => {
-        const parts = node.textContent.split(/(?<=\/)/);
-        if (parts.length < 2) return;
-        node.replaceWith(...parts.flatMap((part, index) => (index ? [document.createElement("wbr"), part] : [part])));
-      });
+  // Pinned names like "trustedrouter/trev-1.0" in comparison tables may wrap
+  // only after the slash.
+  document.querySelectorAll(".scroll-table tbody td:first-child").forEach((cell) => {
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+    nodes.forEach((node) => {
+      const parts = node.textContent.split(/(?<=\/)/);
+      if (parts.length < 2) return;
+      node.replaceWith(...parts.flatMap((part, index) => (index ? [document.createElement("wbr"), part] : [part])));
     });
-    // The same soft edge fade as code areas; nothing to press.
-    window.TRScroll.attach(wrap, { place: "over", label: "table", focusLabel: "Table" });
   });
-  // Other wide tables (pricing, docs) get the same fade.
-  document.querySelectorAll(".model-table-wrap").forEach((wrap) => {
-    window.TRScroll.attach(wrap, { place: "over", label: "table", focusLabel: wrap.querySelector("caption")?.textContent.trim() || "Table" });
+  // Wide tables: the same soft edge fade as code.
+  document.querySelectorAll(".scroll-table, .model-table-wrap, .seo-evidence-table-wrap").forEach((wrap) => {
+    window.TRScroll.attach(wrap, { place: "over", focusLabel: wrap.querySelector("caption")?.textContent.trim() || "Table" });
   });
 })();
 
@@ -544,8 +489,8 @@
 // Code blocks: one shared component for every <pre> on public pages (the
 // NYTE code block standard). An Ink panel with a header strip inside it: a
 // short label (language or file) on the left and an icon-only Copy button
-// on the right. Wide code scrolls in the panel with the shared scroll
-// chevrons over its edges. Existing .copy-terminal, .green-code and .company-code panels
+// on the right. Wide code scrolls in the panel with the shared soft edge
+// fade. Existing .copy-terminal, .green-code and .company-code panels
 // become the panel and their head becomes the strip; an existing
 // data-copy-target or data-copy-prompt-target still names what is copied.
 // Tabbed quickstart boxes (.md-code) and the homepage migration panel use
@@ -696,7 +641,7 @@
       : { source, status });
 
     // Lines never wrap; wide code scrolls in the panel under the shared fade.
-    const scroll = window.TRScroll.attach(pre, { place: "over", label: "code", focusLabel: title || label });
+    const scroll = window.TRScroll.attach(pre, { place: "over", focusLabel: title || label });
 
     // Docs pages: long examples show their first lines on phones; copying
     // still copies all of it.
