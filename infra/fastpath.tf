@@ -197,7 +197,17 @@ locals {
   # passes to Python with its own evaluate.max_price.* reason. The other
   # fastpath/ changes since 2918dbbcf are catalog test vectors (#2675,
   # #2687). Off switch: pin 2918dbbcf again. One node at a time.
-  fastpath_release        = "fab9cd893826ae6476e8ca407f7d3c5cfbf51ee3"
+  # 541e687bf: the decide shadow settles a covered credit refusal against
+  # Python's own read (#2711): Python's internal 402 names the read that
+  # decided it (X-TR-Credit-Refusal-Read), and a refusal whose evidence is
+  # short, with matching row counts and, for snapshots, a short unmarked
+  # re-read at that read's timestamp, counts as funding_race and never
+  # pages; every other covered refusal still pages with a race=<why>
+  # reason, and edge_funding_race watches their rate. The shadow only
+  # observes, so nothing Go answers changes. The other fastpath/ change
+  # since fab9cd893 is a catalog test vector (the 2026-11-17T23:26Z price
+  # refresh). Off switch: pin fab9cd893 again. One node at a time.
+  fastpath_release        = "541e687bf8dba385338fab24d5dfaa16a72fe9be"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -230,6 +240,10 @@ locals {
     "fab9cd893826ae6476e8ca407f7d3c5cfbf51ee3" = {
       fastpath   = "f2837b7c443c0319829fa17fa8c0097f01543064196d61c39e88e114dc18c304"
       sha256sums = "8b1aa4e1cd992421faa1ea37d6603c17590f51d613166b220b327eeabd808e4e"
+    }
+    "541e687bf8dba385338fab24d5dfaa16a72fe9be" = {
+      fastpath   = "7934c7a03b12934cc9f0cfbaa3aac328d9184311d803fd6852809fb5cfb1466b"
+      sha256sums = "ba630193172aae6ec8ad119d8d1ab163630f54d3cf58d41fdba1144fe18561c3"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
