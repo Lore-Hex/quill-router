@@ -665,12 +665,12 @@
   });
 })();
 
-// Long inline code (URLs, model ids, field paths) wraps only after a / . _ ?
+// Long inline code (URLs, model ids, field paths) wraps only after a / . ?
 // & = or bracket, never mid-word. <wbr> adds a break point without changing
 // the text that is copied.
 (() => {
   "use strict";
-  const breakAfter = /([/._?&=}\]])(?=[^/\s])/g;
+  const breakAfter = /([/.?&=}\]])(?=[^/\s])/g;
   document.querySelectorAll(".public-wrap :not(pre) > code").forEach((code) => {
     if (code.textContent.length < 20) return;
     const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
