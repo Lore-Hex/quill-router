@@ -2995,6 +2995,17 @@ class SpannerStore(OperationalAnalyticsReads):
             encrypted_secret=encrypted_secret,
         )
 
+    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig:
+        return self.byok_store.save(config)
+
+    def mutate_byok_provider(
+        self,
+        workspace_id: str,
+        provider: str,
+        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
+    ) -> ByokProviderConfig | None:
+        return self.byok_store.mutate(workspace_id, provider, change)
+
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         return self.byok_store.list_for_workspace(workspace_id)
 
