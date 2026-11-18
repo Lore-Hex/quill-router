@@ -50,6 +50,12 @@ class Case:
 
 
 _CASES = [
+    Case("digitalocean", "deepseek/deepseek-v4-pro", "deepseek-v4-pro",
+         datetime(2026, 11, 23, tzinfo=UTC), "deepseek/deepseek-v4-pro-0813"),
+    Case("digitalocean", "xiaomi/mimo-v2.5-pro", "mimo-v2.5-pro",
+         datetime(2026, 11, 23, tzinfo=UTC), "z-ai/glm-5.3"),
+    Case("digitalocean", "deepseek/deepseek-v3.2", "deepseek-3.2",
+         datetime(2026, 11, 23, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("anthropic", "anthropic/claude-sonnet-4.5", "claude-sonnet-4-5-20250929",
          datetime(2026, 11, 30, 17, tzinfo=UTC), "anthropic/claude-sonnet-5.5"),
     Case("google-ai-studio", "google/gemini-2.5-flash", "gemini-2.5-flash",

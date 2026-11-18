@@ -71,6 +71,7 @@ DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 TOGETHER_QWEN38_24T_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
+DIGITALOCEAN_NOVEMBER_23_RETIREMENT_AT = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)
 NEBIUS_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
 # Decision Models (Passau, CET): pinned ids answer through 30 Nov 2026 and
 # return 410 from 1 Dec; retire at 1 Dec 00:00 CET.
@@ -1526,6 +1527,31 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"gemma-4-31B-it"}),
         effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
         replacement_model_ids=("z-ai/glm-5.3-flash",),
+    ),
+    # DigitalOcean's November 18 notices deprecate these Serverless Inference
+    # models on 2026-11-23 (date only; 00:00 UTC conservatively); requests then
+    # 404 model_not_found. Retire only DigitalOcean's routes; other providers'
+    # routes stay. Replacements are DigitalOcean's recommendations.
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"deepseek/deepseek-v4-pro"}),
+        upstream_ids=frozenset({"deepseek-v4-pro"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_23_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4-pro-0813",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"xiaomi/mimo-v2.5-pro"}),
+        upstream_ids=frozenset({"mimo-v2.5-pro"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_23_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"deepseek/deepseek-v3.2"}),
+        upstream_ids=frozenset({"deepseek-3.2"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_23_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
     ),
     # Together's notice (reminder received October 29) removes Qwen3.8
     # 2.4T-A95B from its serverless API on 2026-11-04 (date only; 00:00 UTC).
