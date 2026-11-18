@@ -1001,3 +1001,52 @@ def test_azure_record_without_an_issuer_is_rejected(httpx_mock: HTTPXMock) -> No
 
     assert record["hostdata"] == configured, "an issuer-less upstream record was republished"
     assert record["attestation_issuers"] == ["https://trquilluaen.uaen.attest.azure.net"]
+
+
+def test_trust_page_fetches_the_plane_records_concurrently(httpx_mock: HTTPXMock) -> None:
+    # QUILL-ROUTER-FT: the page awaited the GCP, AWS and Azure records one
+    # after another, so a cold cache paid every fetch in series. Each upstream
+    # here answers only once the other has also been asked: fetched in
+    # series, the first waits out the barrier and fails, and the page shows
+    # no measurement for that plane.
+    import asyncio
+
+    pcr0, hostdata = "ab" * 48, "44" * 32
+    arrived: set[str] = set()
+    both = asyncio.Event()
+
+    def answering_after_both(plane: str, body: dict[str, object]):
+        async def callback(request):  # type: ignore[no-untyped-def]
+            import httpx
+
+            arrived.add(plane)
+            if len(arrived) == 2:
+                both.set()
+            try:
+                await asyncio.wait_for(both.wait(), timeout=3)
+            except TimeoutError:
+                return httpx.Response(503, request=request)
+            return httpx.Response(200, request=request, json=body)
+        return callback
+
+    httpx_mock.add_callback(
+        answering_after_both("aws", _aws_upstream(pcr0, [pcr0])),
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+    )
+    httpx_mock.add_callback(
+        answering_after_both("azure", _azure_upstream(hostdata)),
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+    )
+    settings = Settings(
+        environment="test",
+        trust_gcp_image_digest="sha256:" + "00" * 32,
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_azure_release_url="https://trust.example/azure.json",
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        page = client.get("/trust")
+
+    assert arrived == {"aws", "azure"}
+    assert pcr0 in page.text
+    assert hostdata in page.text
+    assert "No measurement is available for this plane right now" not in page.text

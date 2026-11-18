@@ -1175,12 +1175,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         /trust/aws-release.json or /trust/azure-release.json. Its HTTP status
         and x-trustedrouter-release-status are the GCP record's.
         """
-        release = await resolved_trust_release()
-        aws, aws_status = await _plane_record(
-            aws_release_resolver, embedded_aws_metadata, aws_release
-        )
-        azure, azure_status = await _plane_record(
-            azure_release_resolver, embedded_azure_metadata, azure_release
+        # Three independent records, each possibly a network fetch on a cache
+        # miss: resolve them concurrently, not one after another.
+        release, (aws, aws_status), (azure, azure_status) = await asyncio.gather(
+            resolved_trust_release(),
+            _plane_record(aws_release_resolver, embedded_aws_metadata, aws_release),
+            _plane_record(azure_release_resolver, embedded_azure_metadata, azure_release),
         )
         headers = trust_response_headers(release.status)
         if {aws_status, azure_status} - {"live", "embedded"}:
