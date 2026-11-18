@@ -1,0 +1,27 @@
+# The heavy lane's test files (scripts/ci/commit_scope.py's HEAVY_TESTS):
+# ci.yml's eight `test` shards ignore them and test-heavy runs them when a
+# change can reach them (run_heavy). One repository path a line, sorted.
+# A list, not code: application boundary guards scan scripts/*.py for the
+# module names written in them.
+#
+# The map workflow's "heavy lane scope" job checks each new map of main
+# against the lane's scope (testmap.py heavy); a file the lane's tests use
+# that no change would run them for opens or updates an issue.
+tests/test_async_settle_proof_oracle.py
+tests/test_async_settle_shadow_cohort_differential.py
+tests/test_async_settle_shadow_cohort_http.py
+tests/test_async_settle_shadow_health_claim_contention.py
+tests/test_async_settle_shadow_http.py
+tests/test_async_settle_shadow_v2_a1_boundaries.py
+tests/test_async_settle_shadow_v2_evidence.py
+tests/test_async_settle_shadow_v2_gate_a2.py
+tests/test_async_settle_shadow_v2_gate_a3.py
+tests/test_async_settle_shadow_v2_gate_complete.py
+tests/test_async_settle_shadow_v2_gate_loading.py
+tests/test_async_settle_shadow_v2_gate_window.py
+tests/test_async_settle_shadow_v2_gates.py
+tests/test_async_settle_shadow_v2_pack_round3_composition.py
+tests/test_async_settle_shadow_v2_pack_round4.py
+tests/test_async_settle_shadow_v2_pack_round5.py
+tests/test_async_settle_shadow_v2_pack_round6.py
+tests/test_async_settle_shadow_v2_pack_round7_chain.py

@@ -544,6 +544,44 @@ def test_compare_reads_the_failure_records_and_never_reports_a_zero_it_did_not_m
     assert "failures outside selection: 0" in compare(tmp_path / "no-artifacts", "success")
 
 
+def test_compare_counts_the_heavy_lanes_failures_against_its_own_result(tmp_path: Path) -> None:
+    # ci.yml's test-heavy uploads test-failures-heavy-N: its own shards (one
+    # to three), never mistaken for the eight's, and its own result.
+    selection = {"full": False, "whole_files": [], "selected": ["tests/test_s.py::test_a"],
+                 "not_selected": ["tests/test_h.py::test_heavy"]}
+    tm.write_gz(selection, tmp_path / "selection.json.gz")
+    summary = tmp_path / "summary.md"
+
+    def compare(failures: Path, result: str, heavy: str) -> str:
+        summary.write_text("")
+        assert tm.main(["compare", "--selection", str(tmp_path / "selection.json.gz"), "--failures", str(failures),
+                        "--test-result", result, "--heavy-result", heavy, "--summary", str(summary)]) == 0
+        return summary.read_text()
+
+    def lane(root: Path, *records: dict) -> Path:
+        for n, record in enumerate(records, 1):
+            (root / f"{tm.HEAVY_FAILURES}{n}").mkdir(parents=True)
+            (root / f"{tm.HEAVY_FAILURES}{n}" / "failures.json").write_text(json.dumps(record))
+        return root
+
+    shards = [_shard(1), _shard(2), _shard(3)]
+    shards = [{**record, "exitstatus": 0} for record in shards]
+    red_lane = lane(_records(tmp_path / "red-lane", *shards), _shard(1, "tests/test_h.py::test_heavy"),
+                    _shard(2, exitstatus=0), _shard(3, exitstatus=0))
+    text = compare(red_lane, "success", "failure")
+    assert "failures outside selection: 1 (tests/test_h.py::test_heavy)" in text
+    # The lane's shards do not count as the eight's: their records alone are
+    # complete, with three groups each.
+    assert tm.load_failure_records(red_lane) == shards
+    assert len(tm.load_failure_records(red_lane, heavy=True)) == 3
+    # A skipped lane failed nothing, and needs no record.
+    assert "failures outside selection: 0" in compare(_records(tmp_path / "skipped", *shards), "success", "skipped")
+    # A red lane that left no complete record: unavailable, never "0".
+    partial = lane(_records(tmp_path / "partial", *shards), _shard(1, complete=False))
+    text = compare(partial, "success", "failure")
+    assert "comparison unavailable: heavy lane: shards 1, 2, 3 left no complete failure record" in text
+
+
 def test_a_directory_that_fails_to_collect_covers_every_test_file_under_it(tmp_path: Path) -> None:
     # A failing tests/sub/conftest.py: pytest reports the directory. It is
     # outside the selection when the selection runs no test file under it.
@@ -694,6 +732,8 @@ def fake_api(artifacts: list[dict], runs: list[dict], maps: dict[int, dict]):
             return buf.getvalue()
         if "/artifacts?" in path:
             return {"artifacts": artifacts}
+        if "/actions/runs/" in path and "/jobs?" in path:
+            return {"jobs": by_run[int(path.split("/actions/runs/")[1].split("/")[0])].get("jobs", [])}
         if "/actions/runs/" in path:
             return by_run[int(path.rsplit("/", 1)[1])]
         raise AssertionError(f"unexpected API call {path}")  # never the commits listing: dates lie
@@ -746,6 +786,33 @@ def test_find_map_refuses_a_map_from_anything_but_its_own_workflow_on_main(tmp_p
     api = fake_api([artifact(1, shas[1]), artifact(2, shas[2])], [run(1, shas[1]), run(2, shas[2])],
                    {1: mapped(shas[1]), 2: mapped(shas[2])})
     assert tm.find_map("o/r", REPO_ID, shas[0], root=root, api=api, now=NOW)[0]["commit"] == shas[1]
+
+
+def red_run(art_id: int, sha: str, jobs: dict[str, str]) -> dict:
+    return {**run(art_id, sha, conclusion="failure"),
+            "jobs": [{"name": name, "conclusion": conclusion} for name, conclusion in jobs.items()]}
+
+
+@pytest.mark.parametrize(("jobs", "usable"), [
+    # Red only in the heavy lane's check, after the map was merged: usable.
+    ({"map inputs": "success", "record (1)": "success", tm.MAP_JOB: "success", tm.HEAVY_CHECK_JOB: "failure"}, True),
+    # Anything else red, or no merged map, is not.
+    ({"map inputs": "success", "record (1)": "failure", tm.MAP_JOB: "skipped", tm.HEAVY_CHECK_JOB: "skipped"}, False),
+    ({"map inputs": "success", "record (1)": "success", tm.MAP_JOB: "failure", tm.HEAVY_CHECK_JOB: "skipped"}, False),
+    ({"map inputs": "failure", "record (1)": "success", tm.MAP_JOB: "success", tm.HEAVY_CHECK_JOB: "failure"}, False),
+    ({"map inputs": "success", tm.HEAVY_CHECK_JOB: "failure"}, False),
+    ({"map inputs": "success", tm.MAP_JOB: "success", tm.HEAVY_CHECK_JOB: "cancelled"}, True),
+])
+def test_a_run_red_only_in_the_heavy_check_still_gives_a_usable_map(tmp_path: Path, jobs: dict, usable: bool) -> None:
+    root, shas = history(tmp_path, ["2026-11-17T10:00:00Z", "2026-11-17T10:30:00Z", "2026-11-17T11:00:00Z"])
+    api = fake_api([artifact(1, shas[1]), artifact(2, shas[2])], [red_run(1, shas[1], jobs), run(2, shas[2])],
+                   {1: mapped(shas[1]), 2: mapped(shas[2])})
+    found, _ = tm.find_map("o/r", REPO_ID, shas[0], root=root, api=api, now=NOW)
+    assert found is not None and found["commit"] == (shas[1] if usable else shas[2])
+    # A cancelled or still-running run is never usable, whatever its jobs.
+    cancelled = {**red_run(1, shas[1], jobs), "conclusion": "cancelled"}
+    assert tm.run_problem("o/r", REPO_ID, artifact(1, shas[1]), shas[1],
+                          fake_api([], [cancelled], {})) == "its run is completed/cancelled"
 
 
 def test_map_artifacts_reads_past_a_first_page_of_other_testmap_artifacts(tmp_path: Path) -> None:
@@ -1018,3 +1085,113 @@ def test_needed_prints_only_github_output_lines_on_stdout(tmp_path: Path, monkey
     assert out.splitlines() == ["record=true"]  # GITHUB_OUTPUT takes stdout whole
     assert "Test map: recording" in summary.read_text() and "no usable map" in summary.read_text()
 
+
+
+# ---------------------------------------------------------------- the heavy lane's footprint check
+
+HEAVY_FILE = "tests/test_heavy_lane.py"
+OWNER_STALL_CLOCK = "tests/test_async_settle_shadow_owner_stall.py:harness.<locals>.<lambda>"
+
+
+def test_heavy_footprint_is_the_tests_windows_fixtures_and_collection_not_shared_misses() -> None:
+    tmap = tm.TestMap(build_map(
+        {f"{HEAVY_FILE}::test_a": {"f": ["src/app/a.py:run", "tests/helper.py:make@memo", OWNER_STALL_CLOCK],
+                                   "o": ["tests/data.json"]},
+         f"{HEAVY_FILE}::test_b": {"f": ["src/app/b.py:run", "tests/shadow_observation_diagnostics.py:status"]},
+         "tests/test_other.py::test_c": {"f": ["src/app/c.py:run"], "o": ["docs/c.md"]}},
+        fixtures={f"{HEAVY_FILE}::test_b": [{"f": ["tests/conftest.py:client"]}]},
+        collect={HEAVY_FILE: {"o": ["tests/collected.json"]}, "tests/test_other.py": {"o": ["docs/other.md"]}},
+        # Every miss of a cached function, whichever test's window it was in,
+        # and what runs outside every window, are not a heavy test's own.
+        cached={"tests/helper.py:make": {"f": ["tests/test_other.py:fake_source"]}},
+        glob={"f": ["src/app/boot.py:boot"], "o": ["docs/global.md"]}))
+    # A leaked function (HEAVY_LEAKS) does not count; the rest of a file a
+    # leak comes from does (diagnostics' status is no leak).
+    assert tm.heavy_footprint(tmap, [HEAVY_FILE]) == {
+        "src/app/a.py", "tests/helper.py", "tests/data.json", "src/app/b.py", "tests/conftest.py",
+        "tests/collected.json", "tests/shadow_observation_diagnostics.py"}
+
+
+def test_the_heavy_check_names_each_file_outside_the_lane(tmp_path: Path, monkeypatch, capsys) -> None:
+    native = "tests/conformance/test_shadow_observation_native.py"
+    for path, text in {"tests/__init__.py": "", "tests/conftest.py": "", HEAVY_FILE: "import tests.helper\n",
+                       "tests/helper.py": "", "tests/unrelated.py": "", "src/app/a.py": "", "docs/c.md": "x\n",
+                       native: ""}.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    monkeypatch.setattr(cs, "HEAVY_TESTS", (HEAVY_FILE,))
+    monkeypatch.chdir(tmp_path)
+    leak = f"{native}:native_liveness.<locals>.Reports.pytest_runtest_makereport"
+    assert leak in tm.HEAVY_LEAKS
+    footprint = {"f": ["src/app/a.py:run", "tests/helper.py:make", "tests/unrelated.py:leak", leak],
+                 "o": ["docs/c.md", "relative-name-in-a-temporary-directory"]}
+
+    def write_map(footprint: dict) -> None:
+        tm.write_gz({**build_map({f"{HEAVY_FILE}::test_a": footprint}), "incomplete_memo": [],
+                     "unattributed_memo": []}, tmp_path / "map.json.gz")
+
+    write_map(footprint)
+    assert tm.main(["heavy", "--map", "map.json.gz", "--report", "report.md"]) == 1
+    out = capsys.readouterr().out
+    # A file no rule reaches, and a document nothing names, are each named;
+    # the lane's own files, src/, a name opened outside the repository and a
+    # known leaked function are not.
+    assert "tests/unrelated.py is in a heavy test's footprint but outside run_heavy" in out
+    assert "docs/c.md is in a heavy test's footprint" in out
+    assert "helper" not in out and "src/app" not in out and "native" not in out and "relative-name" not in out
+    report = (tmp_path / "report.md").read_text()
+    assert "- tests/unrelated.py" in report and "- docs/c.md" in report and "HEAVY_LEAKS" in report
+    # Another function of the leak's file is no leak.
+    footprint["f"].append(f"{native}:shadow_emulator_resources")
+    write_map(footprint)
+    assert tm.main(["heavy", "--map", "map.json.gz"]) == 1
+    assert f"{native} is in a heavy test's footprint" in capsys.readouterr().out
+    # Once the lane names the document and imports the modules, it passes.
+    (tmp_path / HEAVY_FILE).write_text("import tests.helper\nimport tests.unrelated\nDOC = 'docs/c.md'\n"
+                                       "import tests.conformance.test_shadow_observation_native\n")
+    assert tm.main(["heavy", "--map", "map.json.gz", "--report", "report.md"]) == 0
+    assert "outside the lane's scope: 0" in (tmp_path / "report.md").read_text()
+    # A map that is not main's own is refused.
+    tm.write_gz({**build_map({f"{HEAVY_FILE}::test_a": footprint}), "incomplete_memo": [],
+                 "unattributed_memo": [], "ref": "refs/heads/feature"}, tmp_path / "map.json.gz")
+    assert tm.main(["heavy", "--map", "map.json.gz"]) == 1
+    assert "not main's" in capsys.readouterr().out
+
+
+class FakeGh:
+    """gh's issue commands, against a list of open issues."""
+
+    def __init__(self, issues: list[dict]) -> None:
+        self.issues = issues
+        self.calls: list[tuple[list[str], str | None]] = []
+
+    def __call__(self, argv: list[str], stdin: str | None) -> str:
+        self.calls.append((argv, stdin))
+        if argv[:2] == ["issue", "list"]:
+            assert argv[argv.index("--search") + 1] == f'in:title "{tm.HEAVY_ISSUE_TITLE}"'
+            return json.dumps(self.issues)
+        return ""
+
+
+def test_a_failing_heavy_check_opens_the_issue_or_comments_on_the_open_one() -> None:
+    run = "https://github.com/o/r/actions/runs/7"
+    gh = FakeGh([{"number": 3, "title": "Something else"}])
+    assert tm.heavy_issue("failure", "- tests/x.py\n", repo="o/r", run_url=run, gh=gh) == "opened an issue"
+    argv, body = gh.calls[-1]
+    assert argv == ["issue", "create", "--repo", "o/r", "--title", tm.HEAVY_ISSUE_TITLE, "--body-file", "-"]
+    assert body == f"- tests/x.py\n\nRun: {run}\n"
+    gh = FakeGh([{"number": 9, "title": tm.HEAVY_ISSUE_TITLE}, {"number": 3, "title": "Something else"}])
+    assert tm.heavy_issue("failure", "- tests/x.py", repo="o/r", run_url=run, gh=gh) == "commented on #9"
+    assert gh.calls[-1][0] == ["issue", "comment", "9", "--repo", "o/r", "--body-file", "-"]
+    assert len(gh.calls) == 2
+
+
+def test_a_passing_heavy_check_closes_the_open_issue_and_nothing_else() -> None:
+    run = "https://github.com/o/r/actions/runs/8"
+    gh = FakeGh([{"number": 9, "title": tm.HEAVY_ISSUE_TITLE}, {"number": 3, "title": "Something else"}])
+    assert tm.heavy_issue("success", "", repo="o/r", run_url=run, gh=gh) == "closed #9"
+    argv, _ = gh.calls[-1]
+    assert argv[:5] == ["issue", "close", "9", "--repo", "o/r"] and run in argv[-1]
+    gh = FakeGh([])
+    assert tm.heavy_issue("success", "", repo="o/r", run_url=run, gh=gh) == "no open issue"
+    assert [argv[:2] for argv, _ in gh.calls] == [["issue", "list"]]
