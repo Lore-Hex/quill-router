@@ -247,6 +247,8 @@ class _ByokKeyPolicy(_Strict):
 class UpsertByokRequest(_ByokKeyPolicy):
     api_key: str | None = None
     key: str | None = None
+    # A native credential object, for amazon-bedrock, google-vertex and azure.
+    credential: dict[str, Any] | None = None
     secret_ref: str | None = None
     key_hint: str | None = Field(default=None, max_length=80)
 
@@ -259,6 +261,7 @@ class PatchByokKeyRequest(_ByokKeyPolicy):
     # Rotating the secret keeps the key's id and policy.
     api_key: str | None = None
     key: str | None = None
+    credential: dict[str, Any] | None = None
 
 
 class BroadcastDestinationCreateRequest(_Strict):

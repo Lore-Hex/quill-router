@@ -494,13 +494,13 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
 
 
 def test_google_products_have_distinct_capabilities() -> None:
-    # Vertex routes are prepaid-only; AI Studio routes offer prepaid and BYOK,
-    # while each product lists the model.
+    # Both products offer prepaid and BYOK routes (Vertex BYOK takes a native
+    # service-account credential), while each product lists the model.
     built = catalog_vehicles.registry_endpoints()
     for model_id in ("google/gemini-2.5-flash", "google/gemini-3.6-flash"):
-        assert f"{model_id}@google-vertex/byok" not in built
         for endpoint_id in (
             f"{model_id}@google-vertex/prepaid",
+            f"{model_id}@google-vertex/byok",
             f"{model_id}@google-ai-studio/prepaid",
             f"{model_id}@google-ai-studio/byok",
         ):

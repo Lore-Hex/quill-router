@@ -41,6 +41,7 @@ from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from trusted_router.byok_cloud_credentials import is_cloud_credential_provider
 from trusted_router.byok_crypto import (
     ALGORITHM_V2,
     NAMESPACE_CONTROL,
@@ -104,6 +105,9 @@ CONTROL_PURPOSES = [
 ]
 
 BYOK_PROVIDERS = sorted(slug for slug, p in PROVIDERS.items() if p.supports_byok)
+# Providers whose BYOK upload is a native credential document, not one key
+# string; their uploads are covered by tests/test_byok_cloud_credentials.py.
+KEY_STRING_BYOK_PROVIDERS = [slug for slug in BYOK_PROVIDERS if not is_cloud_credential_provider(slug)]
 
 
 # ---------------------------------------------------- namespace separation ---
@@ -163,7 +167,7 @@ def test_a_control_purpose_cannot_be_registered_as_a_provider(
     assert STORE.get_byok_provider(workspace_id, purpose) is None
 
 
-@pytest.mark.parametrize("provider", BYOK_PROVIDERS[:8])
+@pytest.mark.parametrize("provider", KEY_STRING_BYOK_PROVIDERS[:8])
 def test_every_catalog_byok_provider_is_still_accepted(
     console: TestClient, provider: str
 ) -> None:

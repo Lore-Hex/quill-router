@@ -900,7 +900,13 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "google-vertex"
     ]
     assert vertex_endpoints
-    assert all(endpoint.usage_type == "Credits" for endpoint in vertex_endpoints)
+    # Vertex BYOK routes (native service-account credentials) carry no
+    # TrustedRouter retention claim; the prepaid ones are checked below.
+    assert not any(
+        endpoint_zero_data_retention(endpoint) for endpoint in vertex_endpoints if endpoint.usage_type == "BYOK"
+    )
+    vertex_endpoints = [endpoint for endpoint in vertex_endpoints if endpoint.usage_type == "Credits"]
+    assert vertex_endpoints
     from trusted_router.managed_retention import managed_retention_policy
 
     for endpoint in vertex_endpoints:

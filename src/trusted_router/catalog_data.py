@@ -642,7 +642,7 @@ PROVIDERS: dict[str, Provider] = {
         slug="google-vertex",
         name="Google Vertex AI",
         supports_prepaid=True,
-        supports_byok=False,
+        supports_byok=True,
         provider_zero_data_retention=False,
         prepaid_zero_data_retention=True,
         prepaid_zero_data_retention_effective_on="2026-07-28",
@@ -1697,7 +1697,7 @@ PROVIDERS: dict[str, Provider] = {
         name="Microsoft Azure AI Foundry",
         supports_messages=True,
         supports_prepaid=True,
-        supports_byok=False,
+        supports_byok=True,
         provider_zero_data_retention=False,
         prepaid_zero_data_retention=True,
         prepaid_zero_data_retention_effective_on="2026-11-12",
@@ -2207,7 +2207,7 @@ PROVIDERS: dict[str, Provider] = {
         slug="amazon-bedrock",
         name="Amazon Bedrock",
         supports_prepaid=True,
-        supports_byok=False,
+        supports_byok=True,
         provider_policy=(
             "Direct Amazon Bedrock Mantle inference through the US East (N. Virginia) "
             "regional endpoint. Only exact-priced, account-tested standard-tier models "

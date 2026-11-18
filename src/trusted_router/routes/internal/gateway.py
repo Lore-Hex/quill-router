@@ -6072,7 +6072,13 @@ def _byok_admitted_candidates(
     workspace_id: str,
     byok_configs: dict[str, Any] | None,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    """Drop a BYOK route no enabled key of its provider admits by model."""
+    """Drop a BYOK route no enabled key of its provider admits by model.
+
+    Every gateway region gets the same routes. A gateway that cannot run a
+    native-cloud BYOK route (AWS Nitro) refuses it at once as its own limit,
+    so the request falls over to its next route, and a key that turns Credits
+    off still keeps Credits routes out (_byok_credits_policy), exactly as on
+    a gateway that can run it."""
     return [
         (model, endpoint)
         for model, endpoint in candidates
