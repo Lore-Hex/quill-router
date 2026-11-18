@@ -205,51 +205,10 @@ _floodgate = _SentryFloodgate(SentryFloodgateConfig())
 # Logs and error events are separate Sentry products. A noisy log stream must
 # not consume the error budget before an actual exception can be reported.
 _log_floodgate = _SentryFloodgate(SentryFloodgateConfig())
-_CONTRACT_WARNING_LIMITS = SentryFloodgateConfig(
-    max_events_per_fingerprint=1,
-    max_events_per_window=10,
-    max_fingerprints=128,
-)
-_contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS)
-_RECOVERED_FAILOVER_LIMITS = SentryFloodgateConfig(
-    window_seconds=6 * 60 * 60,
-    max_events_per_fingerprint=1,
-    max_events_per_window=10,
-    max_fingerprints=128,
-)
-_recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS)
-
-
-def capture_recovered_failover_warning(event: dict[str, Any]) -> bool:
-    """Sample recovered routes, not requests, before they consume the error budget.
-
-    This is process-local, not a fleet-wide quota. Full content-free failover
-    counts remain in operational logs; billing failures keep the normal gate.
-    """
-    if not _recovered_failover_floodgate.allow(event):
-        return False
-    import sentry_sdk
-
-    sentry_sdk.capture_event(cast(Any, event))
-    return True
-
-
-def capture_gateway_contract_warning(event: dict[str, Any]) -> bool:
-    """Bound compatibility warnings separately, before the shared Sentry cap.
-
-    Per process: one warning per route/status/parameter per hour, ten total.
-    The normal before_send privacy scrubber and global floodgate still apply.
-    """
-    if not _contract_warning_floodgate.allow(event):
-        return False
-    try:
-        import sentry_sdk
-
-        sentry_sdk.capture_event(cast(Any, event))
-    except Exception:  # noqa: BLE001 - telemetry cannot change request validation
-        logging.getLogger(__name__).warning("gateway contract warning capture failed")
-        return False
-    return True
+# Recovered provider failovers and gateway contract rejections (expected
+# customer 4xx/501) are deliberately NOT Sentry events. They go to structured
+# logs only; see routes/internal/gateway.py::_report_route_fallbacks and
+# services/gateway_contract_warnings.py.
 
 
 def init_sentry(settings: Settings) -> None:
@@ -507,11 +466,9 @@ def _safe_route_identity(event: Mapping[str, Any]) -> str:
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
-    global _floodgate, _log_floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
+    global _floodgate, _log_floodgate
     _floodgate = _SentryFloodgate(_floodgate_config(settings))
     _log_floodgate = _SentryFloodgate(_floodgate_config(settings))
-    _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS)
-    _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS)
 
 
 def reset_sentry_floodgate_for_tests(
@@ -519,9 +476,7 @@ def reset_sentry_floodgate_for_tests(
     settings: Settings | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    global _floodgate, _log_floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
-    _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS, clock=clock)
-    _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS, clock=clock)
+    global _floodgate, _log_floodgate
     if settings is None:
         _floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
         _log_floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)

@@ -3756,10 +3756,15 @@ def _is_web_search_restricted_provider(provider: Any) -> bool:
 
 
 def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
-    """Keep every recovery in logs and bounded representative warnings in Sentry."""
-    try:
-        from trusted_router.sentry_config import capture_recovered_failover_warning
+    """Log every recovered failover; never report it to Sentry.
 
+    This runs only for a successful settlement, so another candidate served
+    the request: routing worked as designed. Sentry used to get one warning
+    issue per model/provider pair and those buried real faults. A request
+    whose every candidate failed never settles successfully and keeps its
+    own error reporting on the refund path.
+    """
+    try:
         failures = [f for f in (getattr(body, "route_failures", None) or []) if isinstance(f, str)][
             :8
         ]
@@ -3767,29 +3772,15 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
         model = body.selected_model or body.model or "unknown"
         failed_providers = ",".join(providers) or "unknown"
         # Do not put raw upstream errors in logs. These fixed routing fields
-        # preserve the volume signal even when repeat Sentry events are sampled.
+        # are the full volume signal for failover dashboards.
         logger.info("gateway.provider_failover", extra={
             "failover_model": model[:100],
             "failed_providers": failed_providers[:200],
             "fallbacks": getattr(body, "route_fallbacks", None),
             "served_by": body.selected_endpoint or body.endpoint,
         })
-        capture_recovered_failover_warning({
-            "level": "warning",
-            "message": f"provider failover: {model} routed around {failed_providers}",
-            "fingerprint": ["recovered-provider-failover", model[:100], failed_providers[:200]],
-            "tags": {
-                "failover.model": model[:100],
-                "failover.failed_providers": failed_providers[:200],
-            },
-            "contexts": {"route_failover": {
-                "fallbacks": getattr(body, "route_fallbacks", None),
-                "failures": failures,
-                "served_by": body.selected_endpoint or body.endpoint,
-            }},
-        })
     except Exception:  # noqa: BLE001 - observability must never break settlement
-        logger.warning("route fallback sentry report failed", exc_info=True)
+        logger.warning("route fallback log failed", exc_info=True)
 
 
 def _refund_benchmark_sample_safely(

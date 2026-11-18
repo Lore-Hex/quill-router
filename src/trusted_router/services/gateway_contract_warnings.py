@@ -1,16 +1,27 @@
-"""Content-free visibility into authenticated pre-billing compatibility failures."""
+"""Content-free visibility into authenticated pre-billing compatibility failures.
+
+A contract rejection is a customer request we deliberately refused with a 4xx
+or 501 (``store=true``, an unsupported ``tools[].type`` ...). That is an
+expected client error, not a server fault, so it goes to the structured
+operational log (Axiom), never to Sentry: every distinct route/status/parameter
+used to open its own Sentry issue and buried real faults. The log line keeps
+``parameter_path``, ``http_status`` and the verified workspace so product can
+still count which unsupported parameters are in demand.
+"""
 
 from __future__ import annotations
 
+import logging
 import re
 
 from trusted_router.schemas import (
     GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH,
     GatewayContractRejection,
 )
-from trusted_router.sentry_config import capture_gateway_contract_warning
 from trusted_router.services.contract_value_preview import safe_value_preview
 from trusted_router.storage_operational_analytics import analytics_surrogate
+
+logger = logging.getLogger(__name__)
 
 # Public parameter categories, not a request allowlist. Unknown names might
 # themselves contain customer content, so only bounded identifier paths are
@@ -171,40 +182,33 @@ def report_gateway_contract_rejection(
     workspace_id: str,
     credential_id: str,
 ) -> None:
+    """Log one content-free line per rejection. Never raises, never reaches Sentry."""
     if rejection is None or route not in {"/v1/chat/completions", "/v1/responses"}:
         return
-    parameter = rejection.parameter if rejection.parameter in PARAMETER_CATEGORIES else "other"
-    context: dict[str, str | bool] = {"request_id": rejection.request_id}
-    tags = {
-        "component": "gateway-contract",
-        "route": route,
-        "http_status": str(rejection.status),
-        "parameter": parameter,
-        "workspace_id": workspace_id,
-        "credential_id": credential_id,
-    }
-    if path := _safe_parameter_path(rejection.parameter_path):
-        context["parameter_path"] = path
-        # A tag, never a fingerprint: the breakdown inside one issue shows
-        # which fields it refuses without splitting it into new issues.
-        tags["rejected_field"] = _rejected_field(path)
-        preview, trimmed = safe_value_preview(path, rejection.value_preview)
-        if preview is not None:
-            context["value_preview"] = preview
-            context["value_truncated"] = rejection.value_truncated or trimmed
-    capture_gateway_contract_warning(
-        {
-            "level": "warning",
-            "message": "Authenticated gateway request rejected by the API contract",
-            "fingerprint": ["gateway-contract-rejection", route, str(rejection.status), parameter],
-            # The verified workspace as Sentry's user, as the analytics
-            # surrogate (sha256, resolvable through tr.workspace_directory),
-            # so an issue's user count is how many workspaces hit it without
-            # adding a raw identifier. One workspace sending a field no
-            # contract defines is that client's mistake; many workspaces
-            # refused the same way is a gap or regression of ours.
-            "user": {"id": analytics_surrogate("workspace", workspace_id)},
-            "tags": tags,
-            "contexts": {"gateway_rejection": context},
+    try:
+        parameter = rejection.parameter if rejection.parameter in PARAMETER_CATEGORIES else "other"
+        fields: dict[str, str | bool] = {
+            "contract_route": route,
+            "http_status": str(rejection.status),
+            "parameter": parameter,
+            "request_id": rejection.request_id,
+            "workspace_id": workspace_id,
+            # The analytics surrogate (sha256, resolvable through
+            # tr.workspace_directory) lets a query count distinct workspaces:
+            # one workspace sending a field no contract defines is that
+            # client's mistake; many refused the same way is our gap.
+            "workspace_surrogate": analytics_surrogate("workspace", workspace_id),
+            "credential_id": credential_id,
         }
-    )
+        if path := _safe_parameter_path(rejection.parameter_path):
+            fields["parameter_path"] = path
+            # Indices removed, so input[3].content and input[148].content
+            # aggregate as one field.
+            fields["rejected_field"] = _rejected_field(path)
+            preview, trimmed = safe_value_preview(path, rejection.value_preview)
+            if preview is not None:
+                fields["value_preview"] = preview
+                fields["value_truncated"] = rejection.value_truncated or trimmed
+        logger.info("gateway.contract_rejection", extra=fields)
+    except Exception:  # noqa: BLE001 - telemetry cannot change request validation
+        logger.warning("gateway contract rejection log failed")
