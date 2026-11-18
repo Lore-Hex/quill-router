@@ -1951,13 +1951,20 @@
    the bottom of it, like the homepage. nyte-page.js measures where the hero
    starts (--nyte-above-hero). The copy is centred in the space above the
    Band; heroes taller than a screen just grow. The blog index is left out:
-   its hero is too short to fill a screen. */
+   its hero is too short to fill a screen. Compare pages keep the Band but
+   not the height (see below). */
 :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
   position: relative;
   box-sizing: border-box;
   min-height: calc(var(--hero-vh, 1svh) * 100 - var(--nyte-above-hero, 64px));
   padding-bottom: 152px;
   align-content: center;
+}
+
+/* Compare pages keep the Band but not the full-screen height: visitors come
+   for the side-by-side table, so it starts on the first screen. */
+:root[data-brand="nyte"] main > .compare-hero {
+  min-height: 0;
 }
 
 /* One headline size for every page hero on laptops and desktops, so a

@@ -69,6 +69,23 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
   });
 }
 
+// Comparison visitors come for the table, so its hero does not fill the
+// screen: the table starts on a phone's first screen and its price row is
+// fully visible on a laptop.
+for (const { viewport, firstRow } of [
+  { viewport: { width: 390, height: 844 }, firstRow: ".compare-table thead" },
+  { viewport: { width: 1440, height: 900 }, firstRow: ".compare-table tbody tr:first-child" },
+]) {
+  test(`comparison table starts on the first screen at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
+    await page.goto("/compare/models/moonshotai/kimi-k3/vs/z-ai/glm-5.3");
+
+    const box = await page.locator(firstRow).boundingBox();
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+  });
+}
+
 test("model page quickstart switches tabs and folds the prompt on phones", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
