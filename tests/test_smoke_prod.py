@@ -18,8 +18,8 @@ from typing import Any
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 
-from tests.homepage_copy import LANDSCAPE_MULTICLOUD_HEADING
 from tests.private_repository import mentions as private_repository_mentions
 from trusted_router.routing_candidates import auto_candidate_models
 
@@ -322,13 +322,15 @@ def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) ->
     """Belt-and-suspenders for the alpha-removal: if a future deploy
     accidentally restores 'Public Alpha' framing, this test fails. The cloud
     check looks for the landscape homepage's verification section and its
-    multi-cloud proof point; the local landscape test pins the same string."""
+    links to live evidence (structure, not copy or exact markup: #2705 added
+    a class to the section tag and turned a raw-string check red)."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
-    assert '<section id="verify">' in body
-    assert LANDSCAPE_MULTICLOUD_HEADING in body
+    verify = BeautifulSoup(body, "html.parser").select_one("section#verify")
+    assert verify is not None
+    assert {"/trust", "/status"} <= {anchor["href"] for anchor in verify.select("a[href]")}
     assert "world-map.svg" not in body
 
 
