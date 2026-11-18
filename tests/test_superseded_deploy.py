@@ -327,6 +327,92 @@ def test_ancestry_mode_never_deploys_on_an_unknown_answer(
     assert superseded.main(["--mode", "ancestry", *ARGS]) == 1
 
 
+SERVER_ERROR = "gh: Server Error (HTTP 502)\n"
+
+
+def _scripted_gh(
+    monkeypatch: pytest.MonkeyPatch, *answers: tuple[int, str, str] | Exception
+) -> tuple[list[list[str]], list[float]]:
+    """Answer each gh call with the next (exit code, stdout, stderr), or raise it; return the calls and waits.
+
+    The deadline's clock starts at 0 and moves only with the retry waits.
+    """
+    calls: list[list[str]] = []
+    waits: list[float] = []
+    queue = list(answers)
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        answer = queue.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        code, stdout, stderr = answer
+        return subprocess.CompletedProcess(argv, code, stdout, stderr)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(superseded, "_monotonic", lambda: sum(waits))
+    monkeypatch.setattr(superseded, "_sleep", waits.append)
+    return calls, waits
+
+
+@pytest.mark.parametrize("deadline", [None, 600.0], ids=["no-deadline", "deadline"])
+def test_a_transient_server_error_is_retried_once_then_answers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], deadline: float | None
+) -> None:
+    calls, waits = _scripted_gh(monkeypatch, (1, "", SERVER_ERROR), (0, '{"status": "ahead"}', ""))
+    assert superseded._gh_json(["api", "repos/o/r/compare/a...b"], deadline) == {"status": "ahead"}
+    assert calls == [["gh", "api", "repos/o/r/compare/a...b"]] * 2 and waits == [1.0]
+    assert "retrying gh api in 1 s (retry 1)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stderr", [
+    SERVER_ERROR,
+    "HTTP 500: Internal Server Error (https://api.github.com/repos/o/r/actions/runs)",
+    "HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/actions/runs)",
+    "gh: Service Unavailable (HTTP 503)",
+    "HTTP 504: Gateway Timeout (https://api.github.com/repos/o/r/compare/a...b)",
+    "gh: HTTP 502",
+])
+def test_a_persistent_server_error_fails_closed_after_bounded_retries(
+    monkeypatch: pytest.MonkeyPatch, stderr: str
+) -> None:
+    # A fourth answer would succeed: only the bound stops the retries.
+    calls, waits = _scripted_gh(monkeypatch, *[(1, "", stderr)] * 3, (0, "{}", ""))
+    assert superseded._gh_json(["run", "list"], 600.0) is None
+    assert len(calls) == 3 and waits == [1.0, 2.0]
+
+
+@pytest.mark.parametrize("failure", [
+    (1, "", "gh: API rate limit exceeded for installation ID 1. (HTTP 403)"),
+    (1, "", "gh: You have exceeded a secondary rate limit. (HTTP 403)"),
+    (1, "", "gh: Too Many Requests (HTTP 429)"),
+    (1, "", "gh: Not Found (HTTP 404)"),
+    (1, "", "gh: Server Error (HTTP 403)"),
+    (1, "", ""),
+    (0, "<html>502 Bad Gateway</html>", ""),
+    subprocess.TimeoutExpired(["gh"], 60),
+], ids=["rate-limit", "secondary-rate-limit", "429", "404", "4xx-wins-over-5xx-wording", "silent-failure",
+        "not-json", "timeout"])
+def test_anything_but_a_transient_server_error_is_never_retried(
+    monkeypatch: pytest.MonkeyPatch, failure: tuple[int, str, str] | Exception
+) -> None:
+    # A second answer would succeed: only the classification stops a retry.
+    calls, waits = _scripted_gh(monkeypatch, failure, (0, "{}", ""))
+    assert superseded._gh_json(["api", "repos/o/r/compare/a...b"], 600.0) is None
+    assert len(calls) == 1 and waits == []
+
+
+@pytest.mark.parametrize(("spare", "attempts"), [(0.5, 1), (2.5, 2)], ids=["no-room-for-a-retry", "room-for-one"])
+def test_a_retry_needs_time_for_its_wait_and_a_whole_call_before_the_deadline(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], spare: float, attempts: int
+) -> None:
+    # The first wait (1 s) and a call fit only when the spare exceeds 1 s; the second (2 s) never fits.
+    calls, waits = _scripted_gh(monkeypatch, *[(1, "", SERVER_ERROR)] * 3, (0, "{}", ""))
+    assert superseded._gh_json(["api", "x"], superseded.GH_TIMEOUT_SECONDS + spare) is None
+    assert len(calls) == attempts and waits == [1.0] * (attempts - 1)
+    assert "no time left to retry gh api" in capsys.readouterr().err
+
+
 def _finalize_outcome(needs: dict) -> tuple[str, int]:
     """Run finalize-cloud's step with these `needs` results; return (outcome handed to release, exit code)."""
 

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -200,15 +201,26 @@ class GitHub:
         provenance = item.get("workflow_run", {})
         require(provenance.get("id") == run["id"] and provenance.get("head_sha") == run["head_sha"],
                 "release artifact belongs to another run or commit")
-        timeout = superseded._call_timeout(self.deadline)
-        require(timeout is not None, "release selection deadline exceeded")
-        try:
-            result = subprocess.run(  # noqa: S603 - validated artifact ID in our fixed repository
-                ["gh", "api", f"repos/{REPO}/actions/artifacts/{item['id']}/zip"],  # noqa: S607
-                capture_output=True, check=True, timeout=timeout,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise Refused("release artifact download failed") from exc
+        retries = 0
+        while True:
+            timeout = superseded._call_timeout(self.deadline)
+            require(timeout is not None, "release selection deadline exceeded")
+            try:
+                result = subprocess.run(  # noqa: S603 - validated artifact ID in our fixed repository
+                    ["gh", "api", f"repos/{REPO}/actions/artifacts/{item['id']}/zip"],  # noqa: S607
+                    capture_output=True, check=True, timeout=timeout,
+                )
+                break
+            except subprocess.CalledProcessError as exc:
+                # The artifact is immutable, so its download is an idempotent read.
+                stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else ""
+                print(f"release train: artifact download failed: {stderr.strip()[:300]}", file=sys.stderr)
+                if superseded._retry_transient("artifact download", stderr, retries, self.deadline):
+                    retries += 1
+                    continue
+                raise Refused("release artifact download failed") from exc
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise Refused("release artifact download failed") from exc
         raw = manifest_from_zip(result.stdout)
         require(type(raw.get("schema_version")) is int and raw["schema_version"] == 1,
                 "unknown release manifest version")
