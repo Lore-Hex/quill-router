@@ -153,6 +153,13 @@ def cap_allocation_fleet(monkeypatch, count, *, demand=False, spacing=.1):
                 demand_times={i: stamp-start for i, stamp in demands.items()})
 
 
+def test_idle_startup_block_invariant(monkeypatch):
+    after = cap_allocation_fleet(monkeypatch, 26)
+    assert after["writes"] == 26  # No idle refills.
+    assert after["allocation_attempts"] == after["writes"]
+    assert after["budget_exhaustions"] == 0
+
+
 @pytest.mark.parametrize("count,spacing", [(26, .1), (40, .1), (26, 0.), (40, 0.)])
 def test_restart_with_cohort_demand(monkeypatch, count, spacing):
     result = cap_allocation_fleet(monkeypatch, count, demand=True, spacing=spacing)

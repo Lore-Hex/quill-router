@@ -472,6 +472,25 @@ jobs:
           echo "TR_ENCLAVE_SOURCE_ROOT=$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" >> "$GITHUB_ENV"
           git -C .security/quill-cloud-proxy rev-parse HEAD
           TR_ENCLAVE_SOURCE_ROOT="$GITHUB_WORKSPACE/.security/quill-cloud-proxy/enclave-go" uv run python -m scripts.check_enclave_sentry
+      # The public provider-check package vendors this repository's contract
+      # snapshot; its README and CONTRIBUTING tell maintainers to run
+      # test_optional_public_provider_check_snapshot against a checkout. Here
+      # it runs in every run of this job: a change to
+      # src/trusted_router/data/provider_check_contract.json fails it until
+      # the public repository carries the same snapshot.
+      - name: Check out the public provider-check contract snapshot
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Lore-Hex/trustedrouter-provider-check
+          ref: main
+          path: .security/trustedrouter-provider-check
+          sparse-checkout: src/tr_provider_check/data
+          persist-credentials: false
+      - name: Require the public provider-check contract snapshot
+        run: |
+          test -f .security/trustedrouter-provider-check/src/tr_provider_check/data/contract_snapshot.json
+          git -C .security/trustedrouter-provider-check rev-parse HEAD
+          echo "PROVIDER_CHECK_REPO_PATH=$GITHUB_WORKSPACE/.security/trustedrouter-provider-check" >> "$GITHUB_ENV"
       # The coverage invocation executes the ordinary suite; the frozen-main
       # differential runs in proof-oracle without coverage tracing. Running a
       # separate plain pytest pass doubled CI time and delayed every guarded
