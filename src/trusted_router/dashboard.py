@@ -3165,7 +3165,10 @@ def public_page_html(
         extra_context=(
             _green_tokens_context() if page_key == "green-tokens"
             else token_index_context() if page_key == "index"
-            else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None
+            else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES
+            else {"hero_price_bars": _popular_price_bars(test_mode=settings.environment == "test")}
+            if page_key == "pricing"
+            else None
         ),
     )
 
@@ -4017,6 +4020,7 @@ def _models_hero_price_bars(all_models: list[dict[str, Any]]) -> list[dict[str, 
                 # "DeepSeek: DeepSeek V4 Flash 0731" -> "DeepSeek V4 Flash"
                 "name": re.sub(r" \d{4}$", "", str(model["name"]).split(": ", 1)[-1]),
                 "publisher_slug": model.get("publisher_slug"),
+                "provider": model.get("provider"),
                 "price": price,
                 "label": _price_label(price),
                 "href": href,
@@ -4033,6 +4037,20 @@ def _models_hero_price_bars(all_models: list[dict[str, Any]]) -> list[dict[str, 
         share = (math.log10(max(row["price"], 5_000)) - low) / (high - low)
         row["width"] = f"{max(3.0, min(100.0, share * 100)):.1f}%"
     return rows
+
+
+def _popular_price_bars(*, test_mode: bool) -> list[dict[str, Any]]:
+    """The price-bars chart for heroes outside /models (e.g. /pricing)."""
+    return _models_hero_price_bars(
+        [
+            _model_view(model, test_mode=test_mode)
+            for model in MODELS.values()
+            if model.id in _MODEL_DISCOVERY_PRIORITY_INDEX
+            and not model.internal_only
+            and not is_listing_alias(model.id, MODELS)
+        ]
+    )
+
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"

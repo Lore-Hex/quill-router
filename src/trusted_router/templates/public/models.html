@@ -14,22 +14,7 @@
       <p class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</p>
     </div>
   </div>
-  {% if hero_price_bars %}
-  <figure class="models-hero-bars">
-    <figcaption>Output price per 1M tokens</figcaption>
-    <ul>
-      {% for bar in hero_price_bars %}
-      <li{% if bar.offer %} class="is-offer"{% endif %}>
-        <a href="{{ bar.href }}" style="--bar: {{ bar.width }}">
-          <span class="models-hero-bar-name">{% if bar.publisher_slug %}<img src="/static/provider-logos/{{ bar.publisher_slug }}.png" alt="" width="20" height="20">{% endif %}{{ bar.name }}</span>
-          <span class="models-hero-bar" aria-hidden="true"><i></i></span>
-          <span class="models-hero-bar-price">{{ bar.label }}</span>
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-  </figure>
-  {% endif %}
+  {% include "public/_price_bars.html" %}
 </section>
 {% endblock %}
 {% block body %}

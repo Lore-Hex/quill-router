@@ -19,6 +19,7 @@ from trusted_router.config import Settings
 from trusted_router.dashboard import (
     STATIC_DIR,
     _credits_endpoints,
+    _price_label,
     _short_dollars,
     docs_llms_full_txt,
     llms_txt,
@@ -521,24 +522,39 @@ def test_offer_seo_reverts_when_gate_turns_off(monkeypatch, previous_theme):
     assert "offer=introductory" not in full
 
 
-def test_pricing_page_leads_its_hero_facts_with_the_live_offer_price(client):
-    page = BeautifulSoup(client.get("/pricing").text, "html.parser")
-    rows = page.select(".public-hero-metrics > div")
-    assert rows[0].has_attr("data-launch-offer-metric")
-    assert rows[0].strong.get_text() == "1¢"
-    assert rows[0].a["href"] == f"/models/{MODEL_ID}"
-    assert rows[1].strong.get_text() == "One"
+def _hero_price_rows(client, path):
+    page = BeautifulSoup(client.get(path).text, "html.parser")
+    return page.select(".models-hero-bars li")
 
 
-def test_offer_metric_stays_on_the_pricing_page(client):
-    assert "data-launch-offer-metric" not in client.get("/docs").text
+@pytest.mark.parametrize("path", ["/models", "/pricing"])
+def test_hero_price_bars_show_the_live_offer_price(client, path):
+    offer = launch_offer_facts()
+    assert offer is not None
+    rows = _hero_price_rows(client, path)
+    assert 1 <= len(rows) <= 6
+    offer_rows = [row for row in rows if "is-offer" in (row.get("class") or [])]
+    assert len(offer_rows) == 1
+    assert offer_rows[0].a["href"] == f"/models/{MODEL_ID}"
+    assert offer_rows[0].select_one(".models-hero-bar-price").get_text() == _price_label(offer.output_microdollars)
+    hrefs = [row.a["href"] for row in rows]
+    assert len(hrefs) == len(set(hrefs))
 
 
-def test_pricing_offer_metric_disappears_with_the_offer(client, monkeypatch):
+@pytest.mark.parametrize("path", ["/models", "/pricing"])
+def test_hero_price_bars_fall_back_when_the_offer_ends(client, monkeypatch, path):
     route = endpoints_for_model(MODEL_ID)[0]
     monkeypatch.setitem(
         MODEL_ENDPOINTS,
         route.id,
-        replace(route, completion_price_microdollars_per_million_tokens=20_000),
+        replace(route, completion_price_microdollars_per_million_tokens=route.completion_price_microdollars_per_million_tokens + 1),
     )
-    assert "data-launch-offer-metric" not in client.get("/pricing").text
+    assert launch_offer_facts() is None
+    rows = _hero_price_rows(client, path)
+    assert rows
+    assert not [row for row in rows if "is-offer" in (row.get("class") or [])]
+    assert all(row.a["href"] != f"/models/{MODEL_ID}" for row in rows)
+
+
+def test_pricing_hero_has_no_example_bill(client):
+    assert "pricing-bill" not in client.get("/pricing").text

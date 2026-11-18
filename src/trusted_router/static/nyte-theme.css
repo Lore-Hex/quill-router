@@ -2075,48 +2075,20 @@
   color: var(--nyte-link);
 }
 
-/* /pricing: one reading column, plain rules instead of cards and numbers.
+/* /pricing: the shared price bars (_price_bars.html) beside the copy, then
+   one reading column with plain rules instead of cards and numbers.
    The billing rules (_minimum_charges.html) open on request here only. */
-:root[data-brand="nyte"] .pricing-bill {
-  margin: 0;
-  padding: 28px 28px 22px;
-  border: 1px solid var(--nyte-dark-rule, #3A3631);
-  background: var(--nyte-surface, #1E1B18);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-:root[data-brand="nyte"] .pricing-bill figcaption {
-  font: 500 12px/1.4 var(--tr-font-family-mono);
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--nyte-ink-2-dark, #B9B2A8);
-}
-
-:root[data-brand="nyte"] .pricing-bill dl { margin: 0; display: grid; }
-
-:root[data-brand="nyte"] .pricing-bill dl > div {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--nyte-dark-rule, #3A3631);
-}
-
-:root[data-brand="nyte"] .pricing-bill dt { font-size: 17px; font-weight: 450; color: var(--nyte-cream, #FAF8F4); }
-:root[data-brand="nyte"] .pricing-bill dd { margin: 0; font: 400 18px/1.3 var(--tr-font-family-mono); color: var(--nyte-cream, #FAF8F4); }
-:root[data-brand="nyte"] .pricing-bill .pricing-bill-total { border-bottom: 0; padding-top: 16px; }
-:root[data-brand="nyte"] .pricing-bill .pricing-bill-total dt { font-weight: 550; }
-:root[data-brand="nyte"] .pricing-bill .pricing-bill-total dd {
-  font: 300 34px/1 var(--tr-font-family-sans);
-  letter-spacing: -.02em;
-  color: var(--nyte-lead, #FFC800);
+:root[data-brand="nyte"] .pricing-page main > .public-hero {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
 }
 
 /* Sections */
 :root[data-brand="nyte"] .pricing-page .pricing-section {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
   padding: 72px 0 0;
 }
 
@@ -2138,15 +2110,6 @@
 
 :root[data-brand="nyte"] .pricing-page .pricing-section-head h2 { margin: 0; }
 
-:root[data-brand="nyte"] .pricing-page .pricing-section-lead {
-  max-width: 62ch;
-  margin: -8px 0 28px;
-  font-size: 18px;
-  line-height: 1.6;
-  font-weight: 450;
-  color: var(--nyte-ink, #151311);
-}
-
 :root[data-brand="nyte"] .pricing-page .pricing-ways {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2158,32 +2121,70 @@
 :root[data-brand="nyte"] .pricing-page .pricing-ways h3 { margin: 0 0 10px; font-size: 21px; font-weight: 550; letter-spacing: -.01em; }
 :root[data-brand="nyte"] .pricing-page .pricing-ways p { margin: 0; font-size: 17px; line-height: 1.6; font-weight: 450; color: var(--nyte-ink, #151311); }
 
-:root[data-brand="nyte"] .pricing-page .pricing-rules {
-  list-style: none;
-  margin: 0 0 32px;
-  padding: 0;
-  border-top: 1.5px solid var(--nyte-ink, #151311);
-}
-
-:root[data-brand="nyte"] .pricing-page .pricing-rules li {
-  padding: 18px 0;
-  border-bottom: 1px solid var(--nyte-stone, #DEDAD0);
+:root[data-brand="nyte"] .pricing-page .pricing-rates {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 17px;
   line-height: 1.5;
-  font-weight: 450;
-  color: var(--nyte-ink, #151311);
 }
 
-:root[data-brand="nyte"] .pricing-page .pricing-rules-two {
+:root[data-brand="nyte"] .pricing-page .pricing-rates :is(th, td) {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--nyte-stone);
+  background: transparent;
+  color: var(--nyte-ink);
+  text-align: left;
+  vertical-align: top;
+}
+
+:root[data-brand="nyte"] .pricing-page .pricing-rates tbody th {
+  width: 36%;
+  padding-right: 24px;
+  font: 550 17px/1.5 var(--tr-font-family-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root[data-brand="nyte"] .pricing-page .pricing-rates tr:first-child > * {
+  border-top: 1.5px solid var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .pricing-page .pricing-rates td {
+  font-weight: 450;
+}
+
+:root[data-brand="nyte"] .pricing-page .pricing-note {
+  margin: 16px 0 0;
+  font-size: 16px;
+  line-height: 1.6;
+  font-weight: 450;
+}
+
+:root[data-brand="nyte"] .pricing-page .pricing-included {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 40px;
+  margin: 0 0 32px;
+  padding: 0;
+  border-top: 1.5px solid var(--nyte-ink);
+  list-style: none;
+}
+
+:root[data-brand="nyte"] .pricing-page .pricing-included li {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--nyte-stone);
+  font-size: 17px;
+  line-height: 1.5;
+  font-weight: 450;
+  color: var(--nyte-ink);
 }
 
 /* Minimum charges: the same words; the exact rules open on request. */
 :root[data-brand="nyte"] .pricing-page #minimum-charges {
+  width: 100%;
+  max-width: 1040px;
   min-width: 0;
-  margin: 72px 0 96px !important;
+  margin: 72px auto 96px !important;
   padding: 0 !important;
   background: transparent !important;
   border: 0 !important;
@@ -2254,16 +2255,18 @@
 }
 
 @media (max-width: 760px) {
-    :root[data-brand="nyte"] .pricing-bill { padding: 20px 18px 16px; }
-  :root[data-brand="nyte"] .pricing-bill dt { font-size: 15px; }
-  :root[data-brand="nyte"] .pricing-bill .pricing-bill-total dd { font-size: 28px; }
   :root[data-brand="nyte"] .pricing-page .pricing-section { padding-top: 56px; }
   :root[data-brand="nyte"] .pricing-page .pricing-section h2,
 :root[data-brand="nyte"] .pricing-page #minimum-charges h2 { font-size: 30px; }
   :root[data-brand="nyte"] .pricing-page .pricing-ways { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   :root[data-brand="nyte"] .pricing-page .pricing-section-head { flex-direction: column; align-items: flex-start; gap: 16px; }
-  :root[data-brand="nyte"] .pricing-page .pricing-rules-two { grid-template-columns: minmax(0, 1fr); }
-  :root[data-brand="nyte"] .pricing-page #minimum-charges { margin: 56px 0 72px !important; }
+  :root[data-brand="nyte"] .pricing-page main > .public-hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  :root[data-brand="nyte"] .pricing-page .pricing-included { grid-template-columns: minmax(0, 1fr); }
+  :root[data-brand="nyte"] .pricing-page .pricing-rates :is(tr, th, td) { display: block; width: auto; }
+  :root[data-brand="nyte"] .pricing-page .pricing-rates tbody th { width: auto; padding: 16px 0 0; border-bottom: 0; }
+  :root[data-brand="nyte"] .pricing-page .pricing-rates tr:first-child > td { border-top: 0; }
+  :root[data-brand="nyte"] .pricing-page .pricing-rates td { padding: 4px 0 16px; }
+  :root[data-brand="nyte"] .pricing-page #minimum-charges { margin: 56px auto 72px !important; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges .mc-summary { font-size: 18px; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges ol li { padding-left: 36px; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges ol li::before { font-size: 24px; }
@@ -2297,4 +2300,3 @@
   :root[data-brand="nyte"] .pricing-page #minimum-charges td:nth-child(6)::before { content: "Multiple"; }
 }
 
-:root[data-brand="nyte"] .pricing-what .pricing-bill { max-width: 560px; }
