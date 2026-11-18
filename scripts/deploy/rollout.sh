@@ -134,6 +134,7 @@ SECRET_ENVS=(
 REMOVE_SECRET_ENVS=(
   "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD"
   "TR_OPS_CHAT_WEBHOOK_SECRET"
+  "TR_LIGHTNING_FUNDING_TOKEN"
 )
 
 # E2 routing snapshot publication, dark (docs/design/routing-snapshot-v1.md,

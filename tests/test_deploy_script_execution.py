@@ -1178,10 +1178,25 @@ def test_rollout_pins_the_image_digest_before_any_revision(
     assert not any(call[0] == "docker" for call in run.calls)
 
 
+@pytest.mark.parametrize("optional_secrets_exist", [True, False], ids=["present", "absent"])
 def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
     harness: DeployScriptHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    optional_secrets_exist: bool,
 ) -> None:
-    run = harness.run("scripts/deploy/rollout.sh")
+    script = "scripts/deploy/rollout.sh"
+    rollout = (ROOT / script).read_text().replace("\\\n", "")
+    optional_bindings = re.findall(
+        r'^\s*add_secret_env_if_exists\s+"([^"]+)"\s+"([^"]+)"', rollout, re.M,
+    )
+    assert optional_bindings
+    inventory = "\n".join(secret for _, secret in optional_bindings) if optional_secrets_exist else ""
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES, script,
+        replace(fixture, responses=((r"secrets list --format=value\(name\)", inventory), *fixture.responses)),
+    )
+    run = harness.run(script)
     assert run.returncode == 0, summarise(run)
 
     inventory_calls = [
@@ -1196,6 +1211,16 @@ def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
         and call[4] == "describe"
         for call in run.calls
     )
+
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert deploys
+    for deploy in deploys:
+        removed = deploy[deploy.index("--remove-secrets") + 1].split(",")
+        assert "TR_LIGHTNING_FUNDING_TOKEN" in removed
+        updated = deploy[deploy.index("--update-secrets") + 1].split(",")
+        for env_name, secret_name in optional_bindings:
+            assert (f"{env_name}={secret_name}:latest" in updated) == optional_secrets_exist
+            assert (env_name in removed) != optional_secrets_exist
 
 
 def test_rollout_fails_closed_when_optional_secret_inventory_is_unavailable(

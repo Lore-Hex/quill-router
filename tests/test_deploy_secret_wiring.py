@@ -198,6 +198,7 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
         "REMOVE_SECRET_ENVS=(\n"
         '  "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD"\n'
         '  "TR_OPS_CHAT_WEBHOOK_SECRET"\n'
+        '  "TR_LIGHTNING_FUNDING_TOKEN"\n'
         ")\n"
     ) in rollout
     assert "trustedrouter-google-ads-conversion-feed-password" not in rollout
@@ -208,6 +209,20 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     assert 'REMOVE_SECRET_ENVS+=("${env_name}")' in rollout
     assert 'REMOVE_SECRETS_ARGS=(--remove-secrets ' in rollout
     assert '"${REMOVE_SECRETS_ARGS[@]}"' in rollout
+
+
+def test_deploy_removes_retired_lightning_funding_without_rebinding_it() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text().replace("\\\n", "")
+    retired = "TR_LIGHTNING_FUNDING_TOKEN"
+    removal_block = rollout.split("REMOVE_SECRET_ENVS=(", 1)[1].split(")", 1)[0]
+    assert f'"{retired}"' in removal_block
+
+    optional_calls = re.findall(r"^\s*add_secret_env_if_exists\s+([^\n]+)", rollout, re.M)
+    secret_arrays = re.findall(r"^\s*SECRET_ENVS\+?=\((.*?)\)", rollout, re.M | re.S)
+    assert optional_calls
+    assert secret_arrays
+    assert all(retired not in call for call in optional_calls)
+    assert all(retired not in array for array in secret_arrays)
 
 
 def test_deploy_keeps_retired_user_models_disabled() -> None:
