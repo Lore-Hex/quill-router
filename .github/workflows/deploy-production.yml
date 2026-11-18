@@ -117,7 +117,7 @@ jobs:
             echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
             exit 0
           fi
-          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          latest_sha="$(python3 scripts/deploy/superseded_deploy.py --mode main-head --repo "${GITHUB_REPOSITORY}")"
           if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "${GITHUB_SHA} is still current main"
@@ -431,7 +431,7 @@ jobs:
             echo "manual dispatch: deploying requested revision ${RELEASE_COMMIT}"
             exit 0
           fi
-          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          latest_sha="$(python3 scripts/deploy/superseded_deploy.py --mode main-head --repo "${GITHUB_REPOSITORY}")"
           if [ "${latest_sha}" = "${RELEASE_COMMIT}" ] || python3 scripts/deploy/superseded_deploy.py --mode ancestry \
               --repo "${GITHUB_REPOSITORY}" --base "${RELEASE_COMMIT}" --head "${latest_sha}"; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"

@@ -413,6 +413,100 @@ def test_a_retry_needs_time_for_its_wait_and_a_whole_call_before_the_deadline(
     assert "no time left to retry gh api" in capsys.readouterr().err
 
 
+MAIN_SHA = "0123456789abcdef0123456789abcdef01234567"
+MAIN_REF = json.dumps({"ref": "refs/heads/main", "object": {"type": "commit", "sha": MAIN_SHA}})
+
+
+def test_main_head_prints_only_mains_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = _fake_gh(tmp_path, monkeypatch, stdout=MAIN_REF)
+    assert superseded.main(["--mode", "main-head", "--repo", "o/r"]) == 0
+    assert capsys.readouterr().out == MAIN_SHA + "\n"
+    assert log.read_text().strip() == "api repos/o/r/git/ref/heads/main"
+
+
+def test_main_head_rides_out_a_transient_server_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The 2026-11-18 failure mode: one GitHub 502 on this read failed the whole job.
+    calls, waits = _scripted_gh(monkeypatch, (1, "", SERVER_ERROR), (0, MAIN_REF, ""))
+    assert superseded.main(["--mode", "main-head", "--repo", "o/r"]) == 0
+    assert capsys.readouterr().out == MAIN_SHA + "\n"
+    assert len(calls) == 2 and waits == [1.0]
+
+
+@pytest.mark.parametrize("answers", [
+    [(1, "", SERVER_ERROR)] * 3,
+    [(1, "", "gh: Not Found (HTTP 404)")],
+    [(0, "<html>502 Bad Gateway</html>", "")],
+    [(0, json.dumps({"object": {"type": "commit"}}), "")],
+    [(0, json.dumps({"object": {"sha": MAIN_SHA[:9]}}), "")],
+    [(0, json.dumps({"object": {"sha": MAIN_SHA.upper()}}), "")],
+    [(0, json.dumps({"object": {"sha": MAIN_SHA + "\nproceed=true"}}), "")],
+    [(0, json.dumps({"object": MAIN_SHA}), "")],
+    [(0, json.dumps([MAIN_REF]), "")],
+], ids=["persistent-5xx", "404", "not-json", "no-sha", "short-sha", "not-lowercase-hex", "trailing-junk",
+        "object-not-a-dict", "not-a-dict"])
+def test_main_head_prints_nothing_and_fails_when_it_cannot_read_a_commit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answers: list[tuple[int, str, str]]
+) -> None:
+    # A spare success after each script shows the failure is the answer, not a short queue.
+    _scripted_gh(monkeypatch, *answers, (0, MAIN_REF, ""))
+    assert superseded.main(["--mode", "main-head", "--repo", "o/r"]) == 1
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("mode", ["supersede", "ancestry", "cancel-older"])
+def test_every_other_mode_still_requires_a_base(mode: str) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        superseded.main(["--mode", mode, "--repo", "o/r", "--head", "ccc"])
+    assert exit_info.value.code == 2
+
+
+def _main_head_step(job: str) -> str:
+    run = _workflow()["jobs"][job]["steps"][1]["run"]
+    assert run.startswith("set -euo pipefail\n")
+    assert "gh api" not in run
+    return run
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the step needs bash")
+@pytest.mark.parametrize(("job", "release_env"), [
+    ("confirm-current-main", "GITHUB_SHA"), ("confirm-still-on-main", "RELEASE_COMMIT"),
+])
+def test_an_unreadable_main_head_fails_the_step_without_writing_a_decision(
+    tmp_path: Path, job: str, release_env: str
+) -> None:
+    # Both jobs read main's head through the retrying script; when even that fails, the step must
+    # stop there (finalize-cloud then decides the lease) and never fall through to a decision.
+    lookup = 'python3 scripts/deploy/superseded_deploy.py --mode main-head --repo "${GITHUB_REPOSITORY}"'
+    run = _main_head_step(job)
+    assert run.count(lookup) == 1 and run.index(lookup) < run.index('--head "${latest_sha}"')
+    bash = shutil.which("bash")
+    assert bash is not None
+
+    def step(stub: str) -> tuple[int, str]:
+        script = (run.replace(lookup, stub)
+                  .replace("${{ github.event_name }}", "push").replace("${{ inputs.track_main }}", "true"))
+        assert "${{" not in script
+        output = tmp_path / "github_output"
+        output.write_text("")
+        result = subprocess.run(  # noqa: S603 - the workflow's own step, lookup stubbed
+            [bash, "-c", script],
+            env={**os.environ, "GITHUB_OUTPUT": str(output), "GITHUB_REPOSITORY": "o/r", release_env: MAIN_SHA},
+            capture_output=True, text=True,
+        )
+        return result.returncode, output.read_text()
+
+    # Control: when the lookup answers with the release itself, the step decides at once.
+    code, decided = step(f"echo {MAIN_SHA}")
+    assert code == 0 and decided.endswith("=true\n")
+    code, decided = step("false")
+    assert code != 0
+    assert decided == ""
+
+
 def _finalize_outcome(needs: dict) -> tuple[str, int]:
     """Run finalize-cloud's step with these `needs` results; return (outcome handed to release, exit code)."""
 
@@ -606,10 +700,11 @@ def test_the_workflow_asks_the_script_before_skipping() -> None:
     assert checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     assert checkout["with"]["sparse-checkout"] == "scripts/deploy/superseded_deploy.py"
     run = job["steps"][1]["run"]
+    head = run.index("python3 scripts/deploy/superseded_deploy.py --mode main-head")
     current = run.index('if [ "${latest_sha}" = "${GITHUB_SHA}" ]')
-    script = run.index("python3 scripts/deploy/superseded_deploy.py")
+    script = run.index("python3 scripts/deploy/superseded_deploy.py", current)
     skip = run.index('echo "proceed=false" >> "$GITHUB_OUTPUT"')
-    assert current < script < skip
+    assert head < current < script < skip
     assert '--base "${GITHUB_SHA}" --head "${latest_sha}"' in run
 
 
@@ -760,7 +855,9 @@ def test_follow_main_dispatch_executes_both_workflow_guards(tmp_path, monkeypatc
     script = _workflow()["jobs"][job]["steps"][1]["run"]
     script = script.replace("${{ github.event_name }}", event).replace("${{ inputs.track_main }}", track_main)
     assert "${{" not in script
-    responses = {**READY, "git/ref/heads/main": ("ccc", 0)}
+    # main-head reads the ref as JSON and needs a full SHA; starting it with "ccc" keeps READY's
+    # "compare/...ccc" keys matching (the fake answers by argv substring).
+    responses = {**READY, "git/ref/heads/main": (json.dumps({"object": {"sha": "ccc" + "0" * 37}}), 0)}
     if output == "on_main":
         responses["compare/aaa...ccc"] = (json.dumps({"status": "diverged"}), 0)
     log = _fake_gh(tmp_path, monkeypatch, responses=responses)
