@@ -395,7 +395,7 @@
     table.after(accordion);
     table.classList.add("has-reference-accordion");
   });
-  // Comparison tables: arrows sit above the table so the scroll is seen first.
+  // Comparison tables: a soft fade at the edge that has more to see.
   document.querySelectorAll(".scroll-table").forEach((wrap) => {
     // Pinned names like "trustedrouter/trev-1.0" may wrap only after the slash.
     wrap.querySelectorAll("tbody td:first-child").forEach((cell) => {
@@ -408,11 +408,12 @@
         node.replaceWith(...parts.flatMap((part, index) => (index ? [document.createElement("wbr"), part] : [part])));
       });
     });
-    // Strip placement: a bar above the table holds the arrows.
-    const controls = document.createElement("div");
-    controls.className = "tr-scroll-bar scroll-table-controls";
-    wrap.before(controls);
-    window.TRScroll.attach(wrap, { place: "bar", bar: controls, label: "table", focusLabel: "Table" });
+    // The same soft edge fade as code areas; nothing to press.
+    window.TRScroll.attach(wrap, { place: "over", label: "table", focusLabel: "Table" });
+  });
+  // Other wide tables (pricing, docs) get the same fade.
+  document.querySelectorAll(".model-table-wrap").forEach((wrap) => {
+    window.TRScroll.attach(wrap, { place: "over", label: "table", focusLabel: wrap.querySelector("caption")?.textContent.trim() || "Table" });
   });
 })();
 
