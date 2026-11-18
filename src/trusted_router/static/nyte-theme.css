@@ -2016,12 +2016,6 @@
   :root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .blog-index-head) + * {
     margin-top: 24px;
   }
-
-  /* /pricing spaces its sections with padding; the first one sits 24px
-     under the hero like every other page. */
-  :root[data-brand="nyte"] .pricing-page .public-hero + .pricing-section {
-    padding-top: 0;
-  }
 }
 
 /* The model page sets its colour names on its wrapper; the Ink hero
@@ -2273,7 +2267,8 @@
 }
 
 @media (max-width: 760px) {
-  :root[data-brand="nyte"] .pricing-page .pricing-section { padding-top: 56px; }
+  :root[data-brand="nyte"] .pricing-page .pricing-section { padding-top: var(--tr-phone-section-space); }
+  :root[data-brand="nyte"] .pricing-page .public-hero + .pricing-section { padding-top: 0; }
   :root[data-brand="nyte"] .pricing-page .pricing-section h2,
 :root[data-brand="nyte"] .pricing-page #minimum-charges h2 { font-size: 30px; }
   :root[data-brand="nyte"] .pricing-page .pricing-ways { grid-template-columns: minmax(0, 1fr); gap: 24px; }
@@ -2284,7 +2279,7 @@
   :root[data-brand="nyte"] .pricing-page .pricing-rates tbody th { width: auto; padding: 16px 0 0; border-bottom: 0; }
   :root[data-brand="nyte"] .pricing-page .pricing-rates tr:first-child > td { border-top: 0; }
   :root[data-brand="nyte"] .pricing-page .pricing-rates td { padding: 4px 0 16px; }
-  :root[data-brand="nyte"] .pricing-page #minimum-charges { margin: 56px auto 72px !important; }
+  :root[data-brand="nyte"] .pricing-page #minimum-charges { margin: var(--tr-phone-section-space) auto 72px !important; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges .mc-summary { font-size: 18px; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges ol li { padding-left: 36px; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges ol li::before { font-size: 24px; }
@@ -2342,7 +2337,7 @@
     padding-block: var(--tr-phone-section-space);
   }
 
-  :root[data-brand="nyte"] :is(.cc-explanation, .cc-section, .cc-enterprise) {
+  :root[data-brand="nyte"] .cc-section {
     margin-top: 0;
   }
 
@@ -2350,12 +2345,8 @@
     padding-top: var(--tr-phone-section-space);
   }
 
-  :root[data-brand="nyte"] .pricing-page .pricing-section:not(.public-hero + *) {
-    padding-top: var(--tr-phone-section-space);
-  }
-
   /* Sections spaced with a top margin */
-  :root[data-brand="nyte"] :is(.eai-section, .bgb-privacy-band, .pricing-page #minimum-charges, .pricing-page .routing-feature-section),
+  :root[data-brand="nyte"] :is(.eai-section, .bgb-privacy-band, .cc-explanation, .cc-enterprise, .pricing-page .routing-feature-section),
   :root[data-brand="nyte"] .openrouter-article main > :is(section, .v2-head):not(.v2-head + *) {
     margin-top: var(--tr-phone-section-space);
   }
