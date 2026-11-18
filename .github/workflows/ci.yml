@@ -424,6 +424,13 @@ jobs:
     env:
       TEST_SHARDS: "8"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
+      # The same throwaway service superuser (its POSTGRES_PASSWORD below),
+      # for the tests that create their own databases and cluster-wide roles:
+      # the delivery verifier's scope proofs and the activity repair check.
+      # Each creates and drops its own database. The role tests serialize on
+      # an advisory lock, drop tr_scope_other after each test and leave only
+      # tr_verifier, a role without a password that no other test uses.
+      TR_TEST_POSTGRES_SUPERUSER_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
       # service container.
