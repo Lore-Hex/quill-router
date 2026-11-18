@@ -1,5 +1,15 @@
 # Lexe backend preparation
 
+> **Retired.** LightningRouter was retired on October 22, 2026; see
+> [the retirement record](lightning-retirement.md). On November 18, 2026
+> the scripts this document runs (`scripts.lightning.lexe_setup`,
+> `lexe_preflight` and `deploy_lexe`) were deleted from `main`. They remain at commit
+> `a49bab023`. To read or run them, check that commit out separately:
+>
+> ```sh
+> git worktree add --detach ../quill-router-a49bab023 a49bab0237890fc0957f344cfe81f66543ab92df
+> ```
+
 Reviewed September 16, 2026. This is a backend-only migration. Do not change
 LightningRouter's pages, QR presentation, API-key login, model selection, USD
 balances, pricing, or existing 10% FX buffer.
@@ -223,6 +233,8 @@ uv run --no-project --with lexe-sdk==0.1.19 --with httpx \
   --state-dir /absolute/private/lightningrouter-lexe --create-wallet
 ```
 
+Removed from `main`; run it from the `a49bab023` checkout described at the top.
+
 Before funding, the owner must securely back up the seed independently of this
 computer and confirm recovery in the Lexe app. Do not paste the seed into chat,
 email, a GitHub issue, or a CI secret. Never import the existing LND seed into
@@ -254,6 +266,8 @@ lexe-sidecar --listen-addr 127.0.0.1:5393 \
 uv run python -m scripts.lightning.lexe_preflight \
   --expected-user-pk <wallet-public-key-from-wallet.json>
 ```
+
+Removed from `main`; run it from the `a49bab023` checkout described at the top.
 
 The preflight makes only four GETs. It rejects root/spend/admin credentials,
 extra or unknown permissions, an incorrect wallet, short-lived credentials,
@@ -351,7 +365,8 @@ Deployment sequence:
    `lightning-router-lexe-receive-client`, granting only the existing funding
    runtime identity access to that one secret. No seed is uploaded.
 3. Run `python -m scripts.lightning.deploy_lexe --account <deploy-identity>
-   --image <immutable-image> --suffix lexe<release>-bridge --backend lnd --apply`.
+   --image <immutable-image> --suffix lexe<release>-bridge --backend lnd --apply`
+   (removed from `main`; see the note at the top).
    This migrates separately and stages the dual-backend revision without
    traffic. Verify Ready, then promote it and check public health and an
    unpaid create/cancel flow. New invoices still use LND.

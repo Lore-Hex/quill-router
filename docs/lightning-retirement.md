@@ -34,9 +34,19 @@ every store backend, the `/internal/lightning/*` funding routes, the
 `/lightning/feedback` route and `TR_LIGHTNING_FUNDING_TOKEN`), and the disabled
 deployment and activation tools (website, Lexe sidecar, BTCPay, funding-node
 connection, alert reconciliation, invoice retention, public mirror export), with
-the archived-source workflow and its Dependabot entry. None of it could run
-after October 22. Commit `a49bab0237890fc0957f344cfe81f66543ab92df` is the last
+the archived-source workflow and its Dependabot entry. After October 22 the
+bridge had no mounted route and no token, and the website, Lexe sidecar, BTCPay
+deploy, activation and alert entrypoints refused to run. The other deleted tools
+(Lexe setup and preflight, funding-node connection, invoice retention, BTCPay
+bootstrap and explorer, mirror export) had no such stop but served only the
+retired product. Commit `a49bab0237890fc0957f344cfe81f66543ab92df` is the last
 one that contains it.
+
+`install_maintenance` installed `/opt/tr-lightning/prune_node.py` and an hourly
+`tr-lnd-invoice-cleanup.timer` on the kept wallet node. The job deletes only
+CANCELED invoices with nothing paid, more than 45 days past expiry. Its source
+now exists only at that commit. Check and disable the timer as part of the
+funds recovery.
 
 Kept on purpose:
 

@@ -5,6 +5,7 @@ credit bridge was later deleted. Credits it granted stay readable as ordinary
 ledger rows. The unrelated Lightning AI inference provider is out of scope.
 """
 
+import re
 from datetime import UTC, datetime
 from typing import get_args
 from unittest.mock import Mock
@@ -36,6 +37,10 @@ RETIRED_PATHS = tuple(
         "/lightning/feedback",
     )
 )
+RETIRED_PREFIXES = ("/internal/lightning/", "/v1/internal/lightning/")
+# Names of the deleted Store bridge (ensure_lightning_key, bind_lightning_payment,
+# the in-memory lightning_keys/lightning_payments maps), not the Lightning AI provider.
+RETIRED_STORE_NAME = re.compile(r"lightning_(?:key|payment)|(?:bind|ensure)_lightning")
 
 
 @pytest.mark.parametrize("surface", SURFACES)
@@ -45,7 +50,8 @@ def test_no_surface_serves_a_lightning_funding_route(surface: str) -> None:
         configure_store_arg=False,
         init_observability=False,
     )
-    assert not [path for path in route_paths(app) if "lightning" in path.lower()]
+    served = route_paths(app)
+    assert not [path for path in served if path in RETIRED_PATHS or path.startswith(RETIRED_PREFIXES)]
     client = TestClient(app)
     body = {"account_id": "workspace", "payment_hash": "a" * 64, "amount_microdollars": 1}
     for path in RETIRED_PATHS:
@@ -54,7 +60,7 @@ def test_no_surface_serves_a_lightning_funding_route(surface: str) -> None:
 
 @pytest.mark.parametrize("store", [Store, InMemoryStore, SpannerStore, PostgresStore])
 def test_no_store_can_create_lightning_identities_or_payments(store: type) -> None:
-    assert not [name for name in dir(store) if "lightning" in name.lower()]
+    assert not [name for name in dir(store) if RETIRED_STORE_NAME.search(name)]
 
 
 def test_postgres_ledger_still_rejects_noncanonical_lightning_event_before_sql() -> None:
