@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
@@ -36,8 +36,7 @@ from scripts.pricing.providers import (
     together,
     xiaomi,
 )
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 from trusted_router.synthetic.probes import rotation_candidates
 
 
@@ -282,34 +281,6 @@ def test_xiaomi_cutoff_is_the_substitution_start_not_the_shutoff() -> None:
     assert provider_lifecycle.DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT == datetime(
         2026, 10, 10, tzinfo=UTC,
     )
-
-
-@pytest.mark.parametrize("case", _CASES, ids=lambda case: f"{case.provider}:{case.model}")
-def test_route_routed_before_substitution_retired_after(
-    monkeypatch: pytest.MonkeyPatch, case: Case,
-) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    before = case.cutoff - timedelta(microseconds=1)
-    assert not retired(case.provider, case.model, case.native, at=before)
-    assert retired(case.provider, case.model, at=case.cutoff)
-    assert retired(case.provider, "unknown-canonical", case.native, at=case.cutoff)
-    assert not retired("unaffected-provider", case.model, case.native, at=case.cutoff)
-    if case.replacement is not None:
-        assert not retired(case.provider, case.replacement, at=case.cutoff)
-    endpoints = {}
-    for slug in (case.provider, "unaffected-provider"):
-        endpoint = ModelEndpoint(
-            id=f"{case.model}@{slug}/Credits", model_id=case.model, provider=slug,
-            usage_type="Credits", upstream_id=case.native,
-        )
-        endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: before)
-    assert len(catalog.endpoints_for_model(case.model)) == 2
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff)
-    assert [row.provider for row in catalog.endpoints_for_model(case.model)] == [
-        "unaffected-provider",
-    ]
 
 
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: f"{case.provider}:{case.model}")

@@ -9,8 +9,7 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.providers import nscale
-from trusted_router import catalog, provider_lifecycle, provider_manifest_policy
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle, provider_manifest_policy
 
 _CUTOFF = datetime(2026, 12, 11, tzinfo=UTC)
 _CUTOFF_STAMP = "2026-12-11T00:00:00Z"
@@ -76,13 +75,9 @@ def test_nscale_december_cutoff_is_the_announced_date_at_midnight_utc() -> None:
 
 
 @pytest.mark.parametrize("model_id", sorted(_RETIRING))
-def test_nscale_december_retirement_boundary_and_provider_scope(model_id: str) -> None:
-    native_id = _RETIRING[model_id]
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("nscale", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("nscale", model_id, at=_CUTOFF)
-    assert retired("nscale", "different-canonical-id", native_id, at=_CUTOFF)
-    assert not retired("unaffected-provider", model_id, native_id, at=_CUTOFF)
+def test_nscale_december_entry_names_no_replacement(model_id: str) -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     entries = [
         entry for entry in provider_lifecycle.provider_retirements()
         if entry.provider == "nscale" and model_id in entry.model_ids
@@ -98,25 +93,6 @@ def test_nscale_december_survivors_keep_routing() -> None:
         assert not provider_lifecycle.provider_model_retired(
             "nscale", model_id, native_id, at=_CUTOFF + timedelta(days=365),
         )
-
-
-@pytest.mark.parametrize("model_id", sorted(_RETIRING))
-def test_nscale_december_routes_stop_at_cutover(
-    monkeypatch: pytest.MonkeyPatch, model_id: str,
-) -> None:
-    native_id = _RETIRING[model_id]
-    endpoints = {}
-    for provider in ("nscale", "unaffected-provider"):
-        endpoint = ModelEndpoint(
-            id=f"{model_id}@{provider}/Credits", model_id=model_id,
-            provider=provider, usage_type="Credits", upstream_id=native_id,
-        )
-        endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    _at(monkeypatch, _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 2
-    _at(monkeypatch, _CUTOFF)
-    assert [e.provider for e in catalog.endpoints_for_model(model_id)] == ["unaffected-provider"]
 
 
 def test_nscale_manifest_retirement_dates_match_the_lifecycle() -> None:

@@ -8,11 +8,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import crusoe
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _CUTOFF = datetime(2026, 9, 13, 4, tzinfo=UTC)
 _RETIRING = (
@@ -35,53 +32,11 @@ def test_crusoe_cutoff_matches_announced_pacific_time() -> None:
     assert provider_lifecycle.CRUSOE_SEPTEMBER_2026_RETIREMENT_AT == _CUTOFF
 
 
-@pytest.mark.parametrize(("model_id", "native_id", "replacement"), _RETIRING)
-def test_crusoe_exact_cutoff_and_provider_scope(
-    model_id: str, native_id: str, replacement: str,
-) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("crusoe", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("crusoe", model_id, at=_CUTOFF)
-    assert retired("crusoe", "other-canonical-id", native_id, at=_CUTOFF)
-    assert not retired("novita", model_id, native_id, at=_CUTOFF)
-    assert not retired("crusoe", replacement, _REPLACEMENTS[replacement], at=_CUTOFF)
-
-
-@pytest.mark.parametrize(("model_id", "native_id", "_replacement"), _RETIRING)
-def test_crusoe_runtime_cutoff_without_catalog_reload(
-    monkeypatch: pytest.MonkeyPatch, model_id: str, native_id: str, _replacement: str,
-) -> None:
-    # Isolate the clock gate from independently changing discovery manifests.
-    endpoints = {}
-    for provider in ("crusoe", "novita"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{model_id}@{provider}/{usage}", model_id=model_id,
-                provider=provider, usage_type=usage, upstream_id=native_id,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 4
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = catalog.endpoints_for_model(model_id)
-    assert len(after) == 2
-    assert {endpoint.provider for endpoint in after} == {"novita"}
-    assert {endpoint.model_id for endpoint in after} == {model_id}
-
-
-def test_crusoe_refresh_cannot_restore_retired_prices(monkeypatch: pytest.MonkeyPatch) -> None:
-    retiring = {model for model, _native, _replacement in _RETIRING}
-    result = ProviderPricingResult(
-        slug="crusoe", source="api", fetched_url=crusoe.URL,
-        prices={model: ModelPrice(1_000_000, 2_000_000) for model in retiring | _REPLACEMENTS.keys()},
-    )
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    before = refresh._index_provider_prices({"crusoe": result})
-    assert retiring <= before.keys()
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"crusoe": result})
-    assert set(after) == set(_REPLACEMENTS)
+@pytest.mark.parametrize(("replacement", "native_id"), _REPLACEMENTS.items())
+def test_crusoe_september_replacements_are_not_retired(replacement: str, native_id: str) -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
+    assert not provider_lifecycle.provider_model_retired("crusoe", replacement, native_id, at=_CUTOFF)
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])

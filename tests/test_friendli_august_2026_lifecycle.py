@@ -4,13 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import friendli
-from tests.lifecycle_clock import catalog_predates
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _QWEN_CUTOFF = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 _EXAONE_CUTOFF = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -21,131 +16,16 @@ _EXAONE_UPSTREAM = "LGAI-EXAONE/K-EXAONE-236B-A23B"
 _GLM = "z-ai/glm-5.2"
 
 
-def test_friendli_qwen_retires_at_announced_instant() -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "friendli",
-        _QWEN,
-        _QWEN_UPSTREAM,
-        at=_QWEN_CUTOFF - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "friendli",
-        _QWEN,
-        _QWEN_UPSTREAM,
-        at=_QWEN_CUTOFF,
-    )
-    assert not provider_lifecycle.provider_model_retired(
-        "friendli",
-        _GLM,
-        "zai-org/GLM-5.2",
-        at=_QWEN_CUTOFF,
-    )
-
-
-def test_friendli_exaone_retires_at_announced_instant() -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "friendli",
-        _EXAONE,
-        _EXAONE_UPSTREAM,
-        at=_EXAONE_CUTOFF - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "friendli",
-        _EXAONE,
-        _EXAONE_UPSTREAM,
-        at=_EXAONE_CUTOFF,
-    )
-    assert not provider_lifecycle.provider_model_retired(
-        "another-provider",
-        _EXAONE,
-        _EXAONE_UPSTREAM,
-        at=_EXAONE_CUTOFF,
-    )
-
-
-def test_friendli_qwen_retirement_is_provider_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # This historical Friendli boundary must not depend on providers that
-    # independently retire Qwen later (Crusoe in September).
-    endpoints = {}
-    for provider in ("friendli", "atlas-cloud", "crusoe"):
-        endpoint = ModelEndpoint(
-            id=f"{_QWEN}@{provider}/prepaid", model_id=_QWEN,
-            provider=provider, usage_type="Credits", upstream_id=_QWEN_UPSTREAM,
+def test_friendli_august_retirements_spare_glm() -> None:
+    # The cutoffs themselves, scope and the refresh and catalog paths are
+    # checked for every retirement in tests/test_provider_retirements_generic.py.
+    for cutoff in (_QWEN_CUTOFF, _EXAONE_CUTOFF):
+        assert not provider_lifecycle.provider_model_retired(
+            "friendli",
+            _GLM,
+            "zai-org/GLM-5.2",
+            at=cutoff,
         )
-        endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now", lambda: _QWEN_CUTOFF - timedelta(microseconds=1),
-    )
-    assert {endpoint.provider for endpoint in endpoints_for_model(_QWEN)} == {
-        "friendli", "atlas-cloud", "crusoe",
-    }
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _QWEN_CUTOFF)
-
-    providers = {endpoint.provider for endpoint in endpoints_for_model(_QWEN)}
-
-    assert providers == {"atlas-cloud", "crusoe"}
-
-
-def test_friendli_exaone_catalog_route_retires_on_schedule(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The catalog registry applies retirements at IMPORT, so the live route is
-    # only observable while the process itself was started before the cutover.
-    # `provider_model_retired` is asserted at both instants regardless, by
-    # test_friendli_exaone_retires_at_announced_instant above.
-    if catalog_predates(_EXAONE_CUTOFF):
-        monkeypatch.setattr(
-            provider_lifecycle,
-            "_utc_now",
-            lambda: _EXAONE_CUTOFF - timedelta(microseconds=1),
-        )
-        assert "friendli" in {
-            endpoint.provider for endpoint in endpoints_for_model(_EXAONE)
-        }
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _EXAONE_CUTOFF)
-    assert "friendli" not in {
-        endpoint.provider for endpoint in endpoints_for_model(_EXAONE)
-    }
-
-
-def test_hourly_refresh_cannot_restore_retired_friendli_route(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = ProviderPricingResult(
-        slug="friendli",
-        prices={
-            _QWEN: ModelPrice(200_000, 800_000),
-            _EXAONE: ModelPrice(200_000, 800_000),
-            _GLM: ModelPrice(1_400_000, 4_400_000),
-        },
-        source="api",
-        fetched_url=friendli.URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _QWEN_CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"friendli": result})
-    assert "friendli" in before[_QWEN]
-    assert "friendli" in before[_EXAONE]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _QWEN_CUTOFF)
-    after_qwen = refresh._index_provider_prices({"friendli": result})
-    assert _QWEN not in after_qwen
-    assert "friendli" in after_qwen[_EXAONE]
-    assert "friendli" in after_qwen[_GLM]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _EXAONE_CUTOFF)
-    after_exaone = refresh._index_provider_prices({"friendli": result})
-    assert _QWEN not in after_exaone
-    assert _EXAONE not in after_exaone
-    assert "friendli" in after_exaone[_GLM]
 
 
 def test_friendli_parser_drops_retired_model_even_if_feed_is_stale(

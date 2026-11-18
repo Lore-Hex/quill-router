@@ -53,34 +53,6 @@ def july_catalog(monkeypatch: pytest.MonkeyPatch) -> dict[str, Model]:
     return models
 
 
-def test_phala_retirements_switch_at_announced_instant() -> None:
-    before = _CUTOFF - timedelta(microseconds=1)
-
-    for model_id, upstream_id in (
-        ("z-ai/glm-4.7", "phala/glm-4.7"),
-        (
-            "qwen/qwen3-30b-a3b-instruct-2507",
-            "phala/qwen3-30b-a3b-instruct-2507",
-        ),
-    ):
-        assert not provider_lifecycle.provider_model_retired(
-            "phala", model_id, upstream_id, at=before
-        )
-        assert provider_lifecycle.provider_model_retired("phala", model_id, upstream_id, at=_CUTOFF)
-
-
-def test_phala_retirement_is_provider_scoped(july_catalog: dict[str, Model]) -> None:
-    glm_providers = {endpoint.provider for endpoint in endpoints_for_model("z-ai/glm-4.7")}
-    qwen_providers = {
-        endpoint.provider for endpoint in endpoints_for_model("qwen/qwen3-30b-a3b-instruct-2507")
-    }
-
-    assert "phala" not in glm_providers
-    assert glm_providers
-    assert "phala" not in qwen_providers
-    assert {"alibaba", "wandb"} == qwen_providers
-
-
 def test_non_confidential_phala_qwen_route_is_not_published() -> None:
     assert endpoint_for_id("qwen/qwen-2.5-7b-instruct@phala/prepaid") is None
     assert all(

@@ -11,8 +11,15 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import novita, together, venice
+from tests.pinned_manifests import (
+    FEATHERLESS_MINIMAX_M3_1_FLASH,
+    MINIMAX_M3_1_FLASH,
+    NOVITA_MINIMAX_M3_1_FLASH,
+    build_manifest_rows,
+)
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import MODELS, endpoints_for_model
+from trusted_router.catalog import MODELS
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.routing import candidates_fitting_context, canonical_model_id
 
 MODEL = "minimax/minimax-m3.1-flash"
@@ -20,28 +27,45 @@ ALIAS = "minimax/minimax-m3-1-flash"
 NATIVE = "MiniMaxAI/MiniMax-M3.1-Flash"
 
 
-def test_featherless_shared_context_is_enforced_without_capping_other_hosts() -> None:
-    model = MODELS[MODEL]
-    routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
-    featherless = (model, routes["featherless"])
-    minimax = (model, routes["minimax"])
-    assert routes["featherless"].context_length == 262_144
-    assert routes["minimax"].effective_context_length(model) > 262_144
+def _prepaid_route(
+    monkeypatch: pytest.MonkeyPatch, directory: Path, provider: str, row: dict[str, Any],
+) -> tuple[dict[str, Model], ModelEndpoint]:
+    models, routes = build_manifest_rows(monkeypatch, directory / provider, provider, [row])
+    [route] = [r for r in routes.values() if r.model_id == MODEL and r.usage_type == "Credits"]
+    return models, route
+
+
+def test_featherless_shared_context_is_enforced_without_capping_other_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Pinned rows, built by the catalog's own manifest ingestion: the window a
+    # host lists is provider data the hourly price refresh rewrites.
+    window = FEATHERLESS_MINIMAX_M3_1_FLASH["context_length"]
+    models, minimax_route = _prepaid_route(monkeypatch, tmp_path, "minimax", MINIMAX_M3_1_FLASH)
+    _, featherless_route = _prepaid_route(
+        monkeypatch, tmp_path, "featherless", FEATHERLESS_MINIMAX_M3_1_FLASH,
+    )
+    model = models[MODEL]
+    featherless = (model, featherless_route)
+    minimax = (model, minimax_route)
+    assert featherless_route.context_length == window
+    assert minimax_route.effective_context_length(model) > window
     assert candidates_fitting_context(
-        [featherless], prompt_tokens=262_143, completion_tokens=1,
+        [featherless], prompt_tokens=window - 1, completion_tokens=1,
     ) == [featherless]
     assert candidates_fitting_context(
-        [featherless, minimax], prompt_tokens=262_144, completion_tokens=1,
+        [featherless, minimax], prompt_tokens=window, completion_tokens=1,
     ) == [minimax]
     with pytest.raises(HTTPException) as exc:
-        candidates_fitting_context([featherless], prompt_tokens=262_144, completion_tokens=1)
+        candidates_fitting_context([featherless], prompt_tokens=window, completion_tokens=1)
     assert exc.value.status_code == 400
-    assert "262144" in str(exc.value.detail)
+    assert str(window) in str(exc.value.detail)
 
 
 def test_novita_flash_uses_account_price_units() -> None:
-    row = next(row for row in json.loads(novita.MANIFEST_PATH.read_text())["models"] if row["id"] == MODEL)
-    price = novita._source_price(row)
+    # A pinned row: Novita's live price is provider data the hourly refresh
+    # rewrites. Its feed's units are 100x below the public per-million price.
+    price = novita._source_price(NOVITA_MINIMAX_M3_1_FLASH)
     assert price is not None
     assert (price.prompt_micro_per_m, price.completion_micro_per_m, price.tiers[0].prompt_cached_micro_per_m) == (
         150000, 600000, 15000,

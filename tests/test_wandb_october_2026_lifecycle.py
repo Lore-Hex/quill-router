@@ -7,13 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.providers import _direct_openai, wandb
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _CUTOFF = datetime(2026, 10, 5, tzinfo=UTC)
 _RETIRING = {
@@ -45,56 +43,9 @@ def test_wandb_cutoff_is_conservative_for_date_only_notice() -> None:
     assert provider_lifecycle.WANDB_OCTOBER_2026_RETIREMENT_AT == _CUTOFF
 
 
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING.items())
-def test_wandb_retirement_boundary_and_provider_scope(model_id: str, native_id: str) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("wandb", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("wandb", model_id, at=_CUTOFF)
-    assert retired("wandb", "different-canonical-id", native_id, at=_CUTOFF)
-    assert retired("wandb", model_id, native_id, at=_CUTOFF + timedelta(days=1))
-    assert not retired("unaffected-provider", model_id, native_id, at=_CUTOFF)
-
-
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING.items())
-def test_wandb_runtime_cutoff_without_reload_or_weight_substitution(
-    monkeypatch: pytest.MonkeyPatch, model_id: str, native_id: str,
-) -> None:
-    endpoints = {}
-    for provider in ("wandb", "unaffected-provider"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{model_id}@{provider}/{usage}", model_id=model_id,
-                provider=provider, usage_type=usage, upstream_id=native_id,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 4
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    remaining = catalog.endpoints_for_model(model_id)
-    assert len(remaining) == 2
-    assert {endpoint.provider for endpoint in remaining} == {"unaffected-provider"}
-    assert {endpoint.model_id for endpoint in remaining} == {model_id}
-    assert {endpoint.upstream_id for endpoint in remaining} == {native_id}
-
-
 @pytest.mark.parametrize(("model_id", "native_id"), _RETAINED.items())
 def test_wandb_unannounced_models_survive(model_id: str, native_id: str) -> None:
     assert not provider_lifecycle.provider_model_retired("wandb", model_id, native_id, at=_CUTOFF)
-
-
-@pytest.mark.parametrize("source", ["api", "snapshot"])
-def test_wandb_refresh_cannot_restore_retired_prices(
-    monkeypatch: pytest.MonkeyPatch, source: str,
-) -> None:
-    result = ProviderPricingResult(
-        slug="wandb", source=source, fetched_url=wandb.URL,
-        prices={model: ModelPrice(100_000, 200_000) for model in _RETIRING | _RETAINED},
-    )
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert set(refresh._index_provider_prices({"wandb": result})) == set(_RETIRING | _RETAINED)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    assert set(refresh._index_provider_prices({"wandb": result})) == set(_RETAINED)
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])

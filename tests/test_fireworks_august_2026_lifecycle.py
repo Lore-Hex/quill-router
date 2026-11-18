@@ -2,13 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _AUGUST_CUTOFF = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
 _QWEN_CUTOFF = datetime(2026, 9, 4, 0, 0, tzinfo=UTC)
@@ -33,21 +27,9 @@ _STANDARD_KIMI = {
 }
 
 
-def test_fireworks_august_routes_retire_without_standard_kimi() -> None:
-    for model_id, upstream_id in _AUGUST_RETIRING.items():
-        assert not provider_lifecycle.provider_model_retired(
-            "fireworks",
-            model_id,
-            upstream_id,
-            at=_AUGUST_CUTOFF - timedelta(microseconds=1),
-        )
-        assert provider_lifecycle.provider_model_retired(
-            "fireworks",
-            model_id,
-            upstream_id,
-            at=_AUGUST_CUTOFF,
-        )
-
+def test_fireworks_august_retirement_spares_standard_kimi_and_replacements() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     for model_id, upstream_id in {**_STANDARD_KIMI, **_AUGUST_REPLACEMENTS}.items():
         assert not provider_lifecycle.provider_model_retired(
             "fireworks",
@@ -78,73 +60,4 @@ def test_fireworks_qwen_extension_uses_its_own_cutoff() -> None:
         "qwen/qwen3.8-max",
         "accounts/fireworks/models/qwen3p8-max",
         at=_QWEN_CUTOFF,
-    )
-
-
-def test_fireworks_retirements_are_provider_scoped() -> None:
-    for model_id, upstream_id in {
-        **_AUGUST_RETIRING,
-        "qwen/qwen3.7-plus": "accounts/fireworks/models/qwen3p7-plus",
-    }.items():
-        assert not provider_lifecycle.provider_model_retired(
-            "another-provider",
-            model_id,
-            upstream_id,
-            at=_QWEN_CUTOFF,
-        )
-
-
-def test_hourly_refresh_cannot_restore_retired_fireworks_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prices = {
-        model_id: ModelPrice(1_000_000, 3_000_000)
-        for model_id in {
-            *_AUGUST_RETIRING,
-            *_AUGUST_REPLACEMENTS,
-            *_STANDARD_KIMI,
-            "qwen/qwen3.7-plus",
-            "qwen/qwen3.8-max",
-        }
-    }
-    result = ProviderPricingResult(
-        slug="fireworks",
-        prices=prices,
-        source="api",
-        fetched_url="https://api.fireworks.ai/inference/v1/models",
-    )
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _AUGUST_CUTOFF)
-    august = refresh._index_provider_prices({"fireworks": result})
-    for model_id in _AUGUST_RETIRING:
-        assert "fireworks" not in august.get(model_id, {})
-    for model_id in {*_AUGUST_REPLACEMENTS, *_STANDARD_KIMI, "qwen/qwen3.7-plus"}:
-        assert "fireworks" in august[model_id]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _QWEN_CUTOFF)
-    september = refresh._index_provider_prices({"fireworks": result})
-    assert "fireworks" not in september.get("qwen/qwen3.7-plus", {})
-    assert "fireworks" in september["qwen/qwen3.8-max"]
-
-
-def test_catalog_filters_fireworks_route_at_cutoff(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    endpoints = {
-        model_id: ModelEndpoint(
-            id=f"{model_id}@fireworks/prepaid", model_id=model_id,
-            provider="fireworks", usage_type="Credits", upstream_id=upstream_id,
-        )
-        for model_id, upstream_id in (_AUGUST_RETIRING | _AUGUST_REPLACEMENTS).items()
-    }
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _AUGUST_CUTOFF)
-
-    assert all(
-        endpoint.provider != "fireworks"
-        for endpoint in endpoints_for_model("deepseek/deepseek-v4-pro")
-    )
-    assert any(
-        endpoint.provider == "fireworks"
-        for endpoint in endpoints_for_model("deepseek/deepseek-v4-pro-0813")
     )

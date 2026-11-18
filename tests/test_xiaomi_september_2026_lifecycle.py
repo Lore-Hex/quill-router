@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import xiaomi
-from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
 
 _CUTOFF = datetime(2026, 9, 7, 16, 0, tzinfo=UTC)
 _ULTRASPEED = "xiaomi/mimo-v2.5-pro-ultraspeed"
@@ -19,84 +16,16 @@ _ULTRASPEED_UPSTREAM = "mimo-v2.5-pro-ultraspeed"
 _PRO = "xiaomi/mimo-v2.5-pro"
 
 
-def test_xiaomi_ultraspeed_retires_at_announced_local_date() -> None:
+def test_xiaomi_ultraspeed_cutoff_is_the_announced_local_date_and_spares_pro() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     assert provider_lifecycle.XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT == _CUTOFF
-    assert not provider_lifecycle.provider_model_retired(
-        "xiaomi",
-        _ULTRASPEED,
-        _ULTRASPEED_UPSTREAM,
-        at=_CUTOFF - timedelta(microseconds=1),
-    )
-    assert provider_lifecycle.provider_model_retired(
-        "xiaomi",
-        _ULTRASPEED,
-        _ULTRASPEED_UPSTREAM,
-        at=_CUTOFF,
-    )
-
-
-def test_xiaomi_ultraspeed_retirement_is_provider_scoped() -> None:
-    assert not provider_lifecycle.provider_model_retired(
-        "another-provider",
-        _ULTRASPEED,
-        _ULTRASPEED_UPSTREAM,
-        at=_CUTOFF,
-    )
     assert not provider_lifecycle.provider_model_retired(
         "xiaomi",
         _PRO,
         "mimo-v2.5-pro",
         at=_CUTOFF,
     )
-
-
-def test_xiaomi_catalog_route_retires_on_schedule(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Xiaomi's routes are fixtures: whether Xiaomi lists these models today is
-    # provider state, while the cutoff must drop UltraSpeed and only UltraSpeed.
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    for model_id, upstream_id in ((_ULTRASPEED, _ULTRASPEED_UPSTREAM), (_PRO, "mimo-v2.5-pro")):
-        drop_routes(monkeypatch, model_id)
-        serve_on_fixture_route(
-            monkeypatch, model_id, "xiaomi", author="xiaomi", upstream_id=upstream_id,
-        )
-    assert "xiaomi" in {endpoint.provider for endpoint in endpoints_for_model(_ULTRASPEED)}
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    assert "xiaomi" not in {endpoint.provider for endpoint in endpoints_for_model(_ULTRASPEED)}
-    assert "xiaomi" in {endpoint.provider for endpoint in endpoints_for_model(_PRO)}
-
-
-def test_hourly_refresh_cannot_restore_retired_xiaomi_ultraspeed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = ProviderPricingResult(
-        slug="xiaomi",
-        prices={
-            _ULTRASPEED: ModelPrice(1_305_000, 2_610_000),
-            _PRO: ModelPrice(435_000, 870_000),
-        },
-        source="api",
-        fetched_url=xiaomi.URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"xiaomi": result})
-    assert "xiaomi" in before[_ULTRASPEED]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"xiaomi": result})
-    assert _ULTRASPEED not in after
-    assert "xiaomi" in after[_PRO]
 
 
 def test_xiaomi_manifest_records_retirement_without_inventing_replacement() -> None:

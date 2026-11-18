@@ -4,11 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import nebius
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
 
 _CUTOFF = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 _RETIRING = {
@@ -33,21 +30,9 @@ _SURVIVING = {
 }
 
 
-def test_nebius_routes_retire_at_announced_date() -> None:
-    for model_id, upstream_id in _RETIRING.items():
-        assert not provider_lifecycle.provider_model_retired(
-            "nebius",
-            model_id,
-            upstream_id,
-            at=_CUTOFF - timedelta(microseconds=1),
-        )
-        assert provider_lifecycle.provider_model_retired(
-            "nebius",
-            model_id,
-            upstream_id,
-            at=_CUTOFF,
-        )
-
+def test_nebius_august_retirement_spares_the_surviving_routes() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     for model_id, upstream_id in _SURVIVING.items():
         assert not provider_lifecycle.provider_model_retired(
             "nebius",
@@ -57,50 +42,8 @@ def test_nebius_routes_retire_at_announced_date() -> None:
         )
 
 
-def test_nebius_retirements_are_provider_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
-    for model_id, upstream_id in _RETIRING.items():
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert "nebius" not in providers
-        assert not provider_lifecycle.provider_model_retired(
-            "another-provider",
-            model_id,
-            upstream_id,
-            at=_CUTOFF,
-        )
-
     # This test owns only Nebius's lifecycle. Other providers may add or
     # remove the same checkpoints independently without invalidating it.
-
-
-def test_hourly_refresh_cannot_restore_retired_nebius_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prices = {model_id: ModelPrice(1_000_000, 3_000_000) for model_id in {*_RETIRING, *_SURVIVING}}
-    result = ProviderPricingResult(
-        slug="nebius",
-        prices=prices,
-        source="api",
-        fetched_url=nebius.URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"nebius": result})
-    for model_id in _RETIRING:
-        assert "nebius" in before[model_id]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"nebius": result})
-    assert set(_RETIRING).isdisjoint(after)
-    for model_id in _SURVIVING:
-        assert "nebius" in after[model_id]
 
 
 def test_nebius_parser_filters_retired_rows_from_stale_feed(

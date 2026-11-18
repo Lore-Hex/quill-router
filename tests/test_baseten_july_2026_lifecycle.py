@@ -4,12 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import MODEL_ENDPOINTS, endpoints_for_model
-from trusted_router.catalog_data import ModelEndpoint
 
 _CUTOFF = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 _RETIRING = {
@@ -29,21 +25,9 @@ _SUCCESSORS = {
 }
 
 
-def test_baseten_routes_retire_at_announced_instant() -> None:
-    for model_id, upstream_id in _RETIRING.items():
-        assert not provider_lifecycle.provider_model_retired(
-            "baseten",
-            model_id,
-            upstream_id,
-            at=_CUTOFF - timedelta(microseconds=1),
-        )
-        assert provider_lifecycle.provider_model_retired(
-            "baseten",
-            model_id,
-            upstream_id,
-            at=_CUTOFF,
-        )
-
+def test_baseten_july_successors_are_not_retired() -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     for model_id, upstream_id in _SUCCESSORS.items():
         assert not provider_lifecycle.provider_model_retired(
             "baseten",
@@ -51,78 +35,6 @@ def test_baseten_routes_retire_at_announced_instant() -> None:
             upstream_id,
             at=_CUTOFF,
         )
-
-
-def test_baseten_retirement_is_provider_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Provider discovery may remove or add routes independently of an announced
-    # cutoff. Use a self-contained catalog so this test covers only the
-    # provider-scoped lifecycle rule: Baseten serves every retiring model and
-    # successor, and another host serves each retiring model too.
-    served = {**_RETIRING, **_SUCCESSORS}
-    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
-        if endpoint.model_id in served:
-            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
-    routes = [("baseten", model_id, upstream_id) for model_id, upstream_id in served.items()]
-    routes += [("another-provider", model_id, model_id) for model_id in _RETIRING]
-    for provider, model_id, upstream_id in routes:
-        endpoint = ModelEndpoint(
-            id=f"{model_id}@{provider}/prepaid",
-            model_id=model_id,
-            provider=provider,
-            usage_type="Credits",
-            upstream_id=upstream_id,
-        )
-        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    for model_id in _RETIRING:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert providers == {"baseten", "another-provider"}
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    for model_id in _RETIRING:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert providers == {"another-provider"}
-    for model_id in _SUCCESSORS:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert providers == {"baseten"}
-
-
-def test_hourly_refresh_cannot_restore_retired_baseten_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prices = {
-        model_id: ModelPrice(1_000_000, 3_000_000)
-        for model_id in {*_RETIRING, *_SUCCESSORS}
-    }
-    result = ProviderPricingResult(
-        slug="baseten",
-        prices=prices,
-        source="api",
-        fetched_url=baseten.URL,
-    )
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"baseten": result})
-    for model_id in _RETIRING:
-        assert "baseten" in before[model_id]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    after = refresh._index_provider_prices({"baseten": result})
-    for model_id in _RETIRING:
-        assert model_id not in after
-    for model_id in _SUCCESSORS:
-        assert "baseten" in after[model_id]
 
 
 def test_baseten_parser_filters_retired_rows_from_stale_feed(

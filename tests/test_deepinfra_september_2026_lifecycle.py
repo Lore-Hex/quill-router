@@ -8,11 +8,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.pricing import refresh
-from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import deepinfra
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 
 @dataclass(frozen=True)
@@ -55,71 +52,13 @@ def retirement(request: pytest.FixtureRequest) -> RetirementCase:
     return request.param
 
 
-def test_deepinfra_exact_cutoff_and_provider_scope(retirement: RetirementCase) -> None:
+def test_deepinfra_september_replacement_is_not_retired(retirement: RetirementCase) -> None:
+    # The cutoff itself, scope and the refresh and catalog paths are checked
+    # for every retirement in tests/test_provider_retirements_generic.py.
     case = retirement
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired(
-        "deepinfra", case.model, case.upstream,
-        at=case.cutoff - timedelta(microseconds=1),
-    )
-    assert retired("deepinfra", case.model, at=case.cutoff)
-    assert retired("deepinfra", "other-canonical-id", case.upstream, at=case.cutoff)
-    assert not retired(
+    assert not provider_lifecycle.provider_model_retired(
         "deepinfra", case.replacement, case.replacement_upstream, at=case.cutoff,
     )
-    for provider in ("novita", "siliconflow"):
-        assert not retired(provider, case.model, case.upstream, at=case.cutoff)
-
-
-def test_deepinfra_runtime_cutoff_without_catalog_reload(
-    monkeypatch: pytest.MonkeyPatch, retirement: RetirementCase,
-) -> None:
-    case = retirement
-    # Discovery has already delisted some models. Fixture live endpoints to
-    # prove the clock gate also protects a process with a stale catalog.
-    endpoints = {}
-    for provider in ("deepinfra", "novita"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{case.model}@{provider}/{usage}", model_id=case.model,
-                provider=provider, usage_type=usage, upstream_id=case.upstream,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now", lambda: case.cutoff - timedelta(microseconds=1),
-    )
-    assert len(catalog.endpoints_for_model(case.model)) == 4
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff)
-    after = catalog.endpoints_for_model(case.model)
-    assert len(after) == 2
-    assert {endpoint.provider for endpoint in after} == {"novita"}
-    assert {endpoint.model_id for endpoint in after} == {case.model}
-
-
-def test_hourly_refresh_cannot_restore_retired_deepinfra_model(
-    monkeypatch: pytest.MonkeyPatch, retirement: RetirementCase,
-) -> None:
-    case = retirement
-    result = ProviderPricingResult(
-        slug="deepinfra",
-        prices={
-            case.model: ModelPrice(450_000, 2_250_000),
-            case.replacement: ModelPrice(2_850_000, 14_250_000),
-        },
-        source="api", fetched_url=deepinfra.URL,
-    )
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now", lambda: case.cutoff - timedelta(microseconds=1),
-    )
-    before = refresh._index_provider_prices({"deepinfra": result})
-    assert "deepinfra" in before[case.model]
-
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: case.cutoff)
-    after = refresh._index_provider_prices({"deepinfra": result})
-    assert case.model not in after
-    assert "deepinfra" in after[case.replacement]
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])

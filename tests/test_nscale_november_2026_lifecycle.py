@@ -6,8 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from scripts.pricing.providers import nscale
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _CUTOFF = datetime(2026, 11, 2, tzinfo=UTC)
 _RETIRING = {
@@ -52,38 +51,6 @@ _RETAINED = {
 
 def test_nscale_cutoff_is_the_earliest_named_date_at_midnight_utc() -> None:
     assert provider_lifecycle.NSCALE_NOVEMBER_2026_RETIREMENT_AT == _CUTOFF
-
-
-@pytest.mark.parametrize("model_id", sorted(_RETIRING))
-def test_nscale_retirement_boundary_and_provider_scope(model_id: str) -> None:
-    native_id, _ = _RETIRING[model_id]
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("nscale", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("nscale", model_id, at=_CUTOFF)
-    assert retired("nscale", "different-canonical-id", native_id, at=_CUTOFF)
-    assert not retired("unaffected-provider", model_id, native_id, at=_CUTOFF)
-
-
-@pytest.mark.parametrize("model_id", sorted(_RETIRING))
-def test_nscale_routed_before_cutover_retired_after_without_substitution(
-    monkeypatch: pytest.MonkeyPatch, model_id: str,
-) -> None:
-    native_id, _ = _RETIRING[model_id]
-    endpoints = {}
-    for provider in ("nscale", "unaffected-provider"):
-        endpoint = ModelEndpoint(
-            id=f"{model_id}@{provider}/Credits", model_id=model_id,
-            provider=provider, usage_type="Credits", upstream_id=native_id,
-        )
-        endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 2
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    remaining = catalog.endpoints_for_model(model_id)
-    assert [(e.provider, e.model_id, e.upstream_id) for e in remaining] == [
-        ("unaffected-provider", model_id, native_id),
-    ]
 
 
 @pytest.mark.parametrize("model_id", sorted(_RETIRING))

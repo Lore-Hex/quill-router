@@ -12,7 +12,6 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import openai, together
 from tests.fixture_routes import serve_on_fixture_route
 from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
 
 _OPENAI_CUTOFF = datetime(2026, 9, 28, tzinfo=UTC)
 _CANCELED_TOGETHER_CUTOFF = datetime(2026, 9, 29, tzinfo=UTC)
@@ -27,39 +26,6 @@ _CASES = [
 ]
 _REPLACEMENT = "deepseek/deepseek-v4.1-flash"
 _REPLACEMENT_NATIVE = "deepseek-ai/DeepSeek-V4.1-Flash"
-
-
-@pytest.mark.parametrize(("provider", "model", "native", "cutoff"), _CASES)
-def test_retirement_cutoff_preserves_other_providers_and_model_identity(
-    monkeypatch: pytest.MonkeyPatch, provider: str, model: str, native: str, cutoff: datetime,
-) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    before = cutoff - timedelta(microseconds=1)
-    assert not retired(provider, model, native, at=before)
-    assert retired(provider, model, at=cutoff)
-    assert retired(provider, "unknown-canonical", native, at=cutoff)
-    assert not retired("unaffected-provider", model, native, at=cutoff)
-    endpoints = {}
-    for slug in (provider, "unaffected-provider"):
-        for usage in ("Credits", "BYOK"):
-            endpoint = ModelEndpoint(
-                id=f"{model}@{slug}/{usage}", model_id=model, provider=slug,
-                usage_type=usage, upstream_id=native,
-            )
-            endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: before)
-    assert len(catalog.endpoints_for_model(model)) == 4
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
-    remaining = catalog.endpoints_for_model(model)
-    assert len(remaining) == 2
-    assert {row.provider for row in remaining} == {"unaffected-provider"}
-    assert {row.model_id for row in remaining} == {model}
-    result = ProviderPricingResult(
-        slug=provider, source="api", fetched_url="https://example.com/models",
-        prices={model: ModelPrice(100_000, 200_000)},
-    )
-    assert not refresh._index_provider_prices({provider: result})
 
 
 def test_openai_discovery_does_not_probe_or_republish_retired_ids(

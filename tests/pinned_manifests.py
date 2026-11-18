@@ -1203,6 +1203,65 @@ CONFIDENTIAL_MEDIA_ROUTES: tuple[tuple[str, dict[str, Any]], ...] = (
     }),
 )
 
+# MiniMax M3.1 Flash on MiniMax itself and on Featherless, whose shared
+# deployment lists a narrower window, as their feeds listed them on 2026-11-18.
+MINIMAX_M3_1_FLASH = {
+    "id": "minimax/minimax-m3.1-flash",
+    "upstream_id": "MiniMax-M3.1-Flash",
+    "display_name": "MiniMax-M3.1-Flash",
+    "title": "MiniMax-M3.1-Flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "context_length": 1000000,
+    "supported_parameters": ["tools", "tool_choice", "reasoning_effort"],
+    "created": 1789556118,
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 600000,
+    "cached_input_token_price_per_m": 15000,
+}
+FEATHERLESS_MINIMAX_M3_1_FLASH = {
+    "display_name": "MiniMaxAI/MiniMax-M3.1-Flash",
+    "title": "MiniMaxAI/MiniMax-M3.1-Flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "minimax/minimax-m3.1-flash",
+    "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+    "context_length": 262144,
+    "supported_features": ["tools"],
+    "routable": True,
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 600000,
+    "max_output_tokens": 131072,
+}
+
+# Novita's MiniMax M3.1 Flash row as its feed listed it on 2026-11-18. Novita's
+# feed prices 100x below its public table ($0.15/$0.60/$0.015 per million).
+NOVITA_MINIMAX_M3_1_FLASH = {
+    "id": "minimax/minimax-m3.1-flash",
+    "upstream_id": "minimax/minimax-m3.1-flash",
+    "display_name": "MiniMax M3.1 Flash",
+    "title": "minimax/minimax-m3.1-flash",
+    "model_type": "chat",
+    "features": ["serverless", "function-calling", "structured-outputs", "reasoning"],
+    "input_modalities": ["text", "image", "video"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions", "anthropic", "responses"],
+    "status": 1,
+    "created": 1792406343,
+    "context_length": 1000000,
+    "max_output_tokens": 524288,
+    "routable": True,
+    "input_token_price_per_m": 1500,
+    "output_token_price_per_m": 6000,
+    "cached_input_token_price_per_m": 150,
+}
+
 # TypeSafe's Jev decision row as its models page listed it on 2026-09-30.
 TYPESAFE_JEV = {
     "id": "typesafe-ai/jev",

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import fireworks
 from tests.pinned_manifests import (
@@ -16,8 +15,7 @@ from tests.pinned_manifests import (
     USE_PINNED_MANIFESTS,
     pinned_manifests,
 )
-from trusted_router import catalog, provider_lifecycle
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router import provider_lifecycle
 
 _CUTOFF = datetime(2026, 9, 25, tzinfo=UTC)
 _RETIRING = {
@@ -54,74 +52,9 @@ _FIREWORKS_V4P1_FLASH = {
 }
 
 
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING.items())
-def test_fireworks_september_exact_cutoff_and_provider_scope(model_id: str, native_id: str) -> None:
-    retired = provider_lifecycle.provider_model_retired
-    assert not retired("fireworks", model_id, native_id, at=_CUTOFF - timedelta(microseconds=1))
-    assert retired("fireworks", model_id, at=_CUTOFF)
-    assert retired("fireworks", "different-canonical-id", native_id, at=_CUTOFF)
-    assert retired("fireworks", model_id, native_id, at=_CUTOFF + timedelta(days=1))
-    assert not retired("another-provider", model_id, native_id, at=_CUTOFF)
-
-
-@pytest.mark.parametrize(("model_id", "native_id"), _RETIRING.items())
-def test_fireworks_september_runtime_cutoff_without_reload(
-    monkeypatch: pytest.MonkeyPatch, model_id: str, native_id: str,
-) -> None:
-    endpoints = {}
-    for provider in ("fireworks", "another-provider"):
-        for usage in ("Credits", "BYOK"):
-            for variant in ("standard", "us"):
-                endpoint = ModelEndpoint(
-                    id=f"{model_id}@{provider}/{usage}/{variant}", model_id=model_id,
-                    provider=provider, usage_type=usage, upstream_id=native_id,
-                )
-                endpoints[endpoint.id] = endpoint
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert len(catalog.endpoints_for_model(model_id)) == 8
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    remaining = catalog.endpoints_for_model(model_id)
-    assert len(remaining) == 4
-    assert {endpoint.provider for endpoint in remaining} == {"another-provider"}
-    assert {endpoint.model_id for endpoint in remaining} == {model_id}
-
-
-def test_fireworks_september_build_drops_retired_rows_its_manifest_still_lists(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    # The build drops a retired route even while the manifest still lists it:
-    # the refresh tombstones a row only after it misses the feed twice.
-    from trusted_router import catalog_ingest
-
-    rows = [
-        {"id": model_id, "upstream_id": native_id, "model_type": "chat",
-         "endpoints": ["chat/completions"]}
-        for model_id, native_id in (_RETIRING | _RETAINED).items()
-    ]
-    (tmp_path / "fireworks.json").write_text(json.dumps({"models": rows}), encoding="utf-8")
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
-    allowed = catalog_ingest._authoritative_provider_model_ids
-    assert allowed("fireworks", at=_CUTOFF - timedelta(microseconds=1)) == set(_RETIRING | _RETAINED)
-    assert allowed("fireworks", at=_CUTOFF) == set(_RETAINED)
-
-
 @pytest.mark.parametrize(("model_id", "native_id"), _RETAINED.items())
 def test_fireworks_september_preserves_other_routes(model_id: str, native_id: str) -> None:
     assert not provider_lifecycle.provider_model_retired("fireworks", model_id, native_id, at=_CUTOFF)
-
-
-def test_fireworks_september_stale_prices_cannot_restore_retired_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = ProviderPricingResult(
-        slug="fireworks", source="api", fetched_url=fireworks.MODELS_URL,
-        prices={model: ModelPrice(1_000_000, 2_000_000) for model in _RETIRING | _RETAINED},
-    )
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
-    assert set(refresh._index_provider_prices({"fireworks": result})) == set(_RETIRING | _RETAINED)
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-    assert set(refresh._index_provider_prices({"fireworks": result})) == set(_RETAINED)
 
 
 def test_fireworks_september_manifest_marks_only_announced_routes() -> None:
