@@ -1,4 +1,4 @@
-"""The billing 5xx alert and deploy gate set aside the three authorize 503s
+"""The billing 5xx alert and deploy gate set aside the four authorize 503s
 the app answers by design, and nothing else.
 
 With TR_FASTPATH_LEASE_HEADROOM_503 on, authorize answers 503 (Retry-After: 1)
@@ -6,22 +6,26 @@ when a workspace's shortfall is held in fast-path leases. It answers the
 storage 503 (Retry-After: 1) when a workspace's credit covers the hold but is
 spread across credit shards and the rebalance cooldown is held by its other
 requests. It answers the strict-busy 503 (Retry-After: 1) when a key with a
-strict budget cannot get its per-process admission slot. Cloud Run's request
-log records only status and URL, so each 503 is told apart by the line the
-app writes for it, billing.lease_headroom_unavailable,
-billing.credit_rebalance_busy or billing.strict_budget_busy:
+strict budget cannot get its per-process admission slot. It answers the
+storage 503 when a workspace's own concurrent requests took its spread
+credit from every bounded repair ("credit headroom changed concurrently").
+Cloud Run's request log records only status and URL, so each 503 is told
+apart by the line the app writes for it, billing.lease_headroom_unavailable,
+billing.credit_rebalance_busy, billing.strict_budget_busy or
+billing.credit_headroom_raced:
 
 * the deploy gate (scripts/deploy/assert_no_billing_5xx.sh) pairs each
   authorize 503 with a line by trace, and fails on any 503 left over;
 * "TR Gateway: billing path 5xx" (gateway-alerts/billing-5xx.yaml) sets
   authorize 503s aside, and "TR Gateway: authorize 503 not lease headroom"
   (gateway-alerts/billing-authorize-503.yaml) pages when the authorize 503
-  count and the count of all three lines differ;
+  count and the count of all four lines differ;
 * "TR Gateway: credit rebalance busy"
-  (gateway-alerts/billing-rebalance-busy.yaml) and "TR Gateway: strict
-  budget busy" (gateway-alerts/billing-strict-budget-busy.yaml) each page
-  on more than two of their line in ten minutes or more than five in an
-  hour, which the policy above no longer pages on.
+  (gateway-alerts/billing-rebalance-busy.yaml), "TR Gateway: strict budget
+  busy" (gateway-alerts/billing-strict-budget-busy.yaml) and "TR Gateway:
+  credit headroom raced" (gateway-alerts/billing-headroom-raced.yaml) each
+  page on more than two of their line in ten minutes or more than five in
+  an hour, which the policy above no longer pages on.
 
 The filters are EVALUATED here against log entries, not grepped: a small
 evaluator for the Logging query constructs the filters use, and the gate is
@@ -57,9 +61,22 @@ ALERT_5XX = DEPLOY / "gateway-alerts" / "billing-5xx.yaml"
 ALERT_503 = DEPLOY / "gateway-alerts" / "billing-authorize-503.yaml"
 ALERT_BUSY = DEPLOY / "gateway-alerts" / "billing-rebalance-busy.yaml"
 ALERT_STRICT = DEPLOY / "gateway-alerts" / "billing-strict-budget-busy.yaml"
+ALERT_RACED = DEPLOY / "gateway-alerts" / "billing-headroom-raced.yaml"
 HEADROOM_COUNTER = "trustedrouter_gateway_lease_headroom_503"
 BUSY_COUNTER = "trustedrouter_gateway_rebalance_busy_503"
 STRICT_COUNTER = "trustedrouter_gateway_strict_budget_busy_503"
+RACED_COUNTER = "trustedrouter_gateway_headroom_raced_503"
+# The two WARNINGs every storage 503 of authorize leaves, here for a
+# headroom-raced one, as Cloud Run keeps them. They name the type, not the
+# mark, and must never count as it.
+RACED_ROUTE_WARNING = (
+    "WARNING trusted_router.routes.internal.gateway billing.authorize_storage_unavailable "
+    "request_id=req-1 workspace_id=ws-1 error_class=CreditHeadroomRaced"
+)
+RACED_HANDLER_WARNING = (
+    "WARNING trusted_router.main storage.unavailable method=POST route=/internal/gateway/authorize "
+    "request_id=req-1 error_class=CreditHeadroomRaced workspace_id=ws-1"
+)
 # The WARNING the app's handler writes for every strict-busy 503 (main.py,
 # _log_storage_503), as Cloud Run keeps it: the same event name as the mark,
 # another level and logger, and no trace. It must never count as the mark.
@@ -258,6 +275,7 @@ def _metric_filters() -> dict[str, str]:
         HEADROOM_COUNTER,
         BUSY_COUNTER,
         STRICT_COUNTER,
+        RACED_COUNTER,
     }, filters
     return filters
 
@@ -355,6 +373,32 @@ def _rendered_strict_line(trace_header: dict[str, str] | None) -> tuple[str, str
     gateway.logger.setLevel(logging.INFO)
     try:
         gateway._log_strict_budget_busy("ws-1", request_id="req-1", trace_id=trace_id)
+    finally:
+        gateway.logger.removeHandler(handler)
+        gateway.logger.setLevel(previous)
+    (record,) = records
+    formatter = _ApplicationConsoleFormatter("%(levelname)s %(name)s %(message)s")
+    return formatter.format(record), trace_id
+
+
+def _rendered_raced_line(trace_header: dict[str, str] | None) -> tuple[str, str]:
+    """The line _log_credit_headroom_raced writes for a request, as Cloud
+    Run keeps it, and the trace it was given."""
+    headers = [(name.lower().encode(), value.encode()) for name, value in (trace_header or {}).items()]
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": headers})
+    trace_id = gateway._cloud_trace_id(request)
+    records: list[logging.LogRecord] = []
+
+    class _Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Keep(logging.INFO)
+    previous = gateway.logger.level
+    gateway.logger.addHandler(handler)
+    gateway.logger.setLevel(logging.INFO)
+    try:
+        gateway._log_credit_headroom_raced("ws-1", request_id="req-1", trace_id=trace_id)
     finally:
         gateway.logger.removeHandler(handler)
         gateway.logger.setLevel(previous)
@@ -496,8 +540,50 @@ def test_lines_that_are_not_the_strict_mark_are_not_counted() -> None:
     assert not matches(counter, app_line(line, service="trusted-router-public"))
 
 
+def test_the_raced_line_is_what_its_counter_and_the_gate_read() -> None:
+    from scripts.deploy import billing_5xx_lease_headroom as pairing
+
+    line, trace_id = _rendered_raced_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
+    assert trace_id == TRACE
+    assert line == (
+        "INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced "
+        f"workspace_id=ws-1 request_id=req-1 trace={TRACE}"
+    )
+    assert line.startswith(pairing.HEADROOM_RACED_LINE_PREFIX)
+    assert matches(_metric_filters()[RACED_COUNTER], app_line(line))
+    # The gate pairs it with the 503's request log entry.
+    request = request_log(503, "/internal/gateway/authorize")
+    assert pairing.line_kind(app_line(line)) == "headroom raced"
+    assert pairing.line_trace(app_line(line)) == pairing.request_trace(request) == TRACE
+    assert pairing.unpaired([request], [app_line(line)]) == []
+
+
+def test_lines_that_are_not_the_raced_mark_are_not_counted() -> None:
+    """The warnings every storage 503 of authorize leaves name the type, and
+    the store's own lines name the race; none of them is the mark. Counted
+    too, a headroom-raced 503 would be subtracted twice and page."""
+    counter = _metric_filters()[RACED_COUNTER]
+    line, _trace = _rendered_raced_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
+    for text in (
+        RACED_ROUTE_WARNING,
+        RACED_HANDLER_WARNING,
+        f"{RACED_ROUTE_WARNING} trace={TRACE}",
+        "INFO trusted_router.storage_gcp credit rebalance workspace=ws-1 outcome=moved "
+        "moved_micro=1 mode=consolidate estimate=1 attempt=3",
+        "WARNING trusted_router.storage_gcp credit shard-count forced reload failed after "
+        "incomplete precheck workspace=ws-1",
+        line.replace("INFO ", "WARNING ", 1),
+        line.replace("trusted_router.routes.internal.gateway", "trusted_router.main", 1),
+        line.replace("billing.credit_headroom_raced ", "billing.credit_headroom_raced_v2 "),
+        line.replace("billing.credit_headroom_raced ", "billing.credit_rebalance_busy "),
+        "INFO trusted_router.routes.internal.gateway gateway.idempotency_key_source source=gateway",
+    ):
+        assert not matches(counter, app_line(text)), text
+    assert not matches(counter, app_line(line, service="trusted-router-public"))
+
+
 def test_each_line_is_counted_by_its_own_counter_alone() -> None:
-    """The policy adds the three counters: a line counted by two would be
+    """The policy adds the four counters: a line counted by two would be
     subtracted twice and page, a line counted by none would leave its 503
     unmarked."""
     filters = _metric_filters()
@@ -506,12 +592,14 @@ def test_each_line_is_counted_by_its_own_counter_alone() -> None:
         HEADROOM_COUNTER: _rendered_headroom_line(trace)[0],
         BUSY_COUNTER: _rendered_busy_line(trace)[0],
         STRICT_COUNTER: _rendered_strict_line(trace)[0],
+        RACED_COUNTER: _rendered_raced_line(trace)[0],
     }
     for owner, line in lines.items():
         counted = {name for name in lines if matches(filters[name], app_line(line))}
         assert counted == {owner}, (line, counted)
-    # The other lines of a strict-busy 503 are counted by none of them.
-    for text in (STRICT_HANDLER_WARNING, STRICT_ROUTE_WARNING):
+    # The other lines of a strict-busy or a headroom-raced 503 are counted by
+    # none of them.
+    for text in (STRICT_HANDLER_WARNING, STRICT_ROUTE_WARNING, RACED_ROUTE_WARNING, RACED_HANDLER_WARNING):
         assert not any(matches(filters[name], app_line(text)) for name in lines), text
     # No line is a request log entry, and no request log entry is a line.
     request = request_log(503, "/internal/gateway/authorize")
@@ -731,12 +819,14 @@ def _evaluate(
     headroom_lines: float | None,
     busy_lines: float | None,
     strict_lines: float | None = None,
+    raced_lines: float | None = None,
 ) -> tuple[float | None, list[tuple[str, str, str]]]:
     promql = Promql({
         AUTHORIZE_503_COUNTER: authorize_503s,
         HEADROOM_COUNTER: headroom_lines,
         BUSY_COUNTER: busy_lines,
         STRICT_COUNTER: strict_lines,
+        RACED_COUNTER: raced_lines,
     })
     return promql.evaluate(query), promql.read
 
@@ -746,23 +836,25 @@ def _fires(
     headroom_lines: float | None,
     busy_lines: float | None = None,
     strict_lines: float | None = None,
+    raced_lines: float | None = None,
     *,
     query: str | None = None,
 ) -> bool:
     """Whether the authorize-503 policy's condition returns a series."""
     text = _promql(ALERT_503)["query"] if query is None else query
-    return _evaluate(text, authorize_503s, headroom_lines, busy_lines, strict_lines)[0] is not None
+    return _evaluate(text, authorize_503s, headroom_lines, busy_lines, strict_lines, raced_lines)[0] is not None
 
 
 def test_the_authorize_503_policy_compares_the_503s_with_every_kind_of_line() -> None:
     promql = _promql(ALERT_503)
-    _value, read = _evaluate(promql["query"], 1, 1, 1, 1)
+    _value, read = _evaluate(promql["query"], 1, 1, 1, 1, 1)
     # Each counter once, the same series and the same window.
     assert read == [
         (AUTHORIZE_503_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
         (HEADROOM_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
         (BUSY_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
         (STRICT_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
+        (RACED_COUNTER, 'monitored_resource="cloud_run_revision"', "10m"),
     ]
     # The 503s less every kind of line, to the half that tells 0 from 1.
     assert _evaluate(promql["query"], 7, 2, 4)[0] == 1.0
@@ -771,6 +863,8 @@ def test_the_authorize_503_policy_compares_the_503s_with_every_kind_of_line() ->
     assert _evaluate(promql["query"], 6.6, 2, 4)[0] == pytest.approx(0.6)
     assert _evaluate(promql["query"], 10, 2, 4, 3)[0] == 1.0
     assert _evaluate(promql["query"], 9, 2, 4, 3)[0] is None
+    assert _evaluate(promql["query"], 12, 2, 4, 3, 2)[0] == 1.0
+    assert _evaluate(promql["query"], 11, 2, 4, 3, 2)[0] is None
     assert promql["duration"] == "180s"
     assert promql["evaluationInterval"] == "60s"
     policy = yaml.safe_load(ALERT_503.read_text(encoding="utf-8"))
@@ -782,10 +876,12 @@ def test_the_authorize_503_policy_compares_the_503s_with_every_kind_of_line() ->
     for document in (str(policy["documentation"]["content"]), _alert_5xx_doc()):
         assert "TR Gateway: credit rebalance busy" in " ".join(document.split())
         assert "TR Gateway: strict budget busy" in " ".join(document.split())
+        assert "TR Gateway: credit headroom raced" in " ".join(document.split())
     for token in (
         "billing.lease_headroom_unavailable", HEADROOM_COUNTER,
         "billing.credit_rebalance_busy", BUSY_COUNTER,
         "billing.strict_budget_busy", STRICT_COUNTER,
+        "billing.credit_headroom_raced", RACED_COUNTER,
         "scripts/deploy/assert_no_billing_5xx.sh", "docs/spanner-reliability.md",
     ):
         assert token in policy["documentation"]["content"], token
@@ -834,11 +930,14 @@ def test_an_unmarked_503_pages_among_marked_ones() -> None:
     assert _fires(2, 1, None)
     assert _fires(6, 2, 3)
     assert _fires(101, 60, 40)
-    # The store's other retryable 503 (credit headroom changed concurrently)
-    # writes no line of these three: it pages.
+    # "credit headroom changed concurrently" from a recovery that stopped
+    # early (its forced shard-count reload failed) writes no line of these
+    # four: it pages.
     assert _fires(4, 1, 2)
     assert _fires(5, 1, 2, 1)
     assert _fires(2, None, None, 1)
+    assert _fires(2, None, None, None, 1)
+    assert _fires(6, 1, 2, 1, 1)
 
 
 def test_a_strict_budget_busy_503_with_its_line_does_not_page() -> None:
@@ -867,7 +966,7 @@ def test_lines_without_503s_page() -> None:
     assert _fires(5, 3, 3)
 
 
-AUTHORIZE_503_TERMS = 4  # the 503s, and the three kinds of line
+AUTHORIZE_503_TERMS = 5  # the 503s, and the four kinds of line
 
 
 def _without_or_zero(query: str, term: int) -> str:
@@ -935,7 +1034,9 @@ def test_the_evaluator_gives_what_cloud_monitoring_gave() -> None:
 
 
 @pytest.mark.parametrize(
-    "term", [0, 1, 2, 3], ids=["authorize-503s", "lease-headroom", "rebalance-busy", "strict-budget-busy"]
+    "term",
+    [0, 1, 2, 3, 4],
+    ids=["authorize-503s", "lease-headroom", "rebalance-busy", "strict-budget-busy", "headroom-raced"],
 )
 def test_without_or_vector_zero_a_counter_with_no_series_would_silence_the_policy(term: int) -> None:
     """The mutants each "or vector(0)" kills, made in the query's own text:
@@ -944,11 +1045,12 @@ def test_without_or_vector_zero_a_counter_with_no_series_would_silence_the_polic
     query = _promql(ALERT_503)["query"]
     mutant = _without_or_zero(query, term)
     # Cases that must page, each with the mutated term's counter absent.
-    absent: list[tuple[float | None, float | None, float | None, float | None]] = [
-        (None, 1, 1, 1),   # lines and no 503s
-        (3, None, 1, 1),   # unmarked 503s, no lease-headroom line (the usual state)
-        (3, 1, None, 1),   # unmarked 503s, no rebalance-busy line (the usual state)
-        (3, 1, 1, None),   # unmarked 503s, no strict-budget-busy line (the usual state)
+    absent: list[tuple[float | None, float | None, float | None, float | None, float | None]] = [
+        (None, 1, 1, 1, 1),   # lines and no 503s
+        (4, None, 1, 1, 1),   # unmarked 503s, no lease-headroom line (the usual state)
+        (4, 1, None, 1, 1),   # unmarked 503s, no rebalance-busy line (the usual state)
+        (4, 1, 1, None, 1),   # unmarked 503s, no strict-budget-busy line (the usual state)
+        (4, 1, 1, 1, None),   # unmarked 503s, no headroom-raced line (the usual state)
     ]
     counters = absent[term]
     assert _fires(*counters)
@@ -978,6 +1080,14 @@ def test_the_query_takes_the_strict_budget_busy_lines_off_the_503s() -> None:
     mutant = _with_plus_for_minus(_promql(ALERT_503)["query"], 2)
     assert not _fires(1, None, None, 1)
     assert _fires(1, None, None, 1, query=mutant)
+
+
+def test_the_query_takes_the_headroom_raced_lines_off_the_503s() -> None:
+    """The mutant with the wrong sign on the fifth counter: a marked
+    headroom-raced 503 would page, as on 2026-11-18."""
+    mutant = _with_plus_for_minus(_promql(ALERT_503)["query"], 3)
+    assert not _fires(1, None, None, None, 1)
+    assert _fires(1, None, None, None, 1, query=mutant)
 
 
 # ---------------------------------------------------------------------------
@@ -1063,7 +1173,8 @@ def test_a_promql_condition_is_the_only_condition_of_its_policy() -> None:
             with_promql.append(path.name)
             assert kinds == ["conditionPrometheusQueryLanguage"], path.name
     assert with_promql == [
-        "billing-authorize-503.yaml", "billing-rebalance-busy.yaml", "billing-strict-budget-busy.yaml",
+        "billing-authorize-503.yaml", "billing-headroom-raced.yaml", "billing-rebalance-busy.yaml",
+        "billing-strict-budget-busy.yaml",
     ]
     contention = yaml.safe_load((DEPLOY / "spanner-alerts" / "contention.yaml").read_text(encoding="utf-8"))
     assert len(contention["conditions"]) > 1
@@ -1230,6 +1341,10 @@ def test_marked_503s_page_as_a_burst_and_an_unmarked_one_always() -> None:
         assert not _fires(strict or None, None, None, strict or None)
         assert _strict_fires(strict or None, strict or None) == (strict > 2)
         assert _fires(strict + 1, None, None, strict or None)
+    for raced in range(0, 12):
+        assert not _fires(raced or None, None, None, None, raced or None)
+        assert _raced_fires(raced or None, raced or None) == (raced > 2)
+        assert _fires(raced + 1, None, None, None, raced or None)
 
 
 # ---------------------------------------------------------------------------
@@ -1333,6 +1448,105 @@ def test_the_strict_policy_names_its_line_its_counter_and_its_runbook() -> None:
     assert "(one second)" in document
 
 
+# ---------------------------------------------------------------------------
+# The headroom-raced rate policy: the rebalance-busy policy's shape, on its
+# own counter. A burst of these is a workspace racing itself for spread
+# credit, past what three repairs absorb.
+
+
+RACED_CONDITION = "More than two headroom-raced 503s in ten minutes, or more than five in an hour"
+
+
+def _raced_condition() -> dict[str, Any]:
+    policy = yaml.safe_load(ALERT_RACED.read_text(encoding="utf-8"))
+    (condition,) = policy["conditions"]
+    assert condition["displayName"] == RACED_CONDITION
+    return dict(condition["conditionPrometheusQueryLanguage"])
+
+
+def _raced_fires(ten_minutes: float | None, hour: float | None, *, query: str | None = None) -> bool:
+    """Whether the headroom-raced policy's condition returns a series, given
+    the lines of the last ten minutes and of the last hour."""
+    assert (hour or 0) >= (ten_minutes or 0), (ten_minutes, hour)
+    counters = {(RACED_COUNTER, "10m"): ten_minutes, (RACED_COUNTER, "1h"): hour}
+    text = _raced_condition()["query"] if query is None else query
+    return Promql(counters).evaluate(text) is not None
+
+
+def test_the_raced_policy_is_the_rebalance_policy_on_its_own_counter() -> None:
+    """The bounds tested above for the rebalance-busy policy hold here: the
+    query is that query with the counter swapped, and nothing else."""
+    raced = _raced_condition()
+    busy = _busy_condition()
+    assert raced["query"] == busy["query"].replace(BUSY_COUNTER, RACED_COUNTER)
+    assert BUSY_COUNTER not in raced["query"]
+    assert {k: v for k, v in raced.items() if k != "query"} == {
+        k: v for k, v in busy.items() if k != "query"
+    }
+    evaluation = Promql({(RACED_COUNTER, "10m"): 9, (RACED_COUNTER, "1h"): 9})
+    assert evaluation.evaluate(raced["query"]) == 9.0
+    assert evaluation.read == [(RACED_COUNTER, BUSY_SERIES, "10m"), (RACED_COUNTER, BUSY_SERIES, "1h")]
+    # It reads its own counter alone: the other marks do not page it.
+    assert Promql({
+        (RACED_COUNTER, "10m"): None, (RACED_COUNTER, "1h"): None,
+        (BUSY_COUNTER, "10m"): 9, (BUSY_COUNTER, "1h"): 9,
+        (STRICT_COUNTER, "10m"): 9, (STRICT_COUNTER, "1h"): 9,
+    }).evaluate(raced["query"]) is None
+
+
+def test_the_raced_policy_pages_on_more_than_two_in_ten_minutes_or_five_in_an_hour() -> None:
+    for lines in (None, 0, 1, 2):
+        assert not _raced_fires(lines, lines), lines
+    for lines in (3, 4, 24, 1000):
+        assert _raced_fires(lines, lines), lines
+    for lines in (None, 0, 1, 2, 3, 4, 5):
+        assert not _raced_fires(None, lines), lines
+    for lines in (6, 7, 12, 1000):
+        assert _raced_fires(None, lines), lines
+    assert _raced_fires(2, 6)
+    assert not _raced_fires(2, 5)
+    # The 2026-11-18 event alone, one line: no page from either policy.
+    assert not _raced_fires(1, 1)
+    assert not _fires(1, None, None, None, 1)
+    # The same 503 before the app wrote the line: it paged, and still would.
+    assert _fires(1, None, None, None, None)
+    # One request failing all three attempts on this 503 pages here, and
+    # only here.
+    assert not _fires(3, None, None, None, 3)
+    assert _raced_fires(3, 3)
+    # Either bound alone opens the incident ("and" for "or" would not).
+    mutant = re.sub(r"\n(\s*)or(\s*)\n", r"\n\1and\2\n", _raced_condition()["query"])
+    assert mutant != _raced_condition()["query"]
+    left, right = re.split(r"\n\s*and\s*\n", mutant.strip())
+    for ten_minutes, hour in ((3, 3), (None, 6), (2, 12)):
+        assert _raced_fires(ten_minutes, hour)
+        assert not (_raced_fires(ten_minutes, hour, query=left) and _raced_fires(ten_minutes, hour, query=right))
+
+
+def test_the_raced_policy_names_its_line_its_counter_and_its_runbook() -> None:
+    policy = yaml.safe_load(ALERT_RACED.read_text(encoding="utf-8"))
+    assert policy["displayName"] == "TR Gateway: credit headroom raced"
+    assert policy["enabled"] is True
+    assert policy["combiner"] == "OR"
+    busy = yaml.safe_load(ALERT_BUSY.read_text(encoding="utf-8"))
+    assert policy["alertStrategy"] == busy["alertStrategy"]
+    assert "notificationChannels" not in policy
+    document = " ".join(str(policy["documentation"]["content"]).split())
+    for token in (
+        "more than two headroom-raced 503s in ten minutes", "more than five in an hour",
+        "billing.credit_headroom_raced", RACED_COUNTER, "credit headroom changed concurrently",
+        "storage_gcp.py", "tr_credit_balance", "TR Gateway: authorize 503 not lease headroom",
+        "docs/spanner-reliability.md",
+    ):
+        assert token in document, token
+    runbook_text = (ROOT / "docs" / "spanner-reliability.md").read_text(encoding="utf-8")
+    assert "### Credit headroom raced" in runbook_text
+    runbook = " ".join(runbook_text.split())
+    for text in (runbook, document, RACED_CONDITION[0].lower() + RACED_CONDITION[1:]):
+        assert "more than two headroom-raced 503s in ten minutes" in text
+        assert "more than five in an hour" in text
+
+
 def test_every_gateway_alert_display_name_fits_gcps_limit() -> None:
     """Cloud Monitoring refuses a policy or condition display name over 100
     characters when the script applies it (tests/test_terraform_display_name_length.py
@@ -1352,7 +1566,7 @@ printf '%s\n' "$*" | tr '\n' ' ' >>"$STUB_LOG"; printf '\n' >>"$STUB_LOG"
 query="$3"
 case "$query" in
   *"NOT (httpRequest.status=503"*) cat "$STUB_DIR/other.txt" ;;
-  *"billing.lease_headroom_unavailable"*"billing.credit_rebalance_busy"*"billing.strict_budget_busy"*)
+  *"billing.lease_headroom_unavailable"*"billing.credit_rebalance_busy"*"billing.strict_budget_busy"*"billing.credit_headroom_raced"*)
     printf '%s' "$query" >"$STUB_DIR/line_query.txt"
     n="$(cat "$STUB_DIR/line_calls" 2>/dev/null || echo 0)"
     echo $((n + 1)) >"$STUB_DIR/line_calls"
@@ -1388,6 +1602,16 @@ def _strict_line_entry(trace: str) -> dict[str, Any]:
         "timestamp": "2026-11-13T13:04:15.233651Z",
         "textPayload": (
             "INFO trusted_router.routes.internal.gateway billing.strict_budget_busy "
+            f"workspace_id=ws-1 request_id=r trace={trace}"
+        ),
+    }
+
+
+def _raced_line_entry(trace: str) -> dict[str, Any]:
+    return {
+        "timestamp": "2026-11-13T13:04:15.233651Z",
+        "textPayload": (
+            "INFO trusted_router.routes.internal.gateway billing.credit_headroom_raced "
             f"workspace_id=ws-1 request_id=r trace={trace}"
         ),
     }
@@ -1483,7 +1707,7 @@ def test_gate_fails_on_a_non_lease_authorize_503(tmp_path: Path) -> None:
     )
     assert result.returncode == 1
     assert f"traces/{OTHER_TRACE}" in result.stdout
-    assert "not paired with a lease-headroom, rebalance-busy or strict-budget-busy line" in result.stdout
+    assert "not paired with a lease-headroom, rebalance-busy, strict-budget-busy or headroom-raced line" in result.stdout
     # It waited for the line, three reads, before failing.
     assert sum("billing.lease_headroom_unavailable" in call for call in calls) == 3
 
@@ -1498,8 +1722,8 @@ def test_gate_passes_when_an_authorize_503_is_rebalance_busy(tmp_path: Path) -> 
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (
-        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 1, strict budget busy: 0), "
-        "unpaired: 0"
+        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 1, strict budget busy: 0, "
+        "headroom raced: 0), unpaired: 0"
     ) in result.stdout
     assert "gate passed" in result.stdout
     # One read of the lines was enough.
@@ -1516,8 +1740,8 @@ def test_gate_passes_when_an_authorize_503_is_strict_budget_busy(tmp_path: Path)
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (
-        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 0, strict budget busy: 1), "
-        "unpaired: 0"
+        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 0, strict budget busy: 1, "
+        "headroom raced: 0), unpaired: 0"
     ) in result.stdout
     assert "gate passed" in result.stdout
     assert sum("billing.strict_budget_busy" in call for call in calls) == 1
@@ -1537,9 +1761,9 @@ def test_gate_fails_on_an_unpaired_strict_budget_busy_503(tmp_path: Path) -> Non
         env={"TR_BILLING_5XX_LINE_RETRIES": "1"},
     )
     assert result.returncode == 1
-    assert "strict budget busy: 0), unpaired: 1" in result.stdout
+    assert "strict budget busy: 0, headroom raced: 0), unpaired: 1" in result.stdout
     assert f"traces/{TRACE}" in result.stdout
-    assert "not paired with a lease-headroom, rebalance-busy or strict-budget-busy line" in result.stdout
+    assert "not paired with a lease-headroom, rebalance-busy, strict-budget-busy or headroom-raced line" in result.stdout
     # It waited for the line before failing.
     assert sum("billing.strict_budget_busy" in call for call in calls) == 2
 
@@ -1556,16 +1780,71 @@ def test_gate_does_not_let_one_strict_line_excuse_two_503s(tmp_path: Path) -> No
     assert "unpaired: 1" in result.stdout
 
 
-def test_gate_passes_with_a_503_of_each_kind(tmp_path: Path) -> None:
-    result, _calls = _run_gate(
+def test_gate_passes_when_an_authorize_503_is_headroom_raced(tmp_path: Path) -> None:
+    """The 2026-11-18 page, had it come during a rollout: one authorize 503,
+    "credit headroom changed concurrently" after three repairs lost."""
+    result, calls = _run_gate(
         tmp_path,
-        requests=[_authorize_503(TRACE), _authorize_503(OTHER_TRACE), _authorize_503(THIRD_TRACE)],
-        lines=[_busy_line_entry(OTHER_TRACE), _line_entry(TRACE), _strict_line_entry(THIRD_TRACE)],
+        requests=[_authorize_503(TRACE)],
+        lines=[_raced_line_entry(TRACE)],
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (
-        "authorize 503s: 3, paired with a line of the app: 3 "
-        "(lease headroom: 1, rebalance busy: 1, strict budget busy: 1), unpaired: 0"
+        "paired with a line of the app: 1 (lease headroom: 0, rebalance busy: 0, strict budget busy: 0, "
+        "headroom raced: 1), unpaired: 0"
+    ) in result.stdout
+    assert "gate passed" in result.stdout
+    assert sum("billing.credit_headroom_raced" in call for call in calls) == 1
+
+
+def test_gate_fails_on_an_unmarked_headroom_503(tmp_path: Path) -> None:
+    """The same 503 before the app wrote the line, or from a recovery that
+    stopped early: the storage warnings are all it left, and neither
+    excuses it, though they name the type."""
+    result, calls = _run_gate(
+        tmp_path,
+        requests=[_authorize_503(TRACE)],
+        lines=[
+            {"timestamp": "2026-11-13T13:04:15.233651Z", "textPayload": f"{RACED_ROUTE_WARNING} trace={TRACE}"},
+            {"timestamp": "2026-11-13T13:04:15.233651Z", "textPayload": f"{RACED_HANDLER_WARNING} trace={TRACE}"},
+        ],
+        env={"TR_BILLING_5XX_LINE_RETRIES": "1"},
+    )
+    assert result.returncode == 1
+    assert "headroom raced: 0), unpaired: 1" in result.stdout
+    assert f"traces/{TRACE}" in result.stdout
+    assert sum("billing.credit_headroom_raced" in call for call in calls) == 2
+
+
+def test_gate_does_not_let_one_raced_line_excuse_two_503s(tmp_path: Path) -> None:
+    """An enclave's retry under one trace: two 503s, one raced line."""
+    result, _calls = _run_gate(
+        tmp_path,
+        requests=[_authorize_503(TRACE), _authorize_503(TRACE)],
+        lines=[_raced_line_entry(TRACE)],
+        env={"TR_BILLING_5XX_LINE_RETRIES": "0"},
+    )
+    assert result.returncode == 1
+    assert "unpaired: 1" in result.stdout
+
+
+def test_gate_passes_with_a_503_of_each_kind(tmp_path: Path) -> None:
+    fourth_trace = "8e3f0c1d2b4a59687766554433221100"
+    result, _calls = _run_gate(
+        tmp_path,
+        requests=[
+            _authorize_503(TRACE), _authorize_503(OTHER_TRACE), _authorize_503(THIRD_TRACE),
+            _authorize_503(fourth_trace),
+        ],
+        lines=[
+            _busy_line_entry(OTHER_TRACE), _line_entry(TRACE), _strict_line_entry(THIRD_TRACE),
+            _raced_line_entry(fourth_trace),
+        ],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "authorize 503s: 4, paired with a line of the app: 4 "
+        "(lease headroom: 1, rebalance busy: 1, strict budget busy: 1, headroom raced: 1), unpaired: 0"
     ) in result.stdout
 
 
@@ -1583,7 +1862,9 @@ def test_gate_fails_on_an_unmarked_503_beside_one_of_each_kind(tmp_path: Path) -
         env={"TR_BILLING_5XX_LINE_RETRIES": "0"},
     )
     assert result.returncode == 1
-    assert "(lease headroom: 1, rebalance busy: 1, strict budget busy: 1), unpaired: 1" in result.stdout
+    assert (
+        "(lease headroom: 1, rebalance busy: 1, strict budget busy: 1, headroom raced: 0), unpaired: 1"
+    ) in result.stdout
     assert "unpaired 503: 2026-11-13T13:04:15.208934Z" in result.stdout
     assert f"traces/{THIRD_TRACE}" in result.stdout
     for paired in (TRACE, OTHER_TRACE, fourth_trace):
@@ -1611,7 +1892,9 @@ def test_gate_pairs_a_retried_request_with_a_line_of_each_kind(tmp_path: Path) -
         lines=[_busy_line_entry(TRACE), _line_entry(TRACE)],
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "(lease headroom: 1, rebalance busy: 1, strict budget busy: 0), unpaired: 0" in result.stdout
+    assert (
+        "(lease headroom: 1, rebalance busy: 1, strict budget busy: 0, headroom raced: 0), unpaired: 0"
+    ) in result.stdout
 
 
 def test_gate_is_not_excused_by_the_warnings_of_a_storage_503(tmp_path: Path) -> None:
@@ -1667,6 +1950,7 @@ def test_the_gates_line_read_is_every_line_of_the_candidate_revision_alone(tmp_p
     headroom, _ = _rendered_headroom_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
     busy, _ = _rendered_busy_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
     strict, _ = _rendered_strict_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
+    raced, _ = _rendered_raced_line({"X-Cloud-Trace-Context": f"{TRACE}/99;o=1"})
 
     def entry(text: str, **changes: str) -> dict[str, Any]:
         log = request_log(503, "/internal/gateway/authorize")
@@ -1676,7 +1960,7 @@ def test_the_gates_line_read_is_every_line_of_the_candidate_revision_alone(tmp_p
         )
         return {**log, "timestamp": changes.get("timestamp", log["timestamp"]), "textPayload": text}
 
-    for line in (headroom, busy, strict):
+    for line in (headroom, busy, strict, raced):
         assert matches(query, entry(line), allow_or=True), line
         # Another revision's, another region's, another service's or an
         # earlier line is not this rollout's.
@@ -1693,6 +1977,9 @@ def test_the_gates_line_read_is_every_line_of_the_candidate_revision_alone(tmp_p
         strict.replace("INFO ", "WARNING ", 1),
         STRICT_HANDLER_WARNING,
         STRICT_ROUTE_WARNING,
+        raced.replace("INFO ", "WARNING ", 1),
+        RACED_ROUTE_WARNING,
+        RACED_HANDLER_WARNING,
     ):
         assert not matches(query, entry(text), allow_or=True), text
 
@@ -1756,20 +2043,41 @@ def test_gate_hotfix_skip_is_unchanged(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# gateway_reliability.sh: the counters before any policy, the rebalance-busy
-# policy before the authorize-503 policy stops counting those 503s, and the
+# gateway_reliability.sh: the counters before any policy, the rate policies
+# before the authorize-503 policy stops counting their 503s, and the
 # authorize-503 policy before the narrowed 5xx filter.
 
+# A stub gcloud. By default no counter exists (each is created); with
+# STUB_METRICS_EXIST every counter exists but STUB_NEW_METRIC. STUB_NOT_READY
+# lists "policy-file:N" pairs: each policy is refused its first N applies, as
+# Cloud Monitoring refuses a PromQL policy that names a counter it does not
+# know yet; with STUB_CREATE_LANDS a refused create lands all the same.
 STUB_RELIABILITY_GCLOUD = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 args="$*"
 case "$args" in
-  *"logging metrics describe"*) exit 1 ;;
+  *"logging metrics describe ${STUB_NEW_METRIC:-none}") exit 1 ;;
+  *"logging metrics describe"*) [ "${STUB_METRICS_EXIST:-false}" = true ] && exit 0; exit 1 ;;
   *"logging metrics create ${STUB_FAIL_METRIC:-none} "*) exit 1 ;;
   *"monitoring channels list"*) echo "projects/p/notificationChannels/1" ;;
-  *"monitoring policies list"*"displayName=\"${STUB_MISSING_POLICY:-none}\""*) ;;
+  *"monitoring policies list"*"displayName=\"${STUB_MISSING_POLICY:-none}\""*)
+    if [ -f "$STUB_LOG.landed" ]; then echo "projects/p/alertPolicies/9"; fi ;;
   *"monitoring policies list"*) echo "projects/p/alertPolicies/1" ;;
   *"monitoring policies "*"/${STUB_FAIL_POLICY:-none} "*) exit 1 ;;
+  *"monitoring policies "*"--policy-from-file="*)
+    for spec in ${STUB_NOT_READY:-}; do
+      file="${spec%%:*}"
+      case "$args" in
+        *"/${file} "*)
+          n="$(cat "$STUB_LOG.${file}" 2>/dev/null || echo 0)"
+          echo $((n + 1)) >"$STUB_LOG.${file}"
+          if [ "$n" -lt "${spec##*:}" ]; then
+            if [ "${STUB_CREATE_LANDS:-false}" = true ]; then : >"$STUB_LOG.landed"; fi
+            echo "ERROR: (gcloud.monitoring.policies) INVALID_ARGUMENT: metric invalid" >&2
+            exit 1
+          fi ;;
+      esac
+    done ;;
 esac
 exit 0
 """
@@ -1777,6 +2085,8 @@ exit 0
 
 def _run_reliability(
     tmp_path: Path, *, fail_metric: str = "none", missing_policy: str = "none", fail_policy: str = "none",
+    metrics_exist: bool = False, new_metric: str = "none", not_ready: dict[str, int] | None = None,
+    create_lands: bool = False, retries: int | None = None,
 ) -> tuple[int, list[str]]:
     stub = tmp_path / "bin"
     stub.mkdir()
@@ -1795,6 +2105,12 @@ def _run_reliability(
             "STUB_FAIL_METRIC": fail_metric,
             "STUB_MISSING_POLICY": missing_policy,
             "STUB_FAIL_POLICY": fail_policy,
+            "STUB_METRICS_EXIST": "true" if metrics_exist else "false",
+            "STUB_NEW_METRIC": new_metric,
+            "STUB_NOT_READY": " ".join(f"{name}:{times}" for name, times in (not_ready or {}).items()),
+            "STUB_CREATE_LANDS": "true" if create_lands else "false",
+            "TR_GATEWAY_NEW_COUNTER_RETRY_SECONDS": "0",
+            **({"TR_GATEWAY_NEW_COUNTER_RETRIES": str(retries)} if retries is not None else {}),
             "TR_REGIONS": "us-central1",
         },
     )
@@ -1811,17 +2127,19 @@ def test_reliability_applies_counters_then_the_policies_that_take_over_first(tmp
         HEADROOM_COUNTER,
         BUSY_COUNTER,
         STRICT_COUNTER,
+        RACED_COUNTER,
         "trustedrouter_gateway_billing_slow",
     ]
-    # The policies that bound rebalance-busy and strict-budget-busy 503s,
-    # then the one that stops counting them as unmarked, then the 5xx
-    # filter that sets authorize 503s aside for it. Each exists before the
-    # next gives its 503s up.
+    # The policies that bound rebalance-busy, strict-budget-busy and
+    # headroom-raced 503s, then the one that stops counting them as
+    # unmarked, then the 5xx filter that sets authorize 503s aside for it.
+    # Each exists before the next gives its 503s up.
     assert "billing-rebalance-busy.yaml" in updates[0]
     assert "billing-strict-budget-busy.yaml" in updates[1]
-    assert "billing-authorize-503.yaml" in updates[2]
+    assert "billing-headroom-raced.yaml" in updates[2]
+    assert "billing-authorize-503.yaml" in updates[3]
     narrowed = next(index for index, call in enumerate(updates) if "billing-5xx.yaml" in call)
-    assert narrowed > 2
+    assert narrowed > 3
     files = [call.split("--policy-from-file=")[1].split()[0].rsplit("/", 1)[1] for call in updates]
     assert sorted(files) == sorted(path.name for path in (DEPLOY / "gateway-alerts").glob("*.yaml"))
     assert len(updates) == len(list((DEPLOY / "gateway-alerts").glob("*.yaml")))
@@ -1841,7 +2159,9 @@ def test_reliability_creates_the_rebalance_busy_policy_before_the_other_changes(
     assert "monitoring policies update" in policies[1]
     assert "billing-strict-budget-busy.yaml" in policies[1]
     assert "monitoring policies update" in policies[2]
-    assert "billing-authorize-503.yaml" in policies[2]
+    assert "billing-headroom-raced.yaml" in policies[2]
+    assert "monitoring policies update" in policies[3]
+    assert "billing-authorize-503.yaml" in policies[3]
     assert sum("monitoring policies create" in call for call in policies) == 1
 
 
@@ -1859,8 +2179,185 @@ def test_reliability_creates_the_strict_budget_busy_policy_before_the_authorize_
     assert "monitoring policies create" in policies[1]
     assert "billing-strict-budget-busy.yaml" in policies[1]
     assert "--notification-channels=projects/p/notificationChannels/1" in policies[1]
-    assert "billing-authorize-503.yaml" in policies[2]
+    assert "billing-headroom-raced.yaml" in policies[2]
+    assert "billing-authorize-503.yaml" in policies[3]
     assert sum("monitoring policies create" in call for call in policies) == 1
+
+
+def test_reliability_creates_the_headroom_raced_policy_before_the_authorize_503_policy(
+    tmp_path: Path,
+) -> None:
+    """The first apply after this change: the raced policy does not exist
+    yet, and is created before the authorize-503 policy stops paging on
+    headroom-raced 503s."""
+    status, calls = _run_reliability(tmp_path, missing_policy="TR Gateway: credit headroom raced")
+    assert status == 0, calls
+    policies = [call for call in calls if "monitoring policies create" in call or "monitoring policies update" in call]
+    assert "billing-rebalance-busy.yaml" in policies[0]
+    assert "billing-strict-budget-busy.yaml" in policies[1]
+    assert "monitoring policies create" in policies[2]
+    assert "billing-headroom-raced.yaml" in policies[2]
+    assert "--notification-channels=projects/p/notificationChannels/1" in policies[2]
+    assert "monitoring policies update" in policies[3]
+    assert "billing-authorize-503.yaml" in policies[3]
+    assert sum("monitoring policies create" in call for call in policies) == 1
+
+
+def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_headroom_raced_policy(
+    tmp_path: Path,
+) -> None:
+    """Were the authorize-503 policy changed and the raced rate policy not
+    there, no policy would page on a storm of headroom-raced 503s."""
+    status, calls = _run_reliability(
+        tmp_path,
+        missing_policy="TR Gateway: credit headroom raced",
+        fail_policy="billing-headroom-raced.yaml",
+    )
+    assert status != 0
+    assert any("monitoring policies create" in call and "billing-headroom-raced.yaml" in call for call in calls)
+    assert not any("billing-authorize-503.yaml" in call for call in calls)
+    assert not any("billing-5xx.yaml" in call for call in calls)
+
+
+def _applies(calls: list[str], policy: str) -> list[str]:
+    """The creates and updates of one policy file, in order."""
+    return [
+        call for call in calls
+        if ("monitoring policies create" in call or "monitoring policies update" in call) and f"/{policy} " in call
+    ]
+
+
+def test_reliability_waits_for_a_new_counter_before_the_policies_that_read_it(tmp_path: Path) -> None:
+    """The first apply after this change, as the live state is: every
+    counter exists but the new one, and Cloud Monitoring refuses a PromQL
+    policy naming that counter ("metric invalid") for its first seconds.
+    The raced policy is applied again until it is accepted, and the
+    authorize-503 policy, which reads the counter too, only after."""
+    status, calls = _run_reliability(
+        tmp_path,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        missing_policy="TR Gateway: credit headroom raced",
+        not_ready={"billing-headroom-raced.yaml": 2},
+    )
+    assert status == 0, calls
+    creates = [call for call in calls if "logging metrics create" in call]
+    assert [call.split("logging metrics create ")[1].split()[0] for call in creates] == [RACED_COUNTER]
+    raced = _applies(calls, "billing-headroom-raced.yaml")
+    assert len(raced) == 3
+    assert all("monitoring policies create" in call for call in raced)
+    # Each attempt looks the policy up again first.
+    for call in raced:
+        assert "monitoring policies list" in calls[calls.index(call) - 1]
+    # The policies that read no new counter are applied once each, and the
+    # authorize-503 policy waits for the raced one to be accepted.
+    assert len(_applies(calls, "billing-rebalance-busy.yaml")) == 1
+    assert len(_applies(calls, "billing-strict-budget-busy.yaml")) == 1
+    (authorize,) = _applies(calls, "billing-authorize-503.yaml")
+    assert calls.index(raced[-1]) < calls.index(authorize)
+    (narrowed,) = _applies(calls, "billing-5xx.yaml")
+    assert calls.index(authorize) < calls.index(narrowed)
+
+
+def test_reliability_stops_when_a_new_counter_is_never_accepted(tmp_path: Path) -> None:
+    """Bounded: after the last attempt the script stops, before the
+    authorize-503 policy stops paging on headroom-raced 503s."""
+    status, calls = _run_reliability(
+        tmp_path,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        missing_policy="TR Gateway: credit headroom raced",
+        not_ready={"billing-headroom-raced.yaml": 99},
+        retries=2,
+    )
+    assert status != 0
+    assert len(_applies(calls, "billing-headroom-raced.yaml")) == 3
+    assert not _applies(calls, "billing-authorize-503.yaml")
+    assert not _applies(calls, "billing-5xx.yaml")
+
+
+def test_reliability_shares_one_retry_budget_across_the_run(tmp_path: Path) -> None:
+    """The wait is for counters created together, so its budget is the
+    run's, not each policy's: retries spent on the raced policy are not
+    there again for the authorize-503 policy, and the run stops when the
+    budget is gone, before the 5xx filter narrows."""
+    status, calls = _run_reliability(
+        tmp_path,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        not_ready={"billing-headroom-raced.yaml": 2, "billing-authorize-503.yaml": 2},
+        retries=3,
+    )
+    assert status != 0
+    assert len(_applies(calls, "billing-headroom-raced.yaml")) == 3  # two retries
+    assert len(_applies(calls, "billing-authorize-503.yaml")) == 2  # the last one
+    assert not _applies(calls, "billing-5xx.yaml")
+    # Two refusals and one: the same budget covers both, and the run goes on.
+    control = tmp_path / "control"
+    control.mkdir()
+    status, calls = _run_reliability(
+        control,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        not_ready={"billing-headroom-raced.yaml": 2, "billing-authorize-503.yaml": 1},
+        retries=3,
+    )
+    assert status == 0, calls
+    assert len(_applies(calls, "billing-authorize-503.yaml")) == 2
+
+
+def test_the_new_counter_wait_fits_the_workflows_timeout() -> None:
+    """The script's default retry budget, at its default spacing, is at most
+    a quarter of the time the workflow gives the job, leaving the rest for
+    its ordinary run and gcloud's own latency."""
+    script = RELIABILITY.read_text(encoding="utf-8")
+    (retries,) = re.findall(r'^NEW_COUNTER_RETRIES="\$\{TR_GATEWAY_NEW_COUNTER_RETRIES:-(\d+)\}"$', script, re.M)
+    (spacing,) = re.findall(
+        r'^NEW_COUNTER_RETRY_SECONDS="\$\{TR_GATEWAY_NEW_COUNTER_RETRY_SECONDS:-(\d+)\}"$', script, re.M
+    )
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "gateway-reliability.yml").read_text(encoding="utf-8"))
+    (job,) = workflow["jobs"].values()
+    assert "gateway_reliability.sh --apply" in json.dumps(job["steps"])
+    assert int(retries) * int(spacing) * 4 <= int(job["timeout-minutes"]) * 60
+
+
+def test_reliability_retry_updates_a_policy_an_earlier_attempt_created(tmp_path: Path) -> None:
+    """A create refused to the client may still have landed: the next
+    attempt finds it by name and updates it, never creating a second."""
+    status, calls = _run_reliability(
+        tmp_path,
+        metrics_exist=True,
+        new_metric=RACED_COUNTER,
+        missing_policy="TR Gateway: credit headroom raced",
+        not_ready={"billing-headroom-raced.yaml": 1},
+        create_lands=True,
+    )
+    assert status == 0, calls
+    first, second = _applies(calls, "billing-headroom-raced.yaml")
+    assert "monitoring policies create" in first
+    assert "monitoring policies update projects/p/alertPolicies/9 " in second
+
+
+@pytest.mark.parametrize(
+    ("new_metric", "failing"),
+    [
+        # No counter is new: a refusal is real, and stops the script at once.
+        ("none", "billing-headroom-raced.yaml"),
+        # A counter is new, but this policy does not read it.
+        (RACED_COUNTER, "billing-rebalance-busy.yaml"),
+        (RACED_COUNTER, "billing-strict-budget-busy.yaml"),
+    ],
+    ids=["no-new-counter", "rebalance-busy", "strict-budget-busy"],
+)
+def test_reliability_applies_once_a_policy_that_reads_no_new_counter(
+    tmp_path: Path, new_metric: str, failing: str,
+) -> None:
+    status, calls = _run_reliability(
+        tmp_path, metrics_exist=True, new_metric=new_metric, fail_policy=failing,
+    )
+    assert status != 0
+    assert len(_applies(calls, failing)) == 1
+    assert not _applies(calls, "billing-authorize-503.yaml")
 
 
 def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_strict_budget_busy_policy(
@@ -1896,7 +2393,7 @@ def test_reliability_does_not_narrow_the_authorize_503_policy_without_the_rebala
 
 
 @pytest.mark.parametrize(
-    "metric", ["trustedrouter_gateway_authorize_503", HEADROOM_COUNTER, BUSY_COUNTER, STRICT_COUNTER]
+    "metric", ["trustedrouter_gateway_authorize_503", HEADROOM_COUNTER, BUSY_COUNTER, STRICT_COUNTER, RACED_COUNTER]
 )
 def test_reliability_stops_before_any_policy_without_a_counter(tmp_path: Path, metric: str) -> None:
     status, calls = _run_reliability(tmp_path, fail_metric=metric)

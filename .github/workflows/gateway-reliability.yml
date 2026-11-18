@@ -20,7 +20,9 @@ jobs:
   configure:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # gateway_reliability.sh can wait up to five minutes for a new counter
+    # (its NEW_COUNTER_RETRIES budget) on top of its ordinary run.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Require explicit confirmation
