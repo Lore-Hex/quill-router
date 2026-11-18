@@ -194,7 +194,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 120000,
       "reliability": {
@@ -216,7 +216,8 @@
           "account_quota_exceeded"
         ]
       },
-      "missing_since": "2026-11-18"
+      "missing_since": "2026-11-18",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gemma-4-E2B-it",
@@ -452,7 +453,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "documentation": {
         "description": "Classifies one or more requests against a caller-defined taxonomy and uses an explicit fallback when no supplied label applies.",
         "input_format": "Put one JSON object in the user message with taxonomy_id, labels, fallback_label, and requests. labels maps each allowed label to its meaning. requests is an array of objects containing id and text. Every request ID is classified exactly once.",
@@ -481,7 +482,8 @@
           "account_quota_exceeded"
         ]
       },
-      "missing_since": "2026-11-18"
+      "missing_since": "2026-11-18",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Conversation Summary",
@@ -721,6 +723,6 @@
       "routable_reason": "delisted-upstream"
     }
   ],
-  "generated_at": "2026-11-18T15:01:40Z",
+  "generated_at": "2026-11-18T23:50:47Z",
   "model_count": 13
 }

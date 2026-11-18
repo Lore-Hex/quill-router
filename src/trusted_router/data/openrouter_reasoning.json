@@ -938,6 +938,28 @@
       ],
       "default_effort": "medium"
     },
+    "google/gemini-4-neon": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "google/gemini-4-neon:batch": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
     "google/gemini-nano-banana-2.1": {
       "mandatory": false,
       "default_enabled": true,

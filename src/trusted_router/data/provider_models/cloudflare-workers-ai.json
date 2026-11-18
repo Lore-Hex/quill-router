@@ -1,9 +1,9 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-11-18T15:01:40Z",
+  "generated_at": "2026-11-18T23:50:47Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 41,
+  "model_count": 42,
   "models": [
     {
       "display_name": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
@@ -864,7 +864,7 @@
       "id": "cloudflare/clairic",
       "upstream_id": "@cf/cloudflare/clairic",
       "context_length": 65536,
-      "routable": true,
+      "routable": false,
       "supported_features": [
         "chat",
         "completion"
@@ -878,7 +878,8 @@
         "example_output": "{\"answers\": {\"invoice_number\": {\"type\": \"text\", \"value\": \"INV-2291\", \"confidence\": 0.99}, \"total\": {\"type\": \"number\", \"value\": 1080, \"confidence\": 0.99}}, \"truncated\": false}"
       },
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
@@ -923,6 +924,27 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1000000,
       "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "@cf/cloudflare/clairic-flash",
+      "title": "@cf/cloudflare/clairic-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "cloudflare/clairic-flash",
+      "upstream_id": "@cf/cloudflare/clairic-flash",
+      "context_length": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-11-18"
     }
   ]
 }

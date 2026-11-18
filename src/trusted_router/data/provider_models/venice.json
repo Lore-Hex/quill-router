@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-11-18T15:01:40Z",
+  "generated_at": "2026-11-18T23:50:47Z",
   "model_count": 53,
   "models": [
     {
@@ -353,7 +353,9 @@
       "input_token_price_per_m": 560000,
       "output_token_price_per_m": 3500000,
       "cached_input_token_price_per_m": 220000,
-      "missing_since": "2026-11-18"
+      "missing_since": "2026-11-18",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K2.6",

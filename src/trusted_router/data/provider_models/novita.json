@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-18T15:01:40Z",
+  "generated_at": "2026-11-18T23:50:47Z",
   "model_count": 188,
   "models": [
     {
@@ -1212,7 +1212,9 @@
       ],
       "status": 1,
       "upstream_id": "meta-llama/llama-4-maverick-17b-128e-instruct-fp8",
-      "missing_since": "2026-11-18"
+      "missing_since": "2026-11-18",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "meta-llama/llama-4-scout-17b-16e-instruct",

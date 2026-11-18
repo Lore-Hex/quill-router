@@ -19,6 +19,7 @@ _NAME_TO_OR_ID = {
     "Gemini 4 Hydrogen": "google/gemini-4-hydrogen",
     "Gemini 4 Carbon": "google/gemini-4-carbon",
     "Gemini 4 Argon": "google/gemini-4-argon",
+    "Gemini 4 Neon": "google/gemini-4-neon",
     "Gemini 3.8 Flash": "google/gemini-3.8-flash",
     "Gemini 3.6 Flash": "google/gemini-3.6-flash",
     "Gemini 3.5 Flash": "google/gemini-3.5-flash",
@@ -39,7 +40,7 @@ _NAME_TO_OR_ID = {
 _STANDARD_MODEL_HEADING_RE = re.compile(
     r"^Gemini\s+(?:(?P<family>Argon|Nova)\s+)?"
     r"(?P<version>\d+(?:\.\d+)?)\s+"
-    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon|Carbon|Hydrogen)$",
+    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon|Carbon|Hydrogen|Neon)$",
     re.IGNORECASE,
 )
 

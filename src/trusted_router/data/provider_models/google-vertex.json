@@ -3,8 +3,8 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-11-18T15:01:40Z",
-  "model_count": 49,
+  "generated_at": "2026-11-18T23:50:47Z",
+  "model_count": 50,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -1240,6 +1240,25 @@
       "status": 1,
       "id": "google/gemini-4-hydrogen",
       "upstream_id": "gemini-4-hydrogen",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-4-neon",
+      "title": "gemini-4-neon",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-4-neon",
+      "upstream_id": "gemini-4-neon",
       "routable": false,
       "routable_reason": "unsupported-vertex-api"
     }
