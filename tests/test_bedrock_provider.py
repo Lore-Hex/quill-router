@@ -272,7 +272,8 @@ def test_registration_and_conservative_privacy():
     assert _import_provider("amazon_bedrock") is bedrock
     assert any(row[0] == slug for row in _DISCOVERABLE_MANIFEST_PROVIDERS)
     provider = PROVIDERS[slug]
-    assert not provider.supports_byok
+    # BYOK takes a native AWS credential (Bedrock API key or IAM keys).
+    assert provider.supports_byok
     assert not provider.provider_zero_data_retention
     assert not provider.prepaid_zero_data_retention
     assert not provider.provider_e2ee

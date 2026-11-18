@@ -10,6 +10,11 @@ from fastapi.responses import JSONResponse
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.billing_policy import WALLET_ONLY_BYOK_MESSAGE, is_wallet_only_principal
+from trusted_router.byok_cloud_credentials import (
+    CloudCredentialError,
+    is_cloud_credential_provider,
+    normalize_cloud_credential,
+)
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.errors import api_error
@@ -71,8 +76,9 @@ def register_byok_routes(router: APIRouter) -> None:
         # An existing row (possibly a legacy alias) keeps its storage slug, so
         # its other keys stay with it and every key shares one envelope context.
         storage = _storage_provider(principal.workspace.id, slug)
+        raw_secret, upload_hint = _byok_upload(slug, body.api_key or body.key, body.credential)
         secret_ref, key_hint, encrypted_secret = _seal_byok_secret(
-            body.api_key or body.key, body.secret_ref, body.key_hint,
+            raw_secret, body.secret_ref, body.key_hint or upload_hint,
             settings=settings, workspace_id=principal.workspace.id, provider=storage,
         )
         created = False
@@ -118,8 +124,9 @@ def register_byok_routes(router: APIRouter) -> None:
         slug = _require_byok_provider(provider)
         _require_byok_registration(principal, settings)
         storage = _storage_provider(principal.workspace.id, slug)
+        raw_secret, upload_hint = _byok_upload(slug, body.api_key or body.key, body.credential)
         secret_ref, key_hint, encrypted_secret = _seal_byok_secret(
-            body.api_key or body.key, body.secret_ref, body.key_hint,
+            raw_secret, body.secret_ref, body.key_hint or upload_hint,
             settings=settings, workspace_id=principal.workspace.id, provider=storage,
         )
         # Chosen once, outside the transaction, so a retried transaction adds
@@ -171,12 +178,12 @@ def register_byok_routes(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
         storage = _require_byok_key(principal.workspace.id, slug, key_id).provider
-        raw_secret = body.api_key or body.key
+        raw_secret, upload_hint = _byok_upload(slug, body.api_key or body.key, body.credential)
         sealed: tuple[str, str | None, EncryptedSecretEnvelope | None] | None = None
         if raw_secret is not None:
             _require_byok_registration(principal, settings)
             sealed = _seal_byok_secret(
-                raw_secret, None, None,
+                raw_secret, None, upload_hint,
                 settings=settings, workspace_id=principal.workspace.id, provider=storage,
             )
 
@@ -295,6 +302,32 @@ def _looks_like_raw_secret(value: str) -> bool:
     if stripped.startswith(("sk-", "sk_", "sk-ant-", "AIza", "csk-")):
         return True
     return len(stripped) > 48 and "/" not in stripped and ":" not in stripped
+
+
+def _byok_upload(
+    provider: str, api_key: str | None, credential: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    """The secret a request uploads and its display hint.
+
+    A cloud provider's upload is a native credential, validated and
+    normalized here; any other provider's is a plain API key."""
+    if credential is not None and api_key is not None:
+        raise api_error(400, "send api_key or credential, not both", ErrorType.BAD_REQUEST)
+    if not is_cloud_credential_provider(provider):
+        if credential is not None:
+            raise api_error(
+                400,
+                "credential objects are for amazon-bedrock, google-vertex and azure; send api_key",
+                ErrorType.BAD_REQUEST,
+            )
+        return api_key, None
+    upload = credential if credential is not None else api_key
+    if upload is None:
+        return None, None
+    try:
+        return normalize_cloud_credential(provider, upload)
+    except CloudCredentialError as exc:
+        raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
 
 
 def _require_byok_registration(principal: Any, settings: Any) -> None:

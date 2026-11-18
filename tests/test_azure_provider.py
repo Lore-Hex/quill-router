@@ -1839,7 +1839,8 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
     rows = raw["models"]
 
     assert PROVIDERS["azure"].supports_prepaid is True
-    assert PROVIDERS["azure"].supports_byok is False
+    # BYOK takes a native Azure credential (endpoint, key, deployments).
+    assert PROVIDERS["azure"].supports_byok is True
     assert raw["model_count"] == len(rows) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 10
     assert {row["id"] for row in rows} == _EXPECTED_AZURE_LAUNCH_IDS
     assert azure.retail_model_ids() == {
@@ -1877,7 +1878,8 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
             assert endpoint.completion_price_microdollars_per_million_tokens == 0
         else:
             assert endpoint.completion_price_microdollars_per_million_tokens > 0
-        assert f"{model_id}@azure/byok" not in built
+        # Chat models gain a BYOK route; the decision model stays prepaid-only.
+        assert (f"{model_id}@azure/byok" in built) == (model_id != azure.DECISION_MODEL_ID)
 
 
 @pytest.mark.parametrize(

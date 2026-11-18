@@ -85,9 +85,13 @@ def test_azure_zdr_catalog_and_routing_agree() -> None:
     shape = model_to_openrouter_shape(MODELS["openai/gpt-5-mini"])
     azure = [endpoint for endpoint in shape["trustedrouter"]["endpoints"]
              if endpoint["provider"] == "azure"]
-    assert azure
-    assert all(endpoint["provider_zero_data_retention"] is True for endpoint in azure)
-    assert all(endpoint["usage_type"] == "Credits" for endpoint in azure)
+    credits = [endpoint for endpoint in azure if endpoint["usage_type"] == "Credits"]
+    byok = [endpoint for endpoint in azure if endpoint["usage_type"] == "BYOK"]
+    assert credits and len(credits) + len(byok) == len(azure)
+    # The contracted ZDR covers TrustedRouter's own Azure account only. A
+    # workspace's BYOK route runs on its own Azure resource and terms.
+    assert all(endpoint["provider_zero_data_retention"] is True for endpoint in credits)
+    assert all(endpoint["provider_zero_data_retention"] is not True for endpoint in byok)
     candidates = chat_route_endpoint_candidates(
         {"model": "openai/gpt-5-mini",
          "provider": {"only": ["azure"], "min_privacy": "zdr", "allow_fallbacks": False}},

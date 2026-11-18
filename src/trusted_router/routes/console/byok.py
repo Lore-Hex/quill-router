@@ -17,6 +17,11 @@ from trusted_router.billing_policy import (
     WALLET_ONLY_BYOK_MESSAGE,
     is_wallet_only_user,
 )
+from trusted_router.byok_cloud_credentials import (
+    CloudCredentialError,
+    is_cloud_credential_provider,
+    normalize_cloud_credential,
+)
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.provider_compat import byok_storage_provider_candidates, canonical_byok_provider
@@ -24,10 +29,20 @@ from trusted_router.routes.console._shared import ConsoleDep, render, require_ma
 from trusted_router.storage import STORE
 from trusted_router.storage_models import ByokProviderConfig
 
+_CONSOLE_BYOK_ERRORS = {
+    "credential": (
+        "That credential was not saved: it is not a valid credential for this provider. "
+        "Bedrock takes a Bedrock API key or IAM keys as JSON, Vertex a service account key file, "
+        "and Azure a JSON object with endpoint and api_key. Any key already saved is unchanged."
+    ),
+    "provider": "That provider does not accept your own keys.",
+    "missing_key": "Paste a key or credential to save.",
+}
+
 
 def register(app: FastAPI) -> None:
     @app.get("/console/byok")
-    def console_byok(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    def console_byok(ctx: ConsoleDep, settings: SettingsDep, error: str = "") -> Response:
         providers = [
             {
                 "provider": p.provider,
@@ -53,6 +68,8 @@ def register(app: FastAPI) -> None:
             wallet_only_message=(
                 WALLET_ONLY_BYOK_MESSAGE if is_wallet_only_user(ctx.user) else None
             ),
+            # A fixed message per known code: nothing submitted is echoed back.
+            error_message=_CONSOLE_BYOK_ERRORS.get(error),
             # Wallet-only accounts need a verified email for BYOK and
             # non-stablecoin billing; point them at the attach flow.
             wallet_email_attach_url=(
@@ -65,7 +82,9 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
         provider: str = Form(..., min_length=1, max_length=64),
-        api_key: str = Form("", max_length=512),
+        # Room for a native credential document (a Vertex service account is
+        # about 2 KB), bounded like the API's.
+        api_key: str = Form("", max_length=16384),
         secret_ref: str = Form("", max_length=512),
         key_hint: str = Form("", max_length=80),
     ) -> Response:
@@ -108,6 +127,14 @@ def register(app: FastAPI) -> None:
         storage_slug = str(existing.provider) if existing is not None else provider_slug
         stored_hint: str | None
         encrypted_secret = None
+        if api_key and is_cloud_credential_provider(provider_slug):
+            # Bedrock, Vertex and Azure take a native credential (pasted as
+            # JSON, or a Bedrock API key), validated exactly as the API does.
+            try:
+                api_key, cloud_hint = normalize_cloud_credential(provider_slug, api_key)
+            except CloudCredentialError:
+                return RedirectResponse(url="/console/byok?error=credential", status_code=303)
+            explicit_hint = explicit_hint or cloud_hint
         if api_key:
             if secret_ref and not secret_ref.startswith("byok://"):
                 return RedirectResponse(url="/console/byok?error=secret_ref", status_code=303)

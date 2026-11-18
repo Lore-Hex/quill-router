@@ -426,7 +426,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert google_ai_studio["provider_zero_data_retention"] is False
     assert google_ai_studio["supports_byok"] is True
     assert google_vertex["provider_zero_data_retention"] is False
-    assert google_vertex["supports_byok"] is False
+    assert google_vertex["supports_byok"] is True
     anthropic = next(item for item in provider_rows if item["id"] == "anthropic")
     assert anthropic["provider_zero_data_retention"] is False
     together = next(item for item in provider_rows if item["id"] == "together")

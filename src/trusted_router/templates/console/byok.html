@@ -1,5 +1,6 @@
 {% extends "console/_layout.html" %}
 {% block body %}
+{% if error_message %}<div class="console-flash error" role="alert">{{ error_message }}</div>{% endif %}
 {% if wallet_only_message %}<div class="console-flash error" role="alert">{{ wallet_only_message }}</div>{% endif %}
 {% if can_manage %}
 <section class="panel">
@@ -22,11 +23,14 @@
           <option value="deepseek">DeepSeek (platform.deepseek.com)</option>
           <option value="kimi">Kimi (platform.kimi.ai)</option>
           <option value="mistral">Mistral (console.mistral.ai)</option>
+          <option value="amazon-bedrock">Amazon Bedrock (Bedrock API key, or IAM keys as JSON)</option>
+          <option value="google-vertex">Google Vertex AI (service account key JSON)</option>
+          <option value="azure">Azure OpenAI / AI Foundry (endpoint and key as JSON)</option>
         </select>
       </label>
-      <label>Provider API key
+      <label>Provider API key or credential
         <input name="api_key" type="password" autocomplete="off" required
-               placeholder="paste your API key, for example sk-ant-api03, sk-proj, or AIza">
+               placeholder="paste your API key, for example sk-ant-api03, sk-proj, or AIza, or a credential JSON">
       </label>
       <p style="color:var(--muted);font-size:12px;margin:-4px 0 0">
         Stored encrypted. Only the last 4 characters are ever shown again, as a hint to help you identify the key.

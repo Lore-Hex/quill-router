@@ -1251,7 +1251,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         provider_flags["google-vertex"]["zero_data_retention_scope"]
         == "trustedrouter_prepaid"
     )
-    assert provider_flags["google-vertex"]["supports_byok"] is False
+    assert provider_flags["google-vertex"]["supports_byok"] is True
     assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
     assert "Contracted Zero Data Retention" in provider_flags["openai"]["provider_policy"]
     assert "July 28, 2026" in provider_flags["openai"]["provider_policy"]
@@ -1486,13 +1486,15 @@ def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     assert unsupported.status_code == 400
     assert unsupported.json()["error"]["type"] == "provider_not_supported"
 
-    explicit_vertex = client.put(
-        "/v1/byok/providers/google-vertex",
+    # Vertex takes BYOK with a native credential; a provider without BYOK
+    # is still refused.
+    no_byok = client.put(
+        "/v1/byok/providers/openrouter",
         headers=user_headers,
-        json={"secret_ref": "env://VERTEX_API_KEY"},
+        json={"secret_ref": "env://OPENROUTER_API_KEY"},
     )
-    assert explicit_vertex.status_code == 400
-    assert explicit_vertex.json()["error"]["type"] == "provider_not_supported"
+    assert no_byok.status_code == 400
+    assert no_byok.json()["error"]["type"] == "provider_not_supported"
 
     raw_ref = client.put(
         "/v1/byok/providers/openai",
