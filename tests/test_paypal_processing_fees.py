@@ -286,6 +286,9 @@ def test_paypal_webhook_credits_principal_and_returns_fee_breakdown(
     [
         (400, 400, "Invalid PayPal webhook"),
         (500, 502, "PayPal request failed"),
+        # Our own credentials or quota, not the webhook's fault.
+        (401, 502, "PayPal request failed"),
+        (429, 502, "PayPal request failed"),
     ],
 )
 def test_paypal_webhook_classifies_paypal_verification_failures(
@@ -426,3 +429,51 @@ def test_paypal_capture_rejects_cross_workspace_reference(
         credit_paypal_capture(order, expected_workspace_id=workspace_id)
 
     assert raised.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("paypal_status", "expected_status", "expected_message"),
+    [
+        # QUILL-ROUTER-FY: PayPal's 422 (order not approved / already
+        # captured / declined) was answered as a PayPal outage.
+        (422, 400, "PayPal order could not be captured"),
+        (404, 400, "PayPal order could not be captured"),
+        (409, 400, "PayPal order could not be captured"),
+        (401, 502, "PayPal request failed"),
+        (403, 502, "PayPal request failed"),
+        (429, 502, "PayPal request failed"),
+        (500, 502, "PayPal request failed"),
+        (503, 502, "PayPal request failed"),
+    ],
+)
+def test_paypal_capture_classifies_paypal_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    paypal_status: int,
+    expected_status: int,
+    expected_message: str,
+) -> None:
+    from trusted_router.services.paypal_billing import capture_paypal_order_for_workspace
+
+    seen: list[str] = []
+
+    def paypal_handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(paypal_status, request=request, json={"name": "UNPROCESSABLE_ENTITY"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        "trusted_router.services.paypal_billing._access_token", lambda _settings: "token"
+    )
+    monkeypatch.setattr(
+        "trusted_router.services.paypal_billing.httpx.Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(paypal_handler)),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        capture_paypal_order_for_workspace(
+            order_id="ORDER-422", workspace_id="ws-paypal", settings=_paypal_settings(),
+        )
+
+    assert seen == ["/v2/checkout/orders/ORDER-422/capture"]
+    assert raised.value.status_code == expected_status
+    assert raised.value.detail["error"]["message"] == expected_message

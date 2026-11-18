@@ -179,6 +179,9 @@ def capture_paypal_order_for_workspace(
         f"/v2/checkout/orders/{order_id}/capture",
         request_id=f"tr-paypal-capture-{order_id}",
         json_body={},
+        # An unapproved, already captured, declined or unknown order is the
+        # caller's to fix, not a PayPal outage (QUILL-ROUTER-FY: a 422 was a 502).
+        client_error_message="PayPal order could not be captured",
     )
     result = credit_paypal_capture(order, expected_workspace_id=workspace_id)
     if result.order_id == "":
@@ -393,7 +396,7 @@ def _paypal_post(
             response.raise_for_status()
             data = response.json()
     except httpx.HTTPStatusError as exc:
-        if client_error_message is not None and 400 <= exc.response.status_code < 500:
+        if client_error_message is not None and exc.response.status_code in PAYPAL_CLIENT_ERROR_STATUSES:
             raise api_error(400, client_error_message, ErrorType.BAD_REQUEST) from exc
         raise api_error(502, "PayPal request failed", ErrorType.INTERNAL_ERROR) from exc
     except (httpx.HTTPError, ValueError) as exc:
@@ -401,6 +404,14 @@ def _paypal_post(
     if not isinstance(data, dict):
         raise api_error(502, "PayPal returned an invalid response", ErrorType.INTERNAL_ERROR)
     return data
+
+
+# PayPal statuses that describe the caller's request or the order's state:
+# a malformed body (400), an unknown order (404), a conflicting request
+# (409), or an order PayPal will not process as asked (422: not approved,
+# already captured, instrument declined). 401/403/429 describe our own
+# credentials or quota, so they stay a 502 like PayPal's 5xx.
+PAYPAL_CLIENT_ERROR_STATUSES = frozenset({400, 404, 409, 422})
 
 
 def fetch_paypal_capture(settings: Settings, capture_id: str) -> dict[str, Any]:
