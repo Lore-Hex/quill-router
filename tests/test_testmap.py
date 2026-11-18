@@ -1158,8 +1158,16 @@ def test_the_heavy_check_names_each_file_outside_the_lane(tmp_path: Path, monkey
     assert "not main's" in capsys.readouterr().out
 
 
+BOT = {"is_bot": True, "login": tm.HEAVY_ISSUE_AUTHOR}  # how gh's issue JSON shows the workflow's token
+OUTSIDER = {"is_bot": False, "login": "someone"}
+
+
 class FakeGh:
-    """gh's issue commands, against a list of open issues."""
+    """gh's issue commands, against the open issues the search returns."""
+
+    LIST = ["issue", "list", "--repo", "o/r", "--state", "open", "--search",
+            f'in:title "{tm.HEAVY_ISSUE_TITLE}" author:{tm.HEAVY_ISSUE_AUTHOR}', "--json", "number,title,author",
+            "--limit", "100"]
 
     def __init__(self, issues: list[dict]) -> None:
         self.issues = issues
@@ -1168,30 +1176,93 @@ class FakeGh:
     def __call__(self, argv: list[str], stdin: str | None) -> str:
         self.calls.append((argv, stdin))
         if argv[:2] == ["issue", "list"]:
-            assert argv[argv.index("--search") + 1] == f'in:title "{tm.HEAVY_ISSUE_TITLE}"'
+            # Open issues only, by title and the bot's own authorship.
+            assert argv == self.LIST and stdin is None
             return json.dumps(self.issues)
         return ""
 
 
-def test_a_failing_heavy_check_opens_the_issue_or_comments_on_the_open_one() -> None:
+def issue(number: int, author: dict = BOT, title: str = tm.HEAVY_ISSUE_TITLE) -> dict:
+    return {"number": number, "title": title, "author": author}
+
+
+def test_a_failing_heavy_check_opens_the_issue_or_comments_on_the_oldest_open_one() -> None:
     run = "https://github.com/o/r/actions/runs/7"
-    gh = FakeGh([{"number": 3, "title": "Something else"}])
+    gh = FakeGh([issue(3, title="Something else")])
     assert tm.heavy_issue("failure", "- tests/x.py\n", repo="o/r", run_url=run, gh=gh) == "opened an issue"
     argv, body = gh.calls[-1]
     assert argv == ["issue", "create", "--repo", "o/r", "--title", tm.HEAVY_ISSUE_TITLE, "--body-file", "-"]
     assert body == f"- tests/x.py\n\nRun: {run}\n"
-    gh = FakeGh([{"number": 9, "title": tm.HEAVY_ISSUE_TITLE}, {"number": 3, "title": "Something else"}])
+    # Two of the bot's own issues with the title: the oldest one.
+    gh = FakeGh([issue(12), issue(9), issue(3, title="Something else")])
     assert tm.heavy_issue("failure", "- tests/x.py", repo="o/r", run_url=run, gh=gh) == "commented on #9"
-    assert gh.calls[-1][0] == ["issue", "comment", "9", "--repo", "o/r", "--body-file", "-"]
+    assert gh.calls[-1] == (["issue", "comment", "9", "--repo", "o/r", "--body-file", "-"],
+                            f"- tests/x.py\n\nRun: {run}\n")
     assert len(gh.calls) == 2
 
 
-def test_a_passing_heavy_check_closes_the_open_issue_and_nothing_else() -> None:
+def test_an_issue_someone_else_opened_with_the_title_is_never_used() -> None:
+    # Anyone can open an issue with the exact title; the bot neither
+    # comments on it nor closes it. A bot login that is not a bot account
+    # is someone else too.
+    run = "https://github.com/o/r/actions/runs/9"
+    spoofs = [issue(2, OUTSIDER), issue(4, {"is_bot": False, "login": tm.HEAVY_ISSUE_AUTHOR}), issue(5, {})]
+    gh = FakeGh(spoofs)
+    assert tm.heavy_issue("failure", "- tests/x.py", repo="o/r", run_url=run, gh=gh) == "opened an issue"
+    assert gh.calls[-1][0][:2] == ["issue", "create"]
+    gh = FakeGh([*spoofs, issue(7)])
+    assert tm.heavy_issue("failure", "- tests/x.py", repo="o/r", run_url=run, gh=gh) == "commented on #7"
+    gh = FakeGh(spoofs)
+    assert tm.heavy_issue("success", "", repo="o/r", run_url=run, gh=gh) == "no open issue"
+    assert [argv[:2] for argv, _ in gh.calls] == [["issue", "list"]]
+
+
+def test_a_passing_heavy_check_closes_the_bots_open_issues_and_nothing_else() -> None:
     run = "https://github.com/o/r/actions/runs/8"
-    gh = FakeGh([{"number": 9, "title": tm.HEAVY_ISSUE_TITLE}, {"number": 3, "title": "Something else"}])
+    gh = FakeGh([issue(9), issue(3, title="Something else"), issue(2, OUTSIDER)])
     assert tm.heavy_issue("success", "", repo="o/r", run_url=run, gh=gh) == "closed #9"
-    argv, _ = gh.calls[-1]
-    assert argv[:5] == ["issue", "close", "9", "--repo", "o/r"] and run in argv[-1]
+    assert gh.calls[-1] == (["issue", "close", "9", "--repo", "o/r", "--comment",
+                             f"The heavy lane's scope covers what its tests ran again: {run}"], None)
     gh = FakeGh([])
     assert tm.heavy_issue("success", "", repo="o/r", run_url=run, gh=gh) == "no open issue"
     assert [argv[:2] for argv, _ in gh.calls] == [["issue", "list"]]
+
+
+def test_the_heavy_check_writes_a_report_whatever_stops_it(tmp_path: Path, monkeypatch, capsys) -> None:
+    # A refused map, an unreadable one, or an error computing the scope:
+    # each fails the step and leaves a report for heavy-issue, so the drift
+    # check is never silently gone.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/conftest.py").write_text("")
+    good = {**build_map({f"{HEAVY_FILE}::test_a": {"f": ["src/app/a.py:run"]}}), "incomplete_memo": [],
+            "unattributed_memo": []}
+
+    def heavy(name: str) -> tuple[int, str]:
+        report = tmp_path / f"{name}.md"
+        code = tm.main(["heavy", "--map", f"{name}.json.gz", "--report", str(report), "--summary", ""])
+        return code, report.read_text()
+
+    tm.write_gz({**good, "ref": "refs/heads/feature"}, tmp_path / "refused.json.gz")
+    code, report = heavy("refused")
+    assert code == 1 and "The check could not run: map is from a push run of refs/heads/feature" in report
+    assert "::error title=Heavy lane scope::The check could not run" in capsys.readouterr().out
+    code, report = heavy("missing")
+    assert code == 1 and "The check errored before it finished: FileNotFoundError" in report
+    tm.write_gz(good, tmp_path / "broken.json.gz")
+
+    def broken(root: Path, tree=None) -> frozenset[str]:
+        raise ValueError("tests/x.py does not parse")
+
+    monkeypatch.setattr(cs, "heavy_closure", broken)
+    code, report = heavy("broken")
+    assert code == 1 and "The check errored before it finished: ValueError: tests/x.py does not parse." in report
+    # And heavy-issue opens the issue all the same, even with no report.
+    gh = FakeGh([])
+    monkeypatch.setattr(tm, "_gh", gh)
+    assert tm.main(["heavy-issue", "--outcome", "failure", "--report", "never-written.md", "--repo", "o/r",
+                    "--run-id", "11"]) == 0
+    argv, body = gh.calls[-1]
+    assert argv[:2] == ["issue", "create"] and body is not None
+    assert body.startswith("The heavy lane's scope check errored before writing a report; see the run.")
+    assert body.rstrip().endswith("Run: https://github.com/o/r/actions/runs/11")
