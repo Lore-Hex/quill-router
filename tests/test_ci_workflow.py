@@ -1034,6 +1034,10 @@ def test_the_heavy_check_of_each_map_is_a_job_of_its_own_after_the_upload() -> N
     # The token reaches the two issue steps only: not the check, which runs
     # the repository's code.
     assert "env" not in check
+    # actions/checkout persists the job token in git config by default, where
+    # the check could read it: this checkout must not.
+    checkouts = [step for step in check["steps"] if "actions/checkout" in step.get("uses", "")]
+    assert len(checkouts) == 1 and checkouts[0].get("with", {}).get("persist-credentials") is False
     runs = {step["name"]: step for step in check["steps"] if "run" in step}
     assert {name for name, step in runs.items() if "GH_TOKEN" in json.dumps(step)} == {
         "Open or update the heavy lane's scope issue", "Close the heavy lane's scope issue"}
@@ -1044,7 +1048,7 @@ def test_the_heavy_check_of_each_map_is_a_job_of_its_own_after_the_upload() -> N
     assert the_check["run"] == "python3 scripts/ci/testmap.py heavy --map testmap.json.gz --report heavy-scope.md"
     assert the_check["id"] == "check" and "if" not in the_check
     assert opens["run"] == "python3 scripts/ci/testmap.py heavy-issue --outcome failure --report heavy-scope.md"
-    assert opens["if"] == "failure() && steps.check.outcome == 'failure'"
+    assert opens["if"] == "failure() && steps.check.outcome != 'success'"
     assert closes["run"] == "python3 scripts/ci/testmap.py heavy-issue --outcome success"
     assert closes["if"] == "success()"
     # Nothing else may fail a run and keep its map.
