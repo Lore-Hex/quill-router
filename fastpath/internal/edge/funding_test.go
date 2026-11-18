@@ -766,4 +766,13 @@ func TestTheFundingRaceRateIsWatched(t *testing.T) {
 			t.Errorf("%s: alerts once the hour passed: %q", x.name, again)
 		}
 	}
+	// The period's flush closes the period and raises it the same way.
+	sh, alerts, _ := fundingShadow(t, &fakeCredit{}, 1e9)
+	for i := 0; i < FundingRaceMin; i++ {
+		sh.record("digest", race)
+	}
+	sh.flush()
+	if got := alerts.taken()[AlertFundingRace]; len(got) != 1 {
+		t.Errorf("the flush raised %q", got)
+	}
 }

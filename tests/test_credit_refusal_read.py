@@ -73,6 +73,7 @@ def snapshot_reads(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
 
 def _stamp(reads: list[tuple[str, Any]], prefix: str) -> Any:
     [stamp] = [stamp for sql, stamp in reads if sql.startswith(prefix)]
+    assert stamp is not None, f"no read timestamp kept for {prefix!r}: the snapshot must be multi-use"
     return stamp
 
 
