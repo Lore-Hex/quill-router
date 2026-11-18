@@ -1,1 +1,0 @@
-"""Isolated BTCPay dashboard provisioning."""

@@ -1,5 +1,14 @@
 # Lightning receiving liquidity
 
+> **Retired.** LightningRouter was retired on October 22, 2026; see
+> [the retirement record](lightning-retirement.md). On November 18, 2026
+> the alert installer this document runs (`scripts.lightning.reliability`) were deleted from `main`. They remain at commit
+> `a49bab023`. To read or run them, check that commit out separately:
+>
+> ```sh
+> git worktree add --detach ../quill-router-a49bab023 a49bab0237890fc0957f344cfe81f66543ab92df
+> ```
+
 New production invoices use Lexe. BTCPay is stopped; the existing LND node is
 retained for legacy invoices and funds, not new receiving capacity. The LND
 capacity and replenishment guidance below applies only when LND is the active
@@ -45,6 +54,8 @@ authenticated deployment identity:
 ```sh
 uv run python -m scripts.lightning.reliability --account DEPLOY_IDENTITY --apply
 ```
+
+Removed from `main`; run it from the `a49bab023` checkout described at the top.
 
 The installer installs log-based failure alerts first, then requires a fresh
 production liquidity heartbeat before completing absence-alert initialization.

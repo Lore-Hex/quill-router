@@ -26,16 +26,7 @@ def test_every_node_workflow_uses_the_shared_patched_version() -> None:
                 found += 1
                 assert step["with"].get("node-version-file") == ".node-version", path
                 assert "node-version" not in step["with"], path
-    assert found >= 4
-
-
-def test_lightning_build_image_includes_october_2026_security_fixes() -> None:
-    image = (ROOT / "experiments/lightning_router/Dockerfile").read_text().splitlines()[0].split()[1]
-    assert image.startswith("node:")
-    version = tuple(int(part) for part in image.removeprefix("node:").split("-")[0].split("."))
-    assert len(version) == 3
-    assert version[0] == 24
-    assert version >= SECURITY_FLOOR
+    assert found >= 3
 
 
 def test_runtime_updates_trigger_all_consuming_workflows() -> None:
