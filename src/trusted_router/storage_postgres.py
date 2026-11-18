@@ -2308,14 +2308,6 @@ class PostgresStore(OperationalAnalyticsReads):
     def claim_user_username(self, user_id: str, username: str) -> User:
         self._not_implemented("claim_user_username")
 
-    def ensure_lightning_key(self, raw_key: str) -> ApiKey:
-        from trusted_router.storage_lightning import postgres_key
-        return postgres_key(self, raw_key)
-
-    def bind_lightning_payment(self, workspace_id: str, payment_hash: str, amount_microdollars: int) -> None:
-        from trusted_router.storage_lightning import postgres_bind
-        postgres_bind(self, workspace_id, payment_hash, amount_microdollars)
-
     def create_wallet_user(self, address: str) -> User:
         normalized = address.strip().lower()
 
@@ -4896,10 +4888,13 @@ class PostgresStore(OperationalAnalyticsReads):
         )
         if event.provider == "lightning" and event_id != "lightning:" + str(event.original_payment_ref):
             raise ValueError("Lightning payment requires its canonical event ID")
-        # Lightning binds the globally unique payment hash to its workspace
-        # before this transaction and uses lightning:<hash> as its event ID.
-        # Deduplicate that canonical ID through the primary key: PGAdapter
-        # cannot use the nullable payment index as an ON CONFLICT target.
+        # No caller writes lightning provenance any more; the rows that exist
+        # are history. The retired bridge bound each globally unique payment
+        # hash to one workspace before this transaction, and that binding is
+        # what made the per-workspace ON CONFLICT (workspace_id, event_id)
+        # below globally unique for lightning:<hash>. A future writer of
+        # lightning provenance must restore a global binding first. (PGAdapter
+        # cannot use the nullable payment index as an ON CONFLICT target.)
         conflict_clause = (
             "ON CONFLICT (provider, original_payment_ref, kind) DO NOTHING"
             if event.kind == "payment" and event.provider != "lightning"

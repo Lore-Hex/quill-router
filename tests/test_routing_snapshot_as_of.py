@@ -15,12 +15,13 @@ import json
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.snapshot_retirement_fixture import RETIRING_ROWS
 from trusted_router import provider_lifecycle
 from trusted_router.catalog_ingest import provider_manifest_deadlines
 from trusted_router.routing_snapshot import (
@@ -32,7 +33,9 @@ ROOT = Path(__file__).resolve().parents[1]
 HOUR = EPOCH_SECONDS
 # Real retirements: DeepInfra's GPT-OSS-120B Turbo routes, Together's and
 # OpenAI's October cutovers. Every process below pins its own clocks, so these
-# hold whatever the wall clock or the session's lifecycle override says.
+# hold whatever the wall clock or the session's lifecycle override says. The
+# fixture supplies a route each one ends (RETIRING_ROWS), so the scenario does
+# not depend on what the providers list today.
 RETIREMENTS = {
     "deepinfra-2026-10-20": int(datetime(2026, 10, 20, tzinfo=UTC).timestamp()),
     "together-2026-10-22": int(provider_lifecycle.TOGETHER_OCTOBER_22_RETIREMENT_AT.timestamp()),
@@ -83,6 +86,11 @@ signer = RoutingSnapshotSigner(private, TrustedKey(
     "as-of-test", PURPOSE, b64encode(private.public_key().public_bytes_raw()),
     "https://trustedrouter.com", "tr-fastpath-edge"))
 plan = AsOfSource(identity, auto_model_order="", key_file=str(key_file)).plan(now)
+start = datetime.fromtimestamp(plan.start, UTC)
+retired_at_start = sorted({
+    (e.provider, e.model_id) for e in catalog_registry.MODEL_ENDPOINTS.values()
+    if provider_lifecycle.provider_model_retired(e.provider, e.model_id, e.upstream_id, at=start)
+})
 try:
     rs.compile_routing_snapshot(at=plan.start, horizon=identity.horizon, settings=identity.snapshot_settings,
                                 source_revision="as-of-test", plane=identity.plane,
@@ -95,7 +103,7 @@ snapshot = rs.parse_routing_snapshot(signed.body)
 print(json.dumps({
     "start": plan.start, "next_start": plan.next_start,
     "live_endpoints": len(catalog_registry.MODEL_ENDPOINTS), "live_models": len(catalog_registry.MODELS),
-    "in_process": in_process,
+    "in_process": in_process, "retired_at_start": retired_at_start,
     "digest": hashlib.sha256(signed.body).hexdigest(),
     "endpoints": len(snapshot.endpoints), "models": len(snapshot.models),
 }))
@@ -130,13 +138,22 @@ def _run(script: str, *args: int) -> dict[str, Any]:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.parametrize("retirement", list(RETIREMENTS.values()), ids=list(RETIREMENTS))
-def test_warm_and_cold_publishers_publish_the_as_of_snapshot(retirement: int) -> None:
+@pytest.mark.parametrize("label", list(RETIREMENTS))
+def test_warm_and_cold_publishers_publish_the_as_of_snapshot(label: str) -> None:
+    retirement = RETIREMENTS[label]
+    provider, row = RETIRING_ROWS[label]
+    instant = datetime.fromtimestamp(retirement, UTC)
+    retired = provider_lifecycle.provider_model_retired
+    assert retired(provider, row["id"], row["upstream_id"], at=instant)
+    assert not retired(provider, row["id"], row["upstream_id"], at=instant - timedelta(seconds=1))
     now = retirement + HOUR // 2
     warm = _run(_PUBLISHER, retirement - HOUR // 2, now)
     cold = _run(_PUBLISHER, retirement + HOUR // 3, now)
-    # The scenario: the warm registry still holds what retired at R, and its
-    # own in-process compile refuses; the cold one compiles in process.
+    # The scenario: the warm registry still holds what retired at R (the
+    # supplied route included), and its own in-process compile refuses; the
+    # cold one holds none of it and compiles in process.
+    assert [provider, row["id"]] in warm["retired_at_start"]
+    assert cold["retired_at_start"] == []
     assert warm["live_endpoints"] > cold["live_endpoints"]
     assert (warm["in_process"], cold["in_process"]) == ("refused", "compiled")
     # Both publish the same window, as of its start, byte for byte.

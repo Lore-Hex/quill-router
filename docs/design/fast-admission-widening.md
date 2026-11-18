@@ -1560,8 +1560,14 @@ step.
    (`trustedrouter_gateway_strict_budget_busy_503`), for the 503 answered
    when a strict-budget key cannot get its per-process admission slot;
    the policy subtracts all three, and "TR Gateway: strict
-   budget busy" bounds the third. Tests:
-   `tests/test_billing_5xx_lease_headroom.py`.
+   budget busy" bounds the third. Since 2026-11-18 they accept a fourth,
+   `billing.credit_headroom_raced`
+   (`trustedrouter_gateway_headroom_raced_503`), for the "credit headroom
+   changed concurrently" 503 answered when a workspace's own concurrent
+   requests took its spread credit from every bounded repair; the policy
+   subtracts all four, and "TR Gateway: credit headroom raced" bounds the
+   fourth. Tests: `tests/test_billing_5xx_lease_headroom.py`,
+   `tests/test_credit_headroom_raced_503.py`.
 8. **Activation, WS0 to WS6.** One `rollout.sh`, `fastpath_lists.sh`, job
    setting or node-attribute change per step of §8.2, each opened with the
    previous step's gate read into its description.

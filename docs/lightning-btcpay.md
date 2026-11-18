@@ -1,5 +1,14 @@
 # LightningRouter BTCPay Dashboard
 
+> **Retired.** LightningRouter was retired on October 22, 2026; see
+> [the retirement record](lightning-retirement.md). On November 18, 2026
+> the BTCPay tools this document runs (`scripts.lightning.btcpay`) were deleted from `main`. They remain at commit
+> `a49bab023`. To read or run them, check that commit out separately:
+>
+> ```sh
+> git worktree add --detach ../quill-router-a49bab023 a49bab0237890fc0957f344cfe81f66543ab92df
+> ```
+
 BTCPay uses the existing Bitcoin Core and LND installation on `tr-bitcoin-1`.
 It does not create a second Bitcoin node, LND wallet, channel, or funding service.
 The existing LightningRouter checkout remains authoritative for USD credits.
@@ -79,6 +88,8 @@ uv run python -m scripts.lightning.btcpay.deploy install --account=DEPLOY_EMAIL 
 uv run python -m scripts.lightning.btcpay.explorer --account=DEPLOY_EMAIL --apply
 uv run python -m scripts.lightning.btcpay.deploy publish --account=DEPLOY_EMAIL --apply
 ```
+
+Removed from `main`; run these from the `a49bab023` checkout described at the top.
 
 `publish` first bootstraps through loopback, locks registration, tests the role,
 and revokes the temporary administrator API key. Only then does it enable public

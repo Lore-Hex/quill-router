@@ -1,5 +1,16 @@
 # LightningRouter funding deployment
 
+> **Retired.** LightningRouter was retired on October 22, 2026; see
+> [the retirement record](lightning-retirement.md). On November 18, 2026
+> the scripts this runbook runs (`scripts.lightning.reliability`,
+> `install_maintenance`, `connect_funding_node` and `activate_web`) and the
+> TrustedRouter credit bridge it deploys were deleted from `main`. They remain at commit
+> `a49bab023`. To read or run them, check that commit out separately:
+>
+> ```sh
+> git worktree add --detach ../quill-router-a49bab023 a49bab0237890fc0957f344cfe81f66543ab92df
+> ```
+
 The website funds normal TrustedRouter USD credits. It does not proxy prompts,
 hold a BTC inference balance, or automatically sell received BTC. Coding agents
 use `https://api.trustedrouter.com/v1`, whose TLS terminates in the attested API.
@@ -99,6 +110,8 @@ worker-failure and missing-heartbeat alerts with:
 python -m scripts.lightning.reliability --account=OPERATOR --apply
 ```
 
+Removed from `main`; run it from the `a49bab023` checkout described at the top.
+
 The installer requires the existing verified on-call channel, does not broaden
 IAM, and does not change unrelated alarms. Review/stuck-payment alerts repeat no
 more than every five minutes. A ten-minute missing heartbeat detects an absent
@@ -126,6 +139,8 @@ checkout:
 python -m scripts.lightning.install_maintenance --account=OPERATOR --apply
 ```
 
+Removed from `main`; run it from the `a49bab023` checkout described at the top.
+
 This installs `tr-lnd-invoice-cleanup.timer` without restarting LND. Each hourly
 pass scans at most 100 records and deletes at most 10 website invoices that LND
 confirms canceled, unpaid, and expired for over 45 days. It uses its own local
@@ -142,14 +157,17 @@ policy handles reusable space without an automatic wallet restart.
    mutable working directory. Resolve the image to an immutable digest.
 2. Apply the existing `scripts/lightning/spanner_provenance.sql` upgrade once,
    preserving the old check until the wider check has been validated.
-3. Run `python -m scripts.lightning.connect_funding_node --account=OPERATOR`.
+3. Run `python -m scripts.lightning.connect_funding_node --account=OPERATOR`
+   (removed from `main`; see the note at the top).
    This checks there are no in-flight HTLCs, preserves loopback RPC access,
    verifies the private TLS certificate, and proves wallet RPC access is denied.
-4. Run `python -m scripts.lightning.activate_web bootstrap --account=OPERATOR --apply`.
+4. Run `python -m scripts.lightning.activate_web bootstrap --account=OPERATOR --apply`
+   (removed from `main`; see the note at the top).
    No credentials are printed or passed as command-line arguments.
 5. Deploy the billing bridge through normal control-plane CI and rollout gates.
 6. Run `python -m scripts.lightning.activate_web deploy --account=OPERATOR
-   --image=IMMUTABLE_DIGEST --apply`. The migration job must succeed first.
+   --image=IMMUTABLE_DIGEST --apply` (removed from `main`; see the note at the
+   top). The migration job must succeed first.
    Web startup verifies the database, authenticated billing bridge, and LND
    before becoming ready. A failed new revision must not replace the old one.
 7. Verify public health, HTTPS browser invoice creation, cancellation, and
@@ -174,7 +192,8 @@ validates existing recovery material before the initial pin. A changed secret
 fails startup. Restore the correct secret version rather than replacing it to
 get a deployment through. Secret provisioning refuses differing existing values.
 Only the invoice macaroon and TLS certificate support explicit replacement via
-`connect_funding_node --rotate-node-secrets`; redeploy the funding web revision
+`connect_funding_node --rotate-node-secrets` (removed from `main`; see the note
+at the top); redeploy the funding web revision
 afterward and verify the wallet-RPC denial again. The node tool does not revoke
 the old macaroon automatically; coordinate revocation after successful rollout.
 

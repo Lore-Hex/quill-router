@@ -3,6 +3,16 @@
 Retired on October 22, 2026. This source is retained for financial audit and
 recovery, not production use. See [the retirement record](../../docs/lightning-retirement.md).
 
+On November 18, 2026 the TrustedRouter credit bridge (`TR_LIGHTNING_FUNDING_TOKEN`,
+`/internal/lightning/*`) and the deploy and activation scripts this README names
+(`scripts/lightning/activate_web.py`, `deploy_web.py` and the rest) were deleted
+from `main`. They remain at commit `a49bab023`. To read or run them, check that
+commit out separately:
+
+```sh
+git worktree add --detach ../quill-router-a49bab023 a49bab0237890fc0957f344cfe81f66543ab92df
+```
+
 [Source and community support](https://github.com/Lore-Hex/lightning-router) |
 [Issues](https://github.com/Lore-Hex/lightning-router/issues) |
 [Discord](https://discord.gg/FREVts9KAG) |
@@ -268,7 +278,8 @@ The first production funding database must use the current `lr_checkouts` schema
 2. Deploy persistent funding records and secrets with backup/restore checks.
    Schema migration is a separate deploy action, not web-worker startup.
 3. Activate the tested `TrustedRouterCredits` HTTPS adapter and the dedicated
-   `TR_LIGHTNING_FUNDING_TOKEN` on the internal billing surface only. The token
+   `TR_LIGHTNING_FUNDING_TOKEN` (removed from `main`; see the note at the top)
+   on the internal billing surface only. The token
    must differ from every other service credential. No token means no access,
    including local/test mode. The bridge uses the existing USD credit operation
    and `lightning`/`invoice` payment provenance, not a grant or fake Stripe fact.
@@ -292,7 +303,8 @@ The first production funding database must use the current `lr_checkouts` schema
 ## Payment-disabled web deployment
 
 For production activation use `scripts/lightning/activate_web.py`, not the
-prelaunch tool below, which deliberately disables payments.
+prelaunch tool below, which deliberately disables payments. Both were removed
+from `main`; see the note at the top.
 
 `scripts/lightning/deploy_web.py --account=DEPLOY_IDENTITY` builds only committed
 experiment files, deploys a 512 MiB Cloud Run service under a no-data-access

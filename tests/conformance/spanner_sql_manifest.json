@@ -5310,7 +5310,7 @@
     },
     "operational_analytics:routing_traffic:1": {
       "fingerprint": "24143e3a3eefcc7a3bf9a0af91a2fc5f5b20ad2ce93d995901b204a795e78db5",
-      "reason": "Bounded read-only ClickHouse route aggregates, proven against replicated and standalone schemas in test_clickhouse_replay_functional"
+      "reason": "Bounded read-only ClickHouse route aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:client_reliability_summary:1": {
       "fingerprint": "626ec3bb7eb8e4e06f6e1c77d66629df32cd5320d947499e54d8f847d1dcb1a5",
@@ -5394,10 +5394,6 @@
     },
     "storage_legacy_trust:reject_postgres_reservation:1": {
       "fingerprint": "857d7e00b26cc521eec130efefa3e4f3520c9eb07c86475dab37cbb9ee059479",
-      "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
-    },
-    "storage_lightning:txn:1": {
-      "fingerprint": "3f21f37524b670b987cefd5bbb5b01f67016654e28bf9cc79bfe4fa74acef5f6",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_postgres_operational_analytics_outbox:constants:1": {

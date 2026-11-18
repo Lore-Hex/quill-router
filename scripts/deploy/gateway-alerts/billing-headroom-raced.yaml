@@ -1,0 +1,72 @@
+displayName: "TR Gateway: credit headroom raced"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Authorize answered more than two headroom-raced 503s in ten minutes, or
+    more than five in an hour. Each is the retryable storage 503
+    (Retry-After: 1) the typed authorize gives when a workspace's credit is
+    spread across credit shards and its own concurrent requests took the
+    headroom from every bounded repair of the credit recovery
+    (storage_gcp.py, "credit headroom changed concurrently"): three
+    attempts, each a retry on the funded shards, a rebalance and
+    re-authorize, a forced shard-count reload or a wait for the rebalance
+    cooldown, and each lost before its re-authorize. Aggregate exhaustion
+    was not proven, so a 402 would be wrong. Storage is healthy and nothing
+    is held; the app writes billing.credit_headroom_raced for each one
+    (trustedrouter_gateway_headroom_raced_503) and the enclave retries it.
+    The enclave makes three attempts, seconds apart, so three lines in ten
+    minutes is the least at which a customer's request can have failed on
+    this 503 alone, and the ten-minute bound pages there. Two or fewer in
+    ten minutes are requests made to wait and then answered on a later
+    attempt; the hourly bound limits how long that can go on, at more than
+    five in an hour. When the hourly bound is what was crossed, the
+    incident stays open until the hour's count is back to five or fewer,
+    which can be up to an hour after the last line, and cannot be closed by
+    hand before that. "TR Gateway: authorize 503 not lease headroom" sets
+    these 503s aside, so this is the only page for them. Read the
+    billing.credit_headroom_raced lines for the workspace ids. For each
+    workspace read its lines from trusted_router.storage_gcp around them,
+    "credit rebalance workspace=... outcome=... attempt=..." for each
+    rebalance that ran, then its credit shard count and how its balance is
+    spread over its tr_credit_balance rows (read by the workspace's primary
+    key, never a scan), against its estimates and how many requests it
+    sends at once. One workspace points at its own burst: many concurrent
+    requests over a balance cut into many small shares, often near the end
+    of its credit, where each request takes the headroom another just made;
+    once the balance is really exhausted the recovery proves it and answers
+    402. Many workspaces at once point at Spanner latency, which widens
+    every race, or at a recent deploy. Do not answer these 402 or add
+    attempts to quiet the alert. Runbook: docs/spanner-reliability.md.
+conditions:
+  # The shape of billing-rebalance-busy.yaml, on this counter: one condition
+  # with two bounds, because Cloud Monitoring allows a policy one PromQL
+  # condition and no other beside it.
+  #
+  # Counts over a window, not rates per minute. The first side: one request
+  # writes at most three lines, within seconds (the enclave makes three
+  # attempts), so three in ten minutes is the least at which a customer's
+  # request can have failed on this 503 alone. Before the line existed each
+  # one paged as an unmarked authorize 503; now it pages here only from the
+  # third. The second side: up to two every ten minutes pass the first,
+  # twelve an hour; more than five in an hour takes at least three separate
+  # occurrences within the hour.
+  #
+  # Each side returns its sample only when its count is over its bound, and
+  # "or" returns the first side's sample, else the second's: one series at
+  # most, so one incident. No "or vector(0)": with no lines neither side has
+  # a series and there is nothing to page.
+  - displayName: "More than two headroom-raced 503s in ten minutes, or more than five in an hour"
+    conditionPrometheusQueryLanguage:
+      query: |
+        (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_headroom_raced_503{monitored_resource="cloud_run_revision"}[10m])) > 2.5)
+        or
+        (sum(increase(logging_googleapis_com:user_trustedrouter_gateway_headroom_raced_503{monitored_resource="cloud_run_revision"}[1h])) > 5.5)
+      duration: 0s
+      evaluationInterval: 60s
+alertStrategy:
+  autoClose: 1800s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

@@ -4,7 +4,8 @@ MSATS_PER_BTC = 100_000_000_000
 MAX_MSATS = 21_000_000 * MSATS_PER_BTC
 MICRODOLLARS_PER_DOLLAR = 1_000_000
 MAX_MICRODOLLARS = 2**63 - 1
-# Wire contract with trusted_router.storage_lightning; root CI checks parity.
+# Was the wire contract with trusted_router.storage_lightning, deleted from the
+# root repository on 2026-11-18 together with its parity test.
 MAX_CREDIT_RECEIPT = 2_002_000_000
 
 
