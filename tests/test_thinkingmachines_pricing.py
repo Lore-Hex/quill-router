@@ -101,6 +101,62 @@ def test_retired_nvfp4_inkling_2_small_id_does_not_price_the_route(monkeypatch):
         thinkingmachines.fetch()
 
 
+def _with_extra_fields(feeds: dict[str, object], url: str, tinker_id: str, extra: dict) -> dict[str, object]:
+    feeds[url] = [{**row, **extra} if row["tinker_id"] == tinker_id else row for row in feeds[url]]
+    return feeds
+
+
+TIER = {"min_prompt_tokens": 128_000, "input": "$0.60", "cached_input": "$0.06", "output": "$2.00"}
+
+
+@pytest.mark.parametrize("extra", [
+    {"unit": "USD per 1000 tokens"},
+    # Neither feed states a unit today, so even a per-million spelling is a
+    # format change to review, not a value to guess at.
+    {"unit": "USD per 1M tokens"},
+    {"currency": "EUR"},
+    {"tiers": [TIER]},
+    {"ranges": [{"max_prompt_tokens": 128_000}]},
+    {"max_prompt_tokens": 128_000},
+])
+def test_serverless_row_with_a_stated_unit_tier_or_condition_is_refused(monkeypatch, extra):
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SERVERLESS_URL, "thinkingmachines/Inkling-2-Small:peft:262144", extra
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"unreviewed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("extra", [
+    {"unit": "USD per 1000 tokens"},
+    {"tiers": [{"min_prompt_tokens": 128_000, "prefill": "$7.56", "sample": "$24.30"}]},
+    {"condition": "prompts up to 128K tokens"},
+])
+def test_sampler_row_with_a_stated_unit_tier_or_condition_is_refused(monkeypatch, extra):
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SAMPLER_URL, "zai-org/GLM-5.3:peft:262144", extra)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"unreviewed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+def test_documented_discount_fields_still_price_at_the_current_rate(monkeypatch):
+    # models.json documents original_* fields and a note for temporarily
+    # discounted models (eight live rows carry them); they stay readable.
+    discount = {
+        "note": "Limited-time 50% discount", "original_prefill": "$7.56",
+        "original_cached_prefill": "$1.512", "original_sample": "$24.30", "original_train": "$29.16",
+    }
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SAMPLER_URL, "zai-org/GLM-5.3:peft:262144", discount)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    assert thinkingmachines.fetch().prices["z-ai/glm-5.3"] == ModelPrice(
+        3_780_000, 12_150_000, prompt_cached_micro_per_m=756_000
+    )
+
+
 def test_committed_manifest_upstream_ids_are_the_exact_priced_ids() -> None:
     # A refresh writes prices onto manifest rows by catalog id. Each priced
     # row's upstream_id must be the exact Tinker ID the price was read for,

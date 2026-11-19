@@ -54,11 +54,33 @@ MANIFEST_PATH = (
 )
 
 
+# Every key Tinker documents for each feed (tinker/models/, "Machine-Readable
+# Pricing"), including models.json's temporary-discount fields. A priced row
+# with any other key (a unit, currency, tier, range or condition) is refused,
+# not read as one flat price. Neither feed states a unit today: the docs give
+# per-million-token "$x" strings, so a stated unit is a format change that
+# needs review, whatever it says.
+_DOCUMENTED_ROW_KEYS = {
+    ("input", "cached_input", "output"): frozenset(
+        {"name", "url", "tinker_id", "context", "input", "cached_input", "output"}
+    ),
+    ("prefill", "cached_prefill", "sample"): frozenset(
+        {
+            "name", "url", "tinker_id", "type", "arch", "size", "params",
+            "active_params", "context", "prefill", "cached_prefill", "sample",
+            "train", "note", "original_prefill", "original_cached_prefill",
+            "original_sample", "original_train",
+        }
+    ),
+}
+
+
 def _json_prices(
     payload: object, model_ids: dict[str, str], fields: tuple[str, str, str]
 ) -> dict[str, ModelPrice]:
     if not isinstance(payload, list):
         raise RuntimeError("thinkingmachines: pricing feed must be a list")
+    row_keys = _DOCUMENTED_ROW_KEYS[fields]
     prices: dict[str, ModelPrice] = {}
     for row in payload:
         if not isinstance(row, dict):
@@ -66,6 +88,11 @@ def _json_prices(
         native_id = row.get("tinker_id")
         if not isinstance(native_id, str) or native_id not in model_ids:
             continue
+        unreviewed = sorted(set(row) - row_keys)
+        if unreviewed:
+            raise RuntimeError(
+                f"thinkingmachines: unreviewed pricing field(s) {unreviewed} for {native_id}"
+            )
         amounts = []
         for field in fields:
             value = row.get(field)
