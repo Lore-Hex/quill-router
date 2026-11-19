@@ -19,7 +19,11 @@ MAX_WORKSPACE_MEMBER_IDENTIFIER_LENGTH = 320
 
 
 def register_workspace_routes(router: APIRouter) -> None:
-    @router.get("/workspaces")
+    @router.get(
+        "/workspaces",
+        summary="List workspaces",
+        description="List workspaces accessible to the authenticated user, or the current workspace for a management API key.",
+    )
     def workspaces(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         if principal.user:
             items = STORE.list_workspaces_for_user(principal.user.id)
@@ -27,7 +31,12 @@ def register_workspace_routes(router: APIRouter) -> None:
             items = [principal.workspace]
         return {"data": [workspace_shape(w) for w in items]}
 
-    @router.post("/workspaces")
+    @router.post(
+        "/workspaces",
+        summary="Create a workspace",
+        description="Create a workspace for the authenticated user. Requires user authentication; a management API key without a user cannot create a workspace. The name defaults to Workspace when absent or empty.",
+        openapi_extra={'requestBody': {'required': True, 'content': {'application/json': {'schema': {'type': 'object', 'properties': {'name': {'type': 'string', 'default': 'Workspace'}}}}}}},
+    )
     async def create_workspace(request: Request, principal: ManagementPrincipal) -> JSONResponse:
         if principal.user is None:
             raise api_error(403, "User auth is required to create workspaces", ErrorType.FORBIDDEN)
@@ -41,12 +50,21 @@ def register_workspace_routes(router: APIRouter) -> None:
         )
         return JSONResponse({"data": workspace_shape(workspace)}, status_code=201)
 
-    @router.get("/workspaces/{id}")
+    @router.get(
+        "/workspaces/{id}",
+        summary="Get a workspace",
+        description="Return a workspace the authenticated principal can manage.",
+    )
     def get_workspace(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         workspace = _require_managed_workspace(id, principal)
         return {"data": workspace_shape(workspace)}
 
-    @router.patch("/workspaces/{id}")
+    @router.patch(
+        "/workspaces/{id}",
+        summary="Update a workspace",
+        description="Update the name of a managed workspace. Prompt/output content storage cannot be enabled.",
+        openapi_extra={'requestBody': {'required': True, 'content': {'application/json': {'schema': {'type': 'object', 'properties': {'name': {'type': 'string'}, 'content_storage_enabled': {'type': 'boolean', 'enum': [False]}}}}}}},
+    )
     async def patch_workspace(
         id: str,  # noqa: A002
         request: Request,
@@ -69,13 +87,22 @@ def register_workspace_routes(router: APIRouter) -> None:
             workspace = updated
         return {"data": workspace_shape(workspace)}
 
-    @router.delete("/workspaces/{id}")
+    @router.delete(
+        "/workspaces/{id}",
+        summary="Delete a workspace",
+        description="Mark a managed workspace as deleted.",
+    )
     def delete_workspace(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         workspace = _require_managed_workspace(id, principal)
         STORE.update_workspace(workspace.id, deleted=True)
         return {"data": {"deleted": True, "id": id}}
 
-    @router.post("/workspaces/{id}/members/add")
+    @router.post(
+        "/workspaces/{id}/members/add",
+        summary="Add workspace members",
+        description="Add members by email to a managed workspace. Supports member or admin roles and at most 100 identifiers.",
+        openapi_extra={'requestBody': {'required': True, 'content': {'application/json': {'schema': {'type': 'object', 'properties': {'emails': {'type': 'array', 'maxItems': 100, 'items': {'type': 'string'}}, 'members': {'type': 'array', 'maxItems': 100, 'items': {'type': 'string'}, 'description': 'Alias for emails.'}, 'role': {'type': 'string', 'enum': ['member', 'admin'], 'default': 'member'}}}}}}},
+    )
     async def add_workspace_members(
         id: str,  # noqa: A002
         request: Request,
@@ -118,7 +145,12 @@ def register_workspace_routes(router: APIRouter) -> None:
 
         return await run_in_threadpool(add_members)
 
-    @router.post("/workspaces/{id}/members/remove")
+    @router.post(
+        "/workspaces/{id}/members/remove",
+        summary="Remove workspace members",
+        description="Remove members by user ID from a managed workspace. Supports at most 100 identifiers.",
+        openapi_extra={'requestBody': {'required': True, 'content': {'application/json': {'schema': {'type': 'object', 'properties': {'user_ids': {'type': 'array', 'maxItems': 100, 'items': {'type': 'string'}}, 'members': {'type': 'array', 'maxItems': 100, 'items': {'type': 'string'}, 'description': 'Alias for user_ids.'}}}}}}},
+    )
     async def remove_workspace_members(
         id: str,  # noqa: A002
         request: Request,
@@ -141,7 +173,11 @@ def register_workspace_routes(router: APIRouter) -> None:
         await run_in_threadpool(remove_members)
         return {"data": {"removed": len(normalized_user_ids)}}
 
-    @router.get("/organization/members")
+    @router.get(
+        "/organization/members",
+        summary="List workspace members",
+        description="List members of the current authenticated workspace.",
+    )
     def organization_members(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         return {"data": [member_shape(m) for m in STORE.list_members(principal.workspace.id)]}
 

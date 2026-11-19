@@ -40,7 +40,11 @@ log = logging.getLogger(__name__)
 
 
 def register_byok_routes(router: APIRouter) -> None:
-    @router.get("/byok/providers")
+    @router.get(
+        "/byok/providers",
+        summary="List configured BYOK providers",
+        description="List BYOK provider configurations for the authenticated workspace. Returns metadata and key hints, never raw credentials. Served on https://trustedrouter.com/v1.",
+    )
     def byok_providers(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         configs = STORE.list_byok_providers(principal.workspace.id)
         # Prefer a post-split row when both exist, and never expose the retired
@@ -53,7 +57,11 @@ def register_byok_routes(router: APIRouter) -> None:
             rows.setdefault(public_provider, shape)
         return {"data": list(rows.values())}
 
-    @router.get("/byok/providers/{provider}")
+    @router.get(
+        "/byok/providers/{provider}",
+        summary="Get a BYOK provider",
+        description="Get one workspace provider configuration; returns 404 when not configured. Served on https://trustedrouter.com/v1.",
+    )
     def byok_provider(provider: str, principal: ManagementPrincipal) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
         config = _get_byok_provider(principal.workspace.id, slug)
@@ -63,7 +71,11 @@ def register_byok_routes(router: APIRouter) -> None:
         shape["provider"] = slug
         return {"data": shape}
 
-    @router.put("/byok/providers/{provider}")
+    @router.put(
+        "/byok/providers/{provider}",
+        summary="Set the default BYOK key",
+        description="Create or replace the default upstream provider key while retaining other keys. Requires management authentication and BYOK registration eligibility. Upload api_key or a provider-native credential object. Served on https://trustedrouter.com/v1.",
+    )
     def upsert_byok_provider(
         provider: str,
         body: UpsertByokRequest,
@@ -106,14 +118,22 @@ def register_byok_routes(router: APIRouter) -> None:
             status_code=201 if created else 200,
         )
 
-    @router.get("/byok/providers/{provider}/keys")
+    @router.get(
+        "/byok/providers/{provider}/keys",
+        summary="List BYOK keys",
+        description="List key metadata for a workspace provider, without exposing credentials. An unconfigured provider returns an empty list. Served on https://trustedrouter.com/v1.",
+    )
     def list_byok_keys(provider: str, principal: ManagementPrincipal) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
         config = _get_byok_provider(principal.workspace.id, slug)
         keys = [] if config is None else config.all_keys()
         return {"data": [byok_key_shape(key) for key in keys]}
 
-    @router.post("/byok/providers/{provider}/keys")
+    @router.post(
+        "/byok/providers/{provider}/keys",
+        summary="Create a BYOK key",
+        description="Add an upstream provider credential to the authenticated workspace. The first key becomes the default. Requires management authentication and BYOK registration eligibility. Returns the created key ID and metadata. Served on https://trustedrouter.com/v1.",
+    )
     def create_byok_key(
         provider: str,
         body: CreateByokKeyRequest,
@@ -168,7 +188,11 @@ def register_byok_routes(router: APIRouter) -> None:
         key = next(key for key in config.all_keys() if key.id == added_id)
         return JSONResponse({"data": byok_key_shape(key)}, status_code=201)
 
-    @router.patch("/byok/providers/{provider}/keys/{key_id}")
+    @router.patch(
+        "/byok/providers/{provider}/keys/{key_id}",
+        summary="Update a BYOK key",
+        description="Update credential or routing policy fields for a workspace BYOK key. Omitted policy fields are unchanged; credential replacement requires registration eligibility. Served on https://trustedrouter.com/v1.",
+    )
     def patch_byok_key(
         provider: str,
         key_id: str,
@@ -200,7 +224,11 @@ def register_byok_routes(router: APIRouter) -> None:
         key = next(key for key in config.all_keys() if key.id == key_id)
         return {"data": byok_key_shape(key)}
 
-    @router.delete("/byok/providers/{provider}/keys/{key_id}")
+    @router.delete(
+        "/byok/providers/{provider}/keys/{key_id}",
+        summary="Delete a BYOK key",
+        description="Remove one stored workspace credential. Deleting the default promotes another key; deleting the last removes the provider configuration. Does not revoke the upstream credential. Served on https://trustedrouter.com/v1.",
+    )
     def delete_byok_key(provider: str, key_id: str, principal: ManagementPrincipal) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
         storage = _require_byok_key(principal.workspace.id, slug, key_id).provider
@@ -250,7 +278,11 @@ def register_byok_routes(router: APIRouter) -> None:
                 STORE.mutate_byok_provider(principal.workspace.id, alias, remove_if_unchanged)
         return {"data": {"deleted": True, "provider": slug, "id": key_id}}
 
-    @router.delete("/byok/providers/{provider}")
+    @router.delete(
+        "/byok/providers/{provider}",
+        summary="Delete a BYOK provider",
+        description="Remove the provider configuration and all its stored workspace keys. Does not revoke credentials at the upstream provider. Served on https://trustedrouter.com/v1.",
+    )
     def delete_byok_provider(
         provider: str,
         principal: ManagementPrincipal,

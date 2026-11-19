@@ -6,7 +6,7 @@
     <h2>Azure OpenAI promises privacy in a contract; TrustedRouter proves it with hardware attestation you can check live.</h2>
     <p>Teams comparing alternatives to Azure OpenAI usually landed there for one reason: the data-handling terms. Then the operational bill arrives. Deployment quotas that take support tickets to raise. Models retired on Microsoft's schedule, with the migration work left to you. A catalog that only ever holds one vendor's models.</p>
     <p>TrustedRouter keeps the property you were buying. Every prompt runs through a hardware-attested confidential-compute gateway. The gateway source is open, the image digest is published, and one curl returns an attestation signed by the CPU vendor's root key, bound to your live TLS session. {{ content_handling_claim }} Privacy you can check beats privacy you're promised.</p>
-    <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/choose">Browse 220+ models</a></p>
+    <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/choose">Browse 600+ models</a></p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>migrate.py</span><span>Python</span></div>
@@ -24,14 +24,14 @@ reply = client.chat.completions.create(
   </div>
 </section>
 <section class="marketing-grid three">
-  <div class="marketing-card"><span class="card-label">Capacity</span><h3>Automatic provider rollover</h3><p>Routes are served across 30+ providers. When a provider goes down, requests roll over to another serving the route automatically. Latency numbers come from real routed requests, published at <a href="/llm-provider-latency-benchmarks">the latency benchmarks</a>.</p></div>
-  <div class="marketing-card"><span class="card-label">Catalog</span><h3>220+ models, 30+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5 and more behind one OpenAI-compatible API. Meta-routes decide per request: trustedrouter/auto for best fit, trustedrouter/cheap for the cheapest capable route. <code>trustedrouter/frontier</code>, <code>trustedrouter/advanced</code>, <code>trustedrouter/professional</code>, and <code>trustedrouter/efficient</code> use fixed ordered pools with no synthesis or implicit privacy floor. Compare at <a href="/choose">/choose</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Capacity</span><h3>Automatic provider rollover</h3><p>Routes are served across 100+ providers. When a provider goes down, requests roll over to another serving the route automatically. Latency numbers come from real routed requests, published at <a href="/llm-provider-latency-benchmarks">the latency benchmarks</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Catalog</span><h3>600+ models, 100+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5 and more behind one OpenAI-compatible API. Meta-routes decide per request: trustedrouter/auto for best fit, trustedrouter/cheap for the cheapest capable route. <code>trustedrouter/frontier</code>, <code>trustedrouter/advanced</code>, <code>trustedrouter/professional</code>, and <code>trustedrouter/efficient</code> use fixed ordered pools with no synthesis or implicit privacy floor. Compare at <a href="/choose">/choose</a>.</p></div>
   <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Set privacy per route</h3><p>Three tiers: Open, Zero-Data-Retention, and TEE, where even the serving provider cannot read the prompt. {{ vendor_exclusion_claim }} Details on the <a href="/security">security page</a>.</p></div>
 </section>
 <section class="compare-matrix" aria-label="Azure OpenAI vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>Azure OpenAI</strong><strong>TrustedRouter</strong></div>
   <div class="matrix-row"><span>Privacy model</span><span>Contractual commitments backed by Microsoft's compliance program</span><span>Hardware attestation bound to the live TLS session; open-source gateway, published image digest</span></div>
-  <div class="matrix-row"><span>Model catalog</span><span>OpenAI models, tightly integrated with Azure services</span><span>220+ routes across 30+ providers: Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, more</span></div>
+  <div class="matrix-row"><span>Model catalog</span><span>OpenAI models, tightly integrated with Azure services</span><span>600+ models across 100+ providers: Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, more</span></div>
   <div class="matrix-row"><span>Capacity</span><span>Reserved capacity if approved; quotas set per region and deployment</span><span>Automatic provider fallback; requests roll over when a provider goes down</span></div>
   <div class="matrix-row"><span>Model lifecycle</span><span>Models retire on Microsoft's schedule; migrations are your work</span><span>Multi-provider routes; no single vendor decides what stays available</span></div>
   <div class="matrix-row"><span>Network and billing</span><span>VNet integration, private endpoints, committed-spend agreements</span><span>Public attested endpoint; prepaid credits, BYOK, or crypto pay-per-request</span></div>

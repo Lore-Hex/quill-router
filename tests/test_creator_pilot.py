@@ -33,7 +33,7 @@ def test_creator_quickstart_is_public_and_campaign_attributed(
     )
 
     assert response.status_code == 200
-    assert "Test hundreds of AI models without rewriting your app." in response.text
+    assert "Test 600+ models without rewriting your app." in response.text
     assert response.text.count("Create my test key") == 3
     assert 'base_url="https://api.trustedrouter.com/v1"' in response.text
     assert "trustedrouter/fast" in response.text

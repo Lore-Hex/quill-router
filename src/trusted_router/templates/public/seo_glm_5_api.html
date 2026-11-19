@@ -24,13 +24,13 @@ print(r.choices[0].message.content)</code></pre>
   </div>
 </section>
 <section class="marketing-grid three">
-  <div class="marketing-card"><span class="card-label">Model routes</span><h3>Three GLM routes, one API</h3><p>glm-5, glm-5.2, and glm-5.2-fast are all live, alongside 220+ model routes across 30+ providers. When a hosting provider fails, requests roll over automatically. Kimi, DeepSeek, and Qwen run the same way; see <a href="/chinese-ai-models-us-hosted">Chinese open models served without the vendor</a> and <a href="/llm-provider-latency-benchmarks">measured latency data</a> from real routed requests.</p></div>
+  <div class="marketing-card"><span class="card-label">Model routes</span><h3>Three GLM routes, one API</h3><p>glm-5, glm-5.2, and glm-5.2-fast are all live, alongside 600+ models across 100+ providers. When a hosting provider fails, requests roll over automatically. Kimi, DeepSeek, and Qwen run the same way; see <a href="/chinese-ai-models-us-hosted">Chinese open models served without the vendor</a> and <a href="/llm-provider-latency-benchmarks">measured latency data</a> from real routed requests.</p></div>
   <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>ZDR and TEE on the prompt path</h3><p>Pick Zero-Data-Retention routes, where providers contractually keep nothing, or TEE routes, where end-to-end confidential compute means even the provider cannot read the prompt. Details at <a href="/security">/security</a>.</p></div>
   <div class="marketing-card"><span class="card-label">Measured behavior</span><h3>Host-applied filtering, measured</h3><p>We ran 60 sensitive questions against the same GLM weights twice. The vendor-hosted API answered 30. The attested TrustedRouter route answered all 60. The filtering is applied by the serving host.</p></div>
 </section>
 <section class="compare-matrix" aria-label="z.ai vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>z.ai</strong><strong>TrustedRouter</strong></div>
-  <div class="matrix-row"><span>Model access</span><span>Direct, first-party endpoint from the team that builds GLM</span><span>glm-5, glm-5.2, and glm-5.2-fast among 220+ routes</span></div>
+  <div class="matrix-row"><span>Model access</span><span>Direct, first-party endpoint from the team that builds GLM</span><span>glm-5, glm-5.2, and glm-5.2-fast among 600+ models</span></div>
   <div class="matrix-row"><span>Privacy verification</span><span>A privacy policy you take on trust</span><span>Live hardware attestation, open-source gateway, published image digest</span></div>
   <div class="matrix-row"><span>Prompt path</span><span>Prompts are processed on the model vendor's servers</span><span>Confidential requests never reach the model vendor; ZDR and TEE tiers</span></div>
   <div class="matrix-row"><span>Sensitive questions, our 60-question test</span><span>30 of 60 answered</span><span>60 of 60 answered, same weights</span></div>

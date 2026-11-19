@@ -5,7 +5,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">Sign in with TrustedRouter</span>
     <h2>Add a button. Your users bring their own AI.</h2>
-    <p>&ldquo;Sign in with TrustedRouter&rdquo; is the &ldquo;Sign in with Google&rdquo; of AI. Add one button to your app. Your users authenticate with their TrustedRouter account, add credits if needed, choose your app&rsquo;s maximum spend, and grant you a scoped key. Your app can call hundreds of models on <em>their</em> credits, not yours.</p>
+    <p>&ldquo;Sign in with TrustedRouter&rdquo; is the &ldquo;Sign in with Google&rdquo; of AI. Add one button to your app. Your users authenticate with their TrustedRouter account, add credits if needed, choose your app&rsquo;s maximum spend, and grant you a scoped key. Your app can call 600+ models on <em>their</em> credits, not yours.</p>
     <p>You ship AI features with <strong>no API keys to manage, no inference bill, and no per-user billing to build</strong>. Every call runs through the open-source, hardware-attested gateway that provably never logs prompts.</p>
     <p>
       <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
@@ -40,7 +40,7 @@ const { key, identity } = await flow.handleCallback();
   <div class="marketing-card">
     <span class="card-label">3</span>
     <h3>Use any AI, instantly</h3>
-    <p>Use the returned key for <code>/v1/chat/completions</code>, <code>/responses</code>, or <code>/embeddings</code> across hundreds of models. Usage bills to your user&rsquo;s credits.</p>
+    <p>Use the returned key for <code>/v1/chat/completions</code>, <code>/responses</code>, or <code>/embeddings</code> across 600+ models. Usage bills to your user&rsquo;s credits.</p>
   </div>
 </section>
 
@@ -107,7 +107,7 @@ Persist the key + identity.email per signed-in user.</code></pre>
   <div class="marketing-card">
     <span class="card-label">You ship</span>
     <h3>Zero keys, zero inference cost.</h3>
-    <p>No provider API keys to vault or rotate. No inference bill &mdash; tokens bill to the signed-in user. No per-user metering or limits to build; scoped keys carry their own caps. Hundreds of models across every provider, behind one OpenAI-compatible API.</p>
+    <p>No provider API keys to vault or rotate. No inference bill &mdash; tokens bill to the signed-in user. No per-user metering or limits to build; scoped keys carry their own caps. 600+ models across 100+ providers, behind one OpenAI-compatible API.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Your users get</span>
@@ -178,7 +178,7 @@ let token = try await oauth.authenticate(
     <span>Per-user limits + billing</span><span>Build and run it</span><span>Built in &mdash; spend caps per key</span>
   </div>
   <div class="matrix-row">
-    <span>Models available</span><span>Whatever you integrated</span><span>Hundreds, every provider, one API</span>
+    <span>Models available</span><span>Whatever you integrated</span><span>600+ models, one API</span>
   </div>
   <div class="matrix-row">
     <span>Prompt privacy</span><span>Trust each provider's logs policy</span><span>Attested no-log gateway, verifiable</span>

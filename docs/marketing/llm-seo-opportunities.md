@@ -119,7 +119,7 @@ Every new SEO page should include:
 Preferred plain-language positioning:
 
 - Better trust: open-source router, public attestation, published source commit, published image digest, no prompt/output logs by default.
-- Faster integration: one OpenAI-compatible base URL and one API key across hundreds of models.
+- Faster integration: one OpenAI-compatible base URL and one API key across 600+ models.
 - Lower-cost choices: low-cost open-weight routes for GLM, DeepSeek, Gemma, Kimi, MiniMax, Qwen, and others.
 - Better reliability: provider fallback, status pages, leaderboard samples, and regional APIs.
 

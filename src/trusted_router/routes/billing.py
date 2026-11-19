@@ -171,7 +171,7 @@ def register_billing_routes(router: APIRouter) -> None:
             }
         }
 
-    @router.post("/billing/x402/fund")
+    @router.post("/billing/x402/fund", openapi_extra={"security": [{"BearerAuth": []}]})
     async def billing_x402_fund(
         request: Request,
         settings: SettingsDep,
@@ -222,7 +222,7 @@ def register_billing_routes(router: APIRouter) -> None:
             headers={X402_HEADER: str(challenge["payment_required_header"])},
         )
 
-    @router.post("/billing/x402/settle")
+    @router.post("/billing/x402/settle", openapi_extra={"security": [{"BearerAuth": []}]})
     async def billing_x402_settle(
         request: Request,
         settings: SettingsDep,

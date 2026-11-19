@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.dependencies.models import Dependant
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
@@ -35,6 +36,33 @@ def document_router_server(router: APIRouter) -> None:
             route.openapi_extra = {**(route.openapi_extra or {}), "servers": inference_servers()}
 
 
+# Schema metadata only: authentication continues to be enforced by the existing
+# dependencies and handlers. Public catalog/pages and unsupported stubs stay public.
+BEARER_SECURITY: list[dict[str, list[str]]] = [{"BearerAuth": []}]
+
+
+def _requires_bearer(dependant: Dependant) -> bool:
+    call = dependant.call
+    if (
+        getattr(call, "__module__", "") == "trusted_router.auth"
+        and getattr(call, "__qualname__", "") in {
+            "require_management", "require_inference_key", "require_authenticated",
+            "require_scope.<locals>.dependency",
+        }
+    ):
+        return True
+    return any(_requires_bearer(child) for child in dependant.dependencies)
+
+
+def _document_authentication(router: Any) -> None:
+    for route in router.routes:
+        # FastAPI >= 0.141 keeps included routers nested instead of flattening.
+        if hasattr(route, "original_router"):
+            _document_authentication(route.original_router)
+        elif isinstance(route, APIRoute) and _requires_bearer(route.dependant):
+            route.openapi_extra = {**(route.openapi_extra or {}), "security": BEARER_SECURITY}
+
+
 def install_operation_servers(app: FastAPI, api: APIRouter) -> None:
     """Derive account/API ownership from registration, with gateway overrides.
 
@@ -48,7 +76,17 @@ def install_operation_servers(app: FastAPI, api: APIRouter) -> None:
     def openapi() -> dict[str, Any]:
         if app.openapi_schema is not None:
             return app.openapi_schema
+        _document_authentication(app)
         schema = original_openapi()
+        schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "TrustedRouter API key",
+            "description": (
+                "Send Authorization: Bearer <TrustedRouter API key>. Management operations "
+                "require a management key or management session; inference requires an inference key."
+            ),
+        }
         api_paths = get_openapi(title=app.title, version=app.version, routes=api.routes)["paths"]
         for path, path_item in schema["paths"].items():
             for method, operation in path_item.items():

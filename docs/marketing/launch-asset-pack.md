@@ -104,8 +104,7 @@ the whole ballgame.
   DB" worry is exactly what verification removes.)
 - *"Why not just use GCP confidential computing directly?"* → You can, for
   one provider, if you build all the routing/billing/fallback/attestation
-  plumbing yourself. TR is that plumbing, open-source, verifiable, across 30+
-  providers — so you're not locked to one cloud's models.
+  plumbing yourself. TR is that plumbing, open-source, verifiable, across 100+ providers — so you're not locked to one cloud's models.
 - *"How do I actually trust the attestation / what stops you faking it?"* →
   The JWT is signed by Google's hardware-backed attestation service, not by us. We can't forge
   that signature. The nonce you supply prevents replay. Exact commands: /security.
@@ -174,7 +173,7 @@ It's a drop-in OpenRouter replacement.
 
 Change one base_url. Keep your OpenAI SDK, your model IDs, your code.
 
-30+ providers — Claude, GPT, Gemini, DeepSeek, Kimi, Llama, Mistral. One key.
+100+ providers — Claude, GPT, Gemini, DeepSeek, Kimi, Llama, Mistral. One key.
 ```
 
 **Tweet 5:**
@@ -229,7 +228,7 @@ attestation service; the image_digest matches the hash of the open-source build.
 can verify the exact code that's handling your prompts, instead of trusting
 a policy.
 
-OpenAI-compatible (change one base_url), 30+ providers, prompt/output bodies
+OpenAI-compatible (change one base_url), 100+ providers, prompt/output bodies
 never persisted (verifiable in source), fails closed if attestation breaks.
 
 Open source, and you can self-host — your built image hash is what your
@@ -271,7 +270,7 @@ For teams in healthcare, legal, and finance that can't put sensitive data
 through an opaque router: this is privacy you can audit, not privacy you have
 to take on faith.
 
-Same API as the router you're already using. 30+ models. One key. Self-hostable.
+Same API as the router you're already using. 600+ models. One key. Self-hostable.
 
 Try it: trustedrouter.com/chat
 The thinking behind it: jperla.com/blog/attestation-is-all-you-need
@@ -290,7 +289,7 @@ Hey PH 👋 I'm Joseph. Every LLM API promises not to log your prompts;
 TrustedRouter lets you verify it. The gateway runs in hardware enclaves
 and signs the exact binary it's running — you challenge it with a nonce
 and check the hash against our open source. Same API as OpenRouter,
-30+ models, self-hostable. Try it free (no signup) at the chat
+600+ models, self-hostable. Try it free (no signup) at the chat
 playground. Would love your feedback on the verification flow.
 ```
 - **Topics:** Artificial Intelligence, Developer Tools, Privacy, Open Source

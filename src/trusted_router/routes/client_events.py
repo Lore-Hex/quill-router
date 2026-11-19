@@ -110,7 +110,7 @@ def _enforce_client_events_limits(
 
 
 def register_client_events_routes(router: APIRouter) -> None:
-    @router.post("/client-events")
+    @router.post("/client-events", openapi_extra={"security": [{"BearerAuth": []}]})
     async def client_events(request: Request) -> JSONResponse:
         settings: Settings = request.app.state.settings
         if not settings.client_events_enabled:

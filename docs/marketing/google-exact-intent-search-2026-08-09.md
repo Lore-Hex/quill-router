@@ -64,7 +64,7 @@ No Prompt Or Output Logs
 Automatic Provider Failover
 Open Source AI Router
 Privacy With Proof
-Hundreds Of Models
+600+ models
 Start In Minutes
 ```
 
@@ -72,7 +72,7 @@ Descriptions:
 
 ```text
 Keep your SDK and model IDs. Change one base URL to migrate from OpenRouter.
-Route hundreds of models through an attested open source gateway with zero content logs.
+Route 600+ models through an attested open source gateway with zero content logs.
 Automatic provider failover, a 5.5% fee, prepaid credits, and BYOK. No subscription.
 Create a key, use your existing code, and run the first request with starter credit.
 ```
@@ -144,7 +144,7 @@ Reduce LLM Provider Risk
 OpenAI Compatible Gateway
 Live Provider Benchmarks
 Route Around 429s And 5xx
-Hundreds Of Model Routes
+600+ models
 Test Failover In Minutes
 ```
 
@@ -186,7 +186,7 @@ No Separate Provider Accounts
 OpenAI Compatible API
 Provider Fallback Included
 Privacy Labels Per Route
-Hundreds Of Current Models
+600+ models
 ```
 
 Descriptions:

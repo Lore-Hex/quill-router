@@ -32,7 +32,7 @@ print(resp.choices[0].message.content)</code></pre>
 </section>
 <section class="compare-matrix" aria-label="OpenRouter vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong></div>
-  <div class="matrix-row"><span>Catalog</span><span>Broad multi-provider catalog; M3 is top-5 there by token share</span><span>220+ routes across 30+ providers, M3 included</span></div>
+  <div class="matrix-row"><span>Catalog</span><span>Broad multi-provider catalog; M3 is top-5 there by token share</span><span>600+ models across 100+ providers, M3 included</span></div>
   <div class="matrix-row"><span>Privacy model</span><span>Policy-based</span><span>Hardware attestation you can check live against an open-source gateway</span></div>
   <div class="matrix-row"><span>Privacy tiers</span><span>Set by provider policy</span><span>Chosen per request; each route's tier is on the models page</span></div>
   <div class="matrix-row"><span>API</span><span>OpenAI-compatible</span><span>OpenAI-compatible; migrate by changing base_url</span></div>
@@ -42,7 +42,7 @@ print(resp.choices[0].message.content)</code></pre>
   <div><span class="eyebrow">Verify, don't trust</span><h2>Attestation beats a privacy policy.</h2></div>
   <div>
     <p>Every M3 prompt runs inside a hardware-attested confidential-compute gateway. The gateway source is open and the image digest is published. Ask it to prove itself: <code>curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"</code> returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed. See <a href="/security">/security</a>.</p>
-    <p>Routing path matters for Chinese open weights. In our GLM test, the same weights answered 60 of 60 sensitive questions through the enclave versus 30 of 60 via the vendor-hosted API. The filtering is host-applied, not in the weights. One proof point on scale: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Also on the roster: Kimi K2.7, among 220+ model routes across 30+ providers.</p>
+    <p>Routing path matters for Chinese open weights. In our GLM test, the same weights answered 60 of 60 sensitive questions through the enclave versus 30 of 60 via the vendor-hosted API. The filtering is host-applied, not in the weights. One proof point on scale: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Also on the roster: Kimi K2.7, among 600+ models across 100+ providers.</p>
   </div>
 </section>
 {% endblock %}

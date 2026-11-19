@@ -14,7 +14,7 @@
 
 Stop worrying about who can see your prompts. Tell your coding agent to move
 your project over, pick how private you want to be, pick a model, drop in a
-key — done. Same API, 30+ models, one key. The gateway runs in hardware
+key — done. Same API, 600+ models, one key. The gateway runs in hardware
 enclaves and you can cryptographically verify it never logs you.
 
 ### Move your project over in one prompt
@@ -45,7 +45,7 @@ Then:
    `trustedrouter/e2e` (`trustedrouter/confidential`) aliases select those
    pools. Use `trustedrouter/eu` with
    `https://api-europe-west4.quillrouter.com/v1` for EU-focused routing.
-2. **Pick a model** — any of hundreds, or `trustedrouter/auto` for automatic
+2. **Pick a model** — any of 600+ models, or `trustedrouter/auto` for automatic
    fallback when provider breadth matters more than the strictest privacy
    filter.
 3. **Sign up, add a card, get your key** at https://trustedrouter.com.
@@ -368,8 +368,8 @@ The goal is to support OpenRouter-class scale:
 - 1 trillion tokens/day, or about 11.6 million tokens/second averaged over a
   day.
 - 1-4 million developer accounts.
-- 300+ actively routable models.
-- 60+ providers.
+- 600+ models.
+- 100+ providers.
 - Global routing overhead competitive with edge-deployed routers.
 
 The current production deployment does **not** meet that target yet. It runs

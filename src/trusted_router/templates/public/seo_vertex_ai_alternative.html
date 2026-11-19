@@ -4,7 +4,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">Google Vertex AI alternative</span>
     <h2>If Vertex AI is only your Gemini endpoint, you are maintaining a cloud platform to make an API call.</h2>
-    <p>Vertex AI's standard path runs through a GCP project, IAM roles, service accounts, and region selection. TrustedRouter asks you to change one line. The API is OpenAI-compatible: point base_url at the gateway, keep your SDK and code, and get 220+ model routes across 30+ providers, Gemini included, with a single key.</p>
+    <p>Vertex AI's standard path runs through a GCP project, IAM roles, service accounts, and region selection. TrustedRouter asks you to change one line. The API is OpenAI-compatible: point base_url at the gateway, keep your SDK and code, and get 600+ models across 100+ providers, Gemini included, with a single key.</p>
     <p>First, a filter. If you want managed training pipelines, feature stores, and deployment tooling, Vertex is a real MLOps platform and a router will not replace it. If Vertex is the endpoint you call Gemini through, this page is for you.</p>
     <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/pricing">See per-model pricing</a></p>
   </div>
@@ -18,7 +18,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="trustedrouter/auto",  # or any of 220+ routes
+    model="trustedrouter/auto",  # or any of 600+ models
     messages=[{"role": "user", "content": "Hello"}],
 )
 print(resp.choices[0].message.content)</code></pre>
@@ -32,7 +32,7 @@ print(resp.choices[0].message.content)</code></pre>
 <section class="compare-matrix" aria-label="Vertex AI vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>Vertex AI</strong><strong>TrustedRouter</strong></div>
   <div class="matrix-row"><span>Onboarding</span><span>GCP project, IAM, service accounts, region selection. Smooth if you already run on Google Cloud.</span><span>One API key. Change base_url in an OpenAI SDK.</span></div>
-  <div class="matrix-row"><span>Model catalog</span><span>First-party home for Gemini, plus the Model Garden.</span><span>220+ routes across 30+ providers, Gemini included.</span></div>
+  <div class="matrix-row"><span>Model catalog</span><span>First-party home for Gemini, plus the Model Garden.</span><span>600+ models across 100+ providers, Gemini included.</span></div>
   <div class="matrix-row"><span>Training and MLOps</span><span>Full platform: pipelines, training, deployment. A real strength.</span><span>None. Inference only.</span></div>
   <div class="matrix-row"><span>Quotas and outages</span><span>Per-region quotas you request and manage.</span><span>Automatic provider fallback and meta-routes.</span></div>
   <div class="matrix-row"><span>Privacy verification</span><span>Policy and contract, within Google Cloud's terms.</span><span>Hardware-attested TEE gateway, open source, checkable live.</span></div>

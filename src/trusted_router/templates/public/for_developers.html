@@ -4,7 +4,7 @@
 <section class="public-hero marketing-hero developer-hero" aria-label="TrustedRouter for developers">
   <div>
     <div class="kicker">One API for every model</div>
-    <h1>Test hundreds of AI models without rewriting your app.</h1>
+    <h1>Test 600+ models without rewriting your app.</h1>
     <p class="lead">Keep the OpenAI client you already use. Change one base URL, run the same prompt across open and frontier models, and compare the result on price, speed, privacy, and reliability.</p>
     <div class="hero-actions">
       <button class="btn primary" type="button" data-action="open-signin">Create my test key</button>
@@ -13,7 +13,7 @@
     <p class="microcopy">No subscription. No card required. Text models cost the provider price plus 5.5%.</p>
   </div>
   <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
-    <div><strong>100s</strong><span>of model routes</span></div>
+    <div><strong>600+ models</strong><span>in one catalog</span></div>
     <div><strong>One</strong><span>OpenAI compatible client</span></div>
     <div><strong>Zero</strong><span>prompt or output logs</span></div>
   </div>
@@ -21,6 +21,7 @@
 {% endblock %}
 
 {% block body %}
+{% include "public/_sdk_choice.html" %}
 <section class="public-proof-strip" aria-label="Why developers use TrustedRouter">
   <div><strong>Keep your client</strong><span>One base URL replaces separate integrations for every provider.</span></div>
   <div><strong>Measure, do not guess</strong><span>Live prices, latency, throughput, and availability.</span></div>
@@ -84,7 +85,7 @@ for model in (
   <a class="marketing-card card-as-link" href="/models">
     <span class="card-label">Model choice</span>
     <h3>Stop integrating providers one at a time.</h3>
-    <p>Use one request format across hundreds of open and frontier model routes. Compare context, capabilities, privacy, and current pricing before you call.</p>
+    <p>Use one request format across 600+ models. Compare context, capabilities, privacy, and current pricing before you call.</p>
     <span class="card-link">Browse live models →</span>
   </a>
   <a class="marketing-card card-as-link" href="/leaderboard">

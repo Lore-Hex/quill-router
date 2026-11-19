@@ -207,4 +207,19 @@ def _add_current_openrouter_stubs(router: APIRouter) -> None:
         ("/workspaces/{id}/members", "GET"),
     )
     for path, method in routes:
-        router.add_api_route(path, stub, methods=[method])
+        metadata = {}
+        if path.startswith("/byok"):
+            metadata = {
+                "summary": "Unsupported BYOK compatibility endpoint",
+                "description": (
+                    "This compatibility endpoint returns 501 and does not manage keys. "
+                    "Use /v1/byok/providers and /v1/byok/providers/{provider}/keys on "
+                    "https://trustedrouter.com instead. See https://trustedrouter.com/docs/byok."
+                ),
+            }
+        elif path.startswith("/workspaces/"):
+            metadata = {
+                "summary": "Unsupported workspace compatibility endpoint",
+                "description": "This compatibility endpoint returns 501; it does not manage workspace budgets or members.",
+            }
+        router.add_api_route(path, stub, methods=[method], openapi_extra=metadata)
