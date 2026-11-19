@@ -403,8 +403,9 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
                     "Yes. The AI SDK is Apache-2.0 and provider-agnostic, and we maintain "
                     "an MIT-licensed AI SDK provider package. You must configure it "
                     "explicitly, because plain model strings default to Vercel's Gateway. "
-                    "Realtime voice, speech, transcription, and reranking calls have no "
-                    "TrustedRouter equivalent and would stay on Vercel."
+                    "TrustedRouter supports speech and transcription. Check the "
+                    "simple-start guide and endpoint documentation for request formats; "
+                    "realtime voice sessions and reranking do not carry over."
                 ),
             ),
         ),
@@ -435,7 +436,7 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
 <li>Attestation covers our gateway build, not downstream model providers. Provider retention is a cited policy tier on both platforms; the exception is <span class="mono">trustedrouter/e2e</span> routes (tinfoil, phala), where the provider's own confidential-compute and E2EE mechanisms apply.</li>
 <li>We publish no SOC 2 or HIPAA certification today. Vercel's platform holds SOC 2 Type 2 and ISO 27001:2022. If a certificate is a procurement gate, they clear it and we currently do not.</li>
 <li>We are young. Our public repos date from late April 2026, benchmark history from June 2026, and detailed on-page uptime covers about 72 hours plus monthly rollups against a 99.99% availability target on <a href="/status">/status</a>.</li>
-<li>Our catalog of 600+ models across 100+ providers centers on text, embeddings, and video. We do not match Vercel's realtime voice, speech, transcription, or reranking coverage.</li>
+<li>Our catalog of 600+ models across 100+ providers includes text, embeddings, speech, transcription, and video. See <a href="/docs/simple-start">simple start</a> for supported calls and documentation. Realtime voice sessions and reranking do not carry over.</li>
 </ul>
 
 <h2>Migration reality</h2>
