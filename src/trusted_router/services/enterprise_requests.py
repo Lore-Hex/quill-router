@@ -2,21 +2,15 @@
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import json
 import uuid
 from pathlib import Path
 from typing import Literal
 
-import google.auth
 from email_validator import validate_email
-from google.auth.transport.requests import AuthorizedSession
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
-BASE = "https://pubsub.googleapis.com/v1/projects/quill-cloud-proxy"
-TOPIC = f"{BASE}/topics/tr-enterprise-requests:publish"
-SUBSCRIPTION = f"{BASE}/subscriptions/tr-enterprise-requests-clickhouse"
 SITES = frozenset(json.loads((Path(__file__).parents[1] / "data/token_exchange_origins.json").read_text()))
 RequestKind = Literal["BUYER_DECK", "SECURITY_PACK", "MARKET_DATA", "SAMPLE_DATASET"]
 
@@ -49,15 +43,8 @@ class EnterpriseRequest(BaseModel):
         return value
 
 
-def queue_session() -> AuthorizedSession:
-    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/pubsub"])
-    session = AuthorizedSession(credentials)
-    session.trust_env = False
-    return session
-
-
 def publish_request(record: EnterpriseRequest) -> bool:
-    data = base64.b64encode(record.model_dump_json().encode()).decode("ascii")
-    with queue_session() as session:
-        response = session.post(TOPIC, json={"messages": [{"data": data}]}, timeout=5, allow_redirects=False)
-        return response.status_code == 200 and bool(response.json().get("messageIds"))
+    # This port is called only on the explicitly enabled GCP form surface.
+    from trusted_router.storage_gcp_enterprise_requests import publish
+
+    return publish(record.model_dump_json())

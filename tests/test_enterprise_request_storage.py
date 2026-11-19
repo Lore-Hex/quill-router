@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from clickhouse import ingest_enterprise_requests as ingest
+from trusted_router import storage_gcp_enterprise_requests as transport
 from trusted_router.routes import public
 from trusted_router.services import enterprise_requests as private
 
@@ -74,11 +75,11 @@ def test_publish_only_private_envelope(monkeypatch):
     session = MagicMock()
     session.__enter__.return_value = session
     session.post.return_value = response({"messageIds": ["42"]})
-    monkeypatch.setattr(private, "queue_session", lambda: session)
+    monkeypatch.setattr(transport, "queue_session", lambda: session)
     row = record()
     assert private.publish_request(row)
     url, = session.post.call_args.args
-    assert url == private.TOPIC
+    assert url == transport.TOPIC
     assert session.post.call_args.kwargs["allow_redirects"] is False
     [msg] = session.post.call_args.kwargs["json"]["messages"]
     assert set(msg) == {"data"}

@@ -56,9 +56,33 @@ replicas with a synchronous mutation and verify zero matches on each replica.
 Reconcile the enterprise inbox and any authorized CRM copies separately. Exclude
 erased records from any future historical import or restore.
 
-An authorized CRM worker needs SELECT on this table only, not general database
-or inbox access. Read with `FINAL`, use request UUID as the external event ID,
-match contacts by email, and merge request tags without replacing existing ones.
-A CRM sync and historical email backfill are separate steps, not activated by
-this deployment. MARKET_DATA and SAMPLE_DATASET are reserved types; only publish
-them from a verified intake source, never from a page view.
+The Twenty job consumes a separate subscription, not this table or the inbox.
+Only verified submissions belong here: MARKET_DATA and SAMPLE_DATASET are
+reserved for a verified intake or reviewed import, never inferred from page views.
+The job matches exact primary/additional emails, compares updatedAt before
+adding a tag, and does not overwrite names, other fields, or other tags.
+On ambiguous identity or transient errors it leaves the message unacknowledged.
+It sends no email and never enrolls anyone in a campaign.
+
+## Twenty activation
+
+1. Apply the reviewed infrastructure. Check the CRM job identity can consume
+   only its subscription and access only the dedicated secret. Do not grant it
+   ClickHouse, Gmail, Axiom, or billing access. Record backlog alert delivery.
+2. In the correct Twenty workspace provision a People-only API-key role (read,
+   create/update; no delete/settings). Confirm its assignment and store the
+   credential as a version of `tr-enterprise-twenty-key`, outside Terraform.
+   Never paste the key into the repository, command arguments, tickets or chat.
+3. Run `bash scripts/deploy/enterprise_twenty_job.sh IMAGE@sha256:DIGEST VERSION`
+   with the verified production control build containing this module. It
+   installs a dedicated Cloud Run job without enabling a new timer.
+4. Publish a controlled test submission, execute the job, and verify the
+   tagged person in Twenty. Replay the same message and then a different
+   request type for that address; verify **one** person with both tags.
+   Confirm only email and request tags were sent and the backlog drained.
+   A ClickHouse acknowledgement is not evidence of a CRM write.
+5. Re-run the script with the same arguments and `--verified-canary` to start
+   the five-minute authenticated scheduler. Verify two scheduled completions.
+   Pause that scheduler to roll back CRM independently; do not purge either
+   subscription. During erasure, reconcile pending CRM messages before removing
+   tags/contacts as required. Historical imports require their own reconciliation.
