@@ -3,6 +3,7 @@ import http.client
 import io
 import json
 import runpy
+import ssl
 import subprocess
 import sys
 import urllib.request
@@ -529,6 +530,30 @@ def test_public_read_gives_up_after_bounded_retries_with_a_safe_reason(public_re
     assert str(raised.value) == "GitHub monitoring API request failed (timeout)"
     assert sleeps == list(alerts.PUBLIC_READ_RETRY_DELAYS)
     assert len(opened) == 3
+
+
+@pytest.mark.parametrize("value", ["5 ", " 5", "\t5\t"])
+def test_public_read_honors_a_padded_retry_after(public_reads, value):
+    script, sleeps, _ = public_reads
+    script += [_http_error(429, {"retry-after": value}), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [5.0]
+
+
+def test_public_read_backoff_is_the_floor_under_a_tiny_retry_after(public_reads):
+    script, sleeps, _ = public_reads
+    script += [_http_error(429, {"retry-after": "1"})] * 2 + [b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0, 8.0]
+
+
+def test_public_read_does_not_retry_a_certificate_failure(public_reads):
+    script, sleeps, opened = public_reads
+    script.append(URLError(ssl.SSLCertVerificationError(1, "certificate has expired")))
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(TLS certificate verification failed\)$"):
+        alerts.public_gh("actions/runs/1")
+    assert sleeps == [] and len(opened) == 1
 
 
 def test_public_read_honors_a_short_retry_after(public_reads):

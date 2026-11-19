@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -87,7 +88,7 @@ class MonitoringReadError(RuntimeError):
 
 # One anonymous read in a few hundred fails transiently (2026-11-19 18:23Z:
 # one observer run errored, the next hour's run succeeded), and every failed
-# run raises and resolves a Cron issue. Retry each read at most twice.
+# run raised and then resolved a Cron issue. Retry each read at most twice.
 PUBLIC_READ_RETRY_DELAYS = (2.0, 8.0)
 # Honor a short Retry-After from a rate limit. A longer one (the anonymous
 # primary limit resets hourly) fails now instead of sleeping through the run.
@@ -130,14 +131,20 @@ def _read_failure(exc: Exception) -> tuple[str, float | None]:
         limited = exc.code == 429 or (exc.code == 403 and (
             headers.get("x-ratelimit-remaining") == "0" or headers.get("retry-after") is not None))
         if limited:
-            retry_after = str(headers.get("retry-after") or "")
-            if retry_after.isdigit() and int(retry_after) <= MAX_RETRY_AFTER_SECONDS:
+            # Field values may carry optional whitespace (RFC 9110), which
+            # urllib keeps.
+            retry_after = str(headers.get("retry-after") or "").strip()
+            if retry_after.isascii() and retry_after.isdigit() and int(retry_after) <= MAX_RETRY_AFTER_SECONDS:
                 return f"HTTP {exc.code}, rate limited", float(retry_after)
             return f"HTTP {exc.code}, rate limited", None
         if 500 <= exc.code < 600:
             return f"HTTP {exc.code}", 0.0
         return f"HTTP {exc.code}", None
-    if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, ssl.SSLCertVerificationError) or isinstance(reason, ssl.SSLCertVerificationError):
+        # A trust failure does not heal in seconds; fail now.
+        return "TLS certificate verification failed", None
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
         return "timeout", 0.0
     # URLError, a reset or a truncated body (http.client.IncompleteRead,
     # RemoteDisconnected) while the response is read.
