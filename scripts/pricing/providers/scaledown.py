@@ -74,100 +74,116 @@ UPSTREAM_ID_MAP = {f"scaledown/{task}": task for task in TASKS}
 EXPECTED_MODELS = list(UPSTREAM_ID_MAP)
 _ROWS: dict[str, dict] = {}
 
-_ALL_MODELS = "All four models included"
 _LEGACY_RATE = re.compile(r"(?m)^Public API: \$(\d+(?:\.\d+)?) per 1M tokens\s*$")
-# Since 2026-11-19 llms.txt lists per-modality input rates in one Public API
-# block, and the four-model coverage line lives only on the homepage's
-# self-serve pricing card.
+# Since 2026-11-19 the llms.txt Pricing section is a Public API block of
+# per-modality input rates, then an Enterprise block. Every line of the
+# section must be blank or one exact line below, under its own block heading
+# with no blank line between them, each line at most once. Anything else,
+# including indented bullets, fails closed.
 _PUBLIC_API_HEADING = "Public API, per 1M input tokens:"
-# Every bullet of that block must be one of these, each at most once. The
-# routes are text only, so the Text rate is the tariff; an Image rate never
-# prices a text route. The context line backs the 1M context_length above.
-_PUBLIC_API_BULLETS = {
-    "text": re.compile(r"- Text: \$(\d+(?:\.\d+)?)"),
-    "image": re.compile(r"- Image: \$\d+(?:\.\d+)?"),
-    "output": re.compile(r"- Output tokens are never billed"),
-    "free": re.compile(r"- New accounts get \d+(?:\.\d+)?[MK]? tokens free"),
-    "context": re.compile(
-        r"- 1M-token context window on Summarize, Extract, and Classify; Compress has no limit"
-    ),
-    "flat": re.compile(r"- Flat pricing, no tiers or seats"),
-}
-# A price, currency or rate unit anywhere in the Pricing section outside the
-# Public API block could be a competing tariff, so it fails closed.
-_PRICE_MENTION = re.compile(
-    r"[$€£¥]|\b(?:USD|EUR|GBP|CNY|RMB|dollars?|cents?)\b|\bper\s+(?:1\s*)?(?:[MK]|million|thousand)\b",
-    re.IGNORECASE,
+_ENTERPRISE_HEADING = "Enterprise: dedicated or licensed deployments, custom pricing"
+# ScaleDown's first-party statement, inside the Public API block, that the
+# public rate covers all four task models: it names Summarize, Extract,
+# Classify and Compress. It also backs the 1M context_length above.
+_ALL_FOUR_MODELS_LINE = (
+    "- 1M-token context window on Summarize, Extract, and Classify; Compress has no limit"
 )
-# The self-serve card is the only one with this CTA: it runs from the card's
-# price literal to the CTA, and the Enterprise card follows it.
-_SELF_SERVE_CTA = 'cta:"get_api_key"'
+_USD = r"\$([0-9]+(?:\.[0-9]+)?)"
+_BLOCK_LINES = {
+    _PUBLIC_API_HEADING: {
+        # The routes are text only, so the Text rate is the tariff; the
+        # Image rate is validated but never prices a route.
+        "text": re.compile(rf"- Text: {_USD}"),
+        "image": re.compile(rf"- Image: {_USD}"),
+        "output": re.compile(re.escape("- Output tokens are never billed")),
+        "free": re.compile(r"- New accounts get [0-9]+(?:\.[0-9]+)?[MK]? tokens free"),
+        "all-four-models": re.compile(re.escape(_ALL_FOUR_MODELS_LINE)),
+        "flat": re.compile(re.escape("- Flat pricing, no tiers or seats")),
+    },
+    _ENTERPRISE_HEADING: {
+        "self-hosted": re.compile(re.escape("- Self-hosted in your VPC, including air-gapped")),
+        "fine-tuning": re.compile(re.escape("- Fine-tuning on your data")),
+        "support": re.compile(re.escape("- Dedicated support and SLAs")),
+    },
+}
+_ATX_HEADING = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*")
+_SETEXT_UNDERLINE = re.compile(r" {0,3}(?:=+|-+)[ \t]*")
+_LIST_ITEM = re.compile(r" {0,3}(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]|$)")
 
 
-def _public_api_block(section: str) -> list[str]:
-    """Bullets directly under the Public API heading, up to a blank or other line."""
-    lines = section.splitlines()
-    starts = [i for i, line in enumerate(lines) if line.strip() == _PUBLIC_API_HEADING]
-    if len(starts) != 1:
-        raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
-    block = []
-    for line in lines[starts[0] + 1:]:
-        if not line.strip().startswith("- "):
-            break
-        block.append(line.strip())
-    outside = lines[: starts[0]] + lines[starts[0] + 1 + len(block):]
-    if any(_PRICE_MENTION.search(line) for line in outside):
-        raise RuntimeError("scaledown: price outside the Public API pricing block")
-    return block
+def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(line index, level, text) of every ATX and setext Markdown heading."""
+    found = []
+    for i, line in enumerate(lines):
+        if atx := _ATX_HEADING.fullmatch(line):
+            found.append((i, len(atx[1]), atx[2] or ""))
+        elif (
+            line.strip()
+            and i + 1 < len(lines)
+            and _SETEXT_UNDERLINE.fullmatch(lines[i + 1])
+            and not _SETEXT_UNDERLINE.fullmatch(line)
+            and not _LIST_ITEM.match(line)
+        ):
+            found.append((i, 1 if "=" in lines[i + 1] else 2, line))
+    return found
 
 
-def _self_serve_card(website_code: str) -> str:
-    if website_code.count(_SELF_SERVE_CTA) != 1:
-        raise RuntimeError("scaledown: self-serve pricing card missing or ambiguous")
-    head = website_code[: website_code.index(_SELF_SERVE_CTA)]
-    return head[head.rfind('children:"$'):]
-
-
-def _flat_text_rate(section: str, website_code: str) -> str:
-    """The one public text-input rate that covers all four task models."""
-    legacy = _LEGACY_RATE.findall(section)
-    if _PUBLIC_API_HEADING not in (line.strip() for line in section.splitlines()):
-        if len(legacy) != 1 or _ALL_MODELS not in section:
-            raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
-        return legacy[0]
-    kinds: dict[str, re.Match[str]] = {}
-    for bullet in _public_api_block(section):
-        matched = [(kind, m) for kind, rule in _PUBLIC_API_BULLETS.items() if (m := rule.fullmatch(bullet))]
-        if len(matched) != 1 or matched[0][0] in kinds:
-            raise RuntimeError("scaledown: unknown or repeated Public API pricing line")
-        kinds[matched[0][0]] = matched[0][1]
-    if legacy or not {"text", "flat"} <= kinds.keys():
-        raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
-    rate = kinds["text"][1]
-    # Coverage and price must both come from the self-serve card itself, not
-    # from some other plan in the bundle.
-    card = _self_serve_card(website_code)
-    card_price = re.match(r'children:"\$(\d+(?:\.\d+)?)"', card)
-    if (
-        card_price is None
-        or Decimal(card_price[1]) != Decimal(rate)
-        or '"/ 1M tokens"' not in card
-        or _ALL_MODELS not in card
-    ):
-        raise RuntimeError("scaledown: self-serve card does not confirm the flat rate")
-    return rate
-
-
-def _input_price(markdown: str, website_code: str) -> ModelPrice:
-    headings = re.findall(r"(?m)^## Pricing\s*$", markdown)
-    if len(headings) > 1:
+def _pricing_section(markdown: str) -> list[str]:
+    """Lines under the one "## Pricing" heading, up to the next heading of its level or higher."""
+    lines = markdown.splitlines()
+    headings = _headings(lines)
+    pricing = [(i, level) for i, level, text in headings if " ".join(text.split()).casefold() == "pricing"]
+    if len(pricing) > 1:
         raise RuntimeError("scaledown: ambiguous public pricing sections")
+    if not pricing or lines[pricing[0][0]].rstrip() != "## Pricing":
+        raise RuntimeError("scaledown: public pricing section missing")
+    start, level = pricing[0]
+    end = next((i for i, other, _ in headings if i > start and other <= level), len(lines))
+    return lines[start + 1:end]
+
+
+def _public_api_rate(section: list[str]) -> str:
+    """The Text rate of a section made only of exact allowlisted lines."""
+    rules: dict[str, re.Pattern[str]] = {}
+    blocks: list[str] = []
+    seen: dict[str, re.Match[str]] = {}
+    for line in section:
+        if not line.strip():
+            rules = {}
+        elif line in _BLOCK_LINES:
+            blocks.append(line)
+            rules = _BLOCK_LINES[line]
+        else:
+            matched = [(kind, m) for kind, rule in rules.items() if (m := rule.fullmatch(line))]
+            if len(matched) != 1 or matched[0][0] in seen:
+                raise RuntimeError("scaledown: unknown or repeated line in the Pricing section")
+            seen[matched[0][0]] = matched[0][1]
+    if (
+        blocks not in ([_PUBLIC_API_HEADING], [_PUBLIC_API_HEADING, _ENTERPRISE_HEADING])
+        or not {"text", "all-four-models", "flat"} <= seen.keys()
+    ):
+        raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
+    return seen["text"][1]
+
+
+def _legacy_rate(markdown: str) -> str:
+    """The pre-2026-11-19 layout, checked exactly as before."""
     section = re.search(r"(?ms)^## Pricing\s*\n(.*?)(?=^## |\Z)", markdown)
     if section is None:
         raise RuntimeError("scaledown: public pricing section missing")
-    if "Flat pricing, no tiers" not in section[1]:
+    rates = _LEGACY_RATE.findall(section[1])
+    if (
+        len(rates) != 1
+        or "All four models included" not in section[1]
+        or "Flat pricing, no tiers" not in section[1]
+    ):
         raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
-    rate = _flat_text_rate(section[1], website_code)
+    return rates[0]
+
+
+def _input_price(markdown: str, website_code: str) -> ModelPrice:
+    section = _pricing_section(markdown)
+    rate = _public_api_rate(section) if _PUBLIC_API_HEADING in section else _legacy_rate(markdown)
     # Read the live FAQ, rather than assuming an omitted output rate is free.
     if (
         "ScaleDown does not charge for output tokens. We exclusively charge for input tokens"
