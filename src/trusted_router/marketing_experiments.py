@@ -234,7 +234,7 @@ PROMISES: tuple[Promise, ...] = (
     ),
     Promise(
         "models",
-        "Use hundreds of models through one API.",
+        "Use 600+ models through one API.",
         "Compare exact models and providers, then switch with one model string.",
         "trustedrouter/auto",
         "One integration for the model market.",

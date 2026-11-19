@@ -6,7 +6,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
   await expect(page.locator("#top .hero-promises li")).toHaveCount(4);
   await expect(page.locator("#top .hero .sub")).toHaveText(
-    "Access hundreds of models confidentially through a single OpenAI-compatible API.",
+    "Access 600+ models confidentially through a single OpenAI-compatible API.",
   );
   await expect(page.locator("#top .hero .button-primary")).toHaveText("Create my API key");
   await expect(page.locator("#top .cta-note")).toContainText("No card required");

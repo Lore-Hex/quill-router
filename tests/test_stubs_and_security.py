@@ -594,7 +594,7 @@ def test_og_svg_copy_matches_current_positioning() -> None:
     svg = og_image_svg(Settings())
 
     assert "End-to-End Encrypted Router" in svg
-    assert "Hundreds of models. One verifiable prompt path." in svg
+    assert "600+ models. One verifiable prompt path." in svg
     assert "base_url=https://api.quillrouter.com/v1" in svg
     assert "api.trustedrouter.com" not in svg
 

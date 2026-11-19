@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "src/trusted_router/templates"
 PICKER = ROOT / "src/trusted_router/static/choose-app.js"
 CLAIM = re.compile(
-    r"\b(?:more than |over )?\d[\d,]*\+?\s+(?:(?:additional|public|AI|LLM)\s+)?"
+    r"\b(?:(?:more than |over )?\d[\d,]*\+?|hundreds of)\s+(?:(?:additional|public|AI|LLM)\s+)?"
     r"(?:model\s+(?:ids|routes)|models|routes|providers)\b", re.IGNORECASE,
 )
 # Exact competitor facts and a synthesis panel limit, not TrustedRouter totals.
