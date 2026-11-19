@@ -74,6 +74,13 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # enough". Joseph requested the managed route stay unavailable. Clear
     # only after funding and a successful paid-path recovery canary.
     "kling": "operator-credit-exhausted",
+    # November 19: every zro route had been refused for about 20 hours with
+    # provider out-of-funds errors, even after a top-up (Sentry
+    # QUILL-ROUTER-HG/HJ/HM/HN). Joseph disabled the provider. zro is
+    # prepaid-only, so this holds every route and its route-health probes.
+    # Adapter, manifest and secrets are kept; delete this line to re-enable
+    # after funding and a successful paid-path recovery canary.
+    "zro": "operator-credit-exhausted",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.
