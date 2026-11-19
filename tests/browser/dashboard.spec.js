@@ -417,6 +417,35 @@ test("model picker triangle is keyboard adjustable", async ({ page }) => {
   await expect(page.locator("#speedWeight")).toHaveText("33");
 });
 
+test("model picker keeps catalog claims stable and evaluated and matching counts exact", async ({ page }) => {
+  let matchingCount;
+  await page.route("**/choose/catalog.json", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    matchingCount = payload.models.length;
+    Object.assign(payload, {
+      catalog_model_count: 466,
+      catalog_provider_count: 84,
+      catalog_route_count: 1722,
+      evaluated_model_count: 37,
+    });
+    await route.fulfill({ json: payload });
+  });
+  await page.goto("/static/choose-app.html");
+  await expect(page.locator("#liveCount")).toHaveText("600+");
+  await expect(page.locator("#providerCount")).toHaveText("100+");
+  await expect(page.locator("#evaluatedCount")).toHaveText("37");
+  await expect(page.locator("#loadText")).toHaveText(
+    "37 independently scored models matched against a catalog of 600+ models across 100+ providers.",
+  );
+  await page.getByRole("button", { name: /Simple/ }).click();
+  await page.getByRole("button", { name: /Any/ }).click();
+  await expect(page.locator(".model-card").first()).toBeVisible();
+  await expect(page.locator("#resultsTitle")).toHaveText(
+    `Matches · ${matchingCount} independently scored model${matchingCount === 1 ? "" : "s"}`,
+  );
+});
+
 test("model picker Confidential requires ZDR even when compute and E2EE are verified", async ({ page }) => {
   await page.route("**/choose/catalog.json", async (route) => {
     const response = await route.fetch();

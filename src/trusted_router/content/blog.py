@@ -416,7 +416,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <h2>One API. Every model. No new lock-in.</h2>
 <p>We believe strongly in a polytheistic future. Some big labs think there's going to be a monotheistic world where there's one true model — the only model you need — and it's going to eat the whole world. We don't think that's true. We believe in neurodiversity: every mind has different strengths, and it's true with LLMs as well. We know from our own experiments and <a href="/leaderboard">evals</a> that different models have different strengths. Claude is not the best at everything. We have small language models on our platform that outperform it and are 100 times cheaper. And this is changing every week — new models come out every single week, and the Pareto frontier moves every single week. Our team is on top of this, doing evals all the time, so we can help you decide — or decide automatically for you — which models to send which tasks to.</p>
 
-<blockquote><p>More than 600 models. More than 81 providers. One OpenAI-compatible API.</p></blockquote>
+<blockquote><p>600+ models. 100+ providers. One OpenAI-compatible API.</p></blockquote>
 
 <p>In practice, the thing we're providing most is a <a href="/models">marketplace</a> — with hundreds more models coming. Bringing on each individual provider is a big process for an enterprise — for an individual, it's a big process to even do two. Some of them are in China: do you want to give your credit card to some random Chinese company you've never heard of? It's much easier to sign up once, with one credit system split between all the providers and models you're trying. That's why people love TrustedRouter.</p>
 
@@ -470,7 +470,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 
 <p>Her <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">article about the rise of AI routing</a> explains the larger change. Businesses want lower costs, better security, and the freedom to choose a model for each job. A simple request can go to a cheap fast model. A hard request can go somewhere stronger. Teams can route around price, speed, performance, uptime, and which providers they trust with their data. The model becomes a replaceable part instead of the company you have to build around.</p>
 
-<p>That is what we built: one OpenAI-compatible API for more than 550 models, automatic fallback across providers, and <a href="/trust">privacy with proof</a>. Axios got to a useful result before most API guides finish explaining authentication. <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">Read the full Axios article</a>, then <a href="/?reason=signin">create a key and try the same route</a>.</p>""",
+<p>That is what we built: one OpenAI-compatible API for 600+ models, automatic fallback across providers, and <a href="/trust">privacy with proof</a>. Axios got to a useful result before most API guides finish explaining authentication. <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">Read the full Axios article</a>, then <a href="/?reason=signin">create a key and try the same route</a>.</p>""",
     ),
     BlogPost(
         slug="you-are-a-model-provider",

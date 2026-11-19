@@ -14,6 +14,10 @@ def test_byok_docs_describe_real_endpoints_and_credentials(client: TestClient) -
         "PATCH /v1/byok/providers/{provider}/keys/{key_id}",
         "curl -X DELETE", "unsupported stubs", "return 404",
         '"usage":"byok"', '"fallback_to_credits":false',
+        "On ranked text routes", "before credits within each model",
+        "unless the request specifies a provider order",
+        "Images, video, embeddings, and decisions keep catalog order and may use credits first",
+        'provider.usage: "byok"', "to explicitly restrict the request to BYOK",
     ):
         assert text in response.text
 

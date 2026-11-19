@@ -27,7 +27,7 @@ curl https://trustedrouter.com/v1/byok/providers/openai/keys \
 </section>
 <section class="content-section">
   <h2>Use BYOK at inference</h2>
-  <p>Send inference to <code>https://api.trustedrouter.com/v1</code> with a TrustedRouter inference API key from the same workspace. Do not send the upstream key as the bearer token. Eligible configured BYOK keys are considered before credits for a matching route; <code>provider.usage: "byok"</code> explicitly restricts the request to BYOK. Key model patterns, priorities, disabled status, and provider filters still apply.</p>
+  <p>Send inference to <code>https://api.trustedrouter.com/v1</code> with a TrustedRouter inference API key from the same workspace. Do not send the upstream key as the bearer token. On ranked text routes, eligible configured BYOK keys are considered before credits within each model, unless the request specifies a provider order. Images, video, embeddings, and decisions keep catalog order and may use credits first. Set <code>provider.usage: "byok"</code> to explicitly restrict the request to BYOK. Key model patterns, priorities, disabled status, and provider filters still apply.</p>
   <pre><code>curl https://api.trustedrouter.com/v1/chat/completions \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
