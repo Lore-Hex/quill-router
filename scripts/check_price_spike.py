@@ -726,6 +726,90 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000003"),
             Decimal("0.00000017"),
         ),
+        # Routes held by the hourly refresh on 2026-11-19 (run 44627483513).
+        # Values are the run's exact before/after strings in USD/token.
+        #
+        # Atlas Cloud's public price list
+        # https://www.atlascloud.ai/pricing/models?q=gpt-6-sol-codex and model
+        # page https://www.atlascloud.ai/models/openai/gpt-6-sol-codex,
+        # verified 2026-11-19: GPT 6 Sol Codex input $2, output $10 and cache
+        # read $0.2 per 1M tokens (below 272K billable input tokens).
+        (
+            "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]",
+            "prompt", Decimal("1E-7"), Decimal("0.000002"),
+        ),
+        (
+            "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]",
+            "completion", Decimal("5E-7"), Decimal("0.00001"),
+        ),
+        (
+            "openai/gpt-6-sol-codex "
+            "[atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex] cached-input",
+            "prompt", Decimal("1E-8"), Decimal("2E-7"),
+        ),
+        # GMI's public billing API
+        # https://console.gmicloud.ai/api/v1/billing/model_prices, verified
+        # 2026-11-19: google/gemini-4-argon (effectiveAt 2026-11-11T02:11Z)
+        # lists originInputPrice=4000000, originOutputPrice=20000000 and
+        # originCacheReadPrice=200000 microdollars per 1M tokens, with a 50%
+        # promotion (2000000 / 10000000 / 100000). gmi.py publishes the greater
+        # of the promotional and origin list prices (#699). The snapshot and
+        # manifest print the same route text, so one entry covers both.
+        (
+            "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]",
+            "prompt", Decimal("0.000002"), Decimal("0.000004"),
+        ),
+        (
+            "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]",
+            "completion", Decimal("0.00001"), Decimal("0.00002"),
+        ),
+        (
+            "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon] cached-input",
+            "prompt", Decimal("1E-7"), Decimal("2E-7"),
+        ),
+        # NextBit's public model table https://www.nextbit256.com/modelos and
+        # unauthenticated GET https://api.nextbit256.com/v1/models and
+        # https://eu.api.nextbit256.com/v1/models, verified 2026-11-19:
+        # Gemma 3 12B (gemma3:12b-it) is $0.350 input / $0.450 output per M
+        # ("Precios en dólares (USD)"), present on the EU endpoint. Cache read
+        # $0.050 is unchanged. The EU snapshot uses the canonical model ID.
+        (
+            "google/gemma-3-12b-it [nextbit:nextbit:gemma3:12b-it]",
+            "prompt", Decimal("7.5E-8"), Decimal("3.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit:nextbit:gemma3:12b-it]",
+            "completion", Decimal("1.5E-7"), Decimal("4.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:google/gemma-3-12b-it]",
+            "prompt", Decimal("7.5E-8"), Decimal("3.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:google/gemma-3-12b-it]",
+            "completion", Decimal("1.5E-7"), Decimal("4.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:gemma3:12b-it]",
+            "prompt", Decimal("7.5E-8"), Decimal("3.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:gemma3:12b-it]",
+            "completion", Decimal("1.5E-7"), Decimal("4.5E-7"),
+        ),
+        # Wafer's unauthenticated GET https://pass.wafer.ai/v1/models, verified
+        # 2026-11-19: cache_read_microcents_per_million is 1200000 for
+        # DeepSeek-V4.1-Flash and 800000 for DeepSeek-V4.1-Flash-1017
+        # ($0.012 and $0.008 per M). Input and output did not move.
+        (
+            "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+            "prompt", Decimal("6E-9"), Decimal("1.2E-8"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash-1017 "
+            "[wafer:wafer:DeepSeek-V4.1-Flash-1017] cached-input",
+            "prompt", Decimal("3E-9"), Decimal("8E-9"),
+        ),
     }
 )
 
