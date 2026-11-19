@@ -20,6 +20,8 @@
   </div>
 </section>
 
+{% include "public/_cloud_comparison_links.html" %}
+
 {% for category, comparisons in comparisons_by_category %}
 <section class="panel" aria-labelledby="comparison-category-{{ loop.index }}">
   <div class="panel-head">

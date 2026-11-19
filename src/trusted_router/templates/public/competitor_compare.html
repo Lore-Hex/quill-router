@@ -4,7 +4,7 @@
 <section class="public-hero marketing-hero comparison-hero">
   <div>
     <div class="kicker">{{ comparison.category }} · Verified {{ verified_on_label }}</div>
-    <h1>TrustedRouter vs {{ comparison.name }}</h1>
+    <h1>{{ comparison.title }}</h1>
     <p class="lead">{{ comparison.summary }}</p>
     <div class="hero-actions">
       <button class="btn primary" type="button" data-action="open-signin">Try TrustedRouter</button>
@@ -20,6 +20,9 @@
 {% endblock %}
 
 {% block body %}
+{% if comparison.cloud_comparison %}
+{% include "public/_cloud_market_diagram.html" %}
+{% endif %}
 
 <section class="marketing-split comparison-decision" aria-label="Decision summary">
   <div class="marketing-copy">
@@ -29,7 +32,7 @@
   </div>
   <div class="marketing-copy">
     <span class="eyebrow">Choose TrustedRouter when</span>
-    <h2>Privacy needs evidence.</h2>
+    <h2>{% if comparison.cloud_comparison %}Keep your cloud, add the market.{% else %}Privacy needs evidence.{% endif %}</h2>
     <p>{{ comparison.trustedrouter_fit }}</p>
   </div>
 </section>
@@ -84,5 +87,9 @@ with client.chat.completions.create(
 </section>
 
 {% include "public/_competitor_evidence.html" %}
+{% if comparison.cloud_comparison %}
+{% include "public/_cloud_comparison_links.html" %}
+<section class="panel"><div class="panel-body"><h2>Test one workload on the exchange</h2><p>Compare completed tasks, latency and total cost before expanding.</p><p><a class="btn primary" href="/docs/agent-setup">Try the OpenAI-compatible endpoint</a></p></div></section>
+{% endif %}
 
 {% endblock %}

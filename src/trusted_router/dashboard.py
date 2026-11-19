@@ -184,6 +184,10 @@ _MODEL_DISCOVERY_PRIORITY_INDEX = {
     model_id: index for index, model_id in enumerate(MODEL_DISCOVERY_PRIORITY)
 }
 SEO_CORE_PATHS: tuple[str, ...] = (
+    '/compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry',
+    '/multi-cloud-llm-api',
+    '/bedrock-throttling-quota-guide',
+
     "/abliterated-deepseek",
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
@@ -1407,6 +1411,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "confidential compute plus provider-side encryption.",
             ),
         ),
+    ),
+    'compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry': PublicPage(
+        template='public/cloud_inference_hub.html',
+        title='Bedrock vs Vertex AI vs Azure AI Foundry: NYTE Comparison',
+        description='Compare Amazon Bedrock, Google Vertex AI and Microsoft Foundry by capacity, pricing, deployment and portability. See where NYTE adds independent provider choice.',
+        faq_items=(('Which cloud AI platform is best?', 'Choose by workload: model quality, available capacity, governance, existing cloud integrations and total cost. An exchange can add eligible provider routes alongside your current cloud rather than replacing its whole platform.'), ('Are catalog counts directly comparable?', 'No. A model catalog can contain hosted APIs, deployments you operate and multiple versions. Compare the exact running route, capacity and terms needed for your workload.'), ('Can I use NYTE alongside all three clouds?', 'You can keep existing cloud integrations and use the exchange for supported inference workloads. Check each model route and your procurement, privacy and jurisdiction requirements before shifting traffic.')),
+    ),
+    'multi-cloud-llm-api': PublicPage(
+        template='public/multi_cloud_llm_api.html',
+        title='Multi-Cloud LLM API: Inference Without One-Cloud Dependence',
+        description='Build a portable LLM inference workflow with NYTE. Compare eligible providers, enforce privacy filters and test failover without replacing your cloud platform.',
+        faq_items=(('Does an OpenAI-compatible API eliminate vendor lock-in?', 'It reduces request-format integration work but does not eliminate model-specific behavior, cloud integrations or commercial commitments. Test tools, outputs and fallback routes before migration.'), ('Can fallback change the model?', 'It depends on the route and request configuration. Separate same-model provider fallback from different-model fallback, and evaluate substitute models before using them in production.'), ('What should remain fixed during failover?', 'Privacy, jurisdiction, model capabilities, price limits and the overall request deadline should remain explicit. Do not loosen hard requirements merely to obtain a response.')),
+    ),
+    'bedrock-throttling-quota-guide': PublicPage(
+        template='public/bedrock_quota_guide.html',
+        title='Bedrock Throttling and Quotas: Diagnose 429s and Add Capacity',
+        description='Troubleshoot Amazon Bedrock throttling with quota checks, bounded retries and inference profiles. Evaluate NYTE for approved overflow workloads.',
+        faq_items=(('Does a Bedrock 429 always mean AWS has no GPUs?', 'No. Diagnose the exact error, account quota, inference profile and traffic pattern. Throttling can reflect a limit or burst rather than a universal shortage of capacity.'), ('Should I enable cross-region inference first?', 'Evaluate it for supported models after checking permissions and processing-boundary requirements. It expands eligible AWS Regions; it is different from routing to an independent provider.'), ('Can NYTE bypass my AWS quotas?', 'No. It can serve an approved workload through a separate eligible provider route. That does not change AWS account limits and depends on model compatibility and available capacity.')),
     ),
     "compare/openrouter": PublicPage(
         template="public/compare_openrouter.html",
@@ -3347,7 +3369,7 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
         return None
     path = comparison.href
     canonical_url = canonical_public_url(settings, path)
-    verified_on_label = datetime.fromisoformat(COMPETITOR_COMPARISONS_VERIFIED_ON).strftime(
+    verified_on_label = datetime.fromisoformat(comparison.verified_on).strftime(
         "%B %-d, %Y"
     )
     page_node: dict[str, object] = {
@@ -3355,7 +3377,7 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
         "name": comparison.title,
         "url": canonical_url,
         "description": comparison.description,
-        "dateModified": COMPETITOR_COMPARISONS_VERIFIED_ON,
+        "dateModified": comparison.verified_on,
         "about": [
             {"@type": "Organization", "name": "TrustedRouter"},
             {"@type": "Organization", "name": comparison.name},
