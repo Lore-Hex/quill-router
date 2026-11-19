@@ -268,6 +268,66 @@ def test_any_second_pricing_heading_fails_closed_in_both_layouts(heading):
         scaledown._input_price(legacy, FAQ)
 
 
+NEXT_SECTION = "## Compliance and Security"
+
+
+@pytest.mark.parametrize(
+    "inserted",
+    [
+        # Round-3 review: read as a setext heading, this ended Pricing early
+        # and the conflicting rate was never validated.
+        "> Summarize: $0.20 per 1M input tokens\n---",
+        "> Summarize: $0.20 per 1M input tokens\n===",
+        "Summarize: $0.20 per 1M input tokens\n---",
+        "> - Text: $0.01",
+        "> Enterprise pricing is custom",
+        "---",
+        "=====",
+        "### Batch API, per 1K input tokens:\n- Text: $0.01",
+    ],
+    ids=["blockquote-setext-dash", "blockquote-setext-equals", "plain-setext", "blockquoted-text-rate",
+         "blockquote-prose", "lone-dash-underline", "lone-equals-underline", "deeper-heading"],
+)
+def test_only_atx_headings_end_pricing_and_containers_fail_closed(inserted):
+    assert LLMS_2026_11_19.count(NEXT_SECTION) == 1
+    for anchor in (NEXT_SECTION, ENTERPRISE):
+        source = LLMS_2026_11_19.replace(anchor, inserted + "\n\n" + anchor, 1)
+        with pytest.raises(RuntimeError):
+            scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## **Pricing**",
+        "## [Pricing](#pricing)",
+        "## Pricing details",
+        "### Enterprise pricing",
+        "#Pricing",
+        "> ## Pricing",
+        "**Pricing**\n---",
+        "*Pricing*\n=====",
+        "[Pricing](#pricing)\n-------",
+        "P-r-i-c-i-n-g\n---",
+    ],
+)
+def test_formatted_pricing_headings_count_as_duplicates_in_both_layouts(heading):
+    new = LLMS_2026_11_19 + "\n" + heading + "\n\nPublic API, per 1M input tokens:\n- Text: $0.01\n"
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(new, SITE_2026_11_19)
+    legacy = PRICE + "\n" + heading + "\nPublic API: $0.01 per 1M tokens\n"
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(legacy, FAQ)
+
+
+def test_live_pricing_section_has_one_pricing_heading_and_ends_at_the_next_section():
+    lines = LLMS_2026_11_19.splitlines()
+    assert scaledown._pricing_headings(lines) == [0]
+    section = scaledown._pricing_section(LLMS_2026_11_19)
+    assert section[-1] == "" and NEXT_SECTION not in section
+    assert scaledown._input_price(LLMS_2026_11_19, SITE_2026_11_19) == ModelPrice(50_000, 0)
+
+
 @pytest.mark.parametrize("bad", [None, 0, -1, True, 1.5, "30", 1 << 40])
 def test_bad_usage_is_not_a_healthy_canary(bad):
     for task, result in RESULTS.items():

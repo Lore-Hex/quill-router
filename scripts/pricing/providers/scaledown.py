@@ -106,39 +106,39 @@ _BLOCK_LINES = {
         "support": re.compile(re.escape("- Dedicated support and SLAs")),
     },
 }
-_ATX_HEADING = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*")
-_SETEXT_UNDERLINE = re.compile(r" {0,3}(?:=+|-+)[ \t]*")
-_LIST_ITEM = re.compile(r" {0,3}(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]|$)")
+# Only an ATX heading at column 0 of the Pricing heading's level or higher
+# ends the section. A setext underline, a blockquote line or a deeper heading
+# inside it is not an allowlisted line, so it fails closed instead of
+# silently ending the section.
+_SECTION_END = re.compile(r"#{1,2} ")
+_SETEXT_UNDERLINE = re.compile(r"\s*(?:=+|-+)\s*")
 
 
-def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
-    """(line index, level, text) of every ATX and setext Markdown heading."""
+def _pricing_headings(lines: list[str]) -> list[int]:
+    """Every heading or setext candidate whose letters contain "pricing".
+
+    Deliberately broad, so a formatted, linked, blockquoted or setext heading
+    cannot hide a second Pricing section.
+    """
     found = []
     for i, line in enumerate(lines):
-        if atx := _ATX_HEADING.fullmatch(line):
-            found.append((i, len(atx[1]), atx[2] or ""))
-        elif (
-            line.strip()
-            and i + 1 < len(lines)
-            and _SETEXT_UNDERLINE.fullmatch(lines[i + 1])
-            and not _SETEXT_UNDERLINE.fullmatch(line)
-            and not _LIST_ITEM.match(line)
-        ):
-            found.append((i, 1 if "=" in lines[i + 1] else 2, line))
+        atx = re.sub(r"^[\s>]*", "", line).startswith("#")
+        setext = bool(line.strip()) and i + 1 < len(lines) and bool(_SETEXT_UNDERLINE.fullmatch(lines[i + 1]))
+        if (atx or setext) and "pricing" in re.sub(r"[^a-z]", "", line.lower()):
+            found.append(i)
     return found
 
 
 def _pricing_section(markdown: str) -> list[str]:
-    """Lines under the one "## Pricing" heading, up to the next heading of its level or higher."""
+    """Lines under the one "## Pricing" heading, up to the next "# " or "## " heading."""
     lines = markdown.splitlines()
-    headings = _headings(lines)
-    pricing = [(i, level) for i, level, text in headings if " ".join(text.split()).casefold() == "pricing"]
+    pricing = _pricing_headings(lines)
     if len(pricing) > 1:
         raise RuntimeError("scaledown: ambiguous public pricing sections")
-    if not pricing or lines[pricing[0][0]].rstrip() != "## Pricing":
+    if not pricing or lines[pricing[0]].rstrip() != "## Pricing":
         raise RuntimeError("scaledown: public pricing section missing")
-    start, level = pricing[0]
-    end = next((i for i, other, _ in headings if i > start and other <= level), len(lines))
+    start = pricing[0]
+    end = next((i for i in range(start + 1, len(lines)) if _SECTION_END.match(lines[i])), len(lines))
     return lines[start + 1:end]
 
 
