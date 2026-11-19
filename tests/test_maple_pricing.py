@@ -293,6 +293,83 @@ def test_live_catalog_inventories_inkling_2_small_as_a_held_row(monkeypatch, tmp
     ) == (450_000, 50_000, 1_500_000)
 
 
+INKLING_PRICE = ModelPrice(450_000, 1_500_000, prompt_cached_micro_per_m=50_000)
+PER_MILLION_FOOTER = "<footer>Legacy pricing: USD per 1 million tokens.</footer>"
+
+
+@pytest.mark.parametrize("swaps", [
+    # The table's lead and its caption both move to per-thousand units.
+    [("USD per 1 million tokens.", "USD per 1 thousand tokens."),
+     ("in US dollars per one million tokens", "in US dollars per one thousand tokens")],
+    [("in US dollars per one million tokens", "in US dollars per one thousand tokens")],
+    [("USD per 1 million tokens.", "USD per 1 thousand tokens.")],
+    [("USD per 1 million tokens.", "USD per 1 million tokens. Cached input is USD per 1 thousand tokens.")],
+    # No unit stated by the table at all; only an unrelated footer states one.
+    [("USD per 1 million tokens.", "Prices by model."),
+     ("Model prices on every plan, in US dollars per one million tokens", "Model prices on every plan")],
+])
+def test_unit_must_be_stated_by_the_price_table_not_elsewhere_on_the_page(swaps):
+    page = live_pages_2026_11_19()[maple.PRICING_URL]
+    assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
+    for before, after in swaps:
+        assert before in page
+        page = page.replace(before, after)
+    with pytest.raises(RuntimeError, match="unit changed"):
+        maple.parse_prices(page + PER_MILLION_FOOTER, "Inkling 2 Small")
+
+
+ABOVE_128K_TABLE = (
+    "<table><caption>Above 128K context: USD per 1 million tokens</caption>"
+    "<thead><tr><th>Model</th><th>Input</th><th>Output</th></tr></thead>"
+    '<tbody><tr><th scope="row">Inkling 2 Small</th><td>$0.90</td><td>$3.00</td></tr></tbody></table>'
+)
+
+
+@pytest.mark.parametrize("extra", [
+    ABOVE_128K_TABLE,
+    # Another token table without any condition wording.
+    ABOVE_128K_TABLE.replace("Above 128K context: USD per 1 million tokens", "Batch prices"),
+    # Another table that prices a published model under other column names.
+    "<table><thead><tr><th>Model</th><th>Price</th></tr></thead>"
+    "<tbody><tr><td>Inkling 2 Small</td><td>$0.90</td></tr></tbody></table>",
+    # A section outside any table that prices a published model.
+    "<p><strong>Inkling 2 Small</strong> batch rate: $0.20 in, $0.75 out.</p>",
+    # A tier or context condition with no table at all.
+    "<p>Prompts over 128K tokens are billed at twice the listed rate.</p>",
+    "<p>Long-context requests use separate prices.</p>",
+])
+def test_other_price_tables_sections_or_conditions_are_refused(extra):
+    page = live_pages_2026_11_19()[maple.PRICING_URL]
+    with pytest.raises(RuntimeError, match="maple: "):
+        maple.parse_prices(page + extra, "Inkling 2 Small")
+
+
+def test_extra_tier_table_fails_the_whole_refresh(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    pages = live_pages_2026_11_19()
+    pages[maple.PRICING_URL] += ABOVE_128K_TABLE
+    monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
+    with pytest.raises(RuntimeError):
+        maple.fetch()
+    assert maple._DISCOVERED == {}
+
+
+def test_unpriced_mentions_and_plan_prices_elsewhere_are_not_model_prices():
+    # Live FAQ and plan wording: model names without a price, prices without
+    # a model name. Neither is a second token price.
+    page = live_pages_2026_11_19()[maple.PRICING_URL] + (
+        "<details><summary>Did prices go down on every plan?</summary><p>Yes. "
+        "DeepSeek V4.1 Flash, DeepSeek V4.1 Flash Uncensored and the Kimi models' "
+        "output prices stay the same.</p></details>"
+        "<div><p>Max $100</p><p>Max+ $200 /mo</p><p>Inkling 2 Small is new.</p></div>"
+    )
+    assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
+    assert maple.parse_prices(page, maple.DISPLAY_NAME) == ModelPrice(
+        650_000, 1_450_000, prompt_cached_micro_per_m=130_000
+    )
+
+
 @pytest.mark.parametrize("after", ["inkling-2-medium", "auto:quick"])
 def test_live_catalog_still_fails_closed_on_an_unreviewed_identity(after):
     html = live_pages_2026_11_19()[maple.MODEL_DOCS_URL]
