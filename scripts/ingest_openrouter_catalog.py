@@ -37,6 +37,17 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 HTTP_TIMEOUT = 30.0
 MAX_WORKERS = 8
 
+# OpenRouter occasionally 404s one model's /endpoints while /models still lists
+# it. When a large share of lookups 404 or error, the endpoints API itself is
+# down: on 2026-11-19 09:49Z every lookup 404'd and the refresh dropped 95 of
+# 174 catalog models. Refuse to build a snapshot from such a partial feed.
+MAX_UNAVAILABLE_ENDPOINT_FRACTION = 0.25
+MIN_UNAVAILABLE_ENDPOINTS_FOR_OUTAGE = 10
+
+
+class OpenRouterEndpointsOutage(RuntimeError):
+    """OpenRouter's /endpoints API failed for too many listed models."""
+
 # OpenRouter's per-endpoint `provider_name` → TR provider slug. Anything
 # not in this table gets filtered out (TR has no key/gateway client for it).
 PROVIDER_NAME_TO_SLUG: dict[str, str] = {
@@ -172,10 +183,11 @@ def fetch_models(client: httpx.Client) -> list[dict[str, Any]]:
     return list(payload.get("data") or [])
 
 
-def fetch_endpoints(client: httpx.Client, model_id: str) -> list[dict[str, Any]]:
+def fetch_endpoints(client: httpx.Client, model_id: str) -> list[dict[str, Any]] | None:
+    """Return a listed model's endpoints, or None when OpenRouter 404s the lookup."""
     response = client.get(f"{OPENROUTER_BASE}/models/{model_id}/endpoints")
     if response.status_code == 404:
-        return []
+        return None
     response.raise_for_status()
     data = response.json().get("data") or {}
     return list(data.get("endpoints") or [])
@@ -253,12 +265,17 @@ def build_snapshot() -> dict[str, Any]:
                 for model in models
                 if isinstance(model.get("id"), str)
             }
+            unavailable: list[str] = []
             for future in as_completed(future_to_model):
                 model = future_to_model[future]
                 try:
                     endpoints = future.result()
                 except httpx.HTTPError as exc:
                     print(f"WARN: {model['id']} endpoints fetch failed: {exc}", file=sys.stderr)
+                    unavailable.append(str(model["id"]))
+                    continue
+                if endpoints is None:
+                    unavailable.append(str(model["id"]))
                     continue
                 filtered = filter_endpoints(
                     endpoints,
@@ -267,6 +284,7 @@ def build_snapshot() -> dict[str, Any]:
                 if not filtered:
                     continue
                 kept.append(slim_model(model, filtered))
+            _raise_on_endpoints_outage(unavailable, len(future_to_model))
 
     kept = merge_openrouter_model_rows(kept)
     return {
@@ -276,6 +294,20 @@ def build_snapshot() -> dict[str, Any]:
         "model_count": len(kept),
         "models": kept,
     }
+
+
+def _raise_on_endpoints_outage(unavailable: list[str], attempted: int) -> None:
+    """Fail closed when the endpoint feed is too partial to be a catalog."""
+    if (
+        len(unavailable) >= MIN_UNAVAILABLE_ENDPOINTS_FOR_OUTAGE
+        and len(unavailable) > attempted * MAX_UNAVAILABLE_ENDPOINT_FRACTION
+    ):
+        sample = ", ".join(sorted(unavailable)[:10])
+        raise OpenRouterEndpointsOutage(
+            f"OpenRouter /endpoints unavailable for {len(unavailable)}/{attempted} "
+            f"listed models (limit {MAX_UNAVAILABLE_ENDPOINT_FRACTION:.0%}); "
+            f"refusing to build a partial catalog snapshot. Sample: {sample}"
+        )
 
 
 def write_snapshot(snapshot: dict[str, Any]) -> None:
