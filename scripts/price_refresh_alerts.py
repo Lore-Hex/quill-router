@@ -14,6 +14,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -86,12 +87,31 @@ class MonitoringReadError(RuntimeError):
 
 # One anonymous read in a few hundred fails transiently (2026-11-19 18:23Z:
 # one observer run errored, the next hour's run succeeded), and every failed
-# run raises and resolves a Cron issue. Retry those reads a bounded number of
-# times; a whole run stays far inside the ten-minute max runtime.
+# run raises and resolves a Cron issue. Retry each read at most twice.
 PUBLIC_READ_RETRY_DELAYS = (2.0, 8.0)
 # Honor a short Retry-After from a rate limit. A longer one (the anonymous
 # primary limit resets hourly) fails now instead of sleeping through the run.
 MAX_RETRY_AFTER_SECONDS = 30
+# Retries share one window per run. A run makes about 22 reads, and per-read
+# retries alone could outlast the unit's nine-minute TimeoutStartSec; after
+# this window a failed read fails the run, leaving time to report and persist.
+PUBLIC_READ_RETRY_WINDOW_SECONDS = 180.0
+# An attempt can block for the 15-second socket timeout more than once (connect,
+# then read), so a retry must leave room for one more slow attempt.
+PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS = 30.0
+_retry_until: float | None = None
+
+
+def start_retry_window() -> None:
+    """Open this run's shared retry window (main() calls it once per run)."""
+    global _retry_until
+    _retry_until = time.monotonic() + PUBLIC_READ_RETRY_WINDOW_SECONDS
+
+
+def _may_retry(delay: float) -> bool:
+    # Outside main() (unit tests, ad hoc calls) there is no run to protect.
+    return _retry_until is None or (
+        time.monotonic() + delay + PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= _retry_until)
 
 
 def _read_failure(exc: Exception) -> tuple[str, float | None]:
@@ -110,6 +130,8 @@ def _read_failure(exc: Exception) -> tuple[str, float | None]:
         return f"HTTP {exc.code}", None
     if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
         return "timeout", 0.0
+    # URLError, a reset or a truncated body (http.client.IncompleteRead,
+    # RemoteDisconnected) while the response is read.
     return "network error", 0.0
 
 
@@ -127,11 +149,17 @@ def public_gh(path: str) -> Any:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
                 raw = response.read(2_000_001)
             break
-        except (HTTPError, URLError, TimeoutError) as exc:
+        # OSError covers HTTPError, URLError, timeouts and connection resets;
+        # HTTPException covers a body that ends early. Reading the body can
+        # raise either without urllib wrapping it in URLError.
+        except (OSError, HTTPException) as exc:
             reason, retry_after = _read_failure(exc)
-            if retry_after is None or attempt == len(PUBLIC_READ_RETRY_DELAYS):
+            retries_left = attempt < len(PUBLIC_READ_RETRY_DELAYS)
+            delay = (max(retry_after, PUBLIC_READ_RETRY_DELAYS[attempt])
+                     if retry_after is not None and retries_left else None)
+            if delay is None or not _may_retry(delay):
                 raise MonitoringReadError(f"GitHub monitoring API request failed ({reason})") from exc
-            time.sleep(max(retry_after, PUBLIC_READ_RETRY_DELAYS[attempt]))
+            time.sleep(delay)
     if len(raw) > 2_000_000:
         raise ValueError("Monitoring API response is too large")
     return json.loads(raw)
@@ -317,12 +345,14 @@ def heartbeat(status: str, check_in_id: str, duration: float = 0) -> None:
     }
     if status == "in_progress":
         # Two consecutive failed or missed hourly check-ins open the Cron
-        # issue: one transient failure no longer pages and then resolves an
-        # hour later, while a broken or silent observer still pages within
-        # about two hours.
+        # issue, so one transient failure no longer pages and resolves an
+        # hour later. The timer starts within about 40 s of :23, so a
+        # 15-minute margin is ample, and a silent host pages about 2 h 15 min
+        # after its last check-in (one hour of margin plus threshold 2 would
+        # take about three hours).
         payload["monitor_config"] = {
             "schedule": {"type": "interval", "value": 1, "unit": "hour"},
-            "checkin_margin": 60, "failure_issue_threshold": 2, "recovery_threshold": 1,
+            "checkin_margin": 15, "failure_issue_threshold": 2, "recovery_threshold": 1,
             "max_runtime": 10,
         }
     send_sentry("check_in", payload)
@@ -486,6 +516,7 @@ def main(*, dry_run: bool = False, state_path: Path | None = None,
         raise ValueError("Public observer requires local state")
     if dispatch and os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1":
         raise ValueError("The anonymous observer cannot dispatch workflows")
+    start_retry_window()
     if dry_run:
         observe(dry_run=True, state_path=state_path, dispatch=dispatch)
         return

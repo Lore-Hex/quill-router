@@ -1,6 +1,10 @@
 import copy
+import http.client
 import json
+import runpy
 import subprocess
+import sys
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -119,7 +123,9 @@ def test_watchdog_heartbeat_is_external_and_does_not_spend_error_events(emitted)
     kind, payload = emitted[0]
     assert kind == "check_in"
     assert payload["monitor_slug"] == "price-refresh-watchdog"
-    assert payload["monitor_config"]["checkin_margin"] == 60
+    # The timer starts within about 40 s of :23. With threshold 2, a 15-minute
+    # margin pages a silent host about 2 h 15 min after its last check-in.
+    assert payload["monitor_config"]["checkin_margin"] == 15
     assert payload["monitor_config"]["schedule"] == {"type": "interval", "value": 1, "unit": "hour"}
     # Two consecutive bad hours page; a single transient failure does not.
     assert payload["monitor_config"]["failure_issue_threshold"] == 2
@@ -432,6 +438,8 @@ def test_sentry_429_is_not_success(monkeypatch):
 
 
 class _Reply:
+    """A response whose body is bytes, or an exception raised by read()."""
+
     def __init__(self, body):
         self.body = body
 
@@ -442,22 +450,37 @@ class _Reply:
         return False
 
     def read(self, limit):
+        if isinstance(self.body, Exception):
+            raise self.body
         return self.body[:limit]
+
+
+class _BodyFails:
+    """The headers arrive, then reading the body raises this exception."""
+
+    def __init__(self, exc):
+        self.exc = exc
 
 
 @pytest.fixture
 def public_reads(monkeypatch):
-    """Scripted anonymous GitHub replies; each item is a body (bytes) or an exception."""
+    """Scripted anonymous GitHub replies: bytes, an exception from open(), or _BodyFails."""
     script, sleeps, opened = [], [], []
+    clock = {"now": 1000.0}
     class Opener:
         def open(self, request, timeout):
             opened.append(request.full_url)
             item = script.pop(0)
             if isinstance(item, Exception):
                 raise item
-            return _Reply(item)
+            return _Reply(item.exc if isinstance(item, _BodyFails) else item)
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock["now"] += seconds
     monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
-    monkeypatch.setattr(alerts.time, "sleep", sleeps.append)
+    monkeypatch.setattr(alerts.time, "sleep", sleep)
+    monkeypatch.setattr(alerts.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(alerts, "_retry_until", None, raising=False)
     return script, sleeps, opened
 
 
@@ -511,6 +534,71 @@ def test_public_read_does_not_retry_a_client_error(public_reads, code):
     with pytest.raises(alerts.MonitoringReadError, match=rf"\(HTTP {code}\)$"):
         alerts.public_gh("actions/runs/1")
     assert sleeps == [] and len(opened) == 1
+
+
+@pytest.mark.parametrize("exc", [
+    ConnectionResetError(104, "Connection reset by peer"),
+    http.client.IncompleteRead(b"{", 10),
+    http.client.RemoteDisconnected("Remote end closed connection without response"),
+], ids=["reset", "incomplete-read", "remote-disconnected"])
+def test_public_read_retries_a_body_that_fails_mid_read(public_reads, exc):
+    script, sleeps, opened = public_reads
+    script += [_BodyFails(exc), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0] and len(opened) == 2
+
+
+def test_public_read_body_failure_that_persists_is_a_safe_monitoring_error(public_reads):
+    script, _, _ = public_reads
+    script += [_BodyFails(http.client.IncompleteRead(b"secret-partial-body", 99))] * 3
+    with pytest.raises(alerts.MonitoringReadError) as raised:
+        alerts.public_gh("actions/runs/1")
+    assert str(raised.value) == "GitHub monitoring API request failed (network error)"
+
+
+def test_retries_share_one_window_per_run(public_reads):
+    # Every read times out until the run's retry window is spent; then the next
+    # failed read fails the run instead of retrying past the unit's timeout.
+    script, sleeps, opened = public_reads
+    alerts.start_retry_window()
+    script += [URLError(TimeoutError("timed out")), b"{}"] * 100
+    reads = 0
+    with pytest.raises(alerts.MonitoringReadError, match=r"\(timeout\)$"):
+        while True:
+            alerts.public_gh("actions/runs/1")
+            reads += 1
+    assert reads > 0
+    # Each retry slept 2 s. A retry is allowed only while the sleep plus one more
+    # slow attempt fits inside the window, so no sleep starts past it.
+    assert sum(sleeps) <= alerts.PUBLIC_READ_RETRY_WINDOW_SECONDS - alerts.PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS
+    assert len(sleeps) == reads
+
+
+def test_main_opens_a_fresh_retry_window_each_run(observer, monkeypatch):
+    windows = []
+    monkeypatch.setattr(alerts, "start_retry_window", lambda: windows.append(True))
+    alerts.main(heartbeat_enabled=False)
+    alerts.main(dry_run=True)
+    assert windows == [True, True]
+
+
+def test_cli_prints_the_safe_read_failure_reason(monkeypatch, tmp_path, capsys):
+    # Drive the real __main__ handler: a public read that fails with 404.
+    def build_opener(*_handlers):
+        class Opener:
+            def open(self, request, timeout):
+                raise HTTPError(request.full_url, 404, "secret-reason", {}, None)
+        return Opener()
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+    monkeypatch.setenv("GITHUB_REPOSITORY", alerts.REPOSITORY)
+    monkeypatch.setenv("TR_PRICE_REFRESH_PUBLIC_API", "1")
+    monkeypatch.setattr(sys, "argv", ["price_refresh_alerts.py", "--no-heartbeat",
+                                      "--state-file", str(tmp_path / "state.json")])
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(str(ROOT / "scripts/price_refresh_alerts.py"), run_name="__main__")
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    assert err.strip() == "::error::Price refresh monitoring failed: GitHub monitoring API request failed (HTTP 404)"
 
 
 def test_public_read_failure_message_never_carries_the_url(public_reads):

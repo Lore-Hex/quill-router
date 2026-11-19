@@ -43,16 +43,20 @@ unchanged.
   and completion, reporting OK only after all reads, delivery and state writes.
   An observer error or ten-minute timeout counts as a failed check-in.
   Sentry monitors this hourly heartbeat
-  with a 60-minute grace period and opens the Cron issue after two
-  consecutive failed or missed check-ins, so even a GitHub-wide scheduling
-  outage or a broken observer is detected outside GitHub within about two
-  hours, while one transient failure does not page. The host observer reads
-  GitHub anonymously and retries a timeout, network error or 5xx twice (2 s,
-  then 8 s), and honors a `Retry-After` of up to 30 s. A longer rate limit
-  fails the run at once. A failed read logs only a fixed reason, such as
-  `(HTTP 403, rate limited)` or `(timeout)`, never a URL or response body:
-  read it with `gcloud logging read` on the host's syslog
-  (`price-refresh-observer.service`). The first successful observer
+  with a 15-minute grace period (the timer starts within about 40 s of
+  :23) and opens the Cron issue after two consecutive failed or missed
+  check-ins. A GitHub-wide scheduling outage or a silent host is detected
+  outside GitHub about 2 h 15 min after the last check-in, and an observer
+  that keeps erroring pages on its second failed run, while one transient
+  failure does not page. The host observer reads GitHub anonymously and
+  retries a timeout, connection reset, truncated body or 5xx twice (2 s, then
+  8 s), and honors a `Retry-After` of up to 30 s. All retries in a run share
+  one 180-second window, so retrying can never push a run past the unit's
+  nine-minute timeout; after the window a failed read fails the run. A longer
+  rate limit or another 4xx fails the run at once. A failed read logs only a
+  fixed reason, such as `(HTTP 403, rate limited)` or `(timeout)`, never a
+  URL or response body: read it with `gcloud logging read` on the host's
+  syslog (`price-refresh-observer.service`). The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.
   The external observer runs on `tr-clickhouse-3`
   (`scripts/ops/install_price_refresh_observer.sh`); moving or rebuilding that
