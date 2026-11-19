@@ -74,25 +74,54 @@ UPSTREAM_ID_MAP = {f"scaledown/{task}": task for task in TASKS}
 EXPECTED_MODELS = list(UPSTREAM_ID_MAP)
 _ROWS: dict[str, dict] = {}
 
+_ALL_MODELS = "All four models included"
+_LEGACY_RATE = re.compile(r"(?m)^Public API: \$(\d+(?:\.\d+)?) per 1M tokens\s*$")
+# Since 2026-11-19 llms.txt lists per-modality input rates under one heading,
+# and the four-model coverage line lives only on the homepage pricing card.
+_MODALITY_HEADING = "Public API, per 1M input tokens:"
+_MODALITY_RATE = re.compile(r"- (Text|Image): \$(\d+(?:\.\d+)?)")
+
+
+def _flat_text_rate(section: str, website_code: str) -> str:
+    """The one public text-input rate that covers all four task models."""
+    legacy = _LEGACY_RATE.findall(section)
+    lines = [line.strip() for line in section.splitlines()]
+    if _MODALITY_HEADING not in lines:
+        if len(legacy) != 1 or _ALL_MODELS not in section:
+            raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
+        return legacy[0]
+    # Every priced line must be a Text or Image input rate, each at most once.
+    # The routes are text only, so the Text rate is the tariff; an Image rate
+    # never prices a text route, and any other priced line fails closed.
+    rates = [_MODALITY_RATE.fullmatch(line) for line in lines if "$" in line]
+    labels = [match[1] for match in rates if match]
+    text = [match[2] for match in rates if match and match[1] == "Text"]
+    if (
+        legacy
+        or lines.count(_MODALITY_HEADING) != 1
+        or None in rates
+        or len(text) != 1
+        or len(labels) != len(set(labels))
+        or _ALL_MODELS not in website_code
+    ):
+        raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
+    return text[0]
+
 
 def _input_price(markdown: str, website_code: str) -> ModelPrice:
     section = re.search(r"(?ms)^## Pricing\s*\n(.*?)(?=^## |\Z)", markdown)
     if section is None:
         raise RuntimeError("scaledown: public pricing section missing")
-    rates = re.findall(r"(?m)^Public API: \$(\d+(?:\.\d+)?) per 1M tokens\s*$", section[1])
-    if (
-        len(rates) != 1
-        or "All four models included" not in section[1]
-        or "Flat pricing, no tiers" not in section[1]
-    ):
+    if "Flat pricing, no tiers" not in section[1]:
         raise RuntimeError("scaledown: missing or ambiguous flat task pricing")
+    rate = _flat_text_rate(section[1], website_code)
     # Read the live FAQ, rather than assuming an omitted output rate is free.
     if (
         "ScaleDown does not charge for output tokens. We exclusively charge for input tokens"
         not in website_code
     ):
         raise RuntimeError("scaledown: input-only billing commitment missing")
-    amount = Decimal(rates[0]) * 1_000_000
+    amount = Decimal(rate) * 1_000_000
     if amount != amount.to_integral_value() or not 0 < amount <= 1_000_000_000:
         raise RuntimeError("scaledown: invalid input price or precision")
     return ModelPrice(int(amount), 0)

@@ -1,0 +1,4 @@
+// Excerpts of https://scaledown.ai/assets/index-3m5lEI-Y.js fetched 2026-11-19.
+{q:"Do you charge for output tokens?",a:"No. ScaleDown does not charge for output tokens. We exclusively charge for input tokens because most of our models (Compress, Extract, and Classify) are encoder-only architectures. Summarize has a decoder/generative step, but for our customers we will eat that cost."}
+["All four models included","1M context window, unlimited compression","Flat pricing, no tiers"]
+Mrt="$0.05",Rrt="$0.15",Irt=[{name:"Classify",id:"classify",blurb:"Calibrated label probabilities",images:!0},{name:"Extract",id:"extract",blurb:"Structured fields from text",images:!0},{name:"Summarize",id:"summarize",blurb:"Faithful, length-controlled summaries",images:!0},{name:"Compress",id:"compress",blurb:"Shorten prompts and chat context",images:!1}]

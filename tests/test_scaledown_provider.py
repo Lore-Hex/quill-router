@@ -93,6 +93,52 @@ def test_ambiguous_or_changed_billing_contract_fails_closed(source, faq):
         scaledown._input_price(source, faq)
 
 
+FIXTURES = Path(__file__).parent / "fixtures" / "pricing"
+LLMS_2026_11_19 = (FIXTURES / "scaledown_llms_2026-11-19.txt").read_text(encoding="utf-8")
+SITE_2026_11_19 = (FIXTURES / "scaledown_site_bundle_2026-11-19.js").read_text(encoding="utf-8")
+
+
+def test_live_2026_11_19_per_modality_pricing_bills_the_text_rate():
+    # Refresh run 44601888558 held ScaleDown on "missing or ambiguous flat
+    # task pricing": llms.txt replaced "Public API: $0.05 per 1M tokens" and
+    # "All four models included" with per-modality Text and Image input
+    # rates. The routes are text only, and the homepage pricing card still
+    # says the flat rate covers all four models.
+    assert scaledown._input_price(LLMS_2026_11_19, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    cheaper_image = LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.01")
+    assert scaledown._input_price(cheaper_image, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    assert scaledown._input_price(
+        LLMS_2026_11_19.replace("- Image: $0.15\n", ""), SITE_2026_11_19
+    ) == ModelPrice(50_000, 0)
+
+
+@pytest.mark.parametrize(
+    "old,new,site_old,site_new",
+    [
+        ("", "", "All four models included", "Three models included"),
+        ("", "", "ScaleDown does not charge for output tokens", "Output is billed"),
+        ("- Text: $0.05\n", "", "", ""),
+        ("- Text: $0.05", "- Text: $0.05\n- Text: $0.10", "", ""),
+        ("- Image: $0.15", "- Image: $0.15\n- Image: $0.20", "", ""),
+        ("- Text: $0.05", "- Text: $0.05\n- Text (Summarize): $0.10", "", ""),
+        ("- Image: $0.15", "- Audio: $0.15", "", ""),
+        ("- Text: $0.05", "- Text: from $0.05", "", ""),
+        ("- Text: $0.05", "- Text: $0", "", ""),
+        ("- Text: $0.05", "- Text: $0.0000001", "", ""),
+        ("per 1M input tokens:", "per 1K input tokens:", "", ""),
+        ("Public API, per", "Public API, per 1M input tokens:\nPublic API, per", "", ""),
+        ("- Text: $0.05", "- Text: $0.05\nPublic API: $0.05 per 1M tokens", "", ""),
+        ("Flat pricing, no tiers or seats", "Volume tiers", "", ""),
+    ],
+)
+def test_per_modality_pricing_changes_fail_closed(old, new, site_old, site_new):
+    source = LLMS_2026_11_19.replace(old, new) if old else LLMS_2026_11_19
+    site = SITE_2026_11_19.replace(site_old, site_new) if site_old else SITE_2026_11_19
+    assert source != LLMS_2026_11_19 or site != SITE_2026_11_19
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, site)
+
+
 @pytest.mark.parametrize("bad", [None, 0, -1, True, 1.5, "30", 1 << 40])
 def test_bad_usage_is_not_a_healthy_canary(bad):
     for task, result in RESULTS.items():
