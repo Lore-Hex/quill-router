@@ -167,6 +167,8 @@ GLM_SAMPLER_ID = "zai-org/GLM-5.3:peft:262144"
     {"url": "http://huggingface.co/thinkingmachines/Inkling-2-Small"},
     {"url": "huggingface.co/thinkingmachines/Inkling-2-Small"},
     {"url": ["https://huggingface.co/thinkingmachines/Inkling-2-Small"]},
+    {"url": "https://:443"},
+    {"url": "https://user@"},
     {"context": {"unit": "tokens", "value": 1_048_576}},
     {"context": "1M tokens"},
     {"context": "1048576"},

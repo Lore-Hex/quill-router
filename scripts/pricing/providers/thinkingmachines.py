@@ -94,11 +94,12 @@ def _matching(pattern: re.Pattern[str]):  # noqa: ANN202
 
 def _https_url(value: object) -> bool:
     # The docs: "The url field is an empty string when no model-card link is
-    # provided." Otherwise it must be an https URL with a host.
+    # provided." Otherwise it must be an https URL with a host name ("https://:443"
+    # and "https://user@" have a netloc but no host).
     if not isinstance(value, str):
         return False
     parts = urlsplit(value)
-    return value == "" or (parts.scheme == "https" and bool(parts.netloc))
+    return value == "" or (parts.scheme == "https" and bool(parts.hostname))
 
 
 # Documented value shape of every allowlisted field. A dict or list where a
