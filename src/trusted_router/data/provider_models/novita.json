@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-19T06:51:54Z",
+  "generated_at": "2026-11-19T11:14:43Z",
   "model_count": 188,
   "models": [
     {
@@ -1363,7 +1363,8 @@
       ],
       "status": 1,
       "upstream_id": "minimax/minimax-m2.5",
-      "cached_input_token_price_per_m": 300
+      "cached_input_token_price_per_m": 300,
+      "missing_since": "2026-11-19"
     },
     {
       "id": "minimax/minimax-m2.5-highspeed",
@@ -3305,7 +3306,8 @@
       "context_length": 64000,
       "max_output_tokens": 8000,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-11-19"
     },
     {
       "id": "deepseek/deepseek-v3-community",
@@ -3360,7 +3362,8 @@
       "context_length": 64000,
       "max_output_tokens": 16000,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-11-19"
     },
     {
       "id": "dev/glm46",
@@ -3469,7 +3472,8 @@
       "context_length": 204800,
       "max_output_tokens": 131072,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-11-19"
     },
     {
       "id": "minimax/minimax-m3",
@@ -3999,7 +4003,8 @@
       "context_length": 204800,
       "max_output_tokens": 131072,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-11-19"
     },
     {
       "id": "z-ai/glm-5-turbo",
@@ -5488,7 +5493,8 @@
       "context_length": 198000,
       "max_output_tokens": 131072,
       "routable": false,
-      "routable_reason": "zero-price-unbillable"
+      "routable_reason": "zero-price-unbillable",
+      "missing_since": "2026-11-19"
     },
     {
       "id": "openai/gpt-6.1-terra",

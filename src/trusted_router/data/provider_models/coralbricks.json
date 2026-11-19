@@ -90,8 +90,7 @@
       "routable": true,
       "input_token_price_per_m": 190000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 8000,
-      "missing_since": "2026-11-19"
+      "cached_input_token_price_per_m": 8000
     },
     {
       "display_name": "deepseek-v4.1-flash-value",
@@ -121,12 +120,11 @@
       "routable": true,
       "input_token_price_per_m": 5000,
       "output_token_price_per_m": 570000,
-      "cached_input_token_price_per_m": 3000,
-      "missing_since": "2026-11-19"
+      "cached_input_token_price_per_m": 3000
     }
   ],
   "source": "https://inference.coralbricks.ai/v1/models",
-  "generated_at": "2026-11-19T06:51:54Z",
+  "generated_at": "2026-11-19T11:14:43Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }
