@@ -36,6 +36,10 @@ from trusted_router.marketing_experiments import (
     assigned_onboarding_cell,
     valid_experiment_identity,
 )
+from trusted_router.request_limits import (
+    UNTRUSTED_LOAD_BALANCER_SUBJECT,
+    normalized_client_identity,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution, iso_now
 
@@ -287,6 +291,22 @@ def request_attribution(request: Request) -> AttributionContext | None:
     return value if isinstance(value, AttributionContext) else None
 
 
+def _website_network_fields(request: Request) -> dict[str, str]:
+    """Only the gateway-overwritten, public peer of this website request."""
+    app = request.scope.get("app")
+    settings = getattr(getattr(app, "state", None), "settings", None)
+    if (not isinstance(settings, Settings) or settings.rate_limit_client_ip_mode != "edge_header"
+            or settings.environment.casefold() in {"test", "local"} or _privacy_signal_enabled(request)):
+        return {}
+    peer = normalized_client_identity(request, settings)
+    if peer == UNTRUSTED_LOAD_BALANCER_SUBJECT:
+        return {}
+    address = ipaddress.ip_address(peer)
+    if address.is_global and not address.is_multicast:
+        return {"website_client_ip": address.compressed}
+    return {}
+
+
 def record_signup_attribution(
     request: Request,
     *,
@@ -351,7 +371,7 @@ def record_signup_attribution(
     if not created:
         return
     _clear_usage_check(workspace_id)
-    domain = _verified_email_domain(verified_email)
+    domain = email_domain(verified_email)
     identity: dict[str, object] = {
         # Preserve the namespace used by the original historical export.
         "account_fingerprint": _fingerprint("tr-account:" + user_id) if user_id else "",
@@ -361,6 +381,7 @@ def record_signup_attribution(
         "customer_domain_verified": bool(domain),
         "customer_domain_basis": "verified_oauth_email" if domain else "not_linked",
         "domain_observed_at": occurred_at if domain else "",
+        **(_website_network_fields(request) if signup_provider != "email" else {}),
         # The page the sign-in started on (path only), so sign-ups can be
         # counted per page. Empty when the browser sent no same-site referer.
         "signup_path": signup_path or "",
@@ -369,11 +390,12 @@ def record_signup_attribution(
     _log_conversion("acquisition.api_key_created", record, extra=identity)
 
 
-def _verified_email_domain(email: str | None) -> str:
+def email_domain(email: str | None) -> str:
+    """Project the DNS name only; verification depends on the source of the email."""
     if not email or email.count("@") != 1:
         return ""
     host = email.rsplit("@", 1)[1].lower()
-    if len(host) > 253 or "." not in host or host.endswith((".local", ".internal", ".test", ".invalid")):
+    if len(host) > 253 or "." not in host or host.endswith((".local", ".internal", ".test", ".invalid", ".localhost")):
         return ""
     if not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", p) for p in host.split(".")):
         return ""
@@ -609,8 +631,11 @@ def log_browser_funnel_event(
     request: Request, event: str, *, attempt_id: str | None = None,
     http_status: int | None = None, elapsed_ms: int | None = None,
     failure_reason: str | None = None, finish_reason: str | None = None,
+    requester_domain: str = "",
 ) -> None:
     _log_attributed_event(request, event, {
+        **({"requester_domain": requester_domain} if requester_domain and
+           event in {"enterprise_brief_delivered", "enterprise_security_pack_delivered"} else {}),
         # Page counts describe the sender, not the visitor's original landing.
         **({"page_path": same_site_referer_path(request) or ""}
            if event in {"landing_viewed", "landing_engaged"} else {}),
@@ -625,7 +650,7 @@ def log_browser_funnel_event(
 def _log_attributed_event(request: Request, event: str, fields: dict[str, object]) -> None:
     """Shared envelope for validated, first-party observations; never pass raw bodies."""
     context = request_attribution(request)
-    if context is None:
+    if context is None or _privacy_signal_enabled(request):
         return
     touch = context.last_touch
     log.info(f"acquisition.{event}", extra={
@@ -633,6 +658,7 @@ def _log_attributed_event(request: Request, event: str, fields: dict[str, object
         "anonymous_fingerprint": _fingerprint(context.anonymous_id),
         **_safe_touch_log_fields(touch),
         **_click_id_log_fields(touch),
+        **_website_network_fields(request),
         **fields,
     })
 
@@ -728,6 +754,7 @@ def log_exchange_site_funnel_event(
         "page_path": touch.get("landing_path", "/"),
         "device_category": device_category(request.headers.get("user-agent", "")),
         **(properties or {}),
+        **_website_network_fields(request),
         **_safe_touch_log_fields(touch),
     }
     # The join key is only meaningful when the browser supplied its ID.
@@ -751,6 +778,7 @@ def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, re
         'account_fingerprint': _fingerprint('tr-account:' + user_id),
         'workspace_fingerprint': _fingerprint(workspace_id),
         **_safe_touch_log_fields(context.first_touch),
+        **_website_network_fields(request),
     })
     return cell
 
@@ -763,6 +791,7 @@ def pageview_attribution_fields(request: Request) -> dict[str, object]:
         "anonymous_fingerprint": _fingerprint(context.anonymous_id),
         **_safe_touch_log_fields(context.last_touch),
         **_click_id_log_fields(context.last_touch),
+        **_website_network_fields(request),
     }
 
 

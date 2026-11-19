@@ -141,6 +141,8 @@ _ACQUISITION_CLOUD_FIELDS = (
     "reward_placement",
     "observation_id",
     "site_domain",
+    "requester_domain",
+    "website_client_ip",
     "experiment_id",
     "experiment_cell_id",
     "has_gclid",

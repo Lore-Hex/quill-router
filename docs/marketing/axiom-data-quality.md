@@ -32,6 +32,27 @@ from a verified OAuth address; the email itself is never exported. Historical
 verification retains its dated evidence basis. Unverified billing emails do not
 establish domain ownership.
 
+Use `verified_account_domain` to group acquisition, journey, daily usage and
+gateway-attempt rows by the domain of a verified account email. The exporter
+uses only retained account evidence and unambiguous visitor-to-account links,
+never a workspace's billing owner, IP, or referrer. Conflicting domains and
+unlinked traffic are left blank. As with other projections, deduplicate by
+latest `exported_at` per `event_id` before counting. A new worker release
+can reproject retained evidence; it cannot recover evidence that never existed.
+The separate `requester_domain` on buyer-deck and security-pack deliveries
+comes from the submitted address and is self-reported, not verified. Neither
+field contains the mailbox. Neither modifies SDK telemetry or ad exports.
+
+`website_client_ip` is the exact public IPv4 or IPv6 address seen by a
+verified ingress on **that website request**. A corporate proxy, NAT, or VPN
+may be the peer. It is personal data, not a person or a company identifier.
+The application uses the existing overwritten edge-header contract; direct
+origins, untrusted headers, local/test peers, DNT and GPC contribute no IP.
+The IP is not propagated across a visitor's other events, historical
+purchases, token usage, SDK telemetry, CRM, or ad exports. Such events cannot
+be backfilled from a later visit. Access to raw growth data and its retained
+source/checkpoint must be restricted accordingly.
+
 ## Dimensions
 
 First source, medium, campaign, creative, landing and referrer remain separate

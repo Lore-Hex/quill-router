@@ -108,8 +108,12 @@ def cycle(state, io, now):
             raise ValueError('Event outside requested interval')
         # Preserve previously recovered domain evidence on an overlapping refresh.
         prior = events.get(row['event_id'], {})
-        for key in ('customer_domain', 'first_referrer_domain', 'domain_observed_at',
-                    'customer_domain_basis', 'customer_domain_verified', *m.IDENTITY_FIELDS):
+        if not row.get('customer_domain') and prior.get('customer_domain') and (
+                not row.get('account_fingerprint') or row.get('account_fingerprint') == prior.get('account_fingerprint')):
+            for key in ('customer_domain', 'domain_observed_at', 'customer_domain_basis', 'customer_domain_verified'):
+                if key in prior:
+                    row[key] = prior[key]
+        for key in ('first_referrer_domain', *m.IDENTITY_FIELDS):
             if prior.get(key) and (not row.get(key) or row.get(key) == 'not_linked'):
                 row[key] = prior[key]
         events[row['event_id']] = row
@@ -144,9 +148,13 @@ def cycle(state, io, now):
         attempts, gateway_status = collect_gateway(state, io, now, end, journeys, daily_rows, owners)
     gateway_attempts.preserve_milestones(state, journeys)
     candidates = list(events.values()) + daily_rows + journeys + attempts
-    hashes = {r['event_id']: content_hash(r) for r in candidates}
-    changed = [{**r, 'exported_at': now.isoformat()} for r in candidates
-               if hashes[r['event_id']] != state.get('hashes', {}).get(r['event_id'])]
+    hashes = {}
+    changed = []
+    for row in m.with_verified_domains(events.values(), journeys, candidates):
+        key = row['event_id']
+        hashes[key] = content_hash(row)
+        if hashes[key] != state.get('hashes', {}).get(key):
+            changed.append({**row, 'exported_at': now.isoformat()})
     io.ingest(changed)
     heartbeat = {'_time': now.isoformat(), 'event': 'growth.sync_completed',
                  'event_id': m.digest('sync:' + end.isoformat()),

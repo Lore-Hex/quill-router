@@ -62,7 +62,11 @@ def test_security_pack_contains_exact_owner_supplied_pdfs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     events: list[str] = []
-    monkeypatch.setattr(public_routes, "log_browser_funnel_event", lambda _, event: events.append(event))
+    def record(_request, event, *, requester_domain):
+        assert requester_domain == "example.com"
+        events.append(event)
+
+    monkeypatch.setattr(public_routes, "log_browser_funnel_event", record)
     with caplog.at_level(logging.INFO):
         response = client.post("/token-exchange/brief", json={"email": "ada@example.com", "resource": "security"})
     assert response.status_code == 200
