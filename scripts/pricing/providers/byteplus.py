@@ -119,28 +119,67 @@ def _dollar_price(cell: str) -> str:
     return cell[1:]
 
 
-# Inference tiers that may follow Standard in the non-audio section. BytePlus
-# added a 5-column "Fast" table between Standard and Flex on 2026-11-16.
-_TIERS_AFTER_STANDARD = frozenset({"**Fast**", "**Flex**", "**Batch**"})
+# Inference-tier headings of the non-audio section, in page order. Standard and
+# Flex are required; BytePlus added an optional 5-column Fast table between
+# them on 2026-11-16. Each appears at most once, and any other bold heading
+# fails closed.
+_TIER_ORDER = ("**Standard**", "**Fast**", "**Flex**", "**Batch**")
+_REQUIRED_TIERS = frozenset({"**Standard**", "**Flex**"})
 
 
-def _standard_tier(non_audio: str) -> str:
-    """Standard rows run to the next tier heading; an unknown heading fails closed."""
-    lines = non_audio.splitlines()
-    if lines.count("**Standard**") != 1:
-        raise RuntimeError("byteplus: missing or ambiguous pricing section")
-    for line in lines[lines.index("**Standard**") + 1:]:
+def _check_tier_table(heading: str, lines: list[str]) -> None:
+    """Exactly one rectangular table, starting with its header and a named model.
+
+    Rows of one tier must never be read as, or silently dropped into, another
+    tier: a heading moved inside a table leaves a split table, a headerless
+    run of rows, or rows of the wrong width, and each of those fails closed.
+    """
+    tables: list[list[list[str]]] = []
+    previous_was_row = False
+    for line in lines:
+        is_row = line.startswith("|")
+        if is_row:
+            if not previous_was_row:
+                tables.append([])
+            tables[-1].append([cell.strip() for cell in line.strip()[1:-1].split("|")])
+        previous_was_row = is_row
+    if len(tables) != 1 or len(tables[0]) < 3:
+        raise RuntimeError(f"byteplus: {heading} pricing table missing, split or empty")
+    header, separator, *rows = tables[0]
+    if (
+        header.count("Model ID") != 1
+        or any(not re.fullmatch(r":?-{3,}:?", cell) for cell in separator)
+        or any(len(row) != len(header) for row in (separator, *rows))
+        or not rows[0][header.index("Model ID")]
+    ):
+        raise RuntimeError(f"byteplus: {heading} pricing table shape changed")
+
+
+def _tier_sections(non_audio: str) -> dict[str, str]:
+    """Split non-audio pricing by tier heading after validating every tier."""
+    order: list[str] = []
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in non_audio.splitlines():
         if re.fullmatch(r"\*\*[^*]+\*\*", line.strip()):
-            if line not in _TIERS_AFTER_STANDARD:
-                raise RuntimeError("byteplus: unknown inference tier after Standard")
-            return _section(non_audio, "**Standard**", line)
-    raise RuntimeError("byteplus: missing or ambiguous pricing section")
+            order.append(line.strip())
+            current = sections.setdefault(line.strip(), [])
+        elif current is not None:
+            current.append(line)
+        elif line.startswith("|"):
+            raise RuntimeError("byteplus: pricing table outside an inference tier")
+    ranks = [_TIER_ORDER.index(name) if name in _TIER_ORDER else -1 for name in order]
+    if -1 in ranks or ranks != sorted(set(ranks)) or not _REQUIRED_TIERS <= set(order):
+        raise RuntimeError("byteplus: unknown, repeated or reordered inference tier")
+    for heading, lines in sections.items():
+        _check_tier_table(heading, lines)
+    return {heading: "\n".join(lines) for heading, lines in sections.items()}
 
 
 def _modern_standard_rows(md: str) -> list[list[str]]:
     llm = _section(md, "## Large language models", "## Video generation models")
     non_audio = _section(llm, "#### Non-audio input", "#### Audio input")
-    rows = _table(_standard_tier(non_audio), 7)
+    rows = _table(_tier_sections(non_audio)["**Standard**"], 7)
     header = ["Provider", "Model ID", "Prompt length (K tokens)", "Input", "Cached input", "Cache storage", "Output"]
     if not rows or rows[0] != header:
         raise RuntimeError("byteplus: standard pricing columns changed")

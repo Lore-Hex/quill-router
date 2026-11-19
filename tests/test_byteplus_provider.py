@@ -409,8 +409,74 @@ def test_modern_layout_fast_tier_between_standard_and_flex_is_ignored():
 @pytest.mark.parametrize("heading", ["**Priority**", "**Standard (promotion)**"])
 def test_modern_layout_unknown_tier_after_standard_fails_closed(heading):
     unknown = MODERN_MD.replace("**Flex**\n|Provider", FAST_TIER.replace("**Fast**", heading) + "**Flex**\n|Provider")
-    with pytest.raises(RuntimeError, match="unknown inference tier"):
+    with pytest.raises(RuntimeError, match="unknown, repeated or reordered inference tier"):
         byteplus.parse_prices(unknown)
+
+
+def _moved(md: str, line: str, before: str) -> str:
+    """Move the first exact ``line`` of md to just before the first exact ``before``."""
+    lines = md.splitlines()
+    del lines[lines.index(line)]
+    lines.insert(lines.index(before), line)
+    return "\n".join(lines)
+
+
+def _moved_section(md: str, start: str, end: str, before: str) -> str:
+    """Move the lines from the first ``start`` up to ``end`` to before ``before``."""
+    lines = md.splitlines()
+    first, last = lines.index(start), lines.index(end)
+    block = lines[first:last]
+    del lines[first:last]
+    at = lines.index(before)
+    return "\n".join(lines[:at] + block + lines[at:])
+
+
+LITE_CONTINUATION = "|||(128, 256] |$0.50 |$0.10 |$0.0083 |$4.00 |"
+PRO_ROW = "||`seed-2-0-pro-260328` |[0, 128] |$0.50 |$0.10 |$0.0083 |$3.00 |"
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda md: _moved(md, "**Fast**", LITE_CONTINUATION),
+    lambda md: _moved(md, "**Fast**", PRO_ROW),
+    lambda md: _moved_section(md, "**Fast**", "**Flex**", LITE_CONTINUATION),
+    lambda md: _moved_section(md, "**Fast**", "**Flex**", PRO_ROW),
+], ids=["heading-before-continuation", "heading-before-identity", "fast-table-before-continuation",
+        "fast-table-before-identity"])
+def test_fast_inside_the_standard_table_fails_closed(mutate):
+    # Review of 2026-11-19: moving the Fast heading to just before the lite
+    # model's (128, 256] row made seed-2-0-lite one unlimited $0.25/$2 tier
+    # and dropped 9 Standard models into the unparsed Fast section.
+    md = mutate(BYTEPLUS_PRICING_2026_11_19)
+    assert md != BYTEPLUS_PRICING_2026_11_19
+    with pytest.raises(RuntimeError, match="Fast"):
+        byteplus.parse_prices(md)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda md: md.replace("**Flex**", "**Flex**\n\n**Flex**", 1),
+    lambda md: md.replace("**Fast**", "**Fast**\n\n**Fast**", 1),
+    lambda md: md.replace("**Flex**\n", "", 1),
+    lambda md: md.replace("**Flex**", "**Priority**", 1),
+    lambda md: md.replace("**Batch**", "**Priority**", 1),
+    lambda md: md.replace("**Batch**", "**Batch**\n\n**Note**", 1),
+    lambda md: _moved_section(md, "**Flex**", "**Batch**", "**Standard**"),
+    lambda md: _moved_section(md, "**Batch**", "#### Audio input", "**Flex**"),
+    lambda md: _moved_section(md, "**Fast**", "**Flex**", "**Standard**"),
+], ids=["duplicate-flex", "duplicate-fast", "no-flex-heading", "flex-renamed", "batch-renamed",
+        "unknown-heading-after-batch", "flex-before-standard", "batch-before-flex", "fast-before-standard"])
+def test_tier_heading_sequence_is_validated_after_standard(mutate):
+    md = mutate(BYTEPLUS_PRICING_2026_11_19)
+    assert md != BYTEPLUS_PRICING_2026_11_19
+    with pytest.raises(RuntimeError):
+        byteplus.parse_prices(md)
+
+
+def test_table_rows_before_the_first_tier_heading_fail_closed():
+    heading = "#### Non\\-audio input\n"
+    stray = heading + "\n|Model ID |Input |\n|---|---|\n|`seed-2-0-lite-260428` |$0.01 |\n"
+    assert BYTEPLUS_PRICING_2026_11_19.count(heading) == 1
+    with pytest.raises(RuntimeError, match="outside an inference tier"):
+        byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19.replace(heading, stray, 1))
 
 
 def test_catalog_with_no_priced_row_fails_closed_and_says_why():
