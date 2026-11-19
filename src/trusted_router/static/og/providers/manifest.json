@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -640,10 +640,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 91,
+    "model_count": 90,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 177,
+    "route_count": 175,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -901,10 +901,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 14,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 31,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
