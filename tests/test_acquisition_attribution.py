@@ -26,6 +26,40 @@ from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution
 
 
+@pytest.mark.parametrize(("mode", "env", "headers", "expected"), [
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "8.8.8.8"), ("x-forwarded-for", "1.1.1.1")], "8.8.8.8"),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "2606:4700:4700:0000::1111")], "2606:4700:4700::1111"),
+    ("edge_header", "production", [("x-forwarded-for", "8.8.8.8")], None),
+    ("untrusted", "production", [("x-trustedrouter-client-ip", "8.8.8.8")], None),
+    ("edge_header", "test", [("x-trustedrouter-client-ip", "8.8.8.8")], None),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "8.8.8.8")] * 2, None),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "8.8.8.8"), ("sec-gpc", "1")], None),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "8.8.8.8"), ("dnt", "1")], None),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "10.0.0.1")], None),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "fe80::1%en1")], None),
+    ("edge_header", "production", [("x-trustedrouter-client-ip", "8.8.8.8, 1.1.1.1")], None),
+])
+def test_website_peer_is_on_this_request_only(mode, env, headers, expected, caplog):
+    from fastapi import FastAPI, Request
+
+    app = FastAPI()
+    app.state.settings = Settings().model_copy(update={"environment": env, "rate_limit_client_ip_mode": mode})
+    req = Request({"type": "http", "app": app, "path": "/", "client": ("1.1.1.1", 443),
+                   "headers": [(k.encode(), v.encode()) for k, v in headers]})
+    touch = {"utm_source": "direct"}
+    req.state.acquisition_attribution = AttributionContext("a"*32, touch, touch, "2026-11-19")
+    assert acquisition_module.pageview_attribution_fields(req).get("website_client_ip") == expected
+    with caplog.at_level(logging.INFO):
+        acquisition_module.log_browser_funnel_event(req, "landing_engaged")
+        acquisition_module.log_exchange_site_funnel_event(req, "enterprise_brief_delivered", touch)
+    events = [r for r in caplog.records if r.name == acquisition_module.__name__ and r.msg.startswith("acquisition.")]
+    if any(k in {"dnt", "sec-gpc"} for k, _ in headers):
+        assert not events
+    else:
+        assert len(events) == 2
+        assert all(getattr(r, "website_client_ip", None) == expected for r in events)
+
+
 def _campaign_landing(client: TestClient, *, click_id: str = "google-click-123") -> None:
     response = client.get(
         "/openrouter-alternative"

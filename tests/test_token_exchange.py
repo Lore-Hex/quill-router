@@ -109,8 +109,9 @@ def test_original_brief_delivered_after_lead_acceptance(
 ) -> None:
     events: list[str] = []
 
-    def event(_request: Request, name: str) -> None:
+    def event(_request: Request, name: str, *, requester_domain: str) -> None:
         assert len(sent_messages) == 1
+        assert requester_domain == "example.com"
         events.append(name)
 
     monkeypatch.setattr(public_routes, "log_browser_funnel_event", event)
@@ -247,7 +248,11 @@ def test_exchange_site_brochure_keeps_its_campaign(
     client: TestClient, sent_messages: list[EmailMessage], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     events: list[tuple[str, dict[str, str]]] = []
-    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda _r, name, touch: events.append((name, touch)))
+    def record(_request, name, touch, *, visitor_id, properties):
+        assert properties == {"requester_domain": "example.com"}
+        events.append((name, touch))
+
+    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", record)
     monkeypatch.setattr(public_routes, "log_browser_funnel_event", lambda *_: pytest.fail("cookie funnel used"))
     campaign = {"utm_source": "linkedin", "utm_medium": "paid_social", "utm_campaign": "ny-launch", "gclid": "dropped"}
     response = client.post(
@@ -267,7 +272,7 @@ def test_exchange_site_brochure_keeps_its_campaign(
 def test_exchange_site_email_lists_only_campaign_fields_the_page_sent(
     client: TestClient, sent_messages: list[EmailMessage], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda *_: None)
+    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda *_, **_kw: None)
     client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=EXCHANGE_HEADERS)
     client.post(
         "/token-exchange/brief",

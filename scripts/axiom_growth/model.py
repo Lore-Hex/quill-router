@@ -83,7 +83,7 @@ FIRST_FIELDS = ("first_utm_source", "first_utm_medium", "first_utm_campaign", "f
 EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_domain_basis",
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
-FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain",
+FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain", "requester_domain", "website_client_ip",
           "market", "exchange_market", "exchange_visitor_fingerprint", "page_path", "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade", "device_category", "reward_placement", "reward_action", "observation_id",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
@@ -173,6 +173,17 @@ def project_event(
         "referrer_domain": domain(row.get("referer_host")),
     }
     matched = {**row, **(enrichment or {}).get(fingerprint, {})}
+    ip = row.get("website_client_ip")
+    if (isinstance(ip, str) and 0 < len(ip) <= 45 and "%" not in ip
+            and (event in BROWSER_EVENTS or event in {"acquisition.signup_completed", "acquisition.api_key_created"})
+            and event != "acquisition.reserved_tokens_recorded"):
+        try:
+            peer = ipaddress.ip_address(ip)
+        except ValueError:
+            pass
+        else:
+            if peer.is_global and not peer.is_multicast:
+                output["website_client_ip"] = peer.compressed
     output["customer_domain"] = domain(matched.get("customer_domain"))
     output["first_referrer_domain"] = domain(matched.get("first_referrer_domain"))
     output["customer_domain_verified"] = matched.get("customer_domain_verified") is True
@@ -201,6 +212,9 @@ def project_event(
         output["page_path"] = safe_path(row.get("page_path"))
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
     if exchange:
+        if event in {"acquisition.enterprise_brief_delivered", "acquisition.enterprise_security_pack_delivered"}:
+            if requester := domain(row.get("requester_domain")):
+                output["requester_domain"] = requester
         output["site_domain"] = domain(row.get("site_domain"))
         output["page_path"] = safe_path(row.get("page_path"), exchange=True)
         market = row.get("market") if row.get("market") in EXCHANGE_MARKETS else EXCHANGE_MARKETS_BY_DOMAIN.get(str(output["site_domain"]), "")
@@ -491,6 +505,28 @@ def build_journeys(events, daily, end):
         for field in ('utm_source','utm_medium','utm_campaign','landing_path','creative_id','experiment_id','experiment_cell_id'):
             item[field] = linked.get(field) or '(unattributed)'
     return result
+
+
+def with_verified_domains(events, journeys, candidates):
+    """Project account domains without writing inferred evidence back into the checkpoint."""
+    by_account = defaultdict(set)
+    for row in events:
+        account = row.get('account_fingerprint')
+        if (isinstance(account, str) and HASH.fullmatch(account)
+                and row.get('customer_domain_verified') is True
+                and row.get('customer_domain_basis') in {
+                    'verified_oauth_email', 'verified_account_email', 'current_account_email'}
+                and (host := domain(row.get('customer_domain')))):
+            by_account[account].add(host)
+    by_visitor = {j['anonymous_fingerprint']: j['account_fingerprint'] for j in journeys
+                  if j.get('identity_link_status') == 'linked' and j.get('account_fingerprint')}
+    for row in candidates:
+        account = row.get('account_fingerprint') or by_visitor.get(row.get('anonymous_fingerprint'))
+        domains = by_account.get(account)
+        if domains and len(domains) == 1 and row.get('identity_link_status') != 'ambiguous':
+            yield {**row, 'verified_account_domain': next(iter(domains))}
+        else:
+            yield row
 
 
 def link_billing_accounts(daily, owners, journeys):

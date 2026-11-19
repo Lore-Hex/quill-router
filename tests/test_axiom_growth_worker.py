@@ -84,6 +84,76 @@ def test_failed_ingest_does_not_mutate_checkpoint_or_emit_success():
     assert not io.sent
 
 
+def test_verified_domains_reproject_without_persisting_inferred_evidence():
+    signup = event(account_fingerprint='b'*64, workspace_fingerprint='d'*64,
+                   customer_domain='corp.example', customer_domain_verified=True,
+                   customer_domain_basis='verified_oauth_email')
+    purchase = event('credit_purchase_completed', amount_microdollars=100)
+    io = FakeIO([signup, purchase], [usage(event_id='usage', workspace_fingerprint='d'*64)])
+    snapshot, _ = cycle(state(), io, NOW)
+    enriched = [r for r in io.sent if r.get('verified_account_domain') == 'corp.example']
+    assert {r['event_id'] for r in enriched} == {
+        signup['event_id'], purchase['event_id'], 'usage', m.digest('journey:'+'a'*64)}
+    assert all('verified_account_domain' not in r for r in snapshot['events'] + snapshot['daily'])
+    assert cycle(snapshot, io, NOW + dt.timedelta(minutes=5))[1] == 0
+
+
+def test_domain_requires_agreeing_account_evidence_and_never_current_billing_ownership():
+    account = 'b'*64
+    signup = event(account_fingerprint=account, customer_domain='corp.example',
+                   customer_domain_verified=True, customer_domain_basis='verified_oauth_email')
+    attempt = {'record_type': 'gateway_attempt_snapshot', 'account_fingerprint': account}
+    def project_attempt(sources, target=attempt):
+        return next(m.with_verified_domains(sources, [], [target])).get('verified_account_domain')
+
+    assert project_attempt([signup]) == 'corp.example'
+    for value in ['first@corp.example', '192.0.2.1', 'host.internal', '']:
+        assert not project_attempt([{**signup, 'customer_domain': value}])
+    assert not project_attempt([signup, {**signup, 'customer_domain': 'other.example'}])
+    assert not project_attempt([{**signup, 'customer_domain_verified': False}])
+    assert not project_attempt([{**signup, 'customer_domain_basis': 'current_workspace_owner_email'}])
+    assert not project_attempt([signup], {'billing_account_fingerprint': account})
+    assert not project_attempt([signup], {**attempt, 'identity_link_status': 'ambiguous'})
+
+
+def test_overlap_cannot_upgrade_an_unverified_change_with_prior_verification():
+    old = event(account_fingerprint='b'*64, customer_domain='old.example',
+                customer_domain_verified=True, customer_domain_basis='verified_oauth_email')
+    fresh = event(account_fingerprint='b'*64, customer_domain='other.example',
+                  customer_domain_verified=False, customer_domain_basis='unverified_account_email')
+    base = state()
+    base['events'] = [old]
+    io = FakeIO([fresh])
+    updated, _ = cycle(base, io, NOW)
+    assert updated['events'][0]['customer_domain_verified'] is False
+    assert all('verified_account_domain' not in row for row in io.sent)
+
+
+def test_requester_domain_is_only_self_reported_on_completed_downloads():
+    raw = {'event': 'acquisition.enterprise_brief_delivered', '_time': NOW.isoformat(),
+           'anonymous_fingerprint': 'a'*64, 'requester_domain': 'Example.COM'}
+    projected = project(raw, 'cloud_logging')
+    assert projected['requester_domain'] == 'example.com'
+    assert not projected['customer_domain_verified']
+    for overrides in [{'requester_domain': 'visitor@example.com'}, {'requester_domain': '192.0.2.1'},
+                      {'event': 'acquisition.nyte.form_submitted'}]:
+        assert 'requester_domain' not in project({**raw, **overrides}, 'cloud_logging')
+
+
+def test_website_ip_does_not_follow_a_visitor_into_purchases_or_rollups():
+    raw = {'_time': NOW.isoformat(), 'anonymous_fingerprint': 'a'*64,
+           'event': 'acquisition.landing_engaged', 'website_client_ip': '2606:4700:4700:0000::1111'}
+    observed = project(raw, 'cloud_logging')
+    assert observed['website_client_ip'] == '2606:4700:4700::1111'
+    for value in ['10.0.0.1', 'local@example.com', '2606:4700::1%en0', '8.8.8.8:42', '8.8.8.8,9.9.9.9']:
+        assert 'website_client_ip' not in project({**raw, 'website_client_ip': value}, 'cloud_logging')
+    for name, source in [('acquisition.credit_purchase_completed', 'axiom'),
+                         ('acquisition.reserved_tokens_recorded', 'cloud_logging'),
+                         ('acquisition.first_successful_api_call', 'axiom')]:
+        assert 'website_client_ip' not in project({**raw, 'event': name, 'amount_microdollars': 10}, source)
+    assert 'website_client_ip' not in m.build_journeys([observed], [], NOW)[0]
+
+
 def test_partial_batch_replay_converges_after_failure():
     class Partial(FakeIO):
         def ingest(self, rows):

@@ -724,8 +724,8 @@ def _log_public_page_view(request: Request, response: Response, *, latency_ms: f
     """Emit privacy-bounded public page analytics through the app logger.
 
     The Axiom integration subscribes to Python log records. We only log
-    metadata needed for public-site analytics and deliberately avoid raw IPs,
-    cookies, auth headers, full query strings, or user-agent strings.
+    metadata for public-site analytics. Attributed visits may include a
+    verified edge IP, never cookies, auth headers or raw user-agent strings.
     """
     if request.method.upper() != "GET":
         return

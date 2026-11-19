@@ -35,6 +35,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from trusted_router.acquisition import (
+    email_domain,
     exchange_site_campaign,
     exchange_site_touch,
     log_browser_funnel_event,
@@ -970,6 +971,7 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     if not sent:
         log.error("enterprise_brief.delivery_unavailable")
         return error("delivery_unavailable", 503)
+    requester_domain = email_domain(email)
     if exchange_origin is not None:
         if payload.get("tracking_disabled") is not True:
             try:
@@ -984,12 +986,10 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
                 referrer_host=referrer_host if isinstance(referrer_host, str) else None,
                 page_path=page_path if isinstance(page_path, str) else "/",
             )
-            if visitor_id:
-                log_exchange_site_funnel_event(request, event, touch, visitor_id=visitor_id)
-            else:
-                log_exchange_site_funnel_event(request, event, touch)
-    else:
-        log_browser_funnel_event(request, event)
+            log_exchange_site_funnel_event(request, event, touch, visitor_id=visitor_id,
+                                         properties={"requester_domain": requester_domain})
+    elif payload.get("tracking_disabled") is not True:
+        log_browser_funnel_event(request, event, requester_domain=requester_domain)
     return FileResponse(
         asset,
         media_type=media_type,
