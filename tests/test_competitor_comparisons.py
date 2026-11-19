@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,7 +65,7 @@ def test_each_gateway_comparison_has_unique_evidence_and_schema(client: TestClie
             in response.text
         )
         assert comparison.name in response.text
-        assert "Sources checked August 16, 2026" in response.text
+        assert "Sources checked " + datetime.fromisoformat(comparison.verified_on).strftime("%B %-d, %Y") in response.text
         assert 'href="/compare"' in response.text
         assert 'href="/benchmarks/reports"' in response.text
         assert "https://trust.trustedrouter.com" in response.text
@@ -76,7 +77,7 @@ def test_each_gateway_comparison_has_unique_evidence_and_schema(client: TestClie
         assert isinstance(nodes, list)
         assert any(node["@type"] == "FAQPage" for node in nodes)
         page = next(node for node in nodes if node["@type"] == "WebPage")
-        assert page["dateModified"] == "2026-08-16"
+        assert page["dateModified"] == comparison.verified_on
 
 
 def test_unknown_gateway_comparison_returns_real_404(client: TestClient) -> None:

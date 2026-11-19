@@ -1355,6 +1355,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             api_base_url=request_api_base_url(request, settings),
         )
 
+    @public_html_route('/compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry')
+    def seo_cloud_inference_hub() -> str:
+        return public_page_html(settings, 'compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry')
+
+    @public_html_route('/multi-cloud-llm-api')
+    def seo_multi_cloud_llm_api() -> str:
+        return public_page_html(settings, 'multi-cloud-llm-api')
+
+    @public_html_route('/bedrock-throttling-quota-guide')
+    def seo_bedrock_quota_guide() -> str:
+        return public_page_html(settings, 'bedrock-throttling-quota-guide')
+
     @public_html_route("/compare/openrouter")
     def compare_openrouter() -> HTMLResponse:
         body = public_competitor_compare_html(settings, "openrouter")

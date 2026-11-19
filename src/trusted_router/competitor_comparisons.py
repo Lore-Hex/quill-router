@@ -30,6 +30,8 @@ class CompetitorComparison:
     # empty means the page renders without an article section.
     article_html: str = ""
     custom_page: bool = False
+    verified_on: str = VERIFIED_ON
+    cloud_comparison: bool = False
 
     @property
     def href(self) -> str:
@@ -37,10 +39,14 @@ class CompetitorComparison:
 
     @property
     def title(self) -> str:
+        if self.cloud_comparison:
+            return f"NYTE vs {self.name}: Inference Alternatives"
         return f"TrustedRouter vs {self.name}"
 
     @property
     def description(self) -> str:
+        if self.cloud_comparison:
+            return self.summary
         return (
             f"Compare TrustedRouter and {self.name} across APIs, deployment, routing, "
             "billing, observability, content handling, and verifiable privacy."
@@ -1082,447 +1088,258 @@ COMPETITOR_COMPARISONS: tuple[CompetitorComparison, ...] = (
 <li>We do not match Requesty's team- and user-level budgets, its webhook spend alerts, or its enterprise governance checklist of SSO, RBAC tiers, and PII guardrails.</li>
 </ul>""",
     ),
-    _comparison(
+    CompetitorComparison(
         slug="aws-bedrock",
         name="Amazon Bedrock",
         category="Cloud model platform",
-        summary=(
-            "Amazon Bedrock is AWS's managed model platform: ~120 serverless models "
-            "across 18 providers, strong default privacy, and no gateway markup on your "
-            "AWS bill. TrustedRouter is cloud-neutral, with a hardware-attested gateway "
-            "and per-request privacy-tier routing across ~49 providers."
-        ),
-        competitor_fit=(
-            "Choose Bedrock when your workloads, identity, and compliance evidence "
-            "already live on AWS: IAM/SCP governance, PrivateLink, HIPAA eligibility "
-            "(excluding the Fable and Mythos models), FedRAMP, spend that counts toward "
-            "AWS commitments, and both Anthropic and OpenAI frontier models with no "
-            "gateway markup."
-        ),
-        trustedrouter_fit=(
-            "Choose TrustedRouter when you need one key across roughly 49 providers on "
-            "any cloud, a gateway whose no-durable-prompt-logs behavior is checkable "
-            "through live TEE attestation instead of policy alone, and per-request "
-            "privacy routing (zdr, e2e, eu) that travels with the call."
-        ),
-        migration=(
-            "Apps on Bedrock's OpenAI-compatible endpoints move with a base URL, key, and "
-            "model-id change. Converse or InvokeModel apps need a request-shape rewrite "
-            "first. IAM/SCP enforcement, Guardrails, Knowledge Bases, PrivateLink, "
-            "CloudWatch wiring, and AWS-commitment spend do not carry over; Responses "
-            "state stored with store=true stays in the AWS serving region."
-        ),
-        deployment=(
-            "AWS regional managed service; IAM/SCP governance, PrivateLink, KMS, FIPS endpoints"
-        ),
-        api=(
-            "Converse/InvokeModel plus OpenAI-compatible and Anthropic APIs, split across "
-            "2 endpoints"
-        ),
-        catalog=(
-            "~120 serverless models across 18 providers incl. GPT-5.x and Claude; 100+ Marketplace"
-        ),
-        routing=(
-            "Cross-region inference profiles (global ≈10% cheaper) and intelligent prompt routing"
-        ),
-        observability=(
-            "CloudWatch/CloudTrail; prompt logging opt-in, default off, absent on mantle endpoint"
-        ),
-        content=(
-            "No prompt storage by default; GPT-5.x flagged traffic and Fable/Mythos retained ≤30d"
-        ),
-        verification=(
-            "IAM, audit logs, SOC 1/2/3, FedRAMP, HIPAA-eligible; policy trust, no "
-            "runtime attestation"
-        ),
-        billing="AWS metering at listed model prices, no markup; batch/flex −50%, priority +75%",
-        sources=(
-            ComparisonSource(
-                "Bedrock data retention modes",
-                "https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html",
+        summary="Amazon Bedrock alternative for teams that need more inference capacity: keep AWS for cloud-native workloads and add New York Token Exchange for eligible routes across independent providers.",
+        competitor_fit="Keep Bedrock when AWS identity, private networking, managed integrations and your cloud purchasing agreement are central to the workload.",
+        trustedrouter_fit="Add NYTE when you need provider choice beyond one cloud, price comparisons for eligible model routes, and explicit privacy filters on an OpenAI-compatible inference API.",
+        migration="For a Bedrock workload, translate Converse or InvokeModel inputs into the supported OpenAI-compatible schema. Validate model availability and tools, then test a small overflow workload before changing production routing.",
+        rows=(
+            (
+                "Deployment",
+                "AWS managed inference with account and deployment controls",
+                "Hosted inference; source-available (BUSL-1.1) gateway",
             ),
-            ComparisonSource(
-                "Bedrock abuse detection and default no-storage",
-                "https://docs.aws.amazon.com/bedrock/latest/userguide/abuse-detection.html",
+            (
+                "API surface",
+                "Bedrock APIs; compatibility depends on the endpoint and model",
+                "OpenAI-compatible API; test model-specific features",
             ),
-            ComparisonSource(
-                "Bedrock runtime vs mantle endpoint comparison",
-                "https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html",
+            (
+                "Model access",
+                "Check the supported model and region, not just the catalog headline",
+                "100+ provider listings and 600+ models; check live route availability",
             ),
-            ComparisonSource(
-                "Bedrock models at a glance",
-                "https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html",
+            (
+                "Routing",
+                "In-region and cross-region inference; quotas still apply",
+                "Fallback among eligible providers; filters and capacity still apply",
             ),
-            ComparisonSource("Amazon Bedrock pricing", "https://aws.amazon.com/bedrock/pricing/"),
-            ComparisonSource(
-                "AWS HIPAA eligible services list",
-                "https://aws.amazon.com/compliance/hipaa-eligible-services-reference/",
+            (
+                "Observability",
+                "Cloud-native monitoring and account governance",
+                "Usage metadata and route-level evidence",
             ),
-            ComparisonSource(
-                "GPT-5.6 Luna/Terra price reduction (AWS What's New)",
-                "https://aws.amazon.com/about-aws/whats-new/2026/07/openai-gpt-terra-luna-pricing-bedrock/",
+            (
+                "Prompt content",
+                "Review model-specific AWS data-handling terms",
+                "No durable realtime gateway content logs; batch is separate opt-in retention",
             ),
-            ComparisonSource(
-                "Claude Fable 5 on AWS launch blog",
-                "https://aws.amazon.com/blogs/aws/anthropic-claude-fable-5-on-aws-mythos-class-capabilities-with-built-in-safeguards-now-available/",
+            (
+                "Verification",
+                "AWS security controls and documented service commitments",
+                "Gateway attestation; provider confidentiality requires a verified route",
+            ),
+            (
+                "Billing",
+                "On-demand or committed capacity; compare your actual AWS terms",
+                "Compare live model prices, service fees and your workload mix",
             ),
         ),
         faq_items=(
             (
-                ("Bedrock already does not store prompts by default. What does attestation add?"),
-                """Bedrock's default posture is excellent and we say so: no input/output storage by default, zero operator access, and model providers architecturally cut off from prompts. That posture is enforced by AWS policy and verified by auditors. TrustedRouter's no-durable-prompt-logs claim is verified differently: the gateway runs in enclaves on three clouds, and anyone can check the running build against published source from trust.trustedrouter.com without waiting on an audit cycle. The attestation covers our gateway only; it does not extend to downstream model providers.""",
+                "Is NYTE an Amazon Bedrock replacement?",
+                "It can serve supported inference workloads through an OpenAI-compatible API. Keep Bedrock for AWS-specific integrations, networking or procurement requirements; test NYTE as an additional capacity source.",
             ),
             (
-                "Which catalog is bigger, and what is each one missing?",
-                (
-                    "Bedrock lists ~120 serverless models across 18 providers plus 100+ "
-                    "Marketplace models, and it is the only non-first-party host of both "
-                    "Anthropic and OpenAI frontier models; it carries no Google Gemini, "
-                    "only open-weight Gemma. TrustedRouter lists 550+ model routes across "
-                    "~49 providers (as of August 2026), including Google routes. Coverage "
-                    "gaps exist on both sides, so check /models for the specific SKUs you "
-                    "need before committing."
-                ),
+                "Does Bedrock already support failover across regions?",
+                "Bedrock supports cross-region inference profiles for eligible models. NYTE adds a different option: fallback among eligible providers, subject to availability, model compatibility and your routing filters.",
             ),
             (
-                "What breaks when we move off Bedrock?",
-                (
-                    "OpenAI-compatible call sites just re-point; Converse and InvokeModel "
-                    "call sites need rewriting to OpenAI-compatible shapes. You lose "
-                    "IAM/SCP enforcement, Guardrails, Knowledge Bases and Agents, "
-                    "PrivateLink, CloudWatch/CloudTrail wiring, and spend that counted "
-                    "toward AWS commitments, so plan replacements before cutover. "
-                    "Responses state stored with store=true stays in the AWS serving "
-                    "region; export it first. Our only step-by-step migration doc today "
-                    "covers OpenRouter, not Bedrock."
-                ),
+                "Will NYTE remove every Bedrock throttling error?",
+                "No. Diagnose the AWS quota and retry behavior first. An approved alternative route can handle selected overflow workloads, but it is not unlimited capacity and does not bypass AWS quotas.",
             ),
         ),
-        article_html="""<h2>What Amazon Bedrock actually is</h2>
-<p>Amazon Bedrock is AWS's fully managed foundation-model service. AWS copies each provider's model into AWS-controlled deployment accounts — one per provider per region — and the providers have no access to those accounts, so they cannot see customer prompts or completions. As of August 2026 the serverless catalog is roughly 120 models across 18 providers, including Anthropic's Claude line through Fable 5 and OpenAI's proprietary GPT-5.x family (GA June and July 2026), with 100+ more models available through the Bedrock Marketplace. Bedrock is currently the only place other than the first parties where Anthropic and OpenAI frontier models sit behind one billing relationship.</p>
-<p>There are two inference endpoints, and the split matters when you write code. <span class="mono">bedrock-runtime</span> carries the AWS-native Converse and InvokeModel APIs, OpenAI-compatible Chat Completions and Responses, Anthropic Messages, Guardrails, and cross-region inference profiles. <span class="mono">bedrock-mantle</span> carries the OpenAI-compatible and Anthropic APIs with server-side tools, background inference, and Projects, and lacks Guardrails, cross-region profiles, and model invocation logging. Authentication is IAM SigV4 or plain API keys that work directly with the OpenAI SDK.</p>
-
-<h2>Where Bedrock is the right choice</h2>
-<p>Bedrock's default privacy posture is exceptionally strong for a hosted model platform. Model inputs and outputs are not stored by default, no AWS operator can read them, customer content is not used to train base models, and the 2026 <a href="https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html">Data Retention API</a> adds a <span class="mono">none</span> mode, enforceable org-wide through SCPs, in which any model that requires retention becomes unavailable rather than retaining. Compliance depth is real: HIPAA-eligible (excluding the Fable and Mythos models), FedRAMP Class C and Class D including GovCloud, SOC 1/2/3, FIPS-validated endpoints, and PrivateLink.</p>
-<p>Pricing is a genuine strength too. There is no gateway markup: you pay AWS's <a href="https://aws.amazon.com/bedrock/pricing/">listed per-token price</a>, metered on your AWS bill, counting toward committed spend. AWS passed OpenAI's July 30, 2026 cuts through — GPT-5.6 Luna dropped 80% to $0.20 input / $1.20 output per million tokens — and batch and flex tiers each take 50% off, with global cross-region routing about 10% cheaper than geographic. If your infrastructure, identity, and compliance program already live on AWS, Bedrock is a strong default and this page will not talk you out of it.</p>
-
-<h2>Three differences that decide it</h2>
-<p><strong>Verification kind.</strong> Bedrock's no-storage posture is policy backed by audits: AWS documentation, SOC reports, contract terms. TrustedRouter makes the equivalent claim mechanically checkable: <span class="mono">api.trustedrouter.com</span> runs inside hardware enclaves on three clouds (GCP Confidential Space, AWS Nitro Enclaves, Azure Confidential Containers), and anyone can verify that the running build matches the published source and release digests from <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>. Realtime inference does not write prompt or output content to durable storage, and every line of gateway code that touches your prompt is public.</p>
-<p><strong>Carve-outs versus routes.</strong> Bedrock's zero-retention default now has flagship exceptions: classifier-flagged GPT-5.x traffic is retained up to 30 days, and Claude Fable 5 and Mythos 5 require retention with data sharing to Anthropic and potential human review — AWS's launch blog says plainly that once you opt in to data retention, "your data will leave AWS's data and security boundary." Bedrock manages this with account-level retention modes, and eligible customers can request full zero-data-retention for retention-requiring models through their AWS account team. TrustedRouter manages it with routing: <span class="mono">trustedrouter/zdr</span> restricts a request to providers with a cited zero-data-retention posture, <span class="mono">trustedrouter/e2e</span> restricts to confidential-compute providers with end-to-end encryption (tinfoil, phala), and <span class="mono">trustedrouter/eu</span> pins the EU provider set. Privacy floors compose with any request, so the constraint travels with the call rather than the account.</p>
-<p><strong>Cloud neutrality, with the fee stated.</strong> Bedrock is one cloud: IAM identity, per-region model availability, and no Google Gemini (only open-weight Gemma). TrustedRouter routes 550+ model routes across roughly 49 providers (as of August 2026) with one key, including Google routes. The pricing bases differ, so here are both: Bedrock adds no fee over its listed model prices; TrustedRouter prepaid bills the provider's token price plus 5.5%, with a $0.01 per million token floor (<a href="/pricing">pricing</a>). Where Bedrock's listed price matches the provider's own — AWS matched OpenAI's first-party cuts, for example — Bedrock is cheaper by our 5.5% fee. Base prices are not identical everywhere: Bedrock lists legacy Claude 3.5 Sonnet at a 2x extended-access surcharge, so compare the exact SKUs you run. BYOK is supported; we do not publish a separate BYOK fee.</p>
-
-<h2>What we do not claim</h2>
-<ul>
-<li>Our attestation covers the gateway and stops there. Downstream model providers are covered by cited policy tiers, except the E2E routes (tinfoil, phala), where the provider's own confidential-compute and encryption mechanisms apply.</li>
-<li>We publish no SOC 2 or HIPAA certification. If either is a hard requirement today, Bedrock wins this comparison outright.</li>
-<li>Our repos are young: public since late April 2026, with benchmark history from June 2026. AWS's operating track record is measured in decades.</li>
-<li>The gateway and control plane are source-available under BUSL-1.1, converting to Apache-2.0 four years after each release; the SDKs are Apache-2.0 or MIT. We do not call the platform open source.</li>
-</ul>
-
-<h2>Migration reality</h2>
-<p>If your app already uses Bedrock's OpenAI-compatible Chat Completions or Responses APIs, moving is mechanical: change the base URL and API key, then remap Bedrock model ids (such as <span class="mono">anthropic.claude-...</span> or inference-profile ARNs) to catalog names on <a href="/models">/models</a>. Apps built on Converse or InvokeModel need a request-shape rewrite first; those are AWS-native shapes no gateway speaks.</p>
-<p>What does not carry over: IAM and SCP enforcement, Guardrails, Knowledge Bases and Agents, PrivateLink, CloudWatch and CloudTrail wiring, and spend that counted toward AWS commitments all stay behind. Stateful Responses conversations created with <span class="mono">store=true</span> are pinned to the AWS region that served them, so export or reset that state before cutover. Start with one streamed request, compare output, latency, and billed usage, and read <a href="/security">/security</a> and the <a href="/status">status page</a> before routing anything sensitive.</p>""",
-    ),
-    _comparison(
-        slug="azure-ai-foundry",
-        name="Microsoft Azure AI Foundry",
-        category="Cloud model platform",
-        summary=(
-            "Microsoft Foundry is Azure's first-party AI platform: 1,900+ models "
-            "including both GPT and Claude frontier lines, a GA cross-vendor model "
-            "router, and deep Azure governance. TrustedRouter is a cloud-neutral gateway "
-            "across ~49 providers with no durable prompt logs on realtime inference and a "
-            "hardware-attested prompt path you can verify."
-        ),
-        competitor_fit=(
-            "Choose Microsoft Foundry when your platform is already Azure and its "
-            "controls bind: Entra ID and Azure Policy governance, FedRAMP High or HIPAA "
-            "BAA obligations, PTU reservations and committed spend, or the need for both "
-            "OpenAI GPT and Anthropic Claude frontier models behind one Azure bill with a "
-            "GA cross-vendor router."
-        ),
-        trustedrouter_fit=(
-            "Choose TrustedRouter when you want one API across roughly 49 providers "
-            "rather than one cloud's catalog, realtime inference that keeps no durable "
-            "prompt or output logs by default rather than by approval-gated exemption, "
-            "privacy and region routes (zdr, e2e, eu), and a gateway whose running build "
-            "you can verify by hardware attestation on GCP, AWS, and Azure."
-        ),
-        migration=(
-            "OpenAI-shaped Chat Completions and Responses code moves with a base URL, "
-            "key, and deployment-name-to-model-id swap; Claude workloads keep the "
-            "Anthropic Messages shape, which TrustedRouter serves natively. Server-side "
-            "state (Assistants threads, stored completions, vector stores), Azure "
-            "content-filter annotations, and Azure-native tooling like Foundry Agent "
-            "Service, PTU reservations, and Azure Policy do not carry over."
-        ),
-        deployment=(
-            "Azure resource deployments: Global, Data Zone (US/EU), regional, PTU, and Batch types"
-        ),
-        api="Azure OpenAI Chat + Responses at /openai/v1/; Claude via Anthropic Messages API",
-        catalog=(
-            "1,900+ models incl. GPT and Claude frontier lines (Claude under Marketplace terms)"
-        ),
-        routing=(
-            "GA trained router across OpenAI, Anthropic, xAI, DeepSeek, Meta; subsets + failover"
-        ),
-        observability="Azure Monitor metrics, cost analysis, Foundry tracing, evaluations, dashboards",
-        content=(
-            "Abuse monitoring on by default; flagged prompts stored for review, no documented cap"
-        ),
-        verification=(
-            "Product Terms + Azure audits; ContentLogging:false flag verifiable after approval"
-        ),
-        billing="Azure meters + $0.14/1M-input router markup; Claude billed via Marketplace CCUs",
+        article_html='<h2>Amazon Bedrock vs NYTE: capacity comes first</h2><p>Bedrock is a strong fit when an application is already built around AWS. The decision is not whether to abandon that platform. It is whether every new inference workload should share the same capacity and purchasing boundary. New York Token Exchange adds a market of eligible provider routes alongside your existing AWS setup.</p><h2>Cross-region routing is not cross-provider routing</h2><p>Bedrock already offers <a href="https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html">global cross-region inference</a> for supported profiles. It can move requests between AWS Regions. That is a useful capacity tool, not something an alternative comparison should omit. An exchange addresses a different question: can an approved independent provider serve this model when your current route is unavailable?</p><p>Fallback depends on available routes and your filters. It cannot create capacity for an exclusive model, bypass an account limit or promise that a request will always succeed. For a throttled workload, first identify the model, inference profile, token budget and request rate. Check <a href="https://docs.aws.amazon.com/general/latest/gr/bedrock.html">AWS quotas</a>, then use the <a href="/bedrock-throttling-quota-guide">Bedrock throttling guide</a> to compare backoff, capacity planning and approved overflow.</p><h2>When staying on Bedrock makes sense</h2><p>AWS-specific governance, networking and procurement can be worth more than a small token-price difference. Check those requirements before migrating. NYTE is an inference layer, not a replacement for your AWS application services or an automatic way to spend an AWS commitment. Compare its current route prices with <a href="https://aws.amazon.com/bedrock/pricing/">Bedrock pricing</a> and your contracted rates using a representative workload.</p><h2>Compare the cost of a completed task</h2>\n<p>Price comes after capacity: a cheaper endpoint that cannot finish the workload is not a saving. Use the same prompt set, context length, output budget, concurrency and quality threshold on both services. Measure successful tasks, time to first token, tail latency, retries and the final bill. Include cached tokens, batch discounts, gateway fees and any cloud commitment you would otherwise leave unused. An exchange can expose lower-priced eligible routes, but it does not guarantee the lowest price for every request.</p>\n<h2>Choose privacy before choosing a route</h2>\n<p>New York Token Exchange uses TrustedRouter for its inference API. Gateway attestation and provider confidentiality are separate checks. For confidential inference, select a route whose provider compute, end-to-end encryption and zero-retention posture are verified together. Ordinary routes do not inherit those properties simply by passing through an attested gateway. Read the <a href="/providers">provider evidence</a> and <a href="/security">security boundary</a> before sending sensitive content.</p>\n<p>Realtime inference does not durably log prompt or output content at the gateway; batch is a separate opt-in encrypted-retention mode. <a href="/docs/receipts">Signed response receipts</a> are opt-in and have their own pricing. They describe the serving route and verification evidence, not a blanket certification of every downstream service. The gateway is <a href="https://github.com/Lore-Hex/quill-router">source-available under BUSL-1.1</a>; do not confuse source visibility with an unrestricted open-source license.</p>\n<h2>Keep your cloud, add the market</h2>\n<p>Start with one non-sensitive workload and an explicit set of approved providers. Keep existing cloud-native integrations where they work. Check model IDs, tools, streaming behavior and error handling before moving traffic; translating a cloud SDK call is more than changing a URL. Use the <a href="/multi-cloud-llm-api">multi-cloud rollout guide</a> to stage the change and the <a href="/compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry">cloud comparison hub</a> to evaluate the wider buying decision.</p>',
+        verified_on="2026-11-18",
+        cloud_comparison=True,
         sources=(
             ComparisonSource(
-                "Data, privacy, and security for Foundry Models sold by Azure",
-                "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy",
+                "Bedrock global cross-region inference",
+                "https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html",
             ),
             ComparisonSource(
-                "Modified abuse monitoring eligibility (Limited Access)",
-                "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/limited-access",
+                "Bedrock service quotas", "https://docs.aws.amazon.com/general/latest/gr/bedrock.html"
+            ),
+            ComparisonSource("Bedrock pricing", "https://aws.amazon.com/bedrock/pricing/"),
+            ComparisonSource(
+                "Bedrock data protection",
+                "https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html",
+            ),
+        ),
+    ),
+    CompetitorComparison(
+        slug="azure-ai-foundry",
+        name="Microsoft Foundry (Azure AI Foundry)",
+        category="Cloud model platform",
+        summary="Microsoft Foundry alternative for inference: compare hosted API capacity, deployed-model costs and provider choice. Keep Azure integrations and add New York Token Exchange for eligible workloads outside a single cloud purchasing path.",
+        competitor_fit="Keep Foundry when Azure identity, governance, model deployments and existing Microsoft purchasing arrangements are central to your application.",
+        trustedrouter_fit="Add NYTE when you want to compare independent inference providers, avoid operating additional model deployments and keep selected API workloads portable.",
+        migration="For an Azure AI Foundry workload, distinguish a deployment name from a catalog model ID. Test the matching supported route, tool schema, streaming and authentication before moving a small production canary.",
+        rows=(
+            (
+                "Deployment",
+                "Azure platform with deployment-specific infrastructure and controls",
+                "Hosted inference; source-available (BUSL-1.1) gateway",
+            ),
+            (
+                "API surface",
+                "API and compatibility depend on model and deployment",
+                "OpenAI-compatible API; test model-specific features",
+            ),
+            (
+                "Model access",
+                "Catalog includes hosted options and models requiring deployment",
+                "100+ provider listings and 600+ models; check live route availability",
+            ),
+            (
+                "Routing",
+                "Capacity and processing boundary depend on deployment type",
+                "Fallback among eligible providers; filters and capacity still apply",
+            ),
+            (
+                "Observability",
+                "Azure monitoring and Foundry platform tooling",
+                "Usage metadata and route-level evidence",
+            ),
+            (
+                "Prompt content",
+                "Terms depend on the model, seller and deployment",
+                "No durable realtime gateway content logs; batch is separate opt-in retention",
+            ),
+            (
+                "Verification",
+                "Microsoft security controls and deployment documentation",
+                "Gateway attestation; provider confidentiality requires a verified route",
+            ),
+            (
+                "Billing",
+                "Hosted token usage or compute costs depending on deployment",
+                "Compare live model prices, service fees and your workload mix",
+            ),
+        ),
+        faq_items=(
+            (
+                "Is Microsoft Foundry the same product formerly called Azure AI Foundry?",
+                "Microsoft Foundry is the current branding. Buyers still use Azure AI Foundry in searches; this comparison focuses on model inference and deployment choices under those names.",
+            ),
+            (
+                "Does every Foundry catalog model have a hosted pay-per-token API?",
+                "No. Check the deployment option for the individual model. Hosted API options and managed-compute deployments have different capacity, billing and operational requirements.",
+            ),
+            (
+                "Can NYTE replace my Azure OpenAI deployment without code changes?",
+                "Do not assume so. An Azure deployment name may differ from the exchange model ID, and endpoint features can differ. Validate authentication, model version, tools and streaming with a small canary.",
+            ),
+        ),
+        article_html='<h2>Microsoft Foundry vs NYTE: compare usable capacity</h2><p>Azure AI Foundry is now Microsoft Foundry. The old name still appears in buying searches, so this page covers both. Foundry combines model discovery with Azure development and governance tools. NYTE offers a different purchasing model: select an eligible running inference route through one API rather than treating another model deployment as an infrastructure project.</p><h2>A catalog entry is not a hosted token endpoint</h2><p>Microsoft\'s <a href="https://learn.microsoft.com/en-us/azure/foundry/concepts/deployments-overview">deployment overview</a> distinguishes deployment options. Some models are available through hosted APIs; others use <a href="https://learn.microsoft.com/en-us/azure/foundry/how-to/deploy-models-managed">managed compute</a>. A large catalog count therefore does not tell you how many models you can call immediately, what they cost or which capacity is available to your subscription.</p><p>Compare the exact model version, deployment type and processing boundary. For a model you operate on compute, include idle capacity and operational work in the cost. For a hosted API, compare token rates and the actual throughput you can obtain. The exchange\'s catalog also needs this discipline: a provider listing is not a guarantee of current availability for every model.</p><h2>Keep Azure where it is already doing useful work</h2><p>Foundry can remain the right choice when identity, governance and application integration are built around Azure. Read the <a href="https://learn.microsoft.com/en-us/azure/foundry/what-is-foundry">platform overview</a> before treating a router as a substitute for the whole product. NYTE can sit alongside it for supported inference workloads without replacing Azure services.</p><p>For procurement, compare your contracted terms against current <a href="https://azure.microsoft.com/en-us/pricing/details/azure-openai/">Azure pricing</a> and the exchange\'s <a href="/pricing">published pricing</a>. Do not assume exchange spend consumes a Microsoft commitment or that a similarly named model is API-identical.</p><h2>Compare the cost of a completed task</h2>\n<p>Price comes after capacity: a cheaper endpoint that cannot finish the workload is not a saving. Use the same prompt set, context length, output budget, concurrency and quality threshold on both services. Measure successful tasks, time to first token, tail latency, retries and the final bill. Include cached tokens, batch discounts, gateway fees and any cloud commitment you would otherwise leave unused. An exchange can expose lower-priced eligible routes, but it does not guarantee the lowest price for every request.</p>\n<h2>Choose privacy before choosing a route</h2>\n<p>New York Token Exchange uses TrustedRouter for its inference API. Gateway attestation and provider confidentiality are separate checks. For confidential inference, select a route whose provider compute, end-to-end encryption and zero-retention posture are verified together. Ordinary routes do not inherit those properties simply by passing through an attested gateway. Read the <a href="/providers">provider evidence</a> and <a href="/security">security boundary</a> before sending sensitive content.</p>\n<p>Realtime inference does not durably log prompt or output content at the gateway; batch is a separate opt-in encrypted-retention mode. <a href="/docs/receipts">Signed response receipts</a> are opt-in and have their own pricing. They describe the serving route and verification evidence, not a blanket certification of every downstream service. The gateway is <a href="https://github.com/Lore-Hex/quill-router">source-available under BUSL-1.1</a>; do not confuse source visibility with an unrestricted open-source license.</p>\n<h2>Keep your cloud, add the market</h2>\n<p>Start with one non-sensitive workload and an explicit set of approved providers. Keep existing cloud-native integrations where they work. Check model IDs, tools, streaming behavior and error handling before moving traffic; translating a cloud SDK call is more than changing a URL. Use the <a href="/multi-cloud-llm-api">multi-cloud rollout guide</a> to stage the change and the <a href="/compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry">cloud comparison hub</a> to evaluate the wider buying decision.</p>',
+        verified_on="2026-11-18",
+        cloud_comparison=True,
+        sources=(
+            ComparisonSource(
+                "Foundry deployment overview",
+                "https://learn.microsoft.com/en-us/azure/foundry/concepts/deployments-overview",
             ),
             ComparisonSource(
-                "Foundry model router concepts (GA, cross-vendor pool)",
-                "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-router",
+                "Foundry managed compute",
+                "https://learn.microsoft.com/en-us/azure/foundry/how-to/deploy-models-managed",
             ),
             ComparisonSource(
-                "What is Microsoft Foundry (catalog size, naming history)",
+                "Microsoft Foundry overview",
                 "https://learn.microsoft.com/en-us/azure/foundry/what-is-foundry",
             ),
             ComparisonSource(
-                "Claude in Microsoft Foundry GA announcement (CCU billing)",
-                "https://azure.microsoft.com/en-us/blog/claude-in-microsoft-foundry-is-now-generally-available/",
-            ),
-            ComparisonSource(
-                "Azure Retail Prices API: Model Router meters",
-                "https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices",
-            ),
-            ComparisonSource(
-                "Azure services in FedRAMP audit scope",
-                "https://learn.microsoft.com/en-us/azure/azure-government/compliance/azure-services-in-fedramp-auditscope",
-            ),
-            ComparisonSource(
-                "Docs commit removing the 30-day retention statement (2026-05-18)",
-                "https://github.com/MicrosoftDocs/azure-ai-docs/commit/768d08d61e",
+                "Azure OpenAI pricing",
+                "https://azure.microsoft.com/en-us/pricing/details/azure-openai/",
             ),
         ),
-        faq_items=(
-            (
-                "Can we turn off Azure's abuse-monitoring storage?",
-                (
-                    "Only through modified abuse monitoring, which Microsoft limits to "
-                    "customers managed by a Microsoft account team or in eligible "
-                    "programs; self-service customers cannot opt out. Once approved, the "
-                    "off state is verifiable: the resource JSON shows ContentLogging: "
-                    '"false", which is better verification of an opt-out than most '
-                    "providers offer. On TrustedRouter, no durable prompt or output logs "
-                    "on realtime inference is the default for every account, with no "
-                    "approval step."
-                ),
-            ),
-            (
-                ("Foundry has both GPT and Claude plus a GA router. Why add another gateway?"),
-                (
-                    "If your needs stop at those vendors on Azure, you may not need one — "
-                    "Foundry's dual-frontier catalog and cross-vendor router are real "
-                    "advantages and we say so plainly. TrustedRouter routes across "
-                    "roughly 49 providers as of August 2026, including "
-                    "confidential-compute hosts like Tinfoil and Phala, adds enforced "
-                    "privacy and region routes (trustedrouter/zdr, e2e, eu), and replaces "
-                    "policy trust in the gateway with hardware attestation you can check "
-                    "at trust.trustedrouter.com."
-                ),
-            ),
-            (
-                "How do the fees actually compare?",
-                (
-                    "They sit on different bases, so no single number answers it. Foundry "
-                    "charges a $0.14 per million input token router markup (Global; "
-                    "$0.154 Data Zone) on top of Azure model rates, with Data Zone about "
-                    "10% higher, Priority Processing at 2x, and Batch at half price; "
-                    "Claude bills separately in Marketplace CCUs. TrustedRouter charges "
-                    "the provider's token price plus 5.5% with a $0.01/M floor, listed "
-                    "per model on /models. Run your own model mix through both; neither "
-                    "is uniformly cheaper."
-                ),
-            ),
-        ),
-        article_html="""<h2>What Microsoft Foundry actually is</h2>
-<p>Microsoft Foundry is Microsoft's first-party AI platform on Azure, renamed twice in two years: Azure AI Studio (2023), Azure AI Foundry (November 2024), Microsoft Foundry (Ignite, November 18, 2025). One Azure resource combines a catalog of <a href="https://learn.microsoft.com/en-us/azure/foundry/what-is-foundry">more than 1,900 models</a>, the Foundry Agent Service, evaluations, tracing, and governance through Entra ID and Azure Policy. Deployments come in Global, Data Zone (US or EU processing boundary), regional, Provisioned (PTU), and Batch types.</p>
-<p>Two commercial regimes share the platform. "Models sold by Azure," including the Azure OpenAI line, are hosted by Microsoft, and the <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy">data-privacy documentation</a> commits that prompts and outputs are not available to OpenAI or other model providers. Claude models, generally available since <a href="https://azure.microsoft.com/en-us/blog/claude-in-microsoft-foundry-is-now-generally-available/">June 29, 2026</a>, are Azure Marketplace offerings under a separate regime: Anthropic acts as an independent data processor for prompts and outputs, and usage bills in Claude Consumption Units.</p>
-
-<h2>Where Foundry is the right choice</h2>
-<p>Foundry is the only cloud platform with both OpenAI GPT and Anthropic Claude frontier models behind one procurement surface, and its trained <a href="https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-router">model router</a> reached GA at Ignite 2025, routing across OpenAI, Anthropic, xAI, DeepSeek, and Meta models (27 in the current pool) with subsets and automatic failover. The compliance portfolio is deeper than anything we offer: Azure OpenAI sits in FedRAMP High audit scope, including Azure Government DoD impact levels, Microsoft signs a HIPAA BAA through the Product Terms, and Azure's ISO and SOC audit portfolio is among the largest of any cloud. Cost machinery: PTU reservations, Batch at 50% off, committed spend, one Azure bill. If your platform is already Azure and those constraints bind, Foundry is the sane default.</p>
-
-<h2>The logging models, precisely</h2>
-<p>This is the load-bearing difference. Azure-sold models run abuse monitoring by default: when automated review (which stores nothing) is inconclusive, flagged prompts and completions go to a per-geography store for human review by Microsoft employees. The historical cap was explicit — an archived 2024 legal page said Azure OpenAI "stores all prompts and generated content securely for up to thirty (30) days" — yet Microsoft removed that language, and the last 30-day mention left the docs in a <a href="https://github.com/MicrosoftDocs/azure-ai-docs/commit/768d08d61e">commit on May 18, 2026</a>. As of August 2026, no maximum retention window is documented for that store. The opt-out, <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/limited-access">modified abuse monitoring</a>, is "available only to customers and partners managed by a Microsoft account team" or eligible programs; self-service customers cannot turn storage off. One genuine credit: after approval the resource JSON exposes <span class="mono">"ContentLogging": "false"</span>, a machine-readable off switch most providers do not offer.</p>
-<p>TrustedRouter's default is the inverse. Ordinary synchronous and streaming inference never logs prompt or output content. We retain metadata: request ids, model and provider, token counts, latency, cost, region, API-key hash. Batch is a separate opt-in mode with enclave-encrypted retention up to 30 days (<a href="/docs/batch">details</a>). There is no approval process because there is no storage to turn off.</p>
-
-<h2>Trust by contract, trust by attestation</h2>
-<p>Foundry's privacy commitments are contractual: the Product Terms, the DPA, and Azure's audit evidence. The router documentation states "It does not store your prompts," and you rely on Microsoft's word plus its auditors. TrustedRouter's gateway runs inside hardware enclaves on three clouds — GCP Confidential Space, AWS Nitro Enclaves, and Azure Confidential Containers — with live attestation endpoints and a verifier script anyone can run from <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>. The attested build is bound to published source and release digests, and every line that touches your prompt is public: the gateway is source-available under BUSL-1.1, the SDKs Apache-2.0 or MIT.</p>
-<p>We state the boundary plainly: attestation covers our gateway, never the downstream model providers. Providers are covered by cited policy and contract tiers — <span class="mono">trustedrouter/zdr</span> restricts routing to endpoints with contractual or policy zero-data-retention — while <span class="mono">trustedrouter/e2e</span> restricts routing to providers running confidential compute with provider-side end-to-end encryption, which are the providers' own mechanisms. Microsoft's structural commitment that Azure-hosted models keep prompts away from OpenAI entirely is documented in its data-privacy terms, and it is a property our attestation cannot give you.</p>
-
-<h2>Fees on different bases</h2>
-<p>Do not equate the numbers directly. Foundry's model router adds a markup of $0.14 per million input tokens on Global deployments ($0.154 Data Zone) on top of the underlying Azure model rates. As of August 2026, gpt-5.6-sol Global Standard is $5.00/M input and $30.00/M output; Data Zone runs about 10% higher, Priority Processing doubles it, Batch halves it, and Claude bills separately in CCUs. The <a href="https://azure.microsoft.com/en-us/pricing/details/azure-openai/">public pricing page</a> renders placeholders; the real numbers live in the Retail Prices API. TrustedRouter's prepaid text and embedding pricing is the provider's token price plus 5.5% with a $0.01/M floor, listed per model on <a href="/models">/models</a> and explained on <a href="/pricing">/pricing</a>; BYOK is supported, and our pricing page does not publish a separate BYOK fee. One is a flat per-input-token fee plus cloud list prices; the other is a percentage of provider price. Run your own model mix through both.</p>
-
-<h2>What we do not claim</h2>
-<p>Our repos are young: public since late April 2026, with benchmark history from June 2026. We publish a DPA and BAA but hold no published SOC 2 or HIPAA certification and no FedRAMP authorization — if those are hard requirements, Foundry wins today. Our catalog is 561 model entries (including our meta route ids) across roughly 49 providers as of August 16, 2026: far smaller in raw count than Foundry's 1,900+.</p>
-
-<h2>Moving a workload</h2>
-<p>OpenAI-shaped code moves by pointing the client at <span class="mono">api.trustedrouter.com</span>, swapping the key, and replacing Azure deployment names with catalog model ids; older code also drops the <span class="mono">api-version</span> query parameter. Claude-on-Foundry workloads already speak the Anthropic Messages shape, which we serve natively. What does not carry over: server-side state (Responses history, Assistants threads, stored completions, files and vector stores must be exported and rebuilt), Azure content-filter annotations in responses, and Azure-native machinery such as Foundry Agent Service tools, On Your Data, PTU reservations, and Azure Policy governance. Model-router deployments map to <span class="mono">trustedrouter/auto</span> plus provider preferences.</p>""",
     ),
-    _comparison(
+    CompetitorComparison(
         slug="google-vertex-ai",
         name="Google Vertex AI",
         category="Cloud model platform",
-        summary=(
-            "Vertex AI — renamed the Gemini Enterprise Agent Platform in April 2026 — is "
-            "Google Cloud's managed platform for Gemini, partner, and open models, with "
-            "deep compliance and a documented but opt-out-based path to zero data "
-            "retention. TrustedRouter is a cross-provider gateway whose default realtime "
-            "path keeps no durable prompt logs and runs in a hardware-attested build you "
-            "can verify."
-        ),
-        competitor_fit=(
-            "Choose Vertex AI (Agent Platform) when committed Google Cloud spend, FedRAMP "
-            "High or HIPAA scope, Provisioned Throughput on Gemini, grounding in Google "
-            "Search or Maps, or on-prem deployment via Google Distributed Cloud decides "
-            "the architecture — and a contractual zero-data-retention checklist meets "
-            "your privacy bar."
-        ),
-        trustedrouter_fit=(
-            "Choose TrustedRouter when one API must fail over across Google, Anthropic, "
-            "OpenAI, and roughly 46 other providers, when realtime prompts must never "
-            "touch durable storage by default rather than after an opt-out checklist, and "
-            "when you want to verify the gateway build by remote attestation instead of "
-            "accepting policy."
-        ),
-        migration=(
-            "Vertex's OpenAI-compatible endpoint covers Gemini and select self-deployed "
-            "models only, and its documented auth uses one-hour Google OAuth tokens; "
-            "moving means a static TrustedRouter key, one base URL, and model-id renames. "
-            "Partner-model call sites (Claude on Vertex) use provider-native APIs and "
-            "need request-shape rewrites either way. Grounding and Provisioned Throughput "
-            "have no TrustedRouter equivalent; Vertex's stored context caches map only to "
-            "pass-through provider prompt caching on our side."
-        ),
-        deployment=(
-            "Managed Google Cloud service; Global + regional endpoints; on-prem via "
-            "Distributed Cloud"
-        ),
-        api=(
-            "Gen AI SDKs; OpenAI-compatible Chat Completions for Gemini + select self-deploys only"
-        ),
-        catalog=(
-            "200+ curated models: Gemini 3.x, Imagen 4, Veo 3.1, Claude Opus 5, DeepSeek, "
-            "open models"
-        ),
-        routing="Global endpoint, service tiers, Provisioned Throughput; no cross-vendor failover",
-        observability=(
-            "Cloud Logging/Monitoring, audit logs; optional BigQuery request logging (off "
-            "by default)"
-        ),
-        content=(
-            "No-training terms; 24h cache default; abuse logs up to 90d; ZDR via opt-out checklist"
-        ),
-        verification="IAM, FedRAMP High, HIPAA/BAA, CMEK; no attestation on managed Gemini inference",
-        billing=(
-            "Source token prices; three service tiers, promo expiry dates, GSU commits, spend CUDs"
-        ),
-        sources=(
-            ComparisonSource(
-                "Gemini data governance and zero-data-retention checklist",
-                "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
+        summary="Vertex AI alternative for inference: keep Gemini and Google Cloud tooling where they fit, then compare eligible model routes through New York Token Exchange. Vertex AI has evolved into Gemini Enterprise Agent Platform.",
+        competitor_fit="Keep Google Cloud when Gemini integration, managed model development and your existing Google identity, data and agent workflows are the main value.",
+        trustedrouter_fit="Add NYTE when your inference workloads need independent provider options, comparable route pricing and portable API calls alongside Google Cloud.",
+        migration="For a Vertex AI workload, map the Google SDK request and response to the supported OpenAI-compatible API. Test tools, multimodal inputs and safety behavior separately before shifting an inference workload.",
+        rows=(
+            (
+                "Deployment",
+                "Google Cloud platform with project and deployment controls",
+                "Hosted inference; source-available (BUSL-1.1) gateway",
             ),
-            ComparisonSource(
-                "Vertex abuse-monitoring prompt logging (up to 90 days)",
-                "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/abuse-monitoring",
+            (
+                "API surface",
+                "Google APIs and supported compatibility interfaces",
+                "OpenAI-compatible API; test model-specific features",
             ),
-            ComparisonSource(
-                "Vertex generative AI pricing",
-                "https://cloud.google.com/vertex-ai/generative-ai/pricing",
+            (
+                "Model access",
+                "Google models, partner APIs and deployment options in Model Garden",
+                "100+ provider listings and 600+ models; check live route availability",
             ),
-            ComparisonSource(
-                "OpenAI-compatible Chat Completions for Gemini",
-                "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/call-gemini-using-openai-library",
+            (
+                "Routing",
+                "Capacity behavior depends on model and consumption framework",
+                "Fallback among eligible providers; filters and capacity still apply",
             ),
-            ComparisonSource(
-                "Vertex AI to Agent Platform name changes",
-                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes",
+            (
+                "Observability",
+                "Google Cloud monitoring and platform tooling",
+                "Usage metadata and route-level evidence",
             ),
-            ComparisonSource(
-                "Model Garden catalog (200+ models)", "https://cloud.google.com/model-garden"
+            (
+                "Prompt content",
+                "Review the selected model and deployment terms",
+                "No durable realtime gateway content logs; batch is separate opt-in retention",
             ),
-            ComparisonSource(
-                "Google confidential computing announcements, June 2026",
-                "https://cloud.google.com/blog/products/identity-security/verifiable-trust-in-the-ai-era-whats-new-in-confidential-computing",
+            (
+                "Verification",
+                "Google Cloud security controls and service documentation",
+                "Gateway attestation; provider confidentiality requires a verified route",
             ),
-            ComparisonSource(
-                "Google Cloud HIPAA-included products",
-                "https://cloud.google.com/security/compliance/hipaa",
+            (
+                "Billing",
+                "Pay-as-you-go or provisioned capacity; compare contract terms",
+                "Compare live model prices, service fees and your workload mix",
             ),
         ),
         faq_items=(
             (
-                "Is Gemini cheaper on Vertex AI or through TrustedRouter?",
-                """Vertex, by exactly our fee. TrustedRouter prepaid bills the provider's token price plus 5.5% with a $0.01/M floor, so Gemini 2.5 Pro input (up to 200K-token context) is $1.25/M direct on Vertex and about $1.32/M through us. Vertex's batch discount (~50%), context-cache storage pricing, and Provisioned Throughput commit pricing have no TrustedRouter equivalent — if you run only Gemini at scale, Vertex wins on price. BYOK is supported on our side; the pricing page does not publish a separate BYOK fee.""",
+                "Is Gemini Enterprise Agent Platform the same as Vertex AI?",
+                "Google introduced Gemini Enterprise Agent Platform as the evolution of Vertex AI on April 22, 2026. This page retains Vertex AI for buyers searching the older name and focuses on inference rather than the whole platform.",
             ),
             (
-                "Can Vertex AI actually do zero data retention?",
-                """Yes, with work. Google documents the checklist: disable the default 24-hour in-memory cache per project, request an abuse-logging exception (Master Agreement customers are exempt by default), set store=false on the Interactions API, and avoid Search/Maps grounding retention. It may still be unavailable on some Advanced AI models — Claude Fable 5 and Mythos 5 on Vertex carry prompt and response retention of up to 30 days plus mandatory sharing with Anthropic. TrustedRouter's realtime default is no durable prompt or output logs, with only operational metadata retained.""",
+                "Can I keep Gemini while using NYTE for other models?",
+                "Yes, an application can keep its existing Google integration and send selected supported workloads through NYTE. Verify the exact catalog route and API features before moving any Gemini workload.",
             ),
             (
-                "Does TrustedRouter's attestation cover the model answering my prompt?",
-                (
-                    "No. Attestation proves the gateway at api.trustedrouter.com runs the "
-                    "published source-available build; downstream providers are covered "
-                    "by cited retention-policy tiers, and only the trustedrouter/e2e "
-                    "route restricts to providers running their own confidential compute "
-                    "with end-to-end encryption (Tinfoil, Phala). Vertex's managed Gemini "
-                    "endpoint documents no attestation option; Google's confidential-GPU "
-                    "infrastructure applies when you self-deploy models on Confidential "
-                    "VMs or GKE."
-                ),
+                "Does NYTE replace Google training and agent tooling?",
+                "No. Treat it as an inference purchasing and routing option alongside Google Cloud. Model development, training and cloud-native agent workflows require a separate evaluation.",
             ),
         ),
-        article_html="""<h2>What Vertex AI is today</h2>
-<p>Since April 22, 2026, Vertex AI has been the Gemini Enterprise Agent Platform: roughly 50 renames at Cloud Next 2026, docs re-homed to docs.cloud.google.com, APIs unchanged, no forced migration. We use the old name because most readers still do.</p>
-<p>It is Google Cloud's proprietary managed platform for first-party models (Gemini 3.x, Imagen 4, Veo 3.1), partner models (Anthropic Claude, Mistral, DeepSeek, Qwen, and others), and open models, plus MLOps and agent tooling. <a href="https://cloud.google.com/model-garden">Model Garden</a> lists a curated set of 200+ models as of August 2026, and the cadence is fast: Gemini 3.7 Flash went GA August 13, 2026; Claude Opus 5 arrived July 24, 2026. Deployment spans the managed API (Global plus regional endpoints), self-deployed GPU endpoints, and on-prem installs via Google Distributed Cloud.</p>
-<h2>Where it is genuinely strong</h2>
-<ul>
-<li><strong>Source pricing and capacity engineering on Google models.</strong> Gemini 2.5 Pro is <a href="https://cloud.google.com/vertex-ai/generative-ai/pricing">$1.25/M input and $10.00/M output</a> at up to 200K-token context ($2.50/$15.00 above), batch runs about 50% off, and cached input drops to $0.125/M. Provisioned Throughput sells committed capacity from $2.7397 per GSU-hour on a one-year Global commit. No gateway replicates those economics on Google's own models, including us.</li>
-<li><strong>Compliance depth.</strong> FedRAMP High authorization for Generative AI on Vertex, HIPAA coverage with a BAA, VPC Service Controls, CMEK, data residency, and per-model IAM consent gating.</li>
-<li><strong>A real contractual baseline.</strong> Google's Service Specific Terms training restriction: customer data is not used to train or fine-tune models without prior permission, GA and pre-GA alike.</li>
-<li><strong>Confidential-GPU infrastructure for self-deployed models.</strong> Confidential Space with NVIDIA H100 GPUs went GA and Confidential G4 VMs with Blackwell GPUs entered preview in June 2026, plus open-source Prompt Encryption SDKs.</li>
-</ul>
-<h2>The retention model, line by line</h2>
-<p>This is the load-bearing difference. The <a href="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance">data-governance doc</a> describes a real, auditable path to zero data retention. It is a checklist, not a default:</p>
-<ul>
-<li>In-memory prompt caching is on by default for Gemini (24-hour TTL, project-isolated); disabling it takes a per-project <span class="mono">cacheConfig</span> change.</li>
-<li>If safety classifiers flag activity, prompts can be logged up to 90 days under <a href="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/abuse-monitoring">abuse monitoring</a>. Master Agreement customers are exempt by default; others must file an exception request.</li>
-<li>Designated "Advanced AI" models log all prompts and responses for up to 30 days, and opt-out "may not be possible". For Claude Fable 5 and Mythos 5 on Vertex, prompts and responses are retained up to 30 days, and sharing with Anthropic is mandatory.</li>
-<li>Grounding with Google Search stores prompt-derived queries up to 3 days and cannot be disabled; Maps grounding stores 30 days. The Interactions API defaults to <span class="mono">store=true</span>.</li>
-</ul>
-<p>TrustedRouter's realtime default needs no checklist: ordinary synchronous and streaming prompt paths do not touch persistent storage. We keep operational metadata — request ids, model and provider, token counts, latency, cost, region, API-key hash — and nothing of the prompt or output. Batch is a separate opt-in mode with enclave-encrypted retention up to 30 days. Details on <a href="/privacy">/privacy</a>.</p>
-<h2>Verify vs trust</h2>
-<p>Google documents no customer-verifiable TEE or attestation for the managed Gemini endpoint; the guarantee there is contractual. Its confidential-computing work applies when you self-deploy on Confidential VMs or GKE.</p>
-<p>TrustedRouter's gateway runs inside TEEs on three clouds — GCP Confidential Space, AWS Nitro Enclaves, and Azure Confidential Containers — with live attestation endpoints and a one-command verifier at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>. The gateway and control plane are source-available (BUSL-1.1, converting to Apache-2.0 four years after each release), so every line that touches your prompt is public, and the attestation binds the running build to published source and release digests.</p>
-<p>The boundary: our attestation covers our gateway, not the model providers behind it. Downstream handling is tracked as cited policy tiers per provider — Google Vertex itself sits in the default candidate order of our <span class="mono">trustedrouter/zdr</span> route — and only <span class="mono">trustedrouter/e2e</span> restricts to providers (Tinfoil, Phala) running provider-side confidential compute with end-to-end encryption, where the provider's own enclave claims apply.</p>
-<h2>Pricing, with the bases stated</h2>
-<p>The two fee bases differ, so read carefully. Vertex bills the source token price, with real complexity: three service tiers, Global-versus-regional premiums, and promotional prices with expiry dates. Gemini 3.7/3.6 Flash's intro $0.75/$3.75 per 1M doubles January 1, 2027, and Claude Sonnet 5's $2.00/$10.00 promo ends August 31, 2026.</p>
-<p>TrustedRouter prepaid bills the provider's token price plus 5.5%, with a $0.01/M floor; video is the provider quote plus 20%; there are no seat or subscription fees. So Gemini through us costs 5.5% more than direct Vertex — Gemini 2.5 Pro input at about $1.32/M instead of $1.25/M — and the fee buys cross-provider failover, privacy-tier routing, and the attested prompt path. BYOK is supported; our pricing page does not publish a separate BYOK fee. Exact per-route prices: <a href="/models">/models</a> and <a href="/pricing">/pricing</a>.</p>
-<h2>What we do not claim</h2>
-<ul>
-<li>Our attestation stops at the gateway. We do not attest Google's, Anthropic's, or anyone else's model servers.</li>
-<li>We are young. Our public repos date from late April 2026 and public benchmark history starts June 2026; Google's operating record is measured in decades.</li>
-<li>We publish a DPA, BAA, and subprocessor list, but no SOC 2 or HIPAA certification today. If FedRAMP High or certified HIPAA scope is a hard requirement, Vertex clears bars we do not.</li>
-<li>We have no equivalent of Search or Maps grounding, Provisioned Throughput commitments, context-cache storage pricing, or an on-prem install.</li>
-</ul>
-<h2>Migration reality</h2>
-<p>Vertex exposes an <a href="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/call-gemini-using-openai-library">OpenAI-compatible Chat Completions surface</a>, but only for Gemini and select self-deployed Model Garden models; partner models such as Claude use provider-native APIs there, so those call sites need request rewrites either way. Its documented OpenAI-client auth uses one-hour Google OAuth access tokens refreshed programmatically; moving to TrustedRouter means a static key and one base URL, and adds Anthropic-style Messages alongside Chat Completions and Responses.</p>
-<p>Two cautions from Google's docs: unsupported parameters on the Vertex OpenAI surface are dropped without an error, so a passed setting may never have been active, and Gemini-specific features that ride in <span class="mono">extra_body</span> need re-testing on any gateway. We publish a step-by-step migration doc only for OpenRouter today; coming from Vertex, start at <a href="/docs">/docs</a> and the per-route prices on <a href="/models">/models</a>.</p>""",
+        article_html='<h2>Vertex AI vs NYTE: separate the platform from inference</h2><p>Many teams searching for a Vertex AI alternative need another place to run inference, not a new training stack. That distinction matters. Google offers model development and agent tooling as well as model APIs. NYTE focuses on buying and routing inference across eligible providers. Keep the platform features your team relies on and evaluate the inference workload separately.</p><h2>What happened to the Vertex AI name?</h2><p>Google introduced <a href="https://cloud.google.com/blog/products/ai-machine-learning/introducing-gemini-enterprise-agent-platform">Gemini Enterprise Agent Platform on April 22, 2026</a> as the evolution of Vertex AI. Buyers still search for Vertex AI, so this comparison uses both names. An inference API alternative does not replace that platform\'s broader model-building and agent-development capabilities.</p><h2>Use Gemini where it wins</h2><p>Choose models on your own evaluation set. Keep a Gemini route for tasks where it meets the quality, latency and governance requirements; compare other models for the rest. Google\'s <a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/use-partner-models">partner model APIs</a> already offer choice within its platform. NYTE adds a separate provider market rather than assuming Google serves only Gemini.</p><h2>Plan for shared capacity and 429s</h2><p>Do not reduce every Google capacity issue to a fixed regional quota. Its <a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/error-code-429">429 guidance</a> distinguishes consumption frameworks and provisioned capacity. Identify which applies before changing request concurrency or buying capacity. A second provider is useful only if it offers an approved model or a tested substitute; it does not make an exclusive model portable.</p><h2>Compare the cost of a completed task</h2>\n<p>Price comes after capacity: a cheaper endpoint that cannot finish the workload is not a saving. Use the same prompt set, context length, output budget, concurrency and quality threshold on both services. Measure successful tasks, time to first token, tail latency, retries and the final bill. Include cached tokens, batch discounts, gateway fees and any cloud commitment you would otherwise leave unused. An exchange can expose lower-priced eligible routes, but it does not guarantee the lowest price for every request.</p>\n<h2>Choose privacy before choosing a route</h2>\n<p>New York Token Exchange uses TrustedRouter for its inference API. Gateway attestation and provider confidentiality are separate checks. For confidential inference, select a route whose provider compute, end-to-end encryption and zero-retention posture are verified together. Ordinary routes do not inherit those properties simply by passing through an attested gateway. Read the <a href="/providers">provider evidence</a> and <a href="/security">security boundary</a> before sending sensitive content.</p>\n<p>Realtime inference does not durably log prompt or output content at the gateway; batch is a separate opt-in encrypted-retention mode. <a href="/docs/receipts">Signed response receipts</a> are opt-in and have their own pricing. They describe the serving route and verification evidence, not a blanket certification of every downstream service. The gateway is <a href="https://github.com/Lore-Hex/quill-router">source-available under BUSL-1.1</a>; do not confuse source visibility with an unrestricted open-source license.</p>\n<h2>Keep your cloud, add the market</h2>\n<p>Start with one non-sensitive workload and an explicit set of approved providers. Keep existing cloud-native integrations where they work. Check model IDs, tools, streaming behavior and error handling before moving traffic; translating a cloud SDK call is more than changing a URL. Use the <a href="/multi-cloud-llm-api">multi-cloud rollout guide</a> to stage the change and the <a href="/compare/bedrock-vs-vertex-ai-vs-azure-ai-foundry">cloud comparison hub</a> to evaluate the wider buying decision.</p>',
+        verified_on="2026-11-18",
+        cloud_comparison=True,
+        sources=(
+            ComparisonSource(
+                "Google introduces Gemini Enterprise Agent Platform",
+                "https://cloud.google.com/blog/products/ai-machine-learning/introducing-gemini-enterprise-agent-platform",
+            ),
+            ComparisonSource(
+                "Google partner model APIs",
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/use-partner-models",
+            ),
+            ComparisonSource(
+                "Google 429 error guidance",
+                "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/error-code-429",
+            ),
+            ComparisonSource(
+                "Vertex AI pricing", "https://cloud.google.com/vertex-ai/generative-ai/pricing"
+            ),
+        ),
     ),
     _comparison(
         slug="tinfoil",
