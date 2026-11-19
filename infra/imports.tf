@@ -115,3 +115,10 @@ import {
   to = aws_iam_role.trustedrouter_github_trust_publisher
   id = "trustedrouter-github-trust-publisher"
 }
+
+# Created by the operator on 2026-11-19 with version 1 (the observer's GitHub
+# token); adopted without recreating it (infra/price_refresh_observer.tf).
+import {
+  to = google_secret_manager_secret.price_refresh_dispatch_token
+  id = "projects/quill-cloud-proxy/secrets/trustedrouter-price-refresh-dispatch-token"
+}
