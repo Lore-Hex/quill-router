@@ -556,6 +556,27 @@ def test_public_read_does_not_retry_a_certificate_failure(public_reads):
     assert sleeps == [] and len(opened) == 1
 
 
+@pytest.mark.parametrize("error", [
+    _http_error(502), URLError(TimeoutError("timed out")), _http_error(429, {"retry-after": "1"}),
+], ids=["502", "timeout", "short-rate-limit"])
+def test_the_dispatch_post_is_never_retried(public_reads, monkeypatch, error):
+    # A dispatch that timed out may already have queued a run; a second one
+    # could cancel it (refresh-prices keeps one pending run per group).
+    script, sleeps, opened = public_reads
+    monkeypatch.setattr(alerts, "_github_token", "github_pat_test", raising=False)
+    script += [error, b""]
+    with pytest.raises(alerts.MonitoringReadError):
+        alerts.public_gh(alerts.DISPATCH_PATH, {"ref": "main"})
+    assert sleeps == [] and len(opened) == 1
+
+
+def test_a_dispatch_answering_204_returns_none(public_reads, monkeypatch):
+    script, _, _ = public_reads
+    monkeypatch.setattr(alerts, "_github_token", "github_pat_test", raising=False)
+    script.append(b"")
+    assert alerts.public_gh(alerts.DISPATCH_PATH, {"ref": "main"}) is None
+
+
 def test_each_attempt_gets_a_fresh_https_request(monkeypatch):
     # urllib's ProxyHandler rewrites the Request it is given (set_proxy turns an
     # https request into an http one aimed at the proxy). Reusing one Request

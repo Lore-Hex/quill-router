@@ -10,10 +10,16 @@ DynamicUser=yes
 StateDirectory=tr-price-refresh
 StateDirectoryMode=0700
 LoadCredential=sentry-dsn:/etc/tr-price-refresh/ingest.dsn
+# Fine-grained token, Lore-Hex/quill-router only, Actions read and write
+# (Secret Manager trustedrouter-price-refresh-dispatch-token). It authenticates
+# the reads (anonymous reads are limited to 60 an hour) and its one write,
+# dispatching refresh-prices.yml on main when GitHub dropped the schedule.
+# A missing file fails the unit before the script starts.
+LoadCredential=github-token:/etc/tr-price-refresh/github-dispatch.token
 Environment=GITHUB_REPOSITORY=Lore-Hex/quill-router
 Environment=TR_PRICE_REFRESH_PUBLIC_API=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/usr/bin/python3 /opt/tr-price-refresh/price_refresh_alerts.py --state-file /var/lib/tr-price-refresh/state.json --dsn-file %d/sentry-dsn
+ExecStart=/usr/bin/python3 /opt/tr-price-refresh/price_refresh_alerts.py --state-file /var/lib/tr-price-refresh/state.json --dsn-file %d/sentry-dsn --github-token-file %d/github-token --dispatch-stalled
 TimeoutStartSec=9min
 MemoryMax=96M
 CPUQuota=10%

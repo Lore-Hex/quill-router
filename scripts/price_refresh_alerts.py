@@ -1,4 +1,9 @@
-"""Independent, metadata-only refresh monitoring. Uses only Python's stdlib and gh."""
+"""Independent, metadata-only refresh monitoring. Uses only Python's stdlib and gh.
+
+The host observer reads GitHub's REST API directly (TR_PRICE_REFRESH_PUBLIC_API=1),
+anonymously or, given --github-token-file, with a token whose one write is
+dispatching a stalled refresh.
+"""
 
 from __future__ import annotations
 
@@ -57,11 +62,36 @@ def timestamp(value: str) -> datetime:
     return result.astimezone(UTC)
 
 
+# The host observer's fine-grained token (Lore-Hex/quill-router only,
+# Actions: read and write), read from a systemd credential by main(). Held
+# here, never in the environment, argv or any message.
+_github_token: str | None = None
+GITHUB_TOKEN_PATTERN = re.compile(r"github_pat_[A-Za-z0-9_]{20,250}")
+DISPATCH_PATH = f"actions/workflows/{WORKFLOW}/dispatches"
+
+
+def read_github_token(path: Path) -> str:
+    """Read, strip and validate the dispatch token; errors never carry it."""
+    with path.open() as handle:
+        token = handle.read(1025).strip()
+    if not GITHUB_TOKEN_PATTERN.fullmatch(token):
+        # Fine-grained only: a classic token cannot be limited to one repository.
+        raise ValueError("Invalid GitHub token credential (expected one fine-grained token)")
+    return token
+
+
+def direct_api() -> bool:
+    """The host observer: GitHub's REST API over HTTPS, never the gh CLI."""
+    return os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1"
+
+
 def gh(path: str, data: dict[str, Any] | None = None) -> Any:
-    if os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1":
-        if data is not None:
+    if direct_api():
+        if data is not None and (_github_token is None or path != DISPATCH_PATH
+                                 or data != {"ref": "main"}):
+            # The token's one write: dispatching the refresh on main.
             raise ValueError("Public observer cannot write to GitHub")
-        return public_gh(path)
+        return public_gh(path, data)
     endpoint = path if path.startswith("search/") else f"repos/{REPOSITORY}/{path}"
     args = ["gh", "api", endpoint]
     if data is not None:
@@ -79,10 +109,10 @@ def gh(path: str, data: dict[str, Any] | None = None) -> Any:
 
 
 class MonitoringReadError(RuntimeError):
-    """A failed anonymous GitHub read.
+    """A failed direct GitHub API request (the host observer, anonymous or with its token).
 
     The message is a fixed phrase plus at most an HTTP status code, never a
-    URL, header or response body, so the CLI may print it.
+    URL, header (so never the token) or response body, so the CLI may print it.
     """
 
 
@@ -157,21 +187,39 @@ def _read_failure(exc: Exception) -> tuple[str, float | None]:
     return "network error", 0.0
 
 
-def public_gh(path: str) -> Any:
-    """Anonymous metadata-only reads: no personal or repository write token."""
+def public_gh(path: str, data: dict[str, Any] | None = None) -> Any:
+    """Metadata reads, anonymous or with the dispatch token, plus that dispatch.
+
+    Anonymous reads are limited to 60 an hour per address; with the token they
+    count against its 5,000. The token is sent only to api.github.com and
+    never follows a redirect. Reads are retried (PUBLIC_READ_RETRY_DELAYS);
+    the dispatch POST is attempted once, because a dispatch that timed out may
+    already have queued a run and a second one could cancel it.
+    """
     if "://" in path or ".." in path or not path.startswith(("actions/", "search/issues?q=repo:" + REPOSITORY)):
         raise ValueError("Unexpected public monitoring API path")
+    if data is not None and (_github_token is None or path != DISPATCH_PATH):
+        raise ValueError("Public observer cannot write to GitHub")
     endpoint = path if path.startswith("search/") else f"repos/{REPOSITORY}/{path}"
-    for attempt in range(len(PUBLIC_READ_RETRY_DELAYS) + 1):
+    attempts = len(PUBLIC_READ_RETRY_DELAYS) + 1 if data is None else 1
+    for attempt in range(attempts):
         if not _within(PUBLIC_READ_DEADLINE_SECONDS):
             raise MonitoringReadError("GitHub monitoring API request failed (run deadline reached)")
         # A fresh Request per attempt: urllib's proxy handler rewrites the
         # request it is given, so a reused one can fall back to plain HTTP
         # through an https_proxy on the next attempt.
-        request = Request("https://api.github.com/" + endpoint, headers={
+        headers = {
             "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
             "X-GitHub-Api-Version": "2022-11-28",
-        })
+        }
+        if _github_token is not None:
+            headers["Authorization"] = f"Bearer {_github_token}"
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode()
+            headers["Content-Type"] = "application/json"
+        request = Request("https://api.github.com/" + endpoint, data=body, headers=headers,
+                          method="POST" if body is not None else "GET")
         try:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
                 # http.client's own parse of Content-Length (whitespace
@@ -187,10 +235,11 @@ def public_gh(path: str) -> Any:
             break
         # OSError covers HTTPError, URLError, timeouts and connection resets;
         # HTTPException covers a body that ends early. Reading the body can
-        # raise either without urllib wrapping it in URLError.
+        # raise either without urllib wrapping it in URLError. The message is
+        # fixed text plus at most a status code, so never the token.
         except (OSError, HTTPException) as exc:
             reason, retry_after = _read_failure(exc)
-            retries_left = attempt < len(PUBLIC_READ_RETRY_DELAYS)
+            retries_left = attempt < attempts - 1
             delay = (max(retry_after, PUBLIC_READ_RETRY_DELAYS[attempt])
                      if retry_after is not None and retries_left else None)
             if delay is None or not _within(PUBLIC_READ_RETRY_WINDOW_SECONDS, delay):
@@ -198,7 +247,8 @@ def public_gh(path: str) -> Any:
             time.sleep(delay)
     if len(raw) > 2_000_000:
         raise ValueError("Monitoring API response is too large")
-    return json.loads(raw)
+    # A workflow dispatch answers 204 No Content.
+    return json.loads(raw) if raw.strip() else None
 
 
 def read_local_state(path: Path, remote: dict[str, Any]) -> dict[str, Any]:
@@ -454,7 +504,10 @@ def dispatch_refresh(state: dict[str, Any], now: datetime) -> str:
             gh(f"actions/workflows/{WORKFLOW}/dispatches", {"ref": "main"})
             state["sent"]["refresh_dispatch"] = now.isoformat()
     except Exception as exc:  # noqa: BLE001 - reported below; never blocks alerts
-        print(f"::warning::Price refresh dispatch failed ({type(exc).__name__})", file=sys.stderr)
+        # A MonitoringReadError's text is a fixed phrase plus at most a status
+        # code (never the token); anything else prints only its class.
+        detail = f": {exc}" if isinstance(exc, MonitoringReadError) else f" ({type(exc).__name__})"
+        print(f"::warning::Price refresh dispatch failed{detail}", file=sys.stderr)
         return "failed"
     return decision
 
@@ -545,13 +598,28 @@ def observe(*, dry_run: bool = False, state_path: Path | None = None,
 
 
 def main(*, dry_run: bool = False, state_path: Path | None = None,
-         heartbeat_enabled: bool = True, dispatch: bool = False) -> None:
+         heartbeat_enabled: bool = True, dispatch: bool = False,
+         github_token: str | None = None) -> None:
+    global _github_token
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise ValueError("Monitoring is restricted to the production repository")
-    if os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1" and state_path is None:
+    if direct_api() and state_path is None:
         raise ValueError("Public observer requires local state")
-    if dispatch and os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1":
+    if github_token is not None and not direct_api():
+        # The workflow observer authenticates through gh and GH_TOKEN.
+        raise ValueError("A GitHub token file is only for the host observer")
+    if dispatch and direct_api() and github_token is None:
         raise ValueError("The anonymous observer cannot dispatch workflows")
+    _github_token = github_token
+    try:
+        run_observer(dry_run=dry_run, state_path=state_path,
+            heartbeat_enabled=heartbeat_enabled, dispatch=dispatch)
+    finally:
+        _github_token = None
+
+
+def run_observer(*, dry_run: bool, state_path: Path | None, heartbeat_enabled: bool,
+                 dispatch: bool) -> None:
     start_run_budget()
     if dry_run:
         observe(dry_run=True, state_path=state_path, dispatch=dispatch)
@@ -584,7 +652,11 @@ if __name__ == "__main__":
         parser.add_argument("--no-heartbeat", action="store_true")
         parser.add_argument("--dispatch-stalled", action="store_true",
                             help="dispatch refresh-prices.yml when no run started recently")
+        parser.add_argument("--github-token-file", type=Path,
+                            help="host observer: fine-grained token file (systemd credential)")
         args = parser.parse_args()
+        token = (read_github_token(args.github_token_file)
+                 if args.github_token_file is not None else None)
         if args.dsn_file is not None:
             with args.dsn_file.open() as handle:
                 dsn = handle.read(4097).strip()
@@ -592,7 +664,8 @@ if __name__ == "__main__":
                 raise ValueError("Invalid ingestion credential")
             os.environ["TR_SENTRY_DSN"] = dsn
         main(dry_run=args.dry_run, state_path=args.state_file,
-             heartbeat_enabled=not args.no_heartbeat, dispatch=args.dispatch_stalled)
+             heartbeat_enabled=not args.no_heartbeat, dispatch=args.dispatch_stalled,
+             github_token=token)
     except MonitoringReadError as exc:
         # Safe to print: a fixed phrase and at most an HTTP status code.
         print(f"::error::Price refresh monitoring failed: {exc}", file=sys.stderr)

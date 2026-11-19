@@ -222,6 +222,39 @@ def test_tencent_discovery_joins_exact_catalog_prices_and_canaries(
     assert [p["model"] for p in probes] == ["glm-5.3-flash"]
 
 
+def bot_challenge_html() -> str:
+    # Body served for both 1300/78934 and 1300/78937 from 2026-11-19 13:35Z,
+    # after intl.cloud.tencent.com began to 301 to www.tencentcloud.com.
+    return (FIXTURES / "tencent_docs_bot_challenge_2026-11-19.html").read_text()
+
+
+@pytest.mark.parametrize("challenged", [tencent.MODELS_DOC_URL, tencent.PRICING_URL])
+def test_tencent_bot_challenge_holds_with_its_own_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, challenged: str,
+) -> None:
+    # Refresh run 44601888558 held Tencent on "missing language model
+    # capabilities table". The page had not changed shape: the docs host
+    # answered with a JavaScript bot challenge. Keep failing closed, and say so.
+    monkeypatch.setenv("TENCENT_API_KEY", "test-key")
+    monkeypatch.setattr(tencent.CATALOG, "manifest_path", tmp_path / "tencent.json")
+    pages = {tencent.MODELS_DOC_URL: models_html(), tencent.PRICING_URL: prices_html(), challenged: bot_challenge_html()}
+    monkeypatch.setattr(tencent, "fetch_html", lambda url: pages[url])
+    monkeypatch.setattr(_direct_openai, "fetch_json", lambda *a, **kw: {"data": [{"id": "hy3", "status": "online"}]})
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **kw: True)
+    with pytest.raises(ValueError, match="^tencent: documentation host served a JavaScript bot challenge"):
+        tencent.fetch()
+    assert not (tmp_path / "tencent.json").exists()
+
+
+def test_tencent_real_documents_are_not_mistaken_for_a_challenge(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tencent, "fetch_html", lambda url: models_html())
+    assert tencent._document(tencent.MODELS_DOC_URL) == models_html()
+    mentions = models_html() + "<p>__tst_status EO_Bot_Ssid</p>"
+    assert "<table" in mentions
+    monkeypatch.setattr(tencent, "fetch_html", lambda url: mentions)
+    assert tencent._document(tencent.MODELS_DOC_URL) == mentions
+
+
 @pytest.mark.parametrize("at,peak", [
     ("2026-09-29T00:59:59Z", False), ("2026-09-29T01:00:00Z", True),
     ("2026-09-29T03:59:59Z", True), ("2026-09-29T04:00:00Z", False),

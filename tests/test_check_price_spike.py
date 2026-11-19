@@ -99,6 +99,34 @@ def test_november_1_inception_snapshot_and_manifest_spikes_pass(tmp_path, monkey
         ],
     }
 
+    # Each held route names the exact before and after values, and those are
+    # precisely what an APPROVED_ENDPOINT_PRICE_TRANSITIONS entry must match.
+    held = check_price_spike.spiking_providers(*args)["inception"]
+    assert [route.reasons for route in held] == [
+        ("prompt: 4E-8 → 2E-7 (×5.00 ≥ ×2.0)", "completion: 1.5E-7 → 7.5E-7 (×5.00 ≥ ×2.0)"),
+        ("prompt: 4E-8 → 2E-7 (×5.00 ≥ ×2.0)", "completion: 1.5E-7 → 7.5E-7 (×5.00 ≥ ×2.0)"),
+        ("prompt: 4E-9 → 2E-8 (×5.00 ≥ ×2.0)",),
+    ]
+    approvals = set()
+    for route in held:
+        for reason in route.reasons:
+            dimension, values = reason.split(": ", 1)
+            before_value, after_value = values.split(" (", 1)[0].split(" → ")
+            approvals.add((str(route), dimension, Decimal(before_value), Decimal(after_value)))
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset(approvals))
+    assert check_price_spike.spiking_providers(*args) == {}
+
+
+def test_a_zeroed_route_reason_drops_the_route_prefix():
+    route = "acme/model [acme:acme:model]"
+    reasons = check_price_spike.failing_route_reasons(
+        {route: {"prompt": "0.000001", "completion": "0.000002"}},
+        {route: {"prompt": "0", "completion": "0"}},
+    )
+    assert reasons == {route: [f"{route}: both prompt and completion went to 0 (was prompt=0.000001, completion=0.000002)"]}
+    spiking = check_price_spike.SpikingRoute(route, ("both prompt and completion went to 0",))
+    assert spiking == route and hash(spiking) == hash(route) and sorted([spiking, "a"]) == ["a", route]
+
 
 @pytest.mark.parametrize("native,suffix,dimension,old,new", [
     (native, suffix, dimension, old, new)

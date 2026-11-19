@@ -17,10 +17,16 @@ from trusted_router.provider_lifecycle import TENCENT_HY4_LIST_PRICE, TENCENT_OF
 SLUG = "tencent"
 BASE_URL = "https://tokenhub-intl.tencentcloudmaas.com/v1"
 URL = f"{BASE_URL}/models"
-# The international documentation mirror serves the same first-party tables
-# without the main site's JavaScript challenge. Region tabs must stay separate.
+# The international documentation mirror served the first-party tables without
+# the main site's JavaScript challenge until 2026-11-19, when it began to 301
+# to www.tencentcloud.com, which answers with that challenge instead of the
+# document. Region tabs must stay separate.
 PRICING_URL = "https://intl.cloud.tencent.com/document/product/1300/78937"
 MODELS_DOC_URL = "https://intl.cloud.tencent.com/document/product/1300/78934"
+# Markers of the EdgeOne bot-challenge script served in place of a document.
+# Never solve or evade it: name it so the hold says why, and keep the committed
+# manifest until it expires.
+_BOT_CHALLENGE_MARKERS = ("__tst_status", "EO_Bot_Ssid")
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/tencent.json"
 MANIFEST_STALE_FALLBACK = True
 _METADATA: dict[str, dict[str, Any]] = {}
@@ -50,6 +56,13 @@ _HY4_DISCOUNT_NOTICE = (
 
 def _name(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _document(url: str) -> str:
+    html = fetch_html(url)
+    if "<table" not in html and all(marker in html for marker in _BOT_CHALLENGE_MARKERS):
+        raise ValueError("tencent: documentation host served a JavaScript bot challenge, not the document")
+    return html
 
 
 def canonical_model_id(native_id: str) -> str | None:
@@ -217,7 +230,7 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     _METADATA.clear()
     _MODEL_NAMES.clear()
     _EXPLICIT_MAP.clear()
-    documented = parse_models(fetch_html(MODELS_DOC_URL))
+    documented = parse_models(_document(MODELS_DOC_URL))
     normalized: list[dict[str, Any]] = []
     for source in rows:
         native_id = str(source.get("id", ""))
@@ -233,7 +246,7 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _load_prices() -> dict[str, ModelPrice]:
-    prices = parse_prices(fetch_html(PRICING_URL))
+    prices = parse_prices(_document(PRICING_URL))
     result = {model_id: prices[name] for model_id, name in _MODEL_NAMES.items() if name in prices}
     for model_id, expected in TENCENT_OFF_PEAK_PRICES.items():
         price = result.get(model_id)

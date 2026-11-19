@@ -1721,6 +1721,10 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
             print(f"  {slug}:")
             for route in routes:
                 print(f"    {route}")
+                # A spike hold names the exact before and after values, so the
+                # issue shows what to verify and what an approval must match.
+                for reason in getattr(route, "reasons", ()):
+                    print(f"      {reason}")
         print(
             "::warning title=Provider prices held for review::"
             f"{', '.join(sorted(held))} kept their committed state. Repair refresh "
