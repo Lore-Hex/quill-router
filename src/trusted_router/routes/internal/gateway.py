@@ -124,7 +124,7 @@ from trusted_router.gateway_timing import (
 from trusted_router.model_aliases import names_router_model
 from trusted_router.money import format_money_precise, money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
-from trusted_router.openai_safety import owner_digest
+from trusted_router.openai_safety import owner_digest, valid_digest
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
@@ -3066,7 +3066,8 @@ def _openai_response_fields(
         endpoint.provider == "openai" for _, endpoint in candidates
     ):
         return {}
-    return {"openai_safety_identifier": key.federated_openai_safety_identifier or owner_digest(
+    peer_digest = valid_digest(key.federated_openai_safety_identifier) if key.federated_home else ""
+    return {"openai_safety_identifier": peer_digest or owner_digest(
         key.creator_user_id or workspace.owner_user_id, workspace.id
     )}
 

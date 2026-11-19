@@ -315,6 +315,7 @@ const maxKeyUsageShards = 64
 // runs them): each is read here, or needs no reading, as each says. A field
 // the route starts to consult fails the vector test until it is listed.
 var consultedKeyFields = map[string]string{
+	"creator_user_id":            "CreatorUserID, used to derive the direct OpenAI pseudonym",
 	"app_id":                     "key_app",
 	"budget_alert_only":          "Windows.AlertOnly when a window is set (key_shape:budget_alert_only unless a JSON bool); not read otherwise",
 	"budget_strict":              "key_budget_strict",
@@ -335,6 +336,7 @@ var consultedKeyFields = map[string]string{
 }
 
 var consultedWorkspaceFields = map[string]string{
+	"owner_user_id":        "OwnerUserID, the fallback when the key has no creator",
 	"billing_pause_causes": "PauseCauses, workspace_paused",
 	"billing_paused":       "PauseCauses (the legacy flag)",
 	"deleted":              "Deleted, workspace_unavailable",
