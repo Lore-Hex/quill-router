@@ -374,6 +374,8 @@ def test_registration_and_published_pricing(client):
     from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
     from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
     from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
+    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
     from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS
 
     root = Path(__file__).resolve().parents[1]
@@ -384,7 +386,14 @@ def test_registration_and_published_pricing(client):
         assert any(item[0] == slug for item in _DISCOVERABLE_MANIFEST_PROVIDERS)
         assert f"{slug.upper()}_API_KEY:trustedrouter-{slug}-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
         endpoints = [e for key, e in MODEL_ENDPOINTS.items() if key.endswith(f"@{slug}/prepaid")]
-        assert not _published_route_disagreements(module, endpoints, _manifest_rows(slug))
+        if slug in PREPAID_PROVIDER_HOLD_REASONS:
+            # An operator hold keeps every route dark; its retained settlement
+            # tariffs must still agree with the manifest.
+            assert not endpoints
+            held = [e for key, e in HELD_PREPAID_SETTLEMENT_ENDPOINTS.items() if key.endswith(f"@{slug}/prepaid")]
+            assert not _published_route_disagreements(module, held, _manifest_rows(slug))
+        else:
+            assert not _published_route_disagreements(module, endpoints, _manifest_rows(slug))
         page = client.get(f"/providers/{slug}")
         assert page.status_code == 200 and "Cached" in page.text
         assert all(e.model_id in page.text for e in endpoints)
