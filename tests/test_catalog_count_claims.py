@@ -181,3 +181,12 @@ def test_catalog_json_ld_omits_exact_catalog_totals(client: TestClient, path: st
     assert len(catalogs) == 1
     assert "numberOfItems" not in catalogs[0]
     assert catalogs[0]["itemListElement"]  # Individual catalog rows remain discoverable.
+
+
+def test_models_page_server_render_has_no_exact_catalog_total() -> None:
+    # Crawlers read the server-rendered status line before the explorer script
+    # replaces it with a filtered result count.
+    template = (TEMPLATES / "public/models.html").read_text()
+    assert "{{ models|length }} models" not in template
+    assert not re.search(r"\{\{[^}]*\}\}\s*models</strong><span[^>]*>\s*in the public catalog", template)
+    assert '600+ models</strong><span data-model-result-detail> in the public catalog' in template
