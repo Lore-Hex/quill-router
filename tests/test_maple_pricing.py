@@ -295,27 +295,55 @@ def test_live_catalog_inventories_inkling_2_small_as_a_held_row(monkeypatch, tmp
 
 INKLING_PRICE = ModelPrice(450_000, 1_500_000, prompt_cached_micro_per_m=50_000)
 PER_MILLION_FOOTER = "<footer>Legacy pricing: USD per 1 million tokens.</footer>"
+LEAD = "USD per 1 million tokens."
+CAPTION = "in US dollars per one million tokens"
+FOOTNOTE = "Automatic model aliases are billed at the rate of the model selected for the request."
+
+
+def _swapped(swaps):
+    page = live_pages_2026_11_19()[maple.PRICING_URL]
+    assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
+    for before, after in swaps:
+        assert page.count(before) == 1
+        page = page.replace(before, after)
+    return page + PER_MILLION_FOOTER
 
 
 @pytest.mark.parametrize("swaps", [
     # The table's lead and its caption both move to per-thousand units.
-    [("USD per 1 million tokens.", "USD per 1 thousand tokens."),
-     ("in US dollars per one million tokens", "in US dollars per one thousand tokens")],
-    [("in US dollars per one million tokens", "in US dollars per one thousand tokens")],
-    [("USD per 1 million tokens.", "USD per 1 thousand tokens.")],
-    [("USD per 1 million tokens.", "USD per 1 million tokens. Cached input is USD per 1 thousand tokens.")],
+    [(LEAD, "USD per 1 thousand tokens."), (CAPTION, "in US dollars per one thousand tokens")],
+    [(CAPTION, "in US dollars per one thousand tokens")],
+    [(LEAD, "USD per 1 thousand tokens.")],
+    [(LEAD, LEAD + " Cached input is USD per 1 thousand tokens.")],
     # No unit stated by the table at all; only an unrelated footer states one.
-    [("USD per 1 million tokens.", "Prices by model."),
-     ("Model prices on every plan, in US dollars per one million tokens", "Model prices on every plan")],
+    [(LEAD, "Prices by model."), ("Model prices on every plan, " + CAPTION, "Model prices on every plan")],
+    # The footnote (pr-foot) after the table, in each spelling.
+    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per 1K tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per 1,000 tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per thousand tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " Output is USD/1K tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " Output is billed per token.")],
+    [(FOOTNOTE, FOOTNOTE + " Prices in EUR per 1 million tokens.")],
+    [(CAPTION, "in USD/1K tokens")],
+    [(CAPTION, "in USD per 1,000 tokens")],
+    # A footnote can agree with the unit but cannot be the only statement.
+    [(LEAD, "Prices by model."), ("Model prices on every plan, " + CAPTION, "Model prices on every plan"),
+     (FOOTNOTE, FOOTNOTE + " Rates are USD per million tokens.")],
 ])
 def test_unit_must_be_stated_by_the_price_table_not_elsewhere_on_the_page(swaps):
-    page = live_pages_2026_11_19()[maple.PRICING_URL]
-    assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
-    for before, after in swaps:
-        assert before in page
-        page = page.replace(before, after)
     with pytest.raises(RuntimeError, match="unit changed"):
-        maple.parse_prices(page + PER_MILLION_FOOTER, "Inkling 2 Small")
+        maple.parse_prices(_swapped(swaps), "Inkling 2 Small")
+
+
+@pytest.mark.parametrize("swaps", [
+    [(FOOTNOTE, FOOTNOTE + " Rates are per million tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " All rates are USD/1M tokens.")],
+    [(CAPTION, "in USD per 1,000,000 tokens")],
+    [(LEAD, "USD/M tokens.")],
+    [(LEAD, "Prices in USD per one million input or output tokens.")],
+])
+def test_equivalent_per_million_restatements_pass(swaps):
+    assert maple.parse_prices(_swapped(swaps), "Inkling 2 Small") == INKLING_PRICE
 
 
 ABOVE_128K_TABLE = (
@@ -325,23 +353,45 @@ ABOVE_128K_TABLE = (
 )
 
 
+def _table(headers, *rows):
+    head = "".join(f"<th>{header}</th>" for header in headers)
+    body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
+    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
 @pytest.mark.parametrize("extra", [
     ABOVE_128K_TABLE,
-    # Another token table without any condition wording.
     ABOVE_128K_TABLE.replace("Above 128K context: USD per 1 million tokens", "Batch prices"),
-    # Another table that prices a published model under other column names.
-    "<table><thead><tr><th>Model</th><th>Price</th></tr></thead>"
-    "<tbody><tr><td>Inkling 2 Small</td><td>$0.90</td></tr></tbody></table>",
-    # A section outside any table that prices a published model.
-    "<p><strong>Inkling 2 Small</strong> batch rate: $0.20 in, $0.75 out.</p>",
-    # A tier or context condition with no table at all.
-    "<p>Prompts over 128K tokens are billed at twice the listed rate.</p>",
-    "<p>Long-context requests use separate prices.</p>",
+    _table(["Model", "Price"], ["Inkling 2 Small", "$0.90"]),
+    # A qualified display name under "($/M)" suffixed price columns.
+    _table(["Model", "Input ($/M)", "Output ($/M)"], ["Inkling 2 Small (batch)", "$0.20", "$0.75"]),
+    # The native ID, under a rate column.
+    _table(["Model", "Rate"], ["<code>inkling-2-small</code>", "$0.90"]),
+    # Another published model refuses the page for every model.
+    _table(["Model", "Cached-input"], ["GLM 5.3", "$0.12"]),
+    # Models as columns: no price header, but dollar cells.
+    _table(["Tier", "Inkling 2 Small"], ["Batch", "$0.20"]),
 ])
-def test_other_price_tables_sections_or_conditions_are_refused(extra):
+def test_another_table_pricing_a_published_model_is_refused(extra):
     page = live_pages_2026_11_19()[maple.PRICING_URL]
-    with pytest.raises(RuntimeError, match="maple: "):
+    with pytest.raises(RuntimeError, match="maple: another table prices a published model"):
         maple.parse_prices(page + extra, "Inkling 2 Small")
+
+
+@pytest.mark.parametrize("extra", [
+    _table(["Model", "Image support"], ["Inkling 2 Small", "Yes"], ["GLM 5.3", "No"]),
+    _table(["Plan", "Price"], ["Pro", "$20/month"], ["Max", "$100/month"]),
+    # Prose outside the parsed structures is out of scope, so ordinary copy
+    # never refuses the page.
+    "<h3>What is a context window?</h3>",
+    "<p>Ask us about the enterprise tier.</p>",
+    "<p>Context-aware answers.</p>",
+    "<p>Over 1M downloads.</p>",
+    "<p>Try Inkling 2 Small with Pro for $20/month.</p>",
+])
+def test_tables_without_model_prices_and_ordinary_copy_pass(extra):
+    page = live_pages_2026_11_19()[maple.PRICING_URL]
+    assert maple.parse_prices(page + extra, "Inkling 2 Small") == INKLING_PRICE
 
 
 def test_extra_tier_table_fails_the_whole_refresh(monkeypatch, tmp_path):
