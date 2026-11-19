@@ -1,0 +1,30 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero"><div><p class="kicker">TrustedRouter · Model verification</p><h1>LLM Model Substitution: How to Evaluate an AI API</h1><p class="lead">Understand model substitution, shadow API research and legitimate deployment changes. Learn how to evaluate providers with route controls and verifiable evidence.</p><p><a class="btn primary" href="/models">Find a model and inspect its providers</a></p></div></section>
+{% endblock %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section"><h2>Turn an opaque API into an evidence-based decision</h2>
+<p>Model substitution means a service supplies a different model or deployment than the one it represents to the buyer. The useful response is to ask for better evidence. TrustedRouter helps you choose an explicit route, inspect available configuration sources and verify signed records and confidential-workload evidence.</p>
+<p>Start by separating an undisclosed change from a documented product feature. A router that clearly selects among models is not promising a fixed checkpoint. A version alias may intentionally track newer releases. A disclosed quantized deployment can be a good price-performance choice. What matters is whether the service description, routing policy and delivered behavior agree.</p></section>
+<section class="content-section"><h2>What the research actually found</h2>
+<p>The September 2026 revision of <a href="https://arxiv.org/abs/2603.01919">Real Money, Fake Models</a>, accepted at CCS 2026, reports behavioral inconsistencies and fingerprint evidence consistent with deceptive claims in a subset of audited shadow-API endpoints. Its sampling and statistical tests do not establish a market-wide fraud rate, and the study is not evidence that every aggregator substitutes models.</p>
+<p>In <a href="https://arxiv.org/abs/2504.04715">Are You Getting What You Pay For?</a>, researchers examine substitution detection and limitations of output-based methods, including subtle and adaptive changes. They discuss TEEs as a possible path toward stronger integrity evidence. That supports a layered evaluation rather than treating a few benchmark questions as conclusive proof.</p>
+<p>Developer interest is visible in projects such as <a href="https://github.com/unclecode/modelprint">Modelprint</a>, which compares observable endpoint behavior and infrastructure clues. Such tools can help formulate questions for a provider. Their results are not a hardware-signed statement about loaded weights.</p></section>
+<section class="content-section"><h2>Four changes to distinguish</h2>
+<dl><dt><strong>Different model</strong></dt><dd>A different family, size, checkpoint or fine-tune is selected. Ask whether that is allowed by the route's documented policy.</dd>
+<dt><strong>Different precision</strong></dt><dd>The same model family runs with different weight or cache formats. Evaluate the disclosed configuration on your task; quantization is not inherently deceptive.</dd>
+<dt><strong>Different serving configuration</strong></dt><dd>Prompt templates, context truncation, sampling and tool handling can change results without replacing the weights.</dd>
+<dt><strong>Different route over time</strong></dt><dd>An alias, fallback policy or provider update changes which deployment handles a request. Preserve version and route records to identify the change.</dd></dl></section>
+<section class="content-section"><h2>A practical provider evaluation</h2>
+<p>Ask for the exact model version, available precision evidence, fallback policy and update policy. Run a non-sensitive reference workload, then repeat it with the provider pinned. Measure task quality and response distributions rather than judging a single answer. Keep latency and token-usage changes as diagnostic signals, not verdicts.</p>
+<p>On TrustedRouter, inspect <a href="/model-precision">reviewed precision metadata</a>, pin a route with <a href="/docs/provider-routing">provider controls</a>, and use <a href="/docs/receipts">signed receipts</a> when you need an authenticated gateway record. Unknown configuration remains unknown. Current precision snapshots are marked <code>runtime_verified: false</code>, so they should not be presented as per-request weight proofs.</p></section>
+<section class="content-section"><h2>Why confidential inference changes the conversation</h2>
+<p>A well-designed confidential inference deployment lets a client verify the execution environment before releasing sensitive data. For model identity, that design must also commit to and enforce the model artifacts. This is stronger evidence than a self-reported model label when the full verification chain is present.</p>
+<p>TrustedRouter's gateway attestation and selected confidential upstream routes make that evidence easier to evaluate. Ask which workload was measured, which artifacts it binds, and how the connection is tied to it. A gateway TEE alone cannot establish every remote model's weights. Use the <a href="/confidential-inference-verification">verification checklist</a> to keep the claim matched to the evidence.</p></section>
+<section class="content-section"><h2>Document a concern without jumping to an accusation</h2>
+<p>If results change, preserve the timestamp, model identifier, provider, parameters, receipt and configuration sources. Reproduce the issue, compare a documented reference and ask the provider to explain the discrepancy. An evidence-led conversation can reveal a harmless configuration difference, an integration bug or a material mismatch. Each calls for a different fix.</p></section>
+<p class="microcopy">Research and product documentation reviewed November 19, 2026. Route availability and verification coverage can change.</p>
+</article></div>
+{% include "public/_model_verification_links.html" %}
+{% endblock %}

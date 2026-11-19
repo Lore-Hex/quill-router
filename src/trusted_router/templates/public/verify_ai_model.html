@@ -1,0 +1,36 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero"><div><p class="kicker">TrustedRouter · Model verification</p><h1>How to Verify Which AI Model Your API Is Serving</h1><p class="lead">Verify an LLM API with provider pinning, model precision evidence, signed receipts and confidential-compute attestation. A practical TrustedRouter checklist.</p><p><a class="btn primary" href="/models">Find a model and inspect its providers</a></p></div></section>
+{% endblock %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section"><h2>Know the route behind the model name</h2>
+<p>An API's model label tells you what the service says it selected. Stronger verification connects that selection to a known provider, a reviewed configuration and, where supported, an attested inference workload. TrustedRouter brings these checks into one workflow so you can make a better-informed choice before sending production traffic.</p>
+<p>Start with a non-sensitive evaluation prompt. Record the exact endpoint, model ID, provider and request settings. Then use the steps below to distinguish a routing record from evidence about the code and weights that actually ran. Asking an assistant “what model are you?” is not an authentication method: generated text can repeat a supplied name.</p></section>
+<section class="content-section"><h2>1. Pin the model and provider for your evaluation</h2>
+<p>Use an explicit catalog model ID rather than a convenience selector such as <code>trustedrouter/auto</code>. Choose a provider from the model's endpoint list. In TrustedRouter, <code>provider.only</code> restricts the provider set and <code>allow_fallbacks: false</code> prevents a request from continuing to another candidate. That makes an evaluation easier to reproduce; it does not prevent the provider itself from updating a moving model alias.</p>
+<pre><code>{
+  "model": "AUTHOR/MODEL",
+  "messages": [{"role": "user", "content": "Reply with PONG."}],
+  "provider": {
+    "only": ["PROVIDER_SLUG"],
+    "allow_fallbacks": false
+  }
+}</code></pre>
+<p>Replace both placeholders with a currently available model and provider. See <a href="/docs/provider-routing">routing and pinning</a> for accepted controls and errors. Pinning intentionally trades some availability for a stable route.</p></section>
+<section class="content-section"><h2>2. Check the published serving configuration</h2>
+<p>Open the model's provider list and inspect the <a href="/model-precision">precision evidence</a>. Reviewed endpoints can include weight formats, model revision, serving-code links and a review date. Weight precision and KV-cache precision are separate. Unknown values remain unknown rather than being inferred from a model name.</p>
+<p>This information helps you compare like with like. It is a reviewed configuration snapshot, not a live measurement of every request: the precision metadata explicitly reports <code>runtime_verified: false</code>. Use <a href="/docs/model-precision">the precision metadata API</a> to retain the evidence you evaluated.</p></section>
+<section class="content-section"><h2>3. Keep a verifiable record of the routed response</h2>
+<p>Opt-in <a href="/docs/receipts">signed inference receipts</a> bind request and response hashes to the gateway's recorded model, provider, endpoint and upstream verification tier. Verify the signature, attestation chain and your nonce with the documented verifier. Keep the receipt with your evaluation record; an unsigned response field is a weaker form of evidence.</p>
+<p>The receipt authenticates the gateway's record. A model name inside it is not automatically a measurement of a remote provider's weight files. Receipts are also separate from confidentiality and have their own pricing; check those terms before enabling them for all traffic.</p></section>
+<section class="content-section"><h2>4. Verify the inference workload when identity matters</h2>
+<p>Confidential compute adds an important tool: hardware-rooted evidence about the environment receiving your request. For stronger model identity, the measured serving application must bind and enforce the expected model artifacts, not merely run inside a TEE. Verify that evidence against a reference you approve and bind the encrypted connection to the verified workload.</p>
+<p>TrustedRouter offers verified confidential routes and an attested gateway. Inspect the <a href="/providers">selected provider's evidence</a>; do not extend a gateway guarantee to every upstream endpoint. The <a href="/confidential-inference-verification">attestation guide</a> explains what to ask for at each boundary.</p></section>
+<section class="content-section"><h2>5. Test quality as a separate question</h2>
+<p>Run your task set with fixed prompts, tools, context and generation settings, with enough samples to measure variation. Compare task success, latency and cost. A verified model can still give a poor answer, and different answers do not by themselves prove substitution. <a href="https://arxiv.org/abs/2410.20247">Model Equality Testing</a> studies distributional differences; it is not a cryptographic identity check.</p>
+<p>The practical win is a repeatable evaluation: a pinned route, dated configuration evidence, a verified response record and an explicit attestation scope. You can use those records to investigate a regression without guessing which layer changed.</p></section>
+<p class="microcopy">Research and product documentation reviewed November 19, 2026. Route availability and verification coverage can change.</p>
+</article></div>
+{% include "public/_model_verification_links.html" %}
+{% endblock %}

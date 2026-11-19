@@ -16,4 +16,15 @@ trustedrouter.precision.runtime_verified</code></pre><p>The URL is shown on two 
   <div><h2>Evidence you can inspect.</h2><p>The primary weight format, mixed-format details, and KV-cache dtype are separate fields. The metadata includes the review date and source links so an evaluator can see exactly what was reviewed.</p><p>Unreviewed precision remains <code>null</code>. Unknown is more useful than an inferred answer presented as fact.</p></div>
   <div><h2>Keep the proof in scope.</h2><p><code>runtime_verified</code> is false. A published serving configuration is not per-request proof of loaded weights or precision, and gateway attestation alone cannot establish an upstream model's identity.</p><p>Quantization metadata is available; <code>provider.quantizations</code> filtering remains an explicit <code>501</code>. Compare the evidence before choosing a route.</p></div>
 </section>
+<section class="routing-feature-section">
+  <h2>Why does the same AI model give different results across providers?</h2>
+  <p>The model name is only one part of a deployment. Check the checkpoint revision, weight format, KV-cache precision, tokenizer and prompt template, context handling and generation settings. A change in any of these can affect results. Sampling also produces variation even when the configuration is unchanged.</p>
+  <p>For DeepSeek, Qwen, Kimi or any other open-weight model, compare the exact provider endpoints rather than assuming a shared family name guarantees identical serving behavior. Pin the provider and keep a dated configuration record before evaluating task quality.</p>
+  <h3>BF16, FP8 and INT4: choose with an evaluation</h3>
+  <p>Lower-precision formats can reduce memory requirements and change serving economics. Their quality impact depends on the model, quantization method and workload. A disclosed lower-precision route can be a good choice; neither a format label nor price alone tells you which route performs best on your task. Keep weight formats separate from cache formats, and test long-context and tool-use behavior if those matter to your application.</p>
+  <h3>Disclosure and verification answer different questions</h3>
+  <p><a href="https://arxiv.org/abs/2410.20247">Model Equality Testing (ICLR 2025)</a> found output-distribution differences between some tested commercial endpoints and reference Llama weights. Those Summer 2024 results illustrate a measurement problem, not a verdict about a provider's current service or evidence that every difference is deception.</p>
+  <p>TrustedRouter's reviewed precision metadata helps make configuration differences visible. It does not claim to measure every request's weight files. For the next layer, use the <a href="/verify-ai-model">model verification checklist</a> and learn how <a href="/confidential-inference-verification">attestation can bind a serving workload to approved artifacts</a>.</p>
+</section>
+{% include "public/_model_verification_links.html" %}
 {% endblock %}

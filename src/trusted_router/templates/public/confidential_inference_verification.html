@@ -1,0 +1,32 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero"><div><p class="kicker">TrustedRouter · Model verification</p><h1>Confidential Inference Verification: Attestation and Model Identity</h1><p class="lead">Learn what confidential computing proves about AI inference. Check workload attestation, model artifact binding, encrypted channels and signed response receipts.</p><p><a class="btn primary" href="/models">Find a model and inspect its providers</a></p></div></section>
+{% endblock %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section"><h2>Make the serving environment something you can check</h2>
+<p>Confidential computing helps protect data during processing and gives remote clients a way to verify parts of the environment running their workload. For AI buyers, that creates a useful opportunity: evaluate technical evidence before trusting a model endpoint with valuable data.</p>
+<p>TrustedRouter combines an attested gateway with verified confidential routes, explicit routing controls and opt-in response receipts. These tools help answer different questions. Understanding how they fit together makes it easier to choose the right evidence for privacy, reproducibility and model identity.</p></section>
+<section class="content-section"><h2>What must connect for model identity verification?</h2>
+<ol><li><strong>Hardware and platform state.</strong> Verify authentic, acceptable CPU and GPU evidence, including relevant security versions and policy.</li>
+<li><strong>Serving application.</strong> Match the measured workload to reviewed code or an approved release. A genuine device running unreviewed software is not enough.</li>
+<li><strong>Model artifacts.</strong> Establish which checkpoint, tokenizer, adapters and configuration are bound to that workload. The serving code must enforce the expected artifacts when loading and using them.</li>
+<li><strong>Connection.</strong> Bind the encryption key or channel to the verified workload so a different endpoint cannot simply present somebody else's evidence.</li>
+<li><strong>Response record.</strong> Verify the request-specific signature, hashes and freshness evidence where a receipt is available.</li></ol>
+<p><a href="https://docs.nvidia.com/attestation/">NVIDIA's attestation documentation</a> describes hardware and software integrity checks. Those checks are a foundation, not a generic assertion that a particular model checkpoint was loaded.</p></section>
+<section class="content-section"><h2>Weight identity requires an explicit design</h2>
+<p>A container measurement does not automatically cover a weight file downloaded after boot. Look for a binding to an approved artifact digest or manifest and enforcement inside the measured workload. The reference must be meaningful to the buyer: a provider-selected hash with no reviewable artifact tells you less than a hash you can reproduce from the intended checkpoint.</p>
+<p>As one concrete provider example, <a href="https://tinfoil.sh/security-and-privacy-faq">Tinfoil's October 2026 FAQ</a> describes a model-weight commitment bound into attestation and runtime enforcement, with public checkpoints independently checkable. That is a provider-documented mechanism, not a claim that all confidential endpoints or every TrustedRouter integration expose identical weight-verification coverage. Inspect the route and verifier actually used.</p></section>
+<section class="content-section"><h2>Where TrustedRouter helps today</h2>
+<p>Start with <a href="/providers">provider evidence</a> to identify a verified confidential route for your model. In <a href="/docs/provider-routing">routing controls</a>, an explicit <code>provider.min_privacy: "confidential"</code> is a hard privacy floor. If no eligible route exists, the request fails rather than silently relaxing that requirement. A privacy floor selects qualifying routes; it is not a request for an arbitrary checkpoint hash.</p>
+<p>For a reproducible evaluation, also select the model and pin its provider. Review <a href="/model-precision">published precision metadata</a> for supported endpoints. It is a useful configuration record with source links and review dates, explicitly marked <code>runtime_verified: false</code>. Keep that distinction even when the route also supports confidential compute.</p>
+<p>Then verify the gateway using the <a href="/trust">trust documentation</a> and inspect <a href="/docs/receipts">opt-in signed receipts</a>. A receipt binds the gateway's request/response record and selected route. Its upstream tier describes verification performed on that request; it does not turn every model label into a cryptographic commitment to the upstream weights.</p></section>
+<section class="content-section"><h2>Privacy, identity and answer quality are separate checks</h2>
+<p>Encryption protects the channel, confidential compute reduces exposure during execution, and attestation supplies evidence about measured state. None guarantees that an answer is correct. A known checkpoint still needs task evaluation. A signed response also does not independently establish the provider's retention policy.</p>
+<p>Ask your provider which components are inside the boundary, which external services can receive data, which artifacts are enforced and what happens when verification fails. Review current evidence rather than keeping an old quote forever. These questions turn a broad “secure AI” claim into a deployment you can assess and operate.</p></section>
+<section class="content-section"><h2>Start with one verified route</h2>
+<p>Choose a non-sensitive test, record the approved provider and configuration, verify the available attestation and keep the receipt. Expand only after the evidence and your task evaluation meet your requirements. The <a href="/verify-ai-model">step-by-step model verification guide</a> walks through that workflow, and the <a href="/llm-model-substitution">model substitution guide</a> explains how to investigate unexpected changes.</p></section>
+<p class="microcopy">Research and product documentation reviewed November 19, 2026. Route availability and verification coverage can change.</p>
+</article></div>
+{% include "public/_model_verification_links.html" %}
+{% endblock %}
