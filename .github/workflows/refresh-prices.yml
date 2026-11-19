@@ -834,7 +834,7 @@ jobs:
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
           if [ -n "${summaries}" ]; then
             {
-              echo "These providers had a price spike or refresh failure. The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
+              echo "These providers had a price spike (2x or more), a price drop (100x or more, the signature of a misread unit) or a refresh failure. The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
               echo
               echo "Repair fetch, parser, or manifest failures using the reasons below. If a price change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. Manifest expiry and canary gates still apply; holding a provider does not renew its freshness."
               echo
