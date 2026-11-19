@@ -41,10 +41,18 @@ unchanged.
   dispatch; giving it one would be a new credential.
 * **Watchdog missing:** the observer sends paired Sentry Cron check-ins on start
   and completion, reporting OK only after all reads, delivery and state writes.
-  An observer error or ten-minute timeout also raises a Cron issue.
+  An observer error or ten-minute timeout counts as a failed check-in.
   Sentry monitors this hourly heartbeat
-  with a 60-minute grace period, so even a GitHub-wide scheduling outage or a
-  broken observer can be detected outside GitHub. The first successful observer
+  with a 60-minute grace period and opens the Cron issue after two
+  consecutive failed or missed check-ins, so even a GitHub-wide scheduling
+  outage or a broken observer is detected outside GitHub within about two
+  hours, while one transient failure does not page. The host observer reads
+  GitHub anonymously and retries a timeout, network error or 5xx twice (2 s,
+  then 8 s), and honors a `Retry-After` of up to 30 s. A longer rate limit
+  fails the run at once. A failed read logs only a fixed reason, such as
+  `(HTTP 403, rate limited)` or `(timeout)`, never a URL or response body:
+  read it with `gcloud logging read` on the host's syslog
+  (`price-refresh-observer.service`). The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.
   The external observer runs on `tr-clickhouse-3`
   (`scripts/ops/install_price_refresh_observer.sh`); moving or rebuilding that

@@ -76,6 +76,43 @@ def gh(path: str, data: dict[str, Any] | None = None) -> Any:
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+class MonitoringReadError(RuntimeError):
+    """A failed anonymous GitHub read.
+
+    The message is a fixed phrase plus at most an HTTP status code, never a
+    URL, header or response body, so the CLI may print it.
+    """
+
+
+# One anonymous read in a few hundred fails transiently (2026-11-19 18:23Z:
+# one observer run errored, the next hour's run succeeded), and every failed
+# run raises and resolves a Cron issue. Retry those reads a bounded number of
+# times; a whole run stays far inside the ten-minute max runtime.
+PUBLIC_READ_RETRY_DELAYS = (2.0, 8.0)
+# Honor a short Retry-After from a rate limit. A longer one (the anonymous
+# primary limit resets hourly) fails now instead of sleeping through the run.
+MAX_RETRY_AFTER_SECONDS = 30
+
+
+def _read_failure(exc: Exception) -> tuple[str, float | None]:
+    """A safe failure classification and the delay before a retry (None: do not retry)."""
+    if isinstance(exc, HTTPError):
+        headers = exc.headers or {}
+        limited = exc.code == 429 or (exc.code == 403 and (
+            headers.get("x-ratelimit-remaining") == "0" or headers.get("retry-after") is not None))
+        if limited:
+            retry_after = str(headers.get("retry-after") or "")
+            if retry_after.isdigit() and int(retry_after) <= MAX_RETRY_AFTER_SECONDS:
+                return f"HTTP {exc.code}, rate limited", float(retry_after)
+            return f"HTTP {exc.code}, rate limited", None
+        if 500 <= exc.code < 600:
+            return f"HTTP {exc.code}", 0.0
+        return f"HTTP {exc.code}", None
+    if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+        return "timeout", 0.0
+    return "network error", 0.0
+
+
 def public_gh(path: str) -> Any:
     """Anonymous metadata-only reads: no personal or repository write token."""
     if "://" in path or ".." in path or not path.startswith(("actions/", "search/issues?q=repo:" + REPOSITORY)):
@@ -85,14 +122,19 @@ def public_gh(path: str) -> Any:
         "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
         "X-GitHub-Api-Version": "2022-11-28",
     })
-    try:
-        with build_opener(NoRedirect()).open(request, timeout=15) as response:
-            raw = response.read(2_000_001)
-        if len(raw) > 2_000_000:
-            raise ValueError("Monitoring API response is too large")
-        return json.loads(raw)
-    except (HTTPError, URLError, TimeoutError) as exc:
-        raise RuntimeError("GitHub monitoring API request failed") from exc
+    for attempt in range(len(PUBLIC_READ_RETRY_DELAYS) + 1):
+        try:
+            with build_opener(NoRedirect()).open(request, timeout=15) as response:
+                raw = response.read(2_000_001)
+            break
+        except (HTTPError, URLError, TimeoutError) as exc:
+            reason, retry_after = _read_failure(exc)
+            if retry_after is None or attempt == len(PUBLIC_READ_RETRY_DELAYS):
+                raise MonitoringReadError(f"GitHub monitoring API request failed ({reason})") from exc
+            time.sleep(max(retry_after, PUBLIC_READ_RETRY_DELAYS[attempt]))
+    if len(raw) > 2_000_000:
+        raise ValueError("Monitoring API response is too large")
+    return json.loads(raw)
 
 
 def read_local_state(path: Path, remote: dict[str, Any]) -> dict[str, Any]:
@@ -274,9 +316,13 @@ def heartbeat(status: str, check_in_id: str, duration: float = 0) -> None:
         "status": status, "environment": "production", "duration": duration,
     }
     if status == "in_progress":
+        # Two consecutive failed or missed hourly check-ins open the Cron
+        # issue: one transient failure no longer pages and then resolves an
+        # hour later, while a broken or silent observer still pages within
+        # about two hours.
         payload["monitor_config"] = {
             "schedule": {"type": "interval", "value": 1, "unit": "hour"},
-            "checkin_margin": 60, "failure_issue_threshold": 1, "recovery_threshold": 1,
+            "checkin_margin": 60, "failure_issue_threshold": 2, "recovery_threshold": 1,
             "max_runtime": 10,
         }
     send_sentry("check_in", payload)
@@ -480,6 +526,10 @@ if __name__ == "__main__":
             os.environ["TR_SENTRY_DSN"] = dsn
         main(dry_run=args.dry_run, state_path=args.state_file,
              heartbeat_enabled=not args.no_heartbeat, dispatch=args.dispatch_stalled)
+    except MonitoringReadError as exc:
+        # Safe to print: a fixed phrase and at most an HTTP status code.
+        print(f"::error::Price refresh monitoring failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     except Exception as exc:
         # Suppress exception strings/tracebacks: URLs can contain the DSN.
         print(f"::error::Price refresh monitoring failed ({type(exc).__name__}); inspect configuration and delivery", file=sys.stderr)
