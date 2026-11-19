@@ -39,6 +39,11 @@ _CHAT_MODELS = {
     "gemma4-31b": ("google/gemma-4-31b-it", "Gemma 4 31B"),
     "llama3-3-70b": ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B"),
     "gpt-oss-safeguard-120b": ("openai/gpt-oss-safeguard-120b", "OpenAI GPT-OSS Safeguard 120B API only"),
+    # Listed by 2026-11-19. Maple's model library (maple.ai/learn/models) files
+    # it under "Thinking Machines Lab's open-weight family", so it names the
+    # stock Thinking Machines weights. Held like every row but the qualified
+    # workload above.
+    "inkling-2-small": ("thinkingmachines/inkling-2-small", "Inkling 2 Small"),
 }
 UPSTREAM_ID_MAP = {canonical: native for native, (canonical, _) in _CHAT_MODELS.items()}
 # Release only after the matching measured gateway image passes every cloud.

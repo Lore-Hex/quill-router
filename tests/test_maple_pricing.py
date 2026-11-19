@@ -1,9 +1,11 @@
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 
 import pytest
 
+from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import maple
 from trusted_router.provider_manifest_policy import (
     EXPIRED_PROVIDER_MANIFEST,
@@ -247,6 +249,56 @@ def test_new_identity_or_ambiguous_capabilities_fail_closed(before, after):
     html = expanded_pages()[maple.MODEL_DOCS_URL]
     with pytest.raises(RuntimeError):
         maple.parse_catalog(html.replace(before, after, 1))
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
+
+
+def live_pages_2026_11_19():
+    # Trimmed captures of maple.ai/docs/proxy/models and maple.ai/pricing after
+    # Maple added Inkling 2 Small (model list reviewed 16 November 2026).
+    return {
+        maple.MODEL_DOCS_URL: (FIXTURE_DIR / "maple_proxy_models_2026-11-19.html").read_text(encoding="utf-8"),
+        maple.PRICING_URL: (FIXTURE_DIR / "maple_pricing_2026-11-19.html").read_text(encoding="utf-8"),
+    }
+
+
+def test_live_catalog_inventories_inkling_2_small_as_a_held_row(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    monkeypatch.setattr(maple, "fetch_html", live_pages_2026_11_19().__getitem__)
+    result = maple.fetch()
+    assert len(result.prices) == 10
+    assert result.prices["thinkingmachines/inkling-2-small"] == ModelPrice(
+        450_000, 1_500_000, prompt_cached_micro_per_m=50_000
+    )
+    assert result.prices[maple.MODEL_ID] == ModelPrice(650_000, 1_450_000, prompt_cached_micro_per_m=130_000)
+
+    maple.write_provider_manifest(result)
+    rows = {row["id"]: row for row in json.loads(maple.MANIFEST_PATH.read_text())["models"]}
+    assert len(rows) == 11
+    # Inventory only: the qualified uncensored workload stays the sole route.
+    assert {key for key, row in rows.items() if row["routable"]} == {maple.MODEL_ID}
+    inkling = rows["thinkingmachines/inkling-2-small"]
+    assert inkling["upstream_id"] == "inkling-2-small"
+    assert inkling["display_name"] == "Inkling 2 Small"
+    assert inkling["context_length"] == 524_288
+    assert inkling["input_modalities"] == ["text", "image"]
+    assert inkling["supports_tools"] is True and inkling["supports_reasoning"] is True
+    assert inkling["routable_reason"] == "attested-enclave-qualification-pending"
+    assert (
+        inkling["input_token_price_per_m"],
+        inkling["cached_input_token_price_per_m"],
+        inkling["output_token_price_per_m"],
+    ) == (450_000, 50_000, 1_500_000)
+
+
+@pytest.mark.parametrize("after", ["inkling-2-medium", "auto:quick"])
+def test_live_catalog_still_fails_closed_on_an_unreviewed_identity(after):
+    html = live_pages_2026_11_19()[maple.MODEL_DOCS_URL]
+    assert maple.parse_catalog(html)["thinkingmachines/inkling-2-small"]["upstream_id"] == "inkling-2-small"
+    with pytest.raises(RuntimeError, match="new or ambiguous model identity"):
+        maple.parse_catalog(html.replace("<code>inkling-2-small</code>", f"<code>{after}</code>", 1))
 
 
 def test_expanded_discovery_does_not_reuse_state_after_a_price_failure(monkeypatch):
