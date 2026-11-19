@@ -290,12 +290,13 @@
         "streaming",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 750000,
       "limits_source": "api",
-      "missing_since": "2026-11-19"
+      "missing_since": "2026-11-19",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "qwen/qwen3-235b-a22b-2507",
@@ -707,12 +708,13 @@
         "streaming",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 500000,
       "limits_source": "api",
-      "missing_since": "2026-11-19"
+      "missing_since": "2026-11-19",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4.1 Flash 1017",
@@ -883,7 +885,7 @@
   ],
   "source": "https://api.lyceum.technology/openai/v1/models",
   "pricing_source": "https://api.lyceum.technology/openai/v1/models",
-  "generated_at": "2026-11-19T13:39:32Z",
+  "generated_at": "2026-11-19T14:11:48Z",
   "price_scale": "microdollars_per_million",
   "model_count": 36
 }
