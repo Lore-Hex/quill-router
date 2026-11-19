@@ -371,6 +371,48 @@ def test_live_2026_11_07_pricing_document_still_parses():
     assert prices["seed-2-0-lite-260428"].tiers[0].max_prompt_tokens == 128_000
 
 
+BYTEPLUS_PRICING_2026_11_19 = (
+    Path(__file__).parent / "fixtures/pricing/byteplus_model_pricing_2026-11-19.md"
+).read_text(encoding="utf-8")
+
+
+def test_live_2026_11_19_fast_tier_does_not_break_or_leak_into_standard():
+    # Refresh run 44601888558 held BytePlus on "pricing table shape changed":
+    # a 5-column "Fast" table now sits between Standard and Flex. Standard
+    # rates are unchanged and must still match the committed manifest; the
+    # pricier Fast rows must never become the tariff.
+    prices = byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19)
+    assert prices == byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_07)
+    lite = [(t.max_prompt_tokens, t.prompt_micro_per_m, t.completion_micro_per_m, t.prompt_cached_micro_per_m)
+            for t in prices["seed-2-0-lite-260428"].tiers]
+    assert lite == [(128_000, 250_000, 2_000_000, 50_000), (None, 500_000, 4_000_000, 100_000)]
+    assert "dreamina-seedance-2-5-flash-261115" not in prices
+    assert byteplus.video_resolution_prices(BYTEPLUS_PRICING_2026_11_19)["dreamina-seedance-2-5-260628"] == {
+        "480p": 10_700_000, "720p": 10_700_000, "1080p": 11_700_000,
+    }
+
+
+FAST_TIER = (
+    "**Fast**\n"
+    "|Model ID |Prompt length (K tokens) |Input |Cached input |Output |\n"
+    "|---|---|---|---|---|\n"
+    "|`seed-2-0-pro-260328` |[0, 128] |$9.00 |$9.00 |$9.00 |\n"
+)
+
+
+def test_modern_layout_fast_tier_between_standard_and_flex_is_ignored():
+    with_fast = MODERN_MD.replace("**Flex**\n|Provider", FAST_TIER + "**Flex**\n|Provider")
+    assert with_fast.count("**Fast**") == 1
+    assert byteplus.parse_prices(with_fast) == byteplus.parse_prices(MODERN_MD)
+
+
+@pytest.mark.parametrize("heading", ["**Priority**", "**Standard (promotion)**"])
+def test_modern_layout_unknown_tier_after_standard_fails_closed(heading):
+    unknown = MODERN_MD.replace("**Flex**\n|Provider", FAST_TIER.replace("**Fast**", heading) + "**Flex**\n|Provider")
+    with pytest.raises(RuntimeError, match="unknown inference tier"):
+        byteplus.parse_prices(unknown)
+
+
 def test_catalog_with_no_priced_row_fails_closed_and_says_why():
     payload = catalog()
     for source in payload["data"]:

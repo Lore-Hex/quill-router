@@ -119,10 +119,28 @@ def _dollar_price(cell: str) -> str:
     return cell[1:]
 
 
+# Inference tiers that may follow Standard in the non-audio section. BytePlus
+# added a 5-column "Fast" table between Standard and Flex on 2026-11-16.
+_TIERS_AFTER_STANDARD = frozenset({"**Fast**", "**Flex**", "**Batch**"})
+
+
+def _standard_tier(non_audio: str) -> str:
+    """Standard rows run to the next tier heading; an unknown heading fails closed."""
+    lines = non_audio.splitlines()
+    if lines.count("**Standard**") != 1:
+        raise RuntimeError("byteplus: missing or ambiguous pricing section")
+    for line in lines[lines.index("**Standard**") + 1:]:
+        if re.fullmatch(r"\*\*[^*]+\*\*", line.strip()):
+            if line not in _TIERS_AFTER_STANDARD:
+                raise RuntimeError("byteplus: unknown inference tier after Standard")
+            return _section(non_audio, "**Standard**", line)
+    raise RuntimeError("byteplus: missing or ambiguous pricing section")
+
+
 def _modern_standard_rows(md: str) -> list[list[str]]:
     llm = _section(md, "## Large language models", "## Video generation models")
     non_audio = _section(llm, "#### Non-audio input", "#### Audio input")
-    rows = _table(_section(non_audio, "**Standard**", "**Flex**"), 7)
+    rows = _table(_standard_tier(non_audio), 7)
     header = ["Provider", "Model ID", "Prompt length (K tokens)", "Input", "Cached input", "Cache storage", "Output"]
     if not rows or rows[0] != header:
         raise RuntimeError("byteplus: standard pricing columns changed")
