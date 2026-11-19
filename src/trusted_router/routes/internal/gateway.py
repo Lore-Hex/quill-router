@@ -27,7 +27,7 @@ from dataclasses import replace
 from functools import lru_cache
 from itertools import product
 from time import perf_counter
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -249,6 +249,7 @@ from trusted_router.storage_gcp_settle_outbox import (
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
+    ApiKey,
     AppMarkupPayout,
     ByokKey,
     ByokProviderConfig,
@@ -258,6 +259,7 @@ from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
+    Workspace,
     decode_auth_record,
     generation_id_for_authorization,
     iso_now,
@@ -1396,8 +1398,7 @@ def _authorize_gateway_sync_impl(
         return _gateway_authorize_response(
             authorization=existing_authorization,
             workspace_id=workspace.id,
-            key_owner_id=api_key.creator_user_id or workspace.owner_user_id,
-            federated_digest=api_key.federated_openai_safety_identifier,
+            **_openai_response_fields(request, api_key, workspace, existing_candidates),
             key_hash=api_key.hash,
             model=existing_model,
             endpoint=existing_endpoint,
@@ -2350,8 +2351,7 @@ def _authorize_gateway_sync_impl(
     return _gateway_authorize_response(
         authorization=authorization,
         workspace_id=workspace.id,
-        key_owner_id=api_key.creator_user_id or workspace.owner_user_id,
-        federated_digest=api_key.federated_openai_safety_identifier,
+        **_openai_response_fields(request, api_key, workspace, endpoint_candidates),
         key_hash=api_key.hash,
         model=model,
         endpoint=endpoint,
@@ -3055,12 +3055,27 @@ def _broadcast_destinations_for_authorize(workspace_id: str) -> list[Any]:
     return destinations
 
 
+class _OpenAIResponseFields(TypedDict, total=False):
+    openai_safety_identifier: str
+
+
+def _openai_response_fields(
+    request: Request, key: ApiKey, workspace: Workspace, candidates: list[tuple[Model, ModelEndpoint]],
+) -> _OpenAIResponseFields:
+    if request.headers.getlist("x-tr-openai-safety") != ["v1"] or not any(
+        endpoint.provider == "openai" for _, endpoint in candidates
+    ):
+        return {}
+    return {"openai_safety_identifier": key.federated_openai_safety_identifier or owner_digest(
+        key.creator_user_id or workspace.owner_user_id, workspace.id
+    )}
+
+
 def _gateway_authorize_response(
     *,
     authorization: Any,
     workspace_id: str,
-    key_owner_id: str | None = None,
-    federated_digest: str = "",
+    openai_safety_identifier: str = "",
     key_hash: str,
     model: Model,
     endpoint: ModelEndpoint,
@@ -3142,13 +3157,7 @@ def _gateway_authorize_response(
             "generation_id": generation_id_for_authorization(authorization.id),
             "workspace_id": workspace_id,
             "api_key_hash": key_hash,
-            **(
-                {"openai_safety_identifier": federated_digest or owner_digest(key_owner_id, workspace_id)}
-                if async_request is not None
-                and async_request.headers.getlist("x-tr-openai-safety") == ["v1"]
-                and (endpoint.provider == "openai" or any(e.provider == "openai" for _, e in endpoint_candidates))
-                else {}
-            ),
+            **({"openai_safety_identifier": openai_safety_identifier} if openai_safety_identifier else {}),
             "model": model.id,
             "upstream_model": upstream_model,
             "endpoint_id": endpoint.id,
