@@ -169,6 +169,10 @@ GLM_SAMPLER_ID = "zai-org/GLM-5.3:peft:262144"
     {"url": ["https://huggingface.co/thinkingmachines/Inkling-2-Small"]},
     {"url": "https://:443"},
     {"url": "https://user@"},
+    {"url": "https:// "},
+    {"url": "https://bad host/model"},
+    {"url": "https://huggingface.co:abc/model"},
+    {"url": "https://huggingface.co:65536/model"},
     {"context": {"unit": "tokens", "value": 1_048_576}},
     {"context": "1M tokens"},
     {"context": "1048576"},
@@ -182,6 +186,15 @@ def test_serverless_row_with_a_malformed_documented_field_is_refused(monkeypatch
 
     with pytest.raises(RuntimeError, match=r"thinkingmachines: malformed pricing field\(s\) \['"):
         thinkingmachines.fetch()
+
+
+def test_documented_empty_url_is_still_accepted(monkeypatch):
+    # "The url field is an empty string when no model-card link is provided."
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_2_SMALL_SERVERLESS_ID, {"url": ""})
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    assert thinkingmachines.fetch().prices["thinkingmachines/inkling-2-small"] == ModelPrice(
+        300_000, 1_000_000, prompt_cached_micro_per_m=30_000
+    )
 
 
 @pytest.mark.parametrize("bad", [

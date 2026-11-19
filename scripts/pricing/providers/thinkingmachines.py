@@ -82,6 +82,8 @@ _TINKER_ID = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*(?::peft:[1-9][0-9]*)?(?::sampling-[a-z0-9]+)?"
 )
 _CONTEXT = re.compile(r"[1-9][0-9]*[KM]")
+# Letters, digits, hyphens and dots, with at least one dot and no spaces.
+_DNS_NAME = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _DISCOUNT_NOTE = re.compile(r"Limited-time [1-9][0-9]?% discount")
 _DISCOUNT_FIELDS = frozenset(
     {"original_prefill", "original_cached_prefill", "original_sample", "original_train"}
@@ -94,12 +96,22 @@ def _matching(pattern: re.Pattern[str]):  # noqa: ANN202
 
 def _https_url(value: object) -> bool:
     # The docs: "The url field is an empty string when no model-card link is
-    # provided." Otherwise it must be an https URL with a host name ("https://:443"
-    # and "https://user@" have a netloc but no host).
+    # provided." Otherwise it must be an https URL whose host is a plain DNS
+    # name and whose port, if any, is valid.
     if not isinstance(value, str):
         return False
-    parts = urlsplit(value)
-    return value == "" or (parts.scheme == "https" and bool(parts.hostname))
+    if value == "":
+        return True
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises ValueError on a malformed or out-of-range port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and parts.hostname is not None
+        and _DNS_NAME.fullmatch(parts.hostname) is not None
+    )
 
 
 # Documented value shape of every allowlisted field. A dict or list where a
