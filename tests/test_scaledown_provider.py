@@ -139,6 +139,75 @@ def test_per_modality_pricing_changes_fail_closed(old, new, site_old, site_new):
         scaledown._input_price(source, site)
 
 
+ENTERPRISE = "Enterprise: dedicated or licensed deployments, custom pricing\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A rate under the Enterprise heading is not the Public API rate.
+        LLMS_2026_11_19.replace("- Text: $0.05\n", "").replace(ENTERPRISE, ENTERPRISE + "- Text: $0.01\n"),
+        LLMS_2026_11_19.replace(ENTERPRISE, ENTERPRISE + "- Text: $0.01\n"),
+        # A heading inside the block ends it; its rows are per 1K, not per 1M.
+        LLMS_2026_11_19.replace("- Text: $0.05", "### Batch API, per 1K input tokens:\n- Text: $0.05"),
+        LLMS_2026_11_19.replace("- Image: $0.15\n", "- Image: $0.15\n\n- Text: $0.01\n"),
+    ],
+    ids=["text-moved-to-enterprise", "second-text-under-enterprise", "batch-heading-in-block", "after-blank-line"],
+)
+def test_rates_are_bound_to_the_public_api_block(source):
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize(
+    "bullet",
+    [
+        "- Summarize: USD 0.20 per 1M input tokens",
+        "- Audio: USD 0.15 per 1M input tokens",
+        "- Batch: 50% off",
+        "- Classify only",
+    ],
+)
+def test_every_public_api_bullet_must_be_a_known_line(bullet):
+    source = LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.15\n" + bullet)
+    with pytest.raises(RuntimeError, match="unknown or repeated Public API pricing line"):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        # The coverage line moved from the self-serve card to Enterprise.
+        SITE_2026_11_19.replace('["All four models included"', '["Three models included"').replace(
+            '["Dedicated instance"', '["All four models included","Dedicated instance"'
+        ),
+        FAQ + '{plan:"Public API",features:["Three models included"]},'
+        '{plan:"Enterprise",features:["All four models included"]}',
+        SITE_2026_11_19.replace('children:"$0.05"', 'children:"$0.04"'),
+        SITE_2026_11_19.replace('cta:"get_api_key"', 'cta:"get_api_key"},{cta:"get_api_key"'),
+    ],
+    ids=["coverage-on-enterprise-card", "coverage-on-other-plan", "card-price-differs", "two-self-serve-cards"],
+)
+def test_four_model_coverage_must_come_from_the_self_serve_card(site):
+    assert "All four models included" in site
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(LLMS_2026_11_19, site)
+
+
+SECOND_PRICING = (
+    "\n## Pricing\n\nPublic API, per 1M input tokens:\n- Text: $0.01\n- Flat pricing, no tiers or seats\n"
+)
+
+
+@pytest.mark.parametrize("first_cheaper", [False, True])
+def test_two_pricing_sections_fail_closed(first_cheaper):
+    source = SECOND_PRICING + LLMS_2026_11_19 if first_cheaper else LLMS_2026_11_19 + SECOND_PRICING
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(PRICE + PRICE.replace("0.05", "0.01"), FAQ)
+
+
 @pytest.mark.parametrize("bad", [None, 0, -1, True, 1.5, "30", 1 << 40])
 def test_bad_usage_is_not_a_healthy_canary(bad):
     for task, result in RESULTS.items():
