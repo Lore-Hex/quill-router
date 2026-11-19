@@ -49,12 +49,19 @@ unchanged.
   outside GitHub about 2 h 15 min after the last check-in, and an observer
   that keeps erroring pages on its second failed run, while one transient
   failure does not page. The host observer reads GitHub anonymously and
-  retries a timeout, connection reset, truncated body or 5xx twice (2 s, then
-  8 s), and honors a `Retry-After` of up to 30 s. All retries in a run share
-  one 180-second window, so retrying can never push a run past the unit's
-  nine-minute timeout; after the window a failed read fails the run. A longer
-  rate limit or another 4xx fails the run at once. A failed read logs only a
-  fixed reason, such as `(HTTP 403, rate limited)` or `(timeout)`, never a
+  retries a timeout, connection reset, body shorter than its Content-Length,
+  truncated chunked body or 5xx twice (2 s, then 8 s), and honors a
+  `Retry-After` of up to 30 s. A longer rate limit or another 4xx fails the
+  run at once. All retries in a run share one 180-second window. No read
+  attempt starts unless one slow attempt (two 15-second socket timeouts) still
+  fits before 420 s into the run, so a slow run, with or without retries,
+  fails with a logged reason and leaves the unit's nine minutes room to report.
+  A normal run takes about 20 seconds. The socket timeout bounds each blocking
+  operation, not a whole response, so a server that trickles bytes can still
+  hold an attempt longer; systemd's `TimeoutStartSec` and the monitor's
+  ten-minute `max_runtime` remain the hard bound, and either reports a failed
+  check-in. A failed read logs only a fixed reason, such as
+  `(HTTP 403, rate limited)`, `(timeout)` or `(run deadline reached)`, never a
   URL or response body: read it with `gcloud logging read` on the host's
   syslog (`price-refresh-observer.service`). The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.

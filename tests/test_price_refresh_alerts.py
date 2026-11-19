@@ -1,5 +1,6 @@
 import copy
 import http.client
+import io
 import json
 import runpy
 import subprocess
@@ -440,6 +441,8 @@ def test_sentry_429_is_not_success(monkeypatch):
 class _Reply:
     """A response whose body is bytes, or an exception raised by read()."""
 
+    headers: dict[str, str] = {}
+
     def __init__(self, body):
         self.body = body
 
@@ -462,17 +465,41 @@ class _BodyFails:
         self.exc = exc
 
 
+def _framed(raw):
+    """A real http.client response parsed from raw HTTP/1.1 bytes."""
+    class Socket:
+        def makefile(self, *_args, **_kwargs):
+            return io.BytesIO(raw)
+    response = http.client.HTTPResponse(Socket())
+    response.begin()
+    return response
+
+
+START = 1000.0
+
+
 @pytest.fixture
-def public_reads(monkeypatch):
-    """Scripted anonymous GitHub replies: bytes, an exception from open(), or _BodyFails."""
+def read_clock():
+    """The monotonic clock public_reads drives: sleeps and attempt I/O advance it."""
+    return {"now": START, "attempt": 0.0, "costs": []}
+
+
+@pytest.fixture
+def public_reads(monkeypatch, read_clock):
+    """Scripted anonymous GitHub replies: bytes, an exception from open(), _BodyFails, or
+    a real HTTPResponse. Each attempt costs ``read_clock["attempt"]`` seconds of I/O, or
+    the next value of ``read_clock["costs"]`` when that list is not empty."""
     script, sleeps, opened = [], [], []
-    clock = {"now": 1000.0}
+    clock = read_clock
     class Opener:
         def open(self, request, timeout):
-            opened.append(request.full_url)
+            opened.append((request.full_url, clock["now"]))
+            clock["now"] += clock["costs"].pop(0) if clock["costs"] else clock["attempt"]
             item = script.pop(0)
             if isinstance(item, Exception):
                 raise item
+            if isinstance(item, http.client.HTTPResponse):
+                return item
             return _Reply(item.exc if isinstance(item, _BodyFails) else item)
     def sleep(seconds):
         sleeps.append(seconds)
@@ -480,7 +507,7 @@ def public_reads(monkeypatch):
     monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
     monkeypatch.setattr(alerts.time, "sleep", sleep)
     monkeypatch.setattr(alerts.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(alerts, "_retry_until", None, raising=False)
+    monkeypatch.setattr(alerts, "_run_started", None, raising=False)
     return script, sleeps, opened
 
 
@@ -556,30 +583,90 @@ def test_public_read_body_failure_that_persists_is_a_safe_monitoring_error(publi
     assert str(raised.value) == "GitHub monitoring API request failed (network error)"
 
 
-def test_retries_share_one_window_per_run(public_reads):
+def test_retries_share_one_window_per_run(public_reads, read_clock):
     # Every read times out until the run's retry window is spent; then the next
     # failed read fails the run instead of retrying past the unit's timeout.
     script, sleeps, opened = public_reads
-    alerts.start_retry_window()
+    read_clock["attempt"] = 1.0
+    alerts.start_run_budget()
     script += [URLError(TimeoutError("timed out")), b"{}"] * 100
     reads = 0
     with pytest.raises(alerts.MonitoringReadError, match=r"\(timeout\)$"):
         while True:
             alerts.public_gh("actions/runs/1")
             reads += 1
-    assert reads > 0
-    # Each retry slept 2 s. A retry is allowed only while the sleep plus one more
-    # slow attempt fits inside the window, so no sleep starts past it.
-    assert sum(sleeps) <= alerts.PUBLIC_READ_RETRY_WINDOW_SECONDS - alerts.PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS
-    assert len(sleeps) == reads
+    assert reads > 0 and len(sleeps) == reads
+    # A retry is taken only while its sleep plus one slow attempt fits in the
+    # window, so no retry attempt starts past it.
+    retry_starts = [started for _, started in opened[1::2]]
+    window_end = START + alerts.PUBLIC_READ_RETRY_WINDOW_SECONDS
+    assert max(retry_starts) + alerts.PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= window_end
 
 
-def test_main_opens_a_fresh_retry_window_each_run(observer, monkeypatch):
-    windows = []
-    monkeypatch.setattr(alerts, "start_retry_window", lambda: windows.append(True))
+def test_slow_reads_stop_at_the_run_deadline(public_reads, read_clock):
+    # Review round 2: two 30-second Retry-After replies on the first read, then
+    # 21 slow successful reads. Without a deadline the reads end at 9:24; now no
+    # attempt starts unless one slow attempt still fits before the deadline.
+    script, sleeps, opened = public_reads
+    read_clock["costs"] = [28.0, 28.0, 28.0]
+    read_clock["attempt"] = 20.0
+    alerts.start_run_budget()
+    script += [_http_error(429, {"retry-after": "30"})] * 2 + [b"{}"] * 22
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(run deadline reached\)$"):
+        for _ in range(22):
+            alerts.public_gh("actions/runs/1")
+    assert sleeps == [30.0, 30.0]
+    deadline = START + alerts.PUBLIC_READ_DEADLINE_SECONDS
+    assert max(started for _, started in opened) + alerts.PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= deadline
+    assert read_clock["now"] <= deadline
+
+
+def test_a_normal_run_is_far_from_the_deadline(public_reads, read_clock):
+    script, _, opened = public_reads
+    read_clock["attempt"] = 1.0
+    alerts.start_run_budget()
+    script += [b"{}"] * 22
+    for _ in range(22):
+        assert alerts.public_gh("actions/runs/1") == {}
+    assert len(opened) == 22
+
+
+def test_main_starts_a_fresh_run_budget_each_run(observer, monkeypatch):
+    runs = []
+    monkeypatch.setattr(alerts, "start_run_budget", lambda: runs.append(True))
     alerts.main(heartbeat_enabled=False)
     alerts.main(dry_run=True)
-    assert windows == [True, True]
+    assert runs == [True, True]
+
+
+def test_a_body_short_of_content_length_is_retried(public_reads):
+    # read(n) on a real response returns the partial body without raising when
+    # the connection closes before Content-Length.
+    script, sleeps, opened = public_reads
+    script += [_framed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{"), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0] and len(opened) == 2
+
+
+def test_a_persistently_short_body_is_a_safe_monitoring_error(public_reads):
+    script, _, _ = public_reads
+    script += [_framed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{") for _ in range(3)]
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(network error\)$"):
+        alerts.public_gh("actions/runs/1")
+
+
+@pytest.mark.parametrize("raw", [
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n",
+    b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{}",
+], ids=["content-length", "chunked", "close-delimited"])
+def test_a_complete_framed_body_is_not_retried(public_reads, raw):
+    script, sleeps, opened = public_reads
+    script.append(_framed(raw))
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [] and len(opened) == 1
 
 
 def test_cli_prints_the_safe_read_failure_reason(monkeypatch, tmp_path, capsys):

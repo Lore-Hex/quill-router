@@ -92,26 +92,35 @@ PUBLIC_READ_RETRY_DELAYS = (2.0, 8.0)
 # Honor a short Retry-After from a rate limit. A longer one (the anonymous
 # primary limit resets hourly) fails now instead of sleeping through the run.
 MAX_RETRY_AFTER_SECONDS = 30
-# Retries share one window per run. A run makes about 22 reads, and per-read
-# retries alone could outlast the unit's nine-minute TimeoutStartSec; after
-# this window a failed read fails the run, leaving time to report and persist.
+# Retries share one window per run: a run makes about 22 reads, and per-read
+# retries alone could outlast the unit's nine-minute TimeoutStartSec.
 PUBLIC_READ_RETRY_WINDOW_SECONDS = 180.0
+# No read attempt starts after this point in a run. A normal run finishes in
+# about 20 seconds; this leaves the unit's nine minutes room for up to three
+# Sentry deliveries (15-second timeout each, possibly twice per send) and the
+# state write, so a run that is slow for any reason, retries or not, fails
+# with a logged reason instead of being killed by systemd.
+PUBLIC_READ_DEADLINE_SECONDS = 420.0
 # An attempt can block for the 15-second socket timeout more than once (connect,
-# then read), so a retry must leave room for one more slow attempt.
+# then read), so an attempt or retry must leave room for one slow attempt.
 PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS = 30.0
-_retry_until: float | None = None
+_run_started: float | None = None
 
 
-def start_retry_window() -> None:
-    """Open this run's shared retry window (main() calls it once per run)."""
-    global _retry_until
-    _retry_until = time.monotonic() + PUBLIC_READ_RETRY_WINDOW_SECONDS
+def start_run_budget() -> None:
+    """Start this run's retry window and read deadline (main() calls it once per run)."""
+    global _run_started
+    _run_started = time.monotonic()
 
 
-def _may_retry(delay: float) -> bool:
-    # Outside main() (unit tests, ad hoc calls) there is no run to protect.
-    return _retry_until is None or (
-        time.monotonic() + delay + PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= _retry_until)
+def _within(limit: float, extra: float = 0.0) -> bool:
+    """Whether `extra` seconds plus one slow attempt still fit before `limit` into the run.
+
+    Before main() first runs in a process (unit tests, ad hoc calls) there is
+    no run budget.
+    """
+    return _run_started is None or (
+        time.monotonic() + extra + PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= _run_started + limit)
 
 
 def _read_failure(exc: Exception) -> tuple[str, float | None]:
@@ -145,9 +154,17 @@ def public_gh(path: str) -> Any:
         "X-GitHub-Api-Version": "2022-11-28",
     })
     for attempt in range(len(PUBLIC_READ_RETRY_DELAYS) + 1):
+        if not _within(PUBLIC_READ_DEADLINE_SECONDS):
+            raise MonitoringReadError("GitHub monitoring API request failed (run deadline reached)")
         try:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
                 raw = response.read(2_000_001)
+                # read(n) returns what arrived when the connection closes
+                # short of Content-Length; it raises IncompleteRead only for
+                # a truncated chunked body.
+                declared = response.headers.get("Content-Length")
+                if declared is not None and declared.isdigit() and len(raw) < min(int(declared), 2_000_001):
+                    raise HTTPException("response body ended before Content-Length")
             break
         # OSError covers HTTPError, URLError, timeouts and connection resets;
         # HTTPException covers a body that ends early. Reading the body can
@@ -157,7 +174,7 @@ def public_gh(path: str) -> Any:
             retries_left = attempt < len(PUBLIC_READ_RETRY_DELAYS)
             delay = (max(retry_after, PUBLIC_READ_RETRY_DELAYS[attempt])
                      if retry_after is not None and retries_left else None)
-            if delay is None or not _may_retry(delay):
+            if delay is None or not _within(PUBLIC_READ_RETRY_WINDOW_SECONDS, delay):
                 raise MonitoringReadError(f"GitHub monitoring API request failed ({reason})") from exc
             time.sleep(delay)
     if len(raw) > 2_000_000:
@@ -516,7 +533,7 @@ def main(*, dry_run: bool = False, state_path: Path | None = None,
         raise ValueError("Public observer requires local state")
     if dispatch and os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1":
         raise ValueError("The anonymous observer cannot dispatch workflows")
-    start_retry_window()
+    start_run_budget()
     if dry_run:
         observe(dry_run=True, state_path=state_path, dispatch=dispatch)
         return
