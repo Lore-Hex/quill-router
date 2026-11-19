@@ -441,8 +441,6 @@ def test_sentry_429_is_not_success(monkeypatch):
 class _Reply:
     """A response whose body is bytes, or an exception raised by read()."""
 
-    headers: dict[str, str] = {}
-
     def __init__(self, body):
         self.body = body
 
@@ -647,6 +645,27 @@ def test_a_body_short_of_content_length_is_retried(public_reads):
     script += [_framed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{"), b"{}"]
     assert alerts.public_gh("actions/runs/1") == {}
     assert sleeps == [2.0] and len(opened) == 2
+
+
+@pytest.mark.parametrize("raw", [
+    # Optional whitespace after a field value is valid HTTP (RFC 9112).
+    b"HTTP/1.1 200 OK\r\nContent-Length: 10 \r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nContent-Length:  10\t\r\n\r\n{",
+], ids=["trailing-space", "padded"])
+def test_a_short_body_is_detected_however_content_length_is_padded(public_reads, raw):
+    script, sleeps, _ = public_reads
+    script += [_framed(raw), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0]
+
+
+def test_an_unparseable_content_length_defers_to_json_validation(public_reads):
+    # http.client ignores a non-numeric Content-Length (length is None); the body
+    # is then judged as JSON, exactly as for a close-delimited response.
+    script, sleeps, _ = public_reads
+    script.append(_framed(b"HTTP/1.1 200 OK\r\nContent-Length: \xc2\xb2\r\n\r\n{}"))
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == []
 
 
 def test_a_persistently_short_body_is_a_safe_monitoring_error(public_reads):

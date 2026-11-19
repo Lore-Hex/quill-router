@@ -158,12 +158,15 @@ def public_gh(path: str) -> Any:
             raise MonitoringReadError("GitHub monitoring API request failed (run deadline reached)")
         try:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
+                # http.client's own parse of Content-Length (whitespace
+                # trimmed; None when absent, invalid or chunked), read before
+                # the body consumes it.
+                expected = getattr(response, "length", None)
                 raw = response.read(2_000_001)
                 # read(n) returns what arrived when the connection closes
                 # short of Content-Length; it raises IncompleteRead only for
                 # a truncated chunked body.
-                declared = response.headers.get("Content-Length")
-                if declared is not None and declared.isdigit() and len(raw) < min(int(declared), 2_000_001):
+                if isinstance(expected, int) and len(raw) < min(expected, 2_000_001):
                     raise HTTPException("response body ended before Content-Length")
             break
         # OSError covers HTTPError, URLError, timeouts and connection resets;

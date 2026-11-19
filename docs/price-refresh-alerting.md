@@ -50,17 +50,20 @@ unchanged.
   that keeps erroring pages on its second failed run, while one transient
   failure does not page. The host observer reads GitHub anonymously and
   retries a timeout, connection reset, body shorter than its Content-Length,
-  truncated chunked body or 5xx twice (2 s, then 8 s), and honors a
-  `Retry-After` of up to 30 s. A longer rate limit or another 4xx fails the
-  run at once. All retries in a run share one 180-second window. No read
-  attempt starts unless one slow attempt (two 15-second socket timeouts) still
-  fits before 420 s into the run, so a slow run, with or without retries,
-  fails with a logged reason and leaves the unit's nine minutes room to report.
-  A normal run takes about 20 seconds. The socket timeout bounds each blocking
-  operation, not a whole response, so a server that trickles bytes can still
-  hold an attempt longer; systemd's `TimeoutStartSec` and the monitor's
-  ten-minute `max_runtime` remain the hard bound, and either reports a failed
-  check-in. A failed read logs only a fixed reason, such as
+  truncated chunked body or 5xx twice (2 s, then 8 s). A rate-limit reply (429,
+  or 403 with rate-limit headers) with a `Retry-After` of up to 30 s waits that
+  long instead; a longer one, and any other 4xx, fails the run at once. A 5xx
+  `Retry-After` is not consulted. All retries in a run share one 180-second
+  window. No read attempt starts unless one slow attempt (two 15-second socket
+  timeouts) still fits before 420 s into the run, so a slow run, with or
+  without retries, fails with a logged reason and leaves the unit's nine
+  minutes room to report. A normal run takes about 20 seconds; a run whose 22
+  reads each take 20 seconds now fails at about 400 s where it used to finish
+  at 440 s, a deliberate trade for a clean failure. The socket timeout bounds
+  each blocking operation, not a whole response, so a server that trickles
+  bytes can still hold an attempt longer. systemd's `TimeoutStartSec` stops the
+  process; the monitor's ten-minute `max_runtime` does not stop anything, it
+  marks the open check-in failed. A failed read logs only a fixed reason, such as
   `(HTTP 403, rate limited)`, `(timeout)` or `(run deadline reached)`, never a
   URL or response body: read it with `gcloud logging read` on the host's
   syslog (`price-refresh-observer.service`). The first successful observer
