@@ -471,23 +471,75 @@ def test_tier_heading_sequence_is_validated_after_standard(mutate):
         byteplus.parse_prices(md)
 
 
+def _fast_before_displaced_rows(md: str, before: str, prefix: str, rest: str | None = None) -> str:
+    """Fast inserted before the Standard row ``before``; every displaced
+    Standard row gets ``prefix`` (the first) or ``rest`` (the others)."""
+    lines = _moved(md, "**Fast**", before).splitlines()
+    at = first = lines.index(before)
+    while lines[at].startswith("|"):
+        lines[at] = (prefix if at == first or rest is None else rest) + lines[at]
+        at += 1
+    return "\n".join(lines)
+
+
 def _fast_before_lite_continuation_indented(md: str, spaces: int) -> str:
     """Round-2 review reproducer: Fast inserted before lite's (128, 256] row,
     and every displaced Standard row indented by ``spaces``."""
-    lines = _moved(md, "**Fast**", LITE_CONTINUATION).splitlines()
-    at = lines.index(LITE_CONTINUATION)
-    while lines[at].startswith("|"):
-        lines[at] = " " * spaces + lines[at]
-        at += 1
-    return "\n".join(lines)
+    return _fast_before_displaced_rows(md, LITE_CONTINUATION, " " * spaces)
 
 
 @pytest.mark.parametrize("spaces", [1, 2, 3])
 def test_indented_rows_displaced_by_fast_fail_closed(spaces):
     md = _fast_before_lite_continuation_indented(BYTEPLUS_PRICING_2026_11_19, spaces)
     assert "\n" + " " * spaces + LITE_CONTINUATION in md
-    with pytest.raises(RuntimeError, match="indented pricing table row"):
+    with pytest.raises(RuntimeError, match="pricing table row not at column 0"):
         byteplus.parse_prices(md)
+
+
+STANDARD_HEADER = "|Provider |Model ID |Prompt length (K tokens) |Input |Cached input |Cache storage |Output |"
+
+
+def _blockquoted_table_after_moved_fast(md: str) -> str:
+    """Round-3 review reproducer: Fast moved before the pro row, and the
+    displaced Standard rows become a complete, valid "> " table."""
+    moved = _fast_before_displaced_rows(md, PRO_ROW, "> ")
+    return moved.replace("**Fast**\n> " + PRO_ROW, "**Fast**\n> " + STANDARD_HEADER
+                         + "\n> |---|---|---|---|---|---|---|\n> " + PRO_ROW, 1)
+
+
+@pytest.mark.parametrize("mutate", [
+    _blockquoted_table_after_moved_fast,
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "> "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "- "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "1. ", "   "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "> - ", ">   "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, ">> "),
+], ids=["blockquoted-table-after-moved-fast", "blockquote-round-2-variant", "list-nested-rows",
+        "ordered-list-nested-table", "list-in-blockquote-table", "nested-blockquote"])
+def test_tables_inside_markdown_containers_fail_closed(mutate):
+    md = mutate(BYTEPLUS_PRICING_2026_11_19)
+    assert md != BYTEPLUS_PRICING_2026_11_19
+    with pytest.raises(RuntimeError, match="pricing table row not at column 0"):
+        byteplus.parse_prices(md)
+
+
+@pytest.mark.parametrize("old,new", [
+    ("**Standard**", " **Standard**"),
+    ("**Standard**", "**Standard** "),
+    ("**Flex**", "  **Flex**"),
+    ("**Flex**", "**Flex**\t"),
+    ("**Fast**", "   **Fast**"),
+    ("**Batch**", "**Batch** "),
+])
+def test_padded_tier_headings_fail_closed(old, new):
+    md = BYTEPLUS_PRICING_2026_11_19.replace(old, new, 1)
+    with pytest.raises(RuntimeError, match="padded inference tier heading"):
+        byteplus.parse_prices(md)
+
+
+def test_real_documents_still_parse_to_the_same_prices():
+    assert len(byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19)) == 14
+    assert byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19) == byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_07)
 
 
 def test_table_rows_before_the_first_tier_heading_fail_closed():

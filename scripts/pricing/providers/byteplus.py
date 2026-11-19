@@ -161,11 +161,14 @@ def _tier_sections(non_audio: str) -> dict[str, str]:
     sections: dict[str, list[str]] = {}
     current: list[str] | None = None
     for line in non_audio.splitlines():
-        # An indented row is still a table row to a Markdown reader, but the
-        # Standard parser would skip it, so refuse it outright.
-        if line.lstrip().startswith("|") and not line.startswith("|"):
-            raise RuntimeError("byteplus: indented pricing table row")
+        # A "|" anywhere but column 0 may be a table row that is indented,
+        # blockquoted or nested in a list. The Standard parser would skip it,
+        # so refuse it outright, whatever the container.
+        if "|" in line and not line.startswith("|"):
+            raise RuntimeError("byteplus: pricing table row not at column 0")
         if re.fullmatch(r"\*\*[^*]+\*\*", line.strip()):
+            if line != line.strip():
+                raise RuntimeError("byteplus: padded inference tier heading")
             order.append(line.strip())
             current = sections.setdefault(line.strip(), [])
         elif current is not None:
