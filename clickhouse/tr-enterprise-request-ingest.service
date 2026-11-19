@@ -1,0 +1,16 @@
+[Unit]
+Description=Store private enterprise requests in ClickHouse
+After=network-online.target clickhouse-server.service
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+WorkingDirectory=/opt/tr-enterprise
+EnvironmentFile=/etc/tr-enterprise/insert.env
+ExecStart=/opt/tr-enterprise/venv/bin/python -m clickhouse.ingest_enterprise_requests
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+LimitCORE=0
+TimeoutStartSec=110
