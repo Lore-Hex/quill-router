@@ -1642,11 +1642,33 @@
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "title": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "context_length": 262144,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 1450000,
+      "output_token_price_per_m": 4000000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-19T16:51:43Z",
+  "generated_at": "2026-11-19T19:51:35Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 66
+  "model_count": 67
 }
