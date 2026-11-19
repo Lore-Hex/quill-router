@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -106,41 +108,147 @@ def gh(path: str, data: dict[str, Any] | None = None) -> Any:
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+class MonitoringReadError(RuntimeError):
+    """A failed direct GitHub API request (the host observer, anonymous or with its token).
+
+    The message is a fixed phrase plus at most an HTTP status code, never a
+    URL, header (so never the token) or response body, so the CLI may print it.
+    """
+
+
+# One anonymous read in a few hundred fails transiently (2026-11-19 18:23Z:
+# one observer run errored, the next hour's run succeeded), and every failed
+# run raised and then resolved a Cron issue. Retry each read at most twice.
+PUBLIC_READ_RETRY_DELAYS = (2.0, 8.0)
+# Honor a short Retry-After from a rate limit. A longer one (the anonymous
+# primary limit resets hourly) fails now instead of sleeping through the run.
+MAX_RETRY_AFTER_SECONDS = 30
+# Retries share one window per run: a run makes about 22 reads, and per-read
+# retries alone could outlast the unit's nine-minute TimeoutStartSec.
+PUBLIC_READ_RETRY_WINDOW_SECONDS = 180.0
+# No read attempt starts after this point in a run. A normal run finishes in
+# about 20 seconds; this leaves the unit's nine minutes room for up to three
+# Sentry deliveries (15-second timeout each, possibly twice per send) and the
+# state write, so a run that is slow for any reason, retries or not, fails
+# with a logged reason instead of being killed by systemd.
+PUBLIC_READ_DEADLINE_SECONDS = 420.0
+# An attempt can block for the 15-second socket timeout more than once (connect,
+# then read), so an attempt or retry must leave room for one slow attempt.
+PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS = 30.0
+_run_started: float | None = None
+
+
+def start_run_budget() -> None:
+    """Start this run's retry window and read deadline (main() calls it once per run)."""
+    global _run_started
+    _run_started = time.monotonic()
+
+
+def _within(limit: float, extra: float = 0.0) -> bool:
+    """Whether `extra` seconds plus one slow attempt still fit before `limit` into the run.
+
+    Before main() first runs in a process (unit tests, ad hoc calls) there is
+    no run budget.
+    """
+    return _run_started is None or (
+        time.monotonic() + extra + PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= _run_started + limit)
+
+
+def _read_failure(exc: Exception) -> tuple[str, float | None]:
+    """A safe failure classification and the delay before a retry (None: do not retry)."""
+    if isinstance(exc, HTTPError):
+        headers = exc.headers or {}
+        limited = exc.code == 429 or (exc.code == 403 and (
+            headers.get("x-ratelimit-remaining") == "0" or headers.get("retry-after") is not None))
+        if limited:
+            # Field values may carry optional whitespace (RFC 9110), which
+            # urllib keeps.
+            retry_after = str(headers.get("retry-after") or "").strip()
+            if retry_after.isascii() and retry_after.isdigit() and int(retry_after) <= MAX_RETRY_AFTER_SECONDS:
+                return f"HTTP {exc.code}, rate limited", float(retry_after)
+            return f"HTTP {exc.code}, rate limited", None
+        if 500 <= exc.code < 600:
+            return f"HTTP {exc.code}", 0.0
+        return f"HTTP {exc.code}", None
+    reason = getattr(exc, "reason", None)
+    tls = exc if isinstance(exc, ssl.SSLError) else reason if isinstance(reason, ssl.SSLError) else None
+    if isinstance(tls, ssl.SSLCertVerificationError):
+        # A trust failure does not heal in seconds; fail now.
+        return "TLS certificate verification failed", None
+    if tls is not None and not isinstance(tls, ssl.SSLEOFError | ssl.SSLZeroReturnError):
+        # A negotiation failure (for example WRONG_VERSION_NUMBER from a peer
+        # speaking plain HTTP) repeats; only a connection that ends mid-TLS is
+        # transient.
+        return "TLS error", None
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+        return "timeout", 0.0
+    # URLError, a reset or a truncated body (http.client.IncompleteRead,
+    # RemoteDisconnected) while the response is read.
+    return "network error", 0.0
+
+
 def public_gh(path: str, data: dict[str, Any] | None = None) -> Any:
     """Metadata reads, anonymous or with the dispatch token, plus that dispatch.
 
     Anonymous reads are limited to 60 an hour per address; with the token they
     count against its 5,000. The token is sent only to api.github.com and
-    never follows a redirect.
+    never follows a redirect. Reads are retried (PUBLIC_READ_RETRY_DELAYS);
+    the dispatch POST is attempted once, because a dispatch that timed out may
+    already have queued a run and a second one could cancel it.
     """
     if "://" in path or ".." in path or not path.startswith(("actions/", "search/issues?q=repo:" + REPOSITORY)):
         raise ValueError("Unexpected public monitoring API path")
     if data is not None and (_github_token is None or path != DISPATCH_PATH):
         raise ValueError("Public observer cannot write to GitHub")
     endpoint = path if path.startswith("search/") else f"repos/{REPOSITORY}/{path}"
-    headers = {
-        "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    if _github_token is not None:
-        headers["Authorization"] = f"Bearer {_github_token}"
-    body = None
-    if data is not None:
-        body = json.dumps(data).encode()
-        headers["Content-Type"] = "application/json"
-    request = Request("https://api.github.com/" + endpoint, data=body, headers=headers,
-                      method="POST" if body is not None else "GET")
-    try:
-        with build_opener(NoRedirect()).open(request, timeout=15) as response:
-            raw = response.read(2_000_001)
-        if len(raw) > 2_000_000:
-            raise ValueError("Monitoring API response is too large")
-        # A workflow dispatch answers 204 No Content.
-        return json.loads(raw) if raw.strip() else None
-    except (HTTPError, URLError, TimeoutError) as exc:
-        # Fixed text. The cause holds the URL and status only: urllib's errors
-        # never carry the request's headers, so never the token.
-        raise RuntimeError("GitHub monitoring API request failed") from exc
+    attempts = len(PUBLIC_READ_RETRY_DELAYS) + 1 if data is None else 1
+    for attempt in range(attempts):
+        if not _within(PUBLIC_READ_DEADLINE_SECONDS):
+            raise MonitoringReadError("GitHub monitoring API request failed (run deadline reached)")
+        # A fresh Request per attempt: urllib's proxy handler rewrites the
+        # request it is given, so a reused one can fall back to plain HTTP
+        # through an https_proxy on the next attempt.
+        headers = {
+            "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if _github_token is not None:
+            headers["Authorization"] = f"Bearer {_github_token}"
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode()
+            headers["Content-Type"] = "application/json"
+        request = Request("https://api.github.com/" + endpoint, data=body, headers=headers,
+                          method="POST" if body is not None else "GET")
+        try:
+            with build_opener(NoRedirect()).open(request, timeout=15) as response:
+                # http.client's own parse of Content-Length (whitespace
+                # trimmed; None when absent, invalid or chunked), read before
+                # the body consumes it.
+                expected = getattr(response, "length", None)
+                raw = response.read(2_000_001)
+                # read(n) returns what arrived when the connection closes
+                # short of Content-Length; it raises IncompleteRead only for
+                # a truncated chunked body.
+                if isinstance(expected, int) and len(raw) < min(expected, 2_000_001):
+                    raise HTTPException("response body ended before Content-Length")
+            break
+        # OSError covers HTTPError, URLError, timeouts and connection resets;
+        # HTTPException covers a body that ends early. Reading the body can
+        # raise either without urllib wrapping it in URLError. The message is
+        # fixed text plus at most a status code, so never the token.
+        except (OSError, HTTPException) as exc:
+            reason, retry_after = _read_failure(exc)
+            retries_left = attempt < attempts - 1
+            delay = (max(retry_after, PUBLIC_READ_RETRY_DELAYS[attempt])
+                     if retry_after is not None and retries_left else None)
+            if delay is None or not _within(PUBLIC_READ_RETRY_WINDOW_SECONDS, delay):
+                raise MonitoringReadError(f"GitHub monitoring API request failed ({reason})") from exc
+            time.sleep(delay)
+    if len(raw) > 2_000_000:
+        raise ValueError("Monitoring API response is too large")
+    # A workflow dispatch answers 204 No Content.
+    return json.loads(raw) if raw.strip() else None
 
 
 def read_local_state(path: Path, remote: dict[str, Any]) -> dict[str, Any]:
@@ -322,9 +430,15 @@ def heartbeat(status: str, check_in_id: str, duration: float = 0) -> None:
         "status": status, "environment": "production", "duration": duration,
     }
     if status == "in_progress":
+        # Two consecutive failed or missed hourly check-ins open the Cron
+        # issue, so one transient failure no longer pages and resolves an
+        # hour later. The timer starts within about 40 s of :23, so a
+        # 15-minute margin is ample, and a silent host pages about 2 h 15 min
+        # after its last check-in (one hour of margin plus threshold 2 would
+        # take about three hours).
         payload["monitor_config"] = {
             "schedule": {"type": "interval", "value": 1, "unit": "hour"},
-            "checkin_margin": 60, "failure_issue_threshold": 1, "recovery_threshold": 1,
+            "checkin_margin": 15, "failure_issue_threshold": 2, "recovery_threshold": 1,
             "max_runtime": 10,
         }
     send_sentry("check_in", payload)
@@ -390,7 +504,10 @@ def dispatch_refresh(state: dict[str, Any], now: datetime) -> str:
             gh(f"actions/workflows/{WORKFLOW}/dispatches", {"ref": "main"})
             state["sent"]["refresh_dispatch"] = now.isoformat()
     except Exception as exc:  # noqa: BLE001 - reported below; never blocks alerts
-        print(f"::warning::Price refresh dispatch failed ({type(exc).__name__})", file=sys.stderr)
+        # A MonitoringReadError's text is a fixed phrase plus at most a status
+        # code (never the token); anything else prints only its class.
+        detail = f": {exc}" if isinstance(exc, MonitoringReadError) else f" ({type(exc).__name__})"
+        print(f"::warning::Price refresh dispatch failed{detail}", file=sys.stderr)
         return "failed"
     return decision
 
@@ -503,6 +620,7 @@ def main(*, dry_run: bool = False, state_path: Path | None = None,
 
 def run_observer(*, dry_run: bool, state_path: Path | None, heartbeat_enabled: bool,
                  dispatch: bool) -> None:
+    start_run_budget()
     if dry_run:
         observe(dry_run=True, state_path=state_path, dispatch=dispatch)
         return
@@ -548,6 +666,10 @@ if __name__ == "__main__":
         main(dry_run=args.dry_run, state_path=args.state_file,
              heartbeat_enabled=not args.no_heartbeat, dispatch=args.dispatch_stalled,
              github_token=token)
+    except MonitoringReadError as exc:
+        # Safe to print: a fixed phrase and at most an HTTP status code.
+        print(f"::error::Price refresh monitoring failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     except Exception as exc:
         # Suppress exception strings/tracebacks: URLs can contain the DSN.
         print(f"::error::Price refresh monitoring failed ({type(exc).__name__}); inspect configuration and delivery", file=sys.stderr)

@@ -51,10 +51,38 @@ unchanged.
   false`), and it is an extra no-change refresh, not a cancelled one.
 * **Watchdog missing:** the observer sends paired Sentry Cron check-ins on start
   and completion, reporting OK only after all reads, delivery and state writes.
-  An observer error or ten-minute timeout also raises a Cron issue.
+  An observer error or ten-minute timeout counts as a failed check-in.
   Sentry monitors this hourly heartbeat
-  with a 60-minute grace period, so even a GitHub-wide scheduling outage or a
-  broken observer can be detected outside GitHub. The first successful observer
+  with a 15-minute grace period (the timer starts within about 40 s of
+  :23) and opens the Cron issue after two consecutive failed or missed
+  check-ins. A GitHub-wide scheduling outage or a silent host is detected
+  outside GitHub about 2 h 15 min after the last check-in, and an observer
+  that keeps erroring pages on its second failed run, while one transient
+  failure does not page. The host observer reads GitHub directly
+  (anonymously, or with its token: see Host observer token) and retries a
+  timeout, connection reset, body shorter than its Content-Length,
+  truncated chunked body or 5xx twice (2 s, then 8 s). A rate-limit reply (429,
+  or 403 with rate-limit headers) with a `Retry-After` of up to 30 s waits the
+  longer of that value and the same 2 s, then 8 s backoff; a longer
+  `Retry-After`, any other 4xx, a TLS certificate verification failure and any
+  other TLS error except a connection that ended mid-TLS fail the run at once.
+  A 5xx `Retry-After` is not consulted. Each attempt builds a fresh request, so
+  a proxy rewrite of one attempt cannot downgrade the next. The token's
+  dispatch POST is attempted once and never retried: a dispatch that timed
+  out may already have queued a run, and a second could cancel it. All retries in a run share one 180-second
+  window. No read attempt starts unless one slow attempt (two 15-second socket
+  timeouts) still fits before 420 s into the run, so a slow run, with or
+  without retries, fails with a logged reason and leaves the unit's nine
+  minutes room to report. A normal run takes about 20 seconds; a run whose 22
+  reads each take 20 seconds now fails at about 400 s where it used to finish
+  at 440 s, a deliberate trade for a clean failure. The socket timeout bounds
+  each blocking operation, not a whole response, so a server that trickles
+  bytes can still hold an attempt longer. systemd's `TimeoutStartSec` stops the
+  process; the monitor's ten-minute `max_runtime` does not stop anything, it
+  marks the open check-in failed. A failed read logs only a fixed reason, such as
+  `(HTTP 403, rate limited)`, `(timeout)` or `(run deadline reached)`, never a
+  URL or response body: read it with `gcloud logging read` on the host's
+  syslog (`price-refresh-observer.service`). The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.
   The external observer runs on `tr-clickhouse-3`
   (`scripts/ops/install_price_refresh_observer.sh`); moving or rebuilding that

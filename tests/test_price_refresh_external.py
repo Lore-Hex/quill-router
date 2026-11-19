@@ -364,7 +364,8 @@ def test_token_never_reaches_errors_logs_or_sentry(tmp_path, monkeypatch, host, 
     events = [payload["fingerprint"] for kind, payload in host if kind == "event"]
     assert ["price-refresh", "refresh_dispatch_failed"] in events
     output = capsys.readouterr()
-    assert "Price refresh dispatch failed (RuntimeError)" in output.err
+    # The host path names the safe reason (fixed text and a status code).
+    assert "Price refresh dispatch failed: GitHub monitoring API request failed (HTTP 401)" in output.err
     assert TOKEN not in output.out + output.err + json.dumps(host)
     class Refusing:
         def open(self, request, timeout):
