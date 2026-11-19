@@ -19,7 +19,8 @@ Fails (exit 1) when the same stable provider endpoint:
   * changes both prompt and completion to literal 0.
 
 A verified real change of either size is approved per route, dimension and
-exact old and new value in APPROVED_ENDPOINT_PRICE_TRANSITIONS.
+exact old and new value in APPROVED_ENDPOINT_PRICE_TRANSITIONS. Both prices
+going to 0 is not approvable that way; it always fails.
 
 Removed models are noted in --summary output. Individual removals do not
 fail, but losing more than MAX_REMOVED_MODEL_FRACTION of the catalog's models
@@ -38,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -1274,8 +1276,8 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if not args.drop_ratio > 1:
-        print("PRICE SPIKE INPUT ERROR: --drop-ratio must be greater than 1", file=sys.stderr)
+    if not (math.isfinite(args.drop_ratio) and args.drop_ratio > 1):
+        print("PRICE SPIKE INPUT ERROR: --drop-ratio must be a finite number greater than 1", file=sys.stderr)
         return 2
 
     try:

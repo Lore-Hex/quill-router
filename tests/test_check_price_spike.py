@@ -2240,3 +2240,5 @@ def test_the_cli_fails_a_large_drop_and_rejects_a_bad_drop_ratio(tmp_path, capsy
     assert check_price_spike.main([str(before), str(after)]) == 1
     assert "÷1000.00 ≥ ÷100.0" in capsys.readouterr().err
     assert check_price_spike.main([str(before), str(after), "--drop-ratio", "1"]) == 2
+    for ratio in ("inf", "1e309", "nan"):
+        assert check_price_spike.main([str(before), str(after), "--drop-ratio", ratio]) == 2
