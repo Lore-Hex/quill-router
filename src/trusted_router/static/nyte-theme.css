@@ -2013,6 +2013,18 @@
   }
 }
 
+/* Phones: less empty space around the Band, so the next section starts soon
+   after the hero. Laptops and desktops keep the roomier spacing. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] main > :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+    padding-bottom: 80px;
+  }
+
+  :root[data-brand="nyte"] :is(.public-hero, .models-page-hero, .md-hero, .compare-hero, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .blog-index-head) + * {
+    margin-top: 24px;
+  }
+}
+
 /* The model page sets its colour names on its wrapper; the Ink hero
    re-points them at the dark values. */
 :root[data-brand="nyte"] .model-detail-page .md-hero {
@@ -2262,7 +2274,8 @@
 }
 
 @media (max-width: 760px) {
-  :root[data-brand="nyte"] .pricing-page .pricing-section { padding-top: 56px; }
+  :root[data-brand="nyte"] .pricing-page .pricing-section { padding-top: var(--tr-phone-section-space); }
+  :root[data-brand="nyte"] .pricing-page .public-hero + .pricing-section { padding-top: 0; }
   :root[data-brand="nyte"] .pricing-page .pricing-section h2,
 :root[data-brand="nyte"] .pricing-page #minimum-charges h2 { font-size: 30px; }
   :root[data-brand="nyte"] .pricing-page .pricing-ways { grid-template-columns: minmax(0, 1fr); gap: 24px; }
@@ -2273,7 +2286,7 @@
   :root[data-brand="nyte"] .pricing-page .pricing-rates tbody th { width: auto; padding: 16px 0 0; border-bottom: 0; }
   :root[data-brand="nyte"] .pricing-page .pricing-rates tr:first-child > td { border-top: 0; }
   :root[data-brand="nyte"] .pricing-page .pricing-rates td { padding: 4px 0 16px; }
-  :root[data-brand="nyte"] .pricing-page #minimum-charges { margin: 56px auto 72px !important; }
+  :root[data-brand="nyte"] .pricing-page #minimum-charges { margin: var(--tr-phone-section-space) auto 72px !important; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges .mc-summary { font-size: 18px; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges ol li { padding-left: 36px; }
   :root[data-brand="nyte"] .pricing-page #minimum-charges ol li::before { font-size: 24px; }
@@ -2307,3 +2320,41 @@
   :root[data-brand="nyte"] .pricing-page #minimum-charges td:nth-child(6)::before { content: "Multiple"; }
 }
 
+/* Phones: one section rhythm for every page. Each section gets
+   --tr-phone-section-space above and below its content, whatever its own
+   sheet sets for laptops and desktops. Page sheets keep their desktop values;
+   add a page's section class here rather than a new phone value there. */
+:root {
+  --tr-phone-section-space: 40px;
+}
+
+@media (max-width: 760px) {
+  /* Homepage */
+  :root[data-brand="nyte"] .page {
+    --homepage-space: var(--tr-phone-section-space);
+  }
+
+  :root[data-brand="nyte"] .page :is(.trc, .trm, .trv, .trs, .trpr, .trf, .trft),
+  :root[data-brand="nyte"] .page .closing-cta {
+    padding-block: var(--tr-phone-section-space);
+  }
+
+  /* Sections spaced with padding */
+  :root[data-brand="nyte"] :is(.green-section, .green-final, .ti-section, .tm-section, .bgb-explainer, .bgb-pledge-layout, .bgb-messages, .cc-section, .cc-final) {
+    padding-block: var(--tr-phone-section-space);
+  }
+
+  :root[data-brand="nyte"] .cc-section {
+    margin-top: 0;
+  }
+
+  :root[data-brand="nyte"] .badge-section {
+    padding-top: var(--tr-phone-section-space);
+  }
+
+  /* Sections spaced with a top margin */
+  :root[data-brand="nyte"] :is(.eai-section, .bgb-privacy-band, .cc-explanation, .cc-enterprise, .pricing-page .routing-feature-section),
+  :root[data-brand="nyte"] .openrouter-article main > :is(section, .v2-head):not(.v2-head + *) {
+    margin-top: var(--tr-phone-section-space);
+  }
+}

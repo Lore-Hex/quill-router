@@ -487,8 +487,9 @@ tbody tr:hover {
   min-width: 0;
 }
 
+/* Break points come from content-layout.js; break-word is the last resort. */
 .public-wrap :not(pre) > code {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .agent-prompt-line {

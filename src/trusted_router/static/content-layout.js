@@ -664,3 +664,29 @@
     setCollapsed(true);
   });
 })();
+
+// Long inline code (URLs, model ids, field paths) wraps only after a / . ?
+// & = or bracket, never mid-word. <wbr> adds a break point without changing
+// the text that is copied.
+(() => {
+  "use strict";
+  const breakAfter = /([/.?&=}\]])(?=[^/\s])/g;
+  document.querySelectorAll(".public-wrap :not(pre) > code").forEach((code) => {
+    if (code.textContent.length < 20) return;
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+      const parts = node.data.split(breakAfter);
+      if (parts.length < 2) return;
+      const fragment = document.createDocumentFragment();
+      // split() with one capture group alternates text and break characters.
+      for (let i = 0; i < parts.length; i += 2) {
+        const text = parts[i] + (parts[i + 1] || "");
+        if (text) fragment.append(text);
+        if (i + 1 < parts.length) fragment.append(document.createElement("wbr"));
+      }
+      node.replaceWith(fragment);
+    });
+  });
+})();
