@@ -16,7 +16,11 @@ Fails (exit 1) when the same stable provider endpoint:
   * increases prompt OR completion cost by ≥ 2×; OR
   * changes both prompt and completion to literal 0.
 
-Removed models are noted in --summary output but do not fail.
+Removed models are noted in --summary output. Individual removals do not
+fail, but losing more than MAX_REMOVED_MODEL_FRACTION of the catalog's models
+in one refresh does: that is an upstream outage, not retirements. On
+2026-11-19 OpenRouter's /endpoints API 404'd and a refresh dropped 95 of 174
+models; only exact-SHA CI stopped it.
 
 Usage:
     python scripts/check_price_spike.py BEFORE.json AFTER.json
@@ -36,6 +40,8 @@ from pathlib import Path
 from trusted_router.pricing_approvals import approved_dated_price_transition
 
 DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
+MAX_REMOVED_MODEL_FRACTION = 0.2
+MIN_REMOVED_MODELS_FOR_MASS_REMOVAL = 10
 
 # Exact, provider-endpoint-scoped transitions confirmed against an upstream
 # source. These approvals do not weaken the general spike gate: a different
@@ -1047,6 +1053,24 @@ def check(
     return failures, changes, removed
 
 
+def mass_removal_failure(
+    before: dict[str, dict[str, str]],
+    removed: list[str],
+    max_fraction: float = MAX_REMOVED_MODEL_FRACTION,
+) -> str | None:
+    """Reason to fail when one refresh removes too large a share of models."""
+    if (
+        len(removed) >= MIN_REMOVED_MODELS_FOR_MASS_REMOVAL
+        and len(removed) > len(before) * max_fraction
+    ):
+        return (
+            f"{len(removed)}/{len(before)} catalog models removed in one refresh "
+            f"(limit {max_fraction:.0%}); an upstream catalog source is likely "
+            "returning partial data"
+        )
+    return None
+
+
 def failing_routes(
     before: dict[str, dict[str, str]],
     after: dict[str, dict[str, str]],
@@ -1184,10 +1208,13 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"PRICE SPIKE INPUT ERROR: {exc}", file=sys.stderr)
         return 2
+    before_models = _load(args.before)
     _headline_failures, changes, removed = check(
-        _load(args.before), _load(args.after), args.spike_ratio
+        before_models, _load(args.after), args.spike_ratio
     )
     failures, _snapshot_changes, _snapshot_removed = check(*snapshot_pair, args.spike_ratio)
+    if mass_removal := mass_removal_failure(before_models, removed):
+        failures.append(mass_removal)
     if manifest_pair is not None:
         provider_failures, provider_changes, provider_removed = check(
             *manifest_pair, args.spike_ratio

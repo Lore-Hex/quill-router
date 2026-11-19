@@ -813,6 +813,41 @@ def test_removed_model_does_not_fail_but_is_listed() -> None:
     assert "c/d" in removed
 
 
+def test_mass_model_removal_fails_the_gate(tmp_path: Path, capsys) -> None:
+    """2026-11-19: an OpenRouter /endpoints outage dropped 95 of 174 models."""
+    from scripts.check_price_spike import main
+
+    prices = {f"a/m{i}": ("0.000001", "0.000002") for i in range(174)}
+    kept = dict(list(prices.items())[:79])
+    before = _write(tmp_path, "b.json", _make_snapshot(prices))
+    after = _write(tmp_path, "a.json", _make_snapshot(kept))
+    assert main([str(before), str(after), "--summary"]) == 1
+    out = capsys.readouterr().out
+    assert "95/174 catalog models removed" in out
+    assert main([str(before), str(after)]) == 1
+
+
+def test_ordinary_retirements_stay_nonblocking(tmp_path: Path) -> None:
+    from scripts.check_price_spike import main
+
+    prices = {f"a/m{i}": ("0.000001", "0.000002") for i in range(174)}
+    kept = dict(list(prices.items())[:140])  # 34 removed, under 20%
+    before = _write(tmp_path, "b.json", _make_snapshot(prices))
+    after = _write(tmp_path, "a.json", _make_snapshot(kept))
+    assert main([str(before), str(after), "--summary"]) == 0
+
+
+def test_mass_removal_threshold_is_exact() -> None:
+    from scripts.check_price_spike import mass_removal_failure
+
+    before = {f"a/m{i}": {"prompt": "1", "completion": "1"} for i in range(100)}
+    assert mass_removal_failure(before, [f"a/m{i}" for i in range(20)]) is None
+    assert mass_removal_failure(before, [f"a/m{i}" for i in range(21)])
+    small = {f"a/m{i}": {"prompt": "1", "completion": "1"} for i in range(10)}
+    # Below the absolute floor a large fraction alone is not an outage.
+    assert mass_removal_failure(small, [f"a/m{i}" for i in range(9)]) is None
+
+
 def test_summary_line_zero_changes() -> None:
     assert _summary_line([], []) == "no price changes"
 
