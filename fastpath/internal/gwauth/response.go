@@ -2,6 +2,8 @@ package gwauth
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
@@ -97,10 +99,21 @@ func responseData(in ComposeInput, generationID string, tags []ComposeTag, async
 		{Key: "generation_id", Value: generationID},
 		{Key: "workspace_id", Value: in.WorkspaceID},
 		{Key: "api_key_hash", Value: in.KeyHash},
-		{Key: "model", Value: first.Model},
-		{Key: "upstream_model", Value: first.UpstreamModel},
-		{Key: "endpoint_id", Value: first.EndpointID},
 	}
+	for _, candidate := range in.Candidates {
+		if in.OpenAISafety && candidate.Provider == "openai" {
+			subject := "user\x00" + in.KeyOwnerID
+			if in.KeyOwnerID == "" {
+				subject = "workspace\x00" + in.WorkspaceID
+			}
+			digest := sha256.Sum256([]byte("trustedrouter/openai-safety/v1\x00" + subject))
+			d = append(d, pyjson.Member{Key: "openai_safety_identifier", Value: hex.EncodeToString(digest[:])})
+			break
+		}
+	}
+	d = append(d, pyjson.Member{Key: "model", Value: first.Model},
+		pyjson.Member{Key: "upstream_model", Value: first.UpstreamModel},
+		pyjson.Member{Key: "endpoint_id", Value: first.EndpointID})
 	d = append(d, providerMembers(first, locations[0])...)
 	d = append(d,
 		pyjson.Member{Key: "requested_model", Value: in.RequestedModel},

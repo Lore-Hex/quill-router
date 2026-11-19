@@ -124,6 +124,7 @@ from trusted_router.gateway_timing import (
 from trusted_router.model_aliases import names_router_model
 from trusted_router.money import format_money_precise, money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
+from trusted_router.openai_safety import owner_digest
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
@@ -1395,6 +1396,8 @@ def _authorize_gateway_sync_impl(
         return _gateway_authorize_response(
             authorization=existing_authorization,
             workspace_id=workspace.id,
+            key_owner_id=api_key.creator_user_id or workspace.owner_user_id,
+            federated_digest=api_key.federated_openai_safety_identifier,
             key_hash=api_key.hash,
             model=existing_model,
             endpoint=existing_endpoint,
@@ -2347,6 +2350,8 @@ def _authorize_gateway_sync_impl(
     return _gateway_authorize_response(
         authorization=authorization,
         workspace_id=workspace.id,
+        key_owner_id=api_key.creator_user_id or workspace.owner_user_id,
+        federated_digest=api_key.federated_openai_safety_identifier,
         key_hash=api_key.hash,
         model=model,
         endpoint=endpoint,
@@ -3054,6 +3059,8 @@ def _gateway_authorize_response(
     *,
     authorization: Any,
     workspace_id: str,
+    key_owner_id: str | None = None,
+    federated_digest: str = "",
     key_hash: str,
     model: Model,
     endpoint: ModelEndpoint,
@@ -3135,6 +3142,13 @@ def _gateway_authorize_response(
             "generation_id": generation_id_for_authorization(authorization.id),
             "workspace_id": workspace_id,
             "api_key_hash": key_hash,
+            **(
+                {"openai_safety_identifier": federated_digest or owner_digest(key_owner_id, workspace_id)}
+                if async_request is not None
+                and async_request.headers.getlist("x-tr-openai-safety") == ["v1"]
+                and (endpoint.provider == "openai" or any(e.provider == "openai" for _, e in endpoint_candidates))
+                else {}
+            ),
             "model": model.id,
             "upstream_model": upstream_model,
             "endpoint_id": endpoint.id,

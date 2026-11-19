@@ -40,9 +40,11 @@ type ComposeInput struct {
 	IdempotencyFingerprint string // §7
 	IdempotencyScope       string // workspace#key_hash#sha256(idempotency key)
 
-	WorkspaceID string
-	KeyHash     string
-	KeyTags     []ComposeTag // the key's stored tags, stored order
+	WorkspaceID  string
+	KeyHash      string
+	KeyOwnerID   string
+	OpenAISafety bool
+	KeyTags      []ComposeTag // the key's stored tags, stored order
 
 	// From Request.
 	RequestedModel       string       // body.model, stripped

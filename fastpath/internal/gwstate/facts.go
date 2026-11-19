@@ -82,6 +82,7 @@ type KeyFacts struct {
 	// lookup hash its body records (what a boot signature binds), and
 	// WorkspaceID the workspace the key spends from.
 	Hash, LookupHash, WorkspaceID string
+	CreatorUserID                 string
 	// ExpiresAt is when the key stops working, zero for never.
 	ExpiresAt time.Time
 	// Tags are the key's default tags in the order its body lists them, as
@@ -164,6 +165,11 @@ func ParseKey(body string) KeyFacts {
 		}
 	}
 	var k KeyFacts
+	if !isNull(f["creator_user_id"]) {
+		if k.CreatorUserID, ok = f.str("creator_user_id"); !ok {
+			return keyShape("creator_user_id")
+		}
+	}
 	for _, id := range []struct {
 		name string
 		into *string
@@ -426,8 +432,9 @@ func portable(s string) bool {
 
 // WorkspaceFacts is a key's workspace as the edge's cohort gate reads it.
 type WorkspaceFacts struct {
-	Eligible bool
-	Reason   string
+	OwnerUserID string
+	Eligible    bool
+	Reason      string
 	// Deleted is a workspace row marked deleted (Python reads it as none).
 	Deleted bool
 	// PauseCauses are the document's causes as Workspace.__post_init__
@@ -461,6 +468,9 @@ func ParseWorkspace(body string, found bool, keyWorkspace string) WorkspaceFacts
 		return workspaceShape("id_mismatch")
 	}
 	var w WorkspaceFacts
+	if w.OwnerUserID, ok = f.str("owner_user_id"); !ok {
+		return workspaceShape("owner_user_id")
+	}
 	if w.Deleted, ok = f.boolean("deleted"); !ok {
 		return workspaceShape("deleted")
 	}
