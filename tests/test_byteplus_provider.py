@@ -471,6 +471,25 @@ def test_tier_heading_sequence_is_validated_after_standard(mutate):
         byteplus.parse_prices(md)
 
 
+def _fast_before_lite_continuation_indented(md: str, spaces: int) -> str:
+    """Round-2 review reproducer: Fast inserted before lite's (128, 256] row,
+    and every displaced Standard row indented by ``spaces``."""
+    lines = _moved(md, "**Fast**", LITE_CONTINUATION).splitlines()
+    at = lines.index(LITE_CONTINUATION)
+    while lines[at].startswith("|"):
+        lines[at] = " " * spaces + lines[at]
+        at += 1
+    return "\n".join(lines)
+
+
+@pytest.mark.parametrize("spaces", [1, 2, 3])
+def test_indented_rows_displaced_by_fast_fail_closed(spaces):
+    md = _fast_before_lite_continuation_indented(BYTEPLUS_PRICING_2026_11_19, spaces)
+    assert "\n" + " " * spaces + LITE_CONTINUATION in md
+    with pytest.raises(RuntimeError, match="indented pricing table row"):
+        byteplus.parse_prices(md)
+
+
 def test_table_rows_before_the_first_tier_heading_fail_closed():
     heading = "#### Non\\-audio input\n"
     stray = heading + "\n|Model ID |Input |\n|---|---|\n|`seed-2-0-lite-260428` |$0.01 |\n"

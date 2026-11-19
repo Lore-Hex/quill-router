@@ -137,7 +137,7 @@ def _check_tier_table(heading: str, lines: list[str]) -> None:
     tables: list[list[list[str]]] = []
     previous_was_row = False
     for line in lines:
-        is_row = line.startswith("|")
+        is_row = line.lstrip().startswith("|")
         if is_row:
             if not previous_was_row:
                 tables.append([])
@@ -161,6 +161,10 @@ def _tier_sections(non_audio: str) -> dict[str, str]:
     sections: dict[str, list[str]] = {}
     current: list[str] | None = None
     for line in non_audio.splitlines():
+        # An indented row is still a table row to a Markdown reader, but the
+        # Standard parser would skip it, so refuse it outright.
+        if line.lstrip().startswith("|") and not line.startswith("|"):
+            raise RuntimeError("byteplus: indented pricing table row")
         if re.fullmatch(r"\*\*[^*]+\*\*", line.strip()):
             order.append(line.strip())
             current = sections.setdefault(line.strip(), [])
