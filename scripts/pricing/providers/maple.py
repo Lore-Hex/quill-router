@@ -49,27 +49,52 @@ UPSTREAM_ID_MAP = {canonical: native for native, (canonical, _) in _CHAT_MODELS.
 # Release only after the matching measured gateway image passes every cloud.
 _PENDING_ENCLAVE_MODELS: frozenset[str] = frozenset()
 _DISCOVERED: dict[str, dict[str, Any]] = {}
-# A unit expression: "per" or "/", an optional quantity ("1", "one",
-# "1,000"), then a magnitude (thousand, million, K, M) and/or "tokens". Maple
-# has written it as "USD equivalent per 1 million tokens", "USD per 1 million
-# tokens" (since 2026-11-12) and, in the table caption, "US dollars per one
-# million tokens". Every expression around the price table must come to
-# exactly one million tokens.
-_UNIT_EXPRESSION = re.compile(
-    r"(?i)(?:\bper\b|/)\s*(?:(?:one|a|an)\s+)?(?P<qty>[0-9][0-9,]*(?:\.[0-9]+)?)?\s*"
-    r"(?P<mag>million|thousand|billion|[kmb])?\b\s*"
-    r"(?P<tokens>(?:(?:cached\s+)?(?:input|output|prompt|completion)\s+)?tokens?\b)?"
+# Maple's per-million unit statements: the page moved from the first to the
+# second wording on 2026-11-12 without changing the rates, and the table's
+# caption carries the third.
+_USD_PER_M_UNIT_PHRASES = (
+    "USD equivalent per 1 million tokens",
+    "USD per 1 million tokens",
+    "US dollars per one million tokens",
 )
-_MAGNITUDES = {"": 1, "thousand": 10**3, "k": 10**3, "million": 10**6, "m": 10**6, "billion": 10**9, "b": 10**9}
-_USD = re.compile(r"(?i)\bUSD\b|\bUS dollars?\b|\bUS\$")
-_OTHER_CURRENCY = re.compile(r"\b(?:EUR|GBP|JPY|CNY|CAD|AUD|CHF|INR)\b|[\u20ac\u00a3\u00a5]|(?i:\beuros?\b)")
 _UNIT_SCOPE_STOP = frozenset({"section", "article", "main", "body", "[document]"})
-# Header names (after dropping a "($/M)" style suffix) that make a column a price.
-_PRICE_COLUMNS = frozenset(
-    {"input", "output", "cached input", "prompt", "completion", "price", "prices", "rate", "rates"}
-)
-_PRICE_WORDS = frozenset({"price", "prices", "rate", "rates", "cost", "costs"})
-_DOLLAR_CELL = re.compile(r"\$\s?[0-9]")
+_PRICE_HEADERS = frozenset({"model", "input", "cached input", "output"})
+_PRICE_CELL = "{price}"
+# Reviewed 2026-11-19: the visible text of the section that holds the price
+# table (section#prices), whitespace-normalized, with each price cell's value
+# replaced by {price}. Its lead and caption state USD per one million tokens.
+# Any other text change in that section (a unit, footnote, qualifier, new row
+# or renamed model) refuses until the new text is reviewed here. Price values
+# alone may change; the refresh's spike gates judge those.
+_REVIEWED_PRICING_SECTION = " ".join((
+    "Prices, model by model",
+    "USD per 1 million tokens. The same in Chat, Maple Work and the API.",
+    "New Lower prices across most models, on every plan.",
+    "Prices on every plan New, lower prices on every plan. The earlier price is crossed out.",
+    "Model prices on every plan, in US dollars per one million tokens",
+    "Model Input Cached input Output",
+    *(
+        f"{model} {_PRICE_CELL} {_PRICE_CELL} {_PRICE_CELL}"
+        for model in (
+            "DeepSeek V4.1 Flash",
+            "DeepSeek V4.1 Flash Uncensored",
+            "Inkling 2 Small",
+            "GLM-5.3 Flash",
+            "GLM 5.3",
+            "Kimi K3.1 Pro",
+            "OpenAI GPT-OSS 120B",
+            "Gemma 4 31B",
+            "Llama 3.3 70B",
+            "OpenAI GPT-OSS Safeguard 120B API only",
+        )
+    ),
+    "Cached-input rates apply only to tokens reported as cached.",
+    "\u2013 means the standard input price applies.",
+    "Automatic model aliases are billed at the rate of the model selected for the request.",
+))
+# A currency amount or marker: $, USD, a cent, euro, pound or yen sign, or a
+# number followed by "/M" or "/1K".
+_CURRENCY_MARKER = re.compile(r"[$\u00a2\u00a3\u00a5\u20ac]|\bUSD\b|[0-9]\s*/\s*1?\s*[MK]\b", re.IGNORECASE)
 
 
 def _price(text: str) -> int:
@@ -81,68 +106,48 @@ def _price(text: str) -> int:
     return value
 
 
-def _table_unit_texts(table: Tag) -> tuple[list[str], list[str]]:
-    """The table's own unit context. Stating texts: its caption, its header
-    and the lead (the nearest element before the table, and before each
-    wrapper up to its section). Footnote: the element right after the table."""
-    stating = [part.get_text(" ", strip=True) for part in (table.find("caption"), table.find("thead")) if part]
+def _price_tables(soup: BeautifulSoup) -> list[Tag]:
+    tables = []
+    for table in soup.find_all("table"):
+        head = table.find("thead")
+        headers = {cell.get_text(" ", strip=True).casefold() for cell in head.find_all("th")} if head else set()
+        if _PRICE_HEADERS <= headers:
+            tables.append(table)
+    return tables
+
+
+def verify_pricing_page(html: str) -> None:
+    """Pin the reviewed pricing section; refuse priced tables anywhere else."""
+    soup = BeautifulSoup(html, "html.parser")
+    for hidden in soup(["script", "style", "noscript", "template"]):
+        hidden.decompose()
+    tables = _price_tables(soup)
+    if len(tables) != 1:
+        raise RuntimeError("maple: expected exactly one token price table; review")
+    section = tables[0].find_parent("section")
+    if section is None:
+        raise RuntimeError("maple: pricing section text changed; review")
+    for cell in tables[0].find_all("td"):
+        cell.clear()
+        cell.append(_PRICE_CELL)
+    if " ".join(section.get_text(" ", strip=True).split()) != _REVIEWED_PRICING_SECTION:
+        raise RuntimeError("maple: pricing section text changed; review")
+    for table in soup.find_all("table"):
+        if section not in table.parents and _CURRENCY_MARKER.search(table.get_text(" ", strip=True)):
+            raise RuntimeError("maple: priced table outside the pricing section; review")
+
+
+def _table_states_per_million(table: Tag) -> bool:
+    """Its caption, header or lead (the nearest element before the table and
+    before each wrapper up to its section) states the per-million unit."""
+    texts = [part.get_text(" ", strip=True) for part in (table.find("caption"), table.find("thead")) if part]
     node: Tag | None = table
     while node is not None and node.name not in _UNIT_SCOPE_STOP:
         before = node.find_previous_sibling(True)
         if before is not None:
-            stating.append(before.get_text(" ", strip=True))
+            texts.append(before.get_text(" ", strip=True))
         node = node.parent
-    after = table.find_next_sibling(True)
-    return stating, [after.get_text(" ", strip=True)] if after is not None else []
-
-
-def _unit_token_counts(text: str) -> list[Decimal]:
-    counts = []
-    for match in _UNIT_EXPRESSION.finditer(text):
-        if not (match["mag"] or match["tokens"]):
-            continue  # "per user", "/mo": not a token unit
-        quantity = Decimal(match["qty"].replace(",", "")) if match["qty"] else Decimal(1)
-        counts.append(quantity * _MAGNITUDES[(match["mag"] or "").casefold()])
-    return counts
-
-
-def _require_per_million_table(table: Tag) -> None:
-    # The table itself must state USD per one million tokens, and every unit
-    # expression in its caption, header, lead and footnote must agree. A
-    # statement elsewhere on the page never counts.
-    stating, footnotes = _table_unit_texts(table)
-    stated = False
-    for text, can_state in [*((text, True) for text in stating), *((text, False) for text in footnotes)]:
-        counts = _unit_token_counts(text)
-        if _OTHER_CURRENCY.search(text) or any(count != 10**6 for count in counts):
-            raise RuntimeError("maple: token price currency or unit changed")
-        stated = stated or (can_state and bool(counts) and _USD.search(text) is not None)
-    if not stated:
-        raise RuntimeError("maple: token price currency or unit changed")
-
-
-def _price_column(header: str) -> bool:
-    # "Input ($/M)" -> "input", "Cached-input" -> "cached input".
-    words = re.findall(r"[a-z0-9]+", re.sub(r"[(\[][^)\]]*[)\]]", " ", header.casefold()))
-    return " ".join(words) in _PRICE_COLUMNS or bool(words) and (words[0] in _PRICE_WORDS or words[-1] in _PRICE_WORDS)
-
-
-def _require_no_other_model_price_table(table: Tag, display_name: str) -> None:
-    """Another table that prices a published model (a context tier, batch or
-    regional rate) is a price this flat parser cannot represent."""
-    cells = [cell.get_text(" ", strip=True) for cell in table.find_all(["th", "td"])]
-    first_row = table.find("tr")
-    headers = [cell.get_text(" ", strip=True) for cell in table.find_all("th")]
-    if first_row is not None:
-        headers += [cell.get_text(" ", strip=True) for cell in first_row.find_all(["th", "td"])]
-    if not (any(_price_column(header) for header in headers) or any(_DOLLAR_CELL.search(cell) for cell in cells)):
-        return
-    # By native ID or display name, also inside a qualified name such as
-    # "Inkling 2 Small (batch)".
-    names = {display_name, *_CHAT_MODELS, *(display for _, display in _CHAT_MODELS.values())}
-    patterns = [re.compile(rf"(?<![a-z0-9]){re.escape(name.casefold())}(?![a-z0-9])") for name in names]
-    if any(pattern.search(cell.casefold()) for cell in cells for pattern in patterns):
-        raise RuntimeError("maple: another table prices a published model")
+    return any(phrase in text for text in texts for phrase in _USD_PER_M_UNIT_PHRASES)
 
 
 def parse_prices(html: str, display_name: str = DISPLAY_NAME) -> ModelPrice:
@@ -152,16 +157,17 @@ def parse_prices(html: str, display_name: str = DISPLAY_NAME) -> ModelPrice:
     for struck in soup.find_all("s"):
         struck.decompose()
     prices: list[ModelPrice] = []
-    required = {"model", "input", "cached input", "output"}
     for table in soup.find_all("table"):
         head = table.find("thead")
-        headers = [cell.get_text(" ", strip=True).casefold() for cell in head.find_all("th")] if head else []
-        if not required.issubset(headers):
-            _require_no_other_model_price_table(table, display_name)
+        if head is None:
             continue
-        if len(headers) != len(required):
+        headers = [cell.get_text(" ", strip=True).casefold() for cell in head.find_all("th")]
+        if not _PRICE_HEADERS.issubset(headers):
+            continue
+        if len(headers) != len(_PRICE_HEADERS):
             raise RuntimeError("maple: ambiguous price columns")
-        _require_per_million_table(table)
+        if not _table_states_per_million(table):
+            raise RuntimeError("maple: token price currency or unit changed")
         for row in table.find_all("tr"):
             if row.find("td") is None:
                 continue
@@ -288,6 +294,7 @@ def fetch() -> ProviderPricingResult:
     global _DISCOVERED  # noqa: PLW0603
     _DISCOVERED = {}
     html = fetch_html(PRICING_URL)
+    verify_pricing_page(html)
     discovered = parse_catalog(fetch_html(MODEL_DOCS_URL))
     prices = {model: parse_prices(html, row["display_name"])
               for model, row in discovered.items() if row["model_type"] == "chat"}

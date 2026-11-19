@@ -103,7 +103,7 @@ def test_fetch_writes_held_text_only_route_without_inventing_fees(monkeypatch, t
     monkeypatch.setattr(maple, "_PENDING_ENCLAVE_MODELS", frozenset({maple.MODEL_ID}))
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
-    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    pages = {maple.PRICING_URL: live_pricing_page(), maple.MODEL_DOCS_URL: CAPABILITIES}
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
     result = maple.fetch()
     maple.write_provider_manifest(result)
@@ -123,7 +123,7 @@ def test_fetch_writes_held_text_only_route_without_inventing_fees(monkeypatch, t
 def test_failed_refresh_cannot_reuse_prior_discovery(monkeypatch, tmp_path):
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
-    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    pages = {maple.PRICING_URL: live_pricing_page(), maple.MODEL_DOCS_URL: CAPABILITIES}
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
     result = maple.fetch()
     pages[maple.MODEL_DOCS_URL] = "temporarily unavailable"
@@ -138,7 +138,7 @@ def test_price_refresh_does_not_clear_failed_encrypted_canary(monkeypatch, tmp_p
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
     monkeypatch.setattr(maple, "_PENDING_ENCLAVE_MODELS", frozenset())
-    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    pages = {maple.PRICING_URL: live_pricing_page(), maple.MODEL_DOCS_URL: CAPABILITIES}
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
     maple.MANIFEST_PATH.write_text(json.dumps({"provider": "maple", "models": [{
         "id": maple.MODEL_ID, "routable": False, "routable_reason": "provider-canary-failed",
@@ -153,7 +153,7 @@ def test_maple_manifest_prices_expire_and_pending_routes_stay_closed(monkeypatch
     monkeypatch.setattr(maple, "_PENDING_ENCLAVE_MODELS", frozenset({maple.MODEL_ID}))
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
-    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    pages = {maple.PRICING_URL: live_pricing_page(), maple.MODEL_DOCS_URL: CAPABILITIES}
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
     maple.write_provider_manifest(maple.fetch())
     manifest = json.loads(maple.MANIFEST_PATH.read_text())
@@ -170,7 +170,7 @@ def test_maple_manifest_prices_expire_and_pending_routes_stay_closed(monkeypatch
 def test_reviewed_maple_refresh_publishes_only_exact_text_workload(monkeypatch, tmp_path):
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
-    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    pages = {maple.PRICING_URL: live_pricing_page(), maple.MODEL_DOCS_URL: CAPABILITIES}
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
     maple.write_provider_manifest(maple.fetch())
     row, = json.loads(maple.MANIFEST_PATH.read_text())["models"]
@@ -195,17 +195,16 @@ EXPANDED_MODELS = [
 
 
 def expanded_pages():
-    prices = '<p>USD per 1 million tokens.</p><table><thead><tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr></thead><tbody>'
+    # fetch() pins the reviewed pricing section, so prices come from the live
+    # page capture; its rates are the ones listed in EXPANDED_MODELS.
     capabilities = '<table><thead><tr><th>Model</th><th>Context tokens</th><th>Thinking</th><th>Image input</th><th>Tool calls</th></tr></thead><tbody>'
-    for native, _, name, context, prompt, cached, output in EXPANDED_MODELS:
-        cache = "$" + cached if cached is not None else "\u2013Standard input price applies"
-        prices += f'<tr><th>{name}</th><td><s>$99</s>${prompt}</td><td>{cache}</td><td>${output}</td></tr>'
+    for native, _, name, context, _prompt, _cached, _output in EXPANDED_MODELS:
         thinking = "No" if native == "llama3-3-70b" else "Yes"
         image = "Yes" if native in {"glm-5-3-flash", "kimi-k3-1-pro", "deepseek-v4-1-flash", maple.NATIVE_ID, "gemma4-31b"} else "No"
         tools = "No" if native == "gpt-oss-safeguard-120b" else "Yes"
         capabilities += f'<tr><td>{name}<code>{native}</code></td><td>{context}</td><td>{thinking}</td><td>{image}</td><td>{tools}</td></tr>'
     return {
-        maple.PRICING_URL: prices + "</tbody></table>",
+        maple.PRICING_URL: live_pricing_page(),
         maple.MODEL_DOCS_URL: capabilities + "</tbody></table><p>Embeddings: <code>nomic-embed-text</code></p>",
     }
 
@@ -263,6 +262,10 @@ def live_pages_2026_11_19():
     }
 
 
+def live_pricing_page():
+    return live_pages_2026_11_19()[maple.PRICING_URL]
+
+
 def test_live_catalog_inventories_inkling_2_small_as_a_held_row(monkeypatch, tmp_path):
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
@@ -294,56 +297,97 @@ def test_live_catalog_inventories_inkling_2_small_as_a_held_row(monkeypatch, tmp
 
 
 INKLING_PRICE = ModelPrice(450_000, 1_500_000, prompt_cached_micro_per_m=50_000)
-PER_MILLION_FOOTER = "<footer>Legacy pricing: USD per 1 million tokens.</footer>"
 LEAD = "USD per 1 million tokens."
 CAPTION = "in US dollars per one million tokens"
 FOOTNOTE = "Automatic model aliases are billed at the rate of the model selected for the request."
+INKLING_ROW = '<th scope="row">Inkling 2 Small</th>'
+DASH_CELL = (
+    '<span class="pr-dash"><span aria-hidden="true">\u2013</span>'
+    '<span class="sr-only">Standard input price applies</span></span>'
+)
+PIN_REFUSAL = "maple: pricing section text changed; review"
 
 
-def _swapped(swaps):
-    page = live_pages_2026_11_19()[maple.PRICING_URL]
-    assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
+def _edited(*swaps, page=None):
+    page = live_pricing_page() if page is None else page
     for before, after in swaps:
-        assert page.count(before) == 1
+        assert page.count(before) == 1, before
         page = page.replace(before, after)
-    return page + PER_MILLION_FOOTER
+    return page
+
+
+def _edit_row(page, model, before, after):
+    start = page.index(f'<th scope="row">{model}')
+    end = page.index("</tr>", start)
+    row = page[start:end]
+    assert row.count(before) == 1, before
+    return page[:start] + row.replace(before, after) + page[end:]
+
+
+def _table(headers, *rows):
+    head = "".join(f"<th>{header}</th>" for header in headers)
+    body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
+    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+def test_reviewed_pricing_section_is_the_live_text_and_states_the_unit():
+    maple.verify_pricing_page(live_pricing_page())
+    for text in (LEAD, CAPTION, "Model Input Cached input Output", FOOTNOTE,
+                 "Inkling 2 Small {price} {price} {price}", "OpenAI GPT-OSS Safeguard 120B API only"):
+        assert text in maple._REVIEWED_PRICING_SECTION
+
+
+def test_a_price_value_change_alone_still_parses(monkeypatch, tmp_path):
+    # The pin never blocks a price change: a current rate, a struck previous
+    # rate, and a standard-input dash that becomes a cached rate.
+    page = _edited(("<span>$0.45</span>", "<span>$0.40</span>"))
+    page = _edit_row(page, "Gemma 4 31B", "$0.80</s>", "$0.70</s>")
+    page = _edit_row(page, "Gemma 4 31B", DASH_CELL, '<span class="pr-cell"><span>$0.30</span></span>')
+    maple.verify_pricing_page(page)
+    assert maple.parse_prices(page, "Inkling 2 Small") == ModelPrice(400_000, 1_500_000, prompt_cached_micro_per_m=50_000)
+    assert maple.parse_prices(page, "Gemma 4 31B") == ModelPrice(600_000, 1_500_000, prompt_cached_micro_per_m=300_000)
+    monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    pages = {**live_pages_2026_11_19(), maple.PRICING_URL: page}
+    monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
+    assert maple.fetch().prices["thinkingmachines/inkling-2-small"].prompt_micro_per_m == 400_000
+
+
+FULL_HEADER_ALTERNATE = (
+    "<table><caption>Above 128K context</caption><thead><tr><th>Model</th><th>Input</th>"
+    "<th>Cached input</th><th>Output</th></tr></thead><tbody><tr><th>Inkling 2 Small (above 128K)</th>"
+    "<td>$0.90</td><td>$0.10</td><td>$3.00</td></tr></tbody></table>"
+)
 
 
 @pytest.mark.parametrize("swaps", [
-    # The table's lead and its caption both move to per-thousand units.
-    [(LEAD, "USD per 1 thousand tokens."), (CAPTION, "in US dollars per one thousand tokens")],
-    [(CAPTION, "in US dollars per one thousand tokens")],
+    # Unit changes in the lead, caption and footnote, including the spellings
+    # the round-3 review found the unit parser skipped.
     [(LEAD, "USD per 1 thousand tokens.")],
-    [(LEAD, LEAD + " Cached input is USD per 1 thousand tokens.")],
-    # No unit stated by the table at all; only an unrelated footer states one.
-    [(LEAD, "Prices by model."), ("Model prices on every plan, " + CAPTION, "Model prices on every plan")],
-    # The footnote (pr-foot) after the table, in each spelling.
-    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per 1K tokens.")],
-    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per 1,000 tokens.")],
-    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per thousand tokens.")],
-    [(FOOTNOTE, FOOTNOTE + " Output is USD/1K tokens.")],
-    [(FOOTNOTE, FOOTNOTE + " Output is billed per token.")],
-    [(FOOTNOTE, FOOTNOTE + " Prices in EUR per 1 million tokens.")],
-    [(CAPTION, "in USD/1K tokens")],
-    [(CAPTION, "in USD per 1,000 tokens")],
-    # A footnote can agree with the unit but cannot be the only statement.
-    [(LEAD, "Prices by model."), ("Model prices on every plan, " + CAPTION, "Model prices on every plan"),
-     (FOOTNOTE, FOOTNOTE + " Rates are USD per million tokens.")],
+    [(CAPTION, "in US dollars per one thousand tokens")],
+    [(LEAD, "USD per two million tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " Cached input is billed per 1,000 cached-input tokens.")],
+    [(FOOTNOTE, FOOTNOTE + " Batch jobs are USD per 1 million requests.")],
+    # A footnote hidden after an <hr/>, or outside the table's wrapper div.
+    [("</table>", "</table><hr/><p>Cached input is billed per 1K tokens.</p>")],
+    [("</section>", "<p>Prompts above 128K tokens bill at twice these rates.</p></section>")],
+    # Qualified, renamed and added rows.
+    [(INKLING_ROW, '<th scope="row">Inkling 2 Small (up to 128K)</th>')],
+    [(">API only</span>", ">(API only)</span>")],
+    [("</tbody>", '<tr><th scope="row">Inkling 2 Small (above 128K)</th><td>$0.90</td>'
+                  "<td>$0.10</td><td>$3.00</td></tr></tbody>")],
 ])
-def test_unit_must_be_stated_by_the_price_table_not_elsewhere_on_the_page(swaps):
-    with pytest.raises(RuntimeError, match="unit changed"):
-        maple.parse_prices(_swapped(swaps), "Inkling 2 Small")
+def test_any_other_text_change_in_the_pricing_section_is_refused(swaps):
+    with pytest.raises(RuntimeError, match=PIN_REFUSAL):
+        maple.verify_pricing_page(_edited(*swaps))
 
 
-@pytest.mark.parametrize("swaps", [
-    [(FOOTNOTE, FOOTNOTE + " Rates are per million tokens.")],
-    [(FOOTNOTE, FOOTNOTE + " All rates are USD/1M tokens.")],
-    [(CAPTION, "in USD per 1,000,000 tokens")],
-    [(LEAD, "USD/M tokens.")],
-    [(LEAD, "Prices in USD per one million input or output tokens.")],
-])
-def test_equivalent_per_million_restatements_pass(swaps):
-    assert maple.parse_prices(_swapped(swaps), "Inkling 2 Small") == INKLING_PRICE
+@pytest.mark.parametrize("where", ["inside", "outside"])
+def test_a_full_header_alternate_table_is_refused(where):
+    page = live_pricing_page()
+    page = _edited(("</table>", "</table>" + FULL_HEADER_ALTERNATE)) if where == "inside" else page + FULL_HEADER_ALTERNATE
+    with pytest.raises(RuntimeError, match="maple: expected exactly one token price table; review"):
+        maple.verify_pricing_page(page)
 
 
 ABOVE_128K_TABLE = (
@@ -353,45 +397,37 @@ ABOVE_128K_TABLE = (
 )
 
 
-def _table(headers, *rows):
-    head = "".join(f"<th>{header}</th>" for header in headers)
-    body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
-
-
 @pytest.mark.parametrize("extra", [
     ABOVE_128K_TABLE,
-    ABOVE_128K_TABLE.replace("Above 128K context: USD per 1 million tokens", "Batch prices"),
-    _table(["Model", "Price"], ["Inkling 2 Small", "$0.90"]),
-    # A qualified display name under "($/M)" suffixed price columns.
-    _table(["Model", "Input ($/M)", "Output ($/M)"], ["Inkling 2 Small (batch)", "$0.20", "$0.75"]),
-    # The native ID, under a rate column.
-    _table(["Model", "Rate"], ["<code>inkling-2-small</code>", "$0.90"]),
-    # Another published model refuses the page for every model.
-    _table(["Model", "Cached-input"], ["GLM 5.3", "$0.12"]),
-    # Models as columns: no price header, but dollar cells.
-    _table(["Tier", "Inkling 2 Small"], ["Batch", "$0.20"]),
+    _table(["Plan", "Price"], ["Pro", "$20/month"]),
+    _table(["Model", "Batch"], ["Inkling&nbsp;2&nbsp;Small", "$0.20"]),
+    _table(["Model", "Batch"], ["OpenAI GPT-OSS Safeguard 120B (API only)", "0.12 USD"]),
+    _table(["Model", "Batch"], ["GLM 5.3", "0.12/M"]),
+    _table(["Model", "Batch"], ["GLM 5.3", "0.00012 /1K"]),
+    _table(["Model", "Batch"], ["GLM 5.3", "\u20ac0.11"]),
+    _table(["Model", "Batch"], ["GLM 5.3", "12\u00a2"]),
 ])
-def test_another_table_pricing_a_published_model_is_refused(extra):
-    page = live_pages_2026_11_19()[maple.PRICING_URL]
-    with pytest.raises(RuntimeError, match="maple: another table prices a published model"):
-        maple.parse_prices(page + extra, "Inkling 2 Small")
+def test_a_priced_table_outside_the_pricing_section_is_refused(extra):
+    with pytest.raises(RuntimeError, match="maple: priced table outside the pricing section; review"):
+        maple.verify_pricing_page(live_pricing_page() + extra)
 
 
 @pytest.mark.parametrize("extra", [
     _table(["Model", "Image support"], ["Inkling 2 Small", "Yes"], ["GLM 5.3", "No"]),
-    _table(["Plan", "Price"], ["Pro", "$20/month"], ["Max", "$100/month"]),
-    # Prose outside the parsed structures is out of scope, so ordinary copy
-    # never refuses the page.
+    _table(["Model", "Input (modalities)", "Output (modalities)"],
+           ["Inkling 2 Small", "Text, image", "Text"], ["GLM 5.3", "Text", "Text"]),
+    # Prose outside the parsed structures is out of scope: ordinary copy,
+    # even with a price, never refuses the page.
     "<h3>What is a context window?</h3>",
     "<p>Ask us about the enterprise tier.</p>",
     "<p>Context-aware answers.</p>",
     "<p>Over 1M downloads.</p>",
     "<p>Try Inkling 2 Small with Pro for $20/month.</p>",
 ])
-def test_tables_without_model_prices_and_ordinary_copy_pass(extra):
-    page = live_pages_2026_11_19()[maple.PRICING_URL]
-    assert maple.parse_prices(page + extra, "Inkling 2 Small") == INKLING_PRICE
+def test_unpriced_tables_and_ordinary_copy_outside_the_section_pass(extra):
+    page = live_pricing_page() + extra
+    maple.verify_pricing_page(page)
+    assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
 
 
 def test_extra_tier_table_fails_the_whole_refresh(monkeypatch, tmp_path):
@@ -400,7 +436,7 @@ def test_extra_tier_table_fails_the_whole_refresh(monkeypatch, tmp_path):
     pages = live_pages_2026_11_19()
     pages[maple.PRICING_URL] += ABOVE_128K_TABLE
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="priced table outside the pricing section"):
         maple.fetch()
     assert maple._DISCOVERED == {}
 
@@ -408,12 +444,13 @@ def test_extra_tier_table_fails_the_whole_refresh(monkeypatch, tmp_path):
 def test_unpriced_mentions_and_plan_prices_elsewhere_are_not_model_prices():
     # Live FAQ and plan wording: model names without a price, prices without
     # a model name. Neither is a second token price.
-    page = live_pages_2026_11_19()[maple.PRICING_URL] + (
+    page = live_pricing_page() + (
         "<details><summary>Did prices go down on every plan?</summary><p>Yes. "
         "DeepSeek V4.1 Flash, DeepSeek V4.1 Flash Uncensored and the Kimi models' "
         "output prices stay the same.</p></details>"
         "<div><p>Max $100</p><p>Max+ $200 /mo</p><p>Inkling 2 Small is new.</p></div>"
     )
+    maple.verify_pricing_page(page)
     assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
     assert maple.parse_prices(page, maple.DISPLAY_NAME) == ModelPrice(
         650_000, 1_450_000, prompt_cached_micro_per_m=130_000
