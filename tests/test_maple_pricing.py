@@ -406,6 +406,13 @@ ABOVE_128K_TABLE = (
     _table(["Model", "Batch"], ["GLM 5.3", "0.00012 /1K"]),
     _table(["Model", "Batch"], ["GLM 5.3", "\u20ac0.11"]),
     _table(["Model", "Batch"], ["GLM 5.3", "12\u00a2"]),
+    # Currency codes glued to the amount (round-4 review).
+    "<table><caption>DeepSeek V4.1 Flash Uncensored above 128K tokens</caption>"
+    "<thead><tr><th>Input</th><th>Output</th></tr></thead>"
+    "<tbody><tr><td>USD1.30</td><td>USD2.90</td></tr></tbody></table>",
+    _table(["Model", "Batch"], ["GLM 5.3", "EUR1.20"]),
+    _table(["Model", "Batch"], ["GLM 5.3", "1.10 GBP"]),
+    _table(["Model", "Batch"], ["GLM 5.3", "jpy180"]),
 ])
 def test_a_priced_table_outside_the_pricing_section_is_refused(extra):
     with pytest.raises(RuntimeError, match="maple: priced table outside the pricing section; review"):
@@ -470,8 +477,12 @@ def test_expanded_discovery_does_not_reuse_state_after_a_price_failure(monkeypat
     monkeypatch.setattr(maple, "_DISCOVERED", {})
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
     maple.fetch()
-    pages[maple.PRICING_URL] = pages[maple.PRICING_URL].replace("Kimi K3.1 Pro", "Kimi K3")
-    with pytest.raises(RuntimeError):
+    # A $0 rate keeps the pinned section text (prices are placeholders) and
+    # fails only price parsing, after discovery has already run.
+    assert pages[maple.PRICING_URL].count("<span>$6.00</span>") == 1
+    pages[maple.PRICING_URL] = pages[maple.PRICING_URL].replace("<span>$6.00</span>", "<span>$0</span>")
+    maple.verify_pricing_page(pages[maple.PRICING_URL])
+    with pytest.raises(RuntimeError, match="maple: invalid token prices"):
         maple.fetch()
     assert maple._DISCOVERED == {}
 

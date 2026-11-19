@@ -92,9 +92,14 @@ _REVIEWED_PRICING_SECTION = " ".join((
     "\u2013 means the standard input price applies.",
     "Automatic model aliases are billed at the rate of the model selected for the request.",
 ))
-# A currency amount or marker: $, USD, a cent, euro, pound or yen sign, or a
-# number followed by "/M" or "/1K".
-_CURRENCY_MARKER = re.compile(r"[$\u00a2\u00a3\u00a5\u20ac]|\bUSD\b|[0-9]\s*/\s*1?\s*[MK]\b", re.IGNORECASE)
+# A currency amount or marker: a dollar, cent, pound, yen or euro sign, the
+# code USD, EUR, GBP or JPY (also glued to a number, as in "USD1.30"), or a
+# number followed by "/M" or "/1K". Markers split across elements are out of
+# scope.
+_CURRENCY_MARKER = re.compile(
+    r"[$\u00a2\u00a3\u00a5\u20ac]|(?<![a-z])(?:USD|EUR|GBP|JPY)(?![a-z])|[0-9]\s*/\s*1?\s*[MK]\b",
+    re.IGNORECASE,
+)
 
 
 def _price(text: str) -> int:
