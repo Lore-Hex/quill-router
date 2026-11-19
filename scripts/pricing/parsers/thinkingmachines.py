@@ -7,8 +7,15 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from bs4 import BeautifulSoup, Tag
 
+# Exact serverless Tinker IDs, keyed to the catalog model they price. Each key
+# must equal the manifest row's upstream_id, so a price is only ever verified
+# for the ID the route sends. By 2026-11-19 Tinker's serverless table
+# (tinker-docs.thinkingmachines.ai/tinker/serverless.json) listed Inkling 2
+# Small as "thinkingmachines/Inkling-2-Small:peft:262144", without the
+# ":sampling-nvfp4" suffix it carried when the route was added; Inkling and
+# Inkling-Small keep the suffix.
 _SERVERLESS_IDS = {
-    "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4": (
+    "thinkingmachines/Inkling-2-Small:peft:262144": (
         "thinkingmachines/inkling-2-small"
     ),
     "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4": (

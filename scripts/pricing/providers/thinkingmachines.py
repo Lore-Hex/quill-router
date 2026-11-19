@@ -37,6 +37,9 @@ API_KEY_ENVS = ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY")
 # ID returns 200: run the refresh with THINKING_MACHINES_API_KEY set (the
 # hourly workflow does not receive that key today). To lift it by hand once
 # access is confirmed, delete the row's "routable"/"routable_reason" fields.
+# The 2026-11-08 rejections were for the earlier serverless ID
+# (":sampling-nvfp4" suffix); the canary probes the row's current upstream_id,
+# which follows the exact ID serverless.json lists.
 ACCESS_HOLD_REASON = "provider-access-unavailable"
 OPERATOR_HOLDS = {"thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON}
 _ACCESS_CANARY_CHECKED: set[str] = set()

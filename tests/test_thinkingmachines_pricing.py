@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from scripts.pricing.parsers.thinkingmachines import parse
+from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS, parse
 from scripts.pricing.providers import thinkingmachines
 from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
 SERVERLESS = [
-    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144",
      "input": "$0.30", "cached_input": "$0.03", "output": "$1.00"},
     {"tinker_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
      "input": "$0.30", "cached_input": "$0.06", "output": "$1.20"},
@@ -48,6 +49,69 @@ def test_json_rejects_conflicts_missing_models_and_excessive_cache():
     for rows in [[], {}, [SAMPLER[0], {**SAMPLER[0], "sample": "$99"}], [{**SAMPLER[0], "cached_prefill": "$5"}]]:
         with pytest.raises(RuntimeError, match="thinkingmachines"):
             thinkingmachines._json_prices(rows, ids, ("prefill", "cached_prefill", "sample"))
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
+
+
+def _live_feeds() -> dict[str, object]:
+    # Captured 2026-11-19 from the official machine-readable feeds:
+    # serverless.json in full, models.json trimmed to Inkling 2 Small and the
+    # GLM-5.3 sampler row TR prices.
+    return {
+        thinkingmachines.SERVERLESS_URL: json.loads(
+            (FIXTURE_DIR / "thinkingmachines_serverless_2026-11-19.json").read_text(encoding="utf-8")
+        ),
+        thinkingmachines.SAMPLER_URL: json.loads(
+            (FIXTURE_DIR / "thinkingmachines_models_2026-11-19.json").read_text(encoding="utf-8")
+        ),
+    }
+
+
+def test_fetch_prices_inkling_2_small_from_its_current_serverless_tinker_id(monkeypatch):
+    # Tinker's serverless table now lists Inkling 2 Small as
+    # "thinkingmachines/Inkling-2-Small:peft:262144" (no ":sampling-nvfp4").
+    # The exact-ID gate prices it from that row, at the same published rates.
+    monkeypatch.setattr(thinkingmachines, "fetch_json", _live_feeds().__getitem__)
+    result = thinkingmachines.fetch()
+
+    assert result.prices == {
+        "thinkingmachines/inkling-2-small": ModelPrice(300_000, 1_000_000, prompt_cached_micro_per_m=30_000),
+        "thinkingmachines/inkling-small": ModelPrice(300_000, 1_200_000, prompt_cached_micro_per_m=60_000),
+        "thinkingmachines/inkling": ModelPrice(1_000_000, 4_050_000, prompt_cached_micro_per_m=170_000),
+        "z-ai/glm-5.3": ModelPrice(3_780_000, 12_150_000, prompt_cached_micro_per_m=756_000),
+    }
+    assert set(result.prices) == set(thinkingmachines.EXPECTED_MODELS)
+
+
+def test_retired_nvfp4_inkling_2_small_id_does_not_price_the_route(monkeypatch):
+    # The gate stays exact: a feed that only carries the earlier
+    # ":sampling-nvfp4" ID, or only the sampler (training table) listing,
+    # leaves the serverless route unpriced and fails the provider closed.
+    feeds = _live_feeds()
+    feeds[thinkingmachines.SERVERLESS_URL] = [
+        {**row, "tinker_id": f"{row['tinker_id']}:sampling-nvfp4"}
+        if row["tinker_id"] == "thinkingmachines/Inkling-2-Small:peft:262144"
+        else row
+        for row in feeds[thinkingmachines.SERVERLESS_URL]
+    ]
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"missing exact model prices: \['thinkingmachines/inkling-2-small'\]"):
+        thinkingmachines.fetch()
+
+
+def test_committed_manifest_upstream_ids_are_the_exact_priced_ids() -> None:
+    # A refresh writes prices onto manifest rows by catalog id. Each priced
+    # row's upstream_id must be the exact Tinker ID the price was read for,
+    # or a route would send one ID while billing another's verified price.
+    rows = json.loads(thinkingmachines.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    priced_ids = {**_SERVERLESS_IDS, **_SAMPLER_IDS}
+
+    assert {row["id"]: row["upstream_id"] for row in rows} == {
+        model_id: native_id for native_id, model_id in priced_ids.items()
+    }
+    assert sorted(priced_ids.values()) == sorted(thinkingmachines.EXPECTED_MODELS)
 
 
 def _pricing_html(*, active: str = "old") -> str:
@@ -265,7 +329,7 @@ def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract(
 
 INKLING_2_SMALL_ROW = {
     "id": "thinkingmachines/inkling-2-small",
-    "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+    "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144",
     "display_name": "Thinking Machines Inkling 2 Small 256K",
     "context_length": 262144,
     "input_modalities": ["text", "image"],
@@ -298,7 +362,7 @@ def test_inkling_2_small_would_publish_with_an_open_weights_badge(
         (endpoint.upstream_id, endpoint.effective_context_length(model))
         for endpoint in endpoints_for_model(model.id)
         if endpoint.provider == "thinkingmachines"
-    } == {("thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4", 262_144)}
+    } == {("thinkingmachines/Inkling-2-Small:peft:262144", 262_144)}
 
 
 def test_tinker_inkling_2_small_route_is_held_out_of_routing_and_probes() -> None:
@@ -495,7 +559,7 @@ def test_access_canary_rechecks_only_held_routes_and_lifts_on_success(
     rows = _refresh_rows(manifest)
 
     assert [(c["base_url"], c["model"]) for c in calls] == [
-        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")
+        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144")
     ]
     held = rows["thinkingmachines/inkling-2-small"]
     if healthy:
