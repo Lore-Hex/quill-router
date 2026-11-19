@@ -141,9 +141,15 @@ def _read_failure(exc: Exception) -> tuple[str, float | None]:
             return f"HTTP {exc.code}", 0.0
         return f"HTTP {exc.code}", None
     reason = getattr(exc, "reason", None)
-    if isinstance(exc, ssl.SSLCertVerificationError) or isinstance(reason, ssl.SSLCertVerificationError):
+    tls = exc if isinstance(exc, ssl.SSLError) else reason if isinstance(reason, ssl.SSLError) else None
+    if isinstance(tls, ssl.SSLCertVerificationError):
         # A trust failure does not heal in seconds; fail now.
         return "TLS certificate verification failed", None
+    if tls is not None and not isinstance(tls, ssl.SSLEOFError | ssl.SSLZeroReturnError):
+        # A negotiation failure (for example WRONG_VERSION_NUMBER from a peer
+        # speaking plain HTTP) repeats; only a connection that ends mid-TLS is
+        # transient.
+        return "TLS error", None
     if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
         return "timeout", 0.0
     # URLError, a reset or a truncated body (http.client.IncompleteRead,
@@ -156,13 +162,16 @@ def public_gh(path: str) -> Any:
     if "://" in path or ".." in path or not path.startswith(("actions/", "search/issues?q=repo:" + REPOSITORY)):
         raise ValueError("Unexpected public monitoring API path")
     endpoint = path if path.startswith("search/") else f"repos/{REPOSITORY}/{path}"
-    request = Request("https://api.github.com/" + endpoint, headers={
-        "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
-        "X-GitHub-Api-Version": "2022-11-28",
-    })
     for attempt in range(len(PUBLIC_READ_RETRY_DELAYS) + 1):
         if not _within(PUBLIC_READ_DEADLINE_SECONDS):
             raise MonitoringReadError("GitHub monitoring API request failed (run deadline reached)")
+        # A fresh Request per attempt: urllib's proxy handler rewrites the
+        # request it is given, so a reused one can fall back to plain HTTP
+        # through an https_proxy on the next attempt.
+        request = Request("https://api.github.com/" + endpoint, headers={
+            "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
         try:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
                 # http.client's own parse of Content-Length (whitespace

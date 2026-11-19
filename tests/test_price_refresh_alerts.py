@@ -556,6 +556,50 @@ def test_public_read_does_not_retry_a_certificate_failure(public_reads):
     assert sleeps == [] and len(opened) == 1
 
 
+def test_each_attempt_gets_a_fresh_https_request(monkeypatch):
+    # urllib's ProxyHandler rewrites the Request it is given (set_proxy turns an
+    # https request into an http one aimed at the proxy). Reusing one Request
+    # across retries sent the third attempt over plain HTTP.
+    seen = []
+    class Opener:
+        def open(self, request, timeout):
+            seen.append((request, request.type, request.host))
+            request.set_proxy("proxy.invalid:8080", "http")
+            if len(seen) < 3:
+                raise _http_error(502)
+            return _Reply(b"{}")
+    monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
+    monkeypatch.setattr(alerts.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(alerts, "_run_started", None, raising=False)
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert [(kind, host) for _, kind, host in seen] == [("https", "api.github.com")] * 3
+    assert len({id(request) for request, _, _ in seen}) == 3
+
+
+@pytest.mark.parametrize("error", [
+    ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number"),
+    ssl.SSLError(1, "[SSL: UNSUPPORTED_PROTOCOL] unsupported protocol"),
+])
+def test_public_read_does_not_retry_a_tls_negotiation_failure(public_reads, error):
+    script, sleeps, opened = public_reads
+    script.append(URLError(error))
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(TLS error\)$"):
+        alerts.public_gh("actions/runs/1")
+    assert sleeps == [] and len(opened) == 1
+
+
+@pytest.mark.parametrize("error", [
+    ssl.SSLEOFError(8, "EOF occurred in violation of protocol"),
+    ssl.SSLZeroReturnError(6, "TLS/SSL connection has been closed"),
+])
+def test_public_read_retries_a_tls_connection_that_ended(public_reads, error):
+    script, sleeps, _ = public_reads
+    script += [URLError(error), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0]
+
+
 def test_public_read_honors_a_short_retry_after(public_reads):
     script, sleeps, _ = public_reads
     script += [_http_error(429, {"retry-after": "5"}), b"{}"]

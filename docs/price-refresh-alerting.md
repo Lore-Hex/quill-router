@@ -53,8 +53,10 @@ unchanged.
   truncated chunked body or 5xx twice (2 s, then 8 s). A rate-limit reply (429,
   or 403 with rate-limit headers) with a `Retry-After` of up to 30 s waits the
   longer of that value and the same 2 s, then 8 s backoff; a longer
-  `Retry-After`, any other 4xx and a TLS certificate verification failure fail
-  the run at once. A 5xx `Retry-After` is not consulted. All retries in a run share one 180-second
+  `Retry-After`, any other 4xx, a TLS certificate verification failure and any
+  other TLS error except a connection that ended mid-TLS fail the run at once.
+  A 5xx `Retry-After` is not consulted. Each attempt builds a fresh request, so
+  a proxy rewrite of one attempt cannot downgrade the next. All retries in a run share one 180-second
   window. No read attempt starts unless one slow attempt (two 15-second socket
   timeouts) still fits before 420 s into the run, so a slow run, with or
   without retries, fails with a logged reason and leaves the unit's nine
