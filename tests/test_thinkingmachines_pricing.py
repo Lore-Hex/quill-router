@@ -157,6 +157,122 @@ def test_documented_discount_fields_still_price_at_the_current_rate(monkeypatch)
     )
 
 
+INKLING_2_SMALL_SERVERLESS_ID = "thinkingmachines/Inkling-2-Small:peft:262144"
+GLM_SAMPLER_ID = "zai-org/GLM-5.3:peft:262144"
+
+
+@pytest.mark.parametrize("bad", [
+    {"name": ""},
+    {"name": {"en": "Inkling 2 Small"}},
+    {"url": "http://huggingface.co/thinkingmachines/Inkling-2-Small"},
+    {"url": "huggingface.co/thinkingmachines/Inkling-2-Small"},
+    {"url": ["https://huggingface.co/thinkingmachines/Inkling-2-Small"]},
+    {"context": {"unit": "tokens", "value": 1_048_576}},
+    {"context": "1M tokens"},
+    {"context": "1048576"},
+    {"context": ["1M"]},
+    {"input": {"amount": "$0.30", "unit": "per 1K tokens"}},
+    {"cached_input": ["$0.03"]},
+])
+def test_serverless_row_with_a_malformed_documented_field_is_refused(monkeypatch, bad):
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_2_SMALL_SERVERLESS_ID, bad)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"thinkingmachines: malformed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("bad", [
+    {"train": {"amount": "$14.58"}},
+    {"params": "753B"},
+    {"active_params": True},
+    {"params": 0},
+    {"size": ["Large"]},
+    {"original_sample": ["$24.30"]},
+    {"note": {"text": "Limited-time 50% discount", "applies_to": "prompts up to 128K tokens"}},
+])
+def test_sampler_row_with_a_malformed_documented_field_is_refused(monkeypatch, bad):
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID, bad)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"thinkingmachines: malformed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("tinker_id", [
+    "Inkling 2 Small",
+    "thinkingmachines/Inkling-2-Small:peft:big",
+    "thinkingmachines/Inkling-2-Small:sampling-nvfp4:peft:262144",
+    "/Inkling-2-Small",
+])
+def test_priced_row_with_an_id_outside_the_tinker_grammar_is_refused(tinker_id):
+    row = {"tinker_id": tinker_id, "input": "$0.30", "cached_input": "$0.03", "output": "$1.00"}
+    with pytest.raises(RuntimeError, match=r"malformed pricing field\(s\) \['tinker_id'\]"):
+        thinkingmachines._json_prices(
+            [row], {tinker_id: "thinkingmachines/inkling-2-small"}, ("input", "cached_input", "output")
+        )
+
+
+# The note on every discounted row in the live models.json (2026-11-19).
+LIVE_DISCOUNT_NOTES = {
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16:peft:262144": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16:peft:262144": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:peft:262144": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144": "Limited-time 50% discount",
+}
+ORIGINAL_PRICES = {
+    "original_prefill": "$7.56", "original_cached_prefill": "$1.512",
+    "original_sample": "$24.30", "original_train": "$29.16",
+}
+
+
+@pytest.mark.parametrize("note", sorted(set(LIVE_DISCOUNT_NOTES.values())))
+def test_every_live_discount_note_is_accepted_with_its_original_prices(monkeypatch, note):
+    assert len(LIVE_DISCOUNT_NOTES) == 8
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID, {"note": note, **ORIGINAL_PRICES}
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    assert thinkingmachines.fetch().prices["z-ai/glm-5.3"] == ModelPrice(
+        3_780_000, 12_150_000, prompt_cached_micro_per_m=756_000
+    )
+
+
+@pytest.mark.parametrize("note", [
+    "Limited-time 50% discount for prompts up to 128K tokens",
+    "Limited-time discount",
+    "50% off",
+    "Prices double above 128K context",
+    "",
+])
+def test_any_other_note_is_refused(monkeypatch, note):
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID, {"note": note, **ORIGINAL_PRICES}
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    with pytest.raises(RuntimeError, match=r"malformed pricing field\(s\) \['note'\]"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("originals", [
+    {},
+    {"original_sample": "$24.30"},
+    {key: value for key, value in ORIGINAL_PRICES.items() if key != "original_train"},
+])
+def test_discount_note_without_all_original_prices_is_refused(monkeypatch, originals):
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID,
+        {"note": "Limited-time 50% discount", **originals},
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    with pytest.raises(RuntimeError, match="note without original prices"):
+        thinkingmachines.fetch()
+
+
 def test_committed_manifest_upstream_ids_are_the_exact_priced_ids() -> None:
     # A refresh writes prices onto manifest rows by catalog id. Each priced
     # row's upstream_id must be the exact Tinker ID the price was read for,

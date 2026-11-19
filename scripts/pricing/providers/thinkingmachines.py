@@ -8,6 +8,7 @@ import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json
 from scripts.pricing.manifest import set_manifest_model_canary_states
@@ -73,6 +74,54 @@ _DOCUMENTED_ROW_KEYS = {
         }
     ),
 }
+_PRICE_TEXT = re.compile(r"\$\d+(?:\.\d{1,6})?")
+# Shapes every live row has (2026-11-19): ids like "org/Name:peft:262144:
+# sampling-nvfp4", contexts 32K to 1M, and one discount wording on all eight
+# discounted rows ("Limited-time 50% discount").
+_TINKER_ID = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*(?::peft:[1-9][0-9]*)?(?::sampling-[a-z0-9]+)?"
+)
+_CONTEXT = re.compile(r"[1-9][0-9]*[KM]")
+_DISCOUNT_NOTE = re.compile(r"Limited-time [1-9][0-9]?% discount")
+_DISCOUNT_FIELDS = frozenset(
+    {"original_prefill", "original_cached_prefill", "original_sample", "original_train"}
+)
+
+
+def _matching(pattern: re.Pattern[str]):  # noqa: ANN202
+    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _https_url(value: object) -> bool:
+    # The docs: "The url field is an empty string when no model-card link is
+    # provided." Otherwise it must be an https URL with a host.
+    if not isinstance(value, str):
+        return False
+    parts = urlsplit(value)
+    return value == "" or (parts.scheme == "https" and bool(parts.netloc))
+
+
+# Documented value shape of every allowlisted field. A dict or list where a
+# string or count belongs (a nested unit, condition or note) is refused.
+_FIELD_SHAPES = {
+    "name": lambda value: isinstance(value, str) and bool(value.strip()),
+    "url": _https_url,
+    "tinker_id": _matching(_TINKER_ID),
+    "context": _matching(_CONTEXT),
+    "type": lambda value: isinstance(value, str) and bool(value.strip()),
+    "arch": lambda value: isinstance(value, str) and bool(value.strip()),
+    "size": lambda value: isinstance(value, str) and bool(value.strip()),
+    "params": lambda value: type(value) is int and value > 0,
+    "active_params": lambda value: type(value) is int and value > 0,
+    "note": _matching(_DISCOUNT_NOTE),
+    **{
+        field: _matching(_PRICE_TEXT)
+        for field in (
+            "input", "cached_input", "output", "prefill", "cached_prefill", "sample", "train",
+            *_DISCOUNT_FIELDS,
+        )
+    },
+}
 
 
 def _json_prices(
@@ -93,10 +142,17 @@ def _json_prices(
             raise RuntimeError(
                 f"thinkingmachines: unreviewed pricing field(s) {unreviewed} for {native_id}"
             )
+        malformed = sorted(key for key, value in row.items() if not _FIELD_SHAPES[key](value))
+        if malformed:
+            raise RuntimeError(
+                f"thinkingmachines: malformed pricing field(s) {malformed} for {native_id}"
+            )
+        if "note" in row and not _DISCOUNT_FIELDS <= row.keys():
+            raise RuntimeError(f"thinkingmachines: note without original prices for {native_id}")
         amounts = []
         for field in fields:
             value = row.get(field)
-            if not isinstance(value, str) or re.fullmatch(r"\$\d+(?:\.\d{1,6})?", value) is None:
+            if not isinstance(value, str) or _PRICE_TEXT.fullmatch(value) is None:
                 raise RuntimeError(f"thinkingmachines: invalid {field} price for {native_id}")
             amounts.append(int(Decimal(value[1:]) * 1_000_000))
         prompt, cached, completion = amounts
