@@ -279,6 +279,7 @@ def test_a_spiking_provider_keeps_its_published_prices_while_others_refresh(
     out = capsys.readouterr().out
     assert (
         f"{refresh.HELD_FOR_REVIEW_HEADING}\n  {key}:\n    acme/model [{name}::acme/model]\n"
+        "      prompt: 0.000001 → 0.000003 (×3.00 ≥ ×2.0)\n"
         in out
     )
     assert f"::warning title=Provider prices held for review::{key} kept" in out

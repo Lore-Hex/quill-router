@@ -1071,17 +1071,43 @@ def mass_removal_failure(
     return None
 
 
+class SpikingRoute(str):
+    """A failing route key that also carries the gate's reasons.
+
+    It compares, hashes and sorts as the plain route key. ``reasons`` holds
+    check()'s failure lines without the route prefix, for example
+    ``prompt: 0.000001 → 0.000003 (×3.00 ≥ ×2.0)``, so a held provider's
+    report shows the exact values an approval must name.
+    """
+
+    reasons: tuple[str, ...]
+
+    def __new__(cls, route: str, reasons: tuple[str, ...] = ()) -> SpikingRoute:
+        value = super().__new__(cls, route)
+        value.reasons = reasons
+        return value
+
+
+def failing_route_reasons(
+    before: dict[str, dict[str, str]],
+    after: dict[str, dict[str, str]],
+    spike_ratio: float = DEFAULT_SPIKE_RATIO,
+) -> dict[str, list[str]]:
+    """Each route that fails on its own, with check()'s failure lines for it."""
+    out: dict[str, list[str]] = {}
+    for route, prev in before.items():
+        if route in after and (failures := check({route: prev}, {route: after[route]}, spike_ratio)[0]):
+            out[route] = failures
+    return out
+
+
 def failing_routes(
     before: dict[str, dict[str, str]],
     after: dict[str, dict[str, str]],
     spike_ratio: float = DEFAULT_SPIKE_RATIO,
 ) -> set[str]:
     """Routes that fail on their own: check() applied one continuing route at a time."""
-    return {
-        route
-        for route, prev in before.items()
-        if route in after and check({route: prev}, {route: after[route]}, spike_ratio)[0]
-    }
+    return set(failing_route_reasons(before, after, spike_ratio))
 
 
 def route_provider(route: str) -> str | None:
@@ -1139,7 +1165,11 @@ def spiking_providers(
     after_provider_manifests: Path | None = None,
     spike_ratio: float = DEFAULT_SPIKE_RATIO,
 ) -> dict[str | None, list[str]]:
-    """Failing routes grouped by provider slug; None collects routes without one."""
+    """Failing routes grouped by provider slug; None collects routes without one.
+
+    Each route is a SpikingRoute whose ``reasons`` name the before and after
+    values that failed.
+    """
     snapshot_pair, manifest_pair = route_pairs(
         before, after, before_provider_manifests, after_provider_manifests
     )
@@ -1147,8 +1177,9 @@ def spiking_providers(
     for pair in (snapshot_pair, manifest_pair):
         if pair is None:
             continue
-        for route in sorted(failing_routes(*pair, spike_ratio)):
-            grouped.setdefault(route_provider(route), []).append(route)
+        for route, failures in sorted(failing_route_reasons(*pair, spike_ratio).items()):
+            reasons = tuple(failure.removeprefix(route).lstrip(" :") for failure in failures)
+            grouped.setdefault(route_provider(route), []).append(SpikingRoute(route, reasons))
     return grouped
 
 
