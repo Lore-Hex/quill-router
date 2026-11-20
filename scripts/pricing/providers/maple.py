@@ -92,14 +92,10 @@ _REVIEWED_PRICING_SECTION = " ".join((
     "\u2013 means the standard input price applies.",
     "Automatic model aliases are billed at the rate of the model selected for the request.",
 ))
-# A currency amount or marker: a dollar, cent, pound, yen or euro sign, the
-# code USD, EUR, GBP or JPY (also glued to a number, as in "USD1.30"), or a
-# number followed by "/M" or "/1K". Markers split across elements are out of
-# scope.
-_CURRENCY_MARKER = re.compile(
-    r"[$\u00a2\u00a3\u00a5\u20ac]|(?<![a-z])(?:USD|EUR|GBP|JPY)(?![a-z])|[0-9]\s*/\s*1?\s*[MK]\b",
-    re.IGNORECASE,
-)
+# Outside the pinned section, a table with any digit can price or condition a
+# model (plain "1.30" cells, "Above 128K tokens | 2x"), so it refuses. Tables
+# without digits, such as modality or capability tables, pass.
+_FIGURE = re.compile(r"\d")
 
 
 def _price(text: str) -> int:
@@ -122,7 +118,7 @@ def _price_tables(soup: BeautifulSoup) -> list[Tag]:
 
 
 def verify_pricing_page(html: str) -> None:
-    """Pin the reviewed pricing section; refuse priced tables anywhere else."""
+    """Pin the reviewed pricing section; refuse tables with figures anywhere else."""
     soup = BeautifulSoup(html, "html.parser")
     for hidden in soup(["script", "style", "noscript", "template"]):
         hidden.decompose()
@@ -138,8 +134,8 @@ def verify_pricing_page(html: str) -> None:
     if " ".join(section.get_text(" ", strip=True).split()) != _REVIEWED_PRICING_SECTION:
         raise RuntimeError("maple: pricing section text changed; review")
     for table in soup.find_all("table"):
-        if section not in table.parents and _CURRENCY_MARKER.search(table.get_text(" ", strip=True)):
-            raise RuntimeError("maple: priced table outside the pricing section; review")
+        if section not in table.parents and _FIGURE.search(table.get_text(" ", strip=True)):
+            raise RuntimeError("maple: another table with figures; review")
 
 
 def _table_states_per_million(table: Tag) -> bool:
