@@ -35,6 +35,7 @@ from trusted_router.catalog_data import (
     _EmbeddingSpec,
     maker_provider_slug,
 )
+from trusted_router.closed_weight_routes import closed_weight_route_disallowed
 from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
 from trusted_router.model_aliases import merge_openrouter_model_rows
 from trusted_router.pricing import (
@@ -1768,35 +1769,6 @@ def _input_only_manifest_cost(
     return None
 
 
-# Providers through which we route Anthropic-authored (anthropic/*) models on
-# Credits. First-party Anthropic, Vertex, and Bedrock surfaces are allowed. Resellers that
-# merely list Claude ids are intentionally excluded (see _keep policy below).
-_ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
-    # First-party Anthropic surfaces are OK for Claude Credits routing; resellers
-    # are not. Vertex + Bedrock included per product decision (2026-07-18) so
-    # Claude-on-Vertex/Bedrock Credits routes are permitted when they exist.
-    {"anthropic", "google-vertex", "bedrock", "aws-bedrock", "amazon-bedrock"}
-)
-
-
-# Closed-weight models admitted only on their maker's own surfaces, for every
-# usage type (Credits and BYOK). Third-party catalogs can list a maker's exact
-# public id the day it launches; GMI's BYOK catalog began listing
-# google/gemini-4-carbon on 2026-11-20 and the refresh would have published a
-# reseller route beside the verified direct ones. Listing an id is not an
-# admission: each model here was verified end to end on these providers only
-# (docs/providers/2026-11-10-gemini-carbon.md). Adding a provider is a reviewed
-# admission, never something discovery can do on its own.
-_FIRST_PARTY_ONLY_MODEL_PROVIDERS: dict[str, frozenset[str]] = {
-    "google/gemini-4-carbon": frozenset({"google-ai-studio", "google-vertex"}),
-}
-
-
-def _first_party_only_route_disallowed(endpoint: ModelEndpoint) -> bool:
-    allowed = _FIRST_PARTY_ONLY_MODEL_PROVIDERS.get(endpoint.model_id)
-    return allowed is not None and endpoint.provider not in allowed
-
-
 def _provider_manifest_dark_model_ids() -> dict[str, frozenset[str]]:
     """Return provider-native routes explicitly held by fresh discovery."""
 
@@ -1833,11 +1805,12 @@ def _filter_unserved_provider_endpoints(
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
 
-    Eight complementary filters apply:
+    Seven complementary filters apply:
       * operator hold    — drop deliberately disabled provider/model routes for
         every usage type, including third-party Lightning/Cloudflare passthrough.
-      * first-party only — drop every non-maker route (Credits and BYOK) for
-        closed-weight models admitted only on their maker's surfaces.
+      * closed weights   — drop every route (Credits and BYOK) for a closed-weight
+        model on a provider that is not its maker or an authorized cloud
+        (see trusted_router.closed_weight_routes).
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
       * discovery hold   — drop prepaid routes explicitly held by a fresh
@@ -1846,8 +1819,6 @@ def _filter_unserved_provider_endpoints(
         providers and account-verified Credits models for static allowlists.
       * model denylist    — drop the listed Credits models on EVERY provider (GPT-5.4/pro).
       * provider denylist — drop a Credits model on ONE provider only (gmi closed models).
-      * Claude first-party — route Anthropic-authored models via Anthropic only
-        for Credits, never resellers (policy; see _ANTHROPIC_FIRST_PARTY_PROVIDERS).
     """
     allow = dict(_PROVIDER_SERVED_MODEL_ALLOWLIST)
     dark = _provider_manifest_dark_model_ids()
@@ -1857,7 +1828,7 @@ def _filter_unserved_provider_endpoints(
     def _keep(endpoint: ModelEndpoint) -> bool:
         if provider_model_operator_held(endpoint.provider, endpoint.model_id, endpoint.upstream_id):
             return False
-        if _first_party_only_route_disallowed(endpoint):
+        if closed_weight_route_disallowed(endpoint.provider, endpoint.model_id):
             return False
         if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS:
             return False
@@ -1889,18 +1860,6 @@ def _filter_unserved_provider_endpoints(
             return False
         if endpoint.usage_type != "Credits":
             return True
-        # Policy (2026-07-18): serve Anthropic-authored models via Anthropic
-        # directly for Credits, not resellers. Resellers list Claude ids they
-        # mostly don't actually serve (uniform upstream 404s) and add no value
-        # over first-party; keeping them only produced dead routes and alert
-        # noise. BYOK is untouched — a customer's own reseller key is their
-        # choice. Extend _ANTHROPIC_FIRST_PARTY_PROVIDERS if first-party
-        # Vertex/Bedrock Claude routing is ever enabled.
-        if (
-            endpoint.model_id.startswith("anthropic/")
-            and endpoint.provider not in _ANTHROPIC_FIRST_PARTY_PROVIDERS
-        ):
-            return False
         if endpoint.provider in allow and endpoint.model_id not in allow[endpoint.provider]:
             return False
         if endpoint.model_id in _UNSERVED_CREDITS_MODELS:

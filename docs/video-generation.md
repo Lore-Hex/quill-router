@@ -15,7 +15,6 @@ actual usage. TrustedRouter does not send video requests through OpenRouter.
 | `bytedance/seedance-2.0` | Seedance 2.0 | 5 seconds, 720p |
 | `lightricks/ltx-2.3-fast` | LTX 2.3 Fast | 6 seconds, 1080p |
 | `lightricks/ltx-2.3` | LTX 2.3 | 6 seconds, 1080p |
-| `google/gemini-omni-flash` | Gemini Omni Flash | 4 seconds, 720p |
 | `minimax/hailuo-3` | MiniMax Hailuo 3, also called H3 | 5 seconds, 2K |
 | `minimax/h3-max` | MiniMax H3 Max on fal | 5 seconds, 768p |
 

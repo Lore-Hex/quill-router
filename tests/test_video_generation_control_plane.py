@@ -15,6 +15,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
 )
 from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
+from trusted_router.closed_weight_routes import closed_weight_route_disallowed
 from trusted_router.config import Settings
 from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
@@ -28,7 +29,6 @@ VIDEO_MODELS = {
     "bytedance/seedance-2.0-fast",
     "google/veo-3.1",
     "google/veo-3.1-fast",
-    "google/gemini-omni-flash",
     "openai/sora-2",
     "openai/sora-2-pro",
     "runway/gen-4.5",
@@ -142,6 +142,7 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
             host for host in hosts
             if (host, model_id) not in dark and not provider_model_retired(host, model_id)
             and host not in PREPAID_PROVIDER_HOLD_REASONS
+            and not closed_weight_route_disallowed(host, model_id)
         ]
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
@@ -158,16 +159,18 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     assert MODELS["minimax/h3-max"].input_modalities == ("text", "image")
 
 
-def test_sora_video_authorizes_direct_openai_before_standard_fallback() -> None:
+def test_closed_video_models_route_only_through_their_makers() -> None:
     for model_id in ("openai/sora-2", "openai/sora-2-pro"):
         direct = endpoint_for_id(f"{model_id}@openai/prepaid")
-        fallback = endpoint_for_id(f"{model_id}@venice/prepaid")
         assert direct is not None
-        assert fallback is not None
         assert endpoint_privacy_tier(direct) == PRIVACY_TIER_STANDARD
         assert endpoint_stores_content(direct) is True
-        assert endpoint_privacy_tier(fallback) == PRIVACY_TIER_STANDARD
-        assert endpoint_stores_content(fallback) is True
+    for model_id in ("openai/sora-2", "openai/sora-2-pro", "google/veo-3.1", "google/veo-3.1-fast"):
+        assert endpoint_for_id(f"{model_id}@venice/prepaid") is None
+    # Venice was Gemini Omni Flash's only host, so it no longer claims availability.
+    omni = MODELS["google/gemini-omni-flash"]
+    assert not endpoints_for_model(omni.id)
+    assert omni.prepaid_available is False and omni.byok_available is False
 
 
 def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
