@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
 
 from trusted_router.ai_referrals import ai_referral_platform
+from trusted_router.auth import SESSION_COOKIE_NAME
 from trusted_router.config import Settings
 from trusted_router.exchange_analytics import EXCHANGE_MARKET_SLUGS, HOST_RE, PAGE_RE, market_for
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
@@ -796,12 +797,19 @@ def assign_signup_cta(
     """Give the visitor their sign-up button cell, once.
 
     The cell comes from the anonymous ID, so it never changes for a visitor.
-    The readable cookie lets the shared script pick the label; the exposure
+    The readable cookie lets the shared script pick the label; the assignment
     event (logged only when the cookie is first set) is what the dashboard
-    joins sign-in opens, sign-ups and first calls against.
+    joins sign-in opens, sign-ups and first calls against. It carries the cell
+    in `cta`, not experiment_id: the growth journey reads any experiment_id as
+    the onboarding experiment.
     """
-    # Public acquisition pages only: never the console, sign-in or API paths.
-    if not _should_capture_request(request):
+    # Signed-out visitors on public pages only: never the console, sign-in or
+    # API paths, and never someone who already has a session.
+    if (
+        not _should_capture_request(request)
+        or request.url.path.startswith("/console")
+        or request.cookies.get(SESSION_COOKIE_NAME)
+    ):
         return
     # A visitor who already holds a cell keeps it (and is not logged again).
     if request.cookies.get(SIGNUP_CTA_COOKIE_NAME) in SIGNUP_CTA_CELLS:
@@ -816,11 +824,10 @@ def assign_signup_cta(
         samesite="lax",
         path="/",
     )
-    log.info('acquisition.experiment_exposed', extra={
-        'event': 'acquisition.experiment_exposed',
+    log.info('acquisition.signup_cta_assigned', extra={
+        'event': 'acquisition.signup_cta_assigned',
         'anonymous_fingerprint': _fingerprint(context.anonymous_id),
-        'experiment_id': SIGNUP_CTA_EXPERIMENT_ID,
-        'experiment_cell_id': cell,
+        'cta': f'{SIGNUP_CTA_EXPERIMENT_ID}:{cell}',
         'landing_path': context.last_touch.get('landing_path', ''),
         **_website_network_fields(request),
     })

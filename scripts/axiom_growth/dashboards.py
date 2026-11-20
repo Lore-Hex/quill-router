@@ -120,12 +120,13 @@ def experiment_query():
 def signup_cta_query():
     """Sign-up button A/B test (signup_cta_v1): one row per button label.
 
-    A visitor's cell comes from their one exposure event; their sign-in opens,
-    sign-ups and first calls join on the same anonymous fingerprint."""
+    A visitor's cell comes from their one signup_cta_assigned event (cell in
+    `cta`); their sign-in opens, sign-ups and first calls join on the same
+    anonymous fingerprint. It reads the raw rows because the shared EVENTS
+    projection drops `cta`, so the dashboard filters do not apply to it."""
     return f"""['{DATASET}']
-| where event in ('acquisition.experiment_exposed','acquisition.sign_in_opened','acquisition.signup_completed','acquisition.first_successful_api_call')
-| where event != 'acquisition.experiment_exposed' or experiment_id == 'signup_cta_v1'
-| summarize Building=countif(event=='acquisition.experiment_exposed' and experiment_cell_id=='start_building'), Free=countif(event=='acquisition.experiment_exposed' and experiment_cell_id=='start_for_free'), Opened=countif(event=='acquisition.sign_in_opened'), Signed_up=countif(event=='acquisition.signup_completed'), Called=countif(event=='acquisition.first_successful_api_call') by anonymous_fingerprint
+| where event in ('acquisition.signup_cta_assigned','acquisition.sign_in_opened','acquisition.signup_completed','acquisition.first_successful_api_call')
+| summarize Building=countif(event=='acquisition.signup_cta_assigned' and cta=='signup_cta_v1:start_building'), Free=countif(event=='acquisition.signup_cta_assigned' and cta=='signup_cta_v1:start_for_free'), Opened=countif(event=='acquisition.sign_in_opened'), Signed_up=countif(event=='acquisition.signup_completed'), Called=countif(event=='acquisition.first_successful_api_call') by anonymous_fingerprint
 | extend Button=iff(Free>0,'Start for free',iff(Building>0,'Start building',''))
 | where isnotempty(Button)
 | summarize Visitors=count(), Opened_signup=countif(Opened>0), Signed_up=countif(Signed_up>0), First_API_call=countif(Called>0) by Button

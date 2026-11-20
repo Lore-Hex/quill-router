@@ -44,7 +44,7 @@ BROWSER_EVENTS = frozenset(
         "landing_viewed", "landing_engaged", "sign_in_opened",
         "signin_mode_switched", "signup_mode_switched",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
-        "experiment_exposed",
+        "experiment_exposed", "signup_cta_assigned",
         "social_rewards_exposed", "social_reward_clicked",
         "console_api_keys_viewed", "social_rewards_invitation_viewed", "social_rewards_opened",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",

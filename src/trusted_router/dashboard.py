@@ -2623,7 +2623,7 @@ def _comparison_hero(
     if left_funded or right_funded:
         funded, byok = (left_name, right_name) if left_funded else (right_name, left_name)
         return HERO_BRING_YOUR_OWN_KEY, (
-            f"One key routes both. Your 1 million free tokens cover {funded}, "
+            f"One key routes both. Your free tokens cover your first {funded} requests, "
             f"while {byok} runs on your own provider key. {switch}"
         )
     return HERO_BRING_YOUR_OWN_KEY, (
