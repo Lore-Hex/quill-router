@@ -76,7 +76,7 @@
 .openrouter-article .marketing-copy .microcopy{font-size:14px;line-height:1.6}
 .openrouter-article .copy-terminal{margin-top:24px}
 .openrouter-article .cta-band{border-top:1px solid var(--border-hairline);border-bottom:1px solid var(--border-hairline);padding:28px 0;display:flex;flex-wrap:wrap;gap:20px;background:none}
-.openrouter-article .cta-band .microcopy{width:100%}
+.openrouter-article .cta-band .microcopy,.openrouter-article .cta-band .hero-free-note{width:100%}
 .openrouter-article main>.seo-evidence{max-width:1112px;border-top:1px solid var(--border-hairline);padding-top:36px}
 .openrouter-article [aria-labelledby="sources-heading"] li{font-size:16px;line-height:1.7;margin-bottom:16px}
 .openrouter-article [aria-labelledby="sources-heading"] .panel-body>p{font-size:16px;line-height:1.7}

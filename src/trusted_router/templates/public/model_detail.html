@@ -3,12 +3,12 @@
 {% from "public/_decide_example.html" import decide_curl %}
 {% from "public/_quickstart_box.html" import quickstart_box, chip_row %}
 {% set name = page.short_name %}
-{% set no_card_line %}No card required. Start with 1&nbsp;million free&nbsp;tokens.{% endset %}
+{% from "_free_tokens.html" import free_tokens_line %}{% set no_card_line = free_tokens_line() %}
 {% block head_extra %}<link rel="stylesheet" href="/static/model-detail.css?v={{ static_version|default('local') }}"><link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
 {% block body_attributes %}class="model-detail-page"{% endblock %}
 
 {% macro signup_button(extra_class="", catalog_cta=false) -%}
-<button class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Create my API key</button>
+<button class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Start building</button>
 {%- endmacro %}
 
 {% macro positive_badges(row) -%}
