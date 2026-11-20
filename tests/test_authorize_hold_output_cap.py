@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, effective_endpoint
+from trusted_router.pricing import _flat_tier
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
@@ -29,7 +30,7 @@ from trusted_router.types import UsageType
 
 MODEL = "z-ai/glm-5.3"
 VIDEO_MODEL = "bytedance/seedance-2.5"
-VIDEO_ENDPOINT = f"{VIDEO_MODEL}@venice/prepaid"
+VIDEO_ENDPOINT = f"{VIDEO_MODEL}@byteplus/prepaid"
 
 
 def _figures(client: TestClient, key_hash: str, workspace_id: str, field: str, budget: int) -> tuple[int, int]:
@@ -69,9 +70,11 @@ def test_a_max_tokens_of_131072_reserves_the_16384_figure_and_estimates_the_whol
 @pytest.fixture
 def token_video_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     # The accounting contract, isolated from the provider's catalog state.
+    tiers = _flat_tier(0, 10_700_000)
     monkeypatch.setitem(MODEL_ENDPOINTS, VIDEO_ENDPOINT, replace(
         MODEL_ENDPOINTS[VIDEO_ENDPOINT], completion_price_microdollars_per_million_tokens=10_700_000,
         published_completion_price_microdollars_per_million_tokens=10_700_000,
+        price_tiers=tiers, published_price_tiers=tiers,
     ))
 
 
@@ -85,7 +88,7 @@ def test_a_token_billed_video_reserves_its_whole_budget_and_settles_past_the_bou
         "api_key_lookup_hash": lookup_hash_api_key(inference_key), "model": VIDEO_MODEL,
         "estimated_input_tokens": 0, "max_output_tokens": 80_000, "route_type": "videos",
         "idempotency_key": "token-video-whole-budget", "request_fingerprint": "b" * 64,
-        "provider": {"only": ["venice"]},
+        "provider": {"only": ["byteplus"]},
     })
     assert response.status_code == 200, response.text
     authorization_id = response.json()["data"]["authorization_id"]

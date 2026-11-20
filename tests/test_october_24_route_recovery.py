@@ -227,14 +227,18 @@ def test_ended_union_preview_is_not_silently_replaced(monkeypatch, tmp_path):
     # row instead of pointing the ID at another model. A relisting revives the
     # tombstone, so the rule is checked on pinned rows: the tombstoned preview
     # has no route on any usage type, and no alias sends its ID elsewhere.
-    union, seed = OPENROUTER_UNION_ALPHA["id"], OPENROUTER_SEED_2_1_TURBO["id"]
+    # Seed 2.1 Turbo is closed-weight and now routes only through ByteDance
+    # (trusted_router.closed_weight_routes), so the control is a live listing
+    # of the same row shape under an unrestricted id.
+    union = OPENROUTER_UNION_ALPHA["id"]
+    live = "stealth/union-beta"
     served = _served(monkeypatch, tmp_path, {"openrouter": [
-        dict(OPENROUTER_SEED_2_1_TURBO),
+        {**OPENROUTER_SEED_2_1_TURBO, "id": live, "upstream_id": live},
         {**OPENROUTER_UNION_ALPHA, "routable": False, "routable_reason": "delisted-upstream"},
     ]}, usage_type=None)
     assert not [route for route in served if route[1] == union]
     # Control: the fixture manifest is ingested, and its listed route is served.
-    assert ("openrouter", seed) in served
+    assert ("openrouter", live) in served
     assert canonical_openrouter_model_id(union) == union
     assert canonical_router_model_id(union) == union
 

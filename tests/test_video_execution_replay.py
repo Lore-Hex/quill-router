@@ -11,11 +11,15 @@ from fastapi import HTTPException
 
 from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
 from tests.test_video_derived_routing import MODEL, URL, no_reservation, payload, request
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp import SpannerStore
+
+# Mixed-host video routes the closed-weight rule archived (tests/video_vehicles.py).
+pytestmark = pytest.mark.usefixtures("archived_video_routes")
 
 TOKEN_FIELDS = ("max_tokens", "max_output_tokens", "max_completion_tokens")
 

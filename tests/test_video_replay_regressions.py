@@ -11,11 +11,15 @@ from fastapi.testclient import TestClient
 from tests.test_service_surfaces import _app
 from tests.test_video_derived_routing import MODEL, URL, payload, request
 from tests.test_video_execution_replay import main_fingerprint, resolution_only_fingerprint
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router import authorize_candidates
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway, video_jobs
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import STORE, InMemoryStore, configure_store
+
+# Mixed-host video routes the closed-weight rule archived (tests/video_vehicles.py).
+pytestmark = pytest.mark.usefixtures("archived_video_routes")
 
 LOOKUP = "/v1/internal/gateway/video/replay-lookup"
 

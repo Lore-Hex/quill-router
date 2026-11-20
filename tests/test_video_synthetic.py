@@ -32,30 +32,36 @@ def _mp4() -> bytes:
 
 def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("trusted_router.synthetic.video_generation.PREPAID_PROVIDER_HOLD_REASONS", {})
-    assert len(DAILY_VIDEO_PROFILES) == 8
-    assert len({profile.provider for profile in DAILY_VIDEO_PROFILES}) == 8
-    assert [daily_video_profile(date(2026, 8, day)).provider for day in range(3, 11)] == [
+    # MiniMax Hailuo 3 / H3 Max routed only through resellers (atlas-cloud,
+    # fal) and has no route under the closed-weight rule, so it is not probed.
+    assert len(DAILY_VIDEO_PROFILES) == 6
+    assert len({profile.provider for profile in DAILY_VIDEO_PROFILES}) == 6
+    assert [daily_video_profile(date(2026, 8, day)).provider for day in range(3, 9)] == [
         "grok",
         "runway",
         "alibaba",
         "kling",
         "ltx",
         "google-vertex",
-        "atlas-cloud",
-        "fal",
     ]
     assert sum(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) == (
-        2_827_276
+        1_827_276
     )
     assert max(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) <= 700_000
     profiles = {profile.provider: profile for profile in DAILY_VIDEO_PROFILES}
-    assert profiles["atlas-cloud"].generate_audio is True
     assert profiles["google-vertex"].generate_audio is True
-    assert profiles["fal"].generate_audio is True
     assert all(
         not profile.generate_audio
         for provider, profile in profiles.items()
-        if provider not in {"atlas-cloud", "google-vertex", "fal"}
+        if provider != "google-vertex"
+    )
+    from trusted_router.catalog import endpoint_for_id
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
+    assert all(
+        endpoint_for_id(f"{profile.model}@{profile.provider}/prepaid") is not None
+        for profile in DAILY_VIDEO_PROFILES
+        if profile.provider not in PREPAID_PROVIDER_HOLD_REASONS
     )
 
 
