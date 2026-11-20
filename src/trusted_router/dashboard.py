@@ -1775,7 +1775,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is there a free OpenRouter alternative?",
-                "TrustedRouter gives new accounts 1 million free tokens with no card required, and there's no subscription after that: you pay provider prices plus a 5.5% fee on text and embedding models. Teams spending more than $100 a month on LLMs can request migration credits, granted by approval.",
+                "TrustedRouter gives new accounts up to 1 million free tokens with no card required, and there's no subscription after that: you pay provider prices plus a 5.5% fee on text and embedding models. Teams spending more than $100 a month on LLMs can request migration credits, granted by approval.",
             ),
             (
                 "What is the best OpenRouter alternative for Cursor, Claude Code or Codex?",

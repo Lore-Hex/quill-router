@@ -66,7 +66,7 @@ const SIGNIN_MODES = {
     signup: {
         kicker: "Create your account",
         title: "Get your API key",
-        sub: "No card required. Start with 1 million free tokens.",
+        sub: "No card required. Start with up to 1 million free tokens.",
         ask: "Already have an account?",
         action: "Sign in",
         to: "signin",

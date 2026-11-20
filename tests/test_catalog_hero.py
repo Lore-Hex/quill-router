@@ -60,7 +60,7 @@ def _model_hero(html: str) -> str:
     return match.group(0)
 
 
-NO_CARD = "1&nbsp;million free&nbsp;tokens. No card required."
+NO_CARD = "Up&nbsp;to 1&nbsp;million free&nbsp;tokens. No&nbsp;card&nbsp;required."
 
 
 def test_funded_model_page_is_free_to_start(client: TestClient) -> None:
@@ -353,7 +353,7 @@ def test_model_page_provider_details_use_labels_not_headings(client: TestClient)
 
 def test_free_tokens_note_uses_the_shared_line(client: TestClient) -> None:
     models_html = client.get("/models").text
-    line = "1&nbsp;million free&nbsp;tokens. No card required."
+    line = "Up&nbsp;to 1&nbsp;million free&nbsp;tokens. No&nbsp;card&nbsp;required."
     assert f'<p class="cta-note hero-free-note">{line}</p>' in models_html
     slug = re.search(r'href="/blog/([^"]+)"', client.get("/blog").text)
     assert slug

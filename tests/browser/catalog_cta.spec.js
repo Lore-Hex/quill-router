@@ -132,7 +132,7 @@ test("provider and homepage heroes read Start building", async ({ page }) => {
   await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
   await page.goto("/providers/tinfoil");
   await expect(page.locator(".pd-hero [data-catalog-cta]")).toHaveText("Start building");
-  await expect(page.locator(".pd-hero .hero-free-note")).toHaveText("1 million free tokens. No card required.");
+  await expect(page.locator(".pd-hero .hero-free-note")).toHaveText("Up to 1 million free tokens. No card required.");
   await page.goto("/");
   await expect(page.locator("#top .hero .button-primary")).toHaveText("Start building");
 });
