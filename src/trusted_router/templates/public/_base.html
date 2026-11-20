@@ -74,7 +74,8 @@
           <button {{ signup_cta_attr() }} class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify gateway <span aria-hidden="true">→</span></a>
         </div>
-        <p class="hero-free-note">{{ free_tokens_line() }}</p>
+        {# Legal, careers and error pages empty this block: no offer line there. #}
+        {% block hero_free_note %}<p class="hero-free-note">{{ free_tokens_line() }}</p>{% endblock %}
       </div>
       {% block hero_aside %}
       <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
