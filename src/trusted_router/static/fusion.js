@@ -387,10 +387,9 @@
       return true;
     });
     if (PICKER_FILTERS.cheap) {
-      filtered = filtered
-        .slice()
-        .sort((a, b) => (a.total_per_m || 0) - (b.total_per_m || 0))
-        .slice(0, 30);
+      // Priced models only, cheapest first: a model whose price varies is
+      // neither cheap nor $0 (model_catalog.js cheapestModels).
+      filtered = window.TrustedRouterModelCatalog.cheapestModels(filtered, 30);
     } else {
       filtered = filtered.slice(0, 300);
     }
@@ -490,8 +489,7 @@
         </div>
       </div>
       <div class="chat-model-row-meta">
-        ${model.input_per_m != null ? `<span>$${model.input_per_m.toFixed(2)}/M in</span>` : ""}
-        ${model.output_per_m != null ? `<span>$${model.output_per_m.toFixed(2)}/M out</span>` : ""}
+        ${window.TrustedRouterModelCatalog.priceMetaHtml(model)}
         ${model.context_length ? `<span>${(model.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
         ${model.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
         ${model.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}

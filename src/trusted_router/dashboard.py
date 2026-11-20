@@ -45,9 +45,11 @@ from trusted_router.catalog import (
     PROVIDERS,
     TRUSTED_MODEL_ID,
     TRUSTED_PROVIDER_SLUGS,
+    VARIABLE_PRICE_META_MODEL_IDS,
     Model,
     ModelEndpoint,
     Provider,
+    billed_member_models,
     canonical_orchestration_model_id,
     decide_url,
     endpoint_confidential_compute,
@@ -5578,9 +5580,13 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         and model.prompt_price_microdollars_per_million_tokens == 0
         and model.completion_price_microdollars_per_million_tokens == 0
     ):
-        candidates = meta_candidate_models(model.id)
+        # Same members the /v1/models range is computed from, so the page and
+        # the API cannot disagree about an orchestration's price.
+        candidates = billed_member_models(model.id)
         prompt = _price_range(candidates, "prompt_price_microdollars_per_million_tokens")
         completion = _price_range(candidates, "completion_price_microdollars_per_million_tokens")
+        if model.id in VARIABLE_PRICE_META_MODEL_IDS:
+            prompt = completion = "varies by panel"
     elif endpoints:
         prompt = _endpoint_price_range(endpoints, "prompt_price_microdollars_per_million_tokens")
         completion = _endpoint_price_range(
