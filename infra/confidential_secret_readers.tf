@@ -24,8 +24,10 @@
 #
 # The secret's container is managed here and adopted by the import in
 # infra/imports.tf; its versions are added by hand, so the list is never in
-# this file or in Terraform state. No IAM binding: the deploy identity, which
-# runs infra-apply, already reads every secret in the project.
+# this file. Terraform does keep it, marked sensitive, in the plan and in the
+# private state bucket (through the data source and the alert filter), as it
+# already does for the operator's known addresses. No IAM binding: the deploy
+# identity, which runs infra-apply, already reads every secret in the project.
 resource "google_secret_manager_secret" "confidential_secret_readers" {
   project   = local.gcp_project_id
   secret_id = "tr-confidential-secret-readers"

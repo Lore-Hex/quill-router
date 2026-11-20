@@ -194,10 +194,14 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
     # service accounts of this project: no other project's, no Google-managed
     # account, no user, group, domain or wildcard. Fixed messages: the list
     # is private and the plan log is public.
+    # The whole entry is matched, start to end: the list is interpolated into
+    # the Logging filter, so a quote, space, second "@" or operator inside an
+    # entry could otherwise add alternatives to the exemption.
     precondition {
       condition = alltrue([
         for email in local.confidential_secret_readers :
-        endswith(email, "@${local.service_account_domain}") && can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@", email))
+        can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", email))
+        && endswith(email, "@${local.service_account_domain}")
       ])
       error_message = "tr-confidential-secret-readers holds an entry that is not one whole service account of this project. Entries are separated by commas."
     }

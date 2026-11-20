@@ -237,17 +237,22 @@ def test_confidential_readers_come_only_from_their_secret_and_are_never_written(
         "import {\n  to = google_secret_manager_secret.confidential_secret_readers\n"
         '  id = "projects/quill-cloud-proxy/secrets/tr-confidential-secret-readers"\n}'
     ) in imports
-    # No account is written: only the placeholder in the instructions.
-    assert not re.search(r"[a-z0-9-]+@[a-z0-9-]+\\.iam\\.gserviceaccount\\.com", CONFIDENTIAL.replace("ACCOUNT@PROJECT", ""))
+    # No account is written: only the placeholder in the instructions. The
+    # detector itself is checked against an ordinary address first.
+    account = re.compile(r"[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com")
+    assert account.search("# feed-job@quill-cloud-proxy.iam.gserviceaccount.com")
+    assert not account.search(CONFIDENTIAL.replace("ACCOUNT@PROJECT", ""))
+
+
+CONFIDENTIAL_CHECK = (
+    'can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\\\.iam\\\\.gserviceaccount\\\\.com$", email))\n'
+    '        && endswith(email, "@${local.service_account_domain}")'
+)
 
 
 def test_confidential_readers_must_be_whole_accounts_of_this_project() -> None:
     lifecycle = _resource("unexpected_secret_reader")
-    assert (
-        'endswith(email, "@${local.service_account_domain}") && '
-        'can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@", email))'
-    ) in lifecycle
-    assert "for email in local.confidential_secret_readers :" in lifecycle
+    assert "for email in local.confidential_secret_readers :\n        " + CONFIDENTIAL_CHECK in lifecycle
     assert "length(distinct(local.all_secret_readers)) == length(local.all_secret_readers)" in lifecycle
     # Neither check can quote an entry.
     messages = re.findall(r'error_message\s*= "([^"]*)"', lifecycle)
@@ -255,18 +260,18 @@ def test_confidential_readers_must_be_whole_accounts_of_this_project() -> None:
     assert len(confidential) == 2 and all("${" not in message for message in confidential)
 
 
+def _confidential_accepts(email: str) -> bool:
+    """The precondition's own rule, with its regex read from the Terraform."""
+    found = re.search(r'can\(regex\("(\^\[a-z\][^"]*)", email\)\)\n\s*&& endswith', _resource("unexpected_secret_reader"))
+    assert found
+    pattern = found.group(1).replace("\\\\", "\\")
+    return bool(re.fullmatch(pattern, email)) and email.endswith("@quill-cloud-proxy.iam.gserviceaccount.com")
+
+
 def test_the_confidential_check_admits_real_account_ids_and_refuses_everything_else() -> None:
-    # The same rule as the precondition, applied in Python: a service account
-    # id is 6 to 30 characters, starts with a letter and ends with a letter or
-    # digit, and the domain must be this project's.
     domain = "@quill-cloud-proxy.iam.gserviceaccount.com"
-    pattern = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@")
-
-    def accepted(email: str) -> bool:
-        return email.endswith(domain) and bool(pattern.match(email))
-
-    assert accepted("feed-job" + domain)
-    assert accepted("a-reader-1" + domain)
+    assert _confidential_accepts("feed-job" + domain)
+    assert _confidential_accepts("a-reader-1" + domain)
     for refused in (
         "feed-job@other-project.iam.gserviceaccount.com",
         "12345-compute@developer.gserviceaccount.com",
@@ -277,5 +282,16 @@ def test_the_confidential_check_admits_real_account_ids_and_refuses_everything_e
         "Upper-case" + domain,
         "user:someone@example.com",
         "-starts-with-hyphen" + domain,
+        # Review round 1: entries that would inject alternatives into the
+        # Logging filter, or break its syntax, must be refused whole.
+        'feed-job@x" OR "service-1@gcp-sa-secretmanager.iam.gserviceaccount.com" OR "finish' + domain,
+        'feed-job@"' + domain,
+        "feed-job@feed-job" + domain,
+        "feed job" + domain,
+        "feed-job\\" + domain,
+        "feed-job\n" + domain,
+        "feed-job" + domain + "\n",
+        "feed-job" + domain + ' OR "x' + domain,
+        "feed-job@quill-cloud-proxy.iam.gserviceaccount.com.evil",
     ):
-        assert not accepted(refused), refused
+        assert not _confidential_accepts(refused), refused
