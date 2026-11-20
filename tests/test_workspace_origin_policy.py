@@ -62,6 +62,17 @@ def test_authorize_and_replay_after_policy_change(client):
     assert allowed.status_code == 200, allowed.text
     assert {c["provider"] for c in allowed.json()["data"]["route_candidates"]} == {"cerebras"}
 
+    _, new_key = STORE.create_api_key(workspace_id=ws.id, name="after-change", creator_user_id=user.id)
+    denied = client.post(path, json={**body, "api_key_hash": new_key.hash, "idempotency_key": "new-key"})
+    assert denied.status_code == 403, denied.text
+    mixed = client.post(path, json={
+        "api_key_hash": new_key.hash, "model": "qwen/qwen3.8-27b",
+        "models": ["openai/gpt-oss-120b"], "provider": {"only": ["cerebras"]},
+    })
+    assert mixed.status_code == 200, mixed.text
+    routes = mixed.json()["data"]["route_candidates"]
+    assert {(c["model"], c["provider"]) for c in routes} == {("openai/gpt-oss-120b", "cerebras")}
+
 
 def test_federation_capability_and_stale_unrestricted_shadow(client, monkeypatch):
     user = STORE.ensure_user("peer-origin@example.com")
