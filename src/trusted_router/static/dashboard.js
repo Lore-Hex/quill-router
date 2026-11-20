@@ -303,7 +303,7 @@ function applyAuthAwareChrome() {
         const homepageCta = el.hasAttribute("data-homepage-cta");
         replacement.textContent = homepageCta
             ? "Get my API key"
-            : el.textContent && el.textContent.trim().toLowerCase().includes("api key")
+            : el.hasAttribute("data-signup-cta") || el.getAttribute("data-signin-mode") === "signup" || (el.textContent || "").trim().toLowerCase().includes("api key")
                 ? "Open console"
                 : "Console";
         if (homepageCta)

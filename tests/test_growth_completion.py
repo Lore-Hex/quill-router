@@ -373,6 +373,13 @@ def test_signup_cta_cookie_and_assignment_are_set_once_on_public_pages(client, c
     assigned = [r for r in caplog.records if r.getMessage() == 'acquisition.signup_cta_assigned']
     assert len(assigned) == 1
     assert assigned[0].cta == f'{SIGNUP_CTA_EXPERIMENT_ID}:{cell}'
+    # The exporter keeps the cell; without it the results table has no rows.
+    from scripts.axiom_growth.model import project_event
+    exported = project_event({
+        'event': assigned[0].event, 'anonymous_fingerprint': assigned[0].anonymous_fingerprint,
+        'cta': assigned[0].cta, '_time': '2026-11-20T00:00:00Z',
+    }, source='cloud_logging')
+    assert exported['cta'] == f'{SIGNUP_CTA_EXPERIMENT_ID}:{cell}'
     # It must not look like the onboarding experiment to the growth journey.
     assert not hasattr(assigned[0], 'experiment_id')
     assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)
@@ -393,3 +400,28 @@ def test_signup_cta_is_not_assigned_outside_public_pages(client, caplog):
     signed_in = client.get('/providers/tinfoil')
     assert SIGNUP_CTA_COOKIE_NAME not in signed_in.cookies
     assert not any(r.getMessage() == 'acquisition.signup_cta_assigned' for r in caplog.records)
+
+
+def test_signup_cta_is_assigned_only_where_a_test_button_is_served(client, caplog):
+    from trusted_router.marketing_experiments import SIGNUP_CTA_COOKIE_NAME
+    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
+    # A page that makes no free-token claim, and an old ad page with its own wording.
+    for path in ('/providers/near-ai', '/openrouter-alternative/quickstart'):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert 'data-signup-cta' not in page.text.replace('[data-signup-cta]', '').replace('A="data-signup-cta"', '')
+        assert SIGNUP_CTA_COOKIE_NAME not in page.cookies
+    assert not any(r.getMessage() == 'acquisition.signup_cta_assigned' for r in caplog.records)
+    home = client.get('/')
+    assert home.text.count(' data-signup-cta ') == 3
+    assert home.cookies.get(SIGNUP_CTA_COOKIE_NAME) in {'start_building', 'start_for_free'}
+    assert sum(r.getMessage() == 'acquisition.signup_cta_assigned' for r in caplog.records) == 1
+
+
+def test_signup_cta_results_count_only_events_after_assignment():
+    from scripts.axiom_growth import dashboards as d
+    query = d.signup_cta_query()
+    assert d.FILTER in query and query.index('arg_max(exported_at') < query.index(d.FILTER)
+    assert "column_ifexists('cta','')" in query
+    for column in ('Opened_at>=Assigned_at', 'Signed_up_at>=Assigned_at', 'Called_at>=Assigned_at'):
+        assert column in query

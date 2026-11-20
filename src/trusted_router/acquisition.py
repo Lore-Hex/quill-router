@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -26,6 +27,7 @@ from urllib.parse import urlsplit
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
+from markupsafe import Markup
 
 from trusted_router.ai_referrals import ai_referral_platform
 from trusted_router.auth import SESSION_COOKIE_NAME
@@ -788,6 +790,30 @@ def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, re
     return cell
 
 
+# Whether the page being rendered holds a sign-up button that is in the test.
+# The middleware puts a fresh holder here before the page renders; the
+# template global below flips it. A mutable holder, because the page renders in
+# a child task whose ContextVar writes never reach the middleware.
+_SIGNUP_CTA_RENDERED: ContextVar[list[bool] | None] = ContextVar("signup_cta_rendered", default=None)
+
+
+def track_signup_cta_render() -> list[bool]:
+    holder = [False]
+    _SIGNUP_CTA_RENDERED.set(holder)
+    return holder
+
+
+def signup_cta_attr() -> Markup:
+    """Template global: the attribute that puts a sign-up button in the test.
+
+    Templates write ``<button {{ signup_cta_attr() }} ...>`` so that only
+    visitors who were served such a button are assigned and counted."""
+    holder = _SIGNUP_CTA_RENDERED.get()
+    if holder is not None:
+        holder[0] = True
+    return Markup("data-signup-cta")
+
+
 def assign_signup_cta(
     request: Request,
     response: Response,
@@ -795,6 +821,8 @@ def assign_signup_cta(
     settings: Settings,
 ) -> None:
     """Give the visitor their sign-up button cell, once.
+
+    Called only for a page that rendered a button in the test.
 
     The cell comes from the anonymous ID, so it never changes for a visitor.
     The readable cookie lets the shared script pick the label; the assignment

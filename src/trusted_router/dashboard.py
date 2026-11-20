@@ -21,6 +21,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.acquisition import signup_cta_attr
 from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.bedrock_group_buy import (
     BEDROCK_GROUP_BUY_SPEND_SOURCES,
@@ -2663,7 +2664,9 @@ def _provider_hero_figures(
     prices = [
         cast(int, row["min_prompt_microdollars"])
         for row in served_models
-        if row.get("min_prompt_microdollars") is not None
+        # A zero price is a model billed another way (per image, per second)
+        # or a free route; "from $0" would misdescribe the provider.
+        if row.get("min_prompt_microdollars")
     ]
     if prices:
         figures.append(("Input / 1M from", _short_dollars(min(prices), digits=2)))
@@ -2711,6 +2714,7 @@ def _env() -> Environment:
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
+    env.globals["signup_cta_attr"] = signup_cta_attr
     # Shared header: live catalog size and lab icons for the model search.
     # Lazy import: trusted_router.homepage imports this module at call time.
     from trusted_router.homepage import live_model_count, publisher_icons
@@ -4961,6 +4965,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
             heading=f"{model.name} {label}",
             hero_label=hero_label,
             hero_pitch=hero_pitch,
+            free_hero=hero_label == HERO_FREE_TO_START,
             description=_model_section_description(model, section),
             model=model_view,
             section=section,

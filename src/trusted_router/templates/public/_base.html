@@ -55,12 +55,11 @@
       <div>
         {# A page with the starter credit names it under the button, as every
            other sign-up hero does; the kicker stays for "Bring your own key". #}
-        {% set free_hero = hero_label == "1 million free tokens" %}
         {% if not free_hero %}<div class="kicker">{{ hero_label }}</div>{% endif %}
         <h1>{{ heading }}</h1>
         <p class="lead">{{ hero_pitch }}</p>
         <div class="hero-actions">
-          <button data-signup-cta class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup" data-catalog-cta>Start building</button>
+          <button {% if free_hero %}{{ signup_cta_attr() }} {% endif %}class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup" data-catalog-cta>Start building</button>
         </div>
         {% if free_hero %}<p class="hero-free-note">{{ free_tokens_line() }}</p>{% endif %}
       </div>
@@ -72,7 +71,7 @@
         <h1>{{ heading }}</h1>
         <p class="lead">{{ description }}</p>
         <div class="hero-actions">
-          <button data-signup-cta class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
+          <button {{ signup_cta_attr() }} class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify gateway <span aria-hidden="true">→</span></a>
         </div>
         <p class="hero-free-note">{{ free_tokens_line() }}</p>
