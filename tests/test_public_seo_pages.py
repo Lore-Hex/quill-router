@@ -711,7 +711,7 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
     assert "DRACO" in blog.text
     assert "TrustedRouter Synth Draco on GitHub" in blog.text
-    assert 'data-signin-mode="signup">Create my API key</button>' in blog.text
+    assert 'data-signin-mode="signup">Start building</button>' in blog.text
 
     wrong_zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72", follow_redirects=False)
     assert wrong_zeus_blog.status_code == 301
@@ -1906,14 +1906,14 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
     assert alternatives["itemListElement"][1]["name"] == "Requesty"
     assert alternatives["numberOfItems"] == 10
     assert "Which OpenRouter alternative can I self-host?" in response.text
-    assert response.text.count("Create my API key") == 4
+    assert response.text.count("Start building") == 4
 
 
 def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:
     cases = {
         "/openrouter-alternative": (
             "Switch from OpenRouter in one base URL.",
-            "Create my API key",
+            "Start building",
         ),
         "/private-llm-api": (
             'A private LLM API where "private" means cryptographically verified.',

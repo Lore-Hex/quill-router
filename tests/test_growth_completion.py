@@ -350,3 +350,41 @@ def test_welcome_renders_actual_assigned_treatment(client, cell, label, caplog, 
     client.cookies.delete('tr_pending_reveal')
     assert client.get('/console/welcome').status_code == 200
     assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)
+
+
+def test_signup_cta_assignment_is_balanced_and_stable():
+    from trusted_router.marketing_experiments import assigned_signup_cta_cell
+    cells = [assigned_signup_cta_cell(f'{i:032x}') for i in range(2000)]
+    assert set(cells) == {'start_building', 'start_for_free'}
+    assert 900 <= cells.count('start_building') <= 1100
+    assert cells == [assigned_signup_cta_cell(f'{i:032x}') for i in range(2000)]
+
+
+def test_signup_cta_cookie_and_exposure_are_set_once_on_public_pages(client, caplog):
+    from trusted_router.marketing_experiments import (
+        SIGNUP_CTA_COOKIE_NAME,
+        SIGNUP_CTA_EXPERIMENT_ID,
+    )
+    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
+    first = client.get('/providers/tinfoil')
+    assert first.status_code == 200
+    cell = first.cookies.get(SIGNUP_CTA_COOKIE_NAME)
+    assert cell in {'start_building', 'start_for_free'}
+    exposures = [r for r in caplog.records if r.getMessage() == 'acquisition.experiment_exposed']
+    assert len(exposures) == 1
+    assert exposures[0].experiment_id == SIGNUP_CTA_EXPERIMENT_ID
+    assert exposures[0].experiment_cell_id == cell
+    caplog.clear()
+    # The same visitor keeps the cell and is not logged again.
+    second = client.get('/models')
+    assert second.status_code == 200
+    assert SIGNUP_CTA_COOKIE_NAME not in second.cookies
+    assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)
+
+
+def test_signup_cta_is_not_assigned_outside_public_pages(client, caplog):
+    from trusted_router.marketing_experiments import SIGNUP_CTA_COOKIE_NAME
+    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
+    response = client.get('/console/api-keys', follow_redirects=False)
+    assert SIGNUP_CTA_COOKIE_NAME not in response.cookies
+    assert not any(r.getMessage() == 'acquisition.experiment_exposed' for r in caplog.records)

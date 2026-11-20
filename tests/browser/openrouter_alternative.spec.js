@@ -30,7 +30,7 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
     expect(layout.codeInset).toBeGreaterThanOrEqual(20);
     expect(layout.headingSize).toBeGreaterThan(layout.bodySize);
     expect(layout.headingWeight).toBeGreaterThanOrEqual(500);
-    const ctaStyles = await page.getByRole('button', { name: 'Create my API key', exact: true }).evaluateAll(buttons => buttons.map(button => {
+    const ctaStyles = await page.getByRole('button', { name: 'Start building', exact: true }).evaluateAll(buttons => buttons.map(button => {
       const css = getComputedStyle(button);
       const style = Object.fromEntries(['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'height', 'padding', 'borderRadius', 'backgroundColor', 'color', 'border', 'boxShadow', 'transition'].map(key => [key, css[key]]));
       // On the Ink hero an Ink border would vanish, so that one button's border matches its fill.
@@ -39,7 +39,7 @@ for (const [width, height] of [[320, 568], [360, 800], [390, 844], [430, 932], [
     }));
     expect(ctaStyles).toHaveLength(4);
     for (const style of ctaStyles) expect(style).toEqual(ctaStyles[2]);
-    for (const button of await page.getByRole('button', { name: 'Create my API key', exact: true }).all()) {
+    for (const button of await page.getByRole('button', { name: 'Start building', exact: true }).all()) {
       expect(await button.evaluate(el => {
         const container = el.closest('.cta-band, .marketing-copy, .public-hero > div');
         return Math.abs(el.getBoundingClientRect().left - container.getBoundingClientRect().left
@@ -93,7 +93,7 @@ test('FAQ pricing has no stale as-of date in visible text or structured data', a
 test('API key CTAs open signup, including below the alternatives table', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/openrouter-alternative');
-  const ctas = page.getByRole('button', { name: 'Create my API key', exact: true });
+  const ctas = page.getByRole('button', { name: 'Start building', exact: true });
   await expect(ctas).toHaveCount(4);
   await expect(page.locator('.v2-table-cta')).toHaveCount(1);
   await expect(page.locator('main')).not.toContainText('Attested gateways publish hardware proof');
@@ -107,7 +107,7 @@ test('API key CTAs open signup, including below the alternatives table', async (
 
 test('API key CTAs share hover and keyboard-focus styling', async ({ page }) => {
   await page.goto('/openrouter-alternative');
-  const buttons = page.getByRole('button', { name: 'Create my API key', exact: true });
+  const buttons = page.getByRole('button', { name: 'Start building', exact: true });
   await expect(buttons).toHaveCount(4);
   const readStyle = button => button.evaluate(el => {
     const css = getComputedStyle(el);

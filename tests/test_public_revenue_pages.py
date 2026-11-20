@@ -378,7 +378,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert "import os" in openai_page.text
     assert 'model="trustedrouter/cheap"' in openai_page.text
     assert 'data-action="copy-code"' in openai_page.text
-    assert openai_page.text.count("Create my API key") == 2
+    assert openai_page.text.count("Start building") == 3
     assert "No card required." in openai_page.text
     assert '<a class="btn primary" href="/docs">' not in openai_page.text
 
@@ -386,7 +386,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert migration_page.status_code == 200
     assert "Switch from OpenRouter in one base URL." in migration_page.text
     assert "import os" in migration_page.text
-    assert migration_page.text.count("Create my API key") == 4
+    assert migration_page.text.count("Start building") == 4
     assert "No card required." in migration_page.text
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
@@ -588,7 +588,7 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert "Cached input" in body
     assert "/static/models.js" in body
     assert 'href="/for-developers"' in body
-    assert 'data-signin-mode="signup">Create my API key</button>' in body
+    assert 'data-signin-mode="signup">Start building</button>' in body
     assert 'href="/docs/quickstart"' not in body
     assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
     assert "100+ providers" in body

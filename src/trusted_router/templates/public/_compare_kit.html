@@ -5,7 +5,7 @@
    above-the-fold sign-up action. #}
 {% macro signup(note, hero=false) -%}
 <div class="compare-cta">
-  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup"{% if hero %} data-catalog-cta{% endif %}>Create my API key</button>
+  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup"{% if hero %} data-catalog-cta{% endif %}>Start building</button>
   {% if note %}<p class="compare-cta-note">{{ note }}</p>{% endif %}
 </div>
 {%- endmacro %}
@@ -88,7 +88,7 @@
   {{ extra }}
   <div class="md-code-foot">
     <span>Your agent will need an API key.</span>
-    <button class="btn primary md-cta-small" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
+    <button class="btn primary md-cta-small" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
   </div>
   <span class="md-copy-status tr-code-status" data-md-copy-status role="status" aria-live="polite" aria-atomic="true"></span>
 </div>
