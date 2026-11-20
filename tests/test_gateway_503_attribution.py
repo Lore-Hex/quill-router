@@ -332,6 +332,29 @@ def test_route_template_keeps_a_mounted_root_path_once() -> None:
     assert matched_route_template(mounted) == "/v1/keys/{hash}"
     under_mount = {"path": "/app/v1/keys/h", "root_path": "/app", "route": _route("/keys/{hash}")}
     assert matched_route_template(under_mount) == "/app/v1/keys/{hash}"
+    # Review round 1: a /v1 mount is not the /v1 include. The app mounted at
+    # /v1 and reached through its own /v1 include carries both.
+    v1_mount = {
+        "path": "/v1/v1/internal/gateway/authorize",
+        "root_path": "/v1",
+        "route": _route("/internal/gateway/authorize"),
+    }
+    assert matched_route_template(v1_mount) == "/v1/v1/internal/gateway/authorize"
+    # A root_path strips only at a segment boundary, as Starlette routes it.
+    partial_segment = {"path": "/v1/keys/h", "root_path": "/v", "route": _route("/keys/{hash}")}
+    assert matched_route_template(partial_segment) == "/v/v1/keys/{hash}"
+    whole = {"path": "/v1", "root_path": "/v1", "route": _route("/")}
+    assert matched_route_template(whole) == "/v1/"
+
+
+def test_route_template_restores_the_include_for_a_route_that_begins_with_v1() -> None:
+    # An included route whose own template starts with /v1, reached through
+    # the /v1 include, is served at /v1/v1/...
+    scope = {"path": "/v1/v1/keys/h", "root_path": "", "route": _route("/v1/keys/{hash}")}
+    assert matched_route_template(scope) == "/v1/v1/keys/{hash}"
+    # The same route through the unprefixed include stays as it is.
+    direct = {"path": "/v1/keys/h", "root_path": "", "route": _route("/v1/keys/{hash}")}
+    assert matched_route_template(direct) == "/v1/keys/{hash}"
 
 
 def test_route_template_without_a_matched_route_is_none() -> None:

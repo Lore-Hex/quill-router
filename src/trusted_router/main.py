@@ -216,22 +216,27 @@ def matched_route_template(scope: Any) -> str | None:
         return None
     # Routes under a mounted sub-app carry the mount in root_path.
     root_path = scope.get("root_path") or ""
-    template = f"{root_path}{own}"
     path = scope.get("path")
     path_regex = getattr(route, "path_regex", None)
-    if (
-        isinstance(path, str)
-        and path_regex is not None
-        and not template.startswith(_API_VERSION_PREFIX + "/")
-    ):
-        routed = path[len(root_path) :] if root_path and path.startswith(root_path) else path
+    if isinstance(path, str) and path_regex is not None:
+        routed = _route_path(path, root_path)
         if (
             routed.startswith(_API_VERSION_PREFIX + "/")
             and path_regex.match(routed) is None
             and path_regex.match(routed[len(_API_VERSION_PREFIX) :]) is not None
         ):
-            template = f"{root_path}{_API_VERSION_PREFIX}{own}"
-    return template
+            return f"{root_path}{_API_VERSION_PREFIX}{own}"
+    return f"{root_path}{own}"
+
+
+def _route_path(path: str, root_path: str) -> str:
+    """The path the router matched: Starlette's rule, which strips root_path
+    only when it ends at a segment boundary of the concrete path."""
+    if not root_path or not path.startswith(root_path):
+        return path
+    if path == root_path:
+        return ""
+    return path[len(root_path) :] if path[len(root_path)] == "/" else path
 
 
 def _configure_application_logging() -> None:
