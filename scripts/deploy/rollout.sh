@@ -531,6 +531,7 @@ ENV_VARS=(
   "TR_SOCIAL_REWARDS_ENABLED=true"
   "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
   "TR_SOCIAL_REWARDS_ISSUER_ID=gcp-primary"
+  "TR_SOCIAL_REWARDS_YOUTUBE_URL=https://www.youtube.com/@NYTokenExchange"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   # Owner notifications. The identifiers here are not secrets — the numbers are
   # public and the ids name resources, not authorise them — so they live in

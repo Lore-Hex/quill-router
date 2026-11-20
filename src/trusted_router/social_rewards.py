@@ -25,7 +25,7 @@ ACTIONS = (
     ("x_trustedrouter", "Follow TrustedRouter on X", "https://x.com/TrustedRouter"),
     ("x_founder", "Follow @jperla on X", "https://x.com/jperla"),
     ("linkedin", "Follow TrustedRouter on LinkedIn", "https://www.linkedin.com/company/trustedrouter"),
-    ("youtube", "Subscribe to TrustedRouter on YouTube", ""),
+    ("youtube", "Subscribe to New York Token Exchange on YouTube", ""),
 )
 
 

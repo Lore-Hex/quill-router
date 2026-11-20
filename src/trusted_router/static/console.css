@@ -997,54 +997,62 @@ body.console {
   --adyen-sdk-border-radius-l: var(--tr-radius-control);
 }
 
-/* Social rewards: compact platform rows with one active completion step. */
+/* Social rewards: a raised card over the dimmed page. The header is a
+   colour field (the theme sets it to the page's lead colour), then compact
+   platform rows with one active completion step. */
 .social-rewards {
   color: var(--tr-color-text-primary);
-  background: var(--tr-color-surface-bg-alt);
-  border: 1px solid var(--tr-color-line-rule-soft);
+  background: var(--tr-color-surface-panel-raised);
+  border: 1px solid var(--tr-color-text-primary);
   border-radius: var(--tr-square, 12px);
+  box-shadow: 0 24px 64px rgb(21 19 17 / 28%);
   padding: 0;
   width: min(600px, calc(100vw - 24px));
   max-width: none;
   max-height: calc(100dvh - 24px);
   font-family: var(--tr-font-family-sans);
 }
-.social-rewards::backdrop { background: var(--tr-legacy-000000-c7, rgb(0 0 0 / 78%)); }
-.social-rewards-head { padding: 28px 28px 20px; position: relative; background: color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base)); }
-.social-rewards-close { position: absolute; right: 12px; top: 12px; font-size: 24px; border: 0; background: transparent; }
-.social-rewards h2 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.03em; margin: 0 32px 10px 0; }
-.social-rewards-progress { font-size: 12px; font-weight: 600; margin: 22px 0 10px; }
-.social-rewards progress { display: block; width: 100%; height: 4px; border: 0; border-radius: var(--tr-square, 4px); accent-color: var(--tr-color-accent-base); background: var(--tr-color-line-rule-soft); }
-.social-rewards progress::-webkit-progress-bar { background: var(--tr-color-line-rule-soft); border-radius: var(--tr-square, 4px); }
+.social-rewards::backdrop { background: rgb(21 19 17 / 45%); }
+.social-rewards-head { position: relative; padding: 28px 28px 24px; color: var(--tr-color-text-primary); background: var(--tr-color-surface-bg); }
+.social-rewards-head::before { content: ""; display: block; width: 40px; height: 4px; margin-bottom: 14px; background: var(--tr-color-accent-base); }
+.social-rewards-close { position: absolute; right: 12px; top: 12px; font-size: 24px; border: 0; background: transparent; color: var(--tr-color-text-primary); }
+.social-rewards h2 { color: var(--tr-color-text-primary); font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.025em; margin: 0 32px 10px 0; }
+.social-rewards h2 strong { color: var(--tr-color-accent-base); }
+/* The heading takes focus when the popup opens; it is not a control. */
+.social-rewards h2:focus { outline: none; }
+.social-rewards-progress { color: var(--tr-color-text-primary); font-size: 14px; font-weight: 500; margin: 22px 0 10px; }
+.social-rewards progress { display: block; width: 100%; height: 6px; border: 0; border-radius: var(--tr-square, 4px); accent-color: var(--tr-color-accent-base); background: var(--tr-color-surface-selected); }
+.social-rewards progress::-webkit-progress-bar { background: var(--tr-color-surface-selected); border-radius: var(--tr-square, 4px); }
 .social-rewards progress::-webkit-progress-value { background: var(--tr-color-accent-base); border-radius: var(--tr-square, 4px); }
 .social-rewards-content { padding: 0 28px; }
 .social-rewards-list { padding: 0; margin: 0; list-style: none; }
-.social-rewards-list li { border-top: 1px solid var(--tr-color-line-rule-soft); padding: 18px 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 14px; }
+.social-rewards-list li { border-top: 1px solid var(--tr-color-line-rule-soft); padding: 16px 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 14px; }
+.social-rewards-list li:first-child { border-top: 0; }
 .social-rewards-icon { display: flex; align-items: center; justify-content: center; color: var(--tr-color-text-primary); }
-.social-rewards-icon svg,
-.social-rewards-icon img { display: block; width: 26px; height: 26px; object-fit: contain; }
-.social-rewards-icon img { filter: brightness(0) invert(1); }
+.social-rewards-icon svg { display: block; width: 26px; height: 26px; }
+/* Third-party marks keep their own colours in every theme. */
+.social-rewards-icon[data-platform="linkedin"] { color: #0a66c2; }
+.social-rewards-icon[data-platform="youtube"] { color: #ff0033; }
 .social-rewards-action-title { color: var(--tr-color-text-primary); font-size: 14px; font-weight: 600; line-height: 1.4; text-decoration: none; }
 .social-rewards-list p { color: var(--tr-color-text-tertiary); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
 [data-rewards-open][hidden] { display: none; }
 .social-rewards-start { min-width: 88px; min-height: 44px; font-size: 12px; }
 .social-rewards-controls { grid-column: 2 / -1; display: grid; gap: 14px; padding: 4px 0; }
 .social-rewards-controls[hidden] { display: none; }
-.social-rewards-list .claimed .btn { opacity: 1; background: transparent; color: var(--tr-color-accent-base); border-color: transparent; }
-.social-rewards-foot { padding: 18px 28px; border-top: 1px solid var(--tr-color-line-rule-soft); display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; }
+.social-rewards-list .claimed .btn { opacity: 1; background: transparent; color: var(--tr-color-text-primary); border-color: transparent; }
+.social-rewards-foot { padding: 14px 28px; background: var(--tr-color-surface-bg); border-top: 1px solid var(--tr-color-line-rule-soft); display: flex; gap: 20px; align-items: center; justify-content: space-between; }
 .social-rewards-foot p { color: var(--tr-color-text-tertiary); font-size: 12px; line-height: 1.5; margin: 10px 0; }
-.social-rewards-foot .btn { white-space: nowrap; min-height: 44px; border: 0; background: transparent; }
+.social-rewards-foot .btn { white-space: nowrap; min-height: 44px; border: 0; background: transparent; font-weight: 600; }
 .social-rewards-terms { flex: 1; min-width: 0; }
 .social-rewards-terms summary { font-size: 12px; color: var(--tr-color-text-tertiary); cursor: pointer; padding: 14px 0; }
-.social-rewards :focus-visible { outline: 2px solid var(--tr-color-accent-base); outline-offset: 4px; }
+.social-rewards :focus-visible { outline: 2px solid var(--tr-color-focus); outline-offset: 4px; }
 
 @media (max-width: 600px) {
-  .social-rewards-head { padding: 22px 18px 18px; }
+  .social-rewards-head { padding: 22px 18px 20px; }
   .social-rewards h2 { margin-right: 36px; }
   .social-rewards-content { padding: 0 18px; }
   .social-rewards-list li { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 16px 0; }
-  .social-rewards-icon svg,
-  .social-rewards-icon img { width: 23px; height: 23px; }
+  .social-rewards-icon svg { width: 23px; height: 23px; }
   .social-rewards-action-title { font-size: 13px; }
   .social-rewards-start { min-width: 70px; padding: 8px; font-size: 11px; }
   .social-rewards-controls { grid-column: 1 / -1; }
@@ -1168,47 +1176,6 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   opacity: .18;
   mask-image: linear-gradient(90deg, transparent 20%, var(--tr-legacy-000000, #000) 55%, transparent 85%);
 }
-.social-rewards-head {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  background:
-    linear-gradient(90deg, transparent 42%, color-mix(in srgb, var(--tr-color-accent-ink) 10%, transparent)),
-    radial-gradient(ellipse at 105% 115%, oklch(from var(--tr-color-information-note) 68% calc(c * 2) h / .8), transparent 38%),
-    radial-gradient(ellipse at 94% 100%, oklch(from var(--tr-color-link-base) 68% calc(c * 3) h / .8), transparent 52%),
-    radial-gradient(ellipse at 92% -25%, oklch(from var(--tr-color-accent-base) 72% calc(c * 3) h / .75), transparent 56%),
-    color-mix(in srgb, var(--tr-color-surface-selected) 88%, var(--tr-color-accent-base));
-}
-.social-rewards-head::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(circle, var(--tr-color-accent-base) .65px, transparent .9px) 0 0 / 4px 4px;
-  opacity: .075;
-  mask-image: linear-gradient(100deg, transparent 45%, var(--tr-legacy-000000, #000));
-}
-/* Cropped contours stay in the corner and dissolve above the progress bar. */
-.social-rewards-head::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0 0 auto;
-  height: 108px;
-
-  --reward-arc-x: calc(100% + 30px);
-
-  background:
-    radial-gradient(circle at var(--reward-arc-x) -110px, transparent 189px, color-mix(in srgb, var(--tr-color-accent-base) 14%, transparent) 190px, transparent 191px),
-    radial-gradient(circle at var(--reward-arc-x) -110px, transparent 229px, color-mix(in srgb, var(--tr-color-accent-base) 9%, transparent) 230px, transparent 231px);
-  mask-image: linear-gradient(to bottom, var(--tr-legacy-000000, #000) 5%, var(--tr-legacy-000000-a6, rgb(0 0 0 / 65%)) 40%, transparent 90%);
-  pointer-events: none;
-}
-
-@media (max-width: 600px) {
-  .social-rewards-head::after { --reward-arc-x: calc(100% + 65px); }
-}
 
 @media (min-width: 801px) {
   .console-sidebar {
@@ -1258,8 +1225,6 @@ body.console .console-main:has(.key-list-panel) { background: var(--tr-color-sur
   .console-configuration[open] > summary::after,
   .console-sidebar .console-header-menu[open] > summary::after { transform: rotate(45deg); }
 }
-.social-rewards-icon[data-platform="linkedin"] { color: var(--tr-legacy-0a66c2, #0a66c2); }
-.social-rewards-icon[data-platform="youtube"] { color: var(--tr-legacy-ff0033, #ff0033); }
 
 /* Header balance chip: the workspace's available credit on every console page. */
 .console-balance { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--tr-color-accent-base) 16%, transparent); color: var(--tr-color-accent-base); font-size: 13px; font-weight: 600; letter-spacing: 0.1px; text-decoration: none; white-space: nowrap; }
