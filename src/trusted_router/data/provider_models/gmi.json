@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-11-11T01:59:57Z",
-  "model_count": 113,
+  "generated_at": "2026-11-20T05:10:05Z",
+  "model_count": 116,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -419,7 +419,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 570000,
       "output_token_price_per_m": 2290000,
-      "cached_input_token_price_per_m": 230000
+      "cached_input_token_price_per_m": 230000,
+      "missing_since": "2026-11-20"
     },
     {
       "display_name": "DeepSeek V3 0324",
@@ -710,7 +711,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-11-20"
     },
     {
       "display_name": "KAT-Coder-Pro-V2",
@@ -1503,7 +1505,8 @@
       "upstream_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-FP8",
       "context_length": 262141,
       "input_token_price_per_m": 350000,
-      "output_token_price_per_m": 4200000
+      "output_token_price_per_m": 4200000,
+      "missing_since": "2026-11-20"
     },
     {
       "display_name": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
@@ -1544,7 +1547,8 @@
           "output_token_price_per_m": 13500000,
           "cached_input_token_price_per_m": 540000
         }
-      ]
+      ],
+      "missing_since": "2026-11-20"
     },
     {
       "display_name": "Qwen3 Next 80B A3B Instruct ",
@@ -1587,7 +1591,8 @@
       "upstream_id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
       "context_length": 262144,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-11-20"
     },
     {
       "display_name": "Qwen3.5 122B A10B",
@@ -1896,7 +1901,8 @@
           "output_token_price_per_m": 12000000,
           "cached_input_token_price_per_m": 1000000
         }
-      ]
+      ],
+      "missing_since": "2026-11-20"
     },
     {
       "display_name": "MiMo-V2.5",
@@ -2126,7 +2132,7 @@
       "status": 1,
       "id": "qwen/qwen3.8-27b",
       "upstream_id": "Qwen/Qwen3.8-27B",
-      "context_length": 1048575,
+      "context_length": 1000000,
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 3200000,
       "cached_input_token_price_per_m": 250000
@@ -2594,9 +2600,9 @@
       "id": "google/gemini-4-argon",
       "upstream_id": "google/gemini-4-argon",
       "context_length": 1048576,
-      "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 100000
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 200000
     },
     {
       "display_name": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
@@ -2746,6 +2752,83 @@
       "input_token_price_per_m": 834000,
       "output_token_price_per_m": 2501000,
       "cached_input_token_price_per_m": 42000
+    },
+    {
+      "display_name": "Gemini-4-Carbon",
+      "title": "google/gemini-4-carbon",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-4-carbon",
+      "upstream_id": "google/gemini-4-carbon",
+      "context_length": 1048576,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Gemini-4-Hydrogen",
+      "title": "google/gemini-4-hydrogen",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-4-hydrogen",
+      "upstream_id": "google/gemini-4-hydrogen",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "Grok 4.7",
+      "title": "xai/grok4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok4.7",
+      "upstream_id": "xai/grok4.7",
+      "context_length": 500000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 500000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 199999,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 1000000
+        }
+      ]
     }
   ],
   "price_scale": "microdollars_per_million"

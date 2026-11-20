@@ -447,12 +447,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "cohere/north-mini-code:free": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "deepseek/deepseek-chat-v3.1": {
       "mandatory": false,
       "default_enabled": false,
@@ -3011,12 +3005,6 @@
         "low"
       ],
       "default_effort": "high"
-    },
-    "x-ai/grok-build-0.1": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
     },
     "xiaomi/mimo-v2.5": {
       "mandatory": false,

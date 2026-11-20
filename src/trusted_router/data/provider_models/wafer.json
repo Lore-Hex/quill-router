@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-20T05:10:06Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 17,
+  "model_count": 19,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -164,9 +164,9 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 2000000,
+      "input_token_price_per_m": 600000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 250000,
+      "cached_input_token_price_per_m": 200000,
       "supported_features": [
         "tools",
         "json-mode",
@@ -236,8 +236,8 @@
       "zdr_supported": true,
       "context_length": 1048576,
       "routable": true,
-      "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 3000000,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1800000,
       "cached_input_token_price_per_m": 180000,
       "supported_features": [
         "tools",
@@ -284,7 +284,7 @@
       ],
       "input_token_price_per_m": 190000,
       "output_token_price_per_m": 650000,
-      "cached_input_token_price_per_m": 6000,
+      "cached_input_token_price_per_m": 12000,
       "supported_features": [
         "tools",
         "json-mode",
@@ -361,7 +361,7 @@
       ],
       "input_token_price_per_m": 130000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 3000
+      "cached_input_token_price_per_m": 8000
     },
     {
       "id": "minimax/minimax-m3.1-flash",
@@ -388,9 +388,59 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 15000,
-      "missing_since": "2026-11-01",
-      "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable": true
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "Kimi-K3.1-Pro",
+      "display_name": "Kimi-K3.1-Pro",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro-us",
+      "upstream_id": "Kimi-K3.1-Pro-US",
+      "display_name": "Kimi-K3.1-Pro (US)",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     }
   ]
 }
