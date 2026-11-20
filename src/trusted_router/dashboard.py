@@ -4978,6 +4978,7 @@ def robots_txt(settings: Settings) -> str:
 def sitemap_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
     sitemaps = [
+        "/sitemap-notes.xml",
         "/sitemap-core.xml",
         "/sitemap-providers.xml",
         "/sitemap-models.xml",
