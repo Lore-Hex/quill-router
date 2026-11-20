@@ -206,8 +206,6 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .card-label { display:inline-flex; color:var(--green); background:var(--chip-bg); border:1px solid var(--chip-border); border-radius:999px; padding:4px 8px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
 .marketing-card.featured .card-label { color:var(--tr-legacy-7be0b1, #7be0b1); background:var(--tr-legacy-19a06d-1f, rgb(25,160,109,.12)); border-color:var(--tr-legacy-7be0b1-4c, rgb(123,224,177,.3)); }
 .microcopy { font-size:12px !important; color:var(--muted) !important; }
-/* A sign-up note set at a readable 15px, for pages that want it larger than .microcopy. */
-.cta-note.cta-note-readable { font-size:15px; color:var(--muted); }
 .flow-steps { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
 .flow-steps div { background:var(--code-bg); color:var(--code-ink); border:1px solid var(--code-line); border-radius:var(--tr-square, 8px); padding:16px; }
 .flow-steps span { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:50%; color:var(--tr-color-accent-ink); background:var(--tr-legacy-7be0b1, #7be0b1); font-weight:850; font-size:13px; margin-bottom:14px; }
@@ -961,4 +959,6 @@ input, select { width:100%; border:1px solid var(--line); border-radius:var(--tr
 }
 /* The starter-credit line under a hero's sign-up button: body size and primary
    colour so the offer reads as part of the pitch, not as fine print. */
-.hero-free-note { margin:0; font-size:16px; font-weight:500; line-height:1.5; color:var(--tr-color-text-primary); }
+/* One look wherever the free-tokens line sits (heroes, article bodies, sign-up bands): page
+   rules for paragraphs and notes must not resize or dim it. */
+.hero-free-note { margin:0; font-size:16px !important; font-weight:500; line-height:1.5; color:var(--tr-color-text-primary) !important; }
