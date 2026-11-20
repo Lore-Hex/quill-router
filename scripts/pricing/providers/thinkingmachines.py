@@ -8,6 +8,7 @@ import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json
 from scripts.pricing.manifest import set_manifest_model_canary_states
@@ -37,6 +38,9 @@ API_KEY_ENVS = ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY")
 # ID returns 200: run the refresh with THINKING_MACHINES_API_KEY set (the
 # hourly workflow does not receive that key today). To lift it by hand once
 # access is confirmed, delete the row's "routable"/"routable_reason" fields.
+# The 2026-11-08 rejections were for the earlier serverless ID
+# (":sampling-nvfp4" suffix); the canary probes the row's current upstream_id,
+# which follows the exact ID serverless.json lists.
 ACCESS_HOLD_REASON = "provider-access-unavailable"
 OPERATOR_HOLDS = {"thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON}
 _ACCESS_CANARY_CHECKED: set[str] = set()
@@ -51,11 +55,94 @@ MANIFEST_PATH = (
 )
 
 
+# Every key Tinker documents for each feed (tinker/models/, "Machine-Readable
+# Pricing"), including models.json's temporary-discount fields. A priced row
+# with any other key (a unit, currency, tier, range or condition) is refused,
+# not read as one flat price. Neither feed states a unit today: the docs give
+# per-million-token "$x" strings, so a stated unit is a format change that
+# needs review, whatever it says.
+_DOCUMENTED_ROW_KEYS = {
+    ("input", "cached_input", "output"): frozenset(
+        {"name", "url", "tinker_id", "context", "input", "cached_input", "output"}
+    ),
+    ("prefill", "cached_prefill", "sample"): frozenset(
+        {
+            "name", "url", "tinker_id", "type", "arch", "size", "params",
+            "active_params", "context", "prefill", "cached_prefill", "sample",
+            "train", "note", "original_prefill", "original_cached_prefill",
+            "original_sample", "original_train",
+        }
+    ),
+}
+_PRICE_TEXT = re.compile(r"\$\d+(?:\.\d{1,6})?")
+# Shapes every live row has (2026-11-19): ids like "org/Name:peft:262144:
+# sampling-nvfp4", contexts 32K to 1M, and one discount wording on all eight
+# discounted rows ("Limited-time 50% discount").
+_TINKER_ID = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*(?::peft:[1-9][0-9]*)?(?::sampling-[a-z0-9]+)?"
+)
+_CONTEXT = re.compile(r"[1-9][0-9]*[KM]")
+# Letters, digits, hyphens and dots, with at least one dot and no spaces.
+_DNS_NAME = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+_DISCOUNT_NOTE = re.compile(r"Limited-time [1-9][0-9]?% discount")
+_DISCOUNT_FIELDS = frozenset(
+    {"original_prefill", "original_cached_prefill", "original_sample", "original_train"}
+)
+
+
+def _matching(pattern: re.Pattern[str]):  # noqa: ANN202
+    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _https_url(value: object) -> bool:
+    # The docs: "The url field is an empty string when no model-card link is
+    # provided." Otherwise it must be an https URL whose host is a plain DNS
+    # name and whose port, if any, is valid.
+    if not isinstance(value, str):
+        return False
+    if value == "":
+        return True
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises ValueError on a malformed or out-of-range port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and parts.hostname is not None
+        and _DNS_NAME.fullmatch(parts.hostname) is not None
+    )
+
+
+# Documented value shape of every allowlisted field. A dict or list where a
+# string or count belongs (a nested unit, condition or note) is refused.
+_FIELD_SHAPES = {
+    "name": lambda value: isinstance(value, str) and bool(value.strip()),
+    "url": _https_url,
+    "tinker_id": _matching(_TINKER_ID),
+    "context": _matching(_CONTEXT),
+    "type": lambda value: isinstance(value, str) and bool(value.strip()),
+    "arch": lambda value: isinstance(value, str) and bool(value.strip()),
+    "size": lambda value: isinstance(value, str) and bool(value.strip()),
+    "params": lambda value: type(value) is int and value > 0,
+    "active_params": lambda value: type(value) is int and value > 0,
+    "note": _matching(_DISCOUNT_NOTE),
+    **{
+        field: _matching(_PRICE_TEXT)
+        for field in (
+            "input", "cached_input", "output", "prefill", "cached_prefill", "sample", "train",
+            *_DISCOUNT_FIELDS,
+        )
+    },
+}
+
+
 def _json_prices(
     payload: object, model_ids: dict[str, str], fields: tuple[str, str, str]
 ) -> dict[str, ModelPrice]:
     if not isinstance(payload, list):
         raise RuntimeError("thinkingmachines: pricing feed must be a list")
+    row_keys = _DOCUMENTED_ROW_KEYS[fields]
     prices: dict[str, ModelPrice] = {}
     for row in payload:
         if not isinstance(row, dict):
@@ -63,10 +150,22 @@ def _json_prices(
         native_id = row.get("tinker_id")
         if not isinstance(native_id, str) or native_id not in model_ids:
             continue
+        unreviewed = sorted(set(row) - row_keys)
+        if unreviewed:
+            raise RuntimeError(
+                f"thinkingmachines: unreviewed pricing field(s) {unreviewed} for {native_id}"
+            )
+        malformed = sorted(key for key, value in row.items() if not _FIELD_SHAPES[key](value))
+        if malformed:
+            raise RuntimeError(
+                f"thinkingmachines: malformed pricing field(s) {malformed} for {native_id}"
+            )
+        if "note" in row and not _DISCOUNT_FIELDS <= row.keys():
+            raise RuntimeError(f"thinkingmachines: note without original prices for {native_id}")
         amounts = []
         for field in fields:
             value = row.get(field)
-            if not isinstance(value, str) or re.fullmatch(r"\$\d+(?:\.\d{1,6})?", value) is None:
+            if not isinstance(value, str) or _PRICE_TEXT.fullmatch(value) is None:
                 raise RuntimeError(f"thinkingmachines: invalid {field} price for {native_id}")
             amounts.append(int(Decimal(value[1:]) * 1_000_000))
         prompt, cached, completion = amounts

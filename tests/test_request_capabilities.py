@@ -87,7 +87,9 @@ def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
     assert response.status_code == 200
     rows = {row["id"]: row for row in response.json()["data"]}
     expected = {
-        "openai/gpt-5.5": dict(reasoning_effort=["none", "low", "medium", "high", "xhigh"], tools=True, seed=True, vision=True, confidential=False),
+        # OpenAI's direct contract has no seed; only the removed reseller
+        # routes claimed one (closed_weight_routes).
+        "openai/gpt-5.5": dict(reasoning_effort=["none", "low", "medium", "high", "xhigh"], tools=True, seed=False, vision=True, confidential=False),
         # Large 4's reasoning support does not imply known effort values.
         # The previous generation's contract is covered by the fixture above;
         # an upstream delisting must not require keeping it in the live catalog.

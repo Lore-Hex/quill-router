@@ -227,6 +227,7 @@ def test_actions_surface_owns_only_anonymous_form_submissions() -> None:
 
 def test_control_surface_owns_login_console_and_signed_webhooks_only() -> None:
     paths = _paths(_app("control"))
+    assert "/console/support/inquiry" in paths
 
     assert {
         "/auth/google/login",

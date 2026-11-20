@@ -1,4 +1,8 @@
 import json
+import os
+import subprocess
+import sys
+import traceback
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
@@ -179,8 +183,16 @@ def test_service_is_restricted_and_independent_of_github():
         assert required in service
     assert "GH_TOKEN" not in service
     assert "--no-heartbeat" not in service
-    # Anonymous reads only: the host has no token to dispatch a refresh with.
-    assert "--dispatch-stalled" not in service
+    # The host was anonymous and could not dispatch. GitHub keeps dropping the
+    # refresh cron and the workflow observer's own stall-dispatch rides the
+    # same scheduler, so the host now dispatches too, with a fine-grained
+    # token passed as a systemd credential: a file path in argv, never the
+    # value, and never an environment variable.
+    assert "LoadCredential=github-token:/etc/tr-price-refresh/github-dispatch.token" in service
+    exec_start = next(line for line in service.splitlines() if line.startswith("ExecStart="))
+    assert "--github-token-file %d/github-token" in exec_start
+    assert "--dispatch-stalled" in exec_start
+    assert "github_pat_" not in service
     timer = (root / "scripts/ops/price-refresh-observer.timer").read_text()
     assert "OnCalendar=*-*-* *:23:00 UTC" in timer
     assert "Persistent=true" in timer
@@ -220,3 +232,168 @@ def test_installer_targets_an_existing_cluster_host_by_parameter():
     assert "sys.exit(sys.version_info < (3, 11))" in installer
     runbook = (root / "docs/clickhouse-reliability.md").read_text()
     assert "price-refresh-observer.timer" in runbook
+
+
+TOKEN = "github_pat_" + "T0kenValueForTestsOnly_" * 4
+
+
+def test_token_file_is_stripped_and_validated(tmp_path):
+    path = tmp_path / "github-token"
+    path.write_text(f"  {TOKEN}\n")
+    assert alerts.read_github_token(path) == TOKEN
+    secret = "ghp_" + "S3cretClassicToken" * 3
+    for bad in ("", secret, f"{TOKEN}\n{TOKEN}", f"{TOKEN} extra", TOKEN + "x" * 300):
+        path.write_text(bad)
+        with pytest.raises(ValueError) as caught:
+            alerts.read_github_token(path)
+        assert TOKEN not in str(caught.value) and secret not in str(caught.value)
+
+
+class FakeGitHub:
+    """api.github.com for the host observer: a stalled refresh, no ledger."""
+
+    def __init__(self, *, dispatch_status=204):
+        self.requests = []
+        self.dispatch_status = dispatch_status
+        old = datetime.now(UTC) - timedelta(hours=3)
+        self.old_run = {
+            "id": 7, "run_attempt": 1, "head_sha": "a" * 40, "status": "completed",
+            "conclusion": "success", "path": ".github/workflows/refresh-prices.yml",
+            "head_branch": "main", "repository": {"full_name": alerts.REPOSITORY},
+            "event": "schedule", "created_at": old.isoformat(),
+            "run_started_at": old.isoformat(), "updated_at": old.isoformat(),
+        }
+
+    def __call__(self, handler):
+        assert isinstance(handler, alerts.NoRedirect)
+        return self
+
+    def open(self, request, timeout):
+        self.requests.append(request)
+        url = request.full_url
+        if request.get_method() == "POST":
+            assert url.endswith("/actions/workflows/refresh-prices.yml/dispatches")
+            if self.dispatch_status != 204:
+                raise HTTPError(url, self.dispatch_status, "denied", {}, None)
+            return self.Response(b"")
+        if "/search/issues" in url:
+            return self.Response(b'{"total_count": 0, "incomplete_results": false, "items": []}')
+        if "status=completed" in url or "status=" in url:
+            return self.Response(b'{"workflow_runs": []}')
+        return self.Response(json.dumps({"workflow_runs": [self.old_run]}).encode())
+
+    class Response:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, limit):
+            return self.raw
+
+
+@pytest.fixture
+def host(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", alerts.REPOSITORY)
+    monkeypatch.setenv("TR_PRICE_REFRESH_PUBLIC_API", "1")
+    sent = []
+    monkeypatch.setattr(alerts, "send_sentry", lambda kind, payload: sent.append((kind, payload)))
+    return sent
+
+
+def test_host_observer_with_token_dispatches_a_stalled_refresh(tmp_path, monkeypatch, host, capsys):
+    github = FakeGitHub()
+    monkeypatch.setattr(alerts, "build_opener", github)
+    alerts.main(state_path=tmp_path / "state.json", dispatch=True, github_token=TOKEN)
+    posts = [request for request in github.requests if request.get_method() == "POST"]
+    assert len(posts) == 1
+    assert json.loads(posts[0].data) == {"ref": "main"}
+    # Every read is authenticated too: anonymous reads are limited to 60 an hour.
+    assert all(request.get_header("Authorization") == f"Bearer {TOKEN}"
+               for request in github.requests)
+    assert all(request.full_url.startswith("https://api.github.com/repos/Lore-Hex/quill-router/")
+               or request.full_url.startswith("https://api.github.com/search/issues?q=repo:Lore-Hex/quill-router")
+               for request in github.requests)
+    assert "refresh_dispatch" in json.loads((tmp_path / "state.json").read_text())["sent"]
+    output = capsys.readouterr()
+    assert "Dispatched refresh-prices.yml" in output.out
+    assert TOKEN not in output.out + output.err + json.dumps(host)
+    assert alerts._github_token is None
+
+
+def test_host_observer_without_token_stays_anonymous_and_refuses(tmp_path, monkeypatch, host):
+    github = FakeGitHub()
+    monkeypatch.setattr(alerts, "build_opener", github)
+    with pytest.raises(ValueError, match="anonymous observer cannot dispatch"):
+        alerts.main(state_path=tmp_path / "state.json", dispatch=True)
+    assert not github.requests
+    alerts.main(state_path=tmp_path / "state.json")
+    assert github.requests
+    assert all(request.get_method() == "GET" and not request.has_header("Authorization")
+               for request in github.requests)
+    with pytest.raises(ValueError, match="cannot write"):
+        alerts.gh(alerts.DISPATCH_PATH, {"ref": "main"})
+
+
+def test_token_permits_only_the_refresh_dispatch(monkeypatch):
+    monkeypatch.setenv("TR_PRICE_REFRESH_PUBLIC_API", "1")
+    monkeypatch.setattr(alerts, "_github_token", TOKEN)
+    monkeypatch.setattr(alerts, "build_opener", lambda *args: pytest.fail("no request"))
+    for path, data in (("issues/123", {"state": "closed"}), ("issues", {"title": "x"}),
+                       (alerts.DISPATCH_PATH, {"ref": "evil"}),
+                       ("actions/workflows/deploy.yml/dispatches", {"ref": "main"})):
+        with pytest.raises(ValueError, match="cannot write"):
+            alerts.gh(path, data)
+
+
+def test_token_file_is_refused_outside_the_host_observer(monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_REPOSITORY", alerts.REPOSITORY)
+    monkeypatch.delenv("TR_PRICE_REFRESH_PUBLIC_API", raising=False)
+    with pytest.raises(ValueError, match="only for the host observer"):
+        alerts.main(state_path=tmp_path / "state.json", github_token=TOKEN)
+
+
+def test_token_never_reaches_errors_logs_or_sentry(tmp_path, monkeypatch, host, capsys):
+    github = FakeGitHub(dispatch_status=401)
+    monkeypatch.setattr(alerts, "build_opener", github)
+    alerts.main(state_path=tmp_path / "state.json", dispatch=True, github_token=TOKEN)
+    events = [payload["fingerprint"] for kind, payload in host if kind == "event"]
+    assert ["price-refresh", "refresh_dispatch_failed"] in events
+    output = capsys.readouterr()
+    # The host path names the safe reason (fixed text and a status code).
+    assert "Price refresh dispatch failed: GitHub monitoring API request failed (HTTP 401)" in output.err
+    assert TOKEN not in output.out + output.err + json.dumps(host)
+    class Refusing:
+        def open(self, request, timeout):
+            assert request.get_header("Authorization") == f"Bearer {TOKEN}"
+            raise HTTPError(request.full_url, 401, "Bad credentials", {}, None)
+
+    monkeypatch.setattr(alerts, "build_opener", lambda *args: Refusing())
+    monkeypatch.setattr(alerts, "_github_token", TOKEN)
+    with pytest.raises(RuntimeError) as caught:
+        alerts.public_gh("actions/runs/1/attempts/1/jobs?per_page=100", None)
+    chain = "".join(traceback.format_exception(caught.value))
+    assert "/actions/runs/1/" not in str(caught.value)
+    assert TOKEN not in chain and TOKEN not in repr(caught.value)
+
+
+def test_cli_never_echoes_the_token(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    token_file = tmp_path / "github-token"
+    env = {"PATH": os.environ.get("PATH", ""), "TR_PRICE_REFRESH_PUBLIC_API": "1",
+           "GITHUB_REPOSITORY": "someone/else"}
+    for content in (TOKEN, "ghp_" + TOKEN):
+        token_file.write_text(content)
+        result = subprocess.run(  # noqa: S603 - this repository's script
+            [sys.executable, str(root / "scripts/price_refresh_alerts.py"), "--state-file",
+             str(tmp_path / "state.json"), "--github-token-file", str(token_file),
+             "--dispatch-stalled", "--no-heartbeat"],
+            capture_output=True, text=True, env=env, timeout=30, check=False,
+        )
+        assert result.returncode == 1
+        assert "Price refresh monitoring failed (ValueError)" in result.stderr
+        assert TOKEN not in result.stdout + result.stderr

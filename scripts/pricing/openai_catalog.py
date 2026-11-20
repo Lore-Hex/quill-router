@@ -69,12 +69,17 @@ def discover_openai_chat_catalog(
     explicit_map: dict[str, str],
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
+    price_of: Callable[[dict[str, Any]], ModelPrice | None] | None = None,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     """Normalize text-chat rows while preserving exact upstream IDs.
 
     All-zero prices remain in ``discovered`` so manifest writers can disable
     an existing route immediately, but never enter ``prices`` as billable.
+    ``price_of`` lets a provider whose feed carries more than the flat
+    OpenAI-style rates (for example context tiers) parse its own rows; the
+    default is ``openai_model_price``.
     """
+    price_of = price_of or openai_model_price
 
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
@@ -89,7 +94,7 @@ def discover_openai_chat_catalog(
         model_id = mapped_or_canonical_model_id(native_id, explicit_map)
         if model_id is None:
             continue
-        price = openai_model_price(source)
+        price = price_of(source)
         if price is None:
             continue
 

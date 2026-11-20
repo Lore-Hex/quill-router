@@ -5,6 +5,23 @@ async function fillContact(page) {
   await page.getByLabel("Email", { exact: true }).fill("ada@example.com");
 }
 
+test("signed-in support uses the console endpoint and keeps the contact email separate", async ({ page, context, baseURL }) => {
+  await context.addCookies([{name: "tr_signed_in", value: "1", url: baseURL}]);
+  await page.goto("/support");
+  await fillContact(page);
+  await page.getByLabel("Subject", { exact: true }).fill("Account question");
+  await page.getByLabel("How can we help?").fill("Please help.");
+  const paths = [];
+  await page.route("**/support/inquiry", async (route) => {
+    paths.push(new URL(route.request().url()).pathname);
+    expect(route.request().postDataJSON().email).toBe("ada@example.com");
+    await route.fulfill({ status: 403, json: {} });
+  });
+  await page.getByRole("button", { name: "Send support request" }).click();
+  await expect(page.locator('[data-role="status"]')).toContainText("verify your session");
+  expect(paths).toEqual(["/console/support/inquiry"]);
+});
+
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
   test(`anonymous model request from an empty search at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);

@@ -44,6 +44,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     FAST_MODEL_ID,
     FREE_MODEL_ID,
     FRONTIER_MODEL_ID,
+    FUSION_BILLED_MODEL_ORDER,
+    FUSION_CODE_BILLED_MODEL_ORDER,
     FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -171,6 +173,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     decide_url,
     model_vendor_provider_slugs,
     offers_chat,
+    required_orchestration_configuration,
+    serves_bare_chat,
 )
 from trusted_router.catalog_energy import (
     GREEN_MODEL_ID,
@@ -222,6 +226,8 @@ from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.managed_retention import provider_retention_notice
 from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
+    MICRODOLLARS_PER_DOLLAR,
+    TOKENS_PER_MILLION,
     microdollars_per_million_tokens_to_token_decimal,
     microdollars_to_decimal,
 )
@@ -502,10 +508,56 @@ def _meta_price_range(
             and getattr(endpoint, attr, 0) > 0
         ]
         return (min(values), max(values)) if values else (0, 0)
-    values = [getattr(c, attr) for c in candidates if getattr(c, attr, 0) > 0]
+    values = [getattr(c, attr) for c in billed_member_models(model_id) if getattr(c, attr, 0) > 0]
     if not values:
         return (0, 0)
     return (min(values), max(values))
+
+
+# Orchestration primitives with no fixed members: the caller must choose the
+# panel (analysis_models or a preset), judge and final models, any of which
+# may be any catalog model. No sound bound exists, so they publish
+# OpenRouter's variable-price sentinel instead of a misleading $0.
+VARIABLE_PRICE_META_MODEL_IDS = frozenset({SYNTH_MODEL_ID, SYNTH_CODE_MODEL_ID})
+VARIABLE_PRICE = "-1"
+# The same sentinel in microdollars per million tokens, so the microdollar
+# fields still convert exactly to the decimal strings beside them.
+VARIABLE_PRICE_MICRODOLLARS = -MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION
+
+# Billed-member sets for panels whose catalog candidate list is empty because
+# they never route through the control plane.
+_BILLED_MEMBER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
+    FUSION_MODEL_ID: FUSION_BILLED_MODEL_ORDER,
+    FUSION_CODE_MODEL_ID: FUSION_CODE_BILLED_MODEL_ORDER,
+}
+
+
+def _has_own_token_price(model: Model) -> bool:
+    return (
+        model.prompt_price_microdollars_per_million_tokens > 0
+        or model.completion_price_microdollars_per_million_tokens > 0
+    )
+
+
+def billed_member_models(model_id: str, _seen: frozenset[str] = frozenset()) -> list[Model]:
+    """Concrete models a request naming this meta model can be billed for.
+
+    Orchestrations bill every inner call at the inner model's own price. A
+    member that is itself an unpriced TrustedRouter composition (an advisor
+    whose worker is a panel) is expanded to the models it bills: reading its
+    own $0 dropped it, and an advisor built only from panels published $0.
+    """
+    order = _BILLED_MEMBER_MODEL_ORDERS.get(model_id)
+    candidates = _models_for_ids(order) if order is not None else meta_candidate_models(model_id)
+    seen = _seen | {model_id}
+    members: list[Model] = []
+    for candidate in candidates:
+        if candidate.id in META_MODEL_IDS and not _has_own_token_price(candidate):
+            if candidate.id not in seen:
+                members.extend(billed_member_models(candidate.id, seen))
+        else:
+            members.append(candidate)
+    return members
 
 
 def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int:
@@ -871,6 +923,14 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         prompt_max += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
         pub_prompt_min += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
         pub_prompt_max += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
+    variable_price = model.id in VARIABLE_PRICE_META_MODEL_IDS
+    if variable_price:
+        # Every microdollar field carries the sentinel too, so no field on the
+        # row reads as $0 (free) for a billed orchestration. It converts to
+        # exactly "-1" below.
+        prompt_min = prompt_max = completion_min = completion_max = VARIABLE_PRICE_MICRODOLLARS
+        pub_prompt_min = pub_prompt_max = VARIABLE_PRICE_MICRODOLLARS
+        pub_completion_min = pub_completion_max = VARIABLE_PRICE_MICRODOLLARS
 
     pricing: dict[str, str] = {
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
@@ -994,8 +1054,16 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # it answers POST /v1/decide only: advertised as chat-capable it showed
         # up in the chat picker and as a custom-model base, and both then
         # refused it.
-        "supports_chat": offers_chat(model),
-        "supports_responses": offers_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
+        # A primitive with no built-in configuration refuses a bare request
+        # (400 until the caller configures it), so it is not advertised as
+        # plain chat; required_configuration says what makes it work.
+        "supports_chat": serves_bare_chat(model),
+        "supports_responses": serves_bare_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
+        **(
+            {"required_configuration": list(required_orchestration_configuration(model.id))}
+            if required_orchestration_configuration(model.id)
+            else {}
+        ),
         **({
             "pricing_type": "selection_fee_plus_selected_model_tokens",
             "selector_pricing_unit": "prompt_tokens",

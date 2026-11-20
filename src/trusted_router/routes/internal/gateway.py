@@ -27,7 +27,7 @@ from dataclasses import replace
 from functools import lru_cache
 from itertools import product
 from time import perf_counter
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -124,6 +124,7 @@ from trusted_router.gateway_timing import (
 from trusted_router.model_aliases import names_router_model
 from trusted_router.money import format_money_precise, money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
+from trusted_router.openai_safety import owner_digest, valid_digest
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
@@ -248,6 +249,7 @@ from trusted_router.storage_gcp_settle_outbox import (
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
+    ApiKey,
     AppMarkupPayout,
     ByokKey,
     ByokProviderConfig,
@@ -257,6 +259,7 @@ from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
+    Workspace,
     decode_auth_record,
     generation_id_for_authorization,
     iso_now,
@@ -759,7 +762,14 @@ def _heartbeat_gateway_sync(
             body,
             settings,
             canonical_body=canonical_body,
-            running=int(result.running_micro),
+            # The owner refuses a running charge above the hold's ceiling,
+            # the cap (fastpath owner runningBound), and reaps at most the
+            # cap. The row's transaction lets a prompt above its estimate
+            # raise the cap by that excess (storage_gcp_stage_d.
+            # stage_d_ceiling_microdollars); the owner, which never sees the
+            # prompt, takes the charge clamped to the cap, which is what its
+            # reap would charge either way.
+            running=min(int(result.running_micro), int(result.cap_micro)),
         )
     return {
         "accepted": True,
@@ -1395,6 +1405,7 @@ def _authorize_gateway_sync_impl(
         return _gateway_authorize_response(
             authorization=existing_authorization,
             workspace_id=workspace.id,
+            **_openai_response_fields(request, api_key, workspace, existing_candidates),
             key_hash=api_key.hash,
             model=existing_model,
             endpoint=existing_endpoint,
@@ -2347,6 +2358,7 @@ def _authorize_gateway_sync_impl(
     return _gateway_authorize_response(
         authorization=authorization,
         workspace_id=workspace.id,
+        **_openai_response_fields(request, api_key, workspace, endpoint_candidates),
         key_hash=api_key.hash,
         model=model,
         endpoint=endpoint,
@@ -3050,10 +3062,28 @@ def _broadcast_destinations_for_authorize(workspace_id: str) -> list[Any]:
     return destinations
 
 
+class _OpenAIResponseFields(TypedDict, total=False):
+    openai_safety_identifier: str
+
+
+def _openai_response_fields(
+    request: Request, key: ApiKey, workspace: Workspace, candidates: list[tuple[Model, ModelEndpoint]],
+) -> _OpenAIResponseFields:
+    if request.headers.getlist("x-tr-openai-safety") != ["v1"] or not any(
+        endpoint.provider == "openai" for _, endpoint in candidates
+    ):
+        return {}
+    peer_digest = valid_digest(key.federated_openai_safety_identifier) if key.federated_home else ""
+    return {"openai_safety_identifier": peer_digest or owner_digest(
+        key.creator_user_id or workspace.owner_user_id, workspace.id
+    )}
+
+
 def _gateway_authorize_response(
     *,
     authorization: Any,
     workspace_id: str,
+    openai_safety_identifier: str = "",
     key_hash: str,
     model: Model,
     endpoint: ModelEndpoint,
@@ -3135,6 +3165,7 @@ def _gateway_authorize_response(
             "generation_id": generation_id_for_authorization(authorization.id),
             "workspace_id": workspace_id,
             "api_key_hash": key_hash,
+            **({"openai_safety_identifier": openai_safety_identifier} if openai_safety_identifier else {}),
             "model": model.id,
             "upstream_model": upstream_model,
             "endpoint_id": endpoint.id,
@@ -6299,9 +6330,14 @@ def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
 
     # This helper is settlement-only, after the authorization's endpoint IDs
     # have been checked. A hold must not strand pre-hold charges or refunds.
-    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.catalog_registry import (
+        CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS,
+        HELD_PREPAID_SETTLEMENT_ENDPOINTS,
+    )
 
-    held_endpoint = HELD_PREPAID_SETTLEMENT_ENDPOINTS.get(endpoint_id)
+    held_endpoint = HELD_PREPAID_SETTLEMENT_ENDPOINTS.get(
+        endpoint_id
+    ) or CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS.get(endpoint_id)
     if held_endpoint is not None:
         return held_endpoint
 

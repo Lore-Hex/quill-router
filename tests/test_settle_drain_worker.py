@@ -66,7 +66,7 @@ def inventory_settings(surface, enabled):
     ))
 
 
-def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False,
+def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
               wallet_email_verify=False, routing_evidence=False, request_billing=False, byok_keys=False,
               byok_docs=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
@@ -128,6 +128,10 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     assert routes.count(management_route) == int(management_key)
     if management_key:
         routes.remove(management_route)
+    support_route = ["/console/support/inquiry", ["POST"], "register.<locals>.support_inquiry"]
+    assert routes.count(support_route) == int(console_support)
+    if console_support:
+        routes.remove(support_route)
     if abliterated_page:
         # Account for exactly the reviewed landing page and its slash alias.
         # Keep the frozen inventory's other routes and lifecycle pins intact.
@@ -173,6 +177,7 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
                      byok_docs=surface in {"combined", "public", "observer"},
                      routing_evidence=surface in {"combined", "public", "observer"},
                      management_key=surface in {"combined", "control"},
+                     console_support=surface in {"combined", "control"},
                      request_billing=surface in {"combined", "control"},
                      wallet_email_verify=surface in {"combined", "control"},
                      byok_keys=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]

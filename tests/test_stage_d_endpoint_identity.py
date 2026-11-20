@@ -91,14 +91,17 @@ def test_a_model_id_may_carry_an_at_sign() -> None:
     assert endpoint_provider_and_model("vendor/model@2026-11@some-host/prepaid") == ("some-host", "vendor/model@2026-11")
 
 
-def _fallback_authorization(endpoint_id: str, *, pricing_snapshot: str | None = None, prompt_tokens: int = 102_000) -> GatewayAuthorization:
+def _fallback_authorization(
+    endpoint_id: str, *, pricing_snapshot: str | None = None, prompt_tokens: int = 102_000, output_tokens: int = 500,
+) -> GatewayAuthorization:
     return GatewayAuthorization(
         id="gwa-resold-claude-stream", workspace_id="workspace", key_hash="key",
         model_id=REQUESTED_MODEL, provider=REQUESTED_PROVIDER, usage_type=UsageType.CREDITS,
         estimated_microdollars=40_000, credit_reservation_id="reservation", settled=False,
         endpoint_id=endpoint_id, candidate_endpoint_ids=[endpoint_id],
         pricing_snapshot=pricing_snapshot,
-        heartbeat_seq=0, stage_d_reason="ok", stage_d_prompt_tokens=prompt_tokens, stage_d_max_output_tokens=500,
+        heartbeat_seq=0, stage_d_reason="ok", stage_d_prompt_tokens=prompt_tokens,
+        stage_d_max_output_tokens=output_tokens,
     )
 
 
@@ -145,8 +148,10 @@ def test_the_reaper_books_a_retired_endpoints_stream_in_its_own_convention(monke
 
 def test_a_heartbeat_after_the_endpoint_retired_prices_and_caps_by_the_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """The first heartbeat arrives after the endpoint left the catalog: the
-    running charge is the resold-Claude figure, and a 2,000-token prompt cap
-    refuses the 102,000-token prompt as it does while the endpoint is listed."""
+    running charge is the resold-Claude figure, and the token cap reads the
+    whole 102,000-token prompt as it does while the endpoint is listed: with
+    a 400-token output budget it lends no output and the 500 delivered output
+    tokens are refused (read as 2,000 tokens it would lend 100,000)."""
     route = _stream_route(monkeypatch, *RESOLD_CLAUDE)
     snapshot = canonical_pricing_snapshot(endpoint_pricing_document((route,)))
     _retire(monkeypatch, route.id)
@@ -157,7 +162,9 @@ def test_a_heartbeat_after_the_endpoint_retired_prices_and_caps_by_the_id(monkey
     assert heartbeat.accepted and heartbeat.running_micro == EXCLUSIVE_STREAM_CHARGE
 
     capped = FakeSpannerDatabase(now=STREAM_NOW)
-    _seed_stream(capped, _fallback_authorization(route.id, pricing_snapshot=snapshot, prompt_tokens=2_000))
+    _seed_stream(
+        capped, _fallback_authorization(route.id, pricing_snapshot=snapshot, prompt_tokens=102_000, output_tokens=400),
+    )
     refused = _stream_heartbeat(capped, route)
     assert not refused.accepted and refused.reason == "usage_exceeds_cap"
 

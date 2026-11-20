@@ -31,11 +31,51 @@
     return caps;
   }
 
+  // Dollars per token -> $/M tokens. The catalog publishes a negative price
+  // (OpenRouter's "-1") for an orchestration whose cost depends on the
+  // models the caller configures; that is "varies", never a number to show,
+  // sum, or sort as cheapest. Unknown and varies both come back as null.
+  function pricePerMillion(value) {
+    if (value == null || value === "") return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n * 1_000_000;
+  }
+
+  function priceVaries(pricing) {
+    return [pricing.prompt, pricing.completion].some(
+      (value) => value != null && value !== "" && Number(value) < 0,
+    );
+  }
+
+  // Ascending by total $/M; models without a known price sort after every
+  // priced model instead of reading as $0.
+  function compareByPrice(a, b) {
+    const ak = a.total_per_m == null ? Infinity : a.total_per_m;
+    const bk = b.total_per_m == null ? Infinity : b.total_per_m;
+    if (ak === bk) return 0;
+    return ak < bk ? -1 : 1;
+  }
+
+  // The "Cheap" chip ranks priced models only.
+  function cheapestModels(models, limit) {
+    return models.filter((model) => model.total_per_m != null).sort(compareByPrice).slice(0, limit);
+  }
+
+  function priceMetaHtml(model) {
+    if (model.price_varies) return '<span class="chat-model-price-varies">Price varies</span>';
+    return [
+      model.input_per_m != null ? `<span>$${model.input_per_m.toFixed(2)}/M in</span>` : "",
+      model.output_per_m != null ? `<span>$${model.output_per_m.toFixed(2)}/M out</span>` : "",
+    ].join("");
+  }
+
   function normalizeModel(raw) {
     const pricing = raw.pricing || {};
     const ext = raw.trustedrouter || {};
-    const inputPerM = pricing.prompt != null ? Number(pricing.prompt) * 1_000_000 : null;
-    const outputPerM = pricing.completion != null ? Number(pricing.completion) * 1_000_000 : null;
+    const varies = priceVaries(pricing);
+    const inputPerM = varies ? null : pricePerMillion(pricing.prompt);
+    const outputPerM = varies ? null : pricePerMillion(pricing.completion);
     const declared = ext.capabilities;
     const hasContract = declared && !Array.isArray(declared);
     const catalogCaps = hasContract
@@ -53,11 +93,13 @@
       output_per_m: outputPerM,
       uptime_pct: ext.uptime_pct || null,
       capabilities: allCaps,
-      free: pricing && Number(pricing.prompt) === 0,
+      free: !varies && pricing.prompt != null && Number(pricing.prompt) === 0,
+      price_varies: varies,
       open_weights: !!ext.open_weights,
       us_provider_available: !!ext.us_provider_available,
       eu_focused_provider_available: !!ext.eu_focused_provider_available,
-      total_per_m: (inputPerM || 0) + (outputPerM || 0),
+      // null (unknown) rather than 0, so no consumer can rank it as free.
+      total_per_m: inputPerM == null && outputPerM == null ? null : (inputPerM || 0) + (outputPerM || 0),
       internal_only: !!ext.internal_only,
       route_kind: ext.route_kind || "model",
       supports_chat: ext.supports_chat !== false,
@@ -135,8 +177,7 @@
         </div>
       </div>
       <div class="chat-model-row-meta">
-        ${model.input_per_m != null ? `<span>$${model.input_per_m.toFixed(2)}/M in</span>` : ""}
-        ${model.output_per_m != null ? `<span>$${model.output_per_m.toFixed(2)}/M out</span>` : ""}
+        ${priceMetaHtml(model)}
         ${model.context_length ? `<span>${(model.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
         ${modelTagsHtml(model, activeIds)}
       </div>
@@ -219,10 +260,7 @@
         return true;
       });
       if (state.filters.cheap) {
-        filtered = filtered
-          .slice()
-          .sort((a, b) => (a.total_per_m || 0) - (b.total_per_m || 0))
-          .slice(0, 30);
+        filtered = cheapestModels(filtered, 30);
       } else {
         filtered = filtered.slice(0, 300);
       }
@@ -347,6 +385,8 @@
   }
 
   window.TrustedRouterModelCatalog = {
+    cheapestModels,
+    compareByPrice,
     escapeHtml,
     inferCapabilities,
     loadModels,
@@ -354,5 +394,7 @@
     normalizeModel,
     providerFromModelId,
     prettifyModelId,
+    priceMetaHtml,
+    pricePerMillion,
   };
 })();

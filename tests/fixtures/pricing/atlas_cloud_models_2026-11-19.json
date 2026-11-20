@@ -1,0 +1,301 @@
+{
+  "code": 200,
+  "msg": "succeed",
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-4.5-20250929",
+      "hugging_face_id": "",
+      "name": "Claude Sonnet 4.5 20250929",
+      "object": "model",
+      "created": 1626777600,
+      "is_ready": false,
+      "owned_by": "custom",
+      "root": "anthropic/claude-sonnet-4.5-20250929",
+      "description": "Claude Sonnet 4.5 20250929",
+      "context_length": 200000,
+      "max_output_length": 64000,
+      "quantization": "fp8",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000003",
+        "overrides": [
+          {
+            "prompt": "0.000006",
+            "completion": "0.0000225",
+            "input_cache_read": "0.0000006",
+            "min_context": 200000
+          }
+        ]
+      }
+    },
+    {
+      "id": "google/gemini-2.5-pro",
+      "hugging_face_id": "",
+      "name": "Gemini 2.5 Pro",
+      "object": "model",
+      "created": 1626777600,
+      "is_ready": false,
+      "owned_by": "custom",
+      "root": "google/gemini-2.5-pro",
+      "description": "Gemini 2.5 Pro",
+      "context_length": 1000000,
+      "max_output_length": 65536,
+      "quantization": "fp8",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.00000125",
+        "completion": "0.00001",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.000000125",
+        "overrides": [
+          {
+            "prompt": "0.0000025",
+            "completion": "0.000015",
+            "input_cache_read": "0.00000025",
+            "min_context": 200000
+          }
+        ]
+      }
+    },
+    {
+      "id": "deepseek-ai/deepseek-v4-flash",
+      "hugging_face_id": "",
+      "name": "DeepSeek V4 Flash",
+      "object": "model",
+      "created": 1626777600,
+      "owned_by": "custom",
+      "root": "deepseek-ai/deepseek-v4-flash",
+      "description": "DeepSeek V4 Flash",
+      "context_length": 1048576,
+      "max_output_length": 393216,
+      "quantization": "fp4",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs"
+      ],
+      "pricing": {
+        "prompt": "0.00000014",
+        "completion": "0.00000028",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.000000028"
+      }
+    },
+    {
+      "id": "qwen/qwen3.6-plus",
+      "hugging_face_id": "",
+      "name": "Qwen3.6 Plus",
+      "object": "model",
+      "created": 1626777600,
+      "is_ready": false,
+      "owned_by": "custom",
+      "root": "qwen/qwen3.6-plus",
+      "description": "Qwen3.6 Plus",
+      "context_length": 1000000,
+      "max_output_length": 65536,
+      "quantization": "fp8",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning"
+      ],
+      "pricing": {
+        "prompt": "0.000000325",
+        "completion": "0.00000195",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000000325",
+        "overrides": [
+          {
+            "prompt": "0.0000013",
+            "completion": "0.0000039",
+            "input_cache_read": "0.00000013",
+            "min_context": 256000
+          }
+        ]
+      }
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "hugging_face_id": "",
+      "name": "Kimi K2.7 Code",
+      "object": "model",
+      "created": 1626777600,
+      "is_ready": false,
+      "owned_by": "custom",
+      "root": "moonshotai/kimi-k2.7-code",
+      "description": "Kimi K2.7 Code",
+      "context_length": 262144,
+      "max_output_length": 262144,
+      "quantization": "int4",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "pricing": {
+        "prompt": "0.00000095",
+        "completion": "0.000004",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000016"
+      }
+    },
+    {
+      "id": "zai-org/glm-5.2",
+      "hugging_face_id": "",
+      "name": "GLM 5.2",
+      "object": "model",
+      "created": 1626777600,
+      "discount_to_user": 0.33,
+      "owned_by": "custom",
+      "root": "zai-org/glm-5.2",
+      "description": "GLM 5.2",
+      "context_length": 1048576,
+      "max_output_length": 131072,
+      "quantization": "fp8",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "pricing": {
+        "prompt": "0.0000014",
+        "completion": "0.0000044",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000026"
+      }
+    },
+    {
+      "id": "openai/gpt-6-sol-codex",
+      "hugging_face_id": "",
+      "name": "GPT 6 Sol Codex",
+      "object": "model",
+      "created": 1626777600,
+      "is_ready": false,
+      "owned_by": "custom",
+      "root": "openai/gpt-6-sol-codex",
+      "description": "GPT 6 Sol Codex",
+      "context_length": 1050000,
+      "max_output_length": 131072,
+      "quantization": "fp8",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000002",
+        "overrides": [
+          {
+            "prompt": "0.000004",
+            "completion": "0.000015",
+            "input_cache_read": "0.0000004",
+            "min_context": 272000
+          }
+        ]
+      }
+    }
+  ]
+}

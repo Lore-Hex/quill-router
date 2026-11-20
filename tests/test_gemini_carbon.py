@@ -48,6 +48,34 @@ def test_carbon_has_both_direct_routes_and_correct_capabilities() -> None:
         assert not endpoint_meets_privacy_requirement(ep, PRIVACY_TIER_CONFIDENTIAL)
 
 
+@pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
+def test_reseller_listing_carbon_exact_id_never_becomes_a_route(usage_type: str) -> None:
+    """2026-11-20: GMI's catalog began listing ``google/gemini-4-carbon`` under
+    that exact id. Discovery's identity mapping turned it into a BYOK route and
+    blocked the hourly refresh. Listing a closed model's id is not an admission;
+    only Google's own surfaces may carry Carbon, for every usage type."""
+    from trusted_router import catalog_ingest
+    from trusted_router.catalog import ModelEndpoint
+
+    suffix = usage_type.lower()
+    direct = {
+        provider: ModelEndpoint(
+            id=f"{MODEL}@{provider}/{suffix}", model_id=MODEL, provider=provider,
+            upstream_id="gemini-4-carbon", usage_type=usage_type,
+        )
+        for provider in ("google-ai-studio", "google-vertex")
+    }
+    reseller = ModelEndpoint(
+        id=f"{MODEL}@gmi/{suffix}", model_id=MODEL, provider="gmi",
+        upstream_id=MODEL, usage_type=usage_type,
+    )
+    endpoints = {ep.id: ep for ep in (*direct.values(), reseller)}
+    kept = catalog_ingest._filter_unserved_provider_endpoints(endpoints)
+    assert reseller.id not in kept
+    if usage_type == "BYOK":
+        assert {ep.id for ep in direct.values()} <= kept.keys()
+
+
 def _page() -> str:
     # Official Standard Markdoc cells, captured 2026-11-10. Batch/Contributor
     # are deliberately cheaper and must never become the ordinary tariff.

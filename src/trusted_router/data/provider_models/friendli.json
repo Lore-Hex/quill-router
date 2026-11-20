@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-11-19T19:51:35Z",
+  "generated_at": "2026-11-20T15:28:38Z",
   "model_count": 12,
   "models": [
     {
@@ -220,7 +220,10 @@
         "parallel-tool-calls",
         "structured-outputs",
         "reasoning"
-      ]
+      ],
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.2",

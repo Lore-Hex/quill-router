@@ -220,9 +220,10 @@ def test_the_rule_is_the_enclaves_dispatch_over_the_whole_catalog() -> None:
     assert not _bedrock_runtime_table_disagreements(MODEL_ENDPOINTS.values(), _bedrock_manifest_rows())
     # The equivalence is over a catalog that reaches every branch of it.
     assert by_kind["anthropic"] >= 1 and by_kind["amazon-bedrock"] >= 1 and by_kind["google-vertex"] >= 1, by_kind
-    # Other providers serving an anthropic/ model (deepinfra's BYOK routes
-    # today) relay OpenAI-style counts and stay inclusive.
-    assert by_kind["other_anthropic_publisher"] >= 1, by_kind
+    # Claude routes only through Anthropic and its authorized clouds
+    # (closed_weight_routes), so no other provider serves an anthropic/ model.
+    # Were one admitted, it would relay OpenAI-style counts and stay inclusive.
+    assert by_kind["other_anthropic_publisher"] == 0, by_kind
     # The three relays the rule does not cover are absent from the catalog.
     assert not any(e.provider == "vertex" for e in MODEL_ENDPOINTS.values())
     assert not any(e.provider == "azure" and (_claude_wire_name(e.upstream_id) or _claude_wire_name(e.model_id))
@@ -529,14 +530,17 @@ def _stream_route(monkeypatch: pytest.MonkeyPatch, model_id: str, provider: str,
     )
 
 
-def _stream_authorization(route: ModelEndpoint, *, prompt_tokens: int = 102_000) -> GatewayAuthorization:
+def _stream_authorization(
+    route: ModelEndpoint, *, prompt_tokens: int = 102_000, output_tokens: int = 500,
+) -> GatewayAuthorization:
     return GatewayAuthorization(
         id="gwa-resold-claude-stream", workspace_id="workspace", key_hash="key",
         model_id=route.model_id, provider=route.provider, usage_type=UsageType.CREDITS,
         estimated_microdollars=40_000, credit_reservation_id="reservation", settled=False,
         endpoint_id=route.id, candidate_endpoint_ids=[route.id],
         pricing_snapshot=canonical_pricing_snapshot(endpoint_pricing_document((route,))),
-        heartbeat_seq=0, stage_d_reason="ok", stage_d_prompt_tokens=prompt_tokens, stage_d_max_output_tokens=500,
+        heartbeat_seq=0, stage_d_reason="ok", stage_d_prompt_tokens=prompt_tokens,
+        stage_d_max_output_tokens=output_tokens,
     )
 
 
@@ -652,13 +656,17 @@ def test_the_reaper_books_a_streams_snapshot_in_the_selected_endpoints_conventio
 def test_the_heartbeat_cap_reads_the_whole_prompt_of_a_resold_claude_stream(
     model_id: str, provider: str, upstream_id: str, exclusive: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The authorized-token cap compares the delivered prompt total in the
+    """The authorized-token cap reads the delivered prompt total in the
     selected endpoint's convention: 102,000 tokens for resold Claude (as for
     the anthropic slug), 2,000 for another publisher's model on the same
-    reseller. A limit of 2,000 prompt tokens therefore refuses the resold
-    Claude stream's heartbeat and admits the other."""
+    reseller. A prompt below its 102,000-token estimate lends the difference
+    to the output budget; one at or above it lends nothing (it never spends
+    the budget either: storage_gcp_stage_d.stage_d_ceiling_microdollars). So
+    with a 400-token output budget the 500 delivered output tokens refuse the
+    resold Claude stream's heartbeat and the other is admitted on the
+    100,000 tokens its 2,000-token prompt lends."""
     route = _stream_route(monkeypatch, model_id, provider, upstream_id)
-    authorization = _stream_authorization(route, prompt_tokens=2_000)
+    authorization = _stream_authorization(route, prompt_tokens=102_000, output_tokens=400)
     db = FakeSpannerDatabase(now=STREAM_NOW)
     _seed_stream(db, authorization)
     heartbeat = _stream_heartbeat(db, route)

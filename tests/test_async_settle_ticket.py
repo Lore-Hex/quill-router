@@ -69,13 +69,14 @@ def settings(**kwargs):
     return Settings(environment='test', **{'async_settle_enabled': True, 'async_settle_protection': True, **kwargs})
 
 
-def test_literal_wire_and_fixture_signature():
+@pytest.mark.parametrize("decide_enabled", [False, True])
+def test_literal_wire_and_fixture_signature(decide_enabled):
     assert hashlib.sha256((Path(__file__).parent / 'fixtures/async_settlement/authorize_v1.json').read_bytes()).hexdigest() == '3f8f7b08aeb89e35bdcecd85848fc5bb95b181e103f8473459af7065a79458e0'
     # Keep the frozen wire fixture byte-identical; issue 60s into its window.
     rt = runtime()
     snapshot = BillingSnapshot.model_validate(FIXTURE['response']['data']['billing_snapshot'])
     additions = snapshot_projection(authorization=authorization(), snapshot=snapshot,
-                                   requested=Eligibility(), runtime=rt, settings=settings(),
+                                   requested=Eligibility(), runtime=rt, settings=settings(async_settle_decide_route=decide_enabled),
                                    now=CLAIMS['iat'] + 60)
     response = {'data': {'authorization_id': 'auth-v1', 'generation_id': CLAIMS['generation_id'], **additions}}
     assert canonical(response) == canonical(FIXTURE['response'])  # signature also deterministic

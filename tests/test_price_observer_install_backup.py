@@ -32,6 +32,7 @@ class ObserverBackupTest(unittest.TestCase):
                 "/etc/systemd/system/price-refresh-observer.service",
                 "/etc/systemd/system/price-refresh-observer.timer",
                 "/etc/tr-price-refresh/ingest.dsn",
+                "/etc/tr-price-refresh/github-dispatch.token",
             )
             expected = []
             for index, path in enumerate(paths):
@@ -43,7 +44,7 @@ class ObserverBackupTest(unittest.TestCase):
                 else:
                     source_file = source
                 source_file.write_text(f"backup-fixture-{index}\n")
-                source_file.chmod(0o600 if index == 3 else 0o644)
+                source_file.chmod(0o600 if index >= 3 else 0o644)
                 os.utime(source_file, (1_700_000_000, 1_700_000_000))
                 expected.append(source_file)
                 loop = loop.replace(path, shlex.quote(str(source)))

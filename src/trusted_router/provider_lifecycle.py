@@ -135,6 +135,7 @@ NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 NOVITA_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
+NOVITA_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 12, 10, 0, 0, tzinfo=UTC)
 ARCEE_TRINITY_LARGE_THINKING_RETIREMENT_AT = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
@@ -1750,6 +1751,18 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"xiaomimimo/mimo-v2.5-pro"}),
         effective_at=NOVITA_MIMO_V25_RETIREMENT_AT,
         replacement_model_ids=("xiaomi/mimo-v2.6-pro",),
+    ),
+    # Novita's November 20 notice retires MiniMax M2.7, M2.7-highspeed and
+    # M2.5 at 2026-12-10 00:00 UTC and recommends MiniMax M3.1 Flash; requests
+    # to the retired ids then error. Only M2.7 is a routable Novita route
+    # (Novita's M2.7-highspeed and M2.5 rows are already delisted upstream).
+    # Retire only Novita's route; other providers' M2.7 routes stay.
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"minimax/minimax-m2.7"}),
+        upstream_ids=frozenset({"minimax/minimax-m2.7"}),
+        effective_at=NOVITA_MINIMAX_M27_RETIREMENT_AT,
+        replacement_model_ids=("minimax/minimax-m3.1-flash",),
     ),
     # Alibaba Model Studio's October 19 notice decommissions legacy Qwen3.5
     # Plus snapshots and Qwen3.5 397B-A17B at 2027-01-19 10:00 UTC+8 and

@@ -402,6 +402,22 @@ func answered(f goldenFile) []goldenCase {
 
 func hasLabel(c goldenCase, label string) bool { return slices.Contains(c.Labels, label) }
 
+func TestNewGatewayReceivesSameOpenAISubjectAsPython(t *testing.T) {
+	in, c := baseAsync(t, loadAsyncGoldens(t))
+	in.KeyOwnerID, in.OpenAISafety = "same-user", true
+	staged, err := Stage(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composed, err := staged.Finish(c.Admitted.Envelope, endOfLife(t, c.goldenCase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(composed.Render(c.Expect.timing(), false), []byte(`"openai_safety_identifier":"fe1ee91ba0967306cb5d5f8969cc6d1b8c39e6a36f2f57d93a8b55c9314f864e"`)) {
+		t.Fatal("wrong owner identifier")
+	}
+}
+
 // TestEveryAnsweredCaseIsPythonsBytes: the 200 body byte for byte, with
 // the case's timing (P1 pins perf_counter, so its values are the ones in
 // the body), and after a read-back for an unknown_landed case.

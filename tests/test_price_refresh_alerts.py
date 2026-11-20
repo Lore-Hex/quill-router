@@ -1,9 +1,15 @@
 import copy
+import http.client
+import io
 import json
+import runpy
+import ssl
 import subprocess
+import sys
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 import yaml
@@ -119,8 +125,13 @@ def test_watchdog_heartbeat_is_external_and_does_not_spend_error_events(emitted)
     kind, payload = emitted[0]
     assert kind == "check_in"
     assert payload["monitor_slug"] == "price-refresh-watchdog"
-    assert payload["monitor_config"]["checkin_margin"] == 60
+    # The timer starts within about 40 s of :23. With threshold 2, a 15-minute
+    # margin pages a silent host about 2 h 15 min after its last check-in.
+    assert payload["monitor_config"]["checkin_margin"] == 15
     assert payload["monitor_config"]["schedule"] == {"type": "interval", "value": 1, "unit": "hour"}
+    # Two consecutive bad hours page; a single transient failure does not.
+    assert payload["monitor_config"]["failure_issue_threshold"] == 2
+    assert payload["monitor_config"]["recovery_threshold"] == 1
     assert emitted[1][1]["check_in_id"] == payload["check_in_id"]
     assert emitted[1][1]["status"] == "ok"
     assert emitted[1][1]["duration"] == 2.5
@@ -426,6 +437,373 @@ def test_sentry_429_is_not_success(monkeypatch):
     monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
     with pytest.raises(RuntimeError, match="cooldown not advanced"):
         alerts.send_sentry("event", {"event_id": "a" * 32})
+
+
+class _Reply:
+    """A response whose body is bytes, or an exception raised by read()."""
+
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, limit):
+        if isinstance(self.body, Exception):
+            raise self.body
+        return self.body[:limit]
+
+
+class _BodyFails:
+    """The headers arrive, then reading the body raises this exception."""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+
+def _framed(raw):
+    """A real http.client response parsed from raw HTTP/1.1 bytes."""
+    class Socket:
+        def makefile(self, *_args, **_kwargs):
+            return io.BytesIO(raw)
+    response = http.client.HTTPResponse(Socket())
+    response.begin()
+    return response
+
+
+START = 1000.0
+
+
+@pytest.fixture
+def read_clock():
+    """The monotonic clock public_reads drives: sleeps and attempt I/O advance it."""
+    return {"now": START, "attempt": 0.0, "costs": []}
+
+
+@pytest.fixture
+def public_reads(monkeypatch, read_clock):
+    """Scripted anonymous GitHub replies: bytes, an exception from open(), _BodyFails, or
+    a real HTTPResponse. Each attempt costs ``read_clock["attempt"]`` seconds of I/O, or
+    the next value of ``read_clock["costs"]`` when that list is not empty."""
+    script, sleeps, opened = [], [], []
+    clock = read_clock
+    class Opener:
+        def open(self, request, timeout):
+            opened.append((request.full_url, clock["now"]))
+            clock["now"] += clock["costs"].pop(0) if clock["costs"] else clock["attempt"]
+            item = script.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            if isinstance(item, http.client.HTTPResponse):
+                return item
+            return _Reply(item.exc if isinstance(item, _BodyFails) else item)
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock["now"] += seconds
+    monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
+    monkeypatch.setattr(alerts.time, "sleep", sleep)
+    monkeypatch.setattr(alerts.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(alerts, "_run_started", None, raising=False)
+    return script, sleeps, opened
+
+
+def _http_error(code, headers=None):
+    return HTTPError("https://api.github.com/x", code, "error", headers or {}, None)
+
+
+def test_public_read_retries_a_transient_server_error(public_reads):
+    script, sleeps, opened = public_reads
+    script += [_http_error(502), b'{"workflow_runs": []}']
+    assert alerts.public_gh("actions/workflows/refresh-prices.yml/runs") == {"workflow_runs": []}
+    assert sleeps == [2.0]
+    assert len(opened) == 2
+
+
+def test_public_read_gives_up_after_bounded_retries_with_a_safe_reason(public_reads):
+    script, sleeps, opened = public_reads
+    script += [URLError(TimeoutError("timed out"))] * 3
+    with pytest.raises(alerts.MonitoringReadError) as raised:
+        alerts.public_gh("actions/workflows/refresh-prices.yml/runs")
+    assert str(raised.value) == "GitHub monitoring API request failed (timeout)"
+    assert sleeps == list(alerts.PUBLIC_READ_RETRY_DELAYS)
+    assert len(opened) == 3
+
+
+@pytest.mark.parametrize("value", ["5 ", " 5", "\t5\t"])
+def test_public_read_honors_a_padded_retry_after(public_reads, value):
+    script, sleeps, _ = public_reads
+    script += [_http_error(429, {"retry-after": value}), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [5.0]
+
+
+def test_public_read_backoff_is_the_floor_under_a_tiny_retry_after(public_reads):
+    script, sleeps, _ = public_reads
+    script += [_http_error(429, {"retry-after": "1"})] * 2 + [b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0, 8.0]
+
+
+def test_public_read_does_not_retry_a_certificate_failure(public_reads):
+    script, sleeps, opened = public_reads
+    script.append(URLError(ssl.SSLCertVerificationError(1, "certificate has expired")))
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(TLS certificate verification failed\)$"):
+        alerts.public_gh("actions/runs/1")
+    assert sleeps == [] and len(opened) == 1
+
+
+@pytest.mark.parametrize("error", [
+    _http_error(502), URLError(TimeoutError("timed out")), _http_error(429, {"retry-after": "1"}),
+], ids=["502", "timeout", "short-rate-limit"])
+def test_the_dispatch_post_is_never_retried(public_reads, monkeypatch, error):
+    # A dispatch that timed out may already have queued a run; a second one
+    # could cancel it (refresh-prices keeps one pending run per group).
+    script, sleeps, opened = public_reads
+    monkeypatch.setattr(alerts, "_github_token", "github_pat_test", raising=False)
+    script += [error, b""]
+    with pytest.raises(alerts.MonitoringReadError):
+        alerts.public_gh(alerts.DISPATCH_PATH, {"ref": "main"})
+    assert sleeps == [] and len(opened) == 1
+
+
+def test_a_dispatch_answering_204_returns_none(public_reads, monkeypatch):
+    script, _, _ = public_reads
+    monkeypatch.setattr(alerts, "_github_token", "github_pat_test", raising=False)
+    script.append(b"")
+    assert alerts.public_gh(alerts.DISPATCH_PATH, {"ref": "main"}) is None
+
+
+def test_each_attempt_gets_a_fresh_https_request(monkeypatch):
+    # urllib's ProxyHandler rewrites the Request it is given (set_proxy turns an
+    # https request into an http one aimed at the proxy). Reusing one Request
+    # across retries sent the third attempt over plain HTTP.
+    seen = []
+    class Opener:
+        def open(self, request, timeout):
+            seen.append((request, request.type, request.host))
+            request.set_proxy("proxy.invalid:8080", "http")
+            if len(seen) < 3:
+                raise _http_error(502)
+            return _Reply(b"{}")
+    monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
+    monkeypatch.setattr(alerts.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(alerts, "_run_started", None, raising=False)
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert [(kind, host) for _, kind, host in seen] == [("https", "api.github.com")] * 3
+    assert len({id(request) for request, _, _ in seen}) == 3
+
+
+@pytest.mark.parametrize("error", [
+    ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number"),
+    ssl.SSLError(1, "[SSL: UNSUPPORTED_PROTOCOL] unsupported protocol"),
+])
+def test_public_read_does_not_retry_a_tls_negotiation_failure(public_reads, error):
+    script, sleeps, opened = public_reads
+    script.append(URLError(error))
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(TLS error\)$"):
+        alerts.public_gh("actions/runs/1")
+    assert sleeps == [] and len(opened) == 1
+
+
+@pytest.mark.parametrize("error", [
+    ssl.SSLEOFError(8, "EOF occurred in violation of protocol"),
+    ssl.SSLZeroReturnError(6, "TLS/SSL connection has been closed"),
+])
+def test_public_read_retries_a_tls_connection_that_ended(public_reads, error):
+    script, sleeps, _ = public_reads
+    script += [URLError(error), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0]
+
+
+def test_public_read_honors_a_short_retry_after(public_reads):
+    script, sleeps, _ = public_reads
+    script += [_http_error(429, {"retry-after": "5"}), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [5.0]
+
+
+@pytest.mark.parametrize("error", [
+    _http_error(403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999"}),
+    _http_error(429, {"retry-after": "3600"}),
+])
+def test_public_read_does_not_sleep_through_a_long_rate_limit(public_reads, error):
+    script, sleeps, opened = public_reads
+    script.append(error)
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=rf"^GitHub monitoring API request failed \(HTTP {error.code}, rate limited\)$"):
+        alerts.public_gh("actions/runs/1")
+    assert sleeps == []
+    assert len(opened) == 1
+
+
+@pytest.mark.parametrize("code", [401, 403, 404, 422])
+def test_public_read_does_not_retry_a_client_error(public_reads, code):
+    script, sleeps, opened = public_reads
+    script.append(_http_error(code))
+    with pytest.raises(alerts.MonitoringReadError, match=rf"\(HTTP {code}\)$"):
+        alerts.public_gh("actions/runs/1")
+    assert sleeps == [] and len(opened) == 1
+
+
+@pytest.mark.parametrize("exc", [
+    ConnectionResetError(104, "Connection reset by peer"),
+    http.client.IncompleteRead(b"{", 10),
+    http.client.RemoteDisconnected("Remote end closed connection without response"),
+], ids=["reset", "incomplete-read", "remote-disconnected"])
+def test_public_read_retries_a_body_that_fails_mid_read(public_reads, exc):
+    script, sleeps, opened = public_reads
+    script += [_BodyFails(exc), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0] and len(opened) == 2
+
+
+def test_public_read_body_failure_that_persists_is_a_safe_monitoring_error(public_reads):
+    script, _, _ = public_reads
+    script += [_BodyFails(http.client.IncompleteRead(b"secret-partial-body", 99))] * 3
+    with pytest.raises(alerts.MonitoringReadError) as raised:
+        alerts.public_gh("actions/runs/1")
+    assert str(raised.value) == "GitHub monitoring API request failed (network error)"
+
+
+def test_retries_share_one_window_per_run(public_reads, read_clock):
+    # Every read times out until the run's retry window is spent; then the next
+    # failed read fails the run instead of retrying past the unit's timeout.
+    script, sleeps, opened = public_reads
+    read_clock["attempt"] = 1.0
+    alerts.start_run_budget()
+    script += [URLError(TimeoutError("timed out")), b"{}"] * 100
+    reads = 0
+    with pytest.raises(alerts.MonitoringReadError, match=r"\(timeout\)$"):
+        while True:
+            alerts.public_gh("actions/runs/1")
+            reads += 1
+    assert reads > 0 and len(sleeps) == reads
+    # A retry is taken only while its sleep plus one slow attempt fits in the
+    # window, so no retry attempt starts past it.
+    retry_starts = [started for _, started in opened[1::2]]
+    window_end = START + alerts.PUBLIC_READ_RETRY_WINDOW_SECONDS
+    assert max(retry_starts) + alerts.PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= window_end
+
+
+def test_slow_reads_stop_at_the_run_deadline(public_reads, read_clock):
+    # Review round 2: two 30-second Retry-After replies on the first read, then
+    # 21 slow successful reads. Without a deadline the reads end at 9:24; now no
+    # attempt starts unless one slow attempt still fits before the deadline.
+    script, sleeps, opened = public_reads
+    read_clock["costs"] = [28.0, 28.0, 28.0]
+    read_clock["attempt"] = 20.0
+    alerts.start_run_budget()
+    script += [_http_error(429, {"retry-after": "30"})] * 2 + [b"{}"] * 22
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(run deadline reached\)$"):
+        for _ in range(22):
+            alerts.public_gh("actions/runs/1")
+    assert sleeps == [30.0, 30.0]
+    deadline = START + alerts.PUBLIC_READ_DEADLINE_SECONDS
+    assert max(started for _, started in opened) + alerts.PUBLIC_READ_ATTEMPT_ALLOWANCE_SECONDS <= deadline
+    assert read_clock["now"] <= deadline
+
+
+def test_a_normal_run_is_far_from_the_deadline(public_reads, read_clock):
+    script, _, opened = public_reads
+    read_clock["attempt"] = 1.0
+    alerts.start_run_budget()
+    script += [b"{}"] * 22
+    for _ in range(22):
+        assert alerts.public_gh("actions/runs/1") == {}
+    assert len(opened) == 22
+
+
+def test_main_starts_a_fresh_run_budget_each_run(observer, monkeypatch):
+    runs = []
+    monkeypatch.setattr(alerts, "start_run_budget", lambda: runs.append(True))
+    alerts.main(heartbeat_enabled=False)
+    alerts.main(dry_run=True)
+    assert runs == [True, True]
+
+
+def test_a_body_short_of_content_length_is_retried(public_reads):
+    # read(n) on a real response returns the partial body without raising when
+    # the connection closes before Content-Length.
+    script, sleeps, opened = public_reads
+    script += [_framed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{"), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0] and len(opened) == 2
+
+
+@pytest.mark.parametrize("raw", [
+    # Optional whitespace after a field value is valid HTTP (RFC 9112).
+    b"HTTP/1.1 200 OK\r\nContent-Length: 10 \r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nContent-Length:  10\t\r\n\r\n{",
+], ids=["trailing-space", "padded"])
+def test_a_short_body_is_detected_however_content_length_is_padded(public_reads, raw):
+    script, sleeps, _ = public_reads
+    script += [_framed(raw), b"{}"]
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [2.0]
+
+
+def test_an_unparseable_content_length_defers_to_json_validation(public_reads):
+    # http.client ignores a non-numeric Content-Length (length is None); the body
+    # is then judged as JSON, exactly as for a close-delimited response.
+    script, sleeps, _ = public_reads
+    script.append(_framed(b"HTTP/1.1 200 OK\r\nContent-Length: \xc2\xb2\r\n\r\n{}"))
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == []
+
+
+def test_a_persistently_short_body_is_a_safe_monitoring_error(public_reads):
+    script, _, _ = public_reads
+    script += [_framed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{") for _ in range(3)]
+    with pytest.raises(alerts.MonitoringReadError,
+                       match=r"^GitHub monitoring API request failed \(network error\)$"):
+        alerts.public_gh("actions/runs/1")
+
+
+@pytest.mark.parametrize("raw", [
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n",
+    b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{}",
+], ids=["content-length", "chunked", "close-delimited"])
+def test_a_complete_framed_body_is_not_retried(public_reads, raw):
+    script, sleeps, opened = public_reads
+    script.append(_framed(raw))
+    assert alerts.public_gh("actions/runs/1") == {}
+    assert sleeps == [] and len(opened) == 1
+
+
+def test_cli_prints_the_safe_read_failure_reason(monkeypatch, tmp_path, capsys):
+    # Drive the real __main__ handler: a public read that fails with 404.
+    def build_opener(*_handlers):
+        class Opener:
+            def open(self, request, timeout):
+                raise HTTPError(request.full_url, 404, "secret-reason", {}, None)
+        return Opener()
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+    monkeypatch.setenv("GITHUB_REPOSITORY", alerts.REPOSITORY)
+    monkeypatch.setenv("TR_PRICE_REFRESH_PUBLIC_API", "1")
+    monkeypatch.setattr(sys, "argv", ["price_refresh_alerts.py", "--no-heartbeat",
+                                      "--state-file", str(tmp_path / "state.json")])
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(str(ROOT / "scripts/price_refresh_alerts.py"), run_name="__main__")
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    assert err.strip() == "::error::Price refresh monitoring failed: GitHub monitoring API request failed (HTTP 404)"
+
+
+def test_public_read_failure_message_never_carries_the_url(public_reads):
+    script, _, _ = public_reads
+    script += [URLError("name resolution failed for api.github.com")] * 3
+    with pytest.raises(alerts.MonitoringReadError) as raised:
+        alerts.public_gh("actions/runs/1")
+    assert str(raised.value) == "GitHub monitoring API request failed (network error)"
+    assert "://" not in str(raised.value) and "github.com" not in str(raised.value)
 
 
 def test_cli_failure_does_not_echo_output(monkeypatch):

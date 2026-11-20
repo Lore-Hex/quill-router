@@ -371,6 +371,185 @@ def test_live_2026_11_07_pricing_document_still_parses():
     assert prices["seed-2-0-lite-260428"].tiers[0].max_prompt_tokens == 128_000
 
 
+BYTEPLUS_PRICING_2026_11_19 = (
+    Path(__file__).parent / "fixtures/pricing/byteplus_model_pricing_2026-11-19.md"
+).read_text(encoding="utf-8")
+
+
+def test_live_2026_11_19_fast_tier_does_not_break_or_leak_into_standard():
+    # Refresh run 44601888558 held BytePlus on "pricing table shape changed":
+    # a 5-column "Fast" table now sits between Standard and Flex. Standard
+    # rates are unchanged and must still match the committed manifest; the
+    # pricier Fast rows must never become the tariff.
+    prices = byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19)
+    assert prices == byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_07)
+    lite = [(t.max_prompt_tokens, t.prompt_micro_per_m, t.completion_micro_per_m, t.prompt_cached_micro_per_m)
+            for t in prices["seed-2-0-lite-260428"].tiers]
+    assert lite == [(128_000, 250_000, 2_000_000, 50_000), (None, 500_000, 4_000_000, 100_000)]
+    assert "dreamina-seedance-2-5-flash-261115" not in prices
+    assert byteplus.video_resolution_prices(BYTEPLUS_PRICING_2026_11_19)["dreamina-seedance-2-5-260628"] == {
+        "480p": 10_700_000, "720p": 10_700_000, "1080p": 11_700_000,
+    }
+
+
+FAST_TIER = (
+    "**Fast**\n"
+    "|Model ID |Prompt length (K tokens) |Input |Cached input |Output |\n"
+    "|---|---|---|---|---|\n"
+    "|`seed-2-0-pro-260328` |[0, 128] |$9.00 |$9.00 |$9.00 |\n"
+)
+
+
+def test_modern_layout_fast_tier_between_standard_and_flex_is_ignored():
+    with_fast = MODERN_MD.replace("**Flex**\n|Provider", FAST_TIER + "**Flex**\n|Provider")
+    assert with_fast.count("**Fast**") == 1
+    assert byteplus.parse_prices(with_fast) == byteplus.parse_prices(MODERN_MD)
+
+
+@pytest.mark.parametrize("heading", ["**Priority**", "**Standard (promotion)**"])
+def test_modern_layout_unknown_tier_after_standard_fails_closed(heading):
+    unknown = MODERN_MD.replace("**Flex**\n|Provider", FAST_TIER.replace("**Fast**", heading) + "**Flex**\n|Provider")
+    with pytest.raises(RuntimeError, match="unknown, repeated or reordered inference tier"):
+        byteplus.parse_prices(unknown)
+
+
+def _moved(md: str, line: str, before: str) -> str:
+    """Move the first exact ``line`` of md to just before the first exact ``before``."""
+    lines = md.splitlines()
+    del lines[lines.index(line)]
+    lines.insert(lines.index(before), line)
+    return "\n".join(lines)
+
+
+def _moved_section(md: str, start: str, end: str, before: str) -> str:
+    """Move the lines from the first ``start`` up to ``end`` to before ``before``."""
+    lines = md.splitlines()
+    first, last = lines.index(start), lines.index(end)
+    block = lines[first:last]
+    del lines[first:last]
+    at = lines.index(before)
+    return "\n".join(lines[:at] + block + lines[at:])
+
+
+LITE_CONTINUATION = "|||(128, 256] |$0.50 |$0.10 |$0.0083 |$4.00 |"
+PRO_ROW = "||`seed-2-0-pro-260328` |[0, 128] |$0.50 |$0.10 |$0.0083 |$3.00 |"
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda md: _moved(md, "**Fast**", LITE_CONTINUATION),
+    lambda md: _moved(md, "**Fast**", PRO_ROW),
+    lambda md: _moved_section(md, "**Fast**", "**Flex**", LITE_CONTINUATION),
+    lambda md: _moved_section(md, "**Fast**", "**Flex**", PRO_ROW),
+], ids=["heading-before-continuation", "heading-before-identity", "fast-table-before-continuation",
+        "fast-table-before-identity"])
+def test_fast_inside_the_standard_table_fails_closed(mutate):
+    # Review of 2026-11-19: moving the Fast heading to just before the lite
+    # model's (128, 256] row made seed-2-0-lite one unlimited $0.25/$2 tier
+    # and dropped 9 Standard models into the unparsed Fast section.
+    md = mutate(BYTEPLUS_PRICING_2026_11_19)
+    assert md != BYTEPLUS_PRICING_2026_11_19
+    with pytest.raises(RuntimeError, match="Fast"):
+        byteplus.parse_prices(md)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda md: md.replace("**Flex**", "**Flex**\n\n**Flex**", 1),
+    lambda md: md.replace("**Fast**", "**Fast**\n\n**Fast**", 1),
+    lambda md: md.replace("**Flex**\n", "", 1),
+    lambda md: md.replace("**Flex**", "**Priority**", 1),
+    lambda md: md.replace("**Batch**", "**Priority**", 1),
+    lambda md: md.replace("**Batch**", "**Batch**\n\n**Note**", 1),
+    lambda md: _moved_section(md, "**Flex**", "**Batch**", "**Standard**"),
+    lambda md: _moved_section(md, "**Batch**", "#### Audio input", "**Flex**"),
+    lambda md: _moved_section(md, "**Fast**", "**Flex**", "**Standard**"),
+], ids=["duplicate-flex", "duplicate-fast", "no-flex-heading", "flex-renamed", "batch-renamed",
+        "unknown-heading-after-batch", "flex-before-standard", "batch-before-flex", "fast-before-standard"])
+def test_tier_heading_sequence_is_validated_after_standard(mutate):
+    md = mutate(BYTEPLUS_PRICING_2026_11_19)
+    assert md != BYTEPLUS_PRICING_2026_11_19
+    with pytest.raises(RuntimeError):
+        byteplus.parse_prices(md)
+
+
+def _fast_before_displaced_rows(md: str, before: str, prefix: str, rest: str | None = None) -> str:
+    """Fast inserted before the Standard row ``before``; every displaced
+    Standard row gets ``prefix`` (the first) or ``rest`` (the others)."""
+    lines = _moved(md, "**Fast**", before).splitlines()
+    at = first = lines.index(before)
+    while lines[at].startswith("|"):
+        lines[at] = (prefix if at == first or rest is None else rest) + lines[at]
+        at += 1
+    return "\n".join(lines)
+
+
+def _fast_before_lite_continuation_indented(md: str, spaces: int) -> str:
+    """Round-2 review reproducer: Fast inserted before lite's (128, 256] row,
+    and every displaced Standard row indented by ``spaces``."""
+    return _fast_before_displaced_rows(md, LITE_CONTINUATION, " " * spaces)
+
+
+@pytest.mark.parametrize("spaces", [1, 2, 3])
+def test_indented_rows_displaced_by_fast_fail_closed(spaces):
+    md = _fast_before_lite_continuation_indented(BYTEPLUS_PRICING_2026_11_19, spaces)
+    assert "\n" + " " * spaces + LITE_CONTINUATION in md
+    with pytest.raises(RuntimeError, match="pricing table row not at column 0"):
+        byteplus.parse_prices(md)
+
+
+STANDARD_HEADER = "|Provider |Model ID |Prompt length (K tokens) |Input |Cached input |Cache storage |Output |"
+
+
+def _blockquoted_table_after_moved_fast(md: str) -> str:
+    """Round-3 review reproducer: Fast moved before the pro row, and the
+    displaced Standard rows become a complete, valid "> " table."""
+    moved = _fast_before_displaced_rows(md, PRO_ROW, "> ")
+    return moved.replace("**Fast**\n> " + PRO_ROW, "**Fast**\n> " + STANDARD_HEADER
+                         + "\n> |---|---|---|---|---|---|---|\n> " + PRO_ROW, 1)
+
+
+@pytest.mark.parametrize("mutate", [
+    _blockquoted_table_after_moved_fast,
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "> "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "- "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "1. ", "   "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, "> - ", ">   "),
+    lambda md: _fast_before_displaced_rows(md, LITE_CONTINUATION, ">> "),
+], ids=["blockquoted-table-after-moved-fast", "blockquote-round-2-variant", "list-nested-rows",
+        "ordered-list-nested-table", "list-in-blockquote-table", "nested-blockquote"])
+def test_tables_inside_markdown_containers_fail_closed(mutate):
+    md = mutate(BYTEPLUS_PRICING_2026_11_19)
+    assert md != BYTEPLUS_PRICING_2026_11_19
+    with pytest.raises(RuntimeError, match="pricing table row not at column 0"):
+        byteplus.parse_prices(md)
+
+
+@pytest.mark.parametrize("old,new", [
+    ("**Standard**", " **Standard**"),
+    ("**Standard**", "**Standard** "),
+    ("**Flex**", "  **Flex**"),
+    ("**Flex**", "**Flex**\t"),
+    ("**Fast**", "   **Fast**"),
+    ("**Batch**", "**Batch** "),
+])
+def test_padded_tier_headings_fail_closed(old, new):
+    md = BYTEPLUS_PRICING_2026_11_19.replace(old, new, 1)
+    with pytest.raises(RuntimeError, match="padded inference tier heading"):
+        byteplus.parse_prices(md)
+
+
+def test_real_documents_still_parse_to_the_same_prices():
+    assert len(byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19)) == 14
+    assert byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19) == byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_07)
+
+
+def test_table_rows_before_the_first_tier_heading_fail_closed():
+    heading = "#### Non\\-audio input\n"
+    stray = heading + "\n|Model ID |Input |\n|---|---|\n|`seed-2-0-lite-260428` |$0.01 |\n"
+    assert BYTEPLUS_PRICING_2026_11_19.count(heading) == 1
+    with pytest.raises(RuntimeError, match="outside an inference tier"):
+        byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_19.replace(heading, stray, 1))
+
+
 def test_catalog_with_no_priced_row_fails_closed_and_says_why():
     payload = catalog()
     for source in payload["data"]:

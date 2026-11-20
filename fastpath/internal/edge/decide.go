@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"slices"
@@ -683,6 +684,8 @@ func Decide(in DecideInputs) Decided {
 		IdempotencyFingerprint: identity.Fingerprint,
 		IdempotencyScope:       identity.Scope,
 		WorkspaceID:            key.WorkspaceID,
+		KeyOwnerID:             cmp.Or(key.CreatorUserID, ws.OwnerUserID),
+		OpenAISafety:           slices.Equal(in.Request.Header.Values("X-TR-OpenAI-Safety"), []string{"v1"}),
 		KeyHash:                key.Hash,
 		KeyTags:                composeTags(keyTags),
 		RequestedModel:         r.Model,

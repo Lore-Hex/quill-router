@@ -40,6 +40,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.credit_transfer import validate_amount, validate_transfer_id
 from trusted_router.errors import api_error
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
+from trusted_router.openai_safety import owner_digest
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.security import constant_time_equal
@@ -214,6 +215,10 @@ def register(router: APIRouter) -> None:
                 # suspended records carry the bit: every other record stays
                 # byte-identical, and old peers drop it harmlessly.
                 record["workspace_suspended"] = True
+            if "openai-safety-v1" in declared_features:
+                record["openai_safety_identifier"] = owner_digest(
+                    api_key.creator_user_id or workspace.owner_user_id, workspace.id
+                )
             if app_id:
                 # Attribution and its restrictive suspension bit travel together.
                 # Old peers drop both harmlessly; legacy records remain byte-identical.

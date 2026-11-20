@@ -23,9 +23,10 @@ type pythonKey struct {
 	Reason *string     `json:"reason"`
 	Tags   [][2]string `json:"tags"`
 	// The ids Python's key carries when it is eligible.
-	Hash        *string `json:"hash"`
-	WorkspaceID *string `json:"workspace_id"`
-	LookupHash  *string `json:"lookup_hash"`
+	Hash          *string `json:"hash"`
+	WorkspaceID   *string `json:"workspace_id"`
+	LookupHash    *string `json:"lookup_hash"`
+	CreatorUserID *string `json:"creator_user_id"`
 }
 
 type pythonWorkspace struct {
@@ -35,6 +36,7 @@ type pythonWorkspace struct {
 	PauseCauses json.RawMessage `json:"pause_causes"`
 	// BilledWorkspaceID is the workspace id Python bills: the body's.
 	BilledWorkspaceID *string `json:"billed_workspace_id"`
+	OwnerUserID       *string `json:"owner_user_id"`
 }
 
 type vectors struct {
@@ -109,6 +111,9 @@ func TestTheKeyFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 		ok, reason := facts.PilotAt(at)
 		python := reasonOf(c.Python.Reason)
 		if ok {
+			if facts.CreatorUserID != reasonOf(c.Python.CreatorUserID) {
+				t.Errorf("%s: Go and Python disagree on the key creator", c.Name)
+			}
 			if python != "" || !slices.Equal(facts.Tags, pairsOf(c.Python.Tags)) {
 				t.Errorf("%s: Go admits (tags %q); Python: %q, tags %q", c.Name, facts.Tags, python, c.Python.Tags)
 			} else if facts.Hash != reasonOf(c.Python.Hash) || facts.WorkspaceID != reasonOf(c.Python.WorkspaceID) ||
@@ -162,6 +167,9 @@ func TestTheWorkspaceFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 		python := reasonOf(c.Python.Reason)
 		if facts.Eligible && python != "" {
 			t.Errorf("%s: Go admits; Python %q", c.Name, python)
+		}
+		if facts.Eligible && facts.OwnerUserID != reasonOf(c.Python.OwnerUserID) {
+			t.Errorf("%s: Go and Python disagree on the workspace owner", c.Name)
 		}
 		// Go bills the key's workspace: it answers only where Python bills
 		// the same one.

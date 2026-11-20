@@ -56,6 +56,7 @@
           </label>
           <input class="support-hp" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
         </div>
+        <p>Replies go to the email you enter. When you're signed in, support also receives your verified account email.</p>
         <div class="support-actions">
           <button class="btn primary" type="submit" data-role="submit">Send support request</button>
           <span>Or email <a href="mailto:{{ support_email }}">{{ support_email }}</a>.</span>
@@ -269,8 +270,11 @@
       category.disabled = true;
       status.hidden = true;
       button.textContent = "Sending...";
-      fetch("/support/inquiry", {
+      var signedIn = document.cookie.split(";").some(function (c) { return c.trim() === "tr_signed_in=1"; });
+      fetch(signedIn ? "/console/support/inquiry" : "/support/inquiry", {
         method: "POST",
+        credentials: "same-origin",
+        redirect: "manual",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data)
       }).then(function (response) {
@@ -279,6 +283,8 @@
           category.value = data.category;
           updateCategory();
           show(isModel ? "Your model request was sent. We will reply by email." : "Your request was sent. We will reply by email.", "ok");
+        } else if (signedIn && (response.type === "opaqueredirect" || response.status === 401 || response.status === 403)) {
+          show("We couldn't verify your session. Sign in again or email {{ support_email }}.", "err");
         } else if (response.status === 429) {
           show("Too many requests just now. Please email {{ support_email }}.", "err");
         } else if (response.status === 503) {

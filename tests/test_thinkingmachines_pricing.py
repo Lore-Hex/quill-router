@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from scripts.pricing.parsers.thinkingmachines import parse
+from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS, parse
 from scripts.pricing.providers import thinkingmachines
 from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
 SERVERLESS = [
-    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144",
      "input": "$0.30", "cached_input": "$0.03", "output": "$1.00"},
     {"tinker_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
      "input": "$0.30", "cached_input": "$0.06", "output": "$1.20"},
@@ -48,6 +49,256 @@ def test_json_rejects_conflicts_missing_models_and_excessive_cache():
     for rows in [[], {}, [SAMPLER[0], {**SAMPLER[0], "sample": "$99"}], [{**SAMPLER[0], "cached_prefill": "$5"}]]:
         with pytest.raises(RuntimeError, match="thinkingmachines"):
             thinkingmachines._json_prices(rows, ids, ("prefill", "cached_prefill", "sample"))
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
+
+
+def _live_feeds() -> dict[str, object]:
+    # Captured 2026-11-19 from the official machine-readable feeds:
+    # serverless.json in full, models.json trimmed to Inkling 2 Small and the
+    # GLM-5.3 sampler row TR prices.
+    return {
+        thinkingmachines.SERVERLESS_URL: json.loads(
+            (FIXTURE_DIR / "thinkingmachines_serverless_2026-11-19.json").read_text(encoding="utf-8")
+        ),
+        thinkingmachines.SAMPLER_URL: json.loads(
+            (FIXTURE_DIR / "thinkingmachines_models_2026-11-19.json").read_text(encoding="utf-8")
+        ),
+    }
+
+
+def test_fetch_prices_inkling_2_small_from_its_current_serverless_tinker_id(monkeypatch):
+    # Tinker's serverless table now lists Inkling 2 Small as
+    # "thinkingmachines/Inkling-2-Small:peft:262144" (no ":sampling-nvfp4").
+    # The exact-ID gate prices it from that row, at the same published rates.
+    monkeypatch.setattr(thinkingmachines, "fetch_json", _live_feeds().__getitem__)
+    result = thinkingmachines.fetch()
+
+    assert result.prices == {
+        "thinkingmachines/inkling-2-small": ModelPrice(300_000, 1_000_000, prompt_cached_micro_per_m=30_000),
+        "thinkingmachines/inkling-small": ModelPrice(300_000, 1_200_000, prompt_cached_micro_per_m=60_000),
+        "thinkingmachines/inkling": ModelPrice(1_000_000, 4_050_000, prompt_cached_micro_per_m=170_000),
+        "z-ai/glm-5.3": ModelPrice(3_780_000, 12_150_000, prompt_cached_micro_per_m=756_000),
+    }
+    assert set(result.prices) == set(thinkingmachines.EXPECTED_MODELS)
+
+
+def test_retired_nvfp4_inkling_2_small_id_does_not_price_the_route(monkeypatch):
+    # The gate stays exact: a feed that only carries the earlier
+    # ":sampling-nvfp4" ID, or only the sampler (training table) listing,
+    # leaves the serverless route unpriced and fails the provider closed.
+    feeds = _live_feeds()
+    feeds[thinkingmachines.SERVERLESS_URL] = [
+        {**row, "tinker_id": f"{row['tinker_id']}:sampling-nvfp4"}
+        if row["tinker_id"] == "thinkingmachines/Inkling-2-Small:peft:262144"
+        else row
+        for row in feeds[thinkingmachines.SERVERLESS_URL]
+    ]
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"missing exact model prices: \['thinkingmachines/inkling-2-small'\]"):
+        thinkingmachines.fetch()
+
+
+def _with_extra_fields(feeds: dict[str, object], url: str, tinker_id: str, extra: dict) -> dict[str, object]:
+    feeds[url] = [{**row, **extra} if row["tinker_id"] == tinker_id else row for row in feeds[url]]
+    return feeds
+
+
+TIER = {"min_prompt_tokens": 128_000, "input": "$0.60", "cached_input": "$0.06", "output": "$2.00"}
+
+
+@pytest.mark.parametrize("extra", [
+    {"unit": "USD per 1000 tokens"},
+    # Neither feed states a unit today, so even a per-million spelling is a
+    # format change to review, not a value to guess at.
+    {"unit": "USD per 1M tokens"},
+    {"currency": "EUR"},
+    {"tiers": [TIER]},
+    {"ranges": [{"max_prompt_tokens": 128_000}]},
+    {"max_prompt_tokens": 128_000},
+])
+def test_serverless_row_with_a_stated_unit_tier_or_condition_is_refused(monkeypatch, extra):
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SERVERLESS_URL, "thinkingmachines/Inkling-2-Small:peft:262144", extra
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"unreviewed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("extra", [
+    {"unit": "USD per 1000 tokens"},
+    {"tiers": [{"min_prompt_tokens": 128_000, "prefill": "$7.56", "sample": "$24.30"}]},
+    {"condition": "prompts up to 128K tokens"},
+])
+def test_sampler_row_with_a_stated_unit_tier_or_condition_is_refused(monkeypatch, extra):
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SAMPLER_URL, "zai-org/GLM-5.3:peft:262144", extra)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"unreviewed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+def test_documented_discount_fields_still_price_at_the_current_rate(monkeypatch):
+    # models.json documents original_* fields and a note for temporarily
+    # discounted models (eight live rows carry them); they stay readable.
+    discount = {
+        "note": "Limited-time 50% discount", "original_prefill": "$7.56",
+        "original_cached_prefill": "$1.512", "original_sample": "$24.30", "original_train": "$29.16",
+    }
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SAMPLER_URL, "zai-org/GLM-5.3:peft:262144", discount)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    assert thinkingmachines.fetch().prices["z-ai/glm-5.3"] == ModelPrice(
+        3_780_000, 12_150_000, prompt_cached_micro_per_m=756_000
+    )
+
+
+INKLING_2_SMALL_SERVERLESS_ID = "thinkingmachines/Inkling-2-Small:peft:262144"
+GLM_SAMPLER_ID = "zai-org/GLM-5.3:peft:262144"
+
+
+@pytest.mark.parametrize("bad", [
+    {"name": ""},
+    {"name": {"en": "Inkling 2 Small"}},
+    {"url": "http://huggingface.co/thinkingmachines/Inkling-2-Small"},
+    {"url": "huggingface.co/thinkingmachines/Inkling-2-Small"},
+    {"url": ["https://huggingface.co/thinkingmachines/Inkling-2-Small"]},
+    {"url": "https://:443"},
+    {"url": "https://user@"},
+    {"url": "https:// "},
+    {"url": "https://bad host/model"},
+    {"url": "https://huggingface.co:abc/model"},
+    {"url": "https://huggingface.co:65536/model"},
+    {"context": {"unit": "tokens", "value": 1_048_576}},
+    {"context": "1M tokens"},
+    {"context": "1048576"},
+    {"context": ["1M"]},
+    {"input": {"amount": "$0.30", "unit": "per 1K tokens"}},
+    {"cached_input": ["$0.03"]},
+])
+def test_serverless_row_with_a_malformed_documented_field_is_refused(monkeypatch, bad):
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_2_SMALL_SERVERLESS_ID, bad)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"thinkingmachines: malformed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+def test_documented_empty_url_is_still_accepted(monkeypatch):
+    # "The url field is an empty string when no model-card link is provided."
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SERVERLESS_URL, INKLING_2_SMALL_SERVERLESS_ID, {"url": ""})
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    assert thinkingmachines.fetch().prices["thinkingmachines/inkling-2-small"] == ModelPrice(
+        300_000, 1_000_000, prompt_cached_micro_per_m=30_000
+    )
+
+
+@pytest.mark.parametrize("bad", [
+    {"train": {"amount": "$14.58"}},
+    {"params": "753B"},
+    {"active_params": True},
+    {"params": 0},
+    {"size": ["Large"]},
+    {"original_sample": ["$24.30"]},
+    {"note": {"text": "Limited-time 50% discount", "applies_to": "prompts up to 128K tokens"}},
+])
+def test_sampler_row_with_a_malformed_documented_field_is_refused(monkeypatch, bad):
+    feeds = _with_extra_fields(_live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID, bad)
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+
+    with pytest.raises(RuntimeError, match=r"thinkingmachines: malformed pricing field\(s\) \['"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("tinker_id", [
+    "Inkling 2 Small",
+    "thinkingmachines/Inkling-2-Small:peft:big",
+    "thinkingmachines/Inkling-2-Small:sampling-nvfp4:peft:262144",
+    "/Inkling-2-Small",
+])
+def test_priced_row_with_an_id_outside_the_tinker_grammar_is_refused(tinker_id):
+    row = {"tinker_id": tinker_id, "input": "$0.30", "cached_input": "$0.03", "output": "$1.00"}
+    with pytest.raises(RuntimeError, match=r"malformed pricing field\(s\) \['tinker_id'\]"):
+        thinkingmachines._json_prices(
+            [row], {tinker_id: "thinkingmachines/inkling-2-small"}, ("input", "cached_input", "output")
+        )
+
+
+# The note on every discounted row in the live models.json (2026-11-19).
+LIVE_DISCOUNT_NOTES = {
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16:peft:262144": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16:peft:262144": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:peft:262144": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": "Limited-time 50% discount",
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144": "Limited-time 50% discount",
+}
+ORIGINAL_PRICES = {
+    "original_prefill": "$7.56", "original_cached_prefill": "$1.512",
+    "original_sample": "$24.30", "original_train": "$29.16",
+}
+
+
+@pytest.mark.parametrize("note", sorted(set(LIVE_DISCOUNT_NOTES.values())))
+def test_every_live_discount_note_is_accepted_with_its_original_prices(monkeypatch, note):
+    assert len(LIVE_DISCOUNT_NOTES) == 8
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID, {"note": note, **ORIGINAL_PRICES}
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    assert thinkingmachines.fetch().prices["z-ai/glm-5.3"] == ModelPrice(
+        3_780_000, 12_150_000, prompt_cached_micro_per_m=756_000
+    )
+
+
+@pytest.mark.parametrize("note", [
+    "Limited-time 50% discount for prompts up to 128K tokens",
+    "Limited-time discount",
+    "50% off",
+    "Prices double above 128K context",
+    "",
+])
+def test_any_other_note_is_refused(monkeypatch, note):
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID, {"note": note, **ORIGINAL_PRICES}
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    with pytest.raises(RuntimeError, match=r"malformed pricing field\(s\) \['note'\]"):
+        thinkingmachines.fetch()
+
+
+@pytest.mark.parametrize("originals", [
+    {},
+    {"original_sample": "$24.30"},
+    {key: value for key, value in ORIGINAL_PRICES.items() if key != "original_train"},
+])
+def test_discount_note_without_all_original_prices_is_refused(monkeypatch, originals):
+    feeds = _with_extra_fields(
+        _live_feeds(), thinkingmachines.SAMPLER_URL, GLM_SAMPLER_ID,
+        {"note": "Limited-time 50% discount", **originals},
+    )
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    with pytest.raises(RuntimeError, match="note without original prices"):
+        thinkingmachines.fetch()
+
+
+def test_committed_manifest_upstream_ids_are_the_exact_priced_ids() -> None:
+    # A refresh writes prices onto manifest rows by catalog id. Each priced
+    # row's upstream_id must be the exact Tinker ID the price was read for,
+    # or a route would send one ID while billing another's verified price.
+    rows = json.loads(thinkingmachines.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    priced_ids = {**_SERVERLESS_IDS, **_SAMPLER_IDS}
+
+    assert {row["id"]: row["upstream_id"] for row in rows} == {
+        model_id: native_id for native_id, model_id in priced_ids.items()
+    }
+    assert sorted(priced_ids.values()) == sorted(thinkingmachines.EXPECTED_MODELS)
 
 
 def _pricing_html(*, active: str = "old") -> str:
@@ -265,7 +516,7 @@ def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract(
 
 INKLING_2_SMALL_ROW = {
     "id": "thinkingmachines/inkling-2-small",
-    "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+    "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144",
     "display_name": "Thinking Machines Inkling 2 Small 256K",
     "context_length": 262144,
     "input_modalities": ["text", "image"],
@@ -298,7 +549,7 @@ def test_inkling_2_small_would_publish_with_an_open_weights_badge(
         (endpoint.upstream_id, endpoint.effective_context_length(model))
         for endpoint in endpoints_for_model(model.id)
         if endpoint.provider == "thinkingmachines"
-    } == {("thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4", 262_144)}
+    } == {("thinkingmachines/Inkling-2-Small:peft:262144", 262_144)}
 
 
 def test_tinker_inkling_2_small_route_is_held_out_of_routing_and_probes() -> None:
@@ -495,7 +746,7 @@ def test_access_canary_rechecks_only_held_routes_and_lifts_on_success(
     rows = _refresh_rows(manifest)
 
     assert [(c["base_url"], c["model"]) for c in calls] == [
-        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")
+        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144")
     ]
     held = rows["thinkingmachines/inkling-2-small"]
     if healthy:

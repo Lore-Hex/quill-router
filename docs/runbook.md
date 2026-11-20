@@ -2027,3 +2027,12 @@ It works in pages of at most 1,000 rows, one transaction each, and logs a
 checkpoint after every page. Rerunning it is safe, and `--after <id>` resumes
 from a checkpoint. A row whose `created_at` does not parse, or names no instant
 representable in UTC, keeps a NULL `indexed_at` and is skipped.
+
+### Decide async settlement
+
+To disable decide async admission, set the config-as-code pin
+`TR_ASYNC_SETTLE_DECIDE_ROUTE=false`. Rows already accepted keep draining;
+snapshot-sync retries retain their frozen price. Do not roll the router or
+the drain worker back to a release older than decide async support while
+decide rows are pending: older releases do not support the decide async
+ticket and terminal-envelope contract.

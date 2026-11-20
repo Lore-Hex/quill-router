@@ -472,7 +472,14 @@ def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at, shadow_
     cause = SimpleNamespace(trailing_metadata=lambda: (
         ('google.rpc.retryinfo-bin', RetryInfo().SerializeToString()),))
     error = Aborted('synthetic abort', errors=[cause])
-    session.transaction.return_value.commit.side_effect = [error, None] if abort_at == 'commit' else None
+    # The SDK builds each attempt's transaction with session.transaction()
+    # (google-cloud-spanner < 3.72) or session._create_transaction_for_attempt()
+    # (3.72+). Both must hand out the aborting transaction, or the abort is
+    # never injected and the retry guard goes untested.
+    txn = MagicMock()
+    txn.commit.side_effect = [error, None] if abort_at == 'commit' else None
+    session.transaction.return_value = txn
+    session._create_transaction_for_attempt.return_value = txn
     calls = []
     horizons = []
     class DB:
@@ -497,7 +504,7 @@ def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at, shadow_
         failure = exc
     assert isinstance(failure, RuntimeError) and str(failure) == 'shadow_transaction_retry'
     assert len(calls) == 1 and 0 < horizons[0] <= 1
-    assert session.transaction.return_value.commit.call_count == int(abort_at == 'commit')
+    assert txn.commit.call_count == int(abort_at == 'commit')
 
 
 @pytest.mark.parametrize('delta', [-1, 0, 1])

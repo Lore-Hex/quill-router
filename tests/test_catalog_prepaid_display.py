@@ -245,8 +245,7 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
 def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None:
     # Anthropic-direct, verified Vertex and exact Bedrock Runtime profiles
     # are approved for Credits;
-    # unverified resellers remain blocked. BYOK survives unless the provider
-    # has an all-usage hold, as Lightning and Cloudflare passthroughs do.
+    # resellers are blocked for Credits and BYOK alike.
     built = catalog_vehicles.registry_endpoints()
     credits_providers = {
         e.provider
@@ -274,7 +273,7 @@ def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None
     # Anthropic-direct Credits lineup stays fully routable.
     for model_id in _authoritative_provider_model_ids("anthropic"):
         assert f"{model_id}@anthropic/prepaid" in built, model_id
-    # Unrelated reseller BYOK behavior stays unchanged.
+    # Resellers carry no Claude route at all, BYOK included (closed_weight_routes).
     claude = "anthropic/claude-fixture"
     routes = {
         f"{claude}@{reseller}/{suffix}": ModelEndpoint(
@@ -283,8 +282,7 @@ def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None
         )
         for suffix, usage in (("prepaid", "Credits"), ("byok", "BYOK"))
     }
-    expected = {f"{claude}@{reseller}/byok"} if reseller == "gmi" else set()
-    assert set(_filter_unserved_provider_endpoints(routes)) == expected
+    assert set(_filter_unserved_provider_endpoints(routes)) == set()
 
 
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:

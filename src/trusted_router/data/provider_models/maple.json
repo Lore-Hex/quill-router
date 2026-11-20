@@ -247,11 +247,37 @@
       "input_token_price_per_m": 340000,
       "output_token_price_per_m": 1090000,
       "cached_input_token_price_per_m": 80000
+    },
+    {
+      "display_name": "Inkling 2 Small",
+      "title": "inkling-2-small",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "thinkingmachines/inkling-2-small",
+      "upstream_id": "inkling-2-small",
+      "context_length": 524288,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-qualification-pending",
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 50000
     }
   ],
   "source": "https://maple.ai/docs/proxy/models",
   "pricing_source": "https://maple.ai/pricing",
-  "generated_at": "2026-11-16T09:21:39Z",
+  "generated_at": "2026-11-20T15:28:38Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 10
+  "model_count": 11
 }
