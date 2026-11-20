@@ -220,7 +220,31 @@ locals {
   #   - #2717: the uncensored GLM 5.3 Flash identifier resolves.
   # The other fastpath/ changes are test vectors and #2722's test race fix.
   # Off switch: pin 541e687bf again. One node at a time.
-  fastpath_release        = "65e856777546e0d0c67f0c8d049c3d54ba63c443"
+  # 5e3ebc8b7: the nodes learn hosted decision models and workspace origin
+  # policies, with nothing switched on. Go changes since 65e856777:
+  #   - #2794: the evaluator resolves an exact hosted decision model on
+  #     route decide (no context-window step, as Python's decide resolver).
+  #   - #2799: the edge reads two optional policy members,
+  #     fastpath_edge_hosted_decide and async_settle.decide_route, and with
+  #     the first may answer a hosted decide authorize itself, async-v1
+  #     additions included. Neither member is published while
+  #     TR_FASTPATH_EDGE_HOSTED_DECIDE is "off" (scripts/deploy/rollout.sh),
+  #     so on this release every hosted decide still passes to Python. Such
+  #     a pass is now labelled by the gate that made it, among them
+  #     hosted_decide.off and hosted_decide.async_unknown, where it was
+  #     evaluate.pass, and both shadows compare a hosted decide (the decide
+  #     shadow only one without the async-v1 header). A decide authorize
+  #     that needs a ticket and has no valid nonce passes to Python.
+  #   - #2797: a workspace whose origin_policy is set to anything but
+  #     unrestricted, or is malformed, passes to Python (workspace_origin),
+  #     which alone filters candidates by it. A node on an earlier release
+  #     does not read the field.
+  # This release must be on every node before the hosted decide switch
+  # leaves "off": a node on an older release refuses a policy that carries
+  # a member it does not know. The other fastpath/ changes are tests and
+  # test vectors (#2808 among them).
+  # Off switch: pin 65e856777 again. One node at a time.
+  fastpath_release        = "5e3ebc8b70cb1fbae57704d5cffca0ef3b9c5ca1"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -261,6 +285,10 @@ locals {
     "65e856777546e0d0c67f0c8d049c3d54ba63c443" = {
       fastpath   = "ecd6ce47f1b32c40bbbc6fce69c95d552296b6f234fb8e4841c259de3eb68ade"
       sha256sums = "2110c83771dce88b4bb57d600dba1679716534edbd60497ea3d067666f23510b"
+    }
+    "5e3ebc8b70cb1fbae57704d5cffca0ef3b9c5ca1" = {
+      fastpath   = "1519270769ced33d35a54bdc3b36ab8380b95a035bbd83b572c45c640cd8ddf4"
+      sha256sums = "dfb305a1fb69cd94f20de824dda4925e0373e77ef5a8b17163d25e1fe37c57e3"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
