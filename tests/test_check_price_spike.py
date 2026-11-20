@@ -1778,12 +1778,47 @@ SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS = [
     ),
 ]
 
+# Exact held-run 44627483513 values (2026-11-19) for the routes verified
+# against each provider's own price source. Routes printed twice with the
+# same text (snapshot and manifest) appear once.
+_ATLAS_SOL_CODEX = "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]"
+_GMI_ARGON = "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]"
+NOVEMBER_19_REFRESH_TRANSITIONS = [
+    (_ATLAS_SOL_CODEX, "prompt", "1E-7", "0.000002"),
+    (_ATLAS_SOL_CODEX, "completion", "5E-7", "0.00001"),
+    (_ATLAS_SOL_CODEX + " cached-input", "prompt", "1E-8", "2E-7"),
+    (_GMI_ARGON, "prompt", "0.000002", "0.000004"),
+    (_GMI_ARGON, "completion", "0.00001", "0.00002"),
+    (_GMI_ARGON + " cached-input", "prompt", "1E-7", "2E-7"),
+    *(
+        (route, dimension, old, new)
+        for route in (
+            "google/gemma-3-12b-it [nextbit:nextbit:gemma3:12b-it]",
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:google/gemma-3-12b-it]",
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:gemma3:12b-it]",
+        )
+        for dimension, old, new in (
+            ("prompt", "7.5E-8", "3.5E-7"),
+            ("completion", "1.5E-7", "4.5E-7"),
+        )
+    ),
+    (
+        "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+        "prompt", "6E-9", "1.2E-8",
+    ),
+    (
+        "deepseek/deepseek-v4.1-flash-1017 [wafer:wafer:DeepSeek-V4.1-Flash-1017] cached-input",
+        "prompt", "3E-9", "8E-9",
+    ),
+]
+
 
 @pytest.mark.parametrize(
     ("route", "dimension", "old", "new"),
     CONFIRMED_REFRESH_TRANSITIONS
     + SEPTEMBER_22_REFRESH_TRANSITIONS
-    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS,
+    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
+    + NOVEMBER_19_REFRESH_TRANSITIONS,
 )
 def test_confirmed_refresh_transition_is_allowed(
     route: str, dimension: str, old: str, new: str,
@@ -1812,11 +1847,28 @@ def test_all_fourteen_confirmed_refresh_transitions_are_allowed() -> None:
     assert removed == []
 
 
+def test_november_19_verified_transitions_pass_only_with_their_approvals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before, after = _confirmed_refresh_prices(NOVEMBER_19_REFRESH_TRANSITIONS)
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == len(before) == 9
+    assert removed == []
+    # Positive control: without the approvals the gate holds every route the
+    # 2026-11-19 refresh held for these providers.
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    assert check_price_spike.failing_routes(before, after) == set(before)
+
+
 @pytest.mark.parametrize(
     ("route", "dimension", "old", "new"),
     CONFIRMED_REFRESH_TRANSITIONS
     + SEPTEMBER_22_REFRESH_TRANSITIONS
-    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS,
+    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
+    + NOVEMBER_19_REFRESH_TRANSITIONS,
 )
 @pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
 def test_confirmed_refresh_mutations_still_block(
