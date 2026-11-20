@@ -393,6 +393,44 @@ def test_any_other_per_token_unit_in_the_document_fails_closed(line):
         scaledown._input_price(line + "\n\n" + PRICE, FAQ)
 
 
+# Round-5 review: a tariff wrapped across physical lines.
+WRAPPED_TARIFFS = [
+    "Summarize costs $0.20 per\n1M input tokens.",
+    "Batch is $0.01 per\n1K tokens",
+    "> Summarize costs $0.20 per\n> 1M input tokens.",
+    "- Summarize costs $0.20\n  per 1M\n  input tokens",
+]
+
+
+@pytest.mark.parametrize("wrapped", WRAPPED_TARIFFS)
+def test_tariff_wrapped_across_lines_fails_closed_in_both_layouts(wrapped):
+    for source in (LIVE_WITH_MARKETING + "\n" + wrapped + "\n", wrapped + "\n\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    for source in (PRICE + "\n" + wrapped + "\n", PRICE + wrapped + "\n"):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, FAQ)
+
+
+@pytest.mark.parametrize("line", ["- **Text:** $0.20", "- **Image:** $0.30", "* `Text:` $0.20", "- _Image:_ $0.30"])
+def test_emphasised_rate_labels_count_in_both_layouts(line):
+    for source in (LIVE_WITH_MARKETING + "\n" + line + "\n", line + "\n\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError, match="must appear exactly once"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="must not appear in the legacy layout"):
+        scaledown._input_price(PRICE + "\n" + line + "\n", FAQ)
+
+
+def test_per_1k_calls_benchmark_shorthand_still_prices_in_both_layouts():
+    shorthand = "Cost is per 1K calls; latency is mean response time per call."
+    edited = LIVE_WITH_MARKETING.replace("Cost is per 1,000 calls; latency is mean response time per call.", shorthand)
+    assert shorthand in edited
+    assert scaledown._input_price(edited, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    assert scaledown._input_price(shorthand + "\n\n" + PRICE, FAQ) == ModelPrice(50_000, 0)
+    for unit in ("per 1K input tokens", "per 1M", "per million tokens", "per 1M image tokens"):
+        assert scaledown._PER_TOKEN_UNIT.search(unit), unit
+
+
 def test_live_pricing_section_has_one_pricing_heading_and_ends_at_the_next_section():
     lines = LLMS_2026_11_19.splitlines()
     assert scaledown._pricing_headings(lines) == [0]

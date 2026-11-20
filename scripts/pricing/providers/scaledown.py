@@ -187,37 +187,83 @@ def _legacy_rate(markdown: str) -> str:
 # fails closed. Lines are read after decoding HTML entities and dropping any
 # leading whitespace, blockquote and list markers.
 _CONTAINER_PREFIX = re.compile(r"^(?:\s*(?:>|[-*+](?=\s)|[0-9]{1,9}[.)](?=\s)))*\s*")
-_ONCE_PER_DOCUMENT = {
-    "the Public API heading": lambda line: line == _PUBLIC_API_HEADING.casefold(),
-    "a Text rate": lambda line: line.startswith("text:"),
-    "an Image rate": lambda line: line.startswith("image:"),
-    "the flat pricing bullet": lambda line: line == "flat pricing, no tiers or seats",
+# Emphasis and code markers are dropped too, for the key-line counts only, so
+# "- **Text:** $0.20" is still a Text rate.
+_EMPHASIS = re.compile(r"[*_`]")
+# Key lines and how often each must appear in the per-modality and legacy
+# layouts. The legacy layout has none of them, so one there is a second,
+# conflicting tariff. None means the layout does not constrain it.
+_KEY_LINES = {
+    "the Public API heading": (lambda line: line == _PUBLIC_API_HEADING.casefold(), 1, 0),
+    "a Text rate": (lambda line: line.startswith("text:"), 1, 0),
+    "an Image rate": (lambda line: line.startswith("image:"), 1, 0),
+    "the flat pricing bullet": (lambda line: line == "flat pricing, no tiers or seats", 1, None),
 }
 # "per" or "/" followed by a quantity and K, M, thousand, million or tokens
 # ("per 1M", "/ 1K", "per million input tokens", "per 1,000 input tokens"),
 # or "per" and a bare number ending a phrase ("per 1,000."). A quantity of
-# another unit, such as "per 1,000 calls" or "$10/day", is not one.
+# another unit, such as "per 1,000 calls", "per 1K calls" or "$10/day", is
+# not one.
 _NUM = r"[0-9]+(?:[.,][0-9]+)*(?![.,]?[0-9])"
+_OTHER_UNIT_NOUN = (
+    r"(?:calls?|requests?|quer(?:y|ies)|images?|seconds?|minutes?|hours?|days?|months?|seats?|users?)\b"
+)
 _PER_TOKEN_UNIT = re.compile(
     rf"(?:\bper\b|/)[\s-]*(?:"
-    rf"(?:(?:a|one)\s+)?(?:{_NUM}\s*)?(?:k|m|thousand|million|billion)\b"
+    rf"(?:(?:a|one)\s+)?(?:{_NUM}\s*)?(?:k|m|thousand|million|billion)\b(?!\s*{_OTHER_UNIT_NOUN})"
     rf"|(?:{_NUM}\s+)?(?:[a-z0-9,.-]+\s+){{0,3}}tokens?\b)"
     rf"|\bper\s+{_NUM}(?=\s*(?:$|[^\w\s]))",
     re.IGNORECASE,
 )
 
 
+def _single_rate_line(text: str, *, legacy: bool) -> bool:
+    return bool(_LEGACY_RATE.fullmatch(text)) if legacy else text == _PUBLIC_API_HEADING
+
+
+def _paragraph_units(lines: list[str]) -> list[str | None]:
+    """Per-token units found with each paragraph joined into one line.
+
+    A paragraph is a run of non-blank lines with container markers stripped,
+    so a tariff wrapped across lines is still one match. Each match yields
+    the line that holds it, or None when it spans lines.
+    """
+    found: list[str | None] = []
+    paragraph: list[str] = []
+    for line in [*lines, ""]:
+        if stripped := _CONTAINER_PREFIX.sub("", line).strip():
+            paragraph.append(stripped)
+            continue
+        spans, at = [], 0
+        for part in paragraph:
+            spans.append((at, at + len(part), part))
+            at += len(part) + 1
+        for match in _PER_TOKEN_UNIT.finditer(" ".join(paragraph)):
+            holders = [part for start, end, part in spans if start <= match.start() and match.end() <= end]
+            found.append(holders[0] if holders else None)
+        paragraph = []
+    return found
+
+
 def _check_whole_document(markdown: str, *, legacy: bool) -> None:
     lines = html.unescape(markdown).splitlines()
-    if not legacy:
-        normalized = [_CONTAINER_PREFIX.sub("", line).strip().casefold() for line in lines]
-        for name, test in _ONCE_PER_DOCUMENT.items():
-            if sum(1 for line in normalized if test(line)) != 1:
-                raise RuntimeError(f"scaledown: {name} must appear exactly once in llms.txt")
-    # The one rate line of the layout is the only place a per-token unit may appear.
+    normalized = [_EMPHASIS.sub("", _CONTAINER_PREFIX.sub("", line)).strip().casefold() for line in lines]
+    for name, (test, modal, legacy_count) in _KEY_LINES.items():
+        expected = legacy_count if legacy else modal
+        if expected is not None and sum(1 for line in normalized if test(line)) != expected:
+            rule = "must appear exactly once" if expected else "must not appear in the legacy layout"
+            raise RuntimeError(f"scaledown: {name} {rule} in llms.txt")
+    # The one rate line of the layout is the only place a per-token unit may
+    # appear, read both line by line and with each paragraph joined.
     units = [line for line in lines if _PER_TOKEN_UNIT.search(line)]
-    allowed = _LEGACY_RATE.fullmatch(units[0]) if legacy and len(units) == 1 else None
-    if len(units) != 1 or not (allowed or (not legacy and units[0] == _PUBLIC_API_HEADING)):
+    wrapped = _paragraph_units(lines)
+    if (
+        len(units) != 1
+        or not _single_rate_line(units[0], legacy=legacy)
+        or len(wrapped) != 1
+        or wrapped[0] is None
+        or not _single_rate_line(wrapped[0], legacy=legacy)
+    ):
         raise RuntimeError("scaledown: per-token unit outside the single public rate line")
 
 
