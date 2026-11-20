@@ -259,9 +259,9 @@ terminal counters from other control traffic, even though both backends attach
 policy's limits; compare throttle/429 counts for both backends. See
 [Cloud Armor rate-limit scope](https://docs.cloud.google.com/armor/docs/rate-limiting-overview).
 
-`rollout.sh` uses `_lib.sh`'s effective default concurrency 8 and revision
-max-instances 12; us-central1's service minimum is 8. That gives 64 warm and
-96 maximum concurrent request slots per revision. `_lib.sh` later contains a
+`rollout.sh` uses `_lib.sh`'s effective default concurrency 16 (8 before
+2026-11-20) and revision max-instances 12; us-central1's service minimum is 8.
+That gives 128 warm and 192 maximum concurrent request slots per revision. `_lib.sh` later contains a
 fallback of 20, but the earlier 12 assignment already sets the variable: it
 must not be read as an effective 160-slot cap. Caller overrides and overlapping
 revisions must be checked in the serving revision before activation. Combined

@@ -738,7 +738,10 @@ class Settings(BaseSettings):
     # A contended Spanner authorize can occupy a worker for the full RPC
     # budget. Keep one API key from filling every worker in a service instance
     # while still allowing ordinary low-latency traffic to scale horizontally.
-    gateway_authorize_max_in_flight_per_key: int = 4
+    # 12 of an instance's 16 request slots (TR_CLOUD_RUN_CONCURRENCY): a heavy
+    # key no longer meets 429s at ordinary batch rates (4 refused about 0.3% of
+    # one customer's ~3.5 req/s), and other keys keep a quarter of the instance.
+    gateway_authorize_max_in_flight_per_key: int = 12
     # Settlement has a wider gate because it closes already-issued holds, but
     # one hot key must not consume every Spanner session in an instance.
     settle_per_key_inflight_limit: int = 16
