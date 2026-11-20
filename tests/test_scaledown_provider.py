@@ -93,6 +93,608 @@ def test_ambiguous_or_changed_billing_contract_fails_closed(source, faq):
         scaledown._input_price(source, faq)
 
 
+FIXTURES = Path(__file__).parent / "fixtures" / "pricing"
+LLMS_2026_11_19 = (FIXTURES / "scaledown_llms_2026-11-19.txt").read_text(encoding="utf-8")
+SITE_2026_11_19 = (FIXTURES / "scaledown_site_bundle_2026-11-19.js").read_text(encoding="utf-8")
+
+
+def test_live_2026_11_19_per_modality_pricing_bills_the_text_rate():
+    # Refresh run 44601888558 held ScaleDown on "missing or ambiguous flat
+    # task pricing": llms.txt replaced "Public API: $0.05 per 1M tokens" and
+    # "All four models included" with per-modality Text and Image input
+    # rates. The routes are text only. Four-model coverage now comes from the
+    # Public API block's context-window line, which names all four models.
+    assert scaledown._input_price(LLMS_2026_11_19, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    cheaper_image = LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.01")
+    assert scaledown._input_price(cheaper_image, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    # The Image rate is validated, and must appear exactly once in llms.txt.
+    with pytest.raises(RuntimeError, match="an Image rate must appear exactly once"):
+        scaledown._input_price(LLMS_2026_11_19.replace("- Image: $0.15\n", ""), SITE_2026_11_19)
+    # The bundle is read only for the output-is-free FAQ, never for coverage.
+    assert scaledown._input_price(LLMS_2026_11_19, FAQ) == ModelPrice(50_000, 0)
+
+
+ALL_FOUR = "- 1M-token context window on Summarize, Extract, and Classify; Compress has no limit"
+
+
+@pytest.mark.parametrize(
+    "old,new,site_old,site_new",
+    [
+        (ALL_FOUR + "\n", "", "", ""),
+        (ALL_FOUR, ALL_FOUR.replace("Summarize, Extract, and Classify", "Summarize and Extract"), "", ""),
+        ("", "", "ScaleDown does not charge for output tokens", "Output is billed"),
+        ("- Text: $0.05\n", "", "", ""),
+        ("- Text: $0.05", "- Text: $0.05\n- Text: $0.10", "", ""),
+        ("- Image: $0.15", "- Image: $0.15\n- Image: $0.20", "", ""),
+        ("- Text: $0.05", "- Text: $0.05\n- Text (Summarize): $0.10", "", ""),
+        ("- Image: $0.15", "- Audio: $0.15", "", ""),
+        ("- Text: $0.05", "- Text: from $0.05", "", ""),
+        ("- Text: $0.05", "- Text: $0", "", ""),
+        ("- Text: $0.05", "- Text: $0.0000001", "", ""),
+        ("per 1M input tokens:", "per 1K input tokens:", "", ""),
+        ("Public API, per", "Public API, per 1M input tokens:\nPublic API, per", "", ""),
+        ("- Text: $0.05", "- Text: $0.05\nPublic API: $0.05 per 1M tokens", "", ""),
+        ("Flat pricing, no tiers or seats", "Volume tiers", "", ""),
+    ],
+)
+def test_per_modality_pricing_changes_fail_closed(old, new, site_old, site_new):
+    source = LLMS_2026_11_19.replace(old, new) if old else LLMS_2026_11_19
+    site = SITE_2026_11_19.replace(site_old, site_new) if site_old else SITE_2026_11_19
+    assert source != LLMS_2026_11_19 or site != SITE_2026_11_19
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, site)
+
+
+ENTERPRISE = "Enterprise: dedicated or licensed deployments, custom pricing\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A rate under the Enterprise heading is not the Public API rate.
+        LLMS_2026_11_19.replace("- Text: $0.05\n", "").replace(ENTERPRISE, ENTERPRISE + "- Text: $0.01\n"),
+        LLMS_2026_11_19.replace(ENTERPRISE, ENTERPRISE + "- Text: $0.01\n"),
+        # A heading inside the block ends it; its rows are per 1K, not per 1M.
+        LLMS_2026_11_19.replace("- Text: $0.05", "### Batch API, per 1K input tokens:\n- Text: $0.05"),
+        LLMS_2026_11_19.replace("- Image: $0.15\n", "- Image: $0.15\n\n- Text: $0.01\n"),
+    ],
+    ids=["text-moved-to-enterprise", "second-text-under-enterprise", "batch-heading-in-block", "after-blank-line"],
+)
+def test_rates_are_bound_to_the_public_api_block(source):
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize(
+    "bullet",
+    [
+        "- Summarize: USD 0.20 per 1M input tokens",
+        "- Audio: USD 0.15 per 1M input tokens",
+        "- Batch: 50% off",
+        "- Classify only",
+    ],
+)
+def test_every_public_api_bullet_must_be_a_known_line(bullet):
+    source = LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.15\n" + bullet)
+    with pytest.raises(RuntimeError, match="unknown or repeated line in the Pricing section"):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+# Round-2 review: the self-serve card span could borrow the Enterprise card's
+# "All four models included" when the CTA moved after it.
+ENTERPRISE_BORROWED_CARD = SITE_2026_11_19.replace(
+    '["All four models included"', '["Three models included"'
+).replace(
+    '["Dedicated instance"', '["All four models included","Dedicated instance"'
+).replace('cta:"get_api_key"', 'cta:"none"').replace(
+    '"Dedicated support and SLAs"]', '"Dedicated support and SLAs"],cta:"get_api_key"'
+)
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        ENTERPRISE_BORROWED_CARD,
+        FAQ + '{plan:"Public API",features:["Three models included"]},'
+        '{plan:"Enterprise",features:["All four models included"]}',
+        SITE_2026_11_19,
+    ],
+    ids=["enterprise-borrowed-card", "coverage-on-other-plan", "live-bundle"],
+)
+@pytest.mark.parametrize(
+    "source",
+    [
+        LLMS_2026_11_19.replace(ALL_FOUR + "\n", ""),
+        LLMS_2026_11_19.replace(ALL_FOUR + "\n", "").replace(ENTERPRISE, ENTERPRISE + ALL_FOUR + "\n"),
+        LLMS_2026_11_19.replace(ALL_FOUR, "- " + "All four models included"),
+    ],
+    ids=["no-all-four-line", "all-four-line-under-enterprise", "card-phrase-instead"],
+)
+def test_four_model_coverage_comes_only_from_the_public_api_block(source, site):
+    assert "All four models included" in site
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, site)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.15\n- Summarize: 20¢ / 1M input tokens"),
+        LLMS_2026_11_19.replace(ENTERPRISE, ENTERPRISE + "- Summarize: 20¢ / 1M input tokens\n"),
+        LLMS_2026_11_19.replace(ENTERPRISE, ENTERPRISE + "- Summarize: INR 2 / 1M input tokens\n"),
+        LLMS_2026_11_19.replace(ENTERPRISE, ENTERPRISE + "- Batch: 0.03 / 1K calls\n"),
+        LLMS_2026_11_19.replace(ENTERPRISE, ENTERPRISE + "Summarize is billed at 0.04 per 1,000 input tokens\n"),
+        LLMS_2026_11_19.replace("- Text: $0.05\n", "").replace("- Image: $0.15", "- Image: $0.15\n  - Text: $0.01"),
+        LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.15\n  - Text: $0.05"),
+        LLMS_2026_11_19.replace("- Text: $0.05", " - Text: $0.05"),
+        LLMS_2026_11_19.replace("- Fine-tuning on your data", "- Fine-tuning on your data\n- Classify: $0.01"),
+        LLMS_2026_11_19.replace("Enterprise: dedicated", "Enterprise: per-seat, dedicated"),
+    ],
+    ids=["cent-sign-in-block", "cent-sign-under-enterprise", "inr", "slash-1k", "per-1000-prose",
+         "nested-text-replaces-rate", "nested-text-duplicate", "indented-text", "enterprise-tariff",
+         "changed-enterprise-heading"],
+)
+def test_every_pricing_line_must_be_an_exact_known_line(source):
+    assert source != LLMS_2026_11_19
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+SECOND_PRICING = (
+    "\n## Pricing\n\nPublic API, per 1M input tokens:\n- Text: $0.01\n- Flat pricing, no tiers or seats\n"
+)
+
+
+@pytest.mark.parametrize("first_cheaper", [False, True])
+def test_two_pricing_sections_fail_closed(first_cheaper):
+    source = SECOND_PRICING + LLMS_2026_11_19 if first_cheaper else LLMS_2026_11_19 + SECOND_PRICING
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(PRICE + PRICE.replace("0.05", "0.01"), FAQ)
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["## Pricing ##", "## Pricing #", "# Pricing", "### PRICING", "##   pricing   ##", "Pricing\n=======",
+     "Pricing\n-------"],
+)
+def test_any_second_pricing_heading_fails_closed_in_both_layouts(heading):
+    new = LLMS_2026_11_19 + "\n" + heading + "\n\nPublic API: $0.01 per 1M tokens\n"
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(new, SITE_2026_11_19)
+    legacy = PRICE + "\n" + heading + "\nPublic API: $0.01 per 1M tokens\n"
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(legacy, FAQ)
+
+
+NEXT_SECTION = "## Compliance and Security"
+
+
+@pytest.mark.parametrize(
+    "inserted",
+    [
+        # Round-3 review: read as a setext heading, this ended Pricing early
+        # and the conflicting rate was never validated.
+        "> Summarize: $0.20 per 1M input tokens\n---",
+        "> Summarize: $0.20 per 1M input tokens\n===",
+        "Summarize: $0.20 per 1M input tokens\n---",
+        "> - Text: $0.01",
+        "> Enterprise pricing is custom",
+        "---",
+        "=====",
+        "### Batch API, per 1K input tokens:\n- Text: $0.01",
+    ],
+    ids=["blockquote-setext-dash", "blockquote-setext-equals", "plain-setext", "blockquoted-text-rate",
+         "blockquote-prose", "lone-dash-underline", "lone-equals-underline", "deeper-heading"],
+)
+def test_only_atx_headings_end_pricing_and_containers_fail_closed(inserted):
+    assert LLMS_2026_11_19.count(NEXT_SECTION) == 1
+    for anchor in (NEXT_SECTION, ENTERPRISE):
+        source = LLMS_2026_11_19.replace(anchor, inserted + "\n\n" + anchor, 1)
+        with pytest.raises(RuntimeError):
+            scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## **Pricing**",
+        "## [Pricing](#pricing)",
+        "## Pricing details",
+        "### Enterprise pricing",
+        "#Pricing",
+        "> ## Pricing",
+        "**Pricing**\n---",
+        "*Pricing*\n=====",
+        "[Pricing](#pricing)\n-------",
+        "P-r-i-c-i-n-g\n---",
+    ],
+)
+def test_formatted_pricing_headings_count_as_duplicates_in_both_layouts(heading):
+    new = LLMS_2026_11_19 + "\n" + heading + "\n\nPublic API, per 1M input tokens:\n- Text: $0.01\n"
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(new, SITE_2026_11_19)
+    legacy = PRICE + "\n" + heading + "\nPublic API: $0.01 per 1M tokens\n"
+    with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
+        scaledown._input_price(legacy, FAQ)
+
+
+# Verbatim lines 24, 27, 69 and 136 of the live llms.txt (2026-11-19):
+# "token" without currency, and currency or "per" without a per-token unit.
+# They must not count as rates.
+LIVE_MARKETING = (
+    "## Models\n\nSend in a long prompt or document. Get back a semantically compressed version that "
+    "preserves every fact relevant to your query, at a fraction of the token count.\n\n"
+    "Real impact: A workflow costing $10/day drops to $4/day at 60% compression\n\n"
+    "## Benchmarks\n\nScaleDown is benchmarked against frontier models from OpenAI, Anthropic, Google, "
+    "xAI, DeepSeek, and Qwen on public benchmarks: FinanceBench (Compress, F1), QMSum (Summarize, "
+    "ROUGE-L), CUAD (Extract, F1), and CLINC OOS (Classify, accuracy). Cost is per 1,000 calls; "
+    "latency is mean response time per call.\n\n"
+)
+LIVE_BLOG_LINE = (
+    "  Classify vs. GPT-5.4 Mini/Nano on intent classification for LLM routing: 90.53% accuracy "
+    "at $0.0008, beating both baselines on accuracy and cost.\n"
+)
+LIVE_WITH_MARKETING = LIVE_MARKETING + LLMS_2026_11_19 + "\n## Blog\n\n" + LIVE_BLOG_LINE
+
+
+def test_live_marketing_lines_still_price():
+    assert "$10/day" in LIVE_WITH_MARKETING and "$0.0008" in LIVE_WITH_MARKETING
+    assert scaledown._input_price(LIVE_WITH_MARKETING, SITE_2026_11_19) == ModelPrice(50_000, 0)
+
+
+# Round-4 review: heading forms the section scanner does not recognise.
+HIDDEN_HEADINGS = ["Pricing\nfor Public API\n---", "> Pricing\n> ---", "- ## Pricing", "## Pr&#105;cing"]
+
+
+@pytest.mark.parametrize("heading", HIDDEN_HEADINGS)
+@pytest.mark.parametrize(
+    "block",
+    [
+        "Public API, per 1M input tokens:\n- Text: $0.20\n- Flat pricing, no tiers or seats\n",
+        "- Text: $0.20\n",
+        "> Public API, per 1M input tokens:\n> - Text: $0.20\n",
+        "&#45; Text: $0.20\n",
+        "Public API: $0.20 per 1M tokens\n",
+    ],
+    ids=["full-block", "text-only", "blockquoted-block", "entity-encoded-text", "legacy-rate-line"],
+)
+def test_second_price_block_behind_hidden_heading_fails_closed(heading, block):
+    for source in (LIVE_WITH_MARKETING + "\n" + heading + "\n\n" + block,
+                   heading + "\n\n" + block + "\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError):
+            scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize("heading", HIDDEN_HEADINGS)
+@pytest.mark.parametrize(
+    "block", ["Public API: $0.20 per 1M tokens\n", "> Public API: $0.20 per 1M tokens\n", "- Text: $0.20 per 1M tokens\n"]
+)
+def test_second_price_block_behind_hidden_heading_fails_closed_in_legacy_layout(heading, block):
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(PRICE + "\n" + heading + "\n" + block, FAQ)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Batch API: $0.01 per 1K input tokens",
+        "> Summarize costs $0.01 per 1K input tokens",
+        "Summarize is $0.04 per 1,000.",
+        "Classify: 0.01/1M",
+        "Cheaper per million input tokens than any frontier model",
+        "Extract: 2 &#162; per 1,000 input tokens",
+    ],
+)
+def test_any_other_per_token_unit_in_the_document_fails_closed(line):
+    for at in ("start", "end"):
+        source = line + "\n\n" + LIVE_WITH_MARKETING if at == "start" else LIVE_WITH_MARKETING + "\n" + line + "\n"
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+        scaledown._input_price(line + "\n\n" + PRICE, FAQ)
+
+
+# Round-5 review: a tariff wrapped across physical lines.
+WRAPPED_TARIFFS = [
+    "Summarize costs $0.20 per\n1M input tokens.",
+    "Batch is $0.01 per\n1K tokens",
+    "> Summarize costs $0.20 per\n> 1M input tokens.",
+    "- Summarize costs $0.20\n  per 1M\n  input tokens",
+]
+
+
+@pytest.mark.parametrize("wrapped", WRAPPED_TARIFFS)
+def test_tariff_wrapped_across_lines_fails_closed_in_both_layouts(wrapped):
+    for source in (LIVE_WITH_MARKETING + "\n" + wrapped + "\n", wrapped + "\n\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    for source in (PRICE + "\n" + wrapped + "\n", PRICE + wrapped + "\n"):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, FAQ)
+
+
+@pytest.mark.parametrize("line", ["- **Text:** $0.20", "- **Image:** $0.30", "* `Text:` $0.20", "- _Image:_ $0.30"])
+def test_emphasised_rate_labels_count_in_both_layouts(line):
+    for source in (LIVE_WITH_MARKETING + "\n" + line + "\n", line + "\n\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError, match="must appear exactly once"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="must not appear in the legacy layout"):
+        scaledown._input_price(PRICE + "\n" + line + "\n", FAQ)
+
+
+def test_per_1k_calls_shorthand_holds_for_review_in_both_layouts():
+    # Accepted trade-off (round 6): any K, M, thousand, million or billion
+    # quantity after "per" is a unit, whatever word follows, so this harmless
+    # shorthand edit of live line 69 holds ScaleDown for review. Excluding
+    # "calls" or "users" let "per 1M user supplied input tokens" through.
+    shorthand = "Cost is per 1K calls; latency is mean response time per call."
+    edited = LIVE_WITH_MARKETING.replace("Cost is per 1,000 calls; latency is mean response time per call.", shorthand)
+    assert shorthand in edited
+    with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+        scaledown._input_price(edited, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+        scaledown._input_price(shorthand + "\n\n" + PRICE, FAQ)
+    # The bare-number form on the live page is not a unit and still prices.
+    assert scaledown._input_price(LIVE_WITH_MARKETING, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    for unit in ("per 1K input tokens", "per 1M", "per million tokens", "per 1M image tokens"):
+        assert scaledown._PER_TOKEN_UNIT.search(unit), unit
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Summarize: $0.20 per 1M user supplied input tokens",
+        "Extract: $0.20 per one million image input tokens",
+        "Classify: $0.20 per **1M** input tokens",
+        "Compress: $0.20 per a million tokens",
+        "Summarize: $0.20 per `1K` calls",
+        "Summarize: $0.20 per _1M_ input tokens",
+        "Summarize: $0.20 per 1K\ncalls",
+    ],
+    ids=["user-supplied", "one-million-image", "bold-quantity", "a-million", "code-quantity", "underscore-quantity",
+         "per-1k-wrapped-calls"],
+)
+def test_any_k_m_quantity_is_a_unit_whatever_follows_in_both_layouts(line):
+    for source in (LIVE_WITH_MARKETING + "\n" + line + "\n", line + "\n\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    for source in (line + "\n\n" + PRICE, PRICE + "\n" + line + "\n"):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, FAQ)
+
+
+# Round-7 review: priced token text the unit grammar does not describe.
+PRICED_TOKEN_TEXT = {
+    "five-modifiers": "Summarize: $0.20 per 1,000 billable uncached text input tokens.",
+    "four-modifiers": "Extract: $0.20 per 1,000 billable cached batch text tokens",
+    "link-wrapped-line": "[Summarize: $0.20 per 1,000 billable uncached text input tokens](https://scaledown.ai/)",
+    "strong-wrapped": "<strong>Summarize: $0.20</strong> per 1,000 billable uncached text <em>input tokens</em>",
+    "no-per": "Summarize: USD 0.20 for every 1,000 billable tokens",
+    "wrapped-lines": "Summarize: $0.20 for every 1,000 billable\nuncached text input tokens.",
+    "entity-dollar": "Summarize: &#36;0.20 per 1,000 billable uncached text input tokens.",
+    # Round-8 review: a tag between words, a unit in the heading, and
+    # currency words without a numeral.
+    "br-tag": "Summarize: $0.20 per 1,000 billable uncached text input<br>tokens.",
+    "br-self-closing": "Summarize: $0.20 for every 1,000 input<br/>tokens",
+    "heading-unit": "## Cost for 1M input tokens\n\n- Summarize: $0.20",
+    "setext-heading-unit": "Cost for 1M input tokens\n---\n\n- Summarize: $0.20",
+    "twenty-cents": "Summarize costs twenty cents for every million input tokens",
+    "two-dollars": "Two dollars buys a million tokens of Extract",
+    "one-euro": "One euro for every million input tokens",
+    # Round-9 review: setext headings with container markers or several text
+    # lines, a definition title, and currency symbols and ISO codes.
+    "blockquoted-setext-heading": "> Cost for 1M input tokens\n> ------------------------\n>\n> - Summarize: $0.20",
+    "multi-line-setext-heading": "Cost for 1M input tokens\non Summarize\n------------------------\n\n$0.20",
+    "definition-title": 'Summarize: $0.20 for every [unit].\n[unit]: https://scaledown.ai/docs "million input tokens"',
+    "cad-code": "Summarize costs CAD 0.20 for every million input tokens.",
+    "rupee-sign": "Summarize costs ₹20 for every million input tokens.",
+    "code-after-number": "Summarize costs 0.20CHF for every million input tokens.",
+    "won-sign": "Summarize costs ₩200 for every million input tokens.",
+}
+# Caught first by the per-token unit rule once links and tags are flattened
+# (the wrapped line ends in "per 1,000", a bare number ending a phrase).
+UNIT_TEXT = {
+    "link-unit": "Summarize: $0.20 per [1M input tokens](https://scaledown.ai/#pricing)",
+    "strong-unit": "Summarize: $0.20 per <strong>1M</strong> input tokens",
+    "dollars-words": "Classify costs 2 dollars per million tokens",
+    "wrapped-per-1000": "Summarize: $0.20 per 1,000\nbillable uncached text input tokens.",
+    # Round-9 review: reference-style links, and a unit kept in a link title.
+    "reference-link": "Summarize: $0.20 per [1M][unit].\n\n[unit]: https://scaledown.ai/docs/units",
+    "collapsed-reference-link": "Summarize: $0.20 per [1M][].\n\n[1M]: https://scaledown.ai/docs/units",
+    "shortcut-reference-link": "Summarize: $0.20 per [1M].\n\n[1M]: https://scaledown.ai/docs/units",
+    "inline-link-title": 'Summarize: $0.20 per [unit](https://scaledown.ai/docs "1M input tokens")',
+}
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("SOC 2", False),
+        ("ISO 27001", False),
+        ("In progress with GDPR, HIPAA, and SOC 2 compliance.", False),
+        ("CADX 2", False),
+        ("cad 2", False),
+        ("CAD 2", True),
+        ("2 CAD", True),
+        ("CAD0.20", True),
+        ("0.20CHF", True),
+        ("₹20", True),
+        ("₩200", True),
+        ("₽15", True),
+        ("₺3", True),
+        # Accepted cost: an ISO code that is also a capitalised word.
+        ("TOP 10", True),
+    ],
+)
+def test_currency_markers(text, expected):
+    assert scaledown._has_currency(text) is expected
+
+
+def test_iso_4217_list_is_the_published_list_one():
+    assert len(scaledown._ISO_4217_CODES) == 178
+    assert {"CAD", "AUD", "CHF", "CNY", "INR", "XCG", "ZWG"} <= scaledown._ISO_4217_CODES
+    assert not {"SOC", "ISO", "GPT", "API"} & scaledown._ISO_4217_CODES
+
+
+def _both_layout_sources(text: str) -> list[tuple[str, str]]:
+    return [
+        (LIVE_WITH_MARKETING + "\n" + text + "\n", SITE_2026_11_19),
+        (text + "\n\n" + LIVE_WITH_MARKETING, SITE_2026_11_19),
+        (text + "\n\n" + PRICE, FAQ),
+        (PRICE + "\n" + text + "\n", FAQ),
+    ]
+
+
+@pytest.mark.parametrize("text", list(PRICED_TOKEN_TEXT.values()), ids=list(PRICED_TOKEN_TEXT))
+def test_priced_token_text_outside_pricing_fails_closed_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match=r"^scaledown: priced token text outside the Pricing section; review$"):
+            scaledown._input_price(source, site)
+
+
+@pytest.mark.parametrize("text", list(UNIT_TEXT.values()), ids=list(UNIT_TEXT))
+def test_units_inside_links_or_html_fail_closed_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, site)
+
+
+def test_new_token_text_without_currency_holds_under_the_pinned_line_rule():
+    # "percent" is not "cents", so the priced-token rule passes this line, but
+    # since round 10 any new line that mentions tokens holds for review.
+    assert not scaledown._has_currency("Compression saves 60 percent of input tokens.")
+    source = LIVE_WITH_MARKETING + "\n## Savings\n\nCompression saves 60 percent of input tokens.\n"
+    with pytest.raises(RuntimeError, match=r"^scaledown: unreviewed token or currency text on llms.txt line \d+; review$"):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+# Round-10 review: open-ended constructions the earlier rules let through.
+ROUND_10_FINDINGS = {
+    "list-then-thematic-break": "## Cost for 1M input tokens\n\n- Standard service\n- Batch service\n---\n\nSummarize: $0.20",
+    "html-heading": '<h2 id="token-rates">Cost for 1M input tokens</h2>\n\nSummarize: $0.20',
+    "table": "## Summarize rates\n\n| Input tokens | Cost (CAD) |\n| --- | --- |\n| 1,000,000 | 0.20 |",
+    "parenthesised-code": "0.20 (CAD) for every million input tokens",
+}
+
+
+@pytest.mark.parametrize("text", list(ROUND_10_FINDINGS.values()), ids=list(ROUND_10_FINDINGS))
+def test_round_10_findings_hold_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match="^scaledown: "):
+            scaledown._input_price(source, site)
+
+
+def test_any_new_token_or_currency_line_holds_and_names_only_its_line_number():
+    line_number = len(LIVE_WITH_MARKETING.splitlines()) + 2
+    for added in ("We count tokens per request.", "Billing is in CAD.", "Prices are in euros.", "Pay with ₹."):
+        source = LIVE_WITH_MARKETING + "\n" + added + "\n"
+        with pytest.raises(RuntimeError) as raised:
+            scaledown._input_price(source, SITE_2026_11_19)
+        assert str(raised.value) == (
+            f"scaledown: unreviewed token or currency text on llms.txt line {line_number}; review"
+        )
+        assert added not in str(raised.value)
+    with pytest.raises(RuntimeError, match="unreviewed token or currency text on llms.txt line 1; review"):
+        scaledown._input_price("We count tokens per request.\n\n" + PRICE, FAQ)
+
+
+def test_pinned_live_lines_still_pass_and_edited_ones_hold():
+    line_138 = (
+        "  What ZDR means in practice: prompts are tokenized in memory, processed, and discarded - never "
+        "written to disk, in any environment, including on failure.\n"
+    )
+    assert scaledown._input_price(LIVE_WITH_MARKETING + "\n" + line_138, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    assert scaledown._input_price(line_138 + "\n" + PRICE, FAQ) == ModelPrice(50_000, 0)
+    with pytest.raises(RuntimeError, match="unreviewed token or currency text"):
+        scaledown._input_price(LIVE_WITH_MARKETING + "\n" + line_138.replace("memory", "RAM"), SITE_2026_11_19)
+    assert len(scaledown._PINNED_LINES) == 5
+
+
+PINNED_27 = "Real impact: A workflow costing $10/day drops to $4/day at 60% compression"
+PINNED_HOLD = r"^scaledown: unreviewed token or currency text on llms.txt line \d+; review$"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Round-11 review: normalisation erased the visible tariff.
+        f"[{PINNED_27}][Summarize costs $0.20 for every million input tokens]",
+        f"{PINNED_27}<!-- Summarize costs $0.20 for every million input tokens -->",
+        f"{PINNED_27}<span title='Summarize costs $0.20 per million input tokens'></span>",
+        f"**{PINNED_27}**",
+    ],
+    ids=["reference-label", "html-comment", "html-attribute", "emphasised-pin"],
+)
+def test_pins_match_raw_lines_only_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match=PINNED_HOLD):
+            scaledown._input_price(source, site)
+
+
+def test_unassigned_characters_count_as_currency_in_both_layouts():
+    # U+20C1 is the Saudi riyal sign (Sc in Unicode 17); this runtime's
+    # tables may still call it unassigned (Cn), which must fail closed.
+    assert scaledown._has_currency("⃁") and scaledown._has_currency("\U000e0080")
+    for source, site in _both_layout_sources("\nSummarize: ⃁0.20 for every million inputs.\n"):
+        with pytest.raises(RuntimeError, match=PINNED_HOLD):
+            scaledown._input_price(source, site)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " "],
+    ids=["cr", "vt", "ff", "fs", "gs", "rs", "nel", "line-separator", "paragraph-separator"],
+)
+def test_other_line_separators_hold_the_whole_document_in_both_layouts(separator):
+    text = PINNED_27 + separator + "Summarize costs twenty for every million inputs"
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match=r"^scaledown: unsupported line separator in llms.txt; review$"):
+            scaledown._input_price(source, site)
+
+
+def test_crlf_line_endings_still_price():
+    assert scaledown._input_price(LIVE_WITH_MARKETING.replace("\n", "\r\n"), SITE_2026_11_19) == ModelPrice(50_000, 0)
+    assert scaledown._input_price(PRICE.replace("\n", "\r\n"), FAQ) == ModelPrice(50_000, 0)
+
+
+def test_each_pinned_line_may_appear_only_once_in_both_layouts():
+    source = LIVE_WITH_MARKETING + "\n" + PINNED_27 + "\n"
+    line_number = len(source.splitlines())
+    with pytest.raises(RuntimeError) as raised:
+        scaledown._input_price(source, SITE_2026_11_19)
+    assert str(raised.value) == f"scaledown: unreviewed token or currency text on llms.txt line {line_number}; review"
+    with pytest.raises(RuntimeError, match="unreviewed token or currency text on llms.txt line 3; review"):
+        scaledown._input_price(PINNED_27 + "\n\n" + PINNED_27 + "\n\n" + PRICE, FAQ)
+    assert scaledown._input_price(PINNED_27 + "\n\n" + PRICE, FAQ) == ModelPrice(50_000, 0)
+
+
+def test_thematic_break_after_a_list_item_is_not_a_setext_heading():
+    lines = ["Cost for 1M input tokens", "", "- Standard service", "- Batch service", "---"]
+    assert scaledown._headings(lines, lines) == {}
+    lazy = ["- Standard service", "continued", "---"]
+    assert scaledown._headings(lazy, lazy) == {}
+    setext = ["Cost for 1M input tokens", "on Summarize", "---"]
+    assert scaledown._headings(setext, setext) == {2: "Cost for 1M input tokens on Summarize"}
+
+
+def test_encoded_line_break_fails_closed():
+    source = LLMS_2026_11_19.replace("- Text: $0.05", "- Text: $0.05&#10;- Text: $0.20")
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="encoded line break"):
+        scaledown._input_price(LIVE_WITH_MARKETING + "\nSummarize&#10;costs more\n", SITE_2026_11_19)
+
+
+def test_live_pricing_section_has_one_pricing_heading_and_ends_at_the_next_section():
+    lines = LLMS_2026_11_19.splitlines()
+    assert scaledown._pricing_headings(lines) == [0]
+    section = scaledown._pricing_section(LLMS_2026_11_19)
+    assert section[-1] == "" and NEXT_SECTION not in section
+    assert scaledown._input_price(LLMS_2026_11_19, SITE_2026_11_19) == ModelPrice(50_000, 0)
+
+
 @pytest.mark.parametrize("bad", [None, 0, -1, True, 1.5, "30", 1 << 40])
 def test_bad_usage_is_not_a_healthy_canary(bad):
     for task, result in RESULTS.items():

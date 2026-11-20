@@ -1,0 +1,17 @@
+## Pricing
+
+Public API, per 1M input tokens:
+- Text: $0.05
+- Image: $0.15
+- Output tokens are never billed
+- New accounts get 1M tokens free
+- 1M-token context window on Summarize, Extract, and Classify; Compress has no limit
+- Flat pricing, no tiers or seats
+
+Enterprise: dedicated or licensed deployments, custom pricing
+- Self-hosted in your VPC, including air-gapped
+- Fine-tuning on your data
+- Dedicated support and SLAs
+
+## Compliance and Security
+
