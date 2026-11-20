@@ -94,6 +94,41 @@ func TestHostedDecidePipeline(t *testing.T) {
 	}
 }
 
+func TestHostedDecideHandsRestrictedWorkspacesToControlPlane(t *testing.T) {
+	f := hostedGoldens(t)
+	base := hostedCase(t, f, "answer:hosted:C:eligible")
+	for _, policy := range []string{"unrestricted", "us", "western", "unknown"} {
+		t.Run(policy, func(t *testing.T) {
+			c := base
+			var ws map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(*c.Workspace.Body), &ws); err != nil {
+				t.Fatal(err)
+			}
+			value, err := json.Marshal(policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws["origin_policy"] = value
+			raw, err := json.Marshal(ws)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(raw)
+			c.Workspace.Body = &body
+			in, _ := caseInputs(t, f, c)
+			out := Decide(in)
+			_, admitted := out.Admit()
+			if policy == "unrestricted" {
+				if !admitted {
+					t.Fatalf("unrestricted control passed to Python: %s", out.Pass)
+				}
+			} else if admitted || out.ForShadow() != nil || out.Read.Facts.Workspace.Reason != gwstate.ReasonWorkspaceOrigin {
+				t.Fatalf("restricted hosted request did not hand off at the origin check: %s", out.Pass)
+			}
+		})
+	}
+}
+
 func TestHostedDecideDarkShadow(t *testing.T) {
 	f := hostedGoldens(t)
 	raw, err := readTestdata("edge_policy_hosted_decide_v1.json")
