@@ -135,7 +135,7 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 2 | 250,000,000 microdollars ($250) since 2026-11-13 (0 until then) | `-allowance-tier2` (metadata `fastpath-allowance-tier2`) |
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
-| Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
+| Floor | 2,000,000 microdollars ($2) since 2026-11-20 (20,000,000, $20, from WS0 until then) | `-floor` (new) |
 | Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
 | Enabler's balance to disable | unspent credit under $5 since 2026-11-13 ($40 until then) | enabler setting |
 
