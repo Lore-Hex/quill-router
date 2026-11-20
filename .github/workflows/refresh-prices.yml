@@ -600,8 +600,10 @@ jobs:
                 # whether main moved. If it did, this run's SHA can never be
                 # pushed: cancel it by id and let the next round carry or
                 # recompute now instead of after the run ends.
-                if [ "${status}" != "completed" ] && [ $(( poll % 4 )) -eq 0 ]; then
-                  git fetch -q origin main
+                # A failed fetch only skips this check: the push still needs
+                # main to equal PUBLISH_BASE, re-read after the run ends.
+                if [ "${status}" != "completed" ] && [ $(( poll % 4 )) -eq 0 ] && \
+                   git fetch -q origin main; then
                   main_now=$(git rev-parse origin/main)
                   if [ "${main_now}" != "${PUBLISH_BASE}" ]; then
                     echo "  main advanced to ${main_now} during snapshot CI; cancelling superseded ci run ${ci_run_id}"
