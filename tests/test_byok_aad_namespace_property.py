@@ -38,7 +38,7 @@ import secrets as secrets_module
 import pytest
 from cryptography.exceptions import InvalidTag
 from fastapi.testclient import TestClient
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from trusted_router.byok_cloud_credentials import is_cloud_credential_provider
@@ -118,6 +118,8 @@ KEY_STRING_BYOK_PROVIDERS = [slug for slug in BYOK_PROVIDERS if not is_cloud_cre
         alphabet=st.characters(blacklist_categories=("Cs", "Cc")), min_size=1, max_size=64
     )
 )
+@example(provider="AZURE")
+@example(provider="azure")
 @settings(
     max_examples=300,
     deadline=None,
@@ -140,6 +142,16 @@ def test_whatever_the_console_stores_never_collides_with_a_control_purpose(
     stored = STORE.get_byok_provider(workspace_id, slug)
 
     if location.endswith("error=provider"):
+        assert stored is None, f"rejected {provider!r} but still stored a row"
+        return
+    if location.endswith("error=credential"):
+        # A native-credential provider (Bedrock, Vertex, Azure, in any spelling
+        # that canonicalises to one) refuses the plain key string this property
+        # posts. That refusal is only legitimate for those providers, and it
+        # must leave nothing behind.
+        assert is_cloud_credential_provider(slug), (
+            f"{provider!r} was refused as a bad credential but takes a key string"
+        )
         assert stored is None, f"rejected {provider!r} but still stored a row"
         return
 

@@ -168,7 +168,7 @@ def test_ticket_and_envelope_reject_invalid_route_stream(route, stream):
 @pytest.mark.parametrize('enabled', [False, True])
 @pytest.mark.parametrize('optin', [False, True])
 def test_decide_real_authorize_route(enabled, optin):
-    """The hosted body as the enclave sends it, through the route itself."""
+    """A hosted decide authorize through the route itself."""
     store, _, key = _seed_typed_gateway_store()
     config = settings(async_settle_decide_route=enabled, async_settle_pilot_workspaces='ws-rpc',
                       regions='us-central1', primary_region='us-central1', serving_region='us-central1')
@@ -226,6 +226,13 @@ def test_decide_refund(env, enabled):
     body, auth, _ = prepare(env, decide_case(), kind='refund')
     assert body['terminal']['route_type'] == 'decide' and body['terminal']['charge_micro'] == 0
     env[3].async_settle_decide_route = enabled
+    if enabled:
+        # A nonzero refund is not a decide refund: refused before any row exists.
+        charged = copy.deepcopy(body)
+        charged['terminal']['charge_micro'] = 1
+        with pytest.raises(HTTPException) as refused:
+            call(env, charged)
+        assert refused.value.status_code == 400 and not env[1].settle_outbox
     reply = call(env, body)
     if not enabled:
         assert reply.status_code == 200
@@ -235,12 +242,8 @@ def test_decide_refund(env, enabled):
     assert reply.status_code == 202
     assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert env[1].settle_outbox[(auth.id, 'refund')]['actual_cost_micro'] == 0
-    assert env[0].get_gateway_authorization(auth.id).finalized_cost_microdollars in (0, None)
-    # A nonzero refund is not a decide refund either.
-    charged = copy.deepcopy(body)
-    charged['terminal']['charge_micro'] = 1
-    with pytest.raises(HTTPException):
-        call(env, charged)
+    stored = env[0].get_gateway_authorization(auth.id)
+    assert (stored.settled, stored.finalization_outcome, stored.finalized_cost_microdollars) == (True, 'refunded', 0)
 
 
 @pytest.mark.parametrize('ticket_route,envelope_route', [('decide', 'chat.completions'), ('chat.completions', 'decide')])
