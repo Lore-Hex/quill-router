@@ -412,10 +412,18 @@ def test_signup_cta_is_assigned_only_where_a_test_button_is_served(client, caplo
         assert 'data-signup-cta' not in page.text.replace('[data-signup-cta]', '').replace('A="data-signup-cta"', '')
         assert SIGNUP_CTA_COOKIE_NAME not in page.cookies
     assert not any(r.getMessage() == 'acquisition.signup_cta_assigned' for r in caplog.records)
-    home = client.get('/')
+    # /choose is publicly cacheable: it shows the button but never sets the cell.
+    cached = client.get('/choose')
+    assert 'public' in cached.headers['cache-control'] and ' data-signup-cta ' in cached.text
+    assert SIGNUP_CTA_COOKIE_NAME not in cached.cookies
+    assert not any(r.getMessage() == 'acquisition.signup_cta_assigned' for r in caplog.records)
+    home = client.get('/?utm_source=newsletter&utm_medium=email&utm_campaign=launch')
     assert home.text.count(' data-signup-cta ') == 3
     assert home.cookies.get(SIGNUP_CTA_COOKIE_NAME) in {'start_building', 'start_for_free'}
-    assert sum(r.getMessage() == 'acquisition.signup_cta_assigned' for r in caplog.records) == 1
+    assigned = [r for r in caplog.records if r.getMessage() == 'acquisition.signup_cta_assigned']
+    assert len(assigned) == 1
+    # The dashboard filters need these on the assignment row.
+    assert (assigned[0].utm_source, assigned[0].utm_medium, assigned[0].utm_campaign) == ('newsletter', 'email', 'launch')
 
 
 def test_signup_cta_results_count_only_events_after_assignment():

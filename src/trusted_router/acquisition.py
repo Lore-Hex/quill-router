@@ -856,6 +856,10 @@ def assign_signup_cta(
         'event': 'acquisition.signup_cta_assigned',
         'anonymous_fingerprint': _fingerprint(context.anonymous_id),
         'cta': f'{SIGNUP_CTA_EXPERIMENT_ID}:{cell}',
+        # The dimensions the dashboard filters on. Not experiment_id (see above).
+        'utm_source': context.last_touch.get('utm_source'),
+        'utm_medium': context.last_touch.get('utm_medium'),
+        'utm_campaign': context.last_touch.get('utm_campaign'),
         'landing_path': context.last_touch.get('landing_path', ''),
         **_website_network_fields(request),
     })
