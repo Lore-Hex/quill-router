@@ -38,7 +38,14 @@ def test_sdk_choice_and_official_domains(client: TestClient) -> None:
                       "https://github.com/Lore-Hex/trusted-router-py"):
             assert claim in text, (path, claim)
     for path in ("/llms.txt", "/about"):
-        assert "trustedrouter.ai is not affiliated with TrustedRouter" in client.get(path).text
+        text = client.get(path).text
+        for claim in ("The TrustedRouter website is trustedrouter.com",
+                      "the primary API host is api.trustedrouter.com",
+                      "Other official hosts are listed in", "llms.txt", "SDK documentation",
+                      "https://github.com/Lore-Hex/trusted-router-py#readme",
+                      "trustedrouter.ai is not affiliated with TrustedRouter"):
+            assert claim in text, (path, claim)
+        assert "only official domains" not in text
 
 
 def test_homepage_explains_route_privacy_controls(client: TestClient) -> None:

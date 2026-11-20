@@ -5076,7 +5076,7 @@ def llms_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
     lines = [
         "# TrustedRouter",
-        "The only official domains are trustedrouter.com (site and console), api.trustedrouter.com (API), and the additional hosts listed in llms.txt: api-europe-west4.quillrouter.com, trust.trustedrouter.com, and status.trustedrouter.com; trustedrouter.ai is not affiliated with TrustedRouter.",
+        "The TrustedRouter website is trustedrouter.com, and the primary API host is api.trustedrouter.com. Other official hosts are listed in llms.txt and the SDK documentation (https://github.com/Lore-Hex/trusted-router-py#readme); trustedrouter.ai is not affiliated with TrustedRouter.",
         "",
         "TrustedRouter is an OpenAI compatible AI router with an attested prompt path.",
         "The control plane does not terminate prompt traffic; prompts belong on api.trustedrouter.com.",

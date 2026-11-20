@@ -12,7 +12,7 @@ in, so the default card and the homepage card are one design by construction.
     uv run python scripts/generate_og_card.py                       # writes static/og.png
     uv run python scripts/generate_og_card.py --out card.png \\
         --headline "Private AI routing" --accent "you can verify" \\
-        --subhead "Hundreds of models through one API."              # a one-off card, same style
+        --subhead "600+ models through one API."              # a one-off card, same style
     uv run python scripts/generate_og_card.py --theme nyte           # writes static/og/nyte/og.png
 
 ``--theme nyte`` renders the same words in the NY Token Exchange look
@@ -104,7 +104,7 @@ class Card:
 DEFAULT_CARD = Card(
     headline="Encrypt all your",
     accent="AI chats",
-    subhead="Access hundreds of models confidentially through a single OpenAI-compatible API.",
+    subhead="Access 600+ models confidentially through a single OpenAI-compatible API.",
 )
 
 # Runs in Node against the repo's @playwright/test: load the filled card, fail

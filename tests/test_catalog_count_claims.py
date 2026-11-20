@@ -18,8 +18,10 @@ from trusted_router.dashboard import docs_llms_full_txt, docs_llms_txt, llms_txt
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "src/trusted_router/templates"
 PICKER = ROOT / "src/trusted_router/static/choose-app.js"
+STATIC = ROOT / "src/trusted_router/static"
 CLAIM = re.compile(
-    r"\b(?:(?:more than |over )?\d[\d,]*\+?|hundreds of)\s+(?:(?:additional|public|AI|LLM)\s+)?"
+    r"\b(?:(?:more than |over )?\d[\d,]*\+?|hundreds of)\s+"
+    r"(?:(?:additional|other|more|public|AI|LLM)\s+)?"
     r"(?:model\s+(?:ids|routes)|models|routes|providers)\b", re.IGNORECASE,
 )
 # Exact competitor facts and a synthesis panel limit, not TrustedRouter totals.
@@ -117,6 +119,35 @@ def test_templates_and_homepage_content_use_consistent_totals() -> None:
             r"region\.(?:catalog_provider_count|directory_model_count))\s*}}",
             path.read_text(),
         ), path
+
+
+@pytest.mark.parametrize("current,old", [
+    ("Claude and 100+ providers through", "Claude (and 30+ other providers) through"),
+    ("Claude and 100+ providers, same API", "Claude + 30 more providers, same API"),
+])
+def test_claude_template_scan_rejects_old_claims_in_memory(current: str, old: str) -> None:
+    template = (TEMPLATES / "public/seo_claude_api_privacy.html").read_text()
+    assert current in template
+    assert not invalid_claims(template)
+    with pytest.raises(AssertionError):
+        assert not invalid_claims(template.replace(current, old, 1))
+
+
+def assert_static_svg_totals(text: str) -> None:
+    assert not (claims := invalid_claims(text)), claims
+
+
+@pytest.mark.parametrize("path", sorted(STATIC.rglob("*.svg")),
+                         ids=lambda path: str(path.relative_to(STATIC)))
+def test_static_svg_text_uses_consistent_totals(path: Path) -> None:
+    assert_static_svg_totals(path.read_text())
+
+
+def test_static_svg_scan_rejects_old_claim_in_memory() -> None:
+    svg = (STATIC / "og/blog/axios-tried-trustedrouter.svg").read_text()
+    assert "600+ models" in svg
+    with pytest.raises(AssertionError, match=r"550\+ models"):
+        assert_static_svg_totals(svg.replace("600+ models", "550+ models", 1))
 
 
 @pytest.mark.parametrize("builder", [llms_txt, docs_llms_txt, docs_llms_full_txt])
