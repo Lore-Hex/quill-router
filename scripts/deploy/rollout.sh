@@ -901,6 +901,14 @@ ENV_VARS=(
   # sync_required("unsupported_cohort") before opening a transaction. Add a
   # region only with measured handoff percentiles.
   "TR_ASYNC_SETTLE_ACCEPT_REGIONS=us-central1,us-east4"
+  # 2026-11-20 (Joseph): hosted typed-decision calls negotiate async
+  # settlement as chat does. On only now that every region runs a release
+  # with decide async support: an older release answers 400 to a decide
+  # envelope, and the enclave does not fall back from that answer. The way
+  # back is this one pin, set to false: accepted rows keep draining and the
+  # snapshot-sync retry keeps its frozen price (docs/runbook.md, "Decide
+  # async settlement").
+  "TR_ASYNC_SETTLE_DECIDE_ROUTE=true"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity
