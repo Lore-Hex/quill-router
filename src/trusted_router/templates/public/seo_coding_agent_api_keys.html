@@ -1,8 +1,10 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <div class="content-reader" data-content-toc><article class="content-document">
-<section class="content-section"><h2>An API key belongs to the service that issued it</h2>
-<p>A Codex or Cursor setup can involve an app subscription, a direct model-provider key or a gateway key. These are different credentials and billing relationships. For TrustedRouter requests, pair a TrustedRouter key with the TrustedRouter endpoint and an available model ID.</p><p>First decide whether you are connecting a direct provider or a gateway. Then check the API format expected by the client. A successful plain-text call is only the first step: coding agents also depend on tools, streaming and multi-turn state.</p>
+<section class="content-section">
+<h2>Connect your key to the client that will use it</h2>
+<p>For Codex, configure a named provider with its endpoint and the environment variable holding your gateway key. For Cursor, start in Settings → Models and choose the provider supported by your installation. The same workspace can use both clients, each with its own connection settings.</p>
+<p>Try one small task before moving a project. Ask the agent to read a fixture and report its first field. Check that the chosen model answered and that the tool result came back into the conversation. That gives you a working reference when you later change providers, keys or models.</p>
 </section>
 <section class="content-section"><h2>Codex API key and custom provider configuration</h2>
 <p>Codex supports custom provider configuration. The example below selects a Responses-compatible gateway and reads the credential from the environment. Replace the model placeholder with a currently available route; merge the settings into your existing configuration instead of overwriting it.</p><pre><code>model = "AUTHOR/MODEL"
@@ -23,7 +25,7 @@ wire_api = "responses"</code></pre><p>Check the <a href="https://developers.open
 <section class="content-section"><h2>Verify before moving your real project</h2>
 <div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Check</th><th scope="col">Why it matters</th></tr></thead><tbody><tr><td>Credential and base URL</td><td>Prevents sending a key to the wrong service.</td></tr><tr><td>Model ID and API format</td><td>A catalog name does not prove client compatibility.</td></tr><tr><td>Streaming and tool round trip</td><td>A plain text reply does not exercise a coding agent.</td></tr><tr><td>Cost and limits</td><td>App charges and model-provider charges may be separate.</td></tr><tr><td>Editor, gateway and upstream privacy</td><td>Gateway attestation covers its boundary, not every other component.</td></tr></tbody></table></div><p>Start with a non-sensitive test project, confirm a small edit and run its tests. Keep secrets in the supported credential store or environment. For Claude Code, use the dedicated <a href="/claude-code-router">Messages gateway guide</a>; for common endpoints and smoke tests, see <a href="/docs/agent-setup">agent setup</a>.</p>
 </section>
-<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
 </article></div>
 {% include "public/_comparison_guide_links.html" %}
 {% endblock %}

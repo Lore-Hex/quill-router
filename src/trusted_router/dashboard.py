@@ -1422,7 +1422,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "claude-vs-chatgpt": PublicPage(
         template="public/seo_claude_vs_chatgpt.html",
         title="Claude vs ChatGPT: Writing, Coding and API Choice",
-        description="Compare Claude and ChatGPT for writing, coding and daily work. Separate app features from API models, then test cost, quality and privacy with TrustedRouter.",
+        description="Compare Claude and ChatGPT with a customer email, a coding task and a side-by-side checklist. Find the app or API model that fits your work.",
         faq_items=(
             (
                 "Is ChatGPT the same thing as GPT?",
@@ -1437,7 +1437,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "gpt-vs-gemini": PublicPage(
         template="public/seo_gpt_vs_gemini.html",
         title="GPT vs Gemini for Everyday Use and API Work",
-        description="Compare GPT and Gemini for everyday use, documents, multimodal tasks and API costs. Choose by your workflow and test available routes through TrustedRouter.",
+        description="Compare GPT and Gemini for everyday work with a meeting recap, a document check and a multimodal task. See how app features and API costs affect your choice.",
         faq_items=(
             (
                 "Is GPT or Gemini better for everyday use?",
@@ -1452,7 +1452,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "gemini-vs-claude": PublicPage(
         template="public/seo_gemini_vs_claude.html",
         title="Gemini vs Claude: Compare Models for Your Workflow",
-        description="Compare Gemini and Claude for documents, coding, context and API integration. Use a practical decision table and current route evidence instead of a universal ranking.",
+        description="Compare Gemini and Claude for recordings, documents and code. Check native input support, try a transcript exercise and compare current API routes.",
         faq_items=(
             (
                 "Which has the biggest context window, Gemini or Claude?",
@@ -1467,7 +1467,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "best-llm-for-coding": PublicPage(
         template="public/seo_best_llm_for_coding.html",
         title="Best LLM for Coding: Compare Claude, GPT, DeepSeek and Kimi",
-        description="Choose the best AI model for coding with a reproducible task scorecard. Compare Claude, GPT, DeepSeek, Kimi and GLM by working fixes, tool support and cost.",
+        description="Find the best LLM for your coding workflow. Compare Claude, GPT, DeepSeek and Kimi on working patches, test results, review time and cost per accepted fix.",
         faq_items=(
             (
                 "What is the best AI model for coding right now?",
@@ -1482,7 +1482,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "claude-code-router": PublicPage(
         template="public/seo_claude_code_router.html",
         title="Claude Code Router: API Keys, Proxy Setup and Model Choice",
-        description="Set up a Claude Code gateway with a TrustedRouter API key. Understand base URLs, model selection, proxy troubleshooting and the limits of non-Claude models.",
+        description="Connect Claude Code to TrustedRouter with a gateway API key. Copy the Messages endpoint setup, verify your model and test a tool call in a small project.",
         faq_items=(
             (
                 "Is a Claude Code proxy the same as an HTTP proxy?",
@@ -1497,7 +1497,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "opencode-models": PublicPage(
         template="public/seo_opencode_models.html",
         title="OpenCode Models: API Keys, DeepSeek and Gateway Setup",
-        description="Choose OpenCode models and configure a TrustedRouter provider. Learn API key setup, model IDs, DeepSeek options and how to move from another gateway.",
+        description="Set up OpenCode models with a TrustedRouter API key. Copy a custom provider configuration, choose DeepSeek or Kimi and test a complete coding interaction.",
         faq_items=(
             (
                 "Where do I put an OpenCode API key?",
@@ -1512,7 +1512,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "coding-agent-api-keys": PublicPage(
         template="public/seo_coding_agent_api_keys.html",
         title="Codex and Cursor API Keys: Model Gateway Setup",
-        description="Understand Codex and Cursor API keys, custom endpoints and model support. Configure a gateway carefully and verify tools, billing and privacy before switching.",
+        description="Set up Codex and Cursor API keys, configure a Responses gateway for Codex and check which Cursor features use your provider key. Includes a first tool-call test.",
         faq_items=(
             (
                 "Does a ChatGPT subscription automatically pay for gateway usage?",

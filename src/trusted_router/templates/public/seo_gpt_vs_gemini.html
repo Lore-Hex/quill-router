@@ -1,8 +1,10 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <div class="content-reader" data-content-toc><article class="content-document">
-<section class="content-section"><h2>Choose the workflow before choosing the model</h2>
-<p>For everyday use, start with your three most frequent tasks: drafting messages, understanding documents and getting help with a practical problem. Try them in the apps and plans you would actually use. For a developer, compare exact GPT and Gemini API versions separately. A chat app can add search, memory or integrations that are not features of a bare model endpoint.</p><p>Our recommendation is to choose by workflow fit first, then compare quality and total cost on the tasks that remain difficult. TrustedRouter is useful for the API part: it gives you a common way to test available models and inspect their routes.</p>
+<section class="content-section">
+<h2>Try GPT and Gemini on a day you actually have</h2>
+<p>Take a photo of a meeting agenda, add your notes and ask each assistant for three things: the decisions, the owners and a follow-up email. This small exercise tests several everyday skills at once. You can check the names and dates in a minute and see which draft you would actually send.</p>
+<p>For everyday use, give extra weight to the app that already fits your files and daily tools. For an automated workflow, try the same example with specific GPT and Gemini API models. Record which inputs each route accepts, how quickly the answer arrives and what a completed request costs.</p>
 </section>
 <section class="content-section"><h2>GPT vs Gemini: everyday-use checklist</h2>
 <div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Task</th><th scope="col">What to try</th><th scope="col">What to measure</th></tr></thead><tbody><tr><td>Email and planning</td><td>Give both models the same notes and ask for an actionable draft</td><td>Corrections, missing constraints and time saved.</td></tr><tr><td>Documents</td><td>Ask questions whose answers appear in a supplied file</td><td>Correct references and willingness to say when the file is silent.</td></tr><tr><td>Images, audio or video</td><td>Check that the exact app or endpoint accepts your input type</td><td>Input compatibility and accuracy on your own material.</td></tr><tr><td>Coding help</td><td>Ask for a change with a runnable test</td><td>Correctness after execution, not confidence of the explanation.</td></tr><tr><td>Repeated API tasks</td><td>Run a fixed sample with the same output budget</td><td>Cost per usable result, latency and failure rate.</td></tr></tbody></table></div>
@@ -16,7 +18,7 @@
 <section class="content-section"><h2>Compare both through TrustedRouter</h2>
 <p>Find current GPT and Gemini routes in <a href="/compare/models">Compare AI models</a>. Start with non-sensitive examples, keep the model IDs fixed and record the provider. Test streaming and any tools your application relies on before switching real traffic.</p><p>For a broader shortlist, read <a href="/claude-vs-chatgpt">Claude vs ChatGPT</a> or <a href="/gemini-vs-claude">Gemini vs Claude</a>. You can use different models for different workloads while keeping a single integration. Review upstream privacy separately from the attested gateway.</p>
 </section>
-<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
 </article></div>
 {% include "public/_comparison_guide_links.html" %}
 {% endblock %}

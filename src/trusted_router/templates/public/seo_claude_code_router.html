@@ -1,8 +1,10 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <div class="content-reader" data-content-toc><article class="content-document">
-<section class="content-section"><h2>What a Claude Code router changes</h2>
-<p>A Claude Code router sits between the coding agent and its model provider. It can centralize credentials, route selection and usage accounting. It does not replace the local agent's tools or permissions. TrustedRouter exposes an Anthropic-compatible Messages endpoint as well as OpenAI-compatible endpoints.</p><p><a href="https://code.claude.com/docs/en/llm-gateway">Anthropic's gateway documentation</a> explicitly says it does not support routing Claude Code to non-Claude models. Treat API compatibility and official agent support as separate checks. For broad model choice, <a href="/opencode-models">OpenCode</a> is another client to evaluate.</p>
+<section class="content-section">
+<h2>Give Claude Code a gateway connection</h2>
+<p>A Claude Code router lets your team use a gateway key, choose an available Claude model and track usage through one service. The agent still works in your project with the tools and permissions you give it. On TrustedRouter, the connection starts with a key and the Anthropic-compatible Messages base URL.</p>
+<p>Try the connection in a fresh terminal first. Ask for a short reply, then ask Claude Code to read a small project file and explain one function. The first request checks your key and model selection. The second exercises a tool call before you give the agent an editing task. <a href="https://code.claude.com/docs/en/llm-gateway">Anthropic</a> does not support routing Claude Code to non-Claude models. For DeepSeek or GLM as the primary agent model, see <a href="/opencode-models">OpenCode setup</a>.</p>
 </section>
 <section class="content-section"><h2>Claude Code API key and proxy setup</h2>
 <p>Create a TrustedRouter API key, then start in a temporary terminal session. Keep credentials out of project files. Choose a currently available Claude model ID from <a href="/models">the catalog</a>; replace the placeholder below before launching.</p><pre><code>export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
@@ -18,7 +20,7 @@ claude --model "ANTHROPIC/MODEL_ID_FROM_CATALOG"</code></pre><p>The Messages bas
 <section class="content-section"><h2>Troubleshoot the first request</h2>
 <div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Symptom</th><th scope="col">Check</th></tr></thead><tbody><tr><td>Authentication fails</td><td>The key belongs to the selected gateway and the terminal passes it to Claude Code.</td></tr><tr><td>Model not found</td><td>Copy an exact available catalog ID rather than a display label.</td></tr><tr><td>Text works but tools fail</td><td>Check the client version and supported Messages features; reduce to one tool round trip.</td></tr><tr><td>Unexpected model or cost</td><td>Inspect the selected route, explicit model choice and fallback policy.</td></tr><tr><td>Privacy requirement cannot be met</td><td>Select an eligible route instead of silently lowering the requirement.</td></tr></tbody></table></div><p>For model selection, use the <a href="/best-llm-for-coding">coding evaluation guide</a>. For endpoint details and a smoke test, see <a href="/docs/agent-setup">agent setup</a>.</p>
 </section>
-<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
 </article></div>
 {% include "public/_comparison_guide_links.html" %}
 {% endblock %}

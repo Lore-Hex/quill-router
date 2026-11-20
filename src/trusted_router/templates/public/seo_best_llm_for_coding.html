@@ -1,8 +1,10 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <div class="content-reader" data-content-toc><article class="content-document">
-<section class="content-section"><h2>The best coding model is the one that finishes your task</h2>
-<p>Start with a capable model supported by your coding agent and one lower-cost alternative. Compare them on tasks from your own repository. Keep the cheaper option where it meets your quality bar, and use the stronger option for tasks where fewer retries justify the price. This is a selection method, not an unmeasured league table.</p><p>Claude, GPT, DeepSeek, Kimi and GLM are useful families to include when suitable routes are available. Exact versions, context, serving configuration and agent tool support matter more than the family name alone.</p>
+<section class="content-section">
+<h2>Choose a coding model by the patch you would merge</h2>
+<p>Pick a bug your team fixed last week. Start each candidate from the commit just before the fix, give it the original issue and run the same tests. Look at the resulting patch with the model name hidden. A small change that handles the edge case and is easy to review makes a strong candidate for your daily driver.</p>
+<p>Start with two models your agent supports. Claude and GPT make one practical pairing. DeepSeek and Kimi give you another when you want to compare the cost of longer coding sessions. Track the whole session, including failed attempts. A model can earn its place on routine fixes even if you prefer another for cross-file changes.</p>
 </section>
 <section class="content-section"><h2>A five-task coding scorecard</h2>
 <div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Task</th><th scope="col">Pass condition</th><th scope="col">Record</th></tr></thead><tbody><tr><td>Fix a reproducible bug</td><td>Existing test fails before the patch and passes after it</td><td>Attempts, regressions and total cost.</td></tr><tr><td>Implement a small feature</td><td>Acceptance tests pass without removing checks</td><td>Scope control and review time.</td></tr><tr><td>Refactor across files</td><td>Behavior is preserved and imports still work</td><td>Unnecessary edits and missed references.</td></tr><tr><td>Write meaningful tests</td><td>Tests detect a real defect or edge case</td><td>False confidence and brittle assertions.</td></tr><tr><td>Review a change</td><td>Findings are reproducible and actionable</td><td>False positives and missed defects.</td></tr></tbody></table></div>
@@ -19,7 +21,7 @@
 <section class="content-section"><h2>Connect your agent and keep a stable evaluation</h2>
 <p>Use an explicit model ID and pin a provider when testing. Start with <a href="/claude-code-router">Claude Code gateway setup</a>, <a href="/opencode-models">OpenCode models</a> or <a href="/coding-agent-api-keys">Codex and Cursor API keys</a>. Validate streaming and a complete tool round trip before a larger task.</p><p>TrustedRouter's gateway protects its part of the request path. Your editor and upstream provider retain their own data boundaries. Use <a href="/docs/provider-routing">a hard privacy floor</a> when needed and accept that the requirement may exclude some models.</p>
 </section>
-<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
 </article></div>
 {% include "public/_comparison_guide_links.html" %}
 {% endblock %}

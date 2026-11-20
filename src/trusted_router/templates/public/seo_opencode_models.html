@@ -1,8 +1,10 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <div class="content-reader" data-content-toc><article class="content-document">
-<section class="content-section"><h2>Choose the provider connection, then the model</h2>
-<p>OpenCode separates the agent from the model provider. Connect credentials, select a model and test the tools your coding workflow needs. With TrustedRouter, the gateway key and endpoint stay the same as you compare available model routes.</p><p>Use the <a href="https://opencode.ai/docs/providers">current OpenCode provider documentation</a> for your installed version. Configuration has changed across versions; the example below follows the current <code>providers</code> and <code>package</code> format. Do not mix it with older <code>provider</code> and <code>npm</code> examples.</p>
+<section class="content-section">
+<h2>Put two coding models in the same OpenCode workflow</h2>
+<p>OpenCode lets you keep your editor, project and permissions in place while you switch models. For a practical first comparison, ask one DeepSeek route and one Kimi route to explain the same failing test. Then ask each for the smallest fix. You can compare the patch and the cost without changing clients.</p>
+<p>Start with one working provider connection. The example below reads your TrustedRouter key from the environment and registers a model from the catalog. Add a second model once the first completes a tool call. Match the configuration to your installed version using the <a href="https://opencode.ai/docs/providers">OpenCode provider reference</a>.</p>
 </section>
 <section class="content-section"><h2>Configure a TrustedRouter API key</h2>
 <p>Set <code>TRUSTEDROUTER_API_KEY</code> in your environment without committing its value. Add the following provider definition to your OpenCode configuration. Replace <code>AUTHOR/MODEL</code> with an exact ID from <a href="/models">the current catalog</a>.</p><pre><code>{
@@ -27,7 +29,7 @@
 <section class="content-section"><h2>Keep the privacy boundary explicit</h2>
 <p>The coding agent reads project context and the selected provider processes inference. An attested gateway does not remove those components. Inspect <a href="/docs/provider-routing">route privacy controls</a> and choose an eligible confidential route when required.</p><p>If a request fails, first check the installed OpenCode version, package name, endpoint URL and model ID. Do not paste the secret into a public issue. Share a redacted error and configuration shape instead. The <a href="/docs/agent-setup">agent setup guide</a> provides an independent API smoke test to separate a credential problem from a client integration problem.</p>
 </section>
-<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
 </article></div>
 {% include "public/_comparison_guide_links.html" %}
 {% endblock %}
