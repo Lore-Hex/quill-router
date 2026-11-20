@@ -141,6 +141,7 @@ from trusted_router.provider_precision import endpoint_precision_metadata
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
+    provider_link_rel,
     seo_meta_description,
     seo_title,
 )
@@ -2655,6 +2656,7 @@ def _env() -> Environment:
     )
     env.filters["uptime_pct"] = _format_uptime
     env.filters["seo_title"] = seo_title
+    env.filters["provider_link_rel"] = provider_link_rel
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
     env.globals["fortanix_launch_offer"] = fortanix_launch_offer

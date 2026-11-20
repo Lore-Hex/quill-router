@@ -353,18 +353,18 @@ print(response.choices[0].message.content)
             {% if caveats %}<p>Verification: {{ caveats|unique|join(', ') }}.</p>{% endif %}
             {% endif %}
             <p>{{ endpoint.provider_policy or 'No reviewed retention declaration.' }}</p>
-            {% if endpoint.provider_policy_url %}<p><a href="{{ endpoint.provider_policy_url }}" target="_blank" rel="noopener noreferrer">Provider policy source</a></p>{% endif %}
+            {% if endpoint.provider_policy_url %}<p><a href="{{ endpoint.provider_policy_url }}" target="_blank" rel="{{ endpoint.provider_policy_url|provider_link_rel(true) }}">Provider policy source</a></p>{% endif %}
           </div>
           <div>
             <p class="md-detail-label">Location</p>
             <p>Operator country: {{ endpoint.geography.operator_country or 'Not verified' }}</p>
             <p>Headquarters / registered office: {{ endpoint.geography.headquarters.location or 'Not verified' }}.</p>
-            {% if endpoint.geography.headquarters.source_url %}<p><a href="{{ endpoint.geography.headquarters.source_url }}" target="_blank" rel="noopener noreferrer">Company location source</a> (reviewed {{ endpoint.geography.headquarters.reviewed_on }}).</p>{% endif %}
+            {% if endpoint.geography.headquarters.source_url %}<p><a href="{{ endpoint.geography.headquarters.source_url }}" target="_blank" rel="{{ endpoint.geography.headquarters.source_url|provider_link_rel(true) }}">Company location source</a> (reviewed {{ endpoint.geography.headquarters.reviewed_on }}).</p>{% endif %}
             <p>Inference: {{ endpoint.geography.inference.declaration }}</p>
             <p>{{ endpoint.geography.inference.scope }}</p>
             <p>Region pinning through TR: {{ endpoint.geography.inference.trustedrouter_pinning }}</p>
             {% if endpoint.geography.inference.reviewed_on %}<p>Reviewed {{ endpoint.geography.inference.reviewed_on }}.</p>{% endif %}
-            {% for title, url in endpoint.geography.inference.sources %}<p><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title }}</a></p>{% endfor %}
+            {% for title, url in endpoint.geography.inference.sources %}<p><a href="{{ url }}" target="_blank" rel="{{ url|provider_link_rel(true) }}">{{ title }}</a></p>{% endfor %}
             <p><a href="{{ endpoint.provider_href }}#inference-locations">Full location evidence</a></p>
           </div>
           <div>
@@ -374,7 +374,7 @@ print(response.choices[0].message.content)
             <p>{{ endpoint.precision.notes }}</p>
             <p>KV cache: {{ endpoint.precision.kv_cache_dtype or 'unspecified' }}.</p>
             {% for source in endpoint.precision.sources %}
-            <p><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a></p>
+            <p><a href="{{ source.url }}" target="_blank" rel="{{ source.url|provider_link_rel(true) }}">{{ source.title }}</a></p>
             {% endfor %}
             {% else %}<p>Unknown</p>{% endif %}
           </div>

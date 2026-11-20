@@ -31,7 +31,7 @@
           <td><strong>{{ vendor.name }}</strong></td>
           <td>{{ vendor.purpose }}</td>
           <td>{{ vendor.data_access }}</td>
-          <td><a href="{{ vendor.policy_url }}">Policy</a></td>
+          <td><a href="{{ vendor.policy_url }}" rel="{{ vendor.policy_url|provider_link_rel }}">Policy</a></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -67,7 +67,7 @@
           <td><span class="pill {% if provider.confidential_compute is sameas true %}good{% endif %}">{% if provider.confidential_compute is sameas true %}yes{% elif provider.confidential_compute is sameas false %}no{% else %}unknown{% endif %}</span></td>
           <td><span class="pill {% if provider.provider_e2ee is sameas true %}good{% endif %}">{% if provider.provider_e2ee is sameas true %}yes{% elif provider.provider_e2ee is sameas false %}no{% else %}unknown{% endif %}</span></td>
           <td>{{ provider.data_access }}<br>{{ provider.policy }}</td>
-          <td>{% if provider.policy_url %}<a href="{{ provider.policy_url }}">Policy source</a>{% else %}Not tracked{% endif %}</td>
+          <td>{% if provider.policy_url %}<a href="{{ provider.policy_url }}" rel="{{ provider.policy_url|provider_link_rel }}">Policy source</a>{% else %}Not tracked{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

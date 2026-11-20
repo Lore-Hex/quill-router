@@ -69,7 +69,7 @@
         </summary>
         <div class="provider-policy-full">
           <p>{{ provider.policy }}</p>
-          {% if provider.policy_url %}<a href="{{ provider.policy_url }}">Policy source</a>{% endif %}
+          {% if provider.policy_url %}<a href="{{ provider.policy_url }}" rel="{{ provider.policy_url|provider_link_rel }}">Policy source</a>{% endif %}
         </div>
       </details>
     </article>
