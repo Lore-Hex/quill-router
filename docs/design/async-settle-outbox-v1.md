@@ -1047,6 +1047,16 @@ predicate, and winner reconciliation. Pending/dead rows are protected (leased
 work remains pending); release-approved and abandoned rows permit the
 operator-approved release. Additive INSERT construction is unchanged.
 
+With `TR_ASYNC_SETTLE_DECIDE_ROUTE=true` and the `async-v1` header, ordinary
+local typed Credits `decide` requests may negotiate async settlement. Hosted
+decision models use their selected endpoint's input-only price; native calls
+using ordinary chat models follow the same eligibility rules. Program and private alias
+model names, unknown parameters or extra members, modalities, and all existing
+nonordinary billing facts remain synchronous. Decide tickets and terminal
+envelopes require `streamed=false`, even when native inference streams internally.
+The setting gates admission, not apply: accepted rows keep draining after it
+is disabled, and snapshot-sync recovery still accepts the signed frozen body.
+
 | Gated site | Classification | Reason |
 |---|---|---|
 | `services/async_settle.snapshot_projection` | Admission (both flags) | Issue tickets and read eligibility only when new work may be accepted. |
@@ -1128,6 +1138,7 @@ admission rollback, through the same frozen-money apply and resolution helpers.
 
 | Setting (`TR_` environment prefix) | Default | Meaning and read point |
 |---|---:|---|
+| `async_settle_decide_route` | false | Permit ordinary `decide` ticket issuance and async acceptance; never gates frozen apply. |
 | `settle_outbox_fast_drain_enabled` | false | Select fast pass at the drain entry; required by the callable warm loop. |
 | `settle_outbox_poll_interval_seconds` | 300 | Warm-loop interruptible start-to-start poll interval; unused in legacy mode. |
 | `settle_outbox_health_publish_interval_seconds` | 2 | Fleet publisher cadence; validated positive and at most `CACHE_SECONDS=5`. Fast mode only. |

@@ -180,14 +180,16 @@ class Eligibility(Frozen):
     private_tier_basis: Annotated[bool, Field(strict=True)] = False
 
 
-def exclusion(context: Eligibility) -> str | None:
+def exclusion(context: Eligibility, *, allow_decide: bool = True) -> str | None:
+    """Classify billing facts; retained shadow callers explicitly exclude decide."""
     if not context.typed:
         return "untyped"
     if context.usage_type != "Credits":
         return "non_credits"
     if context.authority != "local":
         return "settlement_authority"
-    if context.route_type not in ("chat.completions", "responses"):
+    if context.route_type not in ("chat.completions", "responses") and not (
+            allow_decide and context.route_type == "decide" and not context.streamed):
         return "unsupported_route"
     if context.service_tier not in (None, "default"):
         return "service_tier"
@@ -322,11 +324,13 @@ class TerminalEnvelope(Frozen):
     usage: NormalizedUsage
     charge_micro: UInt
     terminal_kind: Literal["settle", "refund"]
-    route_type: Literal["chat.completions", "responses"]
+    route_type: Literal["chat.completions", "responses", "decide"]
     streamed: Annotated[bool, Field(strict=True)]
 
     @model_validator(mode="after")
     def refund_is_free(self) -> TerminalEnvelope:
+        if self.route_type == "decide" and self.streamed:
+            raise ValueError("decide must not be streamed")
         if self.terminal_kind == "refund" and self.charge_micro != 0:
             raise ValueError("refund must be zero")
         return self

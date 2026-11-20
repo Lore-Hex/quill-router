@@ -140,7 +140,7 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
                 image_cost=requested.image_cost, video_cost=requested.video_cost,
                 request_fee=bool(requested.request_fee), private_tier_basis=requested.private_tier_basis),
             unknown_features=[])
-        reason = exclusion(requested)
+        reason = exclusion(requested, allow_decide=False)
         if body.inference_receipt:
             reason = "receipt_fee"
         if reason is None and projection and all(p["adapter"] == "other" for p in projection):

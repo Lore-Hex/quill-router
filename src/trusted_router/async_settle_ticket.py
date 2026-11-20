@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from trusted_router.billing_snapshot import Digest, Frozen, Identity, UInt
 from trusted_router.detached_jws import (
@@ -35,7 +35,7 @@ class TicketClaims(Frozen):
     epoch: UInt
     snapshot_version: Literal[1]
     snapshot_hash: Digest
-    route_type: Literal["chat.completions", "responses"]
+    route_type: Literal["chat.completions", "responses", "decide"]
     streamed: Annotated[bool, Field(strict=True)]
     reservation_id: NativeIdentity
     settle_origin: Literal["typed"]
@@ -44,6 +44,12 @@ class TicketClaims(Frozen):
     aud: Identity
     iat: UInt
     exp: UInt
+
+    @model_validator(mode="after")
+    def decide_is_not_streamed(self) -> Self:
+        if self.route_type == "decide" and self.streamed:
+            raise ValueError("decide must not be streamed")
+        return self
 
 
 def validate_claims(claims: Mapping[str, Any], now: int) -> TicketClaims:

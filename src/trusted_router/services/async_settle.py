@@ -335,6 +335,8 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
     """Sign a validated detached DTO; caller has already frozen effective prices."""
     result: dict[str, Any] = {"async_eligible": False}
     try:
+        if requested.route_type == "decide" and not settings.async_settle_decide_route:
+            return result
         require_eligible(requested)
         # Missing authority facts must not be invented from defaults or routing.
         if (runtime is None or runtime.signer is None or runtime.epoch < 1
@@ -557,10 +559,11 @@ def requested_facts(*, body: Any, authorization: GatewayAuthorization, endpoints
     cost branches and holds each to its fact here.
     """
     candidates = list(endpoints)
+    # Decide returns one answer; stream only describes its internal native inference.
     return Eligibility(
         typed=typed, usage_type=authorization.usage_type.value,
         authority="federated" if federated else authorization.settlement,
-        route_type=body.route_type, streamed=body.stream is True,
+        route_type=body.route_type, streamed=body.stream is True and body.route_type != "decide",
         service_tier=body.service_tier,
         app_markup=authorization.app_markup_basis_points,
         custom_markup=authorization.custom_model_markup_basis_points,
@@ -619,7 +622,10 @@ def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthor
                          settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids)
             and request.headers.getlist("X-TR-Settlement-Shadow-Policy") == ["shadow-v2"]
         )
-        if replay or has_authorize_feature_extras(body, shadow_v2=shadow_v2) or body.route_type not in {"chat.completions", "responses"}:
+        supported_route = body.route_type in {"chat.completions", "responses"} or (
+            body.route_type == "decide" and settings.async_settle_decide_route
+        )
+        if replay or has_authorize_feature_extras(body, shadow_v2=shadow_v2) or not supported_route:
             return {"async_eligible": False}
         # Recognizing the enclave's modality field must not expand the
         # text-only settlement optimization's previous eligibility boundary.
