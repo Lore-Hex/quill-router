@@ -112,7 +112,11 @@ def test_the_first_policy_matches_any_read_of_a_secret_value_by_an_unlisted_acco
     assert 'protoPayload.methodName:\\"SecretManagerService.AccessSecretVersion\\"' in code
     assert (
         '"NOT protoPayload.authenticationInfo.principalEmail=(${join(" OR ", '
-        'formatlist("\\"%s\\"", sort(values(local.secret_readers))))})"'
+        'formatlist("\\"%s\\"", local.all_secret_readers))})"'
+    ) in code
+    # The listed accounts and the confidential ones (infra/confidential_secret_readers.tf).
+    assert (
+        "all_secret_readers = sort(concat(values(local.secret_readers), local.confidential_secret_readers))"
     ) in code
     # Every clause must hold at once.
     assert 'secret_read_filter = join(" AND ", [' in code
@@ -201,8 +205,77 @@ def test_both_policies_are_rate_limited_and_notify_the_security_channel() -> Non
 
 def test_messages_quote_nothing_and_no_address_is_written() -> None:
     messages = re.findall(r'error_message\s*= "([^"]*)"', ALERT)
-    assert len(messages) == 7
+    assert len(messages) == 9
     for message in messages:
         assert "${" not in message
     for text in (ALERT, Path(__file__).read_text()):
         assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", text), "an address is written in the repository"
+
+
+CONFIDENTIAL = (INFRA / "confidential_secret_readers.tf").read_text()
+
+
+def test_confidential_readers_come_only_from_their_secret_and_are_never_written() -> None:
+    # Accounts this public repository must not name are read from a secret,
+    # like the operator's known addresses, and nowhere else.
+    code = _code(CONFIDENTIAL)
+    assert 'data "google_secret_manager_secret_version" "confidential_secret_readers" {' in code
+    assert 'secret  = "tr-confidential-secret-readers"' in code
+    readers_of_the_list = [
+        path.name for path in INFRA.glob("*.tf") if 'secret  = "tr-confidential-secret-readers"' in _code(path.read_text())
+    ]
+    assert readers_of_the_list == ["confidential_secret_readers.tf"]
+    assert (
+        "for email in split(\",\", data.google_secret_manager_secret_version.confidential_secret_readers.secret_data) :\n"
+        "    trimspace(email) if trimspace(email) != \"\""
+    ) in code
+    # The container is managed (never destroyed) and adopted, not recreated.
+    assert 'resource "google_secret_manager_secret" "confidential_secret_readers" {' in code
+    assert "prevent_destroy = true" in code
+    imports = _code((INFRA / "imports.tf").read_text())
+    assert (
+        "import {\n  to = google_secret_manager_secret.confidential_secret_readers\n"
+        '  id = "projects/quill-cloud-proxy/secrets/tr-confidential-secret-readers"\n}'
+    ) in imports
+    # No account is written: only the placeholder in the instructions.
+    assert not re.search(r"[a-z0-9-]+@[a-z0-9-]+\\.iam\\.gserviceaccount\\.com", CONFIDENTIAL.replace("ACCOUNT@PROJECT", ""))
+
+
+def test_confidential_readers_must_be_whole_accounts_of_this_project() -> None:
+    lifecycle = _resource("unexpected_secret_reader")
+    assert (
+        'endswith(email, "@${local.service_account_domain}") && '
+        'can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@", email))'
+    ) in lifecycle
+    assert "for email in local.confidential_secret_readers :" in lifecycle
+    assert "length(distinct(local.all_secret_readers)) == length(local.all_secret_readers)" in lifecycle
+    # Neither check can quote an entry.
+    messages = re.findall(r'error_message\s*= "([^"]*)"', lifecycle)
+    confidential = [message for message in messages if "tr-confidential-secret-readers" in message]
+    assert len(confidential) == 2 and all("${" not in message for message in confidential)
+
+
+def test_the_confidential_check_admits_real_account_ids_and_refuses_everything_else() -> None:
+    # The same rule as the precondition, applied in Python: a service account
+    # id is 6 to 30 characters, starts with a letter and ends with a letter or
+    # digit, and the domain must be this project's.
+    domain = "@quill-cloud-proxy.iam.gserviceaccount.com"
+    pattern = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@")
+
+    def accepted(email: str) -> bool:
+        return email.endswith(domain) and bool(pattern.match(email))
+
+    assert accepted("feed-job" + domain)
+    assert accepted("a-reader-1" + domain)
+    for refused in (
+        "feed-job@other-project.iam.gserviceaccount.com",
+        "12345-compute@developer.gserviceaccount.com",
+        "service-1@gcp-sa-secretmanager.iam.gserviceaccount.com",
+        "*" + domain,
+        "short" + domain[:-1],
+        "ab" + domain,
+        "Upper-case" + domain,
+        "user:someone@example.com",
+        "-starts-with-hyphen" + domain,
+    ):
+        assert not accepted(refused), refused
