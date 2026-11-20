@@ -173,6 +173,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     decide_url,
     model_vendor_provider_slugs,
     offers_chat,
+    required_orchestration_configuration,
+    serves_bare_chat,
 )
 from trusted_router.catalog_energy import (
     GREEN_MODEL_ID,
@@ -1052,8 +1054,16 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # it answers POST /v1/decide only: advertised as chat-capable it showed
         # up in the chat picker and as a custom-model base, and both then
         # refused it.
-        "supports_chat": offers_chat(model),
-        "supports_responses": offers_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
+        # A primitive with no built-in configuration refuses a bare request
+        # (400 until the caller configures it), so it is not advertised as
+        # plain chat; required_configuration says what makes it work.
+        "supports_chat": serves_bare_chat(model),
+        "supports_responses": serves_bare_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
+        **(
+            {"required_configuration": list(required_orchestration_configuration(model.id))}
+            if required_orchestration_configuration(model.id)
+            else {}
+        ),
         **({
             "pricing_type": "selection_fee_plus_selected_model_tokens",
             "selector_pricing_unit": "prompt_tokens",

@@ -71,6 +71,7 @@ from trusted_router.catalog import (
     provider_is_routable,
     providers_for_display,
     published_context_length,
+    serves_bare_chat,
 )
 from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
@@ -6194,7 +6195,7 @@ def _model_detail_view(
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
         "candidate_models": candidate_models,
-        "supports_chat": offers_chat(model),
+        "supports_chat": serves_bare_chat(model),
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
         # Same rule as the public catalog shape: hosted and named decision
