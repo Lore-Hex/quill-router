@@ -138,8 +138,8 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
 | Floor | 2,000,000 microdollars ($2) since 2026-11-20 (20,000,000, $20, from WS0 until then) | `-floor` (new) |
-| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
-| Enabler's balance to disable | unspent credit under $5 since 2026-11-13 ($40 until then) | enabler setting |
+| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $3 since 2026-11-20 ($30 from 2026-11-13, $100 until then) | enabler setting |
+| Enabler's balance to disable | unspent credit under $2 since 2026-11-20 ($5 from 2026-11-13, $40 until then) | enabler setting |
 
 **Why.**
 
@@ -331,9 +331,23 @@ reconciler rather than at workspaces, the enabler raises
     of the newly eligible would have stayed out and, past the margin,
     workspaces already on would have left for their rank. A workspace
     that spends its credit down and buys more now leaves and joins once
-    a cycle. The way back is the pause, then both lines up again, the
-    leave line in steps small enough for the mass-disable guard (§5.3),
-    and only then the floor.
+    a cycle. Every eligible workspace joins in the first run after the
+    deploy, since a run enables up to 500 (`MAX_ENABLES`); a dry run that
+    day counted 114. The enabler cannot take that run back, since its
+    guarded disables are capped (§5.3): the way back for that step is the
+    pause and then `fastpathctl disable` for each workspace on the run's
+    `fastpath_enabler.list enable=` log line (`fastpath-deploy.md`,
+    "Lowering the floor"). The way back for the lines is the pause, then
+    both lines up again, the leave line in steps small enough for the
+    mass-disable guard, and only then the floor.
+    A band of refusals remains just above the floor: a workspace at
+    exactly the leave balance stays on and cannot fund the least ask;
+    reservations lower the headroom a grant reads but not the unspent
+    credit the enabler reads; and the floor plus the whole amount asked
+    must fit. While such a workspace has traffic its owner asks again at
+    most once a second for each admission shard (one by default), each
+    ask reading all of the workspace's credit rows and writing nothing
+    when refused.
 
 ### (c) The exclusion set
 

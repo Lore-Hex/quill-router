@@ -8,9 +8,9 @@
 #
 # Its literals: TR_FASTPATH_ENABLER_MODE=apply (WS2) writes the allow-list
 # (dry-run reads and reports but writes nothing; off logs one line and
-# exits), and TR_FASTPATH_ENABLER_MAX_RANK=100 (WS5) lets the hundred largest
-# eligible workspaces join; the rank counts the include list's own
-# workspaces, which join at any rank. In apply mode the job
+# exits), and TR_FASTPATH_ENABLER_MAX_RANK (the literal below; 100 at WS5)
+# lets that many of the largest eligible workspaces join; the rank counts
+# the include list's own workspaces, which join at any rank. In apply mode the job
 # writes nothing until an operator runs `fastpathctl enabler arm`, and never
 # writes the hold table. The lists come from fastpath_lists.sh, shared with
 # rollout.sh; tests/test_fastpath_lists.py holds them there.
@@ -58,11 +58,21 @@ env_vars=(
   # runs that day at $3 to join and $2 to leave: at this rank, 153 eligible
   # (39 already on), 114 to enable and none to disable; at the 100 of WS5
   # (section 8.2), 73 to enable and 9 already on to disable for their rank,
-  # as larger workspaces joined. The enabler turns on at most 20 a run, so
-  # the 114 join over about six runs. A workspace leaves for its rank only
-  # past this figure and a tenth more. WS4 ran at 10 (all nine then
-  # eligible joined, mostly dormant); WS2 and WS3 ran at 0. Lowering it is
-  # a way back (section 8.3).
+  # as larger workspaces joined. A run enables up to 500 (MAX_ENABLES in
+  # fastpath_enabler.py), so every eligible workspace joins in the first
+  # run after the deploy: 114 by the dry run. The enabler cannot take that
+  # run back by itself: a run disables, for a changed fact, at most the
+  # larger of 20 and a tenth of the enabled set, and past that disables
+  # none and alerts. The way back for that one step is
+  # `fastpathctl enabler pause`, then `fastpathctl disable WS` for each
+  # workspace on that run's own "fastpath_enabler.list enable=" log line:
+  # every workspace the run set out to enable, separated by commas (the
+  # same run's fastpath_enabler.report line counts, under writes, how many
+  # it did enable). Each disable holds its workspace, so the enabler
+  # leaves it off until `fastpathctl release WS`.
+  # A workspace leaves for its rank only past this figure and a tenth
+  # more. WS4 ran at 10 (all nine then eligible joined, mostly dormant);
+  # WS2 and WS3 ran at 0. Lowering it is a way back (section 8.3).
   "TR_FASTPATH_ENABLER_MAX_RANK=250"
   # Section 4(b): the trust tier to join, 1 to 3. Never below the nodes'
   # required tier in effect (infra/fastpath.tf fastpath_required_tier), or
@@ -85,12 +95,22 @@ env_vars=(
   # leave balance no lower than it, so a change that moves one side alone
   # fails.
   # The join is the floor and a dollar. A grant needs headroom of the floor
-  # plus the lease asked, and an ask is about a minute of spend, at least
-  # $0.01, so a dollar is room for a first lease and some leased spend.
-  # The leave is the floor itself. Under the floor no lease is granted, and
-  # a workspace left on there pays a front door hop for each request while
-  # its owner asks for a lease once a second and is refused (the $5 to $20
-  # band the old lines left). $2 is below the console's least auto-refill
+  # plus the whole lease asked, and an ask is about a minute of spend, at
+  # least $0.01 and at most $10, so a dollar covers the least ask and most
+  # first asks. It promises no lease.
+  # The leave is the floor itself, which removes the band under the floor
+  # where a workspace that is on can never lease (the $5 to $20 band the
+  # old lines left). A band of refusals remains above it. $2.005 unspent
+  # stays on and cannot take the $0.01 minimum. $3 unspent with $1 reserved
+  # is at the floor: reservations lower the headroom a grant reads, not the
+  # unspent credit read here. And $3 cannot cover a lease of $1.10 plus the
+  # floor. Each such request passes to the synchronous path at the cost of
+  # a front door hop. The load: while such a workspace has traffic, its
+  # owner asks again at most once a second for each admission shard (one by
+  # default; the nodes' startup passes no -shards), each ask a transaction
+  # that reads all of the workspace's credit rows and, refused, writes
+  # nothing. Nothing backs off further, and it stops when the traffic
+  # stops. $2 is below the console's least auto-refill
   # threshold ($10): auto-refill fires only under its threshold, so a
   # refilling workspace never crosses the leave line. A workspace that
   # spends its credit down and buys more leaves and joins once a cycle, at

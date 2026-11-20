@@ -815,8 +815,11 @@ In this order, each step done before the next:
    past the workspaces that become eligible: the rank is by lifetime
    usage, and a rank short of them leaves the smaller ones out and, past
    its margin, turns off workspaces already on. Read the enabler's next
-   reports: `eligible` and `enabled` should meet within a few runs, with
-   nothing under `would_disable` for `rank`.
+   report: a run enables up to 500, so `eligible` and `enabled` should
+   meet in the first run after the deploy (a dry run on 2026-11-20
+   counted 114 to enable), with nothing under `would_disable` for `rank`.
+   Workspaces whose trust watermark is stale that run are counted
+   `frozen` and join at a later one.
 
 What to watch once the enabler's balances are down: the authorize 503s for
 headroom in leases (`trustedrouter_gateway_lease_headroom_503`,
@@ -828,6 +831,23 @@ a grant left, while leases hold the rest, is answered that 503 with
 stops admitting (ten minutes idle, an hour old, or its workspace off), so
 the 503 can outlast the enclave's authorize retries and reach the client,
 which may retry it.
+
+To take the first run's enables back, the enabler is no help: for a
+changed fact it disables at most the larger of 20 and a tenth of the
+enabled set in a run, and past that it disables none and alerts. So:
+`fastpathctl enabler pause`, then `fastpathctl disable WS` for each
+workspace on that run's own log line,
+
+```
+INFO trusted_router.fastpath_enabler fastpath_enabler.list enable=WS,WS,...
+```
+
+which names every workspace the run set out to enable. The same run's
+`fastpath_enabler.report` line counts under `writes` how many of them it
+did enable; one it did not is only held by the `disable`. Each `disable`
+revokes the workspace's leases and holds it, reason `operator`, so the
+enabler leaves it off; once the enabler is resumed, `fastpathctl release
+WS` hands one back.
 
 The way back, in this order. First `fastpathctl enabler pause`, so the
 enabler writes nothing while its balances move. Then the enabler's
