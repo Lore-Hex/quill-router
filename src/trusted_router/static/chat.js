@@ -576,13 +576,20 @@
         const pricing = raw.pricing || {};
         const ext = raw.trustedrouter || {};
         // Pricing in OpenAI shape is dollars per token; convert to
-        // $/M for display.
-        const inPerM =
-            pricing.prompt != null ? Number(pricing.prompt) * 1_000_000 : null;
-        const outPerM =
-            pricing.completion != null
-                ? Number(pricing.completion) * 1_000_000
-                : null;
+        // $/M for display. A negative price is the catalog's variable-price
+        // sentinel ("-1"): the cost depends on the models the caller
+        // configures, so it is "varies", never a number. Same rule as
+        // model_catalog.js normalizeModel.
+        const perM = (value) => {
+            if (value == null || value === "") return null;
+            const n = Number(value);
+            return Number.isFinite(n) && n >= 0 ? n * 1_000_000 : null;
+        };
+        const varies = [pricing.prompt, pricing.completion].some(
+            (value) => value != null && value !== "" && Number(value) < 0,
+        );
+        const inPerM = varies ? null : perM(pricing.prompt);
+        const outPerM = varies ? null : perM(pricing.completion);
         // Catalog rarely populates `capabilities` so the picker's
         // vision/tools filters were dead chips. Derive flags from the
         // model id when the catalog doesn't carry them — keeps the
@@ -602,11 +609,13 @@
             output_per_m: outPerM,
             uptime_pct: ext.uptime_pct || null,
             capabilities: allCaps,
-            free: pricing && Number(pricing.prompt) === 0,
+            free: !varies && pricing.prompt != null && Number(pricing.prompt) === 0,
+            price_varies: varies,
             open_weights: !!ext.open_weights,
             us_provider_available: !!ext.us_provider_available,
             eu_focused_provider_available: !!ext.eu_focused_provider_available,
-            total_per_m: (inPerM || 0) + (outPerM || 0),
+            total_per_m:
+                inPerM == null && outPerM == null ? null : (inPerM || 0) + (outPerM || 0),
             // Internal-only routing pools (trustedrouter/monitor) leak
             // through some catalog snapshots; track the flag so the
             // picker can drop them defensively.
@@ -2376,9 +2385,11 @@
         // top 30 cheapest. Doesn't drop models for being expensive in
         // the absence of the chip; just reorders + truncates when on.
         if (PICKER_FILTERS.cheap) {
+            // Priced models only; one whose price varies or is unknown is
+            // not "cheap" and must not sort ahead as if it were $0.
             filtered = filtered
-                .slice()
-                .sort((a, b) => (a.total_per_m || 0) - (b.total_per_m || 0))
+                .filter((m) => m.total_per_m != null)
+                .sort((a, b) => a.total_per_m - b.total_per_m)
                 .slice(0, 30);
         } else {
             filtered = filtered.slice(0, 200);
@@ -2570,6 +2581,7 @@
                 </div>
             </div>
             <div class="chat-model-row-meta">
+                ${m.price_varies ? '<span class="chat-model-price-varies">Price varies</span>' : ""}
                 ${
                     m.input_per_m != null
                         ? `<span>$${m.input_per_m.toFixed(2)}/M in</span>`
@@ -3536,6 +3548,26 @@
         return Math.max(1, tokens + wordLengthBonus);
     }
 
+    // Input-cost preview for the enabled models. A model whose price varies
+    // (or is unknown) cannot be summed: the preview says the total is at
+    // least the known part, or that it varies, instead of dropping it.
+    function inputCostEstimate(tokens, models) {
+        if (!(tokens > 0)) return { text: "" };
+        let rate = 0;
+        let unknown = 0;
+        for (const m of models) {
+            if (!m) continue; // catalog not loaded yet: nothing to price
+            if (m.input_per_m != null) rate += m.input_per_m;
+            else unknown += 1;
+        }
+        // tokens × $/M-tokens → dollars; convert to microdollars
+        // so formatCost picks the right magnitude bucket.
+        const known = rate > 0 ? formatCost(tokens * rate, { estimate: true }) : "";
+        if (unknown === 0) return { text: known };
+        if (!known) return { text: "price varies" };
+        return { text: "at least " + formatCost(tokens * rate) + " (price varies)" };
+    }
+
     function updateInputEstimate() {
         const input = document.querySelector("[data-chat-input]");
         const tCounter = document.querySelector("[data-chat-token-counter]");
@@ -3547,20 +3579,14 @@
         const chat = getActiveChat();
         if (chat && cCounter) {
             const enabled = chat.models.filter((m) => m.enabled);
-            const totalRate = enabled.reduce((sum, slot) => {
-                const m = findModel(slot.model_id);
-                return sum + (m && m.input_per_m ? m.input_per_m : 0);
-            }, 0);
-            // tokens × $/M-tokens → dollars; convert to microdollars
-            // so formatCost picks the right magnitude bucket.
-            const estMicro = (tokens * totalRate);
-            if (tokens > 0 && totalRate > 0) {
-                cCounter.textContent =
-                    formatCost(estMicro, { estimate: true }) +
-                    (enabled.length > 1 ? " × " + enabled.length + " models" : "");
-            } else {
-                cCounter.textContent = "";
-            }
+            const estimate = inputCostEstimate(
+                tokens,
+                enabled.map((slot) => findModel(slot.model_id)),
+            );
+            cCounter.textContent = estimate.text
+                ? estimate.text +
+                  (enabled.length > 1 ? " × " + enabled.length + " models" : "")
+                : "";
         }
     }
 
