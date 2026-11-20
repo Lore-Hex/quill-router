@@ -141,6 +141,20 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # compose c900dc73, 271-action history e196ae72). Only the GCP fleet
         # runs that release, so the route is gated to it in
         # EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL below.
+        # Held again November 20, 2026: every configured-route probe has
+        # failed (Sentry QUILL-ROUTER-6S, 15 consecutive at 00:01 UTC), and
+        # two direct requests pinned to near-ai hung past 120 s. NEAR keeps
+        # sending connections to its unpinned shared member (gpu13), which
+        # the sidecar refuses by design; quill-cloud-proxy #846's paced
+        # retries did not get through. Release after a reviewed re-pin or a
+        # live recovery, as on November 12.
+        ("near-ai", "z-ai/glm-5.3-flash"),
+        # November 20, 2026: every configured-route probe of Sail Research's
+        # Gemma 4 12B has timed out since November 10 (Sentry
+        # QUILL-ROUTER-G0), and two direct requests pinned to sail-research
+        # hung for the full 90 s with no response, while its other routes
+        # serve. Require a reviewed live recovery before re-enabling.
+        ("sail-research", "google/gemma-4-12b-it"),
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
