@@ -29,11 +29,12 @@ type routingCase struct {
 		MaxOutputTokens      *int64          `json:"max_output_tokens"`
 	} `json:"request"`
 	Expect struct {
-		Candidates    []string `json:"candidates"`
-		ModelEstimate *int64   `json:"model_estimate"`
-		ServiceTier   *string  `json:"service_tier"`
-		StageDReason  string   `json:"stage_d_reason"`
-		Error         *struct {
+		Candidates       []string `json:"candidates"`
+		ModelEstimate    *int64   `json:"model_estimate"`
+		ModelReservation *int64   `json:"model_reservation"`
+		ServiceTier      *string  `json:"service_tier"`
+		StageDReason     string   `json:"stage_d_reason"`
+		Error            *struct {
 			Status  int    `json:"status"`
 			Type    string `json:"type"`
 			Message string `json:"message"`
