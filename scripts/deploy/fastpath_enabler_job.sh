@@ -54,14 +54,15 @@ env_vars=(
   "TR_FASTPATH_ENABLER_MODE=apply"
   # Raised on 2026-11-20 with the join balance (below), to above the count
   # that could then be eligible, so the rank leaves none of them out. The
-  # rank is by lifetime usage among the eligible, largest first: the
-  # enabler's report that day counted 39 eligible and 159 more out for
-  # their balance alone, 198 at most, and at the 100 of WS5 (section 8.2)
-  # the smaller of the newly eligible would have stayed out while, past the
-  # margin of a tenth, workspaces already on left for their rank as larger
-  # ones joined. A workspace leaves for its rank only past this figure and
-  # a tenth more. WS4 ran at 10 (all nine then eligible joined, mostly
-  # dormant); WS2 and WS3 ran at 0. Lowering it is a way back (section 8.3).
+  # rank is by lifetime usage among the eligible, largest first. Two dry
+  # runs that day at $3 to join and $2 to leave: at this rank, 153 eligible
+  # (39 already on), 114 to enable and none to disable; at the 100 of WS5
+  # (section 8.2), 73 to enable and 9 already on to disable for their rank,
+  # as larger workspaces joined. The enabler turns on at most 20 a run, so
+  # the 114 join over about six runs. A workspace leaves for its rank only
+  # past this figure and a tenth more. WS4 ran at 10 (all nine then
+  # eligible joined, mostly dormant); WS2 and WS3 ran at 0. Lowering it is
+  # a way back (section 8.3).
   "TR_FASTPATH_ENABLER_MAX_RANK=250"
   # Section 4(b): the trust tier to join, 1 to 3. Never below the nodes'
   # required tier in effect (infra/fastpath.tf fastpath_required_tier), or
