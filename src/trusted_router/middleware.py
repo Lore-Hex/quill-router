@@ -263,7 +263,14 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         response = await call_next(request)
         if attribution is not None and attribution_changed:
             set_attribution_cookie(response, attribution, settings)
-        if attribution is not None and response.status_code == 200 and signup_cta_rendered[0]:
+        if (
+            attribution is not None
+            and response.status_code == 200
+            and signup_cta_rendered[0]
+            # A shared cache may hand one visitor's response to the next, so a
+            # publicly cacheable page never carries the per-visitor cell cookie.
+            and "public" not in response.headers.get("cache-control", "")
+        ):
             assign_signup_cta(request, response, attribution, settings)
         _log_public_page_view(request, response, latency_ms=(time.perf_counter() - start) * 1000)
         return response
