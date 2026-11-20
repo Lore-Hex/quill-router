@@ -3485,6 +3485,32 @@ SYNTH_CODE_QUALITY_MODEL_ORDER = (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
+# Models a trustedrouter/fusion request bills when the caller sends no panel
+# overrides. The gateway (quill-cloud-proxy enclave fusion.go) runs the
+# `quality` preset panel, judges with fusionDefaultJudgeModels and synthesizes
+# with fusionDefaultFinalModels, and bills each inner call at the inner model's
+# own price. These IDs are the ones the gateway authorizes, verbatim.
+# Listed for catalog pricing only: Fusion executes inside the gateway, never
+# through control-plane routing.
+FUSION_BILLED_MODEL_ORDER = (
+    # panel (fusionQualityPanel)
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.6",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    "deepseek/deepseek-v4-pro",
+    # judge (fusionDefaultJudgeModels): kimi-k2.7-code, then minimax-m3
+    "moonshotai/kimi-k2.7-code",
+    # final (fusionDefaultFinalModels): glm-5.2, then minimax-m3, both above
+)
+
+# trustedrouter/fusion-code differs from fusion only by applyFusionCodeSwap:
+# the general Kimi panel member becomes the code-tuned Kimi.
+FUSION_CODE_BILLED_MODEL_ORDER = tuple(
+    "moonshotai/kimi-k2.7-code" if model_id == "moonshotai/kimi-k2.6" else model_id
+    for model_id in FUSION_BILLED_MODEL_ORDER
+)
+
 SYNTH_CODE_FRONTIER_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
     "openai/gpt-5.5",
