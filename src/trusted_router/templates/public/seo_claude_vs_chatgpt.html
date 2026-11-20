@@ -1,0 +1,24 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section">
+<h2>Which draft would you send?</h2>
+<p>Give Claude and ChatGPT the same five meeting notes. Ask each to turn them into a customer email of 120 words, with one clear next step. Read both drafts without the labels. Which one keeps the date right, sounds like your team and takes less time to send?</p>
+<p>That exercise answers the writing question. For coding, give both a small bug with a failing test and review the working patches. If you’re choosing a subscription, try these tasks inside the apps. If you’re building a product, pick specific Claude and GPT models in TrustedRouter so you can repeat the comparison as your workload grows.</p>
+</section>
+<section class="content-section"><h2>A useful side-by-side comparison</h2>
+<div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Your priority</th><th scope="col">Compare in Claude and ChatGPT</th><th scope="col">Decision rule</th></tr></thead><tbody><tr><td>Writing and editing</td><td>The same source notes, audience, length and style constraints</td><td>Choose the draft with fewer factual corrections and less editing.</td></tr><tr><td>Coding</td><td>The same repository task, test suite and tool permissions</td><td>Choose by accepted fixes and total cost, including retries.</td></tr><tr><td>Everyday use</td><td>The files, tools and integrations available in your actual plan</td><td>Choose the workflow that completes your recurring task with fewer steps.</td></tr><tr><td>API development</td><td>Exact Claude and GPT versions, route limits and prices</td><td>Compare model endpoints rather than assuming app features come with an API key.</td></tr></tbody></table></div>
+</section>
+<section class="content-section"><h2>Claude vs ChatGPT for writing</h2>
+<p>Use a real brief: rewrite a product announcement for customers, shorten an internal memo and summarize a supplied document. Require both candidates to preserve names, dates and numbers, and mark missing facts instead of inventing them. Hide the model names before reviewing the drafts. Score factual fidelity, tone, structure and minutes of human editing.</p><p>The best AI model for writing is the one that meets your editorial standard consistently. A persuasive first paragraph is not enough if the rest introduces unsupported claims. Keep a fast, inexpensive candidate in the comparison for routine rewrites and reserve a more costly candidate for difficult synthesis when your results justify it.</p>
+</section>
+<section class="content-section"><h2>Claude vs GPT: which is better for coding?</h2>
+<p>Use a small bug fix, a cross-file change and a test-writing task. Compare the complete agent loop, including tool calls and failed attempts. A model that explains code well may still make a poor autonomous editor. Our <a href="/best-llm-for-coding">coding-model guide</a> gives a repeatable scorecard and includes DeepSeek and Kimi as additional candidates.</p><p>Check current versions in the <a href="https://platform.claude.com/docs/en/models/overview">Claude model documentation</a> and <a href="https://developers.openai.com/api/docs/models">OpenAI model catalog</a>. We do not assign a universal winner or present provider benchmarks as results of our own test.</p>
+</section>
+<section class="content-section"><h2>Try an API comparison with a clear privacy boundary</h2>
+<p>Open <a href="/compare/models">the model comparison catalog</a>, choose available Claude and GPT IDs and reuse the same prompts and settings. Record the selected provider and billed tokens. An app subscription does not automatically fund TrustedRouter API usage.</p><p>TrustedRouter provides an attested gateway and provider-level routing controls. Gateway protection does not make every upstream Claude or GPT endpoint confidential compute. Review <a href="/docs/provider-routing">each route's privacy requirements</a> before sending sensitive material. For a third candidate, see <a href="/gemini-vs-claude">Gemini vs Claude</a> and <a href="/gpt-vs-gemini">GPT vs Gemini for everyday use</a>.</p>
+</section>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
+</article></div>
+{% include "public/_comparison_guide_links.html" %}
+{% endblock %}

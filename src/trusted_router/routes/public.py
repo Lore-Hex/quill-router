@@ -1359,6 +1359,34 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             api_base_url=request_api_base_url(request, settings),
         )
 
+    @public_html_route("/claude-vs-chatgpt")
+    def seo_claude_vs_chatgpt() -> str:
+        return public_page_html(settings, "claude-vs-chatgpt")
+
+    @public_html_route("/gpt-vs-gemini")
+    def seo_gpt_vs_gemini() -> str:
+        return public_page_html(settings, "gpt-vs-gemini")
+
+    @public_html_route("/gemini-vs-claude")
+    def seo_gemini_vs_claude() -> str:
+        return public_page_html(settings, "gemini-vs-claude")
+
+    @public_html_route("/best-llm-for-coding")
+    def seo_best_llm_for_coding() -> str:
+        return public_page_html(settings, "best-llm-for-coding")
+
+    @public_html_route("/claude-code-router")
+    def seo_claude_code_router() -> str:
+        return public_page_html(settings, "claude-code-router")
+
+    @public_html_route("/opencode-models")
+    def seo_opencode_models() -> str:
+        return public_page_html(settings, "opencode-models")
+
+    @public_html_route("/coding-agent-api-keys")
+    def seo_coding_agent_api_keys() -> str:
+        return public_page_html(settings, "coding-agent-api-keys")
+
     @public_html_route("/compare/openrouter")
     def compare_openrouter() -> HTMLResponse:
         body = public_competitor_compare_html(settings, "openrouter")

@@ -1,5 +1,15 @@
 {% extends "public/_base.html" %}
 {% block body %}
+{% if page == 1 %}
+<section class="content-section" id="choose-a-model"><h2>AI model comparison: which is best for your task?</h2>
+<p>The best LLM depends on the work, the version and the route. Use the live tables below for prices, context and provider options; use a task evaluation for answer quality. Speed measurements are not an intelligence ranking.</p>
+<h3>ChatGPT vs Claude vs Gemini</h3><p>For app users, compare the tools and workflow in your actual plan. For developers, compare exact GPT, Claude and Gemini model IDs. Start with <a href="/claude-vs-chatgpt">Claude vs ChatGPT for writing and coding</a>, <a href="/gpt-vs-gemini">GPT vs Gemini for everyday use</a>, or <a href="/gemini-vs-claude">Gemini vs Claude</a>.</p>
+<h3>Best AI model right now: build a shortlist</h3><p>Choose a quality candidate and a cheaper candidate that both support your required tools and inputs. Compare a fixed set of real tasks, record the model IDs and date, and select by successful results per dollar. See <a href="/best-llm-for-coding">best LLM for coding</a> for a repository scorecard, including DeepSeek vs Claude and DeepSeek vs Kimi.</p>
+<h3>Which model has the biggest context window?</h3><p>Compare the current model and endpoint limits rather than a family-level headline. Reserve tokens for instructions, output and tool history. A larger window does not guarantee better use of a long document; test retrieval at several positions. Open each model's page for its current context and available providers.</p>
+<h3>Which AI model is cheapest but still good?</h3><p>Set a minimum task-success rate, then compare the full cost of reaching it. Include output, retries and human repair. The <a href="/pricing#api-comparison">LLM API pricing comparison</a> explains the calculation.</p></section>
+{% include "public/_comparison_guide_links.html" %}
+{% endif %}
+
 <section class="marketing-grid three" aria-label="Model selection resources">
   <a class="marketing-card card-as-link" href="/leaderboard"><span class="card-label">Measured speed</span><h3>Find the fastest routes.</h3><p>Compare provider TTFT, throughput, and uptime from routed probes.</p><span class="card-link">Open leaderboard →</span></a>
   <a class="marketing-card card-as-link" href="/models?filter=open"><span class="card-label">Open weights</span><h3>Compare open models.</h3><p>Browse DeepSeek, GLM, Gemma, Kimi, MiniMax, Qwen, and other open routes.</p><span class="card-link">Browse models →</span></a>

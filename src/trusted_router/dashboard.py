@@ -187,6 +187,14 @@ _MODEL_DISCOVERY_PRIORITY_INDEX = {
     model_id: index for index, model_id in enumerate(MODEL_DISCOVERY_PRIORITY)
 }
 SEO_CORE_PATHS: tuple[str, ...] = (
+    "/claude-vs-chatgpt",
+    "/gpt-vs-gemini",
+    "/gemini-vs-claude",
+    "/best-llm-for-coding",
+    "/claude-code-router",
+    "/opencode-models",
+    "/coding-agent-api-keys",
+
     "/abliterated-deepseek",
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
@@ -1408,6 +1416,111 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "trustedrouter/efficient use fixed ordered pools without synthesis or a privacy floor, "
                 "trustedrouter/zdr enforces zero retention, and trustedrouter/e2e enforces "
                 "confidential compute plus provider-side encryption.",
+            ),
+        ),
+    ),
+    "claude-vs-chatgpt": PublicPage(
+        template="public/seo_claude_vs_chatgpt.html",
+        title="Claude vs ChatGPT: Writing, Coding and API Choice",
+        description="Compare Claude and ChatGPT with a customer email, a coding task and a side-by-side checklist. Find the app or API model that fits your work.",
+        faq_items=(
+            (
+                "Is ChatGPT the same thing as GPT?",
+                "No. ChatGPT is an application; GPT models are also available through APIs. App tools, subscriptions and API features should be compared separately.",
+            ),
+            (
+                "Which is better for writing, Claude or ChatGPT?",
+                "Test the same brief and source material, then compare factual fidelity, tone and editing time. The better choice depends on your task, model version and workflow.",
+            ),
+        ),
+    ),
+    "gpt-vs-gemini": PublicPage(
+        template="public/seo_gpt_vs_gemini.html",
+        title="GPT vs Gemini for Everyday Use and API Work",
+        description="Compare GPT and Gemini for everyday work with a meeting recap, a document check and a multimodal task. See how app features and API costs affect your choice.",
+        faq_items=(
+            (
+                "Is GPT or Gemini better for everyday use?",
+                "Choose using your recurring tasks and the app features available in your plan. For API use, compare exact model versions and routes with a fixed task set.",
+            ),
+            (
+                "Does a Gemini or ChatGPT subscription cover TrustedRouter?",
+                "Do not assume so. TrustedRouter API usage is billed separately under its own pricing and credits.",
+            ),
+        ),
+    ),
+    "gemini-vs-claude": PublicPage(
+        template="public/seo_gemini_vs_claude.html",
+        title="Gemini vs Claude: Compare Models for Your Workflow",
+        description="Compare Gemini and Claude for recordings, documents and code. Check native input support, try a transcript exercise and compare current API routes.",
+        faq_items=(
+            (
+                "Which has the biggest context window, Gemini or Claude?",
+                "Check the exact current model and serving endpoint. Available input space also depends on output allowance, system instructions and tool history.",
+            ),
+            (
+                "Can I compare Gemini, Claude and GPT together?",
+                "Yes. Use the same task set and separate scores for quality, latency, cost and route privacy rather than combining incompatible benchmark claims.",
+            ),
+        ),
+    ),
+    "best-llm-for-coding": PublicPage(
+        template="public/seo_best_llm_for_coding.html",
+        title="Best LLM for Coding: Compare Claude, GPT, DeepSeek and Kimi",
+        description="Find the best LLM for your coding workflow. Compare Claude, GPT, DeepSeek and Kimi on working patches, test results, review time and cost per accepted fix.",
+        faq_items=(
+            (
+                "What is the best AI model for coding right now?",
+                "Use the current model versions supported by your agent and evaluate them on representative repository tasks. Compare accepted patches, review effort and total cost; this guide does not claim a universal benchmark winner.",
+            ),
+            (
+                "Is the cheapest coding model always cheaper to use?",
+                "No. Extra attempts, long tool histories and human repair time can outweigh a low token price. Measure cost per accepted result.",
+            ),
+        ),
+    ),
+    "claude-code-router": PublicPage(
+        template="public/seo_claude_code_router.html",
+        title="Claude Code Router: API Keys, Proxy Setup and Model Choice",
+        description="Connect Claude Code to TrustedRouter with a gateway API key. Copy the Messages endpoint setup, verify your model and test a tool call in a small project.",
+        faq_items=(
+            (
+                "Is a Claude Code proxy the same as an HTTP proxy?",
+                "No. An LLM gateway routes model API requests. A general network proxy controls network connectivity; its settings and responsibilities differ.",
+            ),
+            (
+                "Can Claude Code officially use other model families?",
+                "Anthropic does not support non-Claude models through gateways. Compatible endpoints still require separate testing of agent features, and alternative clients may fit multi-model use better.",
+            ),
+        ),
+    ),
+    "opencode-models": PublicPage(
+        template="public/seo_opencode_models.html",
+        title="OpenCode Models: API Keys, DeepSeek and Gateway Setup",
+        description="Set up OpenCode models with a TrustedRouter API key. Copy a custom provider configuration, choose DeepSeek or Kimi and test a complete coding interaction.",
+        faq_items=(
+            (
+                "Where do I put an OpenCode API key?",
+                "Use the selected provider connection or the environment variable named by your configuration. Keep the secret out of committed project files.",
+            ),
+            (
+                "Can I use an OpenRouter key with TrustedRouter?",
+                "No. Each gateway issues its own credentials. Change the key, endpoint and model configuration together when switching connections.",
+            ),
+        ),
+    ),
+    "coding-agent-api-keys": PublicPage(
+        template="public/seo_coding_agent_api_keys.html",
+        title="Codex and Cursor API Keys: Model Gateway Setup",
+        description="Set up Codex and Cursor API keys, configure a Responses gateway for Codex and check which Cursor features use your provider key. Includes a first tool-call test.",
+        faq_items=(
+            (
+                "Does a ChatGPT subscription automatically pay for gateway usage?",
+                "No. Verify the billing terms for the chosen connection. TrustedRouter requests use TrustedRouter credits or its supported billing arrangements.",
+            ),
+            (
+                "Will a Cursor API key replace Tab completion?",
+                "Cursor documents custom API keys for chat models. Tab completion continues to use its built-in models; check current feature support for your version.",
             ),
         ),
     ),

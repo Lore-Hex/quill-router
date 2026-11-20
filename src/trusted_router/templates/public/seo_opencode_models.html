@@ -1,0 +1,35 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section">
+<h2>Put two coding models in the same OpenCode workflow</h2>
+<p>OpenCode lets you keep your editor, project and permissions in place while you switch models. For a practical first comparison, ask one DeepSeek route and one Kimi route to explain the same failing test. Then ask each for the smallest fix. You can compare the patch and the cost without changing clients.</p>
+<p>Start with one working provider connection. The example below reads your TrustedRouter key from the environment and registers a model from the catalog. Add a second model once the first completes a tool call. Match the configuration to your installed version using the <a href="https://opencode.ai/docs/providers">OpenCode provider reference</a>.</p>
+</section>
+<section class="content-section"><h2>Configure a TrustedRouter API key</h2>
+<p>Set <code>TRUSTEDROUTER_API_KEY</code> in your environment without committing its value. Add the following provider definition to your OpenCode configuration. Replace <code>AUTHOR/MODEL</code> with an exact ID from <a href="/models">the current catalog</a>.</p><pre><code>{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "trustedrouter": {
+      "name": "TrustedRouter",
+      "env": ["TRUSTEDROUTER_API_KEY"],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {"baseURL": "https://api.trustedrouter.com/v1"},
+      "models": {"AUTHOR/MODEL": {"name": "My selected model"}}
+    }
+  }
+}</code></pre><p>Select the configured model with <code>/models</code>. OpenCode's provider prefix identifies this connection; the model ID inside the configuration must identify the route you intend to call. Verify the selected model before starting a coding task.</p>
+</section>
+<section class="content-section"><h2>OpenCode with DeepSeek, Kimi or GLM</h2>
+<p>Choose a route that supports your required tool calls and context. Start with a short response, then ask the agent to inspect a small test project and make one reversible change. Confirm that tool results are returned correctly and that the model can recover after a failing test.</p><p>Compare DeepSeek, Kimi and GLM using the <a href="/best-llm-for-coding">same coding scorecard</a>. A large context window is useful only if the agent can use it effectively. Review precision, privacy and current price on the model's endpoint page instead of assuming all hosts serve the same configuration.</p>
+</section>
+<section class="content-section"><h2>Moving from OpenCode with OpenRouter</h2>
+<p>Create a separate TrustedRouter connection first so you can compare behavior before replacing a working setup. The new gateway needs its own key and base URL. Model identifiers and available features can differ even where both services expose an OpenAI-compatible interface.</p><p>Check authentication, streamed output and a complete tool interaction. Compare billed tokens and successful tasks, not just the advertised input rate. See <a href="/compare/openrouter">TrustedRouter vs OpenRouter</a> and the <a href="/pricing#api-comparison">pricing comparison method</a>.</p>
+</section>
+<section class="content-section"><h2>Keep the privacy boundary explicit</h2>
+<p>The coding agent reads project context and the selected provider processes inference. An attested gateway does not remove those components. Inspect <a href="/docs/provider-routing">route privacy controls</a> and choose an eligible confidential route when required.</p><p>If a request fails, first check the installed OpenCode version, package name, endpoint URL and model ID. Do not paste the secret into a public issue. Share a redacted error and configuration shape instead. The <a href="/docs/agent-setup">agent setup guide</a> provides an independent API smoke test to separate a credential problem from a client integration problem.</p>
+</section>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
+</article></div>
+{% include "public/_comparison_guide_links.html" %}
+{% endblock %}

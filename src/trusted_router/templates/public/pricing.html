@@ -49,6 +49,10 @@
   <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Get an API key</button>
 </section>
 
+<section class="pricing-section content-section" id="api-comparison"><h2>LLM API pricing comparison: cheapest per useful result</h2>
+<p>Compare available routes in <a href="/compare/models">the model comparison catalog</a>. Input, cached input where supported, and output can have different rates. Include applicable tool charges and gateway fees, and check whether the displayed rate already includes them so you do not count a markup twice.</p>
+<p>For a hypothetical route charging $1 per million input tokens and $4 per million output tokens, a request with 10,000 input and 1,000 output tokens costs $0.014 before other applicable charges. These are illustrative rates, not a current model quote.</p>
+<p>For 100 tasks, divide total billed cost across all attempts by the number of accepted results. Then consider human review time. A cheap model that needs three retries may cost more than one that succeeds immediately. Test a lower-cost route against a quality baseline with <a href="/best-llm-for-coding">the coding scorecard</a> or <a href="/claude-vs-chatgpt">the writing evaluation</a>.</p></section>
 {% set minimum_charges_collapsed = true %}
 {% include "public/_minimum_charges.html" %}
 

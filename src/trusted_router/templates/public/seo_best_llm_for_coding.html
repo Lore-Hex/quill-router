@@ -1,0 +1,27 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section">
+<h2>Choose a coding model by the patch you would merge</h2>
+<p>Pick a bug your team fixed last week. Start each candidate from the commit just before the fix, give it the original issue and run the same tests. Look at the resulting patch with the model name hidden. A small change that handles the edge case and is easy to review makes a strong candidate for your daily driver.</p>
+<p>Start with two models your agent supports. Claude and GPT make one practical pairing. DeepSeek and Kimi give you another when you want to compare the cost of longer coding sessions. Track the whole session, including failed attempts. A model can earn its place on routine fixes even if you prefer another for cross-file changes.</p>
+</section>
+<section class="content-section"><h2>A five-task coding scorecard</h2>
+<div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Task</th><th scope="col">Pass condition</th><th scope="col">Record</th></tr></thead><tbody><tr><td>Fix a reproducible bug</td><td>Existing test fails before the patch and passes after it</td><td>Attempts, regressions and total cost.</td></tr><tr><td>Implement a small feature</td><td>Acceptance tests pass without removing checks</td><td>Scope control and review time.</td></tr><tr><td>Refactor across files</td><td>Behavior is preserved and imports still work</td><td>Unnecessary edits and missed references.</td></tr><tr><td>Write meaningful tests</td><td>Tests detect a real defect or edge case</td><td>False confidence and brittle assertions.</td></tr><tr><td>Review a change</td><td>Findings are reproducible and actionable</td><td>False positives and missed defects.</td></tr></tbody></table></div>
+</section>
+<section class="content-section"><h2>Claude vs GPT for coding</h2>
+<p>Compare the entire agent session with identical permissions and tools. A code-generation answer is not equivalent to a model running tests and repairing its own patch. Hold the repository revision and task constant, cap the allowed attempts and evaluate the final diff. Record the agent version alongside the model.</p><p>Use <a href="/claude-vs-chatgpt">Claude vs ChatGPT</a> to separate application features from API capabilities. Check current model documentation before enabling reasoning settings or tools; a setting accepted by one family may not mean the same thing for another.</p>
+</section>
+<section class="content-section"><h2>Which handles code better, DeepSeek or Claude?</h2>
+<p>Include both in the same bug-fix and cross-file tasks rather than extrapolating from one impressive answer. If a DeepSeek route passes your tests at lower total cost, it is a reasonable default for that task class. If Claude needs fewer repairs on difficult changes, that can justify its cost there. These are decision rules, not claims that we measured a winner.</p><p>Inspect the <a href="/model-precision">serving precision evidence</a> and <a href="/deepseek-api-privacy">DeepSeek privacy options</a>. Compare the chosen provider as well as the model: availability, quantization and tool handling can affect the agent experience.</p>
+</section>
+<section class="content-section"><h2>DeepSeek vs Kimi, and where GLM fits</h2>
+<p>For DeepSeek vs Kimi, repeat a repository-navigation task with enough tool history to exercise your real context needs. Check whether each model identifies the right files, uses tools correctly and recovers after a failing test. Add GLM as another candidate if an available endpoint supports your required tool workflow.</p><p>For each, measure cost per accepted patch, including all intermediate turns. The lowest per-token price is not necessarily the lowest cost per finished change. Find candidates in <a href="/compare/models">the comparison catalog</a> and current <a href="/kimi-k2-api">Kimi route guide</a>.</p>
+</section>
+<section class="content-section"><h2>Connect your agent and keep a stable evaluation</h2>
+<p>Use an explicit model ID and pin a provider when testing. Start with <a href="/claude-code-router">Claude Code gateway setup</a>, <a href="/opencode-models">OpenCode models</a> or <a href="/coding-agent-api-keys">Codex and Cursor API keys</a>. Validate streaming and a complete tool round trip before a larger task.</p><p>TrustedRouter's gateway protects its part of the request path. Your editor and upstream provider retain their own data boundaries. Use <a href="/docs/provider-routing">a hard privacy floor</a> when needed and accept that the requirement may exclude some models.</p>
+</section>
+<p class="microcopy">Documentation reviewed November 20, 2026.</p>
+</article></div>
+{% include "public/_comparison_guide_links.html" %}
+{% endblock %}
