@@ -45,10 +45,6 @@ DAILY_VIDEO_PROFILES: tuple[DailyVideoProfile, ...] = (
         480_000,
         True,
     ),
-    # The current MiniMax operator plan rejects H3 before queueing. Atlas Cloud
-    # serves the same H3 model and requires a five-second minimum duration.
-    DailyVideoProfile("minimax/hailuo-3", "atlas-cloud", 5, "2K", 700_000, True),
-    DailyVideoProfile("minimax/h3-max", "fal", 5, "480p", 300_000, True),
 )
 _VIDEO_ROTATION_EPOCH = date(2026, 8, 3)
 

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
@@ -22,6 +23,9 @@ from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_models import UserProvidedModel
+
+# Mixed-host video routes the closed-weight rule archived (tests/video_vehicles.py).
+pytestmark = pytest.mark.usefixtures("archived_video_routes")
 
 HEADER = "X-Quill-Video-Allowed-Providers"
 MODEL = "bytedance/seedance-2.5"

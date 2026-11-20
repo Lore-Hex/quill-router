@@ -10,12 +10,16 @@ from fastapi.testclient import TestClient
 
 from tests.test_gateway_authorize_spanner_operations import _request, _seed_typed_gateway_store
 from tests.test_video_generation_control_plane import _authorize_video
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp import SpannerStore
+
+# Mixed-host video routes the closed-weight rule archived (tests/video_vehicles.py).
+pytestmark = pytest.mark.usefixtures("archived_video_routes")
 
 
 @pytest.mark.parametrize("changed", [

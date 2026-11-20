@@ -16,6 +16,11 @@ Families are whole maker namespaces and fail closed: a new closed model from
 one of these makers is restricted without a code change. Open-weight releases
 in the same namespace are exempt; anyone may host published weights, and
 `catalog.model_open_weights` must never call one of these restricted.
+
+A maker whose namespace mixes closed and open releases is restricted by model
+prefix instead. MiniMax publishes its M-series LLM weights, so only its closed
+Hailuo video models are restricted; the rest of minimax/* stays open to any
+host.
 """
 
 from __future__ import annotations
@@ -25,17 +30,38 @@ from __future__ import annotations
 # Azure Foundry (Models sold by Azure, docs/providers/azure-openai-zdr.md), and
 # Claude on Vertex and Bedrock is Anthropic's own cloud distribution
 # (product decision 2026-07-18, docs/providers/bedrock-runtime.md).
+# "byteplus" is ByteDance's own ModelArk API for Seed/Doubao text and Seedance
+# video; "runway" is Runway's own API.
 CLOSED_WEIGHT_FAMILY_PROVIDERS: dict[str, frozenset[str]] = {
     "anthropic": frozenset({"anthropic", "google-vertex", "amazon-bedrock"}),
+    "bytedance": frozenset({"byteplus"}),
+    "bytedance-seed": frozenset({"byteplus"}),
     "google": frozenset({"google-ai-studio", "google-vertex"}),
     "openai": frozenset({"openai", "azure"}),
+    "runway": frozenset({"runway"}),
     "x-ai": frozenset({"grok", "azure"}),
+}
+
+# Closed model lines inside an otherwise open namespace, keyed by id prefix.
+# MiniMax Hailuo video (Hailuo 3 is also published as H3, and the earlier
+# Hailuo API ids were video-01*) routes only through MiniMax's own API.
+CLOSED_WEIGHT_PREFIX_PROVIDERS: dict[str, frozenset[str]] = {
+    "minimax/hailuo": frozenset({"minimax"}),
+    "minimax/h3": frozenset({"minimax"}),
+    "minimax/video-01": frozenset({"minimax"}),
 }
 
 # Published weights inside a closed maker's namespace. Gemma (and its
 # derivatives such as EmbeddingGemma), DePlot, gpt-oss and Whisper large are
-# independently hostable.
+# independently hostable, as are ByteDance Seed's released checkpoints:
+# Seed-OSS, Seed-Coder and UI-TARS (Apache-2.0 / MIT on Hugging Face).
 _OPEN_WEIGHT_PREFIXES: tuple[str, ...] = (
+    "bytedance/seed-oss",
+    "bytedance/seed-coder",
+    "bytedance/ui-tars",
+    "bytedance-seed/seed-oss",
+    "bytedance-seed/seed-coder",
+    "bytedance-seed/ui-tars",
     "google/gemma",
     "google/deplot",
     "openai/gpt-oss",
@@ -56,8 +82,12 @@ FIRST_PARTY_ONLY_MODEL_PROVIDERS: dict[str, frozenset[str]] = {
 
 
 def closed_weight_family(model_id: str) -> str | None:
-    """Return the maker namespace when `model_id` is a closed-weight model."""
+    """Return the restricted family (a maker namespace, or a closed model-id
+    prefix inside an open namespace) when `model_id` is a closed-weight model."""
     lowered = model_id.lower()
+    for prefix in CLOSED_WEIGHT_PREFIX_PROVIDERS:
+        if lowered.startswith(prefix):
+            return prefix
     namespace, separator, _ = lowered.partition("/")
     if not separator or namespace not in CLOSED_WEIGHT_FAMILY_PROVIDERS:
         return None
@@ -74,7 +104,9 @@ def authorized_closed_weight_providers(model_id: str) -> frozenset[str] | None:
     if override is not None:
         return override
     family = closed_weight_family(model_id)
-    return CLOSED_WEIGHT_FAMILY_PROVIDERS[family] if family is not None else None
+    if family is None:
+        return None
+    return CLOSED_WEIGHT_PREFIX_PROVIDERS.get(family) or CLOSED_WEIGHT_FAMILY_PROVIDERS[family]
 
 
 def closed_weight_route_disallowed(provider_slug: str, model_id: str) -> bool:
