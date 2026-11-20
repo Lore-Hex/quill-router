@@ -43,7 +43,7 @@
     x_trustedrouter: ["X", "Follow @TrustedRouter", "Follow"],
     x_founder: ["X", "Follow @jperla", "Follow"],
     linkedin: ["LinkedIn", "Follow TrustedRouter", "Follow"],
-    youtube: ["YouTube", "Subscribe to TrustedRouter", "Subscribe"],
+    youtube: ["YouTube", "Subscribe to New York Token Exchange", "Subscribe"],
   };
   function platformIcon(id) {
     const icon = document.createElement("span");
