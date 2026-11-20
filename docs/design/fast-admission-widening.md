@@ -137,7 +137,7 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 2 | 250,000,000 microdollars ($250) since 2026-11-13 (0 until then) | `-allowance-tier2` (metadata `fastpath-allowance-tier2`) |
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
-| Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
+| Floor | 2,000,000 microdollars ($2) since 2026-11-20 (20,000,000, $20, from WS0 until then) | `-floor` (new) |
 | Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
 | Enabler's balance to disable | unspent credit under $5 since 2026-11-13 ($40 until then) | enabler setting |
 
@@ -311,9 +311,13 @@ reconciler rather than at workspaces, the enabler raises
     overstated it: $30 is the least from which a grant of the largest
     top-up succeeds, and a small ask succeeds from just above the floor.
     Once both nodes run the $2 floor the join balance goes to the floor
-    and a dollar, $3, and the leave balance to the floor, $2, so that no
-    workspace stays on where no lease can be granted (the $5 to $20 band
-    above, a front door hop a request and a refused grant a second). Two
+    and a dollar, $3, and the leave balance to the floor, $2, which
+    removes the band under the floor where a workspace that is on can
+    never lease (the $5 to $20 band above, a front door hop a request and
+    a refused grant a second). It promises no lease above the floor: the
+    floor plus the whole amount asked must fit in the headroom, which
+    reservations lower, so a balance a little over the floor is still
+    refused any ask larger than the difference. Two
     rules hold the order, in `tests/test_fastpath_enabler_deploy.py`: the
     join balance is at least a dollar above the nodes' floor, and the
     leave balance no lower than it. Both hold at $30 and $5 over a $2

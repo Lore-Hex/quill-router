@@ -803,8 +803,10 @@ In this order, each step done before the next:
    `TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO` and
    `TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO` in
    `scripts/deploy/fastpath_enabler_job.sh`: the join balance to the floor
-   and a dollar ($3), the leave balance to the floor ($2), so no workspace
-   stays on where no lease can be granted.
+   and a dollar ($3), the leave balance to the floor ($2), which removes
+   the band under the floor where a workspace that is on can never lease.
+   A lease is still not promised just above the floor: the floor plus the
+   whole amount asked must fit in the headroom, which reservations lower.
    `tests/test_fastpath_enabler_deploy.py` holds both to the nodes' floor:
    the join balance at least a dollar above it, the leave balance no lower
    than it. Lowered before the nodes, the enabler would turn on workspaces

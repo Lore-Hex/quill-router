@@ -139,9 +139,9 @@ def test_the_tier_check_reads_each_literal() -> None:
 
 _NODES_FLOOR = r'^\s*fastpath_floor\s*=\s*"(\d+)"$'
 _JOB_BALANCE = r'^\s*"TR_FASTPATH_ENABLER_{}_BALANCE_MICRO=(\d+)"$'
-# The least a join balance stands above the nodes' floor, a dollar: room for
-# a first lease (an ask is a minute of spend, at least $0.01) and for some
-# leased spend before the floor is met.
+# The least a join balance stands above the nodes' floor, a dollar. That is
+# more than the least ask ($0.01) and than most first asks (an ask is about a
+# minute of the shard's spend, at most $10), not a promise of a lease.
 JOIN_ABOVE_FLOOR = 1_000_000
 
 
@@ -172,13 +172,29 @@ def test_the_enablers_join_balance_is_above_the_nodes_floor() -> None:
 
 
 def test_the_enablers_leave_balance_is_no_lower_than_the_nodes_floor() -> None:
-    """Under the floor no lease is granted, so a workspace left on there
-    pays a front door hop for each request while its owner asks Spanner for
-    a lease once a second and is refused. The leave balance is the floor at
-    least, so no workspace stays on unleasable past an enabler run. Until
-    2026-11-20 it was not: the leave balance was $5 under a $20 floor, and a
-    workspace between them stayed on with no lease. Since the balances
-    followed the floor it is the floor itself, $2.
+    """Under the floor no lease is ever taken: the node's check needs the
+    floor and the whole amount asked. A workspace left on there pays a front
+    door hop for each request while its owner asks Spanner for a lease once
+    a second and is refused. A leave balance at the floor or above removes
+    that band, where an enabled workspace can never lease. Until 2026-11-20
+    the band was there: the leave balance was $5 under a $20 floor. Since
+    the balances followed the floor, the leave balance is the floor, $2.
+
+    The rule promises no lease above the floor, and a band of refusals
+    remains. A workspace at exactly the leave balance stays on (it leaves
+    only under it), and one with $2.005 unspent cannot fund even the least
+    ask, $0.01, over the floor. Reservations lower the headroom the check
+    reads but not the unspent credit the enabler measures: $3 unspent with
+    $1 reserved is at the floor. And the floor plus the whole amount asked
+    must fit: $3 does not cover an ask of $1.10. Such requests pass to the
+    synchronous path, as every request of the old band did.
+
+    What that band costs: while such a workspace has traffic, its owner
+    asks again at most once a second for each admission shard (one by
+    default; the nodes' startup passes no -shards), each ask a transaction
+    that reads all of the workspace's credit rows and, refused, writes
+    nothing. Nothing backs off further, and the asks stop when the traffic
+    does.
 
     With the auto-refill rule below (the leave balance under the least
     auto-refill threshold, $10) this holds only for a floor under $10: a
