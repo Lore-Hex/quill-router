@@ -23,7 +23,7 @@
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
         {% if provider.geography %}
         <tr><th>API operator country</th><td>{{ provider.geography.operator_country or 'Not verified' }}<br><small>{{ provider.geography.operator_country_scope }}</small></td></tr>
-        <tr><th>Headquarters</th><td>{{ provider.geography.headquarters.location or 'Not verified' }}{% if provider.geography.headquarters.source_url %}<br><small>{{ provider.geography.headquarters.evidence }}. <a href="{{ provider.geography.headquarters.source_url }}" rel="nofollow noopener">Source</a>; reviewed {{ provider.geography.headquarters.reviewed_on }}.</small>{% endif %}</td></tr>
+        <tr><th>Headquarters</th><td>{{ provider.geography.headquarters.location or 'Not verified' }}{% if provider.geography.headquarters.source_url %}<br><small>{{ provider.geography.headquarters.evidence }}. <a href="{{ provider.geography.headquarters.source_url }}" rel="{{ provider.geography.headquarters.source_url|provider_link_rel }}">Source</a>; reviewed {{ provider.geography.headquarters.reviewed_on }}.</small>{% endif %}</td></tr>
         {% endif %}
         {% if provider.profile %}
         {% for label, value in provider.profile.company_details %}
@@ -31,14 +31,14 @@
         {% endfor %}
         {% endif %}
         <tr><th>Routing status</th><td><span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span></td></tr>
-        {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
+        {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="{{ provider.homepage_url|provider_link_rel }}">{{ provider.homepage_url }}</a></td></tr>{% endif %}
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
         <tr><th>Credits routes</th><td>{{ provider.credits_model_count }}</td></tr>
         {% if provider.id != 'trustedrouter' %}
         <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span>{% if provider.zero_data_retention_scope_label %} <span class="provider-scope-note">{{ provider.zero_data_retention_scope_label }}</span>{% endif %}</td></tr>
         <tr><th>Verified confidential inference</th><td><span class="pill {% if provider.confidential_inference_verified %}good{% endif %}">{{ provider.confidential_inference_label }}</span></td></tr>
         {% endif %}
-        <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
+        <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}" rel="{{ provider.policy_url|provider_link_rel }}">Policy source</a>{% endif %}</td></tr>
         {% if provider.retention_notice %}
         <tr><th>Strict ZDR and safety retention</th><td>{{ provider.retention_notice }} Use <code>provider.min_privacy="zdr"</code> to reject retained or unverified routes, including during fallback.</td></tr>
         {% endif %}
@@ -49,7 +49,7 @@
       <summary>Documentation and policy sources</summary>
       <ul>
         {% for label, url in provider.profile.resources %}
-        <li><a href="{{ url }}" rel="nofollow noopener">{{ label }}</a></li>
+        <li><a href="{{ url }}" rel="{{ url|provider_link_rel }}">{{ label }}</a></li>
         {% endfor %}
       </ul>
     </details>
@@ -94,7 +94,7 @@
   {% if locations.sources %}
   <ul>
     {% for label, url in locations.sources %}
-    <li><a href="{{ url }}" rel="nofollow noopener">{{ label }}</a></li>
+    <li><a href="{{ url }}" rel="{{ url|provider_link_rel }}">{{ label }}</a></li>
     {% endfor %}
   </ul>
   {% endif %}
