@@ -14,7 +14,7 @@
  <div class="hero-actions">
  <button {{ signup_cta_attr() }} class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
  </div>
- <p class="microcopy">No card required. Start with 1 million free tokens.</p>
+ {% from "_free_tokens.html" import free_tokens_line %}<p class="hero-free-note">{{ free_tokens_line() }}</p>
  </div>
  </section>
 
@@ -250,7 +250,7 @@
  <h2>Switch from OpenRouter in one base URL.</h2>
  <p>Keep the OpenAI SDK and swap the base URL and key. OpenRouter-style routing fields such as <code>provider.order</code>, <code>provider.only</code> and <code>provider.ignore</code> carry over, so most migrations are a config change.</p>
  <p><button {{ signup_cta_attr() }} class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button></p>
- <p class="microcopy">No card required. Start with 1 million free tokens.</p>
+ {% from "_free_tokens.html" import free_tokens_line %}<p class="hero-free-note">{{ free_tokens_line() }}</p>
  </div>
  <div class="copy-terminal">
  <pre><code>import os
@@ -288,7 +288,7 @@ response = client.chat.completions.create(
  <div class="cta-band-actions">
  <button {{ signup_cta_attr() }} class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
  </div>
- <span class="microcopy">No card required. Start with 1 million free tokens.</span>
+ {% from "_free_tokens.html" import free_tokens_line %}<span class="hero-free-note">{{ free_tokens_line() }}</span>
 </section>
 
 <!-- ==== OA-14b: Migration resources (two links added) ==== -->

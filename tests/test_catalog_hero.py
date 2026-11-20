@@ -351,12 +351,13 @@ def test_model_page_provider_details_use_labels_not_headings(client: TestClient)
     assert '<p class="md-detail-label">Weight format</p>' in details[0]
 
 
-def test_readable_no_card_note_has_its_own_class(client: TestClient) -> None:
+def test_free_tokens_note_uses_the_shared_line(client: TestClient) -> None:
     models_html = client.get("/models").text
-    assert '<p class="cta-note cta-note-readable">No card required.' in models_html
+    line = "1&nbsp;million free&nbsp;tokens. No card required."
+    assert f'<p class="cta-note hero-free-note">{line}</p>' in models_html
     slug = re.search(r'href="/blog/([^"]+)"', client.get("/blog").text)
     assert slug
     blog_html = client.get(f"/blog/{slug.group(1)}").text
-    assert '<span class="cta-note cta-note-readable">No card required.' in blog_html
+    assert f'<span class="cta-note hero-free-note">{line}</span>' in blog_html
     for html in (models_html, blog_html):
         assert "microcopy cta-note" not in html
