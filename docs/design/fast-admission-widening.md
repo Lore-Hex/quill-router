@@ -253,6 +253,43 @@ reconciler rather than at workspaces, the enabler raises
   a lease holding the rest gets 402 until PR 7's 503 is on
   (`fastpath_lease_headroom_503`), and 503 after it; PR 7 went on before
   WS5's $30 join balance for that reason.
+  - **Amended 2026-11-20: $2.** Joseph lowered the floor
+    (`fastpath_floor = "2000000"`). The floor is headroom for the
+    workspace's own synchronous requests and never was a fraud control:
+    the required tier and the allowances are, and a lease's holds are
+    reserved from the same balance as before ("Why that is accepted"
+    above). What it cost at $20 was traffic. A grant is all or nothing,
+    refused unless the headroom is at least the floor plus the lease asked
+    (`store/grant.go`, `RefusedFloor`), and an ask is about a minute of the
+    shard's spend, at least $0.01 and at most $10 (`owner/shard.go`,
+    `TopUps`), so no balance under about $20 was ever leased. Read on
+    2026-11-20 over seven days, from the request analytics and the credit
+    rows by key: 55 workspaces at tier 1 or above with traffic were out
+    for their balance alone, about 20% of all requests, and most of that
+    from balances under $5. The largest ordinary hold each could make (its
+    largest prompt and 16,384 output tokens at its models' highest credit
+    rates) was at most $0.50 for 51 of them, at most $1 for 53 and above
+    $2 for one; their largest charge was $1.54.
+  - **The catalog rule is one hold, not four.** At four holds the floor
+    could not go under $5.19 (four times $1.296, the figure above at
+    2026-11-20), over what those workspaces hold. The test now fails when
+    one hold's output, 16,384 tokens at the highest credit rate, passes
+    the floor: $1.296 against $2.00. What a hold above the floor meets is
+    the 503 of PR 7, not a loss: a synchronous request of a workspace near
+    the end of its credit is answered 503 with `Retry-After: 1` while
+    leases hold the rest, and nothing is admitted or charged wrongly. That
+    503 can reach the client: a lease gives its unused allocation back
+    only once it stops admitting (ten minutes idle, an hour old, or its
+    workspace off), not as its holds settle, so the headroom may not be
+    back within the enclave's retries. For a small spender the leases hold
+    about one request's hold, so this is the last request or two before
+    its credit runs out.
+  - **How it is taken, and the way back.** The apply changes metadata
+    only; each node takes `-floor` when its unit starts again, one at a
+    time (`fastpath-deploy.md`, "Lowering the floor"), and the enabler's
+    balances follow only after both run it (next item). The way back is
+    `"20000000"` written again, the enabler's balances first; removing the
+    attribute would leave no floor at all.
 - **$100 and $40 (amended 2026-11-13: $30 and $5).** Below about $40 a
   grant leaves at most $20 for leases past the floor, so most leases are
   refused and each request pays a front door hop to be passed. The gap
@@ -267,6 +304,20 @@ reconciler rather than at workspaces, the enabler raises
   a front door hop per request. Near-floor balances bring the case
   above (a hold meeting a lease holding the rest), so the 503 for headroom
   in leases (PR 7) went on first; WS5 rather than WS6 now admits them.
+  - **Amended 2026-11-20: the balances follow the $2 floor, in their own
+    change.** "$30 is the least balance from which a grant can succeed"
+    overstated it: $30 is the least from which a grant of the largest
+    top-up succeeds, and a small ask succeeds from just above the floor.
+    Once both nodes run the $2 floor the join balance goes to the floor
+    and a dollar, $3, and the leave balance to the floor, $2, so that no
+    workspace stays on where no lease can be granted (the $5 to $20 band
+    above, a front door hop a request and a refused grant a second). Two
+    rules hold the order, in `tests/test_fastpath_enabler_deploy.py`: the
+    join balance is at least a dollar above the nodes' floor, and the
+    leave balance no lower than it. Both hold at $30 and $5 over a $2
+    floor, so the floor lands first, and neither would hold if the
+    balances came down before it. $2 is still under the least auto-refill
+    threshold. Until that change the lines stay $30 and $5.
 
 ### (c) The exclusion set
 

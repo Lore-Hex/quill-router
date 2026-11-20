@@ -129,6 +129,71 @@ def test_the_tier_check_reads_each_literal() -> None:
     assert _job_required_tier() in (1, 2, 3) and _nodes_required_tier() in (0, 1, 2, 3)
 
 
+_NODES_FLOOR = r'^\s*fastpath_floor\s*=\s*"(\d+)"$'
+_JOB_BALANCE = r'^\s*"TR_FASTPATH_ENABLER_{}_BALANCE_MICRO=(\d+)"$'
+# The least a join balance stands above the nodes' floor, a dollar: room for
+# a first lease (an ask is a minute of spend, at least $0.01) and for some
+# leased spend before the floor is met.
+JOIN_ABOVE_FLOOR = 1_000_000
+
+
+def _nodes_floor() -> int:
+    found = re.findall(_NODES_FLOOR, (ROOT / "infra" / "fastpath.tf").read_text(), re.M)
+    assert len(found) == 1, found
+    return int(found[0])
+
+
+def _job_balance(line: str) -> int:
+    found = re.findall(_JOB_BALANCE.format(line), (ROOT / SCRIPT).read_text(), re.M)
+    assert len(found) == 1, found
+    return int(found[0])
+
+
+def test_the_enablers_join_balance_is_above_the_nodes_floor() -> None:
+    """A grant is refused unless the workspace's headroom is at least the
+    nodes' floor plus the lease asked (store.Grant, RefusedFloor), so a
+    workspace joined at or under the floor is on with every grant refused:
+    a front door hop a request and no lease. The join balance is the floor
+    and a dollar at least. So the nodes' floor is lowered first and the
+    enabler's balances after, and the balances are raised before the floor
+    is; a change that lowers the enabler's join alone, or raises the floor
+    alone, fails here (widening design (b); fastpath-deploy.md, "Lowering
+    the floor")."""
+    assert _job_balance("ENABLE") >= _nodes_floor() + JOIN_ABOVE_FLOOR
+
+
+def test_the_enablers_leave_balance_is_no_lower_than_the_nodes_floor() -> None:
+    """Under the floor no lease is granted, so a workspace left on there
+    pays a front door hop for each request while its owner asks Spanner for
+    a lease once a second and is refused. The leave balance is the floor at
+    least, so no workspace stays on unleasable past an enabler run. Until
+    2026-11-20 it was not: the leave balance was $5 under a $20 floor, and a
+    workspace between them stayed on with no lease.
+
+    With the auto-refill rule below (the leave balance under the least
+    auto-refill threshold, $10) this holds only for a floor under $10: a
+    return to the $20 floor is the revert of the change that lowered it,
+    this rule with it, after the enabler's balances are back up."""
+    assert _job_balance("DISABLE") >= _nodes_floor()
+
+
+def test_the_floor_checks_read_each_literal() -> None:
+    """The control: the patterns find the nodes' local however terraform fmt
+    aligns it, and each of the job's balances apart, so the order checks
+    above compare the deployed values."""
+    assert re.findall(_NODES_FLOOR, '  fastpath_floor         = "20000000"\n', re.M) == ["20000000"]
+    assert re.findall(_NODES_FLOOR, '  fastpath_floor = "2000000"\n', re.M) == ["2000000"]
+    assert re.findall(_NODES_FLOOR, '    fastpath-floor               = local.fastpath_floor\n', re.M) == []
+    job = ('  "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=3000000"\n'
+           '  "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=2000000"\n')
+    assert re.findall(_JOB_BALANCE.format("ENABLE"), job, re.M) == ["3000000"]
+    assert re.findall(_JOB_BALANCE.format("DISABLE"), job, re.M) == ["2000000"]
+    # The floor is none or at least a dollar (service.CheckMoney), and the
+    # leave balance is under the join balance (config.py's validator).
+    assert _nodes_floor() == 0 or _nodes_floor() >= 1_000_000
+    assert 0 < _job_balance("DISABLE") < _job_balance("ENABLE")
+
+
 def test_the_job_reads_the_async_shadow_list_the_control_plane_does() -> None:
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
     job = (ROOT / SCRIPT).read_text()
@@ -257,7 +322,8 @@ def test_every_kind_has_a_runbook_row() -> None:
 
 
 def test_a_join_balance_near_the_floor_needs_the_lease_headroom_503() -> None:
-    """Below $100 the enabler admits balances near the $20 floor, where a
+    """Below $100 the enabler admits balances near the floor ($20 when this
+    was written, $2 since 2026-11-20), where a
     lease can hold money a synchronous hold needs (widening design (b)).
     Today that hold would get a 402; with PR 7's 503 on it is retried. So a
     join balance under $100 requires rollout.sh's literal to be on."""
