@@ -3227,6 +3227,41 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
     }
 )
 
+# What a request naming each orchestration primitive must configure before the
+# gateway will run it. Each entry is one requirement, and every requirement in
+# a list must be met. A primitive with an empty list has built-in defaults and
+# serves a bare chat request (one user message, no configuration).
+# Source: quill-cloud-proxy enclave validateGenericFusionConfig (synth,
+# synth-code, selector), validateGenericAdvisorConfig (advisor) and the
+# controller_model check in subagent.go. trustedrouter/mapreduce falls back to
+# its built-in mapper and reducer models.
+ORCHESTRATION_PRIMITIVE_REQUIRED_CONFIGURATION: dict[str, tuple[str, ...]] = {
+    SYNTH_MODEL_ID: ("preset or analysis_models",),
+    SYNTH_CODE_MODEL_ID: ("preset or analysis_models",),
+    SELECTOR_MODEL_ID: ("selector_models, preset or analysis_models",),
+    ADVISOR_MODEL_ID: ("worker_models", "advisor_models"),
+    SUBAGENT_MODEL_ID: ("controller_model",),
+    MAPREDUCE_MODEL_ID: (),
+}
+
+
+def required_orchestration_configuration(model_id: str) -> tuple[str, ...]:
+    """Configuration a request naming this model must carry; empty if none."""
+    return ORCHESTRATION_PRIMITIVE_REQUIRED_CONFIGURATION.get(model_id, ())
+
+
+def serves_bare_chat(model: Model) -> bool:
+    """Does a plain chat request (no tools, no configuration) succeed?
+
+    `offers_chat` says the chat routes accept the model at all. An
+    orchestration primitive without defaults is accepted there only with its
+    configuration; a bare request gets 400. Catalog `supports_chat` and the
+    chat pickers ask this, so they never offer a model that refuses the
+    request they send.
+    """
+    return offers_chat(model) and not required_orchestration_configuration(model.id)
+
+
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "decisionmodelsio-eu",
     "mistral",
