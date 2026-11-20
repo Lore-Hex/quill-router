@@ -19,7 +19,6 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -27,20 +26,14 @@ from urllib.parse import urlsplit
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
-from markupsafe import Markup
 
 from trusted_router.ai_referrals import ai_referral_platform
-from trusted_router.auth import SESSION_COOKIE_NAME
 from trusted_router.config import Settings
 from trusted_router.exchange_analytics import EXCHANGE_MARKET_SLUGS, HOST_RE, PAGE_RE, market_for
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
 from trusted_router.marketing_experiments import (
     ONBOARDING_EXPERIMENT_ID,
-    SIGNUP_CTA_CELLS,
-    SIGNUP_CTA_COOKIE_NAME,
-    SIGNUP_CTA_EXPERIMENT_ID,
     assigned_onboarding_cell,
-    assigned_signup_cta_cell,
     valid_experiment_identity,
 )
 from trusted_router.request_limits import (
@@ -788,81 +781,6 @@ def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, re
         **_website_network_fields(request),
     })
     return cell
-
-
-# Whether the page being rendered holds a sign-up button that is in the test.
-# The middleware puts a fresh holder here before the page renders; the
-# template global below flips it. A mutable holder, because the page renders in
-# a child task whose ContextVar writes never reach the middleware.
-_SIGNUP_CTA_RENDERED: ContextVar[list[bool] | None] = ContextVar("signup_cta_rendered", default=None)
-
-
-def track_signup_cta_render() -> list[bool]:
-    holder = [False]
-    _SIGNUP_CTA_RENDERED.set(holder)
-    return holder
-
-
-def signup_cta_attr() -> Markup:
-    """Template global: the attribute that puts a sign-up button in the test.
-
-    Templates write ``<button {{ signup_cta_attr() }} ...>`` so that only
-    visitors who were served such a button are assigned and counted."""
-    holder = _SIGNUP_CTA_RENDERED.get()
-    if holder is not None:
-        holder[0] = True
-    return Markup("data-signup-cta")
-
-
-def assign_signup_cta(
-    request: Request,
-    response: Response,
-    context: AttributionContext,
-    settings: Settings,
-) -> None:
-    """Give the visitor their sign-up button cell, once.
-
-    Called only for a page that rendered a button in the test.
-
-    The cell comes from the anonymous ID, so it never changes for a visitor.
-    The readable cookie lets the shared script pick the label; the assignment
-    event (logged only when the cookie is first set) is what the dashboard
-    joins sign-in opens, sign-ups and first calls against. It carries the cell
-    in `cta`, not experiment_id: the growth journey reads any experiment_id as
-    the onboarding experiment.
-    """
-    # Signed-out visitors on public pages only: never the console, sign-in or
-    # API paths, and never someone who already has a session.
-    if (
-        not _should_capture_request(request)
-        or request.url.path.startswith("/console")
-        or request.cookies.get(SESSION_COOKIE_NAME)
-    ):
-        return
-    # A visitor who already holds a cell keeps it (and is not logged again).
-    if request.cookies.get(SIGNUP_CTA_COOKIE_NAME) in SIGNUP_CTA_CELLS:
-        return
-    cell = assigned_signup_cta_cell(context.anonymous_id)
-    response.set_cookie(
-        key=SIGNUP_CTA_COOKIE_NAME,
-        value=cell,
-        max_age=ATTRIBUTION_COOKIE_MAX_AGE,
-        httponly=False,
-        secure=settings.environment.lower() not in {"local", "test"},
-        samesite="lax",
-        path="/",
-    )
-    log.info('acquisition.signup_cta_assigned', extra={
-        'event': 'acquisition.signup_cta_assigned',
-        'anonymous_fingerprint': _fingerprint(context.anonymous_id),
-        'cta': f'{SIGNUP_CTA_EXPERIMENT_ID}:{cell}',
-        # The dimensions the dashboard filters on. Not experiment_id (see above).
-        'utm_source': context.last_touch.get('utm_source'),
-        'utm_medium': context.last_touch.get('utm_medium'),
-        'utm_campaign': context.last_touch.get('utm_campaign'),
-        'landing_path': context.last_touch.get('landing_path', ''),
-        **_website_network_fields(request),
-    })
 
 
 def pageview_attribution_fields(request: Request) -> dict[str, object]:

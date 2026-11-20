@@ -7,7 +7,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script nonce="{{ csp_nonce() }}">document.documentElement.classList.remove("js-off");</script>
-  {% include "_signup_cta_head.html" %}
   <title>{{ meta_title }}</title>
   <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
@@ -59,7 +58,7 @@
         <h1>{{ heading }}</h1>
         <p class="lead">{{ hero_pitch }}</p>
         <div class="hero-actions">
-          <button {% if free_hero %}{{ signup_cta_attr() }} {% endif %}class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup" data-catalog-cta>Start building</button>
+          <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup" data-catalog-cta>Start building</button>
         </div>
         {% if free_hero %}<p class="hero-free-note">{{ free_tokens_line() }}</p>{% endif %}
       </div>
@@ -71,7 +70,7 @@
         <h1>{{ heading }}</h1>
         <p class="lead">{{ description }}</p>
         <div class="hero-actions">
-          <button {{ signup_cta_attr() }} class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
+          <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify gateway <span aria-hidden="true">→</span></a>
         </div>
         {# Legal, careers and error pages empty this block: no offer line there. #}

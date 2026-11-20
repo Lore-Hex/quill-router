@@ -1,7 +1,7 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import publisher_identity %}
 {% from "public/_decide_example.html" import decide_curl %}
-{% import "public/_compare_kit.html" as kit with context %}
+{% import "public/_compare_kit.html" as kit %}
 {% from "_free_tokens.html" import free_tokens_line %}
 {% set signup_note = free_tokens_line() if free_to_start else hero_pitch %}
 {# Without a verdict the hero's lead already is hero_pitch, so the note under

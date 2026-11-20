@@ -7,7 +7,7 @@
     <h1>{{ variant.headline }}</h1>
     <p class="lead">{{ variant.lead }}</p>
     <div class="hero-actions">
-      <button {% if variant.cta == "Start building" %}{{ signup_cta_attr() }} {% endif %}class="btn primary" type="button" data-action="open-signin">{{ variant.cta }}</button>
+      <button class="btn primary" type="button" data-action="open-signin">{{ variant.cta }}</button>
       <a class="btn" href="{{ variant.secondary_href }}">{{ variant.secondary_label }} <span aria-hidden="true">→</span></a>
     </div>
     <p class="microcopy">{{ variant.microcopy }}</p>
@@ -63,7 +63,7 @@ print(response.choices[0].message.content)</code></pre>
 
 <section class="cta-band" aria-label="Create a TrustedRouter key">
   <div><strong>{{ variant.final_headline }}</strong><span>{{ variant.final_copy }}</span></div>
-  <div class="cta-band-actions"><button {% if variant.cta == "Start building" %}{{ signup_cta_attr() }} {% endif %}class="btn primary" type="button" data-action="open-signin">{{ variant.cta }}</button></div>
+  <div class="cta-band-actions"><button class="btn primary" type="button" data-action="open-signin">{{ variant.cta }}</button></div>
   <span class="microcopy">No card required.</span>
 </section>
 {% endblock %}

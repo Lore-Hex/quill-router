@@ -102,9 +102,7 @@ test("model page quickstart switches tabs and folds the prompt on phones", async
   await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
 });
 
-test("a model with no Credits route makes no credit claim", async ({ page, context, baseURL }) => {
-  // It also stays out of the sign-up button test: the free cell keeps "Start building".
-  await context.addCookies([{ name: "tr_cta", value: "start_for_free", url: baseURL }]);
+test("a model with no Credits route makes no credit claim", async ({ page }) => {
   // Pick the first bring-your-own-key model from the live catalog instead of
   // pinning an id, so the test survives a provider funding that route later.
   // TrustedRouter's own pools and orchestration models route through other
@@ -123,43 +121,18 @@ test("a model with no Credits route makes no credit claim", async ({ page, conte
   await expect(hero.locator(".md-lead")).toContainText("Bring your own provider key");
   await expect(hero.locator(".md-no-card")).toHaveCount(0);
   await expect(page.locator(".md-no-card")).toHaveCount(0);
-  await expect(page.locator("[data-signup-cta]")).toHaveCount(0);
   await expect(hero.locator("[data-catalog-cta]")).toHaveText("Start building");
   await hero.locator("[data-catalog-cta]").click();
   await expect(page.locator("#signinModal")).toHaveAttribute("data-mode", "signup");
 });
 
-// Sign-up button A/B test (signup_cta_v1): the free cell swaps only the
-// button label; the line under it stays the same in both cells.
-for (const [cell, label] of [["start_building", "Start building"], ["start_for_free", "Start for free"]]) {
-  test(`sign-up button reads "${label}" for the ${cell} cell`, async ({ page, context, baseURL }) => {
-    await context.addCookies([{ name: "tr_cta", value: cell, url: baseURL }]);
-    await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
-    await page.goto("/providers/tinfoil");
-    await expect(page.locator(".pd-hero [data-catalog-cta]")).toHaveText(label);
-    await expect(page.locator(".pd-hero .hero-free-note")).toHaveText("1 million free tokens. No card required.");
-    await page.goto("/");
-    await expect(page.locator("#top .hero .button-primary")).toHaveText(label);
-  });
-}
-
-// The label is set by an inline head script, so it must not wait for
-// dashboard.js (otherwise free-cell visitors see "Start building" first).
-test("free-cell label is set without dashboard.js", async ({ page, context, baseURL }) => {
-  await context.addCookies([{ name: "tr_cta", value: "start_for_free", url: baseURL }]);
-  await page.route("**/static/dashboard.js*", route => route.abort());
+// The provider hero and the homepage hero carry the same button label, and
+// the provider hero names the free tokens under it.
+test("provider and homepage heroes read Start building", async ({ page }) => {
+  await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
+  await page.goto("/providers/tinfoil");
+  await expect(page.locator(".pd-hero [data-catalog-cta]")).toHaveText("Start building");
+  await expect(page.locator(".pd-hero .hero-free-note")).toHaveText("1 million free tokens. No card required.");
   await page.goto("/");
-  await expect(page.locator("#top .hero [data-signup-cta]")).toHaveText("Start for free");
-  await page.goto("/providers/tinfoil");
-  await expect(page.locator(".pd-hero [data-signup-cta]")).toHaveText("Start for free");
-});
-
-// A first visit has no cookie: the response sets it, and the label on that
-// same page already matches the cell.
-test("first visit gets a cell and the matching label", async ({ page, context }) => {
-  await context.clearCookies();
-  await page.goto("/providers/tinfoil");
-  const cell = (await context.cookies()).find(c => c.name === "tr_cta");
-  expect(["start_building", "start_for_free"]).toContain(cell && cell.value);
-  await expect(page.locator(".pd-hero [data-signup-cta]")).toHaveText(cell.value === "start_for_free" ? "Start for free" : "Start building");
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Start building");
 });

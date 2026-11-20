@@ -117,33 +117,6 @@ def experiment_query():
 """
 
 
-SIGNUP_CTA_EVENTS = ('acquisition.signup_cta_assigned', 'acquisition.sign_in_opened',
-                     'acquisition.signup_completed', 'acquisition.first_successful_api_call')
-
-
-def signup_cta_query():
-    """Sign-up button A/B test (signup_cta_v1): one row per button label.
-
-    A visitor's cell comes from their signup_cta_assigned event (cell in `cta`,
-    logged when a page first serves them a button in the test). Sign-in opens,
-    sign-ups and first calls join on the same anonymous fingerprint and count
-    only when they happen at or after that assignment. `cta` is a grouping key
-    because the column may not exist yet (see EVENTS); the dashboard filters
-    apply."""
-    events = ', '.join(repr(e) for e in SIGNUP_CTA_EVENTS)
-    return f"""['{DATASET}'] | where event in ({events})
-| extend cta=tostring(column_ifexists('cta',''))
-| summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, landing_path) by event_id, cta
-"""+FILTER+"""| extend at=todatetime(_time), assigned=(event=='acquisition.signup_cta_assigned')
-| summarize Assigned_at=minif(at, assigned), Free=countif(assigned and cta=='signup_cta_v1:start_for_free'), Building=countif(assigned and cta=='signup_cta_v1:start_building'), Opened_at=maxif(at, event=='acquisition.sign_in_opened'), Signed_up_at=maxif(at, event=='acquisition.signup_completed'), Called_at=maxif(at, event=='acquisition.first_successful_api_call') by anonymous_fingerprint
-| extend Button=iff(Free>0,'Start for free',iff(Building>0,'Start building',''))
-| where isnotempty(Button)
-| summarize Visitors=count(), Opened_signup=countif(Opened_at>=Assigned_at), Signed_up=countif(Signed_up_at>=Assigned_at), First_API_call=countif(Called_at>=Assigned_at) by Button
-| extend Open_pct=round(100.0*Opened_signup/Visitors,2), Signup_pct=round(100.0*Signed_up/Visitors,2), First_call_pct=round(100.0*First_API_call/Visitors,2)
-| sort by Button asc
-"""
-
-
 def onboarding_query():
     return ATTEMPTS+"""
 | summarize Started_attempts=countif(Starts>0), Matched_completed=countif(Complete), Visible_answer_successes=countif(Matched_success), Failures=countif(Matched_failure), Pending=countif(Missing_outcome and todatetime(Started_at)>ago(5m)), Missing_outcome_5m=countif(Missing_outcome and todatetime(Started_at)<=ago(5m)), Orphan_outcomes=countif(Starts==0), Conflicting_outcomes=countif(Successes>0 and Failures>0)
@@ -251,7 +224,6 @@ def build():
         ('Landing content at signup','Table',by_dimension('landing_path'),12),
         ('Campaign and creative outcomes','Table',by_dimension('utm_source, utm_campaign, creative_id'),12),
         ('Onboarding experiment: exposed accounts, not assigned visitors','Table',experiment_query(),12),
-        ('Sign-up button test: Start building vs Start for free','Table',signup_cta_query(),12),
         ('First source versus latest tagged source','Table',JOURNEY+' | summarize Visitors=count(), Signups=countif(has_signup), Activated=countif(active_after_signup), Purchasers=countif(paid_after_signup) by first_source, last_source, first_touch_basis | sort by Signups desc | take 40',12),
         ('Content carried by each conversion event','Table',EVENTS+" | where event in ('acquisition.signup_completed','acquisition.first_successful_api_call','acquisition.credit_purchase_completed') | summarize Visitors=dcount(anonymous_fingerprint), Events=count() by event, landing_path, utm_source, utm_campaign | sort by Visitors desc | take 60",12),
         ('Referring domains','Table',by_dimension('referrer_domain'),12),

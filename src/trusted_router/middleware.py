@@ -33,11 +33,9 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from trusted_router.acquisition import (
     acquisition_request_is_automated,
-    assign_signup_cta,
     pageview_attribution_fields,
     prepare_request_attribution,
     set_attribution_cookie,
-    track_signup_cta_render,
 )
 from trusted_router.auth import get_authorization_bearer
 from trusted_router.config import Settings, parse_settlement_inbound_tokens
@@ -259,19 +257,9 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         else:
             attribution, attribution_changed = prepare_request_attribution(request, settings)
         start = time.perf_counter()
-        signup_cta_rendered = track_signup_cta_render()
         response = await call_next(request)
         if attribution is not None and attribution_changed:
             set_attribution_cookie(response, attribution, settings)
-        if (
-            attribution is not None
-            and response.status_code == 200
-            and signup_cta_rendered[0]
-            # A shared cache may hand one visitor's response to the next, so a
-            # publicly cacheable page never carries the per-visitor cell cookie.
-            and "public" not in response.headers.get("cache-control", "")
-        ):
-            assign_signup_cta(request, response, attribution, settings)
         _log_public_page_view(request, response, latency_ms=(time.perf_counter() - start) * 1000)
         return response
 

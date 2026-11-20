@@ -44,7 +44,7 @@ BROWSER_EVENTS = frozenset(
         "landing_viewed", "landing_engaged", "sign_in_opened",
         "signin_mode_switched", "signup_mode_switched",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
-        "experiment_exposed", "signup_cta_assigned",
+        "experiment_exposed",
         "social_rewards_exposed", "social_reward_clicked",
         "console_api_keys_viewed", "social_rewards_invitation_viewed", "social_rewards_opened",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",
@@ -226,9 +226,6 @@ def project_event(
         for field in ("cta", "position", "form", "unit", "underlying_kind", "grade"):
             output[field] = safe_label(row.get(field))
         output["destination_host"] = domain(row.get("destination_host"))
-    if event == "acquisition.signup_cta_assigned":
-        # The sign-up button test cell, e.g. "signup_cta_v1:start_for_free".
-        output["cta"] = safe_label(row.get("cta"))
     # A visitor who arrived from an exchange site carries its market and a hashed exchange visitor ID
     # on trustedrouter.com events, so sign-ups, first calls and purchases join back to exchange visits.
     if row.get("exchange_market") in EXCHANGE_MARKETS:

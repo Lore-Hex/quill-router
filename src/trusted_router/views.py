@@ -16,7 +16,6 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from trusted_router.acquisition import signup_cta_attr
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.middleware import current_csp_nonce
 from trusted_router.provider_branding import provider_logo_url
@@ -131,7 +130,6 @@ def _env() -> Environment:
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
-    env.globals["signup_cta_attr"] = signup_cta_attr
     # Shared header (public/_nav.html): live catalog size and lab icons.
     from trusted_router.homepage import live_model_count, publisher_icons
 

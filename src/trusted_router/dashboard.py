@@ -21,7 +21,6 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from trusted_router.acquisition import signup_cta_attr
 from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.bedrock_group_buy import (
     BEDROCK_GROUP_BUY_SPEND_SOURCES,
@@ -2714,7 +2713,6 @@ def _env() -> Environment:
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
-    env.globals["signup_cta_attr"] = signup_cta_attr
     # Shared header: live catalog size and lab icons for the model search.
     # Lazy import: trusted_router.homepage imports this module at call time.
     from trusted_router.homepage import live_model_count, publisher_icons

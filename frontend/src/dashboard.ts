@@ -343,7 +343,7 @@ function applyAuthAwareChrome(): void {
     const homepageCta = el.hasAttribute("data-homepage-cta");
     replacement.textContent = homepageCta
       ? "Get my API key"
-      : el.hasAttribute("data-signup-cta") || el.getAttribute("data-signin-mode") === "signup" || (el.textContent || "").trim().toLowerCase().includes("api key")
+      : el.getAttribute("data-signin-mode") === "signup" || (el.textContent || "").trim().toLowerCase().includes("api key")
         ? "Open console"
         : "Console";
     if (homepageCta) replacement.setAttribute("data-homepage-cta", "");
@@ -359,9 +359,6 @@ function applyAuthAwareChrome(): void {
     }
   });
 }
-
-// The sign-up button test label (signup_cta_v1) is set before first paint by
-// templates/_signup_cta_head.html, not here.
 
 function init(): void {
   applyAuthAwareChrome();

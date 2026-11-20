@@ -1,7 +1,0 @@
-{# Sign-up button test (signup_cta_v1). The server sets the readable tr_cta
-   cookie; for the start_for_free cell, swap every [data-signup-cta] label as
-   the parser adds it, so visitors never see the other label first. Mutation
-   observer callbacks run before the browser paints. Text and characterData
-   records are handled too: the parser can add a button's text after the
-   button itself has been seen. #}
-<script nonce="{{ csp_nonce() }}">(function(){if(!/(?:^|;\s*)tr_cta=start_for_free(?:;|$)/.test(document.cookie))return;var L="Start for free",A="data-signup-cta";function set(b){if(b.textContent!==L)b.textContent=L}function swap(n){if(n.nodeType===3)n=n.parentNode;if(!n||n.nodeType!==1)return;if(n.hasAttribute(A))set(n);n.querySelectorAll("["+A+"]").forEach(set)}var o=new MutationObserver(function(ms){ms.forEach(function(m){if(m.type==="characterData")swap(m.target);else m.addedNodes.forEach(swap)})});o.observe(document.documentElement,{childList:true,subtree:true,characterData:true});document.addEventListener("DOMContentLoaded",function(){o.disconnect();swap(document.body)})})();</script>
