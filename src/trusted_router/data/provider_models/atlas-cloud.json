@@ -852,7 +852,9 @@
       "input_token_price_per_m": 40000,
       "output_token_price_per_m": 80000,
       "cached_input_token_price_per_m": 40000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V3.1",
@@ -6394,6 +6396,6 @@
       "cached_input_token_price_per_m": 150000
     }
   ],
-  "generated_at": "2026-11-20T07:28:13Z",
+  "generated_at": "2026-11-20T09:28:19Z",
   "model_count": 204
 }
