@@ -128,7 +128,7 @@
     dialog.querySelector("[data-rewards-progress]").textContent = `${count} of ${total} rewards claimed`;
     if (total > 0) {
       const thousands = total * 200;
-      const upTo = thousands >= 1000 ? `${thousands / 1000} million` : `${thousands}K`;
+      const upTo = thousands >= 1000 ? `${thousands / 1000}\u00a0million` : `${thousands}K`;
       const amount = document.createElement("strong");
       amount.textContent = `${upTo} free tokens`;
       dialog.querySelector("h2").replaceChildren("Earn up to ", amount);
@@ -186,6 +186,7 @@
       button.setAttribute("aria-label", action.claimed || busy || errors.has(action.id)
         ? button.textContent : `${presentation[action.id][2]} on ${presentation[action.id][0]}: ${presentation[action.id][1]}`);
       row.classList.toggle("claimed", Boolean(action.claimed));
+      button.classList.toggle("secondary", !action.claimed);
       const status = row.querySelector('[role="status"]');
       status.hidden = !errors.has(action.id) || action.claimed;
       status.textContent = status.hidden ? "" : "We couldn’t confirm your reward yet.";

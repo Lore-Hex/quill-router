@@ -997,36 +997,36 @@ body.console {
   --adyen-sdk-border-radius-l: var(--tr-radius-control);
 }
 
-/* Social rewards: the site's Ink hero in small (lead-colour bar, heading
-   with the amount in the lead colour, the Band closing the header), then
-   compact platform rows with one active completion step. */
+/* Social rewards: a raised card over the dimmed page. The header is a
+   colour field (the theme sets it to the page's lead colour), then compact
+   platform rows with one active completion step. */
 .social-rewards {
   color: var(--tr-color-text-primary);
-  background: var(--tr-color-surface-bg);
-  border: 0;
+  background: var(--tr-color-surface-panel-raised);
+  border: 1px solid var(--tr-color-text-primary);
   border-radius: var(--tr-square, 12px);
+  box-shadow: 0 24px 64px rgb(21 19 17 / 28%);
   padding: 0;
   width: min(600px, calc(100vw - 24px));
   max-width: none;
   max-height: calc(100dvh - 24px);
   font-family: var(--tr-font-family-sans);
 }
-.social-rewards::backdrop { background: color-mix(in srgb, var(--nyte-cream, #faf8f4) 72%, transparent); backdrop-filter: blur(4px); }
-.social-rewards-head { position: relative; padding: 28px 28px 44px; color: var(--tr-color-text-primary); background: var(--tr-color-surface-bg); }
+.social-rewards::backdrop { background: rgb(21 19 17 / 45%); }
+.social-rewards-head { position: relative; padding: 28px 28px 24px; color: var(--tr-color-text-primary); background: var(--tr-color-surface-bg); }
 .social-rewards-head::before { content: ""; display: block; width: 40px; height: 4px; margin-bottom: 14px; background: var(--tr-color-accent-base); }
-.social-rewards-head::after { content: ""; position: absolute; inset: auto 0 0; height: 22px; background: var(--nyte-band, none) 0 0 / 100% 120px no-repeat; }
 .social-rewards-close { position: absolute; right: 12px; top: 12px; font-size: 24px; border: 0; background: transparent; color: var(--tr-color-text-primary); }
-.social-rewards h2 { color: var(--tr-color-text-primary); font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.03em; margin: 0 32px 10px 0; }
-.social-rewards h2 strong { color: var(--tr-color-accent-base); font-weight: 600; }
+.social-rewards h2 { color: var(--tr-color-text-primary); font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.025em; margin: 0 32px 10px 0; }
+.social-rewards h2 strong { color: var(--tr-color-accent-base); }
 /* The heading takes focus when the popup opens; it is not a control. */
 .social-rewards h2:focus { outline: none; }
 .social-rewards-progress { color: var(--tr-color-text-primary); font-size: 14px; font-weight: 500; margin: 22px 0 10px; }
-.social-rewards progress { display: block; width: 100%; height: 4px; border: 0; border-radius: var(--tr-square, 4px); accent-color: var(--tr-color-accent-base); background: var(--tr-color-surface-selected); }
+.social-rewards progress { display: block; width: 100%; height: 6px; border: 0; border-radius: var(--tr-square, 4px); accent-color: var(--tr-color-accent-base); background: var(--tr-color-surface-selected); }
 .social-rewards progress::-webkit-progress-bar { background: var(--tr-color-surface-selected); border-radius: var(--tr-square, 4px); }
 .social-rewards progress::-webkit-progress-value { background: var(--tr-color-accent-base); border-radius: var(--tr-square, 4px); }
 .social-rewards-content { padding: 0 28px; }
 .social-rewards-list { padding: 0; margin: 0; list-style: none; }
-.social-rewards-list li { border-top: 1px solid var(--tr-color-line-rule-soft); padding: 18px 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 14px; }
+.social-rewards-list li { border-top: 1px solid var(--tr-color-line-rule-soft); padding: 16px 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 14px; }
 .social-rewards-list li:first-child { border-top: 0; }
 .social-rewards-icon { display: flex; align-items: center; justify-content: center; color: var(--tr-color-text-primary); }
 .social-rewards-icon svg { display: block; width: 26px; height: 26px; }
@@ -1039,16 +1039,16 @@ body.console {
 .social-rewards-start { min-width: 88px; min-height: 44px; font-size: 12px; }
 .social-rewards-controls { grid-column: 2 / -1; display: grid; gap: 14px; padding: 4px 0; }
 .social-rewards-controls[hidden] { display: none; }
-.social-rewards-list .claimed .btn { opacity: 1; background: transparent; color: var(--tr-color-accent-base); border-color: transparent; }
-.social-rewards-foot { padding: 18px 28px; border-top: 1px solid var(--tr-color-line-rule-soft); display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; }
+.social-rewards-list .claimed .btn { opacity: 1; background: transparent; color: var(--tr-color-text-primary); border-color: transparent; }
+.social-rewards-foot { padding: 14px 28px; background: var(--tr-color-surface-bg); border-top: 1px solid var(--tr-color-line-rule-soft); display: flex; gap: 20px; align-items: center; justify-content: space-between; }
 .social-rewards-foot p { color: var(--tr-color-text-tertiary); font-size: 12px; line-height: 1.5; margin: 10px 0; }
-.social-rewards-foot .btn { white-space: nowrap; min-height: 44px; border: 0; background: transparent; }
+.social-rewards-foot .btn { white-space: nowrap; min-height: 44px; border: 0; background: transparent; font-weight: 600; }
 .social-rewards-terms { flex: 1; min-width: 0; }
 .social-rewards-terms summary { font-size: 12px; color: var(--tr-color-text-tertiary); cursor: pointer; padding: 14px 0; }
 .social-rewards :focus-visible { outline: 2px solid var(--tr-color-focus); outline-offset: 4px; }
 
 @media (max-width: 600px) {
-  .social-rewards-head { padding: 22px 18px 40px; }
+  .social-rewards-head { padding: 22px 18px 20px; }
   .social-rewards h2 { margin-right: 36px; }
   .social-rewards-content { padding: 0 18px; }
   .social-rewards-list li { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 16px 0; }

@@ -540,7 +540,7 @@
 
 /* Ink areas: the header bar, the footer and the console top bar keep the
    kit's dark theme, so their own colours read Cream on Ink. */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head) {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-ink);
   --tr-color-surface-bg-alt: var(--nyte-surface);
@@ -1035,18 +1035,18 @@
 }
 
 /* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
   border-color: var(--nyte-cream);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.button.button-primary, .btn.primary) {
   border-color: var(--nyte-orange);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.button, .btn):hover {
   border-color: var(--nyte-cream);
   background: var(--nyte-cream);
@@ -1091,7 +1091,7 @@
   background: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
   :is(.eyebrow, .kicker) {
   color: var(--nyte-cream);
 }
@@ -1115,7 +1115,7 @@
   outline-offset: 2px;
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head) :focus-visible {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) :focus-visible {
   outline-color: var(--nyte-cream);
 }
 
@@ -1223,6 +1223,26 @@
 
 :root[data-brand="nyte"] .sp * {
   color: var(--nyte-ink);
+}
+
+/* Social rewards popup header: a lead-colour field with Ink text, so it
+   matches the page underneath. Its title is a heading, not display type,
+   so it takes Medium rather than the display Light. */
+:root[data-brand="nyte"] .social-rewards-head {
+  --tr-color-text-primary: var(--nyte-ink);
+  --tr-color-accent-base: var(--nyte-ink);
+  --tr-color-surface-selected: rgb(21 19 17 / 18%);
+
+  background: var(--nyte-lead);
+  border-bottom: 1px solid var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .social-rewards-head h2 {
+  font-weight: 500;
+}
+
+:root[data-brand="nyte"] .social-rewards-head h2 strong {
+  font-weight: 700;
 }
 
 /* Status badges on /encrypted-ai (page-local colours, not the old dark site) */
