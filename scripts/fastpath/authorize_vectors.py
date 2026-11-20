@@ -2889,7 +2889,11 @@ def hosted_cases() -> list[dict[str, Any]]:
     add("pass:hosted:replay", "insert.scope_taken",
         prior=(({"idempotency_key": "hosted-decide"}, ADMIT),))
     ticket_policy = {"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}}
-    add("answer:hosted:C:eligible", body={"invocation_nonce": "nonce-hosted"}, policy=ticket_policy, admits=True)
+    # The repository's scan for schema-change carriers reads this golden as
+    # text, and a ticket's base64 can spell one of its tokens by chance. This
+    # nonce gives a ticket that does not; if a regeneration trips the scan
+    # (tests/test_fastpath_authorize_vectors.py says so), choose another.
+    add("answer:hosted:C:eligible", body={"invocation_nonce": "nonce-hosted-a"}, policy=ticket_policy, admits=True)
     add("answer:hosted:C:ineligible", body={"invocation_nonce": "nonce-hosted"}, policy=ticket_policy)
     add("pass:hosted:nonce_absent", "compose.refused", policy=ticket_policy)
     add("pass:hosted:nonce_invalid", "compose.refused", body={"invocation_nonce": "space nonce"}, policy=ticket_policy)
