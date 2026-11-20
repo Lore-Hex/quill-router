@@ -1779,6 +1779,24 @@ _ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
 )
 
 
+# Closed-weight models admitted only on their maker's own surfaces, for every
+# usage type (Credits and BYOK). Third-party catalogs can list a maker's exact
+# public id the day it launches; GMI's BYOK catalog began listing
+# google/gemini-4-carbon on 2026-11-20 and the refresh would have published a
+# reseller route beside the verified direct ones. Listing an id is not an
+# admission: each model here was verified end to end on these providers only
+# (docs/providers/2026-11-10-gemini-carbon.md). Adding a provider is a reviewed
+# admission, never something discovery can do on its own.
+_FIRST_PARTY_ONLY_MODEL_PROVIDERS: dict[str, frozenset[str]] = {
+    "google/gemini-4-carbon": frozenset({"google-ai-studio", "google-vertex"}),
+}
+
+
+def _first_party_only_route_disallowed(endpoint: ModelEndpoint) -> bool:
+    allowed = _FIRST_PARTY_ONLY_MODEL_PROVIDERS.get(endpoint.model_id)
+    return allowed is not None and endpoint.provider not in allowed
+
+
 def _provider_manifest_dark_model_ids() -> dict[str, frozenset[str]]:
     """Return provider-native routes explicitly held by fresh discovery."""
 
@@ -1815,9 +1833,11 @@ def _filter_unserved_provider_endpoints(
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
 
-    Seven complementary filters apply:
+    Eight complementary filters apply:
       * operator hold    — drop deliberately disabled provider/model routes for
         every usage type, including third-party Lightning/Cloudflare passthrough.
+      * first-party only — drop every non-maker route (Credits and BYOK) for
+        closed-weight models admitted only on their maker's surfaces.
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
       * discovery hold   — drop prepaid routes explicitly held by a fresh
@@ -1836,6 +1856,8 @@ def _filter_unserved_provider_endpoints(
 
     def _keep(endpoint: ModelEndpoint) -> bool:
         if provider_model_operator_held(endpoint.provider, endpoint.model_id, endpoint.upstream_id):
+            return False
+        if _first_party_only_route_disallowed(endpoint):
             return False
         if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS:
             return False
