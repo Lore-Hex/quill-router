@@ -1363,6 +1363,9 @@ class Settings(BaseSettings):
     # federation serving entirely (403), so a plane cannot become a user
     # directory by accident.
     federation_peer_token: str = ""
+    # Expose writes only after every inference/edge plane enforces the policy.
+    workspace_origin_controls_enabled: bool = False
+    workspace_origin_peer_checks_enabled: bool = False
     # PEER side: the home plane this deployment resolves unknown keys from,
     # and the token it presents. Both empty = no federation, unknown key is
     # simply unknown.

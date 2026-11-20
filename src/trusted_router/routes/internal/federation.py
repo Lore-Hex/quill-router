@@ -179,6 +179,8 @@ def register(router: APIRouter) -> None:
             workspace = STORE.get_workspace(api_key.workspace_id)
             if workspace is None:
                 raise api_error(404, "Workspace is unavailable", ErrorType.NOT_FOUND)
+            if workspace.origin_policy != "unrestricted" and "workspace-origin-v1" not in declared_features:
+                raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
 
             # An explicit allow-list. A field added to ApiKey later must be
             # opted in here deliberately — the alternative (serialize the
@@ -216,9 +218,12 @@ def register(router: APIRouter) -> None:
                 # byte-identical, and old peers drop it harmlessly.
                 record["workspace_suspended"] = True
             if "openai-safety-v1" in declared_features:
+                # Independent of origin support; peers advertise both separately.
                 record["openai_safety_identifier"] = owner_digest(
                     api_key.creator_user_id or workspace.owner_user_id, workspace.id
                 )
+            if "workspace-origin-v1" in declared_features:
+                record["workspace_origin_policy"] = workspace.origin_policy
             if app_id:
                 # Attribution and its restrictive suspension bit travel together.
                 # Old peers drop both harmlessly; legacy records remain byte-identical.
