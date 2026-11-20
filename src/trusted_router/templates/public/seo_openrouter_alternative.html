@@ -12,9 +12,9 @@
  <p class="lead">TrustedRouter keeps OpenRouter's one-endpoint access to 600+ models, then adds a gateway that attests to the exact build it runs and never logs prompts, an EU gateway on every account, and a 5.5% fee with no subscription.</p>
  {# Sign-up before the long table, as on the page before the Oct 27 redesign. #}
  <div class="hero-actions">
- <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
+ <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
  </div>
- <p class="microcopy">No card required. Start with 1 million free tokens.</p>
+ {% from "_free_tokens.html" import free_tokens_line %}<p class="hero-free-note">{{ free_tokens_line() }}</p>
  </div>
  </section>
 
@@ -63,7 +63,7 @@
  </div>
  <div class="cta-band v2-table-cta">
  <h3>Keep your SDK. Change one URL.</h3>
- <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
+ <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
  </div>
 </section>
 
@@ -106,7 +106,7 @@
  <tbody>
  <tr><th scope="row" data-label="">Platform fee</th><td data-label="Pay as you go">5.5% on top of provider prices, at most, on text and embedding models</td><td data-label="Enterprise">Falls with volume, to as low as 0.1%</td></tr>
  <tr><th scope="row" data-label="">Subscription or seats</th><td data-label="Pay as you go">None</td><td data-label="Enterprise">None</td></tr>
- <tr><th scope="row" data-label="">Getting started</th><td data-label="Pay as you go">1 million free tokens, no card</td><td data-label="Enterprise">Migration credits, by approval, for teams moving off OpenRouter</td></tr>
+ <tr><th scope="row" data-label="">Getting started</th><td data-label="Pay as you go">Up to 1 million free tokens, no card</td><td data-label="Enterprise">Migration credits, by approval, for teams moving off OpenRouter</td></tr>
  <tr><th scope="row" data-label="">Your own provider keys</th><td data-label="Pay as you go">Supported</td><td data-label="Enterprise">Supported</td></tr>
  </tbody>
  </table>
@@ -249,8 +249,8 @@
  <div class="marketing-copy">
  <h2>Switch from OpenRouter in one base URL.</h2>
  <p>Keep the OpenAI SDK and swap the base URL and key. OpenRouter-style routing fields such as <code>provider.order</code>, <code>provider.only</code> and <code>provider.ignore</code> carry over, so most migrations are a config change.</p>
- <p><button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button></p>
- <p class="microcopy">No card required. Start with 1 million free tokens.</p>
+ <p><button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button></p>
+ {% from "_free_tokens.html" import free_tokens_line %}<p class="hero-free-note">{{ free_tokens_line() }}</p>
  </div>
  <div class="copy-terminal">
  <pre><code>import os
@@ -286,9 +286,9 @@ response = client.chat.completions.create(
  <span>Create a key and run your existing integration through TrustedRouter.</span>
  </div>
  <div class="cta-band-actions">
- <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
+ <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
  </div>
- <span class="microcopy">No card required. Start with 1 million free tokens.</span>
+ {% from "_free_tokens.html" import free_tokens_line %}<span class="hero-free-note">{{ free_tokens_line() }}</span>
 </section>
 
 <!-- ==== OA-14b: Migration resources (two links added) ==== -->
