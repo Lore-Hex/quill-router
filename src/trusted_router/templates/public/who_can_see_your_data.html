@@ -1,0 +1,67 @@
+{% extends "public/_base.html" %}
+{% block hero_aside %}{% endblock %}
+{% block body %}
+<div class="content-reader" data-content-toc>
+<div class="content-document">
+<section class="content-section" id="request-path">
+  <h2>Who processes a request?</h2>
+  <p>Prompt TLS terminates inside an attested enclave running published source. The TrustedRouter control plane never receives production inference prompt or output bodies, and ordinary inference keeps no prompt or output logs. Anyone can verify the running image against the published release using the evidence on the <a href="/trust">trust page</a>.</p>
+  <h3>What this does not change</h3>
+  <p>TrustedRouter adds a company and a gateway to the request path. The attested gateway processes your prompt in memory. The control plane handles account and billing metadata. The upstream provider still processes the prompt and receives the content needed to run the model. Its privacy terms depend on the route you select; bound the upstream with <code>provider.only</code> and <code>provider.min_privacy</code>.</p>
+  <p>Calling a provider directly means trusting that provider's policy document. Through TrustedRouter, the gateway hop is verifiable, and you can restrict the upstream per request to zero-retention or confidential routes with <code>provider.min_privacy</code>, failing closed if no eligible route remains. The selected provider's retention policy still matters.</p>
+  <p>This table describes ordinary synchronous and streaming inference. The <a href="/privacy">privacy policy</a>, <a href="/security">security boundary</a>, and <a href="/docs/byok">BYOK guide</a> describe the handling of content, credentials, and metadata.</p>
+  <div class="content-reference">
+    <table data-reference-table>
+      <thead><tr><th scope="col">Party</th><th scope="col">Prompt and output content</th><th scope="col">API keys</th><th scope="col">Metadata and billing</th><th scope="col">Retention</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Your app</th><td>Creates the prompt and receives the output.</td><td>Holds your TrustedRouter key and any upstream credentials you manage.</td><td>Can read response usage and generation identifiers.</td><td>Your application, logging, and storage configuration determine what you retain.</td></tr>
+        <tr><th scope="row">TrustedRouter attested gateway</th><td>TLS terminates inside the enclave. The gateway processes plaintext to forward the request and return the response.</td><td>Receives the bearer key and uses the selected route's upstream credential, including BYOK when configured.</td><td>Uses authorization and routing metadata and reports usage for billing.</td><td>No ordinary prompt or output logs. Opt-in signed receipts are not stored server-side. Batch has separate temporary retention, described below.</td></tr>
+        <tr><th scope="row">Upstream provider on the chosen route</th><td>Its inference workload processes the prompt and generates the output. Confidential routes add provider-side protections.</td><td>Authenticates with the upstream credential for the route, not your TrustedRouter bearer key.</td><td>Sees the model request and upstream usage. With BYOK, usage belongs to your provider account.</td><td>Depends on that route's provider policy and contract. Gateway attestation does not establish upstream retention.</td></tr>
+        <tr><th scope="row">TrustedRouter control plane</th><td>Does not receive production inference prompt or output bodies.</td><td>Creates and manages TrustedRouter keys, stores protected hashes and display hints, and stores BYOK credentials encrypted. BYOK registration is a control-plane operation.</td><td>Retains account, billing, security, and usage metadata, including model, provider, token counts, latency, cost, region, and request identifiers.</td><td>Metadata retention varies by record type and contractual, legal, accounting, and security requirements. The policy does not set one universal deletion deadline.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The <a href="/legal/subprocessors">subprocessor list</a> identifies infrastructure and service providers. The privacy policy permits licensing aggregated usage data that excludes prompts, outputs, and customer identifiers. If you enable a content-bearing Broadcast destination, that destination also receives the selected content under your configuration and its terms.</p>
+</section>
+
+<section class="content-section" id="verify">
+  <h2>Verify the gateway hop</h2>
+  <p>The hosted API runs in an attested enclave. The <a href="/trust">trust page</a> publishes the source commit, image digest, source repositories, and verification prompt. Follow its current release evidence rather than copying a digest from this page.</p>
+  <ol>
+    <li>Fetch <a href="https://api.trustedrouter.com/attestation"><code>https://api.trustedrouter.com/attestation</code></a> over normal public TLS.</li>
+    <li>Verify the JWT signature and issuer <code>https://confidentialcomputing.googleapis.com</code>, and the audience <code>quill-cloud</code>.</li>
+    <li>Compare the attested image digest with the accepted release measurements on the trust page and in <a href="/trust/gcp-release.json"><code>gcp-release.json</code></a>. Follow the published source commit to inspect the gateway code.</li>
+    <li>Check that the TLS certificate fingerprint is bound into the attestation nonce, so the evidence belongs to the connection you use.</li>
+  </ol>
+  <p>These checks bind the connection to the measured gateway workload and its published release. They do not make the upstream provider confidential or prove its retention policy. The ordinary OpenAI SDK example in <a href="/docs/simple-start">simple start</a> does not perform these attestation checks for you.</p>
+  <p><a href="/docs/receipts">Optional signed inference receipts</a> identify the serving model, provider, and upstream verification mechanism and bind the request and response bytes. A receipt proves integrity and origin, not confidentiality or upstream retention. Archive the receipt and matching attestation yourself if you need that evidence.</p>
+</section>
+
+<section class="content-section" id="controls">
+  <h2>Bound the upstream explicitly</h2>
+  <p><a href="/docs/provider-routing">Provider routing and pinning</a> documents the actual request fields. <code>provider.only</code> is a hard provider allowlist. Set <code>provider.allow_fallbacks: false</code> to serve only the first eligible candidate. <code>provider.order</code> alone is a preference and can leave other providers eligible.</p>
+  <p><code>provider.zdr: true</code> restricts requests to routes with a tracked zero-data-retention guarantee. <code>provider.min_privacy</code> sets a hard floor: <code>any</code>, <code>no_store</code>, <code>zdr</code>, or <code>confidential</code>. The confidential tier requires verified provider compute, provider-side encryption, and explicit zero retention on the same route. If no eligible route remains, the request fails instead of downgrading.</p>
+  <p>This example pins OpenAI and requires the selected route to qualify for ZDR. It does not request confidential provider compute. Review the <a href="/providers/openai">OpenAI route policy</a>, including the distinction between managed credits and your own upstream account.</p>
+  <pre data-example="curl"><code>curl https://api.trustedrouter.com/v1/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai/gpt-4o",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "provider": {
+      "only": ["openai"],
+      "allow_fallbacks": false,
+      "min_privacy": "zdr"
+    }
+  }'</code></pre>
+  <p>For <a href="/eu">Europe-focused routing</a>, the regional base URL is <code>https://api-europe-west4.quillrouter.com/v1</code>. It selects the gateway region. The <code>trustedrouter/eu</code> model alias selects an EU-focused provider pool; combine it with <code>provider.only</code> and <code>provider.min_privacy</code> for your approved routes. Gateway location alone is not an upstream data-residency guarantee. Keep strict residency requirements and the approved provider allowlist in your contract.</p>
+</section>
+
+<section class="content-section" id="batch">
+  <h2>Batch has a different retention boundary</h2>
+  <p><a href="/docs/batch">Batch</a> is opt-in and retains encrypted artifacts scheduled for deletion after 30 days. Its storage boundary depends on GCP KMS, Cloud Storage, and the project's IAM administration. It does not have the same zero-retention property as ordinary inference.</p>
+  <p>Provider-native Batch can retain plaintext input for up to 26 hours and provider results for up to 6 hours. That execution path is blocked for ZDR, confidential, regional, and BYOK routes. Strict EU data-residency batch execution is not included. Review the <a href="/legal/dpa">DPA</a> and obtain written approval of the applicable Batch boundary before using it for contractually restricted data.</p>
+</section>
+</div>
+</div>
+{% endblock %}
