@@ -23,9 +23,12 @@ or tests of tools, caching, all modalities or per-request residency.
 
 ## Activation checklist
 
-1. Confirm the production account, billing terms and express marketplace
-   resale authorization under the [ElastixAI terms, section 2.1](https://www.elastix.ai/legal/terms).
-   Test credit alone is not a production funding arrangement.
+1. The operator confirmed marketplace resale permission on November 20.
+   Retain the applicable authorization with the commercial records (see
+   [ElastixAI terms, section 2.1](https://www.elastix.ai/legal/terms)).
+   Confirm that the agreed production billing arrangement applies to the
+   provisioned credential; the application describes probe credit and
+   does not specify payout or reconciliation terms.
 2. Obtain a key-scoped [Contract v2 feed](https://trustedrouter.com/providers/marketplace/catalog.v2.schema.json)
    with callable canonical IDs, prices as exact USD/M decimal strings, cache
    charges, limits, capabilities, lifecycle and reliability metadata. Run the
