@@ -612,6 +612,64 @@ def test_pinned_live_lines_still_pass_and_edited_ones_hold():
     assert len(scaledown._PINNED_LINES) == 5
 
 
+PINNED_27 = "Real impact: A workflow costing $10/day drops to $4/day at 60% compression"
+PINNED_HOLD = r"^scaledown: unreviewed token or currency text on llms.txt line \d+; review$"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Round-11 review: normalisation erased the visible tariff.
+        f"[{PINNED_27}][Summarize costs $0.20 for every million input tokens]",
+        f"{PINNED_27}<!-- Summarize costs $0.20 for every million input tokens -->",
+        f"{PINNED_27}<span title='Summarize costs $0.20 per million input tokens'></span>",
+        f"**{PINNED_27}**",
+    ],
+    ids=["reference-label", "html-comment", "html-attribute", "emphasised-pin"],
+)
+def test_pins_match_raw_lines_only_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match=PINNED_HOLD):
+            scaledown._input_price(source, site)
+
+
+def test_unassigned_characters_count_as_currency_in_both_layouts():
+    # U+20C1 is the Saudi riyal sign (Sc in Unicode 17); this runtime's
+    # tables may still call it unassigned (Cn), which must fail closed.
+    assert scaledown._has_currency("⃁") and scaledown._has_currency("\U000e0080")
+    for source, site in _both_layout_sources("\nSummarize: ⃁0.20 for every million inputs.\n"):
+        with pytest.raises(RuntimeError, match=PINNED_HOLD):
+            scaledown._input_price(source, site)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " "],
+    ids=["cr", "vt", "ff", "fs", "gs", "rs", "nel", "line-separator", "paragraph-separator"],
+)
+def test_other_line_separators_hold_the_whole_document_in_both_layouts(separator):
+    text = PINNED_27 + separator + "Summarize costs twenty for every million inputs"
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match=r"^scaledown: unsupported line separator in llms.txt; review$"):
+            scaledown._input_price(source, site)
+
+
+def test_crlf_line_endings_still_price():
+    assert scaledown._input_price(LIVE_WITH_MARKETING.replace("\n", "\r\n"), SITE_2026_11_19) == ModelPrice(50_000, 0)
+    assert scaledown._input_price(PRICE.replace("\n", "\r\n"), FAQ) == ModelPrice(50_000, 0)
+
+
+def test_each_pinned_line_may_appear_only_once_in_both_layouts():
+    source = LIVE_WITH_MARKETING + "\n" + PINNED_27 + "\n"
+    line_number = len(source.splitlines())
+    with pytest.raises(RuntimeError) as raised:
+        scaledown._input_price(source, SITE_2026_11_19)
+    assert str(raised.value) == f"scaledown: unreviewed token or currency text on llms.txt line {line_number}; review"
+    with pytest.raises(RuntimeError, match="unreviewed token or currency text on llms.txt line 3; review"):
+        scaledown._input_price(PINNED_27 + "\n\n" + PINNED_27 + "\n\n" + PRICE, FAQ)
+    assert scaledown._input_price(PINNED_27 + "\n\n" + PRICE, FAQ) == ModelPrice(50_000, 0)
+
+
 def test_thematic_break_after_a_list_item_is_not_a_setext_heading():
     lines = ["Cost for 1M input tokens", "", "- Standard service", "- Batch service", "---"]
     assert scaledown._headings(lines, lines) == {}

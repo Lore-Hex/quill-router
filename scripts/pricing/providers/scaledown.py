@@ -235,10 +235,13 @@ _ISO_CODE_WORD = re.compile(r"\b([A-Z]{3})\b")
 _LIST_ITEM = re.compile(r"\s*(?:>\s*)*(?:[-*+]|[0-9]{1,9}[.)])(?:\s|$)")
 # Closed rule. Outside the allowlisted Pricing section (in the legacy layout,
 # outside its single rate line), every line that mentions tokens or currency
-# must be one of these, normalised. They are the lines that did so on the live
-# llms.txt of 2026-11-19 (lines 7, 24, 27, 136 and 138). Any new token or
-# currency line holds the refresh for an operator to look at, which is the
-# accepted trade-off for closing open-ended prose.
+# must be one of these RAW lines, exactly as in the live llms.txt of
+# 2026-11-19 (lines 7, 24, 27, 136 and 138; only trailing whitespace is
+# stripped), and each at most once. Normalised forms only decide whether a
+# line mentions tokens or currency, never whether it matches a pin, so
+# markup cannot hide visible text. Any new token or currency line holds the
+# refresh for an operator to look at, which is the accepted trade-off for
+# closing open-ended prose.
 _PINNED_LINES = frozenset(
     {
         "ScaleDown (scaledown.ai) builds task-specific models, each trained to do one job well. They are "
@@ -248,17 +251,23 @@ _PINNED_LINES = frozenset(
         "Send in a long prompt or document. Get back a semantically compressed version that preserves every "
         "fact relevant to your query, at a fraction of the token count.",
         "Real impact: A workflow costing $10/day drops to $4/day at 60% compression",
-        "Classify vs. GPT-5.4 Mini/Nano on intent classification for LLM routing: 90.53% accuracy at "
+        "  Classify vs. GPT-5.4 Mini/Nano on intent classification for LLM routing: 90.53% accuracy at "
         "$0.0008, beating both baselines on accuracy and cost.",
-        "What ZDR means in practice: prompts are tokenized in memory, processed, and discarded - never "
+        "  What ZDR means in practice: prompts are tokenized in memory, processed, and discarded - never "
         "written to disk, in any environment, including on failure.",
     }
 )
+# Line separators other than "\n" and "\r\n" could split one Markdown line
+# into fragments that each pass, so the whole document holds on any of them.
+_OTHER_LINE_SEPARATOR = re.compile("\r(?!\n)|[\v\f\x1c\x1d\x1e\x85  ]")
 
 
 def _has_currency(text: str) -> bool:
+    # Unassigned characters (Cn in this runtime's Unicode tables) count too,
+    # so a currency sign newer than those tables, such as U+20C1 (Sc since
+    # Unicode 17), fails closed.
     return (
-        any(unicodedata.category(char) == "Sc" for char in text)
+        any(unicodedata.category(char) in ("Sc", "Cn") for char in text)
         or bool(_NAMED_CURRENCY.search(text))
         or any((m[1] or m[2]) in _ISO_4217_CODES for m in _CODE_NEXT_TO_NUMBER.finditer(text))
     )
@@ -428,18 +437,22 @@ def _check_whole_document(markdown: str, *, legacy: bool) -> None:
         text = " ".join(([headings[max(previous)]] if previous else []) + paragraph)
         if _has_currency(text) and _TOKEN_WORD.search(text):
             raise RuntimeError("scaledown: priced token text outside the Pricing section; review")
-    # The closed pinned-line rule, on both the raw and the normalised line.
-    # The message names the line number only, never the line's text.
+    # The closed pinned-line rule: a line whose raw or normalised form
+    # mentions tokens or currency must be a pinned raw line, seen once. The
+    # message names the line number only, never the line's text.
+    seen: set[str] = set()
     for i, (source, line) in enumerate(zip(raw, lines, strict=True)):
-        if (
-            i not in exempt
-            and line not in _PINNED_LINES
-            and (_mentions_token_or_currency(source) or _mentions_token_or_currency(line))
-        ):
+        if i in exempt or not (_mentions_token_or_currency(source) or _mentions_token_or_currency(line)):
+            continue
+        pinned = source.rstrip()
+        if pinned not in _PINNED_LINES or pinned in seen:
             raise RuntimeError(f"scaledown: unreviewed token or currency text on llms.txt line {i + 1}; review")
+        seen.add(pinned)
 
 
 def _input_price(markdown: str, website_code: str) -> ModelPrice:
+    if _OTHER_LINE_SEPARATOR.search(markdown):
+        raise RuntimeError("scaledown: unsupported line separator in llms.txt; review")
     section = _pricing_section(markdown)
     legacy = _PUBLIC_API_HEADING not in section
     rate = _legacy_rate(markdown) if legacy else _public_api_rate(section)
