@@ -61,6 +61,22 @@ def test_the_shared_default_parser_is_unchanged():
     assert len(prices["openai/gpt-6-sol-codex"].tiers) == 1
 
 
+@pytest.mark.parametrize("extra", [{}, {"unit": "per 1K tokens"}], ids=["plain", "with-unknown-field"])
+def test_an_override_without_a_valid_base_holds_the_provider(extra):
+    # Returning None here would drop a still-listed model and later tombstone it.
+    row = _row("openai/gpt-6-sol-codex")
+    del row["pricing"]["prompt"]
+    row["pricing"]["overrides"][0].update(extra)
+    with pytest.raises(RuntimeError, match="without a valid base rate"):
+        atlas_cloud.atlas_model_price(row)
+
+
+def test_a_row_without_overrides_and_without_a_base_is_skipped_as_before():
+    row = _row("deepseek-ai/deepseek-v4-flash")
+    del row["pricing"]["prompt"]
+    assert atlas_cloud.atlas_model_price(row) is None
+
+
 def test_empty_overrides_is_flat():
     row = _row("openai/gpt-6-sol-codex")
     row["pricing"]["overrides"] = []

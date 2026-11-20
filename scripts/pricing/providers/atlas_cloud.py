@@ -87,9 +87,13 @@ def atlas_model_price(row: dict[str, Any]) -> ModelPrice | None:
     base = openai_model_price(row)
     pricing = row.get("pricing")
     overrides = pricing.get("overrides") if isinstance(pricing, dict) else None
-    if base is None or overrides in (None, []):
+    if overrides in (None, []):
         return base
     model = row.get("id")
+    if base is None:
+        # Returning None would drop a still-listed model and, on the next
+        # refresh, tombstone it; a tiered row with no valid base is unreviewed.
+        raise RuntimeError(f"atlas-cloud: {model}: pricing override without a valid base rate")
     if not isinstance(overrides, list) or len(overrides) != 1 or not isinstance(overrides[0], dict):
         raise RuntimeError(f"atlas-cloud: {model}: expected exactly one pricing override")
     override = overrides[0]
