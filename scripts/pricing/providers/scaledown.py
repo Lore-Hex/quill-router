@@ -194,14 +194,16 @@ _CONTAINER_PREFIX = re.compile(r"^(?:\s*(?:>|[-*+](?=\s)|[0-9]{1,9}[.)](?=\s)))*
 _EMPHASIS = re.compile(r"[*_`]")
 _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _HTML_TAG = re.compile(r"<[^>]*>")
-# Outside the Pricing section, a paragraph with both a currency amount or
-# marker and the word "token(s)" is a possible tariff, so it fails closed.
+# Outside the Pricing section, a paragraph that, together with the text of
+# its nearest preceding heading, has both a currency amount or marker and the
+# word "token(s)" is a possible tariff, so it fails closed. Currency words
+# count with or without a numeral ("twenty cents").
 _CURRENCY = re.compile(
-    r"[$¢€£¥]|(?<![a-z])(?:USD|EUR|GBP|JPY|INR)(?![a-z])"
-    r"|[0-9]\s*(?:dollars?|cents?)\b|\b(?:dollars?|cents?)\s*[0-9]",
+    r"[$¢€£¥]|(?<![a-z])(?:USD|EUR|GBP|JPY|INR)(?![a-z])|\b(?:cents?|dollars?|euros?)\b",
     re.IGNORECASE,
 )
 _TOKEN_WORD = re.compile(r"\btokens?\b", re.IGNORECASE)
+_HEADING_LINE = re.compile(r"#{1,6}(?:\s|$)")
 # Key lines and how often each must appear in the per-modality and legacy
 # layouts. The legacy layout has none of them, so one there is a second,
 # conflicting tariff. None means the layout does not constrain it.
@@ -236,20 +238,38 @@ def _single_rate_line(text: str, *, legacy: bool) -> bool:
     return bool(_LEGACY_RATE.fullmatch(text)) if legacy else text == _PUBLIC_API_HEADING
 
 
-def _plain(line: str) -> str:
-    return _EMPHASIS.sub("", _HTML_TAG.sub("", _LINK.sub(r"\1", html.unescape(line))))
+def _plain(decoded: str) -> str:
+    """Links flattened, each HTML tag replaced by a space, emphasis dropped,
+    whitespace collapsed, so "input<br>tokens" stays two words."""
+    return " ".join(_EMPHASIS.sub("", _HTML_TAG.sub(" ", _LINK.sub(r"\1", decoded))).split())
 
 
-def _paragraphs(lines: list[str], skip: range = range(0)) -> list[list[str]]:
-    """Runs of non-blank lines with container markers stripped; ``skip`` lines break runs."""
-    found: list[list[str]] = []
+def _paragraphs(lines: list[str], skip: range = range(0)) -> list[tuple[int, list[str]]]:
+    """(first line index, lines) of each run of non-blank lines, container
+    markers stripped; ``skip`` lines break runs."""
+    found: list[tuple[int, list[str]]] = []
     paragraph: list[str] = []
+    first = 0
     for i, line in enumerate([*lines, ""]):
         if i not in skip and (stripped := _CONTAINER_PREFIX.sub("", line).strip()):
+            if not paragraph:
+                first = i
             paragraph.append(stripped)
         elif paragraph:
-            found.append(paragraph)
+            found.append((first, paragraph))
             paragraph = []
+    return found
+
+
+def _headings(lines: list[str]) -> dict[int, str]:
+    """Heading text by line index, for ATX lines and setext text lines."""
+    found = {}
+    for i, line in enumerate(lines):
+        stripped = _CONTAINER_PREFIX.sub("", line).strip()
+        if _HEADING_LINE.match(stripped):
+            found[i] = stripped.lstrip("#").strip()
+        elif stripped and i + 1 < len(lines) and _SETEXT_UNDERLINE.fullmatch(lines[i + 1]):
+            found[i] = stripped
     return found
 
 
@@ -260,7 +280,7 @@ def _paragraph_units(lines: list[str]) -> list[str | None]:
     line that holds it, or None when it spans lines.
     """
     found: list[str | None] = []
-    for paragraph in _paragraphs(lines):
+    for _first, paragraph in _paragraphs(lines):
         spans, at = [], 0
         for part in paragraph:
             spans.append((at, at + len(part), part))
@@ -289,12 +309,13 @@ def _allowlisted_lines(raw: list[str], plain: list[str], *, legacy: bool) -> ran
 
 def _check_whole_document(markdown: str, *, legacy: bool) -> None:
     raw = markdown.splitlines()
-    lines = [_plain(line) for line in raw]
+    decoded = [html.unescape(line) for line in raw]
     # Lines are decoded one by one to stay aligned with the Pricing section,
     # so an entity that decodes to a line break would hide a line: refuse it.
-    if any(len(line.splitlines()) > 1 for line in lines):
+    if any(len(line.splitlines()) > 1 for line in decoded):
         raise RuntimeError("scaledown: encoded line break in llms.txt")
-    normalized =[_CONTAINER_PREFIX.sub("", line).strip().casefold() for line in lines]
+    lines = [_plain(line) for line in decoded]
+    normalized = [_CONTAINER_PREFIX.sub("", line).strip().casefold() for line in lines]
     for name, (test, modal, legacy_count) in _KEY_LINES.items():
         expected = legacy_count if legacy else modal
         if expected is not None and sum(1 for line in normalized if test(line)) != expected:
@@ -312,8 +333,10 @@ def _check_whole_document(markdown: str, *, legacy: bool) -> None:
         or not _single_rate_line(wrapped[0], legacy=legacy)
     ):
         raise RuntimeError("scaledown: per-token unit outside the single public rate line")
-    for paragraph in _paragraphs(lines, skip=_allowlisted_lines(raw, lines, legacy=legacy)):
-        text = " ".join(paragraph)
+    headings = _headings(lines)
+    for first, paragraph in _paragraphs(lines, skip=_allowlisted_lines(raw, lines, legacy=legacy)):
+        previous = [i for i in headings if i < first]
+        text = " ".join(([headings[max(previous)]] if previous else []) + paragraph)
         if _CURRENCY.search(text) and _TOKEN_WORD.search(text):
             raise RuntimeError("scaledown: priced token text outside the Pricing section; review")
 

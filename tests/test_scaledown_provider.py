@@ -474,6 +474,15 @@ PRICED_TOKEN_TEXT = {
     "no-per": "Summarize: USD 0.20 for every 1,000 billable tokens",
     "wrapped-lines": "Summarize: $0.20 for every 1,000 billable\nuncached text input tokens.",
     "entity-dollar": "Summarize: &#36;0.20 per 1,000 billable uncached text input tokens.",
+    # Round-8 review: a tag between words, a unit in the heading, and
+    # currency words without a numeral.
+    "br-tag": "Summarize: $0.20 per 1,000 billable uncached text input<br>tokens.",
+    "br-self-closing": "Summarize: $0.20 for every 1,000 input<br/>tokens",
+    "heading-unit": "## Cost for 1M input tokens\n\n- Summarize: $0.20",
+    "setext-heading-unit": "Cost for 1M input tokens\n---\n\n- Summarize: $0.20",
+    "twenty-cents": "Summarize costs twenty cents for every million input tokens",
+    "two-dollars": "Two dollars buys a million tokens of Extract",
+    "one-euro": "One euro for every million input tokens",
 }
 # Caught first by the per-token unit rule once links and tags are flattened
 # (the wrapped line ends in "per 1,000", a bare number ending a phrase).
@@ -506,6 +515,13 @@ def test_units_inside_links_or_html_fail_closed_in_both_layouts(text):
     for source, site in _both_layout_sources(text):
         with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
             scaledown._input_price(source, site)
+
+
+def test_token_text_without_currency_and_percent_still_prices():
+    # "percent" is not "cents", and a heading without currency or tokens does
+    # not make a paragraph priced token text.
+    source = LIVE_WITH_MARKETING + "\n## Savings\n\nCompression saves 60 percent of input tokens.\n"
+    assert scaledown._input_price(source, SITE_2026_11_19) == ModelPrice(50_000, 0)
 
 
 def test_encoded_line_break_fails_closed():
