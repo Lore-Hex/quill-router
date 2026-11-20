@@ -8,7 +8,7 @@
 {% block body_attributes %}class="model-detail-page"{% endblock %}
 
 {% macro signup_button(extra_class="", catalog_cta=false) -%}
-<button class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Start building</button>
+<button data-signup-cta class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Start building</button>
 {%- endmacro %}
 
 {% macro positive_badges(row) -%}

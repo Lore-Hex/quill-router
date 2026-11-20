@@ -138,3 +138,14 @@ for (const [cell, label] of [["start_building", "Start building"], ["start_for_f
     await expect(page.locator("#top .hero .button-primary")).toHaveText(label);
   });
 }
+
+// The label is set by an inline head script, so it must not wait for
+// dashboard.js (otherwise free-cell visitors see "Start building" first).
+test("free-cell label is set without dashboard.js", async ({ page, context, baseURL }) => {
+  await context.addCookies([{ name: "tr_cta", value: "start_for_free", url: baseURL }]);
+  await page.route("**/static/dashboard.js*", route => route.abort());
+  await page.goto("/");
+  await expect(page.locator("#top .hero [data-signup-cta]")).toHaveText("Start for free");
+  await page.goto("/providers/tinfoil");
+  await expect(page.locator(".pd-hero [data-signup-cta]")).toHaveText("Start for free");
+});
