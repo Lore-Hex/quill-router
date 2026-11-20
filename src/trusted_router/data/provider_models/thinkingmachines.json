@@ -46,7 +46,7 @@
     },
     {
       "id": "thinkingmachines/inkling-2-small",
-      "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+      "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144",
       "display_name": "Thinking Machines Inkling 2 Small 256K",
       "context_length": 262144,
       "input_modalities": [

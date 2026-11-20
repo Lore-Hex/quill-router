@@ -886,13 +886,19 @@ def test_summary_line_with_changes_and_removals() -> None:
     assert "1 models removed" in line
 
 
-def test_decrease_does_not_fail() -> None:
-    """Even a 100x decrease (i.e., a free tier kicking in) should not
-    fail the spike check — only increases ≥2× fail."""
+def test_decrease_does_not_fail_below_the_drop_ratio() -> None:
+    """Ordinary decreases, even 99x, do not fail. Since 2026-11-19 a 100x or
+    larger cut does: no real cut on a continuing route reached ÷16 in the 213
+    refreshes from 2026-08-21 to 2026-11-19, while a misread unit is ÷1000 or
+    more. (A free tier, both prices to 0, has always failed separately.)"""
     before = _to_prices(_make_snapshot({"a/b": ("0.0001", "0.0001")}))
+    almost = _to_prices(_make_snapshot({"a/b": ("0.00000102", "0.00000102")}))
+    assert check(before, almost)[0] == []
     after = _to_prices(_make_snapshot({"a/b": ("0.000001", "0.000001")}))
-    failures, _, _ = check(before, after)
-    assert failures == []
+    assert check(before, after)[0] == [
+        "a/b prompt: 0.0001 → 0.000001 (÷100.00 ≥ ÷100.0)",
+        "a/b completion: 0.0001 → 0.000001 (÷100.00 ≥ ÷100.0)",
+    ]
 
 
 def test_summary_surfaces_per_model_deltas(tmp_path: Path, capsys) -> None:
@@ -1778,12 +1784,47 @@ SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS = [
     ),
 ]
 
+# Exact held-run 44627483513 values (2026-11-19) for the routes verified
+# against each provider's own price source. Routes printed twice with the
+# same text (snapshot and manifest) appear once.
+_ATLAS_SOL_CODEX = "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]"
+_GMI_ARGON = "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]"
+NOVEMBER_19_REFRESH_TRANSITIONS = [
+    (_ATLAS_SOL_CODEX, "prompt", "1E-7", "0.000002"),
+    (_ATLAS_SOL_CODEX, "completion", "5E-7", "0.00001"),
+    (_ATLAS_SOL_CODEX + " cached-input", "prompt", "1E-8", "2E-7"),
+    (_GMI_ARGON, "prompt", "0.000002", "0.000004"),
+    (_GMI_ARGON, "completion", "0.00001", "0.00002"),
+    (_GMI_ARGON + " cached-input", "prompt", "1E-7", "2E-7"),
+    *(
+        (route, dimension, old, new)
+        for route in (
+            "google/gemma-3-12b-it [nextbit:nextbit:gemma3:12b-it]",
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:google/gemma-3-12b-it]",
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:gemma3:12b-it]",
+        )
+        for dimension, old, new in (
+            ("prompt", "7.5E-8", "3.5E-7"),
+            ("completion", "1.5E-7", "4.5E-7"),
+        )
+    ),
+    (
+        "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+        "prompt", "6E-9", "1.2E-8",
+    ),
+    (
+        "deepseek/deepseek-v4.1-flash-1017 [wafer:wafer:DeepSeek-V4.1-Flash-1017] cached-input",
+        "prompt", "3E-9", "8E-9",
+    ),
+]
+
 
 @pytest.mark.parametrize(
     ("route", "dimension", "old", "new"),
     CONFIRMED_REFRESH_TRANSITIONS
     + SEPTEMBER_22_REFRESH_TRANSITIONS
-    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS,
+    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
+    + NOVEMBER_19_REFRESH_TRANSITIONS,
 )
 def test_confirmed_refresh_transition_is_allowed(
     route: str, dimension: str, old: str, new: str,
@@ -1812,11 +1853,28 @@ def test_all_fourteen_confirmed_refresh_transitions_are_allowed() -> None:
     assert removed == []
 
 
+def test_november_19_verified_transitions_pass_only_with_their_approvals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before, after = _confirmed_refresh_prices(NOVEMBER_19_REFRESH_TRANSITIONS)
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == len(before) == 9
+    assert removed == []
+    # Positive control: without the approvals the gate holds every route the
+    # 2026-11-19 refresh held for these providers.
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    assert check_price_spike.failing_routes(before, after) == set(before)
+
+
 @pytest.mark.parametrize(
     ("route", "dimension", "old", "new"),
     CONFIRMED_REFRESH_TRANSITIONS
     + SEPTEMBER_22_REFRESH_TRANSITIONS
-    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS,
+    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
+    + NOVEMBER_19_REFRESH_TRANSITIONS,
 )
 @pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
 def test_confirmed_refresh_mutations_still_block(
@@ -2138,3 +2196,101 @@ def test_io_net_v41_flash_live_rates_pass_snapshot_and_manifest_only_when_approv
             f"{model_id} [io-net:io-net:{native}] cached-input",
         ],
     }
+
+
+# Large price drops: the signature of a misread unit (a per-1K or per-token
+# price read as per-1M), which would otherwise publish and under-bill silently.
+DROP_ROUTE = "acme/model [acme:acme:model]"
+
+
+def _drop(prompt, completion, *, before=("0.000001", "0.000002"), route=DROP_ROUTE, **kwargs):
+    return check(
+        {route: {"prompt": before[0], "completion": before[1]}},
+        {route: {"prompt": prompt, "completion": completion}},
+        **kwargs,
+    )[0]
+
+
+@pytest.mark.parametrize(("prompt", "completion", "failure"), [
+    # Per 1K read as per 1M: 1,000x too low.
+    ("0.000000001", "0.000002", f"{DROP_ROUTE} prompt: 0.000001 → 1E-9 (÷1000.00 ≥ ÷100.0)"),
+    ("0.000001", "0.000000002", f"{DROP_ROUTE} completion: 0.000002 → 2E-9 (÷1000.00 ≥ ÷100.0)"),
+    # Per token read as per 1M: 1,000,000x too low.
+    ("1E-12", "0.000002", f"{DROP_ROUTE} prompt: 0.000001 → 1E-12 (÷1000000.00 ≥ ÷100.0)"),
+    # One dimension falling to zero.
+    ("0", "0.000002", f"{DROP_ROUTE} prompt: 0.000001 → 0 (to 0 ≥ ÷100.0)"),
+])
+def test_a_large_drop_fails_with_its_exact_values(prompt, completion, failure):
+    assert _drop(prompt, completion) == [failure]
+
+
+def test_the_drop_boundary_is_inclusive_at_100x():
+    assert _drop("0.00000001", "0.000002") == [
+        f"{DROP_ROUTE} prompt: 0.000001 → 1E-8 (÷100.00 ≥ ÷100.0)"
+    ]
+    assert _drop("0.0000000100001", "0.000002") == []
+
+
+@pytest.mark.parametrize(("before", "after"), [
+    (("0.000001", "0.000002"), ("0.0000005", "0.000001")),  # a 50% cut
+    (("0.00000003", "0.000002"), ("0.000000002", "0.000002")),  # ÷15, the largest real cut 2026-08-21..11-19
+    (("0.000001", "0.000002"), ("0.000000011", "0.000002")),  # ÷90.9
+])
+def test_ordinary_and_historical_cuts_pass(before, after):
+    assert _drop(*after, before=before) == []
+
+
+def test_both_prices_zeroed_reports_once_with_the_dedicated_message():
+    assert _drop("0", "0") == [
+        f"{DROP_ROUTE}: both prompt and completion went to 0 (was prompt=0.000001, completion=0.000002)"
+    ]
+
+
+def test_a_route_that_was_already_free_is_not_a_drop():
+    assert _drop("0", "0.000002", before=("0", "0.000002")) == []
+
+
+def test_an_exact_approval_clears_a_drop_and_nothing_nearby(monkeypatch):
+    approval = (DROP_ROUTE, "prompt", Decimal("0.000001"), Decimal("1E-9"))
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset({approval}))
+    assert _drop("0.000000001", "0.000002") == []
+    # A different new value, old value, dimension or route still fails.
+    assert _drop("0.000000002", "0.000002")
+    assert _drop("0.000000001", "0.000002", before=("0.0000011", "0.000002"))
+    assert _drop("0.000001", "0.000000002", before=("0.000001", "0.000002"))
+    assert _drop("0.000000001", "0.000002", route="acme/model [acme:acme:other]")
+
+
+def test_a_custom_drop_ratio_is_honored():
+    assert _drop("0.0000001", "0.000002", drop_ratio=10.0) == [
+        f"{DROP_ROUTE} prompt: 0.000001 → 1E-7 (÷10.00 ≥ ÷10.0)"
+    ]
+    assert _drop("0.0000001", "0.000002") == []
+
+
+def test_drops_hold_the_provider_through_spiking_providers(tmp_path):
+    before = _write(tmp_path, "before.json", _make_endpoint_snapshot(
+        ("1", "1"), [("acme", "acme/model", "0.000001", "0.000002"),
+                     ("other", "acme/model", "0.000001", "0.000002")],
+    ))
+    after = _write(tmp_path, "after.json", _make_endpoint_snapshot(
+        ("1", "1"), [("acme", "acme/model", "0.000000001", "0.000002"),
+                     ("other", "acme/model", "0.0000009", "0.000002")],
+    ))
+    held = check_price_spike.spiking_providers(before, after)
+    assert list(held) == ["acme"]
+    assert [route.reasons for route in held["acme"]] == [("prompt: 0.000001 → 1E-9 (÷1000.00 ≥ ÷100.0)",)]
+
+
+def test_the_cli_fails_a_large_drop_and_rejects_a_bad_drop_ratio(tmp_path, capsys):
+    before = _write(tmp_path, "before.json", _make_endpoint_snapshot(
+        ("1", "1"), [("acme", "acme/model", "0.000001", "0.000002")],
+    ))
+    after = _write(tmp_path, "after.json", _make_endpoint_snapshot(
+        ("1", "1"), [("acme", "acme/model", "0.000000001", "0.000002")],
+    ))
+    assert check_price_spike.main([str(before), str(after)]) == 1
+    assert "÷1000.00 ≥ ÷100.0" in capsys.readouterr().err
+    assert check_price_spike.main([str(before), str(after), "--drop-ratio", "1"]) == 2
+    for ratio in ("inf", "1e309", "nan"):
+        assert check_price_spike.main([str(before), str(after), "--drop-ratio", ratio]) == 2

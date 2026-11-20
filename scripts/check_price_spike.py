@@ -14,7 +14,13 @@ no continuing provider endpoint changed price.
 
 Fails (exit 1) when the same stable provider endpoint:
   * increases prompt OR completion cost by ≥ 2×; OR
+  * cuts prompt OR completion cost by ≥ 100×, including to 0 (a misread
+    unit: per-1K or per-token prices read as per-1M); OR
   * changes both prompt and completion to literal 0.
+
+A verified real change of either size is approved per route, dimension and
+exact old and new value in APPROVED_ENDPOINT_PRICE_TRANSITIONS. Both prices
+going to 0 is not approvable that way; it always fails.
 
 Removed models are noted in --summary output. Individual removals do not
 fail, but losing more than MAX_REMOVED_MODEL_FRACTION of the catalog's models
@@ -33,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +47,11 @@ from pathlib import Path
 from trusted_router.pricing_approvals import approved_dated_price_transition
 
 DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
+# ≥100× cheaper fails. A misread unit is 1,000× (per 1K read as per 1M) or
+# 1,000,000× (per token). Across all 213 published refreshes from 2026-08-21 to
+# 2026-11-19, the largest real cut on a continuing route was ÷15 (a cached-input
+# rate), and only six were ÷10 or more, so ÷100 leaves real cuts alone.
+DEFAULT_DROP_RATIO = 100.0
 MAX_REMOVED_MODEL_FRACTION = 0.2
 MIN_REMOVED_MODELS_FOR_MASS_REMOVAL = 10
 
@@ -726,6 +738,90 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000003"),
             Decimal("0.00000017"),
         ),
+        # Routes held by the hourly refresh on 2026-11-19 (run 44627483513).
+        # Values are the run's exact before/after strings in USD/token.
+        #
+        # Atlas Cloud's public price list
+        # https://www.atlascloud.ai/pricing/models?q=gpt-6-sol-codex and model
+        # page https://www.atlascloud.ai/models/openai/gpt-6-sol-codex,
+        # verified 2026-11-19: GPT 6 Sol Codex input $2, output $10 and cache
+        # read $0.2 per 1M tokens (below 272K billable input tokens).
+        (
+            "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]",
+            "prompt", Decimal("1E-7"), Decimal("0.000002"),
+        ),
+        (
+            "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]",
+            "completion", Decimal("5E-7"), Decimal("0.00001"),
+        ),
+        (
+            "openai/gpt-6-sol-codex "
+            "[atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex] cached-input",
+            "prompt", Decimal("1E-8"), Decimal("2E-7"),
+        ),
+        # GMI's public billing API
+        # https://console.gmicloud.ai/api/v1/billing/model_prices, verified
+        # 2026-11-19: google/gemini-4-argon (effectiveAt 2026-11-11T02:11Z)
+        # lists originInputPrice=4000000, originOutputPrice=20000000 and
+        # originCacheReadPrice=200000 microdollars per 1M tokens, with a 50%
+        # promotion (2000000 / 10000000 / 100000). gmi.py publishes the greater
+        # of the promotional and origin list prices (#699). The snapshot and
+        # manifest print the same route text, so one entry covers both.
+        (
+            "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]",
+            "prompt", Decimal("0.000002"), Decimal("0.000004"),
+        ),
+        (
+            "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]",
+            "completion", Decimal("0.00001"), Decimal("0.00002"),
+        ),
+        (
+            "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon] cached-input",
+            "prompt", Decimal("1E-7"), Decimal("2E-7"),
+        ),
+        # NextBit's public model table https://www.nextbit256.com/modelos and
+        # unauthenticated GET https://api.nextbit256.com/v1/models and
+        # https://eu.api.nextbit256.com/v1/models, verified 2026-11-19:
+        # Gemma 3 12B (gemma3:12b-it) is $0.350 input / $0.450 output per M
+        # ("Precios en dólares (USD)"), present on the EU endpoint. Cache read
+        # $0.050 is unchanged. The EU snapshot uses the canonical model ID.
+        (
+            "google/gemma-3-12b-it [nextbit:nextbit:gemma3:12b-it]",
+            "prompt", Decimal("7.5E-8"), Decimal("3.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit:nextbit:gemma3:12b-it]",
+            "completion", Decimal("1.5E-7"), Decimal("4.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:google/gemma-3-12b-it]",
+            "prompt", Decimal("7.5E-8"), Decimal("3.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:google/gemma-3-12b-it]",
+            "completion", Decimal("1.5E-7"), Decimal("4.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:gemma3:12b-it]",
+            "prompt", Decimal("7.5E-8"), Decimal("3.5E-7"),
+        ),
+        (
+            "google/gemma-3-12b-it [nextbit-eu:nextbit-eu:gemma3:12b-it]",
+            "completion", Decimal("1.5E-7"), Decimal("4.5E-7"),
+        ),
+        # Wafer's unauthenticated GET https://pass.wafer.ai/v1/models, verified
+        # 2026-11-19: cache_read_microcents_per_million is 1200000 for
+        # DeepSeek-V4.1-Flash and 800000 for DeepSeek-V4.1-Flash-1017
+        # ($0.012 and $0.008 per M). Input and output did not move.
+        (
+            "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+            "prompt", Decimal("6E-9"), Decimal("1.2E-8"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash-1017 "
+            "[wafer:wafer:DeepSeek-V4.1-Flash-1017] cached-input",
+            "prompt", Decimal("3E-9"), Decimal("8E-9"),
+        ),
     }
 )
 
@@ -986,6 +1082,7 @@ def check(
     before: dict[str, dict[str, str]],
     after: dict[str, dict[str, str]],
     spike_ratio: float = DEFAULT_SPIKE_RATIO,
+    drop_ratio: float = DEFAULT_DROP_RATIO,
 ) -> tuple[list[str], list[str], list[str]]:
     """Return (failures, changes, removed).
 
@@ -997,6 +1094,7 @@ def check(
     changes: list[str] = []
     removed: list[str] = []
     spike = Decimal(str(spike_ratio))
+    drop = Decimal(str(drop_ratio))
 
     for model_id, prev in before.items():
         if model_id not in after:
@@ -1031,8 +1129,31 @@ def check(
                     f"{model_id} {dim}: {prv} → {curv} (×{ratio:.2f} ≥ ×{spike})"
                 )
 
+        both_zeroed = prev_p > 0 and prev_c > 0 and cur_p == 0 and cur_c == 0
+
+        # A ≥100× drop on either dimension, including to 0: the signature of a
+        # misread unit (a per-1K or per-token price read as per-1M is 1,000× or
+        # 1,000,000× too low), which would under-bill silently. A real cut that
+        # large is approved the same way as a spike.
+        for dim, prv, curv in (
+            ("prompt", prev_p, cur_p),
+            ("completion", prev_c, cur_c),
+        ):
+            if prv > 0 and curv * drop <= prv and not both_zeroed:
+                if (
+                    model_id,
+                    dim,
+                    prv,
+                    curv,
+                ) in APPROVED_ENDPOINT_PRICE_TRANSITIONS or approved_pair:
+                    continue
+                size = f"÷{prv / curv:.2f}" if curv else "to 0"
+                failures.append(
+                    f"{model_id} {dim}: {prv} → {curv} ({size} ≥ ÷{drop})"
+                )
+
         # Both dimensions zeroed out.
-        if prev_p > 0 and prev_c > 0 and cur_p == 0 and cur_c == 0:
+        if both_zeroed:
             failures.append(
                 f"{model_id}: both prompt and completion went to 0 "
                 f"(was prompt={prev_p}, completion={prev_c})"
@@ -1092,11 +1213,14 @@ def failing_route_reasons(
     before: dict[str, dict[str, str]],
     after: dict[str, dict[str, str]],
     spike_ratio: float = DEFAULT_SPIKE_RATIO,
+    drop_ratio: float = DEFAULT_DROP_RATIO,
 ) -> dict[str, list[str]]:
     """Each route that fails on its own, with check()'s failure lines for it."""
     out: dict[str, list[str]] = {}
     for route, prev in before.items():
-        if route in after and (failures := check({route: prev}, {route: after[route]}, spike_ratio)[0]):
+        if route in after and (
+            failures := check({route: prev}, {route: after[route]}, spike_ratio, drop_ratio)[0]
+        ):
             out[route] = failures
     return out
 
@@ -1105,9 +1229,10 @@ def failing_routes(
     before: dict[str, dict[str, str]],
     after: dict[str, dict[str, str]],
     spike_ratio: float = DEFAULT_SPIKE_RATIO,
+    drop_ratio: float = DEFAULT_DROP_RATIO,
 ) -> set[str]:
     """Routes that fail on their own: check() applied one continuing route at a time."""
-    return set(failing_route_reasons(before, after, spike_ratio))
+    return set(failing_route_reasons(before, after, spike_ratio, drop_ratio))
 
 
 def route_provider(route: str) -> str | None:
@@ -1164,8 +1289,9 @@ def spiking_providers(
     before_provider_manifests: Path | None = None,
     after_provider_manifests: Path | None = None,
     spike_ratio: float = DEFAULT_SPIKE_RATIO,
+    drop_ratio: float = DEFAULT_DROP_RATIO,
 ) -> dict[str | None, list[str]]:
-    """Failing routes grouped by provider slug; None collects routes without one.
+    """Failing routes (spikes and drops) grouped by provider slug; None collects routes without one.
 
     Each route is a SpikingRoute whose ``reasons`` name the before and after
     values that failed.
@@ -1177,7 +1303,7 @@ def spiking_providers(
     for pair in (snapshot_pair, manifest_pair):
         if pair is None:
             continue
-        for route, failures in sorted(failing_route_reasons(*pair, spike_ratio).items()):
+        for route, failures in sorted(failing_route_reasons(*pair, spike_ratio, drop_ratio).items()):
             reasons = tuple(failure.removeprefix(route).lstrip(" :") for failure in failures)
             grouped.setdefault(route_provider(route), []).append(SpikingRoute(route, reasons))
     return grouped
@@ -1209,6 +1335,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"fail when after/before >= this (default {DEFAULT_SPIKE_RATIO})",
     )
     parser.add_argument(
+        "--drop-ratio",
+        type=float,
+        default=DEFAULT_DROP_RATIO,
+        help=f"fail when before/after >= this, or a price falls to 0 (default {DEFAULT_DROP_RATIO})",
+    )
+    parser.add_argument(
         "--before-provider-manifests",
         type=Path,
         help="directory of supplemental provider manifests before refresh",
@@ -1228,6 +1360,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if not (math.isfinite(args.drop_ratio) and args.drop_ratio > 1):
+        print("PRICE SPIKE INPUT ERROR: --drop-ratio must be a finite number greater than 1", file=sys.stderr)
+        return 2
 
     try:
         snapshot_pair, manifest_pair = route_pairs(
@@ -1241,14 +1376,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     before_models = _load(args.before)
     _headline_failures, changes, removed = check(
-        before_models, _load(args.after), args.spike_ratio
+        before_models, _load(args.after), args.spike_ratio, args.drop_ratio
     )
-    failures, _snapshot_changes, _snapshot_removed = check(*snapshot_pair, args.spike_ratio)
+    failures, _snapshot_changes, _snapshot_removed = check(
+        *snapshot_pair, args.spike_ratio, args.drop_ratio
+    )
     if mass_removal := mass_removal_failure(before_models, removed):
         failures.append(mass_removal)
     if manifest_pair is not None:
         provider_failures, provider_changes, provider_removed = check(
-            *manifest_pair, args.spike_ratio
+            *manifest_pair, args.spike_ratio, args.drop_ratio
         )
         failures.extend(provider_failures)
         changes.extend(provider_changes)

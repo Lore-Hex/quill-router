@@ -20,6 +20,7 @@ FIXTURE_SHA256 = "68568699b000210413a20916ffa1f56093ab0223bb6a65d935ae453a9d96a2
 
 
 class ShadowClaims(TicketClaims):
+    route_type: Literal["chat.completions", "responses"]
     authorization_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
     generation_id: Annotated[str, Field(max_length=128)]
     journal_region: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_./:@+\-]+$")]

@@ -169,6 +169,17 @@ def test_python_entry_point_mutation_is_killed(name: str, old: str, new: str) ->
 def mutate_rule(source: str, rule: dict) -> str:
     """Limit field mutations to one model; other models retain their constraints."""
     old, new = rule["old"], rule["new"]
+    # Keep the cross-language vectors unchanged; target the widened live type.
+    if rule["name"] in {
+        "terminalenvelope_route_type_literal", "terminalenvelope_route_type_required",
+        "terminalenvelope_route_type_nonnull",
+    }:
+        prior = 'Literal["chat.completions", "responses"]'
+        current = 'Literal["chat.completions", "responses", "decide"]'
+        old, new = old.replace(prior, current), new.replace(prior, current)
+    elif rule["name"] == "eligibility_unsupported_route":
+        old = ('if context.route_type not in ("chat.completions", "responses") and not (\n'
+               '            allow_decide and context.route_type == "decide" and not context.streamed):')
     if scope := rule.get("scope"):
         start = source.index(f"class {scope}(")
         end = source.find("\n\nclass ", start + 1)

@@ -24,7 +24,11 @@ from trusted_router.services import async_settle_shadow_health as shell
 from trusted_router.storage_gcp_shadow_io import Sessions, configure
 
 
-async def until(predicate, seconds=2.):
+async def until(predicate, seconds=10.):
+    # A hang guard, not a latency bound: every caller waits for progress while
+    # the logical clock is held, and budgets run on that clock. At 2 s a loaded
+    # CI runner timed out waiting for the owner's first checkpoint (runs
+    # 42988523375 and 43234260853).
     async with asyncio.timeout(seconds):
         while not predicate():
             await asyncio.sleep(.005)

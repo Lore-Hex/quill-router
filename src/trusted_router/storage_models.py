@@ -11,6 +11,7 @@ from typing import Any, TypeVar, cast
 
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.money import microdollars_to_float
+from trusted_router.openai_safety import valid_digest
 from trusted_router.types import UsageType
 
 T = TypeVar("T")
@@ -393,6 +394,7 @@ class ApiKey:
     # A peer must never substitute an app row from its own slug namespace.
     federated_app_markup_basis_points: int = 0
     federated_app_owner_user_id: str = ""
+    federated_openai_safety_identifier: str = ""
     disabled: bool = False
     management: bool = False
     limit_microdollars: int | None = None
@@ -2401,6 +2403,7 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         federated_app_suspended=bool(record.get("app_suspended", False)),
         federated_app_markup_basis_points=int(record.get("app_markup_basis_points") or 0),
         federated_app_owner_user_id=str(record.get("app_owner_user_id") or ""),
+        federated_openai_safety_identifier=valid_digest(record.get("openai_safety_identifier")),
         disabled=bool(record.get("disabled", False)),
         management=False,  # never federated; the home plane refuses to serve them
         limit_microdollars=record.get("limit_microdollars"),

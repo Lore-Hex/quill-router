@@ -49,7 +49,7 @@ class TestResolve:
     def test_resolves_and_returns_record(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["x-trustedrouter-federation-token"] == "peer-secret"
-            assert request.headers["x-trustedrouter-federation-features"] == "scopes"
+            assert set(request.headers["x-trustedrouter-federation-features"].split(",")) == {"scopes", "openai-safety-v1"}
             return httpx.Response(200, json={"data": RECORD})
 
         assert _client(handler).resolve("lh-abc") == RECORD
