@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
+from trusted_router.storage import STORE
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +70,7 @@ def test_support_submission_sends_to_help_with_reply_to(
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.public"):
         response = client.post(
             "/support/inquiry",
-            json=_payload(category=category, message=support_text),
+            json=_payload(category=category, message=support_text, verified_account_email="fake@example.com"),
         )
 
     assert response.status_code == 200
@@ -78,6 +79,8 @@ def test_support_submission_sends_to_help_with_reply_to(
     message = sent_messages[0]
     assert message.to == "help@trustedrouter.com"
     assert message.reply_to == "ada@example.com"
+    assert "Verified account email: (not verified for this request)" in message.text_body
+    assert "fake@example.com" not in message.text_body
     assert message.subject == (
         f"TrustedRouter support: {label}: Streaming request failed"
     )
@@ -88,6 +91,47 @@ def test_support_submission_sends_to_help_with_reply_to(
         record.getMessage().startswith(f"support_inquiry.sent category={category} ")
         for record in caplog.records
     )
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_console_support_separates_session_email_from_contact(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, verified: bool,
+) -> None:
+    sent: list[EmailMessage] = []
+
+    class Mail:
+        def send(self, message: EmailMessage) -> bool:
+            sent.append(message)
+            return True
+
+    monkeypatch.setattr(public_routes, "get_email_service", lambda _: Mail())
+    user = STORE.ensure_user("account@example.org", email_verified=verified)
+    token, _ = STORE.create_auth_session(
+        user_id=user.id, workspace_id=STORE.list_workspaces_for_user(user.id)[0].id,
+        state="active", provider="test", label="support", ttl_seconds=600,
+    )
+    client.cookies.set("tr_session", token)
+    for origin, expected in [("https://other.example", 403), (str(client.base_url).rstrip("/"), 200)]:
+        response = client.post("/console/support/inquiry", headers={"Origin": origin},
+                               json=_payload(verified_account_email="fake@example.com"))
+        assert response.status_code == expected
+    assert response.json() == {"ok": True}
+    assert len(sent) == 1
+    assert sent[0].to == "help@trustedrouter.com"
+    assert sent[0].reply_to == "ada@example.com"
+    assert "fake@example.com" not in sent[0].text_body
+    assert ("account@example.org" in sent[0].text_body) is verified
+    expected_email = "account@example.org" if verified else "(not verified for this request)"
+    assert sent[0].text_body.splitlines()[2] == f"Verified account email: {expected_email}"
+    assert "account@example.org" not in caplog.text
+
+
+def test_console_support_rejects_stale_or_forged_session_before_sending(client: TestClient) -> None:
+    client.cookies.set("tr_signed_in", "1")
+    client.cookies.set("tr_session", "expired-or-invalid")
+    response = client.post("/console/support/inquiry", json=_payload(), follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/?reason=signin"
 
 
 def test_feature_request_uses_the_support_delivery_path(

@@ -27,6 +27,11 @@ signed-webhook and browser-key control exceptions. Both unprefixed and `/v1`
 API forms are tested against the actual FastAPI route inventory. This preserves
 the `https://trustedrouter.com(/v1)` URL measured into attested gateway images.
 
+The support page itself is public and cacheable. Signed-in browsers submit to
+`POST /console/support/inquiry` on control, which reads the verified email from
+the session's account. Guest submissions use the anonymous actions endpoint.
+On both paths the submitted contact email is the reply address, not proof of identity.
+
 Cloud Run default service URLs are not an alternate route: each service uses
 `internal-and-cloud-load-balancing` ingress. The load balancer is still
 Internet-facing, so internal paths continue to require the internal gateway or

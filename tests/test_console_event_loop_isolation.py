@@ -1,16 +1,4 @@
-"""Regression coverage for control-plane event-loop isolation.
-
-Console pages are dominated by synchronous storage, KMS, payment-provider, and
-template work.  FastAPI only moves that work to AnyIO's worker pool when the
-decorated endpoint is a plain ``def``.  The four console endpoints that really
-await network I/O or coordinate concurrent provider calls keep ``async def`` and
-place each synchronous segment behind ``run_in_threadpool`` explicitly.
-
-The AST checks make the 59/4 split non-vacuous; the thread-id and heartbeat
-checks prove the framework/runtime behavior instead of merely matching source
-text.  Storage methods are patched on ``InMemoryStore`` rather than the global
-``STORE`` proxy so pytest restores them without poisoning later tests.
-"""
+"""Pin the async console routes and verify blocking operations run off the event loop."""
 
 from __future__ import annotations
 
@@ -33,6 +21,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _CONSOLE_DIR = _ROOT / "src" / "trusted_router" / "routes" / "console"
 _ASYNC_CONSOLE_HANDLERS = {
     "console_credit_stripe_details",
+    "support_inquiry",
 }
 
 
@@ -165,6 +154,33 @@ def test_limiter_stays_storage_free() -> None:
     assert "ingress_rate_limits.hit" in source
     assert "STORE.hit_rate_limit" not in source
     assert "run_in_threadpool" not in source
+
+
+def test_authenticated_support_mail_is_sent_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = create_app(Settings(environment="test"), init_observability=False)
+    token = _active_console_session(app, "support-loop@example.com")
+    send_threads: list[int] = []
+
+    class Mail:
+        def send(self, _message: Any) -> bool:
+            send_threads.append(threading.get_ident())
+            return True
+
+    monkeypatch.setattr("trusted_router.routes.public.get_email_service", lambda settings: Mail())
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver",
+            cookies={"tr_session": token},
+        ) as client:
+            response = await client.post(
+                "/console/support/inquiry", headers={"Origin": "http://testserver"},
+                json={"name": "Test", "email": "reply@example.com", "subject": "Help", "message": "Test"},
+            )
+        assert response.status_code == 200
+        assert len(send_threads) == 1 and send_threads[0] != threading.get_ident()
+
+    asyncio.run(scenario())
 
 
 async def _wait_until_started(started: threading.Event) -> None:
