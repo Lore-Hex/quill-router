@@ -421,14 +421,45 @@ def test_emphasised_rate_labels_count_in_both_layouts(line):
         scaledown._input_price(PRICE + "\n" + line + "\n", FAQ)
 
 
-def test_per_1k_calls_benchmark_shorthand_still_prices_in_both_layouts():
+def test_per_1k_calls_shorthand_holds_for_review_in_both_layouts():
+    # Accepted trade-off (round 6): any K, M, thousand, million or billion
+    # quantity after "per" is a unit, whatever word follows, so this harmless
+    # shorthand edit of live line 69 holds ScaleDown for review. Excluding
+    # "calls" or "users" let "per 1M user supplied input tokens" through.
     shorthand = "Cost is per 1K calls; latency is mean response time per call."
     edited = LIVE_WITH_MARKETING.replace("Cost is per 1,000 calls; latency is mean response time per call.", shorthand)
     assert shorthand in edited
-    assert scaledown._input_price(edited, SITE_2026_11_19) == ModelPrice(50_000, 0)
-    assert scaledown._input_price(shorthand + "\n\n" + PRICE, FAQ) == ModelPrice(50_000, 0)
+    with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+        scaledown._input_price(edited, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+        scaledown._input_price(shorthand + "\n\n" + PRICE, FAQ)
+    # The bare-number form on the live page is not a unit and still prices.
+    assert scaledown._input_price(LIVE_WITH_MARKETING, SITE_2026_11_19) == ModelPrice(50_000, 0)
     for unit in ("per 1K input tokens", "per 1M", "per million tokens", "per 1M image tokens"):
         assert scaledown._PER_TOKEN_UNIT.search(unit), unit
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Summarize: $0.20 per 1M user supplied input tokens",
+        "Extract: $0.20 per one million image input tokens",
+        "Classify: $0.20 per **1M** input tokens",
+        "Compress: $0.20 per a million tokens",
+        "Summarize: $0.20 per `1K` calls",
+        "Summarize: $0.20 per _1M_ input tokens",
+        "Summarize: $0.20 per 1K\ncalls",
+    ],
+    ids=["user-supplied", "one-million-image", "bold-quantity", "a-million", "code-quantity", "underscore-quantity",
+         "per-1k-wrapped-calls"],
+)
+def test_any_k_m_quantity_is_a_unit_whatever_follows_in_both_layouts(line):
+    for source in (LIVE_WITH_MARKETING + "\n" + line + "\n", line + "\n\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    for source in (line + "\n\n" + PRICE, PRICE + "\n" + line + "\n"):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, FAQ)
 
 
 def test_live_pricing_section_has_one_pricing_heading_and_ends_at_the_next_section():

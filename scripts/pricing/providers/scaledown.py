@@ -187,8 +187,9 @@ def _legacy_rate(markdown: str) -> str:
 # fails closed. Lines are read after decoding HTML entities and dropping any
 # leading whitespace, blockquote and list markers.
 _CONTAINER_PREFIX = re.compile(r"^(?:\s*(?:>|[-*+](?=\s)|[0-9]{1,9}[.)](?=\s)))*\s*")
-# Emphasis and code markers are dropped too, for the key-line counts only, so
-# "- **Text:** $0.20" is still a Text rate.
+# Emphasis and code markers are dropped too, before the key-line counts and
+# both unit scans, so "- **Text:** $0.20" is still a Text rate and
+# "per **1M** input tokens" is still a unit.
 _EMPHASIS = re.compile(r"[*_`]")
 # Key lines and how often each must appear in the per-modality and legacy
 # layouts. The legacy layout has none of them, so one there is a second,
@@ -199,18 +200,21 @@ _KEY_LINES = {
     "an Image rate": (lambda line: line.startswith("image:"), 1, 0),
     "the flat pricing bullet": (lambda line: line == "flat pricing, no tiers or seats", 1, None),
 }
-# "per" or "/" followed by a quantity and K, M, thousand, million or tokens
-# ("per 1M", "/ 1K", "per million input tokens", "per 1,000 input tokens"),
-# or "per" and a bare number ending a phrase ("per 1,000."). A quantity of
-# another unit, such as "per 1,000 calls", "per 1K calls" or "$10/day", is
-# not one.
+# A per-token unit is:
+# - "per" or "/" and a K, M, thousand, million or billion quantity (optionally
+#   digits, "one" or "a" first), whatever word follows: "per 1M", "/ 1K",
+#   "per one million image input tokens", "per a million tokens";
+# - "per" or "/" and up to three words before "token(s)": "per 1,000 input
+#   tokens", "per-token";
+# - "per" and a bare number ending a phrase: "per 1,000.".
+# A bare number before another word, such as "per 1,000 calls" or "$10/day",
+# is not one. Accepted trade-off: a shorthand edit such as "per 1K calls" now
+# counts as a unit, so it holds ScaleDown for review rather than risk letting
+# "per 1M user supplied input tokens" through.
 _NUM = r"[0-9]+(?:[.,][0-9]+)*(?![.,]?[0-9])"
-_OTHER_UNIT_NOUN = (
-    r"(?:calls?|requests?|quer(?:y|ies)|images?|seconds?|minutes?|hours?|days?|months?|seats?|users?)\b"
-)
 _PER_TOKEN_UNIT = re.compile(
     rf"(?:\bper\b|/)[\s-]*(?:"
-    rf"(?:(?:a|one)\s+)?(?:{_NUM}\s*)?(?:k|m|thousand|million|billion)\b(?!\s*{_OTHER_UNIT_NOUN})"
+    rf"(?:(?:a|one)\s+)?(?:{_NUM}\s*)?(?:k|m|thousand|million|billion)\b"
     rf"|(?:{_NUM}\s+)?(?:[a-z0-9,.-]+\s+){{0,3}}tokens?\b)"
     rf"|\bper\s+{_NUM}(?=\s*(?:$|[^\w\s]))",
     re.IGNORECASE,
@@ -224,14 +228,14 @@ def _single_rate_line(text: str, *, legacy: bool) -> bool:
 def _paragraph_units(lines: list[str]) -> list[str | None]:
     """Per-token units found with each paragraph joined into one line.
 
-    A paragraph is a run of non-blank lines with container markers stripped,
-    so a tariff wrapped across lines is still one match. Each match yields
-    the line that holds it, or None when it spans lines.
+    A paragraph is a run of non-blank lines with container, emphasis and code
+    markers stripped, so a tariff wrapped across lines is still one match.
+    Each match yields the line that holds it, or None when it spans lines.
     """
     found: list[str | None] = []
     paragraph: list[str] = []
     for line in [*lines, ""]:
-        if stripped := _CONTAINER_PREFIX.sub("", line).strip():
+        if stripped := _EMPHASIS.sub("", _CONTAINER_PREFIX.sub("", line)).strip():
             paragraph.append(stripped)
             continue
         spans, at = [], 0
@@ -254,8 +258,9 @@ def _check_whole_document(markdown: str, *, legacy: bool) -> None:
             rule = "must appear exactly once" if expected else "must not appear in the legacy layout"
             raise RuntimeError(f"scaledown: {name} {rule} in llms.txt")
     # The one rate line of the layout is the only place a per-token unit may
-    # appear, read both line by line and with each paragraph joined.
-    units = [line for line in lines if _PER_TOKEN_UNIT.search(line)]
+    # appear, read both line by line and with each paragraph joined, after
+    # entities are decoded and emphasis and code markers are dropped.
+    units = [plain for plain in (_EMPHASIS.sub("", line) for line in lines) if _PER_TOKEN_UNIT.search(plain)]
     wrapped = _paragraph_units(lines)
     if (
         len(units) != 1
