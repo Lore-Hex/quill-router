@@ -179,6 +179,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _is_provider_deprecated_model,
     _supplemental_provider_models_and_endpoints,
 )
+from trusted_router.closed_weight_routes import closed_weight_route_disallowed
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_INPUT_MICRODOLLARS_PER_MILLION,
     PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS,
@@ -1782,11 +1783,29 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
     if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
 }
 HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
+# Closed-weight reseller routes are refused at admission for every usage type.
+# Requests authorized by a control plane that still listed one must settle or
+# refund at the tariff they were quoted, so archive them settlement-only. This
+# is never read by admission, public model lists or routing snapshots.
+CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS = {
+    identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
+    if closed_weight_route_disallowed(endpoint.provider, endpoint.model_id)
+}
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS) | frozenset(TRANSCRIPTION_MODELS) | {FETCH_MODEL_ID},
     at=CATALOG_RESOLVED_AT,
 )
+# A model whose only routes were closed-weight reseller routes stays known (so
+# archived settlements still resolve it) but must not advertise availability.
+_routed_model_ids = {endpoint.model_id for endpoint in MODEL_ENDPOINTS.values()}
+for _closed_model_id in {
+    endpoint.model_id for endpoint in CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS.values()
+} - _routed_model_ids:
+    if _closed_model_id in MODELS:
+        MODELS[_closed_model_id] = replace(
+            MODELS[_closed_model_id], prepaid_available=False, byok_available=False,
+        )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
 
 # Apply gateway rollout holds after every catalog source has merged and before
