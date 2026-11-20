@@ -108,3 +108,35 @@ def test_llms_full_matches_the_docs_variant(client: TestClient) -> None:
 
     assert root == docs
     assert len(root) > 1000
+
+
+def test_llms_txt_resource_links_resolve_to_the_right_pages() -> None:
+    """Agents follow these links literally: the interactive reference must be
+    the Swagger page, and the authentication link must land on a real anchor."""
+    text = llms_txt(Settings(environment="test"))
+
+    assert "[TrustedRouter interactive API reference](https://trustedrouter.com/api/reference)" in text
+    assert "/docs#authentication" in text
+
+
+def test_llms_txt_primary_links_are_not_repeated() -> None:
+    text = llms_txt(Settings(environment="test"))
+    section = text.split("## Primary Links", 1)[1].split("\n##", 1)[0]
+    links = [line for line in section.splitlines() if line.startswith("- [")]
+
+    assert len(links) == len(set(links))
+
+
+def test_docs_page_has_the_authentication_anchor_and_spec_link(client: TestClient) -> None:
+    """llms.txt links /docs#authentication, and agents look for an OpenAPI
+    service description (RFC 8631) before guessing /openapi.json."""
+    html = client.get("/docs").text
+
+    assert 'id="authentication"' in html
+    assert '<link rel="service-desc" type="application/json" href="/openapi.json"' in html
+
+
+def test_homepage_links_the_openapi_service_description(client: TestClient) -> None:
+    html = client.get("/").text
+
+    assert 'rel="service-desc" type="application/json" href="/openapi.json"' in html
