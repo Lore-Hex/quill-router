@@ -37,9 +37,10 @@ var (
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
 // missing one (async_settle, its admission_workspaces and
 // admission_excluded_workspaces, edge_tickets, edge_ticket_workspaces,
-// edge_leased, overlap_workspaces, fastpath_pilot_key_windows,
-// fastpath_edge_streams, fastpath_pilot_all, fastpath_pilot_exclude and
-// fastpath_stream_ceiling alone may be absent), a float, a duplicate key,
+// edge_leased, overlap_workspaces, decide_route, fastpath_pilot_key_windows,
+// fastpath_edge_streams, fastpath_pilot_all, fastpath_pilot_exclude,
+// fastpath_stream_ceiling and fastpath_edge_hosted_decide alone may be absent),
+// a float, a duplicate key,
 // null anywhere but monitor_lookup_hash, and a body that is not its own
 // canonical encoding.
 type EdgePolicy struct {
@@ -82,6 +83,8 @@ type EdgePolicy struct {
 	// it (EdgeStreams) and still passes every stream until the increment
 	// that decides them.
 	FastpathEdgeStreams *bool `json:"fastpath_edge_streams,omitempty"`
+	// Hosted decide is optional and true only; absent keeps answering off.
+	FastpathEdgeHostedDecide *bool `json:"fastpath_edge_hosted_decide,omitempty"`
 	// FastpathPilotAll is optional: true when the control plane's pilot
 	// covers every workspace but FastpathPilotExclude, in place of the
 	// explicit FastpathPilotWorkspaces, which is then empty
@@ -139,6 +142,11 @@ func (p *EdgePolicy) CoversAny() bool {
 // publisher does not carry it.
 func (p *EdgePolicy) EdgeStreams() bool {
 	return p.FastpathEdgeStreams != nil && *p.FastpathEdgeStreams
+}
+
+// HostedDecide is the explicit permission to answer hosted decision models.
+func (p *EdgePolicy) HostedDecide() bool {
+	return p.FastpathEdgeHostedDecide != nil && *p.FastpathEdgeHostedDecide
 }
 
 // StreamCeiling is the policy's fastpath_stream_ceiling, false when the
@@ -206,6 +214,8 @@ type AsyncSettle struct {
 	// EdgeDecide is fastpath_edge_decide_async: whether the edge may answer
 	// an async-v1 authorize itself.
 	EdgeDecide bool `json:"edge_decide"`
+	// DecideRoute says Python supports non-streamed decide tickets.
+	DecideRoute *bool `json:"decide_route,omitempty"`
 	// EdgeTickets is optional, present only when true (absent when off,
 	// never false): Python's sign-only route is up
 	// (POST /internal/fastpath/async-ticket), so the edge answers an
@@ -290,7 +300,15 @@ func (a *AsyncSettle) AdmitsLeased(workspace string) bool {
 	return a.OverlapWorkspaces != nil && slices.Contains(*a.OverlapWorkspaces, workspace)
 }
 
+// SupportsDecide is Python's published permission for decide tickets.
+func (a *AsyncSettle) SupportsDecide() bool {
+	return a.DecideRoute != nil && *a.DecideRoute
+}
+
 func (a *AsyncSettle) validate() error {
+	if a.DecideRoute != nil && !*a.DecideRoute {
+		return errors.New("async_settle.decide_route is absent when off, never false")
+	}
 	if a.EdgeTickets != nil {
 		if !*a.EdgeTickets {
 			return errors.New("async_settle.edge_tickets is absent when off, never false")
@@ -462,6 +480,9 @@ func (p *EdgePolicy) validate() error {
 	}
 	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsAlert && *m != KeyWindowsEnforce {
 		return errors.New("fastpath_pilot_key_windows")
+	}
+	if s := p.FastpathEdgeHostedDecide; s != nil && !*s {
+		return errors.New("fastpath_edge_hosted_decide is absent when off, never false")
 	}
 	if s := p.FastpathEdgeStreams; s != nil && !*s {
 		return errors.New("fastpath_edge_streams is absent when off, never false")

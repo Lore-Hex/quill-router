@@ -611,7 +611,8 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 		return Request{}, p
 	}
 	r.Routing = routing
-	r.Async.Streamed = r.Streamed()
+	r.Async.InvocationNonce = r.InvocationNonce
+	r.Async.Streamed = r.Streamed() && (r.Async.RouteType == nil || *r.Async.RouteType != "decide")
 	r.EstimatedInputTokens = 1
 	if routing.EstimatedInputTokens != nil {
 		r.EstimatedInputTokens = *routing.EstimatedInputTokens

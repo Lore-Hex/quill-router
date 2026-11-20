@@ -131,6 +131,7 @@ const (
 	PassAsyncUnpublished = "async.unpublished"
 	PassAsyncAdmission   = "policy.async_admission"
 	PassAsyncOff         = "async.off"
+	PassHostedDecideOff  = "hosted_decide.off"
 	// PassSettlementHeader is gwauth's request reason for any other present
 	// X-TR-Settlement-Mode, named here for the watch's settlement-header
 	// pass share (only the edge uses gwauth's request side).
@@ -602,6 +603,7 @@ func Decide(in DecideInputs) Decided {
 	}
 
 	req := r.Routing
+	req.HostedDecide = true
 	req.At = at
 	req.BYOKProviders = snap.BYOKProviders(read.Facts.BYOKProviders)
 	// A workspace's BYOK keys carry routing policy the edge does not read:
@@ -612,7 +614,7 @@ func Decide(in DecideInputs) Decided {
 	if len(req.BYOKProviders) > 0 {
 		return pass(PassCandidatesBYOK)
 	}
-	res := snap.Evaluate(req)
+	res := evaluateRouting(snap, req)
 	switch res.Outcome {
 	case routingsnapshot.Refused:
 		return pass(PassEvaluateRefused)
@@ -731,6 +733,10 @@ func Decide(in DecideInputs) Decided {
 	// fastpath_edge_streams, the policy's mode for a windowed key, the
 	// decide row, the switch copy, and async-v1's edge_decide.
 	switch {
+	case res.HostedDecide && !policy.HostedDecide():
+		// Composed for the shadow even with an older policy; only this
+		// explicit member permits answering the hosted model arm.
+		out.DecideGate = PassHostedDecideOff
 	case darkStream:
 		// Composed for the shadow, answered by Python, even for a workspace
 		// whose decide row is on (docs/design/fast-admission-streams.md

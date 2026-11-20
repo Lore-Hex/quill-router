@@ -97,8 +97,12 @@ type asyncExtras struct {
 }
 
 func loadAsyncGoldens(t testing.TB) asyncGoldens {
+	return loadAsyncGoldensFile(t, asyncCasesFile)
+}
+
+func loadAsyncGoldensFile(t testing.TB, name string) asyncGoldens {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(testdata, asyncCasesFile))
+	raw, err := os.ReadFile(filepath.Join(testdata, name))
 	if err != nil {
 		t.Fatal(err)
 	}

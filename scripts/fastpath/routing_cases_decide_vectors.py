@@ -129,6 +129,18 @@ def cases() -> list[dict[str, Any]]:
     add("models_no_fallbacks", {"models": [common.GLM], "allow_fallbacks": False})
     add("native_chat_decide", model=common.FLASH)
     add("embeddings_only", model=fixture.EMBEDDING_ONLY)
+    # A model that is both a chat model and a decision model keeps the chat
+    # arm, context window included, whatever the route.
+    add("chat_and_decision", model=fixture.DECIDE_CHAT)
+    add("chat_and_decision_fits", {"estimated_input_tokens": 4, "max_output_tokens": 1},
+        model=fixture.DECIDE_CHAT)
+    add("chat_and_decision_chat_route", {"route_type": "chat.completions", "estimated_input_tokens": 4,
+                                         "max_output_tokens": 1}, model=fixture.DECIDE_CHAT)
+    # A decision-only model named as a chat model's alternative is not a
+    # hosted decision: the request's own arm is the chat arm.
+    add("chat_then_decision", {"models": [MULTI]}, model=common.FLASH)
+    add("chat_then_decision_chat_route", {"models": [MULTI], "route_type": "chat.completions"},
+        model=common.FLASH)
     return out
 
 
