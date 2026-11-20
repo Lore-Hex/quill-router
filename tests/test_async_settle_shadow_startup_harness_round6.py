@@ -40,19 +40,22 @@ async def test_logging_setup_does_not_hold_listener(monkeypatch):
     @app.get("/live")
     async def live():
         return {"live": True}
-    entered = threading.Event()
+    # The holder keeps logging's lock until the probe has its answer (or a
+    # generous cap passes). Ordering, not wall time, is the assertion: a
+    # listener that waited on logging setup could only answer after release.
+    entered, answered, released = threading.Event(), threading.Event(), threading.Event()
     def hold():
         logging._acquireLock()
         try:
             entered.set()
-            time.sleep(.4)
+            answered.wait(10)
         finally:
+            released.set()
             logging._releaseLock()
     holder = threading.Thread(target=hold)
     holder.start()
     assert entered.wait(1)
     async def probe():
-        started = time.monotonic()
         await asyncio.sleep(.02)
         messages = []
         async def receive():
@@ -64,14 +67,17 @@ async def test_logging_setup_does_not_hold_listener(monkeypatch):
             "query_string": b"", "headers": [], "server": ("test", 80),
             "client": ("test", 1), "root_path": ""}, receive, send)
         assert messages[0]["status"] == 200
-        return time.monotonic() - started
+        held = not released.is_set()
+        answered.set()
+        return held
     task = asyncio.create_task(probe())
     h.listener_started(app)
     try:
-        assert await task < .2
+        assert await task, "the listener answered only after logging's lock was released"
         await startup.task
         assert not startup.admission.ready
     finally:
+        answered.set()
         holder.join(1)
         # A timed-out setup retains its one worker slot until the lock is free.
         for _ in range(200):

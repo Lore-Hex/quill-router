@@ -30,7 +30,10 @@ def test_frozen_drain_missing_key_rows(env, caplog, other_shard):
     assert call(env, body).status_code == 202
     before = copy.deepcopy(db.settle_outbox[(auth.id, 'settle')])
     caplog.clear()
-    result = _drain_async(concurrency=1)
+    # One drain attempt. A failed apply is retried 1 s after a whole-second
+    # stamp, so an unbounded pass that crosses a second boundary claims the
+    # row again (claimed == 2, attempts + 2), as main's CI saw on 2026-11-19.
+    result = _drain_async(limit=1, concurrency=1)
     assert result['claimed'] == 1
     row = db.settle_outbox[(auth.id, 'settle')]
     if other_shard:
