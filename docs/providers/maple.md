@@ -177,6 +177,12 @@ The embedding alias is held without invented prices or a versioned weights
 identity: encrypted embedding support and pricing remain unqualified.
 Automatic model aliases and unrecognized new IDs fail discovery review.
 
+On 2026-11-19 discovery added a tenth chat row, `inkling-2-small` as
+`thinkingmachines/inkling-2-small`, after the unrecognized ID failed the hourly
+refresh. Maple's [model library](https://maple.ai/learn/models) lists it under
+Thinking Machines Lab's open-weight family. It is held with
+`attested-enclave-qualification-pending` like the other eight inventory rows.
+
 Before activating another row, review its exact downstream route and privacy
 boundary, extend the measured encrypted adapter with exact model-response
 checks, verify billing/cache/capability behavior with bounded canaries, and

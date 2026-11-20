@@ -65,13 +65,22 @@ def write(store, rows):
         store.transaction(lambda tx, batch=batch, budget=budget: store.write(tx, batch, budget), budget, 2.)
 
 
+
+def reader_on_a_held_clock(database, **kwargs):
+    # The page deadline (200 ms) is judged on a held clock here, as the unit
+    # tests judge it on the fake database's clock. Fixture work and thread
+    # scheduling on a loaded runner are not source latency: on the real clock
+    # a stall while iterating 200 emulator rows raised range_iteration_deadline
+    # (CI run 41780434659). Each RPC keeps its real 200 ms timeout.
+    return NativeV2RangeRead(database, io=native_io(), clock=lambda: 0.0, **kwargs)
+
 @pytest.mark.parametrize('backend', ['spanner-emulator'])
 @pytest.mark.parametrize('count', [0, 199, 200, 201])
 def test_native_export_page_edges(export_emulator, backend, count):
     day, rows = originals(count)
     store = ObservationStore(export_emulator)
     write(store, rows)
-    reader = NativeV2RangeRead(export_emulator, io=native_io())
+    reader = reader_on_a_held_clock(export_emulator)
     found = list(reader.rows(COUNTER_KIND, day))
     assert [(r.key, r.body) for r in found] == [(r.key, r.body) for r in rows]
     assert [p['count'] for p in reader.pages] == ([count] if count < 200 else [200, count-200])
@@ -103,7 +112,7 @@ def test_native_export_kinds_day_boundaries_and_fixed_snapshot(export_emulator, 
             value[field] += delta * 86400 * 1000000
         neighbours.append(Row.build(COUNTER_KIND, value['day']+'/'+value['boot'], value))
     write(store, [*counters, closing, *neighbours])
-    reader = NativeV2RangeRead(export_emulator, io=native_io(), page_size=1)
+    reader = reader_on_a_held_clock(export_emulator, page_size=1)
     found = list(reader.rows(COUNTER_KIND, day))
     # A later write to the other kind must not change this pass's view.
     old = closing.body
@@ -129,6 +138,6 @@ def test_native_export_preserves_literal_utf8_corruption(export_emulator, backen
     with export_emulator.batch() as batch:
         batch.update(table='tr_entities', columns=('kind', 'id', 'body', 'updated_at'),
             values=[(COUNTER_KIND, rows[0].key, body, dt.datetime.now(dt.UTC))])
-    found = list(NativeV2RangeRead(export_emulator, io=native_io()).rows(COUNTER_KIND, day))
+    found = list(reader_on_a_held_clock(export_emulator).rows(COUNTER_KIND, day))
     assert len(found) == 1 and found[0].body == body.encode('utf-8')
     assert b'\xc3\xa3' in found[0].body and b'\xe9\x9b\xaa' in found[0].body
