@@ -320,10 +320,13 @@ def test_formatted_pricing_headings_count_as_duplicates_in_both_layouts(heading)
         scaledown._input_price(legacy, FAQ)
 
 
-# Verbatim lines 27, 69 and 136 of the live llms.txt (2026-11-19): currency
-# and "per" without a per-token unit. They must not count as rates.
+# Verbatim lines 24, 27, 69 and 136 of the live llms.txt (2026-11-19):
+# "token" without currency, and currency or "per" without a per-token unit.
+# They must not count as rates.
 LIVE_MARKETING = (
-    "## Models\n\nReal impact: A workflow costing $10/day drops to $4/day at 60% compression\n\n"
+    "## Models\n\nSend in a long prompt or document. Get back a semantically compressed version that "
+    "preserves every fact relevant to your query, at a fraction of the token count.\n\n"
+    "Real impact: A workflow costing $10/day drops to $4/day at 60% compression\n\n"
     "## Benchmarks\n\nScaleDown is benchmarked against frontier models from OpenAI, Anthropic, Google, "
     "xAI, DeepSeek, and Qwen on public benchmarks: FinanceBench (Compress, F1), QMSum (Summarize, "
     "ROUGE-L), CUAD (Extract, F1), and CLINC OOS (Classify, accuracy). Cost is per 1,000 calls; "
@@ -460,6 +463,57 @@ def test_any_k_m_quantity_is_a_unit_whatever_follows_in_both_layouts(line):
     for source in (line + "\n\n" + PRICE, PRICE + "\n" + line + "\n"):
         with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
             scaledown._input_price(source, FAQ)
+
+
+# Round-7 review: priced token text the unit grammar does not describe.
+PRICED_TOKEN_TEXT = {
+    "five-modifiers": "Summarize: $0.20 per 1,000 billable uncached text input tokens.",
+    "four-modifiers": "Extract: $0.20 per 1,000 billable cached batch text tokens",
+    "link-wrapped-line": "[Summarize: $0.20 per 1,000 billable uncached text input tokens](https://scaledown.ai/)",
+    "strong-wrapped": "<strong>Summarize: $0.20</strong> per 1,000 billable uncached text <em>input tokens</em>",
+    "no-per": "Summarize: USD 0.20 for every 1,000 billable tokens",
+    "wrapped-lines": "Summarize: $0.20 for every 1,000 billable\nuncached text input tokens.",
+    "entity-dollar": "Summarize: &#36;0.20 per 1,000 billable uncached text input tokens.",
+}
+# Caught first by the per-token unit rule once links and tags are flattened
+# (the wrapped line ends in "per 1,000", a bare number ending a phrase).
+UNIT_TEXT = {
+    "link-unit": "Summarize: $0.20 per [1M input tokens](https://scaledown.ai/#pricing)",
+    "strong-unit": "Summarize: $0.20 per <strong>1M</strong> input tokens",
+    "dollars-words": "Classify costs 2 dollars per million tokens",
+    "wrapped-per-1000": "Summarize: $0.20 per 1,000\nbillable uncached text input tokens.",
+}
+
+
+def _both_layout_sources(text: str) -> list[tuple[str, str]]:
+    return [
+        (LIVE_WITH_MARKETING + "\n" + text + "\n", SITE_2026_11_19),
+        (text + "\n\n" + LIVE_WITH_MARKETING, SITE_2026_11_19),
+        (text + "\n\n" + PRICE, FAQ),
+        (PRICE + "\n" + text + "\n", FAQ),
+    ]
+
+
+@pytest.mark.parametrize("text", list(PRICED_TOKEN_TEXT.values()), ids=list(PRICED_TOKEN_TEXT))
+def test_priced_token_text_outside_pricing_fails_closed_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match=r"^scaledown: priced token text outside the Pricing section; review$"):
+            scaledown._input_price(source, site)
+
+
+@pytest.mark.parametrize("text", list(UNIT_TEXT.values()), ids=list(UNIT_TEXT))
+def test_units_inside_links_or_html_fail_closed_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, site)
+
+
+def test_encoded_line_break_fails_closed():
+    source = LLMS_2026_11_19.replace("- Text: $0.05", "- Text: $0.05&#10;- Text: $0.20")
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="encoded line break"):
+        scaledown._input_price(LIVE_WITH_MARKETING + "\nSummarize&#10;costs more\n", SITE_2026_11_19)
 
 
 def test_live_pricing_section_has_one_pricing_heading_and_ends_at_the_next_section():

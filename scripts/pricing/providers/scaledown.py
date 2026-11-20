@@ -184,13 +184,24 @@ def _legacy_rate(markdown: str) -> str:
 
 # Whole-document rules, independent of headings, so a second price block
 # hidden behind heading syntax the section scanner does not recognise still
-# fails closed. Lines are read after decoding HTML entities and dropping any
-# leading whitespace, blockquote and list markers.
+# fails closed. Every rule reads plain lines: HTML entities decoded, Markdown
+# links "[text](url)" flattened to their text, HTML tags removed, and emphasis
+# and code markers dropped, so "- **Text:** $0.20", "per **1M** input tokens",
+# "per [1M input tokens](...)" and "per <strong>1M</strong> input tokens" are
+# all seen. Paragraph and key-line rules also drop leading whitespace,
+# blockquote and list markers.
 _CONTAINER_PREFIX = re.compile(r"^(?:\s*(?:>|[-*+](?=\s)|[0-9]{1,9}[.)](?=\s)))*\s*")
-# Emphasis and code markers are dropped too, before the key-line counts and
-# both unit scans, so "- **Text:** $0.20" is still a Text rate and
-# "per **1M** input tokens" is still a unit.
 _EMPHASIS = re.compile(r"[*_`]")
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_HTML_TAG = re.compile(r"<[^>]*>")
+# Outside the Pricing section, a paragraph with both a currency amount or
+# marker and the word "token(s)" is a possible tariff, so it fails closed.
+_CURRENCY = re.compile(
+    r"[$¢€£¥]|(?<![a-z])(?:USD|EUR|GBP|JPY|INR)(?![a-z])"
+    r"|[0-9]\s*(?:dollars?|cents?)\b|\b(?:dollars?|cents?)\s*[0-9]",
+    re.IGNORECASE,
+)
+_TOKEN_WORD = re.compile(r"\btokens?\b", re.IGNORECASE)
 # Key lines and how often each must appear in the per-modality and legacy
 # layouts. The legacy layout has none of them, so one there is a second,
 # conflicting tariff. None means the layout does not constrain it.
@@ -225,19 +236,31 @@ def _single_rate_line(text: str, *, legacy: bool) -> bool:
     return bool(_LEGACY_RATE.fullmatch(text)) if legacy else text == _PUBLIC_API_HEADING
 
 
+def _plain(line: str) -> str:
+    return _EMPHASIS.sub("", _HTML_TAG.sub("", _LINK.sub(r"\1", html.unescape(line))))
+
+
+def _paragraphs(lines: list[str], skip: range = range(0)) -> list[list[str]]:
+    """Runs of non-blank lines with container markers stripped; ``skip`` lines break runs."""
+    found: list[list[str]] = []
+    paragraph: list[str] = []
+    for i, line in enumerate([*lines, ""]):
+        if i not in skip and (stripped := _CONTAINER_PREFIX.sub("", line).strip()):
+            paragraph.append(stripped)
+        elif paragraph:
+            found.append(paragraph)
+            paragraph = []
+    return found
+
+
 def _paragraph_units(lines: list[str]) -> list[str | None]:
     """Per-token units found with each paragraph joined into one line.
 
-    A paragraph is a run of non-blank lines with container, emphasis and code
-    markers stripped, so a tariff wrapped across lines is still one match.
-    Each match yields the line that holds it, or None when it spans lines.
+    A tariff wrapped across lines is still one match. Each match yields the
+    line that holds it, or None when it spans lines.
     """
     found: list[str | None] = []
-    paragraph: list[str] = []
-    for line in [*lines, ""]:
-        if stripped := _EMPHASIS.sub("", _CONTAINER_PREFIX.sub("", line)).strip():
-            paragraph.append(stripped)
-            continue
+    for paragraph in _paragraphs(lines):
         spans, at = [], 0
         for part in paragraph:
             spans.append((at, at + len(part), part))
@@ -245,22 +268,41 @@ def _paragraph_units(lines: list[str]) -> list[str | None]:
         for match in _PER_TOKEN_UNIT.finditer(" ".join(paragraph)):
             holders = [part for start, end, part in spans if start <= match.start() and match.end() <= end]
             found.append(holders[0] if holders else None)
-        paragraph = []
     return found
 
 
+def _allowlisted_lines(raw: list[str], plain: list[str], *, legacy: bool) -> range:
+    """Lines exempt from the priced-token rule.
+
+    In the per-modality layout that is the Pricing section, whose lines are
+    allowlisted one by one. The legacy section has no line allowlist, so only
+    its single rate line is exempt there, which also covers everything
+    outside main's legacy section.
+    """
+    if legacy:
+        rate = next(i for i, line in enumerate(plain) if _LEGACY_RATE.fullmatch(line))
+        return range(rate, rate + 1)
+    start = next(i for i, line in enumerate(raw) if line.rstrip() == "## Pricing")
+    end = next((i for i in range(start + 1, len(raw)) if _SECTION_END.match(raw[i])), len(raw))
+    return range(start, end)
+
+
 def _check_whole_document(markdown: str, *, legacy: bool) -> None:
-    lines = html.unescape(markdown).splitlines()
-    normalized = [_EMPHASIS.sub("", _CONTAINER_PREFIX.sub("", line)).strip().casefold() for line in lines]
+    raw = markdown.splitlines()
+    lines = [_plain(line) for line in raw]
+    # Lines are decoded one by one to stay aligned with the Pricing section,
+    # so an entity that decodes to a line break would hide a line: refuse it.
+    if any(len(line.splitlines()) > 1 for line in lines):
+        raise RuntimeError("scaledown: encoded line break in llms.txt")
+    normalized =[_CONTAINER_PREFIX.sub("", line).strip().casefold() for line in lines]
     for name, (test, modal, legacy_count) in _KEY_LINES.items():
         expected = legacy_count if legacy else modal
         if expected is not None and sum(1 for line in normalized if test(line)) != expected:
             rule = "must appear exactly once" if expected else "must not appear in the legacy layout"
             raise RuntimeError(f"scaledown: {name} {rule} in llms.txt")
     # The one rate line of the layout is the only place a per-token unit may
-    # appear, read both line by line and with each paragraph joined, after
-    # entities are decoded and emphasis and code markers are dropped.
-    units = [plain for plain in (_EMPHASIS.sub("", line) for line in lines) if _PER_TOKEN_UNIT.search(plain)]
+    # appear, read both line by line and with each paragraph joined.
+    units = [line for line in lines if _PER_TOKEN_UNIT.search(line)]
     wrapped = _paragraph_units(lines)
     if (
         len(units) != 1
@@ -270,6 +312,10 @@ def _check_whole_document(markdown: str, *, legacy: bool) -> None:
         or not _single_rate_line(wrapped[0], legacy=legacy)
     ):
         raise RuntimeError("scaledown: per-token unit outside the single public rate line")
+    for paragraph in _paragraphs(lines, skip=_allowlisted_lines(raw, lines, legacy=legacy)):
+        text = " ".join(paragraph)
+        if _CURRENCY.search(text) and _TOKEN_WORD.search(text):
+            raise RuntimeError("scaledown: priced token text outside the Pricing section; review")
 
 
 def _input_price(markdown: str, website_code: str) -> ModelPrice:
