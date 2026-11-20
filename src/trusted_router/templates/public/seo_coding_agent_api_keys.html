@@ -1,0 +1,29 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section"><h2>An API key belongs to the service that issued it</h2>
+<p>A Codex or Cursor setup can involve an app subscription, a direct model-provider key or a gateway key. These are different credentials and billing relationships. For TrustedRouter requests, pair a TrustedRouter key with the TrustedRouter endpoint and an available model ID.</p><p>First decide whether you are connecting a direct provider or a gateway. Then check the API format expected by the client. A successful plain-text call is only the first step: coding agents also depend on tools, streaming and multi-turn state.</p>
+</section>
+<section class="content-section"><h2>Codex API key and custom provider configuration</h2>
+<p>Codex supports custom provider configuration. The example below selects a Responses-compatible gateway and reads the credential from the environment. Replace the model placeholder with a currently available route; merge the settings into your existing configuration instead of overwriting it.</p><pre><code>model = "AUTHOR/MODEL"
+model_provider = "trustedrouter"
+
+[model_providers.trustedrouter]
+name = "TrustedRouter"
+base_url = "https://api.trustedrouter.com/v1"
+env_key = "TRUSTEDROUTER_API_KEY"
+wire_api = "responses"</code></pre><p>Check the <a href="https://developers.openai.com/codex/config-advanced/">official Codex configuration reference</a> for your version. A compatible gateway does not imply support for every OpenAI-hosted tool or transport. Test the specific agent features you use before migrating.</p>
+</section>
+<section class="content-section"><h2>Codex with OpenRouter or another gateway</h2>
+<p>Use a separate provider name for each connection, and pair its base URL with the corresponding credential. A gateway key does not transfer between services. Compare the same task and explicit model ID where both catalogs offer it; preserve the working configuration until the new route passes your checks.</p><p>Our <a href="/compare/openrouter">gateway comparison</a> covers the broader choice. Use <a href="/best-llm-for-coding">cost per accepted patch</a> to assess value rather than comparing one input-token price.</p>
+</section>
+<section class="content-section"><h2>Cursor API keys and custom endpoint limits</h2>
+<p>Cursor documents key setup under Settings → Models. Its <a href="https://prod.cursor.com/help/models-and-usage/api-keys">API key guide</a> says custom keys cover chat models, while Tab completion keeps using Cursor's built-in models. It also explains that requests pass through Cursor's backend for prompt construction and that its own ZDR policy does not apply to BYOK traffic.</p><p>For Cursor with OpenRouter, DeepSeek or TrustedRouter, confirm that your installed version exposes a suitable custom endpoint and supports the model's request format. Do not assume a generic key field accepts every gateway or enables every editor feature. If the required custom endpoint is unavailable, use a supported client such as <a href="/opencode-models">OpenCode</a>.</p>
+</section>
+<section class="content-section"><h2>Verify before moving your real project</h2>
+<div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Check</th><th scope="col">Why it matters</th></tr></thead><tbody><tr><td>Credential and base URL</td><td>Prevents sending a key to the wrong service.</td></tr><tr><td>Model ID and API format</td><td>A catalog name does not prove client compatibility.</td></tr><tr><td>Streaming and tool round trip</td><td>A plain text reply does not exercise a coding agent.</td></tr><tr><td>Cost and limits</td><td>App charges and model-provider charges may be separate.</td></tr><tr><td>Editor, gateway and upstream privacy</td><td>Gateway attestation covers its boundary, not every other component.</td></tr></tbody></table></div><p>Start with a non-sensitive test project, confirm a small edit and run its tests. Keep secrets in the supported credential store or environment. For Claude Code, use the dedicated <a href="/claude-code-router">Messages gateway guide</a>; for common endpoints and smoke tests, see <a href="/docs/agent-setup">agent setup</a>.</p>
+</section>
+<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+</article></div>
+{% include "public/_comparison_guide_links.html" %}
+{% endblock %}

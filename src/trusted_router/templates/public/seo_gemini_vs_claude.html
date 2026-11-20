@@ -1,0 +1,25 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section"><h2>Gemini or Claude: make the comparison specific</h2>
+<p>Compare Gemini and Claude on the work you want to finish, using an explicit version of each. Both families contain models with different cost and latency tradeoffs. The answer for a high-volume classifier can differ from the answer for a long coding task or a document review.</p><p>Start with the required input types and tools. Then evaluate quality, time and cost. TrustedRouter helps you inspect available model routes and repeat an API evaluation without rewriting the integration for each family.</p>
+</section>
+<section class="content-section"><h2>Where the choice matters</h2>
+<div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Need</th><th scope="col">First check</th><th scope="col">Practical test</th></tr></thead><tbody><tr><td>Document analysis</td><td>Context and file support on the chosen endpoint</td><td>Ask for answers supported by specific passages and verify them.</td></tr><tr><td>Audio or video input</td><td>Native modality support and gateway compatibility</td><td>Test the actual format and duration, not a text-only substitute.</td></tr><tr><td>Coding agent</td><td>Tool schemas, streaming and multi-turn tool results</td><td>Run a small edit, a shell test and a repair attempt.</td></tr><tr><td>Routine text work</td><td>Latency, quality floor and current price</td><td>Measure successful results per dollar on a representative batch.</td></tr><tr><td>Sensitive prompts</td><td>The selected provider privacy policy and verification evidence</td><td>Require an eligible route; do not infer confidentiality from the model name.</td></tr></tbody></table></div>
+</section>
+<section class="content-section"><h2>A concrete difference: native input types</h2>
+<p>Google's current Gemini catalog lists models that accept text, images, audio, video and PDFs. Anthropic's current Claude overview lists text and image input with text output across its current general-purpose lineup. If native audio or video is essential, start by checking a Gemini endpoint that explicitly supports it. If you already have a text transcript or extracted document, compare both on that same representation.</p>
+<p>This is a capability filter, not a quality ranking. Confirm the selected gateway route forwards the required modality before building around the vendor's native API specification.</p></section>
+<section class="content-section"><h2>Context length is a limit, not a quality score</h2>
+<p>A bigger window can reduce chunking, but it does not ensure accurate retrieval or reasoning over every token. Build a test with a known answer, distractors and a required citation. Repeat it with the relevant passage at different positions. Compare this with a shorter, retrieved excerpt to see whether sending the whole file is worth the cost.</p><p>Check the current <a href="https://ai.google.dev/gemini-api/docs/models">Gemini specifications</a> and <a href="https://platform.claude.com/docs/en/models/overview">Claude specifications</a>, then verify the limits of the actual route. Reserve space for generated output, system instructions and agent tool history.</p>
+</section>
+<section class="content-section"><h2>Compare coding and writing separately</h2>
+<p>For code, grade a working patch, test results and unnecessary changes. For prose, grade factual fidelity, audience fit and editing effort. Do not reuse a coding score to declare a writing winner. Model updates and agent scaffolding can change the result, so retain the version and evaluation date.</p><p>Use the <a href="/best-llm-for-coding">coding-model scorecard</a> for implementation work and the writing exercise in <a href="/claude-vs-chatgpt">Claude vs ChatGPT</a> for editorial work. Add a GPT candidate when neither Gemini nor Claude meets your quality or cost target.</p>
+</section>
+<section class="content-section"><h2>One evaluation, several model routes</h2>
+<p>Browse <a href="/compare/models">the current comparisons</a>, copy two available model IDs and run the same requests. Record tokens, total cost, latency and task success. Compare provider performance separately from answer quality: a fast route is not proof that its model is the most capable.</p><p>TrustedRouter's <a href="/docs/provider-routing">provider controls</a> let you make the route explicit. Confidential compute is a property of eligible serving paths, not a blanket claim about Gemini or Claude. If confidentiality is a hard requirement, let that narrow the shortlist before quality testing.</p>
+</section>
+<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+</article></div>
+{% include "public/_comparison_guide_links.html" %}
+{% endblock %}

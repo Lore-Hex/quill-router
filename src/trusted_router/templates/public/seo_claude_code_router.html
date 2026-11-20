@@ -1,0 +1,24 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-reader" data-content-toc><article class="content-document">
+<section class="content-section"><h2>What a Claude Code router changes</h2>
+<p>A Claude Code router sits between the coding agent and its model provider. It can centralize credentials, route selection and usage accounting. It does not replace the local agent's tools or permissions. TrustedRouter exposes an Anthropic-compatible Messages endpoint as well as OpenAI-compatible endpoints.</p><p><a href="https://code.claude.com/docs/en/llm-gateway">Anthropic's gateway documentation</a> explicitly says it does not support routing Claude Code to non-Claude models. Treat API compatibility and official agent support as separate checks. For broad model choice, <a href="/opencode-models">OpenCode</a> is another client to evaluate.</p>
+</section>
+<section class="content-section"><h2>Claude Code API key and proxy setup</h2>
+<p>Create a TrustedRouter API key, then start in a temporary terminal session. Keep credentials out of project files. Choose a currently available Claude model ID from <a href="/models">the catalog</a>; replace the placeholder below before launching.</p><pre><code>export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
+export ANTHROPIC_AUTH_TOKEN="$TRUSTEDROUTER_API_KEY"
+claude --model "ANTHROPIC/MODEL_ID_FROM_CATALOG"</code></pre><p>The Messages base URL omits <code>/v1</code>; the client adds its endpoint path. The credential is a TrustedRouter key for this gateway, not a Claude subscription login or an OpenRouter key. Check <code>/status</code> and resolve conflicting credentials using <a href="https://code.claude.com/docs/en/llm-gateway-connect">the official connection guide</a>.</p>
+</section>
+<section class="content-section"><h2>Can Claude Code use DeepSeek, Gemini or GLM?</h2>
+<p>Developers experiment with non-Claude models behind compatible gateways, but that does not establish full Claude Code compatibility or Anthropic support. Tool schemas, streaming events, thinking behavior and model-specific agent features can differ. Do not assume that changing a model string makes every feature work.</p><p>To use DeepSeek, Gemini or GLM, test them in a client designed to select multiple providers, or use the <a href="/vibe-coders">separate model-call workflow</a> while retaining your host agent. That workflow calls another model for a subtask; it does not turn the other model into Claude or replace the active agent.</p>
+</section>
+<section class="content-section"><h2>Claude Code with OpenRouter or TrustedRouter</h2>
+<p>If you are moving from OpenRouter, use the new gateway's base URL, credential and catalog model ID together. Do not reuse an OpenRouter key on TrustedRouter. Compare actual route privacy, fees and required API features using <a href="/compare/openrouter">the gateway comparison</a>.</p><p>Before changing a team default, verify a short reply, streaming, a read-only tool call and a small edit with a test. Use a disposable project for the edit. A successful text response alone does not prove the complete coding workflow.</p>
+</section>
+<section class="content-section"><h2>Troubleshoot the first request</h2>
+<div class="model-table-wrap"><table data-reference-table><thead><tr><th scope="col">Symptom</th><th scope="col">Check</th></tr></thead><tbody><tr><td>Authentication fails</td><td>The key belongs to the selected gateway and the terminal passes it to Claude Code.</td></tr><tr><td>Model not found</td><td>Copy an exact available catalog ID rather than a display label.</td></tr><tr><td>Text works but tools fail</td><td>Check the client version and supported Messages features; reduce to one tool round trip.</td></tr><tr><td>Unexpected model or cost</td><td>Inspect the selected route, explicit model choice and fallback policy.</td></tr><tr><td>Privacy requirement cannot be met</td><td>Select an eligible route instead of silently lowering the requirement.</td></tr></tbody></table></div><p>For model selection, use the <a href="/best-llm-for-coding">coding evaluation guide</a>. For endpoint details and a smoke test, see <a href="/docs/agent-setup">agent setup</a>.</p>
+</section>
+<p class="microcopy">Documentation reviewed November 20, 2026. Model availability, client features and pricing can change. Selection advice is an evaluation framework, not a claimed benchmark result.</p>
+</article></div>
+{% include "public/_comparison_guide_links.html" %}
+{% endblock %}
