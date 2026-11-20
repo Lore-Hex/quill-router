@@ -35,7 +35,8 @@ def test_state_round_trips_and_only_unexpired_entries_are_active(tmp_path: Path)
 
 
 @pytest.mark.parametrize("body", [
-    "", "{", "[]", '{"quarantined": [{"slug": "x"}]}',
+    "", "{", "[]", '{"quarantined": [{"slug": "x"}]}', '{"quarantined": null}', '{"quarantined": 3}',
+    '{"quarantined": [1, true, "x"]}', '{"quarantined": {"slug": "x"}}',
     '{"quarantined": [{"slug": "x", "reason": "r", "until": "2026-11-21T00:00:00"}]}',  # naive time
 ])
 def test_unreadable_state_quarantines_nothing(tmp_path: Path, body: str) -> None:
@@ -243,6 +244,10 @@ def test_probes_run_without_the_refresh_jobs_credentials(monkeypatch: pytest.Mon
     assert quarantine._run_tests(["tests/x.py::t"]) is True
     assert "TOGETHER_API_KEY" not in seen["env"] and "GITHUB_ACTIONS" not in seen["env"]
     assert seen["env"]["TR_STORAGE_BACKEND"] == "memory"
+    # Not the job's home: its gcloud login and credential files stay out of reach.
+    import os
+    assert seen["env"]["HOME"] != os.environ.get("HOME")
+    assert seen["env"]["CLOUDSDK_CONFIG"].startswith(seen["env"]["HOME"])
     assert seen["command"][-2:] == ["--", "tests/x.py::t"]
     assert quarantine.PROBE_MARKERS in seen["command"]
 

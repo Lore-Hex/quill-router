@@ -62,7 +62,7 @@ MAX_PROBES = 40
 PROBE_TIMEOUT_SECONDS = 600
 # Environment the local probes keep. The refresh job's environment holds
 # every provider credential; the probes need none of it.
-PROBE_ENV_KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "UV_CACHE_DIR", "VIRTUAL_ENV")
+PROBE_ENV_KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "UV_CACHE_DIR")
 PROBE_MARKERS = "not provider_health and not proof_oracle"
 
 
@@ -85,13 +85,14 @@ def load_state(path: Path) -> list[Entry]:
     except (OSError, ValueError):
         return []
     entries: list[Entry] = []
-    for item in raw.get("quarantined", []) if isinstance(raw, dict) else []:
+    items = raw.get("quarantined") if isinstance(raw, dict) else None
+    for item in items if isinstance(items, list) else []:
         try:
             until = datetime.fromisoformat(item["until"])
             if until.tzinfo is None:
                 continue
             entries.append(Entry(str(item["slug"]), str(item["reason"]), until))
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             continue
     return entries
 
@@ -260,6 +261,16 @@ def _run_tests(tests: list[str]) -> bool:
     """Whether the tests fail on the working tree, run offline without secrets."""
     env = {name: os.environ[name] for name in PROBE_ENV_KEEP if name in os.environ}
     env["TR_STORAGE_BACKEND"] = "memory"
+    # A fresh home and gcloud configuration: the refresh job's gcloud login
+    # and any credential file in the real home stay out of reach. uv keeps
+    # its package cache, which holds no credential.
+    home = tempfile.mkdtemp(prefix="quarantine-probe-home-")
+    real_home = env.get("HOME", "")
+    if real_home:
+        env.setdefault("UV_CACHE_DIR", str(Path(real_home) / ".cache" / "uv"))
+    env["HOME"] = home
+    env["CLOUDSDK_CONFIG"] = str(Path(home) / "gcloud")
+    env["XDG_CONFIG_HOME"] = str(Path(home) / ".config")
     command = ["uv", "run", "--frozen", "pytest", "-q", "-p", "no:cacheprovider",
                "-m", PROBE_MARKERS, "--", *tests]
     try:
@@ -267,6 +278,8 @@ def _run_tests(tests: list[str]) -> bool:
                                 timeout=PROBE_TIMEOUT_SECONDS, check=False)
     except subprocess.TimeoutExpired:
         return True
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
     return result.returncode != 0
 
 
