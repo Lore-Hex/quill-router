@@ -342,7 +342,8 @@ locals {
   # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
   # section 8.2): a lease needs effective trust tier 3 (1 since 2026-11-13,
   # with the lower tiers' allowances below), a tier-3 workspace's
-  # allowance is $1,000 and a lease leaves at least $20 of the balance, in
+  # allowance is $1,000 and a lease leaves at least $20 of the balance ($2
+  # since 2026-11-20, at the floor below), in
   # microdollars. The startup script passes each as -required-tier,
   # -allowance and -floor (8af87998a and later take all three). A reset
   # alone keeps the unit's old arguments: each node takes them one at a
@@ -354,11 +355,38 @@ locals {
   # customer's, whose switch is off, so it takes today's path and cannot be
   # refused at the tier. Step 4: over the leases kept (seven days), the
   # largest lease under $4 and the lease spend far under a quarter of the
-  # allowance; a lease tops up at most $10. Rollback: remove the three
-  # and take each node the same way, which restores the release's defaults.
+  # allowance; a lease tops up at most $10. Rollback: each value written
+  # back as it was and each node taken the same way. Never remove an
+  # attribute to go back: a node without one runs the release's default,
+  # which for the floor is none and for the allowance bounds nothing.
   fastpath_required_tier = "1"
   fastpath_allowance     = "1000000000"
-  fastpath_floor         = "20000000"
+  # The floor, $2 since 2026-11-20 ($20 before; the design's (b), amended
+  # that day). It is the headroom a new lease must leave outside leases for
+  # the same workspace's synchronous requests, not a fraud control: the
+  # required tier and the allowances are. A lease is taken whole or not at
+  # all: the node's lease check refuses it unless the headroom is at least
+  # the floor plus the whole amount asked, and an ask is about a minute of
+  # the shard's spend, at least $0.01 and at most $10, so at $20 no balance
+  # under about $20 was ever leased. Read on 2026-11-20
+  # over seven days: of the workspaces at tier 1 or above left out for their
+  # balance alone, 55 had traffic, about 20% of all requests, most of it
+  # from balances under $5; the largest ordinary hold each could make (its
+  # largest prompt and 16,384 output tokens at its models' highest credit
+  # rates) was at most $0.50 for 51 of them and above $2 for one. A
+  # synchronous hold above the headroom left, while leases hold the rest, is
+  # answered 503 with Retry-After (TR_FASTPATH_LEASE_HEADROOM_503), which
+  # the client may retry: nothing is admitted or charged wrongly.
+  # Applying this changes the instances' metadata only. A node takes the
+  # value when its unit starts again, one node at a time, the other
+  # serving, by fastpath-deploy.md's "Lowering the floor", and until both
+  # have, a lease is checked at whichever floor its owner runs. The enabler's
+  # join and leave balances come down only after both nodes run it
+  # (tests/test_fastpath_enabler_deploy.py holds the order). The way back
+  # is "20000000" written here again, by reverting the change that lowered
+  # it, after the enabler's balances are raised; never the attribute
+  # removed, which would leave no floor at all.
+  fastpath_floor = "2000000"
   # The lower tiers' allowances (docs/design/fast-admission-widening.md
   # (b)), in microdollars, each at most the tier above's: $250 for tier 2
   # (paid, owner identity approved) and $100 for tier 1 (paid, identity not

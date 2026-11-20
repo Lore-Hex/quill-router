@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from tests.test_fastpath_p1 import _command_flags, _source_at, _unit_flags
-from trusted_router import catalog
+from trusted_router import authorize_candidates, catalog
 from trusted_router.pricing import _flat_tier
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,16 +30,20 @@ _MONEY_ATTRIBUTES = ("fastpath-required-tier", "fastpath-allowance", "fastpath-f
 _TIER_ATTRIBUTES = {"fastpath-allowance-tier2": "allowance-tier2", "fastpath-allowance-tier1": "allowance-tier1"}
 
 # WS0's values (tier 3 only), which the deploy runbook's money settings
-# section names; the tier-3 allowance and the floor are unchanged since.
+# section names; the tier-3 allowance is unchanged since.
 WS0_REQUIRED_TIER = 3
 ALLOWANCE = 1_000_000_000
-FLOOR = 20_000_000
+WS0_FLOOR = 20_000_000
 # Today's: the required tier lowered to 1, with the lower tiers' allowances
-# (2026-11-12), which the runbook's "Lowering the required tier" names.
+# (2026-11-12), which the runbook's "Lowering the required tier" names, and
+# the floor lowered to $2 (2026-11-20), which its "Lowering the floor" does.
 REQUIRED_TIER = 1
 ALLOWANCE_TIER2 = 250_000_000
 ALLOWANCE_TIER1 = 100_000_000
-# A hold's output budget that the floor must leave room for four times over.
+FLOOR = 2_000_000
+# A hold's output budget, which the floor must leave room for once:
+# authorize_candidates.HOLD_OUTPUT_TOKENS, the most output a catalog
+# request's credit hold prices.
 HOLD_OUTPUT_TOKENS = 16_384
 
 
@@ -107,7 +111,7 @@ def test_the_tier_allowances_pass_only_when_set_and_not_zero() -> None:
     the unit's order."""
     assert _flags(**dict.fromkeys(_TIER_ATTRIBUTES, "0")) == []
     assert _flags(**{"fastpath-required-tier": "3", "fastpath-allowance": str(ALLOWANCE),
-                     "fastpath-floor": str(FLOOR), **dict.fromkeys(_TIER_ATTRIBUTES, "0")}) == [
+                     "fastpath-floor": str(WS0_FLOOR), **dict.fromkeys(_TIER_ATTRIBUTES, "0")}) == [
         "-required-tier", "3", "-allowance", "1000000000", "-floor", "20000000"]
     assert _flags(**{"fastpath-allowance": str(ALLOWANCE), "fastpath-allowance-tier2": "100000000",
                      "fastpath-allowance-tier1": "25000000"}) == [
@@ -171,20 +175,31 @@ def test_terraform_sets_the_tier_allowances_with_a_release_that_takes_them() -> 
         "fastpath-floor": str(FLOOR),
         "fastpath-allowance-tier2": str(ALLOWANCE_TIER2),
         "fastpath-allowance-tier1": str(ALLOWANCE_TIER1),
-    }) == ["-required-tier", "1", "-allowance", "1000000000", "-floor", "20000000",
+    }) == ["-required-tier", "1", "-allowance", "1000000000", "-floor", "2000000",
            "-allowance-tier2", "250000000", "-allowance-tier1", "100000000"]
+
+
+def test_terraform_sets_the_floor_this_file_holds_to_the_catalog() -> None:
+    """Terraform's floor is the one the catalog check below is made against,
+    written once and as an attribute of every node, so a floor changed in
+    Terraform alone fails here and the check is read again."""
+    tf = (ROOT / "infra" / "fastpath.tf").read_text(encoding="utf-8")
+    assert re.findall(r'^\s*fastpath_floor\s*=\s*"(\d+)"$', tf, re.M) == [str(FLOOR)]
+    assert re.search(r"^\s*fastpath-floor\s*=\s*local\.fastpath_floor$", tf, re.M)
+    assert FLOOR < WS0_FLOOR
 
 
 def test_the_attributes_render_the_flags_in_the_units_order() -> None:
     assert _flags(**{
         "fastpath-required-tier": str(WS0_REQUIRED_TIER),
         "fastpath-allowance": str(ALLOWANCE),
-        "fastpath-floor": str(FLOOR),
+        "fastpath-floor": str(WS0_FLOOR),
     }) == ["-required-tier", "3", "-allowance", "1000000000", "-floor", "20000000"]
     assert _flags(**{"fastpath-required-tier": "3"}) == ["-required-tier", "3"]
     assert _flags(**{"fastpath-allowance": str(ALLOWANCE)}) == ["-allowance", "1000000000"]
     assert _flags(**{"fastpath-floor": "0"}) == ["-floor", "0"]
-    assert _flags(**{"fastpath-floor": str(FLOOR)}) == ["-floor", "20000000"]
+    assert _flags(**{"fastpath-floor": str(WS0_FLOOR)}) == ["-floor", "20000000"]
+    assert _flags(**{"fastpath-floor": str(FLOOR)}) == ["-floor", "2000000"]
 
 
 def test_the_script_holds_each_value_to_the_releases_bounds() -> None:
@@ -232,22 +247,25 @@ def test_the_money_flags_wait_for_metadata_and_a_release_that_takes_them() -> No
 
 
 def test_the_runbook_names_the_designs_values_in_order() -> None:
-    """The deploy runbook's steps carry the values this file holds the
-    floor to, and run in the design's order: the provisioner's bypass,
-    ready for each pilot workspace, LeaseReserved, then the re-pin."""
+    """The deploy runbook's steps carry WS0's values, the design's, and run
+    in the design's order: the provisioner's bypass, ready for each pilot
+    workspace, LeaseReserved, then the re-pin. Its way back writes values
+    back and never removes an attribute, which would leave no floor."""
     runbook = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
     section = runbook[runbook.index("## The money settings"):]
     section = section[:section.index("\n## ")]
     order = [section.index(step) for step in (
         "--tier 3 --identity-bypass --apply",
-        f"ready $WS -required-tier {WS0_REQUIRED_TIER} -floor {FLOOR}",
+        f"ready $WS -required-tier {WS0_REQUIRED_TIER} -floor {WS0_FLOOR}",
         "LeaseReserved",
         f'fastpath-required-tier = "{WS0_REQUIRED_TIER}"',
     )]
     assert order == sorted(order), order
-    assert f'fastpath-allowance = "{ALLOWANCE}"' in section and f'fastpath-floor = "{FLOOR}"' in section
-    assert f"-required-tier {WS0_REQUIRED_TIER} -allowance {ALLOWANCE} -floor {FLOOR}" in section
+    assert f'fastpath-allowance = "{ALLOWANCE}"' in section and f'fastpath-floor = "{WS0_FLOOR}"' in section
+    assert f"-required-tier {WS0_REQUIRED_TIER} -allowance {ALLOWANCE} -floor {WS0_FLOOR}" in section
     assert str(ALLOWANCE // 4) in section
+    assert "The way back is the attributes removed" not in section
+    assert "never an attribute removed" in " ".join(section.split())
 
 
 def _highest_credit_output_rate() -> tuple[int, str]:
@@ -268,22 +286,41 @@ def _highest_credit_output_rate() -> tuple[int, str]:
     return best
 
 
-def _hold_passes_a_quarter_of_the_floor(rate: int) -> bool:
-    """Whether HOLD_OUTPUT_TOKENS at the rate cost more than a quarter of
-    the floor, exactly: tokens x rate / 1e6 > floor / 4."""
-    return HOLD_OUTPUT_TOKENS * rate * 4 > FLOOR * 1_000_000
+def _hold_passes_the_floor(rate: int) -> bool:
+    """Whether HOLD_OUTPUT_TOKENS at the rate cost more than the floor,
+    exactly: tokens x rate / 1e6 > floor."""
+    return HOLD_OUTPUT_TOKENS * rate > FLOOR * 1_000_000
 
 
-def test_the_floor_is_four_holds_at_the_highest_credit_output_rate() -> None:
+def test_the_largest_ordinary_hold_fits_under_the_floor() -> None:
     """A hold of 16,384 output tokens at the highest customer output rate on
-    any credit endpoint fits in a quarter of the $20 floor. A price that
-    passes it fails here, so a rise is reviewed, not absorbed."""
+    any credit endpoint, the largest ordinary hold's output, fits under the
+    $2 floor once: about $1.30 on 2026-11-20. A price that passes the floor
+    fails here, so a rise is reviewed, not absorbed.
+
+    Until 2026-11-20 the rule was four such holds under a $20 floor. At four
+    the floor could not go under $5.19, and the workspaces a lower floor is
+    for held under $5: of the 55 at tier 1 or above with traffic that their
+    balance alone kept out, the largest hold any could make was at most
+    $0.50 for 51. What the multiple bought is small: a synchronous hold
+    above the headroom a grant left, met while leases hold the rest, is
+    answered 503 with Retry-After (TR_FASTPATH_LEASE_HEADROOM_503), which a
+    workspace near the end of its credit may retry. Nothing is admitted
+    that should not be and nothing is charged twice. One hold is kept so
+    that the largest ordinary request still fits beside a workspace's
+    leases, and no floor covers a hold's prompt, which only the context
+    window bounds (widening design (b))."""
+    assert HOLD_OUTPUT_TOKENS == authorize_candidates.HOLD_OUTPUT_TOKENS
     rate, endpoint = _highest_credit_output_rate()
     assert rate > 0 and endpoint
-    assert not _hold_passes_a_quarter_of_the_floor(rate), (
+    assert not _hold_passes_the_floor(rate), (
         f"{endpoint} bills {rate} microdollars per million output tokens: {HOLD_OUTPUT_TOKENS} of them cost "
-        f"{HOLD_OUTPUT_TOKENS * rate // 1_000_000} microdollars, past a quarter of the floor {FLOOR}"
+        f"{HOLD_OUTPUT_TOKENS * rate // 1_000_000} microdollars, past the floor {FLOOR}"
     )
+    # The edge, exactly, at the multiple of one: the highest rate whose hold
+    # fits, and a microdollar per million tokens more, whose hold does not.
+    at_the_floor = FLOOR * 1_000_000 // HOLD_OUTPUT_TOKENS
+    assert not _hold_passes_the_floor(at_the_floor) and _hold_passes_the_floor(at_the_floor + 1)
 
 
 def test_the_floor_check_counts_a_current_credit_endpoint_and_nothing_retired(monkeypatch: Any) -> None:
@@ -295,7 +332,7 @@ def test_the_floor_check_counts_a_current_credit_endpoint_and_nothing_retired(mo
     rate, endpoint_id = baseline
     base = catalog.MODEL_ENDPOINTS[endpoint_id]
     priced = 633_000_000
-    assert _hold_passes_a_quarter_of_the_floor(priced)
+    assert _hold_passes_the_floor(priced)
 
     def endpoint_of(**fields: Any) -> Any:
         return replace(
@@ -319,7 +356,7 @@ def test_the_floor_check_counts_a_current_credit_endpoint_and_nothing_retired(mo
                           upstream_id="floor-test-current", usage_type="Credits")
     monkeypatch.setitem(catalog.MODEL_ENDPOINTS, current.id, current)
     assert _highest_credit_output_rate() == (priced, current.id)
-    assert _hold_passes_a_quarter_of_the_floor(_highest_credit_output_rate()[0])
+    assert _hold_passes_the_floor(_highest_credit_output_rate()[0])
     assert rate < priced
 
 
@@ -337,6 +374,28 @@ def test_the_runbook_lowers_the_tier_with_todays_values() -> None:
              f"-allowance-tier2 {ALLOWANCE_TIER2} -allowance-tier1 {ALLOWANCE_TIER1}")
     order = [section.index(step) for step in (flags, ready, "TR_FASTPATH_ENABLER_REQUIRED_TIER")]
     assert order == sorted(order), order
+
+
+def test_the_runbook_lowers_the_floor_on_the_nodes_before_the_enabler() -> None:
+    """The runbook's floor section names the floor Terraform sets, in order:
+    the local, each node's arguments read back, readiness at the new floor,
+    and only then the enabler's balances. Its way back raises the enabler's
+    balances first and then writes the earlier floor out, since a removed
+    attribute is no floor at all."""
+    runbook = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
+    section = runbook[runbook.index("## Lowering the floor"):]
+    section = section[:section.index("\n## ")]
+    flags = (f"-required-tier {REQUIRED_TIER} -allowance {ALLOWANCE} -floor {FLOOR} "
+             f"-allowance-tier2 {ALLOWANCE_TIER2} -allowance-tier1 {ALLOWANCE_TIER1} -fleet-audit")
+    ready = (f"ready $WS -required-tier {REQUIRED_TIER} -floor {FLOOR} "
+             f"-allowance-tier2 {ALLOWANCE_TIER2} -allowance-tier1 {ALLOWANCE_TIER1}")
+    order = [section.index(step) for step in (
+        f'fastpath_floor = "{FLOOR}"', flags, ready, "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO",
+    )]
+    assert order == sorted(order), order
+    back = section[section.index("The way back"):]
+    assert back.index("TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO") < back.index(f'fastpath_floor = "{WS0_FLOOR}"')
+    assert "no floor at all" in " ".join(back.split())
 
 
 def test_the_lower_allowances_reach_the_fleet_on_new_nodes() -> None:
