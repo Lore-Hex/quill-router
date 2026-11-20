@@ -714,7 +714,9 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     return ok
 
 
-async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONResponse:
+async def _handle_support_inquiry(
+    settings: Settings, request: Request, *, verified_account_email: str | None = None,
+) -> JSONResponse:
     """Send support mail without logging submitted free text or identity fields."""
     try:
         payload = await request.json()
@@ -751,6 +753,8 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
 
     text_body = (
         "New TrustedRouter support request\n\n"
+        f"Verified account email: {verified_account_email or '(not verified for this request)'}\n\n"
+        "Submitted contact details:\n"
         f"Category:   {category_label}\n"
         f"Name:       {name}\n"
         f"Email:      {email}\n"

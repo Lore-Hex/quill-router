@@ -1037,7 +1037,7 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert "TrustedRouter support" in support.text
     assert "help@trustedrouter.com" in support.text
     assert 'id="support-inquiry"' in support.text
-    assert 'fetch("/support/inquiry"' in support.text
+    assert 'fetch(signedIn ? "/console/support/inquiry" : "/support/inquiry"' in support.text
     assert '<option value="feature">Feature request</option>' in support.text
     assert '<option value="model">Model request</option>' in support.text
     assert 'href="/support?category=feature#support-inquiry"' in support.text
