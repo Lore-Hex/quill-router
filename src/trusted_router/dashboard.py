@@ -117,6 +117,12 @@ from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
+from trusted_router.page_headers import (
+    page_header_icon,
+    page_header_short_line,
+    page_header_short_title,
+    page_header_title_size,
+)
 from trusted_router.provider_branding import (
     PROVIDER_BRANDS,
     provider_homepage_url,
@@ -2705,6 +2711,10 @@ def _env() -> Environment:
     env.filters["provider_link_rel"] = provider_link_rel
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["page_header_icon"] = page_header_icon
+    env.globals["page_header_short_line"] = page_header_short_line
+    env.globals["page_header_title_size"] = page_header_title_size
+    env.globals["page_header_short_title"] = page_header_short_title
     env.globals["fortanix_launch_offer"] = fortanix_launch_offer
     env.globals["launch_offer_facts"] = launch_offer_facts
     env.globals["decide_url"] = decide_url
