@@ -487,7 +487,7 @@ OPENROUTER_PAID_LANDING_VARIANTS: dict[str, OpenRouterLandingVariant] = {
             "Keep one OpenAI-compatible interface while models and providers "
             "change underneath it. Pick an exact model or let TrustedRouter route."
         ),
-        cta="Create my API key",
+        cta="Start building",
         secondary_label="Browse models",
         secondary_href="/models",
         microcopy="Keep your SDK. Switch models with one string.",
@@ -1776,7 +1776,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Is there a free OpenRouter alternative?",
-                "TrustedRouter gives new accounts 1 million free tokens with no card required, and there's no subscription after that: you pay provider prices plus a 5.5% fee on text and embedding models. Teams spending more than $100 a month on LLMs can request migration credits, granted by approval.",
+                "TrustedRouter gives new accounts up to 1 million free tokens with no card required, and there's no subscription after that: you pay provider prices plus a 5.5% fee on text and embedding models. Teams spending more than $100 a month on LLMs can request migration credits, granted by approval.",
             ),
             (
                 "What is the best OpenRouter alternative for Cursor, Claude Code or Codex?",
@@ -2366,13 +2366,13 @@ def _hero_model_name(model: Model) -> str:
 
 
 # The catalog hero (model, comparison and provider pages) gives one
-# page-specific reason to sign up. "Free to start" rests on the starter credit,
+# page-specific reason to sign up. "1 million free tokens" is the starter credit,
 # which only pays for Credits routes, so a page without one says "Bring your
 # own key" and makes no credit claim. Keep the sentences free of "no", "not"
 # and "never": public-page copy avoids them.
-HERO_FREE_TO_START = "Free to start"
+HERO_FREE_TO_START = "1 million free tokens"
 HERO_BRING_YOUR_OWN_KEY = "Bring your own key"
-_HERO_STARTER = "Starter credit covers your first requests, then one key "
+_HERO_STARTER = "One key "
 
 
 def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
@@ -2624,7 +2624,7 @@ def _comparison_hero(
     if left_funded or right_funded:
         funded, byok = (left_name, right_name) if left_funded else (right_name, left_name)
         return HERO_BRING_YOUR_OWN_KEY, (
-            f"One key routes both. Starter credit covers your first {funded} requests, "
+            f"One key routes both. Your free tokens cover your first {funded} requests, "
             f"while {byok} runs on your own provider key. {switch}"
         )
     return HERO_BRING_YOUR_OWN_KEY, (
@@ -2649,6 +2649,33 @@ def _provider_hero(provider: Provider, credits_model_count: int) -> tuple[str, s
             "with one base URL, usage records and spend limits."
         )
     return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
+
+
+def _provider_hero_figures(
+    provider: Provider,
+    view: dict[str, object],
+    served_models: list[dict[str, object]],
+) -> list[tuple[str, str]]:
+    """The small facts row in the provider hero. Only facts that hold for the
+    provider are shown; a missing fact is left out, never shown as a "no"."""
+    figures: list[tuple[str, str]] = []
+    if served_models:
+        figures.append(("Models", str(len(served_models))))
+    prices = [
+        cast(int, row["min_prompt_microdollars"])
+        for row in served_models
+        # A zero price is a model billed another way (per image, per second)
+        # or a free route; "from $0" would misdescribe the provider.
+        if row.get("min_prompt_microdollars")
+    ]
+    if prices:
+        figures.append(("Input / 1M from", _short_dollars(min(prices), digits=2)))
+    if provider.slug != "trustedrouter":
+        if view.get("zero_data_retention_scope_label") == "All routes":
+            figures.append(("Zero retention", "All routes"))
+        if view.get("confidential_inference_verified"):
+            figures.append(("Confidential", "Verified"))
+    return figures
 
 
 def _seo_comparison_title(left: Model, right: Model) -> str:
@@ -4531,6 +4558,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
     served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
     provider_faq_items = _provider_faq_items(provider, model_count=len(served_models))
     hero_label, hero_pitch = _provider_hero(provider, len(served_models))
+    provider_view = _provider_detail_view(provider, served_models=served_models)
     return (
         _env()
         .get_template("public/provider_detail.html")
@@ -4547,7 +4575,9 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             ),
             og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
             og_image_alt=f"{provider.name} models and routes on TrustedRouter",
-            provider=_provider_detail_view(provider, served_models=served_models),
+            provider=provider_view,
+            provider_figures=_provider_hero_figures(provider, provider_view, served_models),
+            free_hero=hero_label == HERO_FREE_TO_START,
             served_models=served_models,
             measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
             faq_items=provider_faq_items,
@@ -4935,6 +4965,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
             heading=f"{model.name} {label}",
             hero_label=hero_label,
             hero_pitch=hero_pitch,
+            free_hero=hero_label == HERO_FREE_TO_START,
             description=_model_section_description(model, section),
             model=model_view,
             section=section,
@@ -7388,6 +7419,15 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                     "prompt_price_microdollars_per_million_tokens",
                 ),
                 "cached_prompt_price": "Not applicable" if speech or transcription or model.id == FETCH_MODEL_ID else _cached_prompt_price_range(endpoints),
+                # Token-priced chat rows only: the provider hero's "from" price.
+                "min_prompt_microdollars": (
+                    None
+                    if model.id == FETCH_MODEL_ID
+                    or model.supports_embeddings
+                    or transcription
+                    or (speech and not speech.token_billed)
+                    else min(endpoint.prompt_price_microdollars_per_million_tokens for endpoint in endpoints)
+                ),
                 "completion_price": "Included" if transcription or (speech and not speech.token_billed) or model.id == FETCH_MODEL_ID else _endpoint_price_range(
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",

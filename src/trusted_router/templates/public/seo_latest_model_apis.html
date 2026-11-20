@@ -7,7 +7,7 @@
     <h2>Try the models developers are evaluating now.</h2>
     <p>Kimi K3, GLM 5.2, DeepSeek V4, and Gemini 3.6 Flash share one OpenAI-compatible endpoint. Create one key, keep one SDK, and compare them on your own prompts.</p>
     <p><button class="btn primary" type="button" data-action="open-signin">Create key and run a model</button> <a class="btn" href="/choose">Compare the catalog</a></p>
-    <p class="microcopy">New email signups receive starter credit. No card required.</p>
+    {% from "_free_tokens.html" import free_tokens_line %}<p class="hero-free-note">{{ free_tokens_line() }}</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Switch the model string</span><span>OpenAI SDK</span></div>
@@ -73,7 +73,7 @@ response = client.chat.completions.create(
     <span>Run Kimi K3, GLM 5.2, DeepSeek V4, or Gemini 3.6 Flash with the SDK you already use.</span>
   </div>
   <div class="cta-band-actions">
-    <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
+    <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
   </div>
   <span class="microcopy">No card required.</span>
 </section>
