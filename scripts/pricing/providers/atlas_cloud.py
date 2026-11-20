@@ -108,12 +108,23 @@ def atlas_model_price(row: dict[str, Any]) -> ModelPrice | None:
     has_cached = override.get("input_cache_read") is not None
     cached = dollars_per_token_to_micro_per_m(override.get("input_cache_read")) if has_cached else None
     flat = base.tiers[0]
+    if flat.prompt_micro_per_m == 0 and flat.completion_micro_per_m == 0:
+        # Discovery drops an all-zero headline as free, which would disable a
+        # route whose long-context tier is paid.
+        raise RuntimeError(f"atlas-cloud: {model}: zero base rate with a paid override")
+    # Read the base cache rate from Atlas's own field: the shared parser's
+    # fallback chain turns an invalid value, or a numeric 0, into "absent".
+    base_cached: int | None = None
+    if pricing.get("input_cache_read") is not None:
+        base_cached = dollars_per_token_to_micro_per_m(pricing["input_cache_read"])
+        if base_cached is None:
+            raise RuntimeError(f"atlas-cloud: {model}: invalid cached-input base rate")
     if has_cached and cached is None:
         raise RuntimeError(f"atlas-cloud: {model}: invalid cached-input override")
-    if (cached is None) != (flat.prompt_cached_micro_per_m is None):
+    if (cached is None) != (base_cached is None):
         raise RuntimeError(f"atlas-cloud: {model}: cached input priced on only one tier")
     if prompt < flat.prompt_micro_per_m or completion < flat.completion_micro_per_m or (
-        cached is not None and cached < flat.prompt_cached_micro_per_m
+        cached is not None and base_cached is not None and cached < base_cached
     ):
         raise RuntimeError(f"atlas-cloud: {model}: long-context rate below the base rate")
     return ModelPrice(tiers=[
@@ -121,7 +132,7 @@ def atlas_model_price(row: dict[str, Any]) -> ModelPrice | None:
             max_prompt_tokens=threshold,
             prompt_micro_per_m=flat.prompt_micro_per_m,
             completion_micro_per_m=flat.completion_micro_per_m,
-            prompt_cached_micro_per_m=flat.prompt_cached_micro_per_m,
+            prompt_cached_micro_per_m=base_cached,
         ),
         PriceTier(
             max_prompt_tokens=None,

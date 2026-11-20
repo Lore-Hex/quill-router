@@ -71,6 +71,34 @@ def test_an_override_without_a_valid_base_holds_the_provider(extra):
         atlas_cloud.atlas_model_price(row)
 
 
+def test_a_zero_base_with_a_paid_override_holds_the_provider():
+    # Discovery would drop the all-zero headline as free and disable the route.
+    row = _row("openai/gpt-6-sol-codex")
+    row["pricing"]["prompt"] = "0"
+    row["pricing"]["completion"] = "0"
+    with pytest.raises(RuntimeError, match="zero base rate"):
+        atlas_cloud.atlas_model_price(row)
+
+
+@pytest.mark.parametrize("base_cache", ["n/a", "", "-0.0000001"])
+def test_an_invalid_base_cache_rate_holds_the_provider(base_cache):
+    # The shared parser would read these as "no cache rate" and, with the
+    # override's cache rate removed too, bill cached tokens at the input rate.
+    row = _row("openai/gpt-6-sol-codex")
+    row["pricing"]["input_cache_read"] = base_cache
+    del row["pricing"]["overrides"][0]["input_cache_read"]
+    with pytest.raises(RuntimeError, match="invalid cached-input base rate"):
+        atlas_cloud.atlas_model_price(row)
+
+
+def test_a_numeric_zero_cache_rate_stays_zero_on_both_tiers():
+    row = _row("openai/gpt-6-sol-codex")
+    row["pricing"]["input_cache_read"] = 0
+    row["pricing"]["overrides"][0]["input_cache_read"] = 0
+    tiers = atlas_cloud.atlas_model_price(row).tiers
+    assert [tier.prompt_cached_micro_per_m for tier in tiers] == [0, 0]
+
+
 def test_a_row_without_overrides_and_without_a_base_is_skipped_as_before():
     row = _row("deepseek-ai/deepseek-v4-flash")
     del row["pricing"]["prompt"]
