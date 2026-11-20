@@ -360,27 +360,10 @@ function applyAuthAwareChrome(): void {
   });
 }
 
-// Sign-up button A/B test (signup_cta_v1). The server sets the readable
-// tr_cta cookie once per visitor and logs the exposure; the HTML is the same
-// for both cells, so only the label changes here. The line under the button
-// stays the same in both cells.
-const SIGNUP_CTA_DEFAULT = "Start building";
-const SIGNUP_CTA_FREE = "Start for free";
-
-function signupCtaCell(): string {
-  const match = document.cookie.match(/(?:^|;\s*)tr_cta=([a-z_]+)/);
-  return match ? match[1] : "";
-}
-
-function applySignupCtaCell(): void {
-  if (signupCtaCell() !== "start_for_free") return;
-  document.querySelectorAll<HTMLElement>('[data-action="open-signin"], [data-homepage-cta]').forEach((el) => {
-    if ((el.textContent || "").trim() === SIGNUP_CTA_DEFAULT) el.textContent = SIGNUP_CTA_FREE;
-  });
-}
+// The sign-up button test label (signup_cta_v1) is set before first paint by
+// templates/_signup_cta_head.html, not here.
 
 function init(): void {
-  applySignupCtaCell();
   applyAuthAwareChrome();
   applySigninTarget();
   trackEngagedLanding();
