@@ -117,19 +117,28 @@ def experiment_query():
 """
 
 
+SIGNUP_CTA_EVENTS = ('acquisition.signup_cta_assigned', 'acquisition.sign_in_opened',
+                     'acquisition.signup_completed', 'acquisition.first_successful_api_call')
+
+
 def signup_cta_query():
     """Sign-up button A/B test (signup_cta_v1): one row per button label.
 
-    A visitor's cell comes from their one signup_cta_assigned event (cell in
-    `cta`); their sign-in opens, sign-ups and first calls join on the same
-    anonymous fingerprint. It reads the raw rows because the shared EVENTS
-    projection drops `cta`, so the dashboard filters do not apply to it."""
-    return f"""['{DATASET}']
-| where event in ('acquisition.signup_cta_assigned','acquisition.sign_in_opened','acquisition.signup_completed','acquisition.first_successful_api_call')
-| summarize Building=countif(event=='acquisition.signup_cta_assigned' and cta=='signup_cta_v1:start_building'), Free=countif(event=='acquisition.signup_cta_assigned' and cta=='signup_cta_v1:start_for_free'), Opened=countif(event=='acquisition.sign_in_opened'), Signed_up=countif(event=='acquisition.signup_completed'), Called=countif(event=='acquisition.first_successful_api_call') by anonymous_fingerprint
+    A visitor's cell comes from their signup_cta_assigned event (cell in `cta`,
+    logged when a page first serves them a button in the test). Sign-in opens,
+    sign-ups and first calls join on the same anonymous fingerprint and count
+    only when they happen at or after that assignment. `cta` is a grouping key
+    because the column may not exist yet (see EVENTS); the dashboard filters
+    apply."""
+    events = ', '.join(repr(e) for e in SIGNUP_CTA_EVENTS)
+    return f"""['{DATASET}'] | where event in ({events})
+| extend cta=tostring(column_ifexists('cta',''))
+| summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, landing_path) by event_id, cta
+"""+FILTER+"""| extend at=todatetime(_time), assigned=(event=='acquisition.signup_cta_assigned')
+| summarize Assigned_at=minif(at, assigned), Free=countif(assigned and cta=='signup_cta_v1:start_for_free'), Building=countif(assigned and cta=='signup_cta_v1:start_building'), Opened_at=maxif(at, event=='acquisition.sign_in_opened'), Signed_up_at=maxif(at, event=='acquisition.signup_completed'), Called_at=maxif(at, event=='acquisition.first_successful_api_call') by anonymous_fingerprint
 | extend Button=iff(Free>0,'Start for free',iff(Building>0,'Start building',''))
 | where isnotempty(Button)
-| summarize Visitors=count(), Opened_signup=countif(Opened>0), Signed_up=countif(Signed_up>0), First_API_call=countif(Called>0) by Button
+| summarize Visitors=count(), Opened_signup=countif(Opened_at>=Assigned_at), Signed_up=countif(Signed_up_at>=Assigned_at), First_API_call=countif(Called_at>=Assigned_at) by Button
 | extend Open_pct=round(100.0*Opened_signup/Visitors,2), Signup_pct=round(100.0*Signed_up/Visitors,2), First_call_pct=round(100.0*First_API_call/Visitors,2)
 | sort by Button asc
 """

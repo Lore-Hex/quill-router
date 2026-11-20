@@ -102,7 +102,9 @@ test("model page quickstart switches tabs and folds the prompt on phones", async
   await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
 });
 
-test("a model with no Credits route makes no credit claim", async ({ page }) => {
+test("a model with no Credits route makes no credit claim", async ({ page, context, baseURL }) => {
+  // It also stays out of the sign-up button test: the free cell keeps "Start building".
+  await context.addCookies([{ name: "tr_cta", value: "start_for_free", url: baseURL }]);
   // Pick the first bring-your-own-key model from the live catalog instead of
   // pinning an id, so the test survives a provider funding that route later.
   // TrustedRouter's own pools and orchestration models route through other
@@ -121,6 +123,8 @@ test("a model with no Credits route makes no credit claim", async ({ page }) => 
   await expect(hero.locator(".md-lead")).toContainText("Bring your own provider key");
   await expect(hero.locator(".md-no-card")).toHaveCount(0);
   await expect(page.locator(".md-no-card")).toHaveCount(0);
+  await expect(page.locator("[data-signup-cta]")).toHaveCount(0);
+  await expect(hero.locator("[data-catalog-cta]")).toHaveText("Start building");
   await hero.locator("[data-catalog-cta]").click();
   await expect(page.locator("#signinModal")).toHaveAttribute("data-mode", "signup");
 });
@@ -148,4 +152,14 @@ test("free-cell label is set without dashboard.js", async ({ page, context, base
   await expect(page.locator("#top .hero [data-signup-cta]")).toHaveText("Start for free");
   await page.goto("/providers/tinfoil");
   await expect(page.locator(".pd-hero [data-signup-cta]")).toHaveText("Start for free");
+});
+
+// A first visit has no cookie: the response sets it, and the label on that
+// same page already matches the cell.
+test("first visit gets a cell and the matching label", async ({ page, context }) => {
+  await context.clearCookies();
+  await page.goto("/providers/tinfoil");
+  const cell = (await context.cookies()).find(c => c.name === "tr_cta");
+  expect(["start_building", "start_for_free"]).toContain(cell && cell.value);
+  await expect(page.locator(".pd-hero [data-signup-cta]")).toHaveText(cell.value === "start_for_free" ? "Start for free" : "Start building");
 });
