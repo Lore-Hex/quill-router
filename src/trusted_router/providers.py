@@ -45,7 +45,6 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "abliterate": (("ABLITERATE_API_KEY",), "https://abliterate.ai/api/v1"),
     "abliteration": (("ABLITERATION_API_KEY",), "https://api.abliteration.ai/v1"),
     "meta": (("META_API_KEY",), "https://api.meta.ai/v1"),
-    "openrouter": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
     "cerebras": (("CEREBRAS_API_KEY",), "https://api.cerebras.ai/v1"),
     "deepseek": (("DEEPSEEK_API_KEY",), "https://api.deepseek.com"),
