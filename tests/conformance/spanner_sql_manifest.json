@@ -2846,7 +2846,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:1": {
-      "fingerprint": "6e12304cea3fc1e48d3f9d7510c423dc901e8911b849d8d9fbaca5f70c4118fa",
+      "fingerprint": "64f18e0330ceff6f71740633e964d6472c26b0d2216d251e11f8cb6c34c96d57",
       "scenarios": [
         {
           "bindings": {},
@@ -2857,7 +2857,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:2": {
-      "fingerprint": "6e12304cea3fc1e48d3f9d7510c423dc901e8911b849d8d9fbaca5f70c4118fa",
+      "fingerprint": "64f18e0330ceff6f71740633e964d6472c26b0d2216d251e11f8cb6c34c96d57",
       "scenarios": [
         {
           "bindings": {},
@@ -2874,7 +2874,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:3": {
-      "fingerprint": "6e12304cea3fc1e48d3f9d7510c423dc901e8911b849d8d9fbaca5f70c4118fa",
+      "fingerprint": "64f18e0330ceff6f71740633e964d6472c26b0d2216d251e11f8cb6c34c96d57",
       "scenarios": [
         {
           "bindings": {},
@@ -5222,7 +5222,7 @@
     "storage_gcp_shadow_observation:ObservationStore.snapshot_query": "3ba01c37908cd1a6cb113ac4bb5302961cc207a7d9b0c1ea8a4405999e1988b5",
     "storage_gcp_shadow_v2_export:open_page": "9f96c5fe6fb1fa21be6fe58d56f4c8dffed10a376870b43a940086010b0773e1",
     "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
-    "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "6e12304cea3fc1e48d3f9d7510c423dc901e8911b849d8d9fbaca5f70c4118fa",
+    "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "64f18e0330ceff6f71740633e964d6472c26b0d2216d251e11f8cb6c34c96d57",
     "storage_gcp_stage_d_policy:advance_stage_d_policy_watermark.txn": "f8692a3d8d16677e42220de0981b22ff0872777f5a80f690e3a91236d0874df8",
     "storage_gcp_stage_d_policy:get_stage_d_policy_watermark": "8a15b7d23674a778d0b3a0267e0a8ed3080f8e99d94c926c79bbcee32f13839d",
     "storage_gcp_strict_budget:reserve_strict_key": "e04729c0c164a2da9412ae17ed4709c8f5bcda80e84d4eb82750a5741dbced62",

@@ -759,7 +759,14 @@ def _heartbeat_gateway_sync(
             body,
             settings,
             canonical_body=canonical_body,
-            running=int(result.running_micro),
+            # The owner refuses a running charge above the hold's ceiling,
+            # the cap (fastpath owner runningBound), and reaps at most the
+            # cap. The row's transaction lets a prompt above its estimate
+            # raise the cap by that excess (storage_gcp_stage_d.
+            # stage_d_ceiling_microdollars); the owner, which never sees the
+            # prompt, takes the charge clamped to the cap, which is what its
+            # reap would charge either way.
+            running=min(int(result.running_micro), int(result.cap_micro)),
         )
     return {
         "accepted": True,
