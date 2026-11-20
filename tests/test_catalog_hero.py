@@ -361,3 +361,11 @@ def test_free_tokens_note_uses_the_shared_line(client: TestClient) -> None:
     assert f'<span class="cta-note hero-free-note">{line}</span>' in blog_html
     for html in (models_html, blog_html):
         assert "microcopy cta-note" not in html
+
+
+@pytest.mark.parametrize("path", ["/terms", "/privacy", "/careers", "/legal", "/legal/dpa", "/page-that-is-missing"])
+def test_legal_careers_and_error_pages_carry_no_offer_line(client: TestClient, path: str) -> None:
+    html = client.get(path).text
+    assert 'class="hero-free-note"' not in html and "free&nbsp;tokens" not in html
+    # Pages that sell the product keep it.
+    assert 'class="hero-free-note"' in client.get("/pricing").text
