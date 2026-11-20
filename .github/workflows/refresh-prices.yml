@@ -268,6 +268,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "TR_PRICE_QUARANTINE=/tmp/price-quarantine.json" >> "$GITHUB_ENV"
+          # One evaluation time for the whole run: every step holds the same set.
+          echo "TR_PRICE_QUARANTINE_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"
           printf '{"quarantined": []}\n' > /tmp/price-quarantine.json
           since=$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)
           runs=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow refresh-prices.yml \

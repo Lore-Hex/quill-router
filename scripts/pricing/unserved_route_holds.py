@@ -178,11 +178,17 @@ def apply_unserved_route_holds(
             notes.append(f"{provider}: no provider manifest; not held")
 
     manifests: list[tuple[Path, dict[str, Any], bool]] = []
+    frozen_held = 0
     for path in sorted(manifest_dir.glob("*.json")):
+        raw = _load(path)
         if path.stem in frozen:
             notes.append(f"{path.stem}: quarantined; manifest left as published")
+            # Its holds still count against the global route cap.
+            frozen_held += sum(
+                1 for row in (raw or {}).get("models", [])
+                if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+            )
             continue
-        raw = _load(path)
         if raw is None:
             continue
         lifted = _lift_expired(raw["models"], now=now)
@@ -226,7 +232,7 @@ def apply_unserved_route_holds(
     # Held routes stop being probed and drop out of the evidence, so the
     # route cap must count the holds already in place: otherwise it bounds
     # only each hourly run and a rolling problem accumulates without limit.
-    held_total = sum(
+    held_total = frozen_held + sum(
         1
         for _, raw, _ in manifests
         for row in raw["models"]

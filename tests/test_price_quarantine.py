@@ -52,6 +52,11 @@ def test_quarantine_is_read_from_the_named_state_only(tmp_path: Path, monkeypatc
     monkeypatch.setenv("TR_PRICE_QUARANTINE", str(path))
     assert quarantine.quarantined_providers(NOW) == {"gmi": "fixture reason"}
     assert quarantine.quarantined_providers(NOW + timedelta(hours=2)) == {}
+    # Within a run, activity is judged at the time the workflow loaded it.
+    monkeypatch.setenv("TR_PRICE_QUARANTINE_AT", NOW.isoformat())
+    assert quarantine.quarantined_providers() == {"gmi": "fixture reason"}
+    monkeypatch.setenv("TR_PRICE_QUARANTINE_AT", (NOW + timedelta(hours=2)).isoformat())
+    assert quarantine.quarantined_providers() == {}
 
 
 # --- culprit search ---------------------------------------------------------
@@ -291,6 +296,7 @@ def test_the_refresh_reads_the_quarantine_before_any_provider_refresh() -> None:
     assert run.index('echo "TR_PRICE_QUARANTINE=/tmp/price-quarantine.json" >> "$GITHUB_ENV"') < run.index("gh run")
     assert "printf '{\"quarantined\": []}\\n' > /tmp/price-quarantine.json" in run
     assert "-n price-quarantine" in run and ".databaseId != ${GITHUB_RUN_ID}" in run
+    assert 'echo "TR_PRICE_QUARANTINE_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"' in run
 
 
 def test_quarantine_runs_only_after_a_failed_snapshot_ci_and_resaves_state() -> None:

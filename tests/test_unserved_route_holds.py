@@ -705,3 +705,16 @@ def test_quarantined_manifests_come_from_the_runs_quarantine(
     assert holds.quarantined_manifests() == frozenset({"phala", "no_such_module"})
     monkeypatch.delenv("TR_PRICE_QUARANTINE")
     assert holds.quarantined_manifests() == frozenset()
+
+
+def test_a_quarantined_manifests_holds_still_count_against_the_route_cap(tmp_path: Path) -> None:
+    held = [_row(f"m/{i}", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+                 **{holds.HELD_AT_FIELD: "2026-11-11T06:00:00Z"}) for i in range(holds.MAX_ROUTES)]
+    _manifest(tmp_path, "phala", held)
+    other = _manifest(tmp_path, "makora", [_row(f"x/{i}") for i in range(10)])
+    before = other.read_bytes()
+    evidence = holds.parse_evidence(_payload([("makora", "x/1")]), now=NOW)
+    notes = holds.apply_unserved_route_holds(evidence, manifest_dir=tmp_path, now=NOW,
+                                             frozen=frozenset({"phala"}))
+    assert other.read_bytes() == before
+    assert any("route cap; holding nothing new" in note for note in notes)

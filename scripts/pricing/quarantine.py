@@ -112,11 +112,24 @@ def dump_state(path: Path, entries: Iterable[Entry]) -> None:
 
 
 def quarantined_providers(now: datetime | None = None) -> dict[str, str]:
-    """Active quarantine named by TR_PRICE_QUARANTINE: slug -> reason."""
+    """Active quarantine named by TR_PRICE_QUARANTINE: slug -> reason.
+
+    Activity is judged at TR_PRICE_QUARANTINE_AT, the time the workflow
+    loaded the state, so every step of one run sees the same quarantine even
+    when an entry expires mid-run (refresh.py discarding a provider's fresh
+    data and a later step then editing its committed manifest).
+    """
     path = os.environ.get("TR_PRICE_QUARANTINE", "")
     if not path:
         return {}
-    return {e.slug: e.reason for e in active(load_state(Path(path)), now or datetime.now(UTC))}
+    if now is None:
+        try:
+            now = datetime.fromisoformat(os.environ["TR_PRICE_QUARANTINE_AT"])
+        except (KeyError, ValueError):
+            now = datetime.now(UTC)
+        if now.tzinfo is None:
+            now = datetime.now(UTC)
+    return {e.slug: e.reason for e in active(load_state(Path(path)), now)}
 
 
 # --- culprit search ---------------------------------------------------------
