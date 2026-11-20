@@ -396,8 +396,10 @@
     const list = document.createElement("ol");
     const entries = headings.map((heading) => {
       const section = heading.closest(".content-section");
-      const target = section && content.contains(section) && section.querySelector("h2") === heading
-        ? section : heading;
+      const topic = heading.querySelector("a.docs-topic-link");
+      const explicitTarget = topic && document.getElementById(topic.hash.slice(1));
+      const target = explicitTarget || (section && content.contains(section) && section.querySelector("h2") === heading
+        ? section : heading);
       if (!target.id) {
         const base = heading.textContent.trim().toLowerCase().normalize("NFKD")
           .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-")

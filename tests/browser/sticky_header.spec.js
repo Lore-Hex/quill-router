@@ -69,8 +69,19 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
         return target && target.getBoundingClientRect().top >= document.querySelector(".trnav").getBoundingClientRect().bottom;
       })).toBe(true);
     } else {
-      await expect(toc).toBeHidden();
+      await expect(toc.locator("summary")).toBeVisible();
+      await toc.locator("summary").click();
     }
+    const permalink = "#deidentification";
+    await toc.locator(`a[href="${permalink}"]`).click();
+    await expect(page).toHaveURL(/\/docs#deidentification$/);
+    await page.reload();
+    const heading = page.locator("#deidentification h2");
+    await expect(heading.locator("a")).toHaveAttribute("href", permalink);
+    await expect.poll(() => heading.evaluate(el => {
+      const y = el.getBoundingClientRect().top;
+      return y >= document.querySelector(".trnav").getBoundingClientRect().bottom && y < innerHeight;
+    })).toBe(true);
   });
 }
 
