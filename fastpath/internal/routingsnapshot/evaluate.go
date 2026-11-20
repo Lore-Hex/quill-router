@@ -19,10 +19,14 @@ import (
 //
 // Evaluate assumes the inputs authorize_candidates takes besides these are
 // absent: a custom or user-provided model, a partner billing mode, an
-// additional cost reservation, a video resolution or allowed providers, and
-// the process-local health re-rank. The caller's cohort predicate must pass
+// additional cost reservation, a video resolution or allowed providers,
+// workspace BYOK policy beyond usable-key presence, and the process-local
+// health re-rank. The caller's cohort predicate must pass
 // any request that has one to Python (the edge's shadow, requestOf).
 type Request struct {
+	// HostedDecide enables exact catalog decision-only models on route decide.
+	// It defaults to false; callers must opt in after their cohort checks.
+	HostedDecide bool
 	// Model and Models are the body's model strings as sent; Models is nil
 	// when the body has no models array.
 	Model  string
@@ -256,9 +260,14 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	// and every string in a list of strings; provider values and extra fields
 	// it keeps as sent. Go strips only the space: anything else Python or
 	// pydantic might strip is not printable ASCII, which goes to Python.
+	rawModel := req.Model
 	req, ok := schemaStrip(req)
 	if !ok {
 		return pass("a string field that is not printable ASCII, or one the authorize schema refuses")
+	}
+	hostedDecide, result, ok := s.hostedDecideArm(req, rawModel)
+	if !ok {
+		return result
 	}
 	if req.RouteType != nil && !chatArmRouteTypes[*req.RouteType] {
 		return pass("route type %q", *req.RouteType)
@@ -294,7 +303,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		tier = strings.ToLower(*req.ServiceTier)
 	}
 
-	ids, result, ok := s.requestedModelIDs(req, &p)
+	ids, result, ok := s.requestedModelIDs(req, &p, hostedDecide)
 	if !ok {
 		return result
 	}
@@ -312,12 +321,12 @@ func (s *Snapshot) Evaluate(req Request) Result {
 		p.only = ordered
 	}
 
-	// chat_route_endpoint_candidates.
+	// Chat and hosted decide share endpoint collection, filters and ordering.
 	var all []int
 	seen := map[int]bool{}
 	for _, id := range ids {
 		m := s.models[id]
-		if m == nil || !m.SupportsChat {
+		if m == nil || (!hostedDecide && !m.SupportsChat) {
 			return refused(400, "model_not_supported", "Model does not support chat completions: "+id)
 		}
 		for _, i := range s.endpointsByModel[id] {
@@ -329,6 +338,8 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	}
 	filtered := s.keep(all, p, at)
 	if len(filtered) == 0 {
+		// On route decide capability parameters are empty, so this returns
+		// the fixed provider-filter refusal, as the decide resolver does.
 		return s.noRouteError(all, p, at)
 	}
 	candidates, ok := s.sortCandidates(filtered, p, at, req.At.UnixMicro(), prompt, outputTokens)
@@ -339,23 +350,25 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	// candidates_fitting_context: the model and host windows hold the prompt
 	// and the completion; an unknown window (0) holds anything. When none
 	// does, OpenAI's context-length error names the largest window.
-	needed := prompt + completionTokens
-	fitting := candidates[:0:0]
-	window := int64(0)
-	for _, i := range candidates {
-		length := s.models[s.Endpoints[i].ModelID].ContextLength
-		if host := s.Endpoints[i].ContextLength; host > 0 && (length == 0 || host < length) {
-			length = host
+	if !hostedDecide {
+		needed := prompt + completionTokens
+		fitting := candidates[:0:0]
+		window := int64(0)
+		for _, i := range candidates {
+			length := s.models[s.Endpoints[i].ModelID].ContextLength
+			if host := s.Endpoints[i].ContextLength; host > 0 && (length == 0 || host < length) {
+				length = host
+			}
+			window = max(window, length)
+			if length <= 0 || needed <= length {
+				fitting = append(fitting, i)
+			}
 		}
-		window = max(window, length)
-		if length <= 0 || needed <= length {
-			fitting = append(fitting, i)
+		if len(fitting) == 0 {
+			return contextLengthError(window, prompt, completionTokens)
 		}
+		candidates = fitting
 	}
-	if len(fitting) == 0 {
-		return contextLengthError(window, prompt, completionTokens)
-	}
-	candidates = fitting
 
 	// resolve_candidates: reachable from the request's gateway region.
 	regional := candidates[:0:0]
@@ -439,6 +452,37 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	return out
 }
 
+// hostedDecideArm admits only the spelling and route whose Python resolver
+// is fully described by the snapshot. Rewritten decision ids need the
+// gateway's prepare_model check, before provider parsing.
+func (s *Snapshot) hostedDecideArm(req Request, rawModel string) (bool, Result, bool) {
+	if !req.HostedDecide {
+		return false, Result{}, true
+	}
+	base := req.Model
+	for _, variant := range s.Aliases.VariantSuffixes {
+		if strings.HasSuffix(base, variant.Suffix) {
+			base = strings.TrimSuffix(base, variant.Suffix)
+			break
+		}
+	}
+	id, ok := s.resolve(base)
+	m := s.models[id]
+	if !ok || m == nil || m.SupportsChat || !m.SupportsDecide {
+		return false, Result{}, true
+	}
+	if rawModel != id {
+		return false, pass("hosted decide requires an exact catalog id"), false
+	}
+	if req.RouteType == nil || *req.RouteType != "decide" {
+		return false, pass("hosted decide requires route_type decide"), false
+	}
+	if len(req.Models) != 0 {
+		return false, pass("hosted decide with a nonempty models array"), false
+	}
+	return true, Result{}, true
+}
+
 // available is catalog_is_current(at) and not provider_model_retired(at).
 func (s *Snapshot) available(e *Endpoint, at int64) bool {
 	return (e.CatalogValidUntil == nil || at < *e.CatalogValidUntil) &&
@@ -506,10 +550,11 @@ func (s *Snapshot) resolve(id string) (string, bool) {
 	return id, true
 }
 
-// requestedModelIDs is routing._requested_model_ids for requests that name
-// no requested model (meta model, pool, privacy alias, decision model): the
-// canonical ids in order, and the variant suffix's sort.
-func (s *Snapshot) requestedModelIDs(req Request, p *prefs) ([]string, Result, bool) {
+// requestedModelIDs is routing._requested_model_ids for catalog models,
+// excluding meta models, pools and privacy aliases: the canonical ids in
+// order, and the variant suffix's sort. hostedDecide is
+// true only after hostedDecideArm admitted the exact primary model.
+func (s *Snapshot) requestedModelIDs(req Request, p *prefs, hostedDecide bool) ([]string, Result, bool) {
 	var ids []string
 	sortOverride := ""
 	take := func(raw string) (Result, bool) {
@@ -557,7 +602,9 @@ func (s *Snapshot) requestedModelIDs(req Request, p *prefs) ([]string, Result, b
 	// plan_route dispatches on the requested model before any suffix or
 	// alias: an embeddings-only or decision-only model takes another arm.
 	if m := s.models[route]; m != nil && !m.SupportsChat && (m.SupportsEmbeddings || m.SupportsDecide) {
-		return nil, pass("model %q is served by the embeddings or decide resolver", route), false
+		if !hostedDecide {
+			return nil, pass("model %q is served by the embeddings or decide resolver", route), false
+		}
 	}
 	if _, chain := s.DecisionChains[route]; chain {
 		return nil, pass("decision chain %q", route), false
@@ -1150,6 +1197,10 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, 
 			}
 			k.sort = h.Prompt + h.Completion
 		case "latency", "throughput":
+			if model := s.models[e.ModelID]; model != nil && !model.SupportsChat {
+				k.sort = s.rank(e.Provider, p.sort, nowUS)
+				break
+			}
 			if s.rank(e.Provider, p.sort, nowUS) >= 1000 {
 				k.health = 1
 			}
@@ -1168,6 +1219,9 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, 
 				if v, ok := s.Ranking.ModelProviderPreference[e.ModelID][e.Provider]; ok {
 					k.sort = v
 				}
+			}
+			if model := s.models[e.ModelID]; model != nil && !model.SupportsChat {
+				break
 			}
 			if k.sort < 0 || k.sort >= 1000 {
 				k.health = k.sort

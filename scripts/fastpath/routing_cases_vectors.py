@@ -28,7 +28,7 @@ import importlib.util
 import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -99,9 +99,9 @@ def _instant(stamp: str) -> dt.datetime:
 
 
 @contextmanager
-def fixture_catalog(at: dt.datetime) -> Iterator[None]:
+def fixture_catalog(at: dt.datetime, *, hosted_decide: bool = False) -> Iterator[None]:
     """Install the snapshot fixture's catalog and policy; pin every clock to ``at``."""
-    inputs = _snapshot_vectors().fixture_inputs()
+    inputs = _snapshot_vectors().fixture_inputs(hosted_decide=hosted_decide)
     aliases = inputs.aliases
     saved_models, saved_endpoints = dict(MODELS), dict(MODEL_ENDPOINTS)
 
@@ -167,12 +167,15 @@ def _authorize_body(request: dict[str, Any]) -> tuple[GatewayAuthorizeRequest, d
     return body, {name: dumped[name] for name in ROUTING_FIELDS if name in dumped}
 
 
-def evaluate(case: dict[str, Any]) -> dict[str, Any]:
+def evaluate(
+    case: dict[str, Any], *, hosted_decide: bool = False,
+    prepare_model: Callable[[GatewayAuthorizeRequest], None] | None = None,
+) -> dict[str, Any]:
     from trusted_router.routes.internal.gateway import _stage_d_eligibility_reason
 
     request = case["request"]
     at = _instant(case["at"])
-    with fixture_catalog(at):
+    with fixture_catalog(at, hosted_decide=hosted_decide):
         settings = Settings(
             environment="test", regions=",".join(REGIONS), primary_region=PRIMARY_REGION,
             auto_model_order="",
@@ -184,6 +187,8 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
             routing_body=routing_body, body_region=body.region,
         )
         try:
+            if prepare_model is not None:
+                prepare_model(body)
             plan = plan_route(candidate_request, settings, region=region)
             # As the gateway calls it: the prompt estimate, and max_tokens (or
             # max_completion_tokens) as the completion the window must hold.
@@ -227,6 +232,7 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
         return {
             "candidates": [endpoint.id for _model, endpoint in outcome.candidates],
             "model_estimate": outcome.model_estimate,
+            **({"model_reservation": outcome.model_reservation} if hosted_decide else {}),
             "service_tier": outcome.service_tier,
             "stage_d_reason": stage_d_reason,
         }
