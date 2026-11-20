@@ -220,7 +220,25 @@ locals {
   #   - #2717: the uncensored GLM 5.3 Flash identifier resolves.
   # The other fastpath/ changes are test vectors and #2722's test race fix.
   # Off switch: pin 541e687bf again. One node at a time.
-  fastpath_release        = "65e856777546e0d0c67f0c8d049c3d54ba63c443"
+  # 918a77457: the nodes learn hosted decision models, with nothing switched
+  # on. Go changes since 65e856777:
+  #   - #2794: the evaluator resolves an exact hosted decision model on
+  #     route decide (no context-window step, as Python's decide resolver).
+  #   - #2799: the edge reads two optional policy members,
+  #     fastpath_edge_hosted_decide and async_settle.decide_route, and with
+  #     the first may answer a hosted decide authorize itself, async-v1
+  #     additions included. Neither member is published while
+  #     TR_FASTPATH_EDGE_HOSTED_DECIDE is "off" (scripts/deploy/rollout.sh),
+  #     so on this release every hosted decide still passes to Python, now
+  #     as hosted_decide.off or hosted_decide.async_unknown where it was
+  #     evaluate.pass, and one without the async-v1 header is compared by
+  #     the shadow. A decide authorize that needs a ticket and has no valid
+  #     nonce passes to Python.
+  # This release must be on every node before that switch leaves "off": a
+  # node on an older release refuses a policy that carries a member it does
+  # not know. The other fastpath/ changes are test vectors.
+  # Off switch: pin 65e856777 again. One node at a time.
+  fastpath_release        = "918a774572d7c0622589d41d06b927578fda7b27"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -261,6 +279,10 @@ locals {
     "65e856777546e0d0c67f0c8d049c3d54ba63c443" = {
       fastpath   = "ecd6ce47f1b32c40bbbc6fce69c95d552296b6f234fb8e4841c259de3eb68ade"
       sha256sums = "2110c83771dce88b4bb57d600dba1679716534edbd60497ea3d067666f23510b"
+    }
+    "918a774572d7c0622589d41d06b927578fda7b27" = {
+      fastpath   = "8774fc70672d83270d91189b80c8e45a003213b7323142b0332b5825761cc2a5"
+      sha256sums = "f45c1526706a96d6beed5c6c6bcf577da120cce3fc66b9032c80188dce80ab67"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
