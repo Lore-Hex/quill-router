@@ -222,8 +222,8 @@ def verify_fleet(state: Path, targets: list[str], project: str) -> None:
     for region in targets:
         service = json.loads((state / f"{region}.service.json").read_text())
         name = active_revision(service)
-        # Two warm instances at concurrency 8 give 16 slots / 2-4s = 4-8 calls/s.
-        # One gives 2-4 calls/s, below the current 5.28/s aggregate arrival rate.
+        # Two warm instances at concurrency 16 give 32 slots / 2-4s = 8-16 calls/s.
+        # One gives 4-8 calls/s, near the current 5.28/s aggregate arrival rate.
         # Two buffer the first seconds while autoscaling; not a full capacity SLA.
         if region != targets[0] and int(service["metadata"]["annotations"].get(
                 "run.googleapis.com/minScale", 0)) < 2:

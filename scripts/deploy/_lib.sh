@@ -38,15 +38,17 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Service-level minimums stay allocated across staged revision traffic shifts.
 # All three primary regions need burst headroom before autoscaling catches up.
 # Europe exhausted its two warm instances during the 2026-09-27 billing burst;
-# match the US service floor (64 request slots at concurrency 8).
+# match the US service floor (128 request slots at concurrency 16).
 # Keep concurrency and billing admission bounded, but prewarm capacity.
 # São Paulo is the gateway billing failover: keep two instances even without
-# a local attested enclave. gateway_edge.sh requires two warm failover instances (16 slots at concurrency 8).
+# a local attested enclave. gateway_edge.sh requires two warm failover instances (32 slots at concurrency 16).
 TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=8,southamerica-east1=2}"
 # Billing handlers are small, synchronous Spanner operations dispatched to a
-# worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
-# cold-starting dozens of instances for a short burst.
-TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"
+# worker thread. Measured 2026-11-20 at concurrency 8 over 7 days: worst-hour
+# p99 memory 25% of 2 GiB and CPU 43% of one vCPU (us-central1), so 16 fits
+# and autoscaling still adds instances under CPU pressure. Requests share the
+# SDK's multiplexed session, so this does not need TR_SPANNER_POOL_SIZE to match.
+TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-16}"
 # Autoscaling ceiling per revision for the main service. Cloud Run's default (100)
 # was never a sizing decision; the async-settle §5 fleet budget projects Spanner
 # load from the declared maximum router count (two revisions can overlap during a
@@ -54,7 +56,7 @@ TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"
 # instances per primary region, 16 only while a rollout overlaps, and the measured
 # admission-read CPU (SPANNER_SYS, 1.6 ms/exec) fits under the 45% Spanner alarm
 # only up to a declared cap of 24 per region. 12 keeps 1.5x the warm floor
-# (96 request slots at concurrency 8) for bursts.
+# (192 request slots at concurrency 16) for bursts.
 TR_CLOUD_RUN_MAX_INSTANCES="${TR_CLOUD_RUN_MAX_INSTANCES:-12}"
 TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"
 # Cloud Run memory limit. 2Gi as of 2026-05-10.

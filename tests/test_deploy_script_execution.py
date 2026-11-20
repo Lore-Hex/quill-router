@@ -752,7 +752,7 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     assert deploy[deploy.index("--min-instances") + 1] == "2"
     # Declared autoscaling ceiling per revision (async-settle §5 fleet budget caps = 2x).
     assert deploy[deploy.index("--max-instances") + 1] == "12"
-    assert deploy[deploy.index("--concurrency") + 1] == "8"
+    assert deploy[deploy.index("--concurrency") + 1] == "16"
     assert deploy.count("--no-cpu-throttling") == 1
     assert "--cpu-throttling" not in deploy
     assert "--no-traffic" in deploy
