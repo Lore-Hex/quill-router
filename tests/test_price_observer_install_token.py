@@ -73,8 +73,13 @@ def install(tmp_path):
     (bin_dir / "gcloud").chmod(0o755)
     log = tmp_path / "gcloud.log"
 
-    def run(mode: str) -> tuple[subprocess.CompletedProcess[str], str]:
+    def run(mode: str, *, stale_installer: bool = False,
+            ) -> tuple[subprocess.CompletedProcess[str], str]:
         log.write_text("")
+        installer = repo / FILES[0]
+        committed = git(repo, "show", f"{sha}:{FILES[0]}") + "\n"
+        # A stale working tree: an installer other than the one at $sha.
+        installer.write_text(committed + ("# older installer\n" if stale_installer else ""))
         env = {
             "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
             "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "FAKE_GCLOUD_LOG": str(log),
@@ -112,6 +117,26 @@ def test_installer_copies_the_token_and_never_prints_it(install):
     assert "/github-dispatch.token " in scp
     assert "sudo bash" in calls
     assert TOKEN not in result.stdout + result.stderr + calls
+
+
+def test_installer_from_another_commit_refuses_before_any_gcloud(install) -> None:
+    """2026-11-19: an older installer installed a newer unit without its token."""
+    result, calls = install("valid", stale_installer=True)
+    assert result.returncode == 2
+    assert "differs from scripts/ops/install_price_refresh_observer.sh at" in result.stderr
+    assert "git worktree add --detach" in result.stderr
+    assert "Nothing was installed." in result.stderr
+    # No secret read, copy, ssh or cleanup: gcloud was never invoked.
+    assert calls == ""
+
+
+def test_installer_matching_the_target_commit_proceeds(install) -> None:
+    result, calls = install("valid")
+    assert result.returncode == 0, result.stderr
+    assert "differs from" not in result.stderr
+    assert "--secret=trustedrouter-sentry-dsn" in calls
+    assert "compute scp" in calls
+    assert "sudo bash" in calls
 
 
 def test_installer_installs_the_token_where_the_service_loads_it():

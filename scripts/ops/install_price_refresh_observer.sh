@@ -12,9 +12,19 @@ if [[ ${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-} == *tr-ops-local.json ]]; then
   echo "Use a separately authenticated deployment identity, not the read-only ops key." >&2
   exit 2
 fi
-root=$(git rev-parse --show-toplevel)
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+root=$(git -C "$(dirname "$self")" rev-parse --show-toplevel)
 cd "$root"
 git merge-base --is-ancestor "$sha" origin/main
+# The unit, timer and script come from $sha, but this file runs from the
+# working tree. On 2026-11-19 an older installer installed a newer unit that
+# needs a credential it never copied. Refuse unless this is $sha's installer.
+if ! git show "$sha:scripts/ops/install_price_refresh_observer.sh" | cmp -s - "$self"; then
+  echo "This installer differs from scripts/ops/install_price_refresh_observer.sh at $sha. Nothing was installed." >&2
+  echo "Run the installer from the target commit:" >&2
+  echo "  git worktree add --detach /tmp/tr-observer-$sha $sha && bash /tmp/tr-observer-$sha/scripts/ops/install_price_refresh_observer.sh $sha" >&2
+  exit 2
+fi
 tmp=$(mktemp -d)
 remote="/tmp/tr-price-observer-$(basename "$tmp")"
 ssh_args=(compute ssh "$host" --zone="$zone" --tunnel-through-iap --quiet)
