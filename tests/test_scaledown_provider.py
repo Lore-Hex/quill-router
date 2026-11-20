@@ -107,9 +107,9 @@ def test_live_2026_11_19_per_modality_pricing_bills_the_text_rate():
     assert scaledown._input_price(LLMS_2026_11_19, SITE_2026_11_19) == ModelPrice(50_000, 0)
     cheaper_image = LLMS_2026_11_19.replace("- Image: $0.15", "- Image: $0.01")
     assert scaledown._input_price(cheaper_image, SITE_2026_11_19) == ModelPrice(50_000, 0)
-    assert scaledown._input_price(
-        LLMS_2026_11_19.replace("- Image: $0.15\n", ""), SITE_2026_11_19
-    ) == ModelPrice(50_000, 0)
+    # The Image rate is validated, and must appear exactly once in llms.txt.
+    with pytest.raises(RuntimeError, match="an Image rate must appear exactly once"):
+        scaledown._input_price(LLMS_2026_11_19.replace("- Image: $0.15\n", ""), SITE_2026_11_19)
     # The bundle is read only for the output-is-free FAQ, never for coverage.
     assert scaledown._input_price(LLMS_2026_11_19, FAQ) == ModelPrice(50_000, 0)
 
@@ -318,6 +318,79 @@ def test_formatted_pricing_headings_count_as_duplicates_in_both_layouts(heading)
     legacy = PRICE + "\n" + heading + "\nPublic API: $0.01 per 1M tokens\n"
     with pytest.raises(RuntimeError, match="ambiguous public pricing sections"):
         scaledown._input_price(legacy, FAQ)
+
+
+# Verbatim lines 27, 69 and 136 of the live llms.txt (2026-11-19): currency
+# and "per" without a per-token unit. They must not count as rates.
+LIVE_MARKETING = (
+    "## Models\n\nReal impact: A workflow costing $10/day drops to $4/day at 60% compression\n\n"
+    "## Benchmarks\n\nScaleDown is benchmarked against frontier models from OpenAI, Anthropic, Google, "
+    "xAI, DeepSeek, and Qwen on public benchmarks: FinanceBench (Compress, F1), QMSum (Summarize, "
+    "ROUGE-L), CUAD (Extract, F1), and CLINC OOS (Classify, accuracy). Cost is per 1,000 calls; "
+    "latency is mean response time per call.\n\n"
+)
+LIVE_BLOG_LINE = (
+    "  Classify vs. GPT-5.4 Mini/Nano on intent classification for LLM routing: 90.53% accuracy "
+    "at $0.0008, beating both baselines on accuracy and cost.\n"
+)
+LIVE_WITH_MARKETING = LIVE_MARKETING + LLMS_2026_11_19 + "\n## Blog\n\n" + LIVE_BLOG_LINE
+
+
+def test_live_marketing_lines_still_price():
+    assert "$10/day" in LIVE_WITH_MARKETING and "$0.0008" in LIVE_WITH_MARKETING
+    assert scaledown._input_price(LIVE_WITH_MARKETING, SITE_2026_11_19) == ModelPrice(50_000, 0)
+
+
+# Round-4 review: heading forms the section scanner does not recognise.
+HIDDEN_HEADINGS = ["Pricing\nfor Public API\n---", "> Pricing\n> ---", "- ## Pricing", "## Pr&#105;cing"]
+
+
+@pytest.mark.parametrize("heading", HIDDEN_HEADINGS)
+@pytest.mark.parametrize(
+    "block",
+    [
+        "Public API, per 1M input tokens:\n- Text: $0.20\n- Flat pricing, no tiers or seats\n",
+        "- Text: $0.20\n",
+        "> Public API, per 1M input tokens:\n> - Text: $0.20\n",
+        "&#45; Text: $0.20\n",
+        "Public API: $0.20 per 1M tokens\n",
+    ],
+    ids=["full-block", "text-only", "blockquoted-block", "entity-encoded-text", "legacy-rate-line"],
+)
+def test_second_price_block_behind_hidden_heading_fails_closed(heading, block):
+    for source in (LIVE_WITH_MARKETING + "\n" + heading + "\n\n" + block,
+                   heading + "\n\n" + block + "\n" + LIVE_WITH_MARKETING):
+        with pytest.raises(RuntimeError):
+            scaledown._input_price(source, SITE_2026_11_19)
+
+
+@pytest.mark.parametrize("heading", HIDDEN_HEADINGS)
+@pytest.mark.parametrize(
+    "block", ["Public API: $0.20 per 1M tokens\n", "> Public API: $0.20 per 1M tokens\n", "- Text: $0.20 per 1M tokens\n"]
+)
+def test_second_price_block_behind_hidden_heading_fails_closed_in_legacy_layout(heading, block):
+    with pytest.raises(RuntimeError):
+        scaledown._input_price(PRICE + "\n" + heading + "\n" + block, FAQ)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Batch API: $0.01 per 1K input tokens",
+        "> Summarize costs $0.01 per 1K input tokens",
+        "Summarize is $0.04 per 1,000.",
+        "Classify: 0.01/1M",
+        "Cheaper per million input tokens than any frontier model",
+        "Extract: 2 &#162; per 1,000 input tokens",
+    ],
+)
+def test_any_other_per_token_unit_in_the_document_fails_closed(line):
+    for at in ("start", "end"):
+        source = line + "\n\n" + LIVE_WITH_MARKETING if at == "start" else LIVE_WITH_MARKETING + "\n" + line + "\n"
+        with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+            scaledown._input_price(source, SITE_2026_11_19)
+    with pytest.raises(RuntimeError, match="per-token unit outside the single public rate line"):
+        scaledown._input_price(line + "\n\n" + PRICE, FAQ)
 
 
 def test_live_pricing_section_has_one_pricing_heading_and_ends_at_the_next_section():
