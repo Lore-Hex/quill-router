@@ -1,0 +1,45 @@
+name: Sync published notes
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-notes
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Lore-Hex/trustedrouter-blog
+          ref: main
+          path: source-notes
+          token: ${{ secrets.NOTES_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          sparse-checkout: posts
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install "markdown-it-py==4.2.0" "PyYAML==6.0.3"
+      - run: python scripts/notes/build.py source-notes/posts "$RUNNER_TEMP/notes-dist"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: published-notes
+          path: notes-output
+      - name: Publish changed documents
+        working-directory: notes-output
+        run: |
+          rsync -a --delete --exclude='.git' "$RUNNER_TEMP/notes-dist/" ./
+          git add -A
+          if ! git diff --cached --quiet; then
+            git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Refresh published TrustedRouter notes'
+            git push origin HEAD:published-notes
+          fi
