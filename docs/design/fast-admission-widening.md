@@ -5,7 +5,9 @@ Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
 since WS3, the required tier lowered to 1 with the lower tiers' allowances
 since 2026-11-13 ((b), amended), `max_rank` 100 and the $30 join balance
-since 2026-11-13. This is
+since 2026-11-13, and since 2026-11-20 the nodes' floor at $2, then the
+join balance at $3 and the leave balance at $2 with `max_rank` raised past
+the workspaces that could be eligible ((b), amended). This is
 the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
@@ -317,7 +319,17 @@ reconciler rather than at workspaces, the enabler raises
     leave balance no lower than it. Both hold at $30 and $5 over a $2
     floor, so the floor lands first, and neither would hold if the
     balances came down before it. $2 is still under the least auto-refill
-    threshold. Until that change the lines stay $30 and $5.
+    threshold. That change followed once both nodes ran the $2 floor: $3
+    and $2 in `scripts/deploy/fastpath_enabler_job.sh`. It raised
+    `max_rank` with them, past the workspaces that could then be eligible
+    (the enabler's report counted 39 eligible and 159 out for their
+    balance alone): the rank is by lifetime usage, so at 100 the smaller
+    of the newly eligible would have stayed out and, past the margin,
+    workspaces already on would have left for their rank. A workspace
+    that spends its credit down and buys more now leaves and joins once
+    a cycle. The way back is the pause, then both lines up again, the
+    leave line in steps small enough for the mass-disable guard (§5.3),
+    and only then the floor.
 
 ### (c) The exclusion set
 
@@ -335,7 +347,7 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
-| Unspent credit under $5 (under $30 to join; $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
+| Unspent credit under $2 (under $3 to join; $5 and $30 until 2026-11-20, $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
 | Deleted workspaces | enabler (the entity's deletion); edge `workspace.deleted` | |
 | BYOK candidates | request (`funding`; `candidates.byok`) | per request: the same workspace's credit requests stay in |
 | Non-credit funding: partner billing, custom or user-provided models, priced extras | request (`pricing`; `body.priced_extra`, `body.custom_model`) | |
@@ -958,7 +970,9 @@ counts from before it do not count.
    counted and each explained by a fact the enabler had not yet seen. (The
    owner does not count refused grants yet, so this is read from the
    enabler's reports and the edge's `owner.busy`; with the $30 join a
-   workspace spending below its last top-up can still meet the floor.)
+   workspace spending below its last top-up can still meet the floor, and
+   with the $3 join over the $2 floor, since 2026-11-20, one whose last
+   minute's spend is more than its credit above the floor does.)
 6. W3's ceilings: Spanner CPU, every subscription's backlog, pending work
    overdue, none crossed.
 7. The enabler: no `fastpath_enabler_mass_disable` or

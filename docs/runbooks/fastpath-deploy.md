@@ -809,7 +809,12 @@ In this order, each step done before the next:
    the join balance at least a dollar above it, the leave balance no lower
    than it. Lowered before the nodes, the enabler would turn on workspaces
    every grant still refuses, which costs each of their requests a
-   front door hop.
+   front door hop. The same change raises `TR_FASTPATH_ENABLER_MAX_RANK`
+   past the workspaces that become eligible: the rank is by lifetime
+   usage, and a rank short of them leaves the smaller ones out and, past
+   its margin, turns off workspaces already on. Read the enabler's next
+   reports: `eligible` and `enabled` should meet within a few runs, with
+   nothing under `would_disable` for `rank`.
 
 What to watch once the enabler's balances are down: the authorize 503s for
 headroom in leases (`trustedrouter_gateway_lease_headroom_503`,

@@ -3340,9 +3340,13 @@ def _deferred_expires_at(settings: Settings) -> str:
 
 
 #: The lease-headroom 503's message and wait (fastpath_lease_headroom_503).
-#: A lease's unused allocation goes back as its owner's holds settle, so the
-#: headroom comes back within the lease's horizon; the enclave's authorize
-#: retry reads Retry-After as the least wait between its attempts.
+#: A lease gives its unused allocation back only once it stops admitting
+#: (idle for ten minutes, an hour old, or its workspace turned off: the
+#: owner's TopUps, fastpath/internal/owner/shard.go), not as its holds
+#: settle. Before that the headroom comes back as the workspace's own
+#: synchronous holds settle or credit is added, so a retry may meet the
+#: same answer. The enclave's authorize retry reads Retry-After as the
+#: least wait between its attempts.
 LEASE_HEADROOM_MESSAGE = (
     "This workspace's credits are held by requests in flight; retry shortly."
 )
