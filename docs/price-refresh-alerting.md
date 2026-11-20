@@ -86,7 +86,20 @@ unchanged.
   run provisions `price-refresh-watchdog`; verify it exists when installing.
   The external observer runs on `tr-clickhouse-3`
   (`scripts/ops/install_price_refresh_observer.sh`); moving or rebuilding that
-  host means reinstalling it first.
+  host means reinstalling it first. Run the installer from a detached
+  worktree at the target SHA, so the installer matches the unit it installs:
+
+  ```bash
+  sha=<full SHA merged into origin/main>
+  git fetch origin
+  git worktree add --detach "/tmp/tr-observer-$sha" "$sha"
+  bash "/tmp/tr-observer-$sha/scripts/ops/install_price_refresh_observer.sh" "$sha"
+  git worktree remove "/tmp/tr-observer-$sha"
+  ```
+
+  The installer refuses to run, before any gcloud call, unless it is
+  byte-identical to its own version at that SHA (on 2026-11-19 an older
+  installer installed a newer unit without the credential it loads).
 
 The first observed failure sends immediately. Each error class sends at most
 once per six hours across runs. Recovery closes the GitHub monitoring issue
