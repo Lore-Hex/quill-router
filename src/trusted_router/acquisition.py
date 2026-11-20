@@ -33,7 +33,11 @@ from trusted_router.exchange_analytics import EXCHANGE_MARKET_SLUGS, HOST_RE, PA
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
 from trusted_router.marketing_experiments import (
     ONBOARDING_EXPERIMENT_ID,
+    SIGNUP_CTA_CELLS,
+    SIGNUP_CTA_COOKIE_NAME,
+    SIGNUP_CTA_EXPERIMENT_ID,
     assigned_onboarding_cell,
+    assigned_signup_cta_cell,
     valid_experiment_identity,
 )
 from trusted_router.request_limits import (
@@ -781,6 +785,45 @@ def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, re
         **_website_network_fields(request),
     })
     return cell
+
+
+def assign_signup_cta(
+    request: Request,
+    response: Response,
+    context: AttributionContext,
+    settings: Settings,
+) -> None:
+    """Give the visitor their sign-up button cell, once.
+
+    The cell comes from the anonymous ID, so it never changes for a visitor.
+    The readable cookie lets the shared script pick the label; the exposure
+    event (logged only when the cookie is first set) is what the dashboard
+    joins sign-in opens, sign-ups and first calls against.
+    """
+    # Public acquisition pages only: never the console, sign-in or API paths.
+    if not _should_capture_request(request):
+        return
+    # A visitor who already holds a cell keeps it (and is not logged again).
+    if request.cookies.get(SIGNUP_CTA_COOKIE_NAME) in SIGNUP_CTA_CELLS:
+        return
+    cell = assigned_signup_cta_cell(context.anonymous_id)
+    response.set_cookie(
+        key=SIGNUP_CTA_COOKIE_NAME,
+        value=cell,
+        max_age=ATTRIBUTION_COOKIE_MAX_AGE,
+        httponly=False,
+        secure=settings.environment.lower() not in {"local", "test"},
+        samesite="lax",
+        path="/",
+    )
+    log.info('acquisition.experiment_exposed', extra={
+        'event': 'acquisition.experiment_exposed',
+        'anonymous_fingerprint': _fingerprint(context.anonymous_id),
+        'experiment_id': SIGNUP_CTA_EXPERIMENT_ID,
+        'experiment_cell_id': cell,
+        'landing_path': context.last_touch.get('landing_path', ''),
+        **_website_network_fields(request),
+    })
 
 
 def pageview_attribution_fields(request: Request) -> dict[str, object]:

@@ -959,3 +959,6 @@ input, select { width:100%; border:1px solid var(--line); border-radius:var(--tr
   .video-embed, .video-embed-play { transition:none; }
   .video-embed:hover .video-embed-play { transform:none; }
 }
+/* The starter-credit line under a hero's sign-up button: body size and primary
+   colour so the offer reads as part of the pitch, not as fine print. */
+.hero-free-note { margin:0; font-size:16px; font-weight:500; line-height:1.5; color:var(--tr-color-text-primary); }

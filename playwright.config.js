@@ -7,6 +7,13 @@ module.exports = defineConfig({
   use: {
     baseURL: "http://127.0.0.1:18081",
     trace: "retain-on-failure",
+    // Pin every visitor to the default cell of the sign-up button A/B test
+    // (signup_cta_v1) so label assertions are stable; tests of the free cell
+    // set their own cookie.
+    storageState: {
+      cookies: [{ name: "tr_cta", value: "start_building", domain: "127.0.0.1", path: "/", expires: -1, httpOnly: false, secure: false, sameSite: "Lax" }],
+      origins: [],
+    },
   },
   webServer: {
     // Every browser worker and subresource shares 127.0.0.1. Leaving source

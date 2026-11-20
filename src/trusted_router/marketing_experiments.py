@@ -23,6 +23,19 @@ def assigned_onboarding_cell(seed: str) -> str:
     value = hashlib.sha256(f"{ONBOARDING_EXPERIMENT_ID}:{seed}".encode()).digest()
     return ONBOARDING_CELLS[value[0] % len(ONBOARDING_CELLS)]
 
+# Public sign-up button wording. Every visitor with an attribution cookie gets
+# a stable 50/50 assignment; the page HTML is the same for both cells and the
+# shared script swaps the label, so cached pages stay shareable.
+SIGNUP_CTA_EXPERIMENT_ID = "signup_cta_v1"
+SIGNUP_CTA_CELLS = ("start_building", "start_for_free")
+SIGNUP_CTA_COOKIE_NAME = "tr_cta"
+
+
+def assigned_signup_cta_cell(seed: str) -> str:
+    value = hashlib.sha256(f"{SIGNUP_CTA_EXPERIMENT_ID}:{seed}".encode()).digest()
+    return SIGNUP_CTA_CELLS[value[0] % len(SIGNUP_CTA_CELLS)]
+
+
 EXPERIMENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 EXPERIMENT_CELL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,95}$")
 

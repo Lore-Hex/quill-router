@@ -353,14 +353,34 @@ function applyAuthAwareChrome(): void {
   // visitors. Hide them for signed-in people, keeping their space so the
   // page does not shift.
   const signupNote = /no card required|free tokens|starter credit/i;
-  document.querySelectorAll<HTMLElement>(".cta-note, .md-no-card, .compare-cta-note, .microcopy, [data-signup-note]").forEach((note) => {
+  document.querySelectorAll<HTMLElement>(".cta-note, .md-no-card, .compare-cta-note, .hero-free-note, .microcopy, [data-signup-note]").forEach((note) => {
     if (note.matches(".cta-note, [data-signup-note]") || signupNote.test(note.textContent || "")) {
       note.style.visibility = "hidden";
     }
   });
 }
 
+// Sign-up button A/B test (signup_cta_v1). The server sets the readable
+// tr_cta cookie once per visitor and logs the exposure; the HTML is the same
+// for both cells, so only the label changes here. The line under the button
+// stays the same in both cells.
+const SIGNUP_CTA_DEFAULT = "Start building";
+const SIGNUP_CTA_FREE = "Start for free";
+
+function signupCtaCell(): string {
+  const match = document.cookie.match(/(?:^|;\s*)tr_cta=([a-z_]+)/);
+  return match ? match[1] : "";
+}
+
+function applySignupCtaCell(): void {
+  if (signupCtaCell() !== "start_for_free") return;
+  document.querySelectorAll<HTMLElement>('[data-action="open-signin"], [data-homepage-cta]').forEach((el) => {
+    if ((el.textContent || "").trim() === SIGNUP_CTA_DEFAULT) el.textContent = SIGNUP_CTA_FREE;
+  });
+}
+
 function init(): void {
+  applySignupCtaCell();
   applyAuthAwareChrome();
   applySigninTarget();
   trackEngagedLanding();
