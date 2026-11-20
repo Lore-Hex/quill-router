@@ -1,0 +1,41 @@
+{% set groups = [
+  ("Get started", [
+    ("quickstart-one-base-url-change", "Quickstart"), ("python-sdk-choice", "Python SDK"),
+    ("two-hosts", "API hosts"), ("nyte-api", "NY Token Exchange API"), ("sdks", "SDKs"), ("guides", "All guides"),
+  ]),
+  ("Privacy", [
+    ("deidentification", "Deidentify"), ("privacy-filters", "Privacy filters"),
+    ("require-zero-retention", "Zero retention"), ("require-confidential-verified-compute-e2ee-zdr", "Require Confidential"),
+    ("trusted-tier", "Trusted operators"), ("confidential-api", "Confidential hostname"),
+  ]),
+  ("Models and APIs", [
+    ("api-reference", "API reference"), ("model-capabilities", "Model capabilities"), ("model-changes", "Route changes"),
+    ("openai-compatible-endpoints", "OpenAI-compatible endpoints"), ("agent-readable-docs", "Agent-readable docs"),
+    ("web-fetch", "Web Fetch"), ("text-to-speech", "Text to speech"), ("transcription", "Audio transcription"),
+  ]),
+  ("API keys", [
+    ("key-management", "Key management"), ("list-and-page-through-keys", "List keys"),
+    ("delete-many-keys-in-one-request", "Bulk delete"), ("management-rate-limits", "Rate limits and retries"),
+    ("key-usage-freshness", "Usage freshness"),
+  ]),
+  ("Billing and limits", [
+    ("billing-usage", "Billing and usage"), ("usage-cost", "Cost per response"),
+    ("minimum-charges", "Minimum charges"), ("worked-examples-tiny-calls", "Rounding examples"),
+    ("rate-limit-headers", "Spend windows"), ("response-headers", "Response headers"), ("strict-budgets", "Strict budgets"),
+  ]),
+] %}
+<nav class="content-toc" data-docs-contents aria-label="Table of contents">
+  <p class="content-toc-title">Table of contents</p>
+  <details class="content-toc-disclosure" open>
+    <summary>Table of contents</summary>
+    <ol>
+      {% for group, links in groups %}
+      <li><strong class="docs-toc-group">{{ group }}</strong>
+        <ul aria-label="{{ group }}">
+          {% for fragment, label in links %}<li><a href="#{{ fragment }}">{{ label }}</a></li>{% endfor %}
+        </ul>
+      </li>
+      {% endfor %}
+    </ol>
+  </details>
+</nav>

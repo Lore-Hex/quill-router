@@ -1,4 +1,4 @@
-/* Preserve main's docs composition; add only desktop section navigation. */
+/* Native topic links and responsive navigation on the docs index. */
 .docs-main-reader > .content-document {
   display: block;
   min-width: 0;
@@ -21,6 +21,19 @@
 
 .docs-topic-link:is(:hover, :focus-visible) {
   text-decoration: underline;
+}
+
+.docs-toc-group {
+  display: block;
+  padding: 12px 12px 4px;
+  color: var(--tr-color-text-primary);
+  font-size: 13px;
+}
+
+.docs-main-reader .content-toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 @media (max-width: 1399px) {

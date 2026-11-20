@@ -6,7 +6,8 @@
 {% block body %}
 {% set docs_index_topics = true %}
 {% from "public/_docs_topic.html" import topic with context %}
-<div class="docs-main-reader" data-content-toc>
+<div class="docs-main-reader has-content-toc" data-content-toc>
+{% include "public/_docs_contents.html" %}
 <div class="content-document">
 {% include "public/_sdk_choice.html" %}
 

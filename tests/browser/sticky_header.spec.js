@@ -59,7 +59,7 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
     expect(await target.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(headerBottom);
     // Check the pinned state before the rail reaches the end of its container.
     await page.evaluate(() => window.scrollTo(0, 900));
-    const toc = page.locator(".content-toc");
+    const toc = page.getByRole("navigation", { name: "Table of contents" });
     if (width >= 1400) {
       await expect(toc).toBeVisible();
       expect(await toc.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(headerBottom);
@@ -73,7 +73,8 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
       await toc.locator("summary").click();
     }
     const permalink = "#deidentification";
-    await toc.locator(`a[href="${permalink}"]`).click();
+    const privacy = toc.getByRole("list", { name: "Privacy", exact: true });
+    await privacy.getByRole("link", { name: "Deidentify", exact: true }).click();
     await expect(page).toHaveURL(/\/docs#deidentification$/);
     await page.reload();
     const heading = page.locator("#deidentification h2");
@@ -84,6 +85,17 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
     })).toBe(true);
   });
 }
+
+test.describe("docs without JavaScript", () => {
+  test.use({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  test("the grouped contents opens the Deidentify section", async ({ page }) => {
+    await page.goto("/docs");
+    const nav = page.getByRole("navigation", { name: "Table of contents" });
+    await nav.getByRole("link", { name: "Deidentify", exact: true }).click();
+    await expect(page).toHaveURL(/\/docs#deidentification$/);
+    await expect(page.locator("#deidentification h2")).toBeInViewport();
+  });
+});
 
 for (const path of ["/", "/models"]) {
   test(`landscape menu stays within the viewport on ${path}`, async ({ page }) => {

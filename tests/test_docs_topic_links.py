@@ -17,6 +17,11 @@ def test_docs_topics_have_native_unambiguous_links(client):
     assert topic.h2.a["href"] == "#deidentification"
     assert topic.h2["id"] == "optional-de-identification"  # Older contents-menu bookmark.
     assert reader.select_one("a.card-as-link[href='#deidentification']")
+    toc, = reader.select('nav[aria-label="Table of contents"]')
+    links = [a["href"] for a in toc.select("a")]
+    assert len(links) == len(set(links))
+    assert set(links) == {a["href"] for a in reader.select(".docs-topic-link")}
+    assert toc.select_one('ul[aria-label="Privacy"] a[href="#deidentification"]').text == "Deidentify"
 
 
 def test_shared_sections_outside_docs_keep_their_plain_titles(client):
