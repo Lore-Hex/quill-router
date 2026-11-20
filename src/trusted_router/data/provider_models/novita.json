@@ -1430,6 +1430,8 @@
       ],
       "status": 1,
       "upstream_id": "minimax/minimax-m2.7",
+      "retirement_at": "2026-12-10T00:00:00Z",
+      "replacement_model_id": "minimax/minimax-m3.1-flash",
       "cached_input_token_price_per_m": 600
     },
     {
