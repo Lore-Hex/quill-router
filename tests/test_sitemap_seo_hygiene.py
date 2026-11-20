@@ -124,7 +124,7 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
             # The homepage deliberately shares the approved, shorter hero copy.
             # Require that exact copy rather than padding it to the generated-page minimum.
             expected_description = (
-                "Access hundreds of models confidentially through a single OpenAI-compatible API."
+                "Access 600+ models confidentially through a single OpenAI-compatible API."
             )
             if parser.description != expected_description:
                 issues.append(f"{path}: description does not match the approved hero copy")

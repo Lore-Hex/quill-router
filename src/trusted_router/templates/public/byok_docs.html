@@ -1,0 +1,47 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<div class="content-document" data-content-toc>
+<section class="content-section">
+  <h2>Bring your own upstream provider key</h2>
+  <p>BYOK lets TrustedRouter use a provider credential from your workspace for inference. Your upstream provider account supplies the key; your TrustedRouter key authenticates requests to TrustedRouter. Uploaded secrets are encrypted, and list responses return key metadata and hints rather than the secret.</p>
+  <p><strong>Management base URL: <code>https://trustedrouter.com/v1</code>.</strong> BYOK registration and workspace/key management belong to the control plane. <code>https://api.trustedrouter.com/v1</code> serves inference; management calls there return 404 because the services are separated. The compatibility endpoints <code>/v1/byok</code> and <code>/v1/byok/{id}</code> are unsupported stubs; use <code>/v1/byok/providers</code> and its key endpoints below.</p>
+  <p>Authenticate management calls with <code>Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY</code>, using a management key for the workspace (or a signed-in management session). An inference key or delegated scope does not grant management access. Wallet-only accounts cannot register provider credentials; use an account eligible for BYOK registration.</p>
+</section>
+<section class="content-section">
+  <h2>List providers and keys</h2>
+  <pre><code>curl https://trustedrouter.com/v1/byok/providers \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY"
+
+curl https://trustedrouter.com/v1/byok/providers/openai/keys \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY"</code></pre>
+  <p><code>GET /v1/byok/providers/{provider}</code> returns one configured provider. Choose a provider that supports BYOK; the provider slug must match the catalog.</p>
+</section>
+<section class="content-section">
+  <h2>Create or update a key</h2>
+  <pre><code>curl https://trustedrouter.com/v1/byok/providers/openai/keys \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"api_key":"YOUR_UPSTREAM_OPENAI_KEY","label":"production","fallback_to_credits":false}'</code></pre>
+  <p><code>POST /v1/byok/providers/{provider}/keys</code> returns <code>201</code> with the new key's metadata under <code>data</code>. Save <code>data.id</code> for updates and deletion. The first key becomes the provider's default. <code>PUT /v1/byok/providers/{provider}</code> sets the default key while preserving other keys; <code>PATCH /v1/byok/providers/{provider}/keys/{key_id}</code> updates a key.</p>
+  <p>Optional policy fields include <code>label</code>, <code>models</code> (model-ID patterns), <code>priority</code> (lower values first), <code>disabled</code>, and <code>fallback_to_credits</code>. Setting <code>fallback_to_credits: false</code> prevents a request that key can serve from falling back to platform credits. For Amazon Bedrock, Google Vertex, and Azure, use the provider-native <code>credential</code> object instead of a plain API key; see the request schemas in the <a href="/openapi.json">OpenAPI specification</a>.</p>
+</section>
+<section class="content-section">
+  <h2>Use BYOK at inference</h2>
+  <p>Send inference to <code>https://api.trustedrouter.com/v1</code> with a TrustedRouter inference API key from the same workspace. Do not send the upstream key as the bearer token. On ranked text routes, eligible configured BYOK keys are considered before credits within each model, unless the request specifies a provider order. Images, video, embeddings, and decisions keep catalog order and may use credits first. Set <code>provider.usage: "byok"</code> to explicitly restrict the request to BYOK. Key model patterns, priorities, disabled status, and provider filters still apply.</p>
+  <pre><code>curl https://api.trustedrouter.com/v1/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}],"provider":{"only":["openai"],"allow_fallbacks":false,"usage":"byok"}}'</code></pre>
+  <p>Choose a current BYOK-capable model from the <a href="/models">catalog</a>. You can also require <code>provider.min_privacy</code>; see <a href="/docs/provider-routing">provider routing and privacy controls</a>.</p>
+</section>
+<section class="content-section">
+  <h2>Delete a key or provider configuration</h2>
+  <pre><code>curl -X DELETE "https://trustedrouter.com/v1/byok/providers/openai/keys/$BYOK_KEY_ID" \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY"
+
+curl -X DELETE https://trustedrouter.com/v1/byok/providers/openai \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY"</code></pre>
+  <p>Deleting a key removes that stored credential. Deleting the last key removes the provider configuration; deleting the provider removes all its keys. These calls do not revoke the credential at the upstream provider.</p>
+</section>
+</div>
+{% endblock %}

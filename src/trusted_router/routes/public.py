@@ -1393,6 +1393,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
 
+    @public_html_route("/docs/byok")
+    def byok_docs_page() -> str:
+        return public_page_html(settings, "docs/byok")
+
     @public_html_route("/docs/provider-routing")
     def provider_routing_docs() -> str:
         return public_page_html(settings, "docs/provider-routing")

@@ -11,7 +11,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">American labs, and the operators who serve them</span>
     <h2>"US AI models" is two questions. This page answers both, separately.</h2>
-    <p><strong>Who built it</strong> and <strong>where your prompt goes</strong> are different facts. {{ region.origin_model_count }} models here come from {{ region.lab_count }} US labs: {% for lab in region.labs %}{{ lab.lab_name }}{% if not loop.last %}, {% endif %}{% endfor %}. {{ region.provider_count }} of {{ region.catalog_provider_count }} providers are US-headquartered.</p>
+    <p><strong>Who built it</strong> and <strong>where your prompt goes</strong> are different facts. {{ region.origin_model_count }} models here come from {{ region.lab_count }} US labs: {% for lab in region.labs %}{{ lab.lab_name }}{% if not loop.last %}, {% endif %}{% endfor %}. {{ region.provider_count }} of 100+ providers are US-headquartered.</p>
     <p>Need US-only routing? Set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span>. It fails closed when nothing qualifies.</p>
     <p><a class="btn primary" href="/models?filter=us">Browse US-provider routes</a> <a class="btn" href="/providers">Review provider policies</a></p>
   </div>

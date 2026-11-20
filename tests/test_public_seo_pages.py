@@ -185,7 +185,7 @@ def test_public_pages_are_gzip_compressed(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-encoding"] == "gzip"
     assert "Accept-Encoding" in response.headers.get("vary", "")
-    assert "Hundreds of models" in response.text
+    assert "600+ models" in response.text
 
 
 def test_public_host_aliases_redirect_to_the_canonical_marketing_host(

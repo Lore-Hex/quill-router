@@ -16,13 +16,13 @@
     <div><strong>{{ region.provider_count }}</strong><span>providers operated from {{ region.country_label }}</span></div>
     <div><strong>{{ region.lab_count }}</strong><span>lab{{ "" if region.lab_count == 1 else "s" }} with models here</span></div>
     <div><strong>{{ region.origin_model_count }}</strong><span>models from those labs</span></div>
-    <div><strong>{{ region.catalog_provider_count }}</strong><span>providers in the catalog</span></div>
-    <div><strong>{{ region.directory_model_count }}</strong><span>callable catalog models</span></div>
+    <div><strong>100+ providers</strong><span>in the catalog</span></div>
+    <div><strong>600+ models</strong><span>callable catalog</span></div>
     <div><strong>{{ region.unestablished_operator_count }}</strong><span>providers whose operator we could not establish</span></div>
   </div>
 
   <div class="panel" aria-label="{{ region.provider_heading }}">
-    <div class="panel-head"><h2>{{ region.provider_heading }}</h2><span class="pill">{{ region.provider_count }} of {{ region.catalog_provider_count }}</span></div>
+    <div class="panel-head"><h2>{{ region.provider_heading }}</h2><span class="pill">{{ region.provider_count }} listed</span></div>
     <div class="panel-body">
       <p>Send a request to one of these and the operator is a company headquartered in {{ region.country_label }} &mdash; head office, not place of registration. Privacy tier is a separate column: it is the highest bar we have recorded from that provider's published policy.</p>
       <div class="model-table-wrap">

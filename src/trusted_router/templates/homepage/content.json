@@ -18,7 +18,7 @@
     "footer"
   ],
   "nav": {
-    "search_placeholder": "Search 653 models",
+    "search_placeholder": "Search 600+ models",
     "search_shortcut": "⌘K",
     "links": [
       [
@@ -54,7 +54,7 @@
   "hero": {
     "headline": "Encrypt all your",
     "headline_emphasis": "AI chats",
-    "subtitle": "Access hundreds of models confidentially through a single OpenAI-compatible API.",
+    "subtitle": "Access 600+ models confidentially through a single OpenAI-compatible API.",
     "four_words": [
       {
         "word": "Secure",
@@ -214,12 +214,12 @@
     "E2EE": "Confidential compute with end-to-end encryption. The prompt stays encrypted until it reaches verified provider hardware."
   },
   "catalog": {
-    "headline": "653 models. Every route labeled.",
+    "headline": "600+ models. Every route labeled.",
     "browse_link": [
       "Browse all models →",
       "/models"
     ],
-    "count_label_all": "Popular · 6 of 653",
+    "count_label_all": "Popular · from 600+ models",
     "count_label_filtered": "6 shown",
     "filters": [
       {
@@ -637,7 +637,8 @@
       "label": "In the press",
       "lead": {
         "source": "VentureBeat",
-        "quote": "Challenging the dominance of major AI providers, TrustedRouter clears more than three billion encrypted tokens on a typical day across a catalog of more than 600 models and 100 providers.",
+        "quote": "Challenging the dominance of major AI providers, TrustedRouter clears more than three billion encrypted tokens on a typical day",
+        "catalog_note": "Our catalog: 600+ models across 100+ providers.",
         "link": [
           "Read the story",
           "https://venturebeat.com/technology/trustedrouter-launches-three-new-encrypted-fusion-models-that-combine-multiple-llms-including-one-exclusively-with-u-s-model-providers"
