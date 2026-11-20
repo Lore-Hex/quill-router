@@ -268,39 +268,11 @@ CREDIT_READ_FORM = re.compile(
 )
 
 
-def _reference_byok_first(rank: Any) -> Any:
-    """Independent specification of the approved BYOK-first ordering, applied
-    to the frozen leg where it ranks text-generation routes: each model's
-    routes keep the positions they hold, its BYOK routes first, unless the
-    request names a provider order. The matrix's keys admit every model and
-    allow Credits fallback, so no route is dropped."""
-
-    def ranked(candidates: list[Any], preferences: Any, **kwargs: Any) -> list[Any]:
-        result = list(rank(candidates, preferences, **kwargs))
-        if preferences.order:
-            return result
-        slots: dict[str, list[int]] = {}
-        for index, (model, _endpoint) in enumerate(result):
-            slots.setdefault(model.id, []).append(index)
-        ordered = list(result)
-        for positions in slots.values():
-            byok = [result[i] for i in positions if result[i][1].usage_type == "BYOK"]
-            credits = [result[i] for i in positions if result[i][1].usage_type != "BYOK"]
-            for position, candidate in zip(positions, byok + credits, strict=True):
-                ordered[position] = candidate
-        return ordered
-
-    return ranked
-
-
 def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
          monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> str:
     _deterministic_ids(monkeypatch)
     store, key = _seed(backend, case.get("byok", ()))
-    routing_state = RoutingState()
-    if module is FROZEN_GATEWAY:
-        routing_state.rank = _reference_byok_first(routing_state.rank)  # type: ignore[method-assign]
-    monkeypatch.setattr(module, "ROUTING_STATE", routing_state)
+    monkeypatch.setattr(module, "ROUTING_STATE", RoutingState())
     body = GatewayAuthorizeRequest.model_validate({**_body_fields(case), "api_key_hash": key.hash})
     request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
     quotes: list[dict[str, int]] = []

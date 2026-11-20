@@ -1002,23 +1002,7 @@ def sealed_families(
 # ---------------------------------------------------------------------------
 
 SEALING_FUNCTIONS = sealing_functions(byok_crypto)
-_ALL_ENVELOPE_MODEL_FIELDS = envelope_fields(MODULES_BY_PATH.values())
-# Envelope-bearing models stored only INSIDE another model's row, never as a
-# row of their own: (parent model, parent field holding them). They are not
-# placed by an entity-IO call, so they are judged here instead of by the
-# per-kind registry: their envelopes are always sealed v2 under the parent's
-# own context (routes/byok.py seals each key with the row's provider), every
-# decrypt path rejects any other algorithm before unwrapping
-# (byok_crypto._envelope_aad), and the census's whole-body literal search finds
-# a v1 envelope at any depth. Registering them as a surface would change the
-# surface fingerprint the fleet's recorded zero-v1 attestations are bound to.
-NESTED_ENVELOPE_MODELS = {"ByokKey": ("ByokProviderConfig", "additional_keys")}
-DERIVED_NESTED_MODEL_FIELDS = {
-    name: fields for name, fields in _ALL_ENVELOPE_MODEL_FIELDS.items() if name in NESTED_ENVELOPE_MODELS
-}
-DERIVED_MODEL_FIELDS = {
-    name: fields for name, fields in _ALL_ENVELOPE_MODEL_FIELDS.items() if name not in NESTED_ENVELOPE_MODELS
-}
+DERIVED_MODEL_FIELDS = envelope_fields(MODULES_BY_PATH.values())
 DERIVED_FIELD_NAMES = frozenset(name for fields in DERIVED_MODEL_FIELDS.values() for name in fields)
 DERIVED_KINDS = entity_kinds(SRC, frozenset(DERIVED_MODEL_FIELDS))
 DERIVED_FAMILIES = sealed_families(SRC, DERIVED_FIELD_NAMES)
@@ -1908,28 +1892,3 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "storage_gcp_user_models.py",
         "storage_postgres.py",
     }
-
-
-def test_nested_envelope_models_live_inside_a_migrated_row() -> None:
-    """A nested envelope model must be held by a registered parent, share its
-    sealing family, and be unreadable in any format but v2."""
-    import dataclasses
-    import typing
-
-    from trusted_router import storage_models
-
-    assert set(DERIVED_NESTED_MODEL_FIELDS) == set(NESTED_ENVELOPE_MODELS), (
-        "a nested model listed here no longer bears an envelope, or one is missing"
-    )
-    for model, (parent, field_name) in NESTED_ENVELOPE_MODELS.items():
-        parent_fields = {f.name: f for f in dataclasses.fields(getattr(storage_models, parent))}
-        hints = typing.get_type_hints(getattr(storage_models, parent))
-        assert field_name in parent_fields
-        assert getattr(storage_models, model) in typing.get_args(hints[field_name])
-        assert DERIVED_KINDS[parent] & set(MIGRATED_KINDS)
-        for nested_field in DERIVED_NESTED_MODEL_FIELDS[model]:
-            assert nested_field in DERIVED_MODEL_FIELDS[parent], (
-                f"{model}.{nested_field} has no same-named sealed field on {parent}"
-            )
-    with pytest.raises(ValueError, match="unsupported BYOK envelope algorithm"):
-        byok_crypto._envelope_aad(backfill.V1_ALGORITHM_LITERAL, NAMESPACE_PROVIDER, "ws", "kimi")

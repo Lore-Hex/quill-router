@@ -211,57 +211,13 @@ class PatchKeyRequest(_Lenient):
         return _validate_dollars(value)
 
 
-def _validate_byok_models(value: list[str] | None) -> list[str] | None:
-    if value is None:
-        return None
-    if len(value) > 100:
-        raise ValueError("models holds at most 100 patterns")
-    patterns = []
-    for pattern in value:
-        pattern = str(pattern).strip()
-        if not pattern or len(pattern) > 200:
-            raise ValueError("each models pattern must be 1 to 200 characters")
-        patterns.append(pattern)
-    return patterns
-
-
-class _ByokKeyPolicy(_Strict):
-    """Routing policy of one BYOK key. None leaves a field as it is."""
-
-    label: str | None = Field(default=None, max_length=80)
-    # Model-id patterns this key serves; "*" matches any run of characters.
-    # An empty list serves every model of the provider.
-    models: list[str] | None = None
-    # Lower runs first among a provider's keys.
-    priority: int | None = Field(default=None, ge=-1000, le=1000)
-    # False: a request this key can serve never falls back to Credits.
-    fallback_to_credits: bool | None = None
-    disabled: bool | None = None
-
-    @field_validator("models")
-    @classmethod
-    def _check_models(cls, value: list[str] | None) -> list[str] | None:
-        return _validate_byok_models(value)
-
-
-class UpsertByokRequest(_ByokKeyPolicy):
+class UpsertByokRequest(_Strict):
     api_key: str | None = None
     key: str | None = None
     # A native credential object, for amazon-bedrock, google-vertex and azure.
     credential: dict[str, Any] | None = None
     secret_ref: str | None = None
     key_hint: str | None = Field(default=None, max_length=80)
-
-
-class CreateByokKeyRequest(UpsertByokRequest):
-    pass
-
-
-class PatchByokKeyRequest(_ByokKeyPolicy):
-    # Rotating the secret keeps the key's id and policy.
-    api_key: str | None = None
-    key: str | None = None
-    credential: dict[str, Any] | None = None
 
 
 class BroadcastDestinationCreateRequest(_Strict):

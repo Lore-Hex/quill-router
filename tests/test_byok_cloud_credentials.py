@@ -148,13 +148,13 @@ def test_upload_native_credentials_through_the_key_api() -> None:
     assert vertex.json()["data"]["key_hint"].startswith("router@customer-project-1")
     assert vertex.json()["data"]["secret_storage"] == "envelope"  # noqa: S105
 
-    azure = client.post(
-        "/v1/byok/providers/azure/keys",
+    azure = client.put(
+        "/v1/byok/providers/azure",
         headers=USER,
-        json={"credential": {"endpoint": "https://c.openai.azure.com", "api_key": FAKE_AZURE_KEY}, "models": ["openai/*"]},
+        json={"credential": {"endpoint": "https://c.openai.azure.com", "api_key": FAKE_AZURE_KEY}},
     )
     assert azure.status_code == 201, azure.text
-    assert azure.json()["data"]["models"] == ["openai/*"]
+    assert azure.json()["data"]["key_hint"].startswith("c.openai.azure.com")
 
     bedrock = client.put(
         "/v1/byok/providers/amazon-bedrock", headers=USER, json={"api_key": "ABSKexamplebedrockkey"},
@@ -252,12 +252,11 @@ def test_an_unsupported_key_algorithm_is_a_validation_error(monkeypatch: pytest.
 
 
 @pytest.mark.parametrize("region", ["us-central1", "aws-eu-west-1"])
-def test_a_no_credits_cloud_key_keeps_credits_out_in_every_region(monkeypatch: pytest.MonkeyPatch, region: str) -> None:
+def test_a_cloud_byok_route_is_offered_in_every_region(monkeypatch: pytest.MonkeyPatch, region: str) -> None:
     # Every region gets the same routes; an AWS gateway refuses the BYOK route
-    # itself, and with Credits forbidden the request then fails, never spends.
+    # itself as its own limit and falls over to the next route.
     from tests.fixture_routes import drop_routes, serve_on_fixture_route
     from trusted_router.storage import STORE
-    from trusted_router.storage_models import ByokProviderConfig
 
     model_id = "openai/gpt-5-mini"
     drop_routes(monkeypatch, model_id)
@@ -267,19 +266,16 @@ def test_a_no_credits_cloud_key_keeps_credits_out_in_every_region(monkeypatch: p
         )
     settings = Settings(environment="test", regions="us-central1,aws-eu-west-1")
     client = TestClient(create_app(settings, init_observability=False))
-    key = client.post("/v1/keys", headers=USER, json={"name": "no credits"}).json()["data"]
-    STORE.save_byok_provider(ByokProviderConfig(
-        workspace_id=key["workspace_id"], provider="azure", secret_ref="env://AZURE",  # noqa: S106
-        fallback_to_credits=False,
-    ))
+    key = client.post("/v1/keys", headers=USER, json={"name": "cloud byok"}).json()["data"]
+    STORE.upsert_byok_provider(
+        workspace_id=key["workspace_id"], provider="azure", secret_ref="env://AZURE", key_hint=None,  # noqa: S106
+    )
     response = client.post("/v1/internal/gateway/authorize", json={
         "api_key_hash": key["hash"], "model": model_id, "route_type": "chat.completions",
         "estimated_input_tokens": 100, "max_output_tokens": 100, "region": region,
     })
     assert response.status_code == 200, response.text
-    data = response.json()["data"]
-    assert [c["usage_type"] for c in data["route_candidates"]] == ["BYOK"]
-    assert data["credit_reservation_id"] is None
+    assert "BYOK" in [c["usage_type"] for c in response.json()["data"]["route_candidates"]]
 
 
 def test_an_oversized_vertex_key_is_refused_before_parsing(monkeypatch: pytest.MonkeyPatch) -> None:

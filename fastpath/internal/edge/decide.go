@@ -604,14 +604,6 @@ func Decide(in DecideInputs) Decided {
 	req := r.Routing
 	req.At = at
 	req.BYOKProviders = snap.BYOKProviders(read.Facts.BYOKProviders)
-	// A workspace's BYOK keys carry routing policy the edge does not read:
-	// model filters, BYOK ahead of Credits, and no Credits fallback. Even
-	// where its routes come out Credits-only here (allow_fallbacks=false keeps
-	// the Credits route first), Python may choose the key or refuse Credits,
-	// so every request of such a workspace is Python's.
-	if len(req.BYOKProviders) > 0 {
-		return pass(PassCandidatesBYOK)
-	}
 	res := snap.Evaluate(req)
 	switch res.Outcome {
 	case routingsnapshot.Refused:

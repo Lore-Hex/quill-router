@@ -10,7 +10,6 @@ instead of a 4-AM AttributeError.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -609,13 +608,6 @@ class Store(Protocol):
         key_hint: str | None,
         encrypted_secret: EncryptedSecretEnvelope | None = ...,
     ) -> ByokProviderConfig: ...
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig: ...
-    def mutate_byok_provider(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None: ...
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]: ...
     def get_byok_provider(self, workspace_id: str, provider: str) -> ByokProviderConfig | None: ...
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool: ...

@@ -213,7 +213,7 @@ def _add_current_openrouter_stubs(router: APIRouter) -> None:
                 "summary": "Unsupported BYOK compatibility endpoint",
                 "description": (
                     "This compatibility endpoint returns 501 and does not manage keys. "
-                    "Use /v1/byok/providers and /v1/byok/providers/{provider}/keys on "
+                    "Use /v1/byok/providers and /v1/byok/providers/{provider} on "
                     "https://trustedrouter.com instead. See https://trustedrouter.com/docs/byok."
                 ),
             }

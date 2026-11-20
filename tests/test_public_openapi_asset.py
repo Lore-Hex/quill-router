@@ -338,7 +338,5 @@ def test_byok_workspace_and_security_documentation(source: str) -> None:
         assert schema["paths"][path][method]["security"] == [{"BearerAuth": []}]
     for path in ("/v1/models", "/v1/providers"):
         assert not schema["paths"][path]["get"].get("security")
-    for path, method in (("/v1/byok/providers/{provider}", "put"),
-                         ("/v1/byok/providers/{provider}/keys", "post"),
-                         ("/v1/byok/providers/{provider}/keys/{key_id}", "patch")):
+    for path, method in (("/v1/byok/providers/{provider}", "put"),):
         assert schema["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"]["$ref"]

@@ -67,7 +67,7 @@ def inventory_settings(surface, enabled):
 
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
-              wallet_email_verify=False, routing_evidence=False, request_billing=False, byok_keys=False,
+              wallet_email_verify=False, routing_evidence=False, request_billing=False,
               byok_docs=False, notes=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
@@ -80,19 +80,6 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
         assert routes.count(billing_route) == int(request_billing)
         if request_billing:
             routes.remove(billing_route)
-    # Account for exactly the reviewed BYOK key routes (several keys per
-    # provider) and their /v1 aliases, only where the BYOK API is served.
-    for prefix in ("", "/v1"):
-        for path, method, name in (
-            ("/byok/providers/{provider}/keys", "GET", "list_byok_keys"),
-            ("/byok/providers/{provider}/keys", "POST", "create_byok_key"),
-            ("/byok/providers/{provider}/keys/{key_id}", "PATCH", "patch_byok_key"),
-            ("/byok/providers/{provider}/keys/{key_id}", "DELETE", "delete_byok_key"),
-        ):
-            key_route = [prefix + path, [method], f"register_byok_routes.<locals>.{name}"]
-            assert routes.count(key_route) == int(byok_keys)
-            if byok_keys:
-                routes.remove(key_route)
     # The BYOK documentation page and its slash alias are public HTML only.
     # Pin their identities and absence on other surfaces; retain every frozen
     # API, lifecycle, and state assertion below.
@@ -190,8 +177,7 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
                      management_key=surface in {"combined", "control"},
                      console_support=surface in {"combined", "control"},
                      request_billing=surface in {"combined", "control"},
-                     wallet_email_verify=surface in {"combined", "control"},
-                     byok_keys=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
+                     wallet_email_verify=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):

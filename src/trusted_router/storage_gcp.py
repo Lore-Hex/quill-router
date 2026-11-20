@@ -2995,17 +2995,6 @@ class SpannerStore(OperationalAnalyticsReads):
             encrypted_secret=encrypted_secret,
         )
 
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        return self.byok_store.save(config)
-
-    def mutate_byok_provider(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        return self.byok_store.mutate(workspace_id, provider, change)
-
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         return self.byok_store.list_for_workspace(workspace_id)
 
@@ -7637,18 +7626,7 @@ class SpannerStore(OperationalAnalyticsReads):
         )
         if not rows:
             return None
-        data = json.loads(rows[0][0])
-        if cls is dict:
-            return data
-        if dataclasses.is_dataclass(cls):
-            known = {f.name for f in dataclasses.fields(cls)}
-            unknown = data.keys() - known
-            if unknown:
-                # Forward/back-compat: newer releases may persist fields this
-                # class does not know yet; drop extras instead of 500ing.
-                data = {key: value for key, value in data.items() if key in known}
-            return cls(**data)
-        return cls(**data)
+        return _entity_from_body(json.loads(rows[0][0]), cls)
 
     def _list_entities(
         self,
@@ -7683,7 +7661,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 params=params,
                 param_types=param_types,
             )
-            return [cls(**json.loads(row[0])) for row in rows]
+            return [_entity_from_body(json.loads(row[0]), cls) for row in rows]
 
     def _write_entity(self, kind: str, entity_id: str, value: Any) -> None:
         with self._database.batch() as batch:
@@ -7715,3 +7693,19 @@ class SpannerStore(OperationalAnalyticsReads):
             self.entity_table,
             self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
         )
+
+
+def _entity_from_body(data: Any, cls: type[T]) -> T:
+    """Build an entity from its stored JSON body.
+
+    Forward/back-compat: a row may carry fields this release's class does not
+    know (written by a newer release, or by a removed feature, such as the
+    multi-key BYOK fields `default_key_id` and `additional_keys`). Extras are
+    dropped instead of failing the read; point reads and lists agree."""
+    if cls is dict:
+        return cast(T, data)
+    if dataclasses.is_dataclass(cls):
+        known = {f.name for f in dataclasses.fields(cls)}
+        if data.keys() - known:
+            data = {key: value for key, value in data.items() if key in known}
+    return cls(**data)

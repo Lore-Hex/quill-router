@@ -9,17 +9,14 @@ def test_byok_docs_describe_real_endpoints_and_credentials(client: TestClient) -
         "https://trustedrouter.com/v1/byok/providers",
         "https://api.trustedrouter.com/v1/chat/completions",
         "TRUSTEDROUTER_MANAGEMENT_KEY", "TRUSTEDROUTER_API_KEY",
-        "POST /v1/byok/providers/{provider}/keys",
         "PUT /v1/byok/providers/{provider}",
-        "PATCH /v1/byok/providers/{provider}/keys/{key_id}",
         "curl -X DELETE", "unsupported stubs", "return 404",
-        '"usage":"byok"', '"fallback_to_credits":false',
-        "On ranked text routes", "before credits within each model",
-        "unless the request specifies a provider order",
-        "Images, video, embeddings, and decisions keep catalog order and may use credits first",
-        'provider.usage: "byok"', "to explicitly restrict the request to BYOK",
+        '"usage":"byok"', "credential",
+        'provider.usage: "byok"', "to restrict the request to BYOK",
     ):
         assert text in response.text
+    # One key per provider: the multi-key API was removed.
+    assert "/keys" not in response.text
 
 
 def test_byok_docs_are_discoverable(client: TestClient) -> None:
