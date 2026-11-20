@@ -252,6 +252,43 @@ jobs:
             echo "0G key not provisioned; private routes remain dark."
           fi
 
+      - name: Load provider quarantine
+        # A provider whose fresh data failed a snapshot's exact-SHA CI is
+        # quarantined (scripts/pricing/quarantine.py, the "Quarantine
+        # providers that failed snapshot CI" step below): refresh.py keeps
+        # its committed manifest, parser and snapshot endpoints, as for a
+        # failed fetch, so one provider's bad data no longer blocks every
+        # other provider's prices. The state is the newest price-quarantine
+        # artifact of a recent run (only workflow runs can write one); each
+        # entry expires after 12 hours and the provider is refreshed again.
+        # A state that cannot be read quarantines nothing.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "TR_PRICE_QUARANTINE=/tmp/price-quarantine.json" >> "$GITHUB_ENV"
+          printf '{"quarantined": []}\n' > /tmp/price-quarantine.json
+          since=$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)
+          runs=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow refresh-prices.yml \
+            --branch main --limit 30 --json databaseId,createdAt \
+            --jq "map(select(.databaseId != ${GITHUB_RUN_ID} and .createdAt >= \"${since}\")) | .[].databaseId")
+          for run in ${runs}; do
+            rm -rf /tmp/price-quarantine-previous
+            if gh run download "${run}" --repo "${GITHUB_REPOSITORY}" \
+                -n price-quarantine -D /tmp/price-quarantine-previous 2>/dev/null; then
+              cp /tmp/price-quarantine-previous/price-quarantine.json /tmp/price-quarantine.json
+              echo "Loaded the provider quarantine saved by run ${run}"
+              break
+            fi
+          done
+          {
+            echo "### Quarantined providers"
+            echo '```'
+            uv run python -m scripts.pricing.quarantine active /tmp/price-quarantine.json
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Snapshot existing pricing files
         run: |
           cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
@@ -634,6 +671,10 @@ jobs:
                     sleep 15
                     continue
                   fi
+                  if [ "${conclusion}" = "failure" ]; then
+                    # The quarantine step reads this run's failure records.
+                    echo "snapshot_ci_failed=${ci_run_id}" >> "$GITHUB_OUTPUT"
+                  fi
                   echo "generated snapshot CI concluded '${conclusion}'"
                   exit 1
                 fi
@@ -759,6 +800,75 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Quarantine providers that failed snapshot CI
+        id: quarantine
+        # The snapshot's exact-SHA CI failed (after its one rerun). Find
+        # whether one provider's fresh data explains it: reproduce the failed
+        # tests locally (offline, without this job's credentials) and search
+        # for the fewest changed providers whose committed state makes them
+        # pass (scripts/pricing/quarantine.py). Only a clean attribution
+        # quarantines anything; this run still fails, so the refresh-failed
+        # alert fires. The recompute dispatched below holds the quarantined
+        # providers and goes through the whole exact-SHA CI gate again.
+        if: failure() && steps.publication.outputs.snapshot_ci_failed != ''
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_RUN: ${{ steps.publication.outputs.snapshot_ci_failed }}
+        run: |
+          set -euo pipefail
+          # The working tree becomes exactly the tree CI ran: the snapshot
+          # commit, whose parent holds the published catalog it replaced.
+          git reset -q --hard HEAD
+          rm -rf /tmp/snapshot-ci-failures /tmp/quarantine-parent /tmp/quarantine-baseline
+          gh run download "${CI_RUN}" --repo "${GITHUB_REPOSITORY}" \
+            -p 'test-failures-*' -D /tmp/snapshot-ci-failures
+          mkdir -p /tmp/quarantine-parent /tmp/quarantine-baseline
+          git archive HEAD^ src/trusted_router/data/openrouter_snapshot.json \
+            src/trusted_router/data/provider_models scripts/pricing/parsers \
+            | tar -x -C /tmp/quarantine-parent
+          cp /tmp/quarantine-parent/src/trusted_router/data/openrouter_snapshot.json /tmp/quarantine-baseline/
+          cp -R /tmp/quarantine-parent/src/trusted_router/data/provider_models /tmp/quarantine-baseline/
+          cp -R /tmp/quarantine-parent/scripts/pricing/parsers /tmp/quarantine-baseline/
+          set +e
+          uv run python -m scripts.pricing.quarantine diagnose \
+            --baseline /tmp/quarantine-baseline --failures /tmp/snapshot-ci-failures \
+            --state /tmp/price-quarantine.json --out /tmp/price-quarantine-next.json \
+            --ci-run "${CI_RUN}" | tee -a "$GITHUB_STEP_SUMMARY"
+          rc=${PIPESTATUS[0]}
+          set -e
+          case "${rc}" in
+            0) echo "quarantined=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "No clean provider attribution; nothing quarantined." ;;
+            *) exit "${rc}" ;;
+          esac
+
+      - name: Keep the active provider quarantine
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          state=/tmp/price-quarantine.json
+          if [ -s /tmp/price-quarantine-next.json ]; then state=/tmp/price-quarantine-next.json; fi
+          mkdir -p /tmp/price-quarantine-save
+          uv run python -m scripts.pricing.quarantine prune "${state}" /tmp/price-quarantine-save/price-quarantine.json
+
+      - name: Save the provider quarantine for the next run
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: price-quarantine
+          path: /tmp/price-quarantine-save/price-quarantine.json
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Recompute without the quarantined providers
+        if: always() && steps.quarantine.outputs.quarantined == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run refresh-prices.yml --ref main --repo "${GITHUB_REPOSITORY}"
+
       - name: Catalog refresh validated
         if: steps.publication.outputs.validated == 'true'
         run: echo "Validated catalog publication or no changes; deployment health is checked separately."
@@ -868,7 +978,7 @@ jobs:
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
           if [ -n "${summaries}" ]; then
             {
-              echo "These providers had a price spike (2x or more), a price cut to 1/100 or less (the signature of a misread unit) or a refresh failure. The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
+              echo "These providers had a price spike (2x or more), a price cut to 1/100 or less (the signature of a misread unit) a refresh failure, or a quarantine (\"refresh failed: quarantined\": their fresh data failed a snapshot's exact-SHA CI, scripts/pricing/quarantine.py; it lifts by itself after 12 hours and returns if the data still fails). The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
               echo
               echo "Repair fetch, parser, or manifest failures using the reasons below. If a price change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. Manifest expiry and canary gates still apply; holding a provider does not renew its freshness."
               echo
