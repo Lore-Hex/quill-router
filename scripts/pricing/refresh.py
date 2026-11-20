@@ -70,6 +70,10 @@ from trusted_router.model_aliases import (  # noqa: E402
     canonical_openrouter_model_id,
     merge_openrouter_model_rows,
 )
+from trusted_router.provider_contracts import (  # noqa: E402
+    PREPAID_PROVIDER_HOLD_REASONS,
+    PROVIDER_INCIDENT_HOLD_REASONS,
+)
 from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E402
 from trusted_router.provider_manifest_policy import (  # noqa: E402
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
@@ -831,6 +835,61 @@ def _index_provider_prices(
     return out
 
 
+# A provider manifest row held for one of these reasons is not a route on any
+# key: TR's own provider account cannot reach it, or an operator has disabled
+# the provider. A fresh price for it still updates the manifest, but must
+# never make a snapshot endpoint, because the runtime held-row filter drops
+# only prepaid routes and would publish the endpoint as a BYOK route.
+#
+# Deliberately narrow. Other unroutable reasons are left as they were:
+# discovery-managed states (provider-canary-failed, awaiting-price, ...) and
+# attestation states already publish snapshot routes for customer keys, and
+# changing that is a BYOK policy decision, not a refresh fix.
+SNAPSHOT_EXCLUDED_HOLD_REASONS: frozenset[str] = frozenset(
+    {
+        "provider-access-unavailable",
+        *PREPAID_PROVIDER_HOLD_REASONS.values(),
+        *PROVIDER_INCIDENT_HOLD_REASONS.values(),
+    }
+)
+
+
+def _manifest_held_routes() -> dict[str, frozenset[str]]:
+    """Model ids each provider's current manifest holds out of every route.
+
+    Read after this run's manifest writers, so a hold a fresh canary lifted
+    is gone and a hold the writer re-applied is present. Stale fallback
+    already skips every ``routable: false`` row; this closes the fresh path.
+    """
+    held: dict[str, set[str]] = {}
+    for slug in PROVIDER_SLUGS:
+        manifest = getattr(_import_provider(slug), "MANIFEST_PATH", None)
+        if manifest is None:
+            continue
+        try:
+            raw = json.loads(Path(manifest).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
+        if not isinstance(raw, dict) or raw.get("provider") not in provider_slugs:
+            continue
+        rows = raw.get("models")
+        if not isinstance(rows, list):
+            continue
+        model_ids = {
+            row["id"]
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance(row.get("id"), str)
+            and row.get("routable") is False
+            and row.get("routable_reason") in SNAPSHOT_EXCLUDED_HOLD_REASONS
+        }
+        if model_ids:
+            for provider_slug in provider_slugs:
+                held.setdefault(provider_slug, set()).update(model_ids)
+    return {slug: frozenset(ids) for slug, ids in held.items()}
+
+
 def _or_pricing_to_micro_per_m(pricing: dict[str, Any]) -> ModelPrice | None:
     """Read OR's pricing block (dollars-per-token strings) and convert
     to microdollars per million."""
@@ -1251,6 +1310,7 @@ def _merge_snapshot(
     or_snapshot: dict[str, Any],
     provider_index: dict[str, dict[str, ModelPrice]],
     healed_slugs: set[str],
+    held_routes: dict[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     """Build the final snapshot.
 
@@ -1265,6 +1325,11 @@ def _merge_snapshot(
     endpoint keeps its own provider-direct price. Endpoints whose slug
     has NO provider-direct price are dropped — TR can't bill them
     correctly without using OR data.
+
+    ``held_routes`` ({provider slug: model ids}, see _manifest_held_routes)
+    removes held provider rows before anything else: they neither publish an
+    endpoint nor set the headline price. A model priced only by held rows is
+    left out, never sent to the OpenRouter fallback.
     """
     or_by_id = {
         m["id"]: m
@@ -1280,7 +1345,14 @@ def _merge_snapshot(
         slug: _upstream_id_map_for(slug) for slug in PROVIDER_SLUGS
     }
     merged_models: list[dict[str, Any]] = []
+    held_routes = held_routes or {}
     for model_id, by_slug in provider_index.items():
+        by_slug = {
+            slug: price for slug, price in by_slug.items()
+            if model_id not in held_routes.get(slug, ())
+        }
+        if not by_slug:
+            continue
         or_model = or_by_id.get(model_id)
         if or_model is None:
             # Provider gave us a price for a model OR doesn't list. We
@@ -1647,7 +1719,8 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
     disagreements = _cross_check(provider_index, or_snapshot)
     id_mismatches = _cross_check_ids(results, or_snapshot)
 
-    merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+    held_routes = _manifest_held_routes()
+    merged = _merge_snapshot(or_snapshot, provider_index, set(healed), held_routes)
     held_models = _keep_failed_snapshot_routes(merged, committed_snapshot, failed)
 
     held: dict[str, list[str]] = {}
@@ -1668,7 +1741,7 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
             provider_index = _index_provider_prices({slug: res for slug, res in results.items() if slug not in failed})
             disagreements = _cross_check(provider_index, or_snapshot)
             id_mismatches = _cross_check_ids(results, or_snapshot)
-            merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+            merged = _merge_snapshot(or_snapshot, provider_index, set(healed), held_routes)
             all_held = {**held, **failed}
             disabled = _published_disabled_held_routes(baseline, committed_snapshot, all_held)
             held_models = _keep_failed_snapshot_routes(
