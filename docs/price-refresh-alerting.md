@@ -107,6 +107,34 @@ but preserves cooldown timestamps, preventing flapping from spending the error
 budget. Historical Sentry error issues are not automatically resolved: verify
 the cause and recovery before resolving them. Cron recovery is automatic.
 
+## Publication when main keeps moving
+
+The publication step pushes a snapshot to main only after a successful
+`ci.yml` run of that exact SHA, whose parent must still be main's head. A
+busy main (a merge every 20 to 40 minutes) against a 35 to 55 minute CI run
+makes that a race, and the stale alert above is what reports losing it. Two
+rules keep the race winnable without ever pushing an untested tree:
+
+* **Carry instead of recompute.** When main moved but changed no refresh
+  input (`scripts/pricing/refresh_inputs.py`: the refresh's import closure,
+  catalog data, parsers, lock, workflow, and only the `static/` directories the
+  social cards are drawn from and written to), the snapshot commit is
+  replayed onto the new head and that new SHA gets its own CI run. A change
+  to an input still queues a fresh recomputation. Until 2026-11-20 all of
+  `static/` counted, so every site-page or CSS merge forced a recompute.
+* **Restart at once.** The CI poll checks main about once a minute. When main
+  moves, the running CI run can no longer be published: it is cancelled by id
+  and the next round starts right away (carry and re-dispatch, or recompute).
+  Before, the job waited for the doomed run to finish and then needed main to
+  stay still for one more whole CI run. On 2026-11-19 (about 9 hours) and
+  11-20 (runs 44782888255 and 44800370604) every round lost. Publication now
+  needs one quiet CI-length window after any merge.
+
+Rounds are bounded: at most six exact-SHA CI dispatches, and no new round
+after 150 minutes of publication. A run that runs out of rounds queues a fresh
+recomputation and ends green without validating, which the stale alert counts
+as no publication.
+
 ## Host observer token
 
 The host observer on `tr-clickhouse-3` reads GitHub's REST API directly
