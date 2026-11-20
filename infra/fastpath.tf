@@ -207,7 +207,20 @@ locals {
   # observes, so nothing Go answers changes. The other fastpath/ change
   # since fab9cd893 is a catalog test vector (the 2026-11-17T23:26Z price
   # refresh). Off switch: pin fab9cd893 again. One node at a time.
-  fastpath_release        = "541e687bf8dba385338fab24d5dfaa16a72fe9be"
+  # 65e856777: brings the nodes level with what Python has answered since
+  # 2026-11-20 05:07Z. The decide shadow has differed on about 4% of
+  # comparisons since then, nearly all on openai_safety_identifier, which
+  # 541e687bf does not compose. Go changes since 541e687bf:
+  #   - #2752: an authorize that negotiates X-TR-OpenAI-Safety: v1 and has a
+  #     direct OpenAI candidate answers with the stable safety subject,
+  #     derived from the key's creator or else the workspace owner; the key
+  #     and workspace records now carry creator_user_id and owner_user_id.
+  #   - #2732: every request of a workspace with BYOK keys passes to Python
+  #     (candidates.byok), which alone reads their filters and order.
+  #   - #2717: the uncensored GLM 5.3 Flash identifier resolves.
+  # The other fastpath/ changes are test vectors. Off switch: pin 541e687bf
+  # again. One node at a time.
+  fastpath_release        = "65e856777546e0d0c67f0c8d049c3d54ba63c443"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -244,6 +257,10 @@ locals {
     "541e687bf8dba385338fab24d5dfaa16a72fe9be" = {
       fastpath   = "7934c7a03b12934cc9f0cfbaa3aac328d9184311d803fd6852809fb5cfb1466b"
       sha256sums = "ba630193172aae6ec8ad119d8d1ab163630f54d3cf58d41fdba1144fe18561c3"
+    }
+    "65e856777546e0d0c67f0c8d049c3d54ba63c443" = {
+      fastpath   = "ecd6ce47f1b32c40bbbc6fce69c95d552296b6f234fb8e4841c259de3eb68ade"
+      sha256sums = "2110c83771dce88b4bb57d600dba1679716534edbd60497ea3d067666f23510b"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
