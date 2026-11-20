@@ -129,10 +129,12 @@ def _store(*, leased: bool) -> tuple[FakeSpannerDatabase, Any, Any]:
     return db, private, boot
 
 
-def _raw(seq: int = 1, *, output_tokens: int = 10) -> bytes:
+def _raw(seq: int = 1, *, output_tokens: int = 10, input_tokens: int | None = None) -> bytes:
     body = json.loads(_literal("heartbeat_request.json"))
     body["seq"] = seq
     body["usage"]["output_tokens"] = output_tokens
+    if input_tokens is not None:
+        body["usage"]["input_tokens"] = input_tokens
     return json.dumps(body, separators=(",", ":")).encode()
 
 
@@ -195,6 +197,25 @@ def test_an_accepted_leased_heartbeat_answers_the_owners_deadline_and_todays_fig
     assert stored["heartbeat_seq"] == 1
     assert stored["selected_endpoint_id"] == "anthropic/test"
     assert [path for path, _ in door.seen] == ["/v1/heartbeat"]
+
+
+def test_a_prompt_above_its_estimate_reaches_the_owner_clamped_to_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row's transaction lets a prompt above its estimate (100) raise the
+    cap (300) by that excess, so a 400-token prompt with 10 output tokens
+    (420) runs on. The owner bounds a hold's running charge by the cap and
+    never sees the prompt, so it is sent the charge clamped to the cap: what
+    its reap would charge either way. The enclave is told the true figure."""
+    _db, private, boot = _store(leased=True)
+    door = _Door(ACCEPT)
+    _use(monkeypatch, _client(door))
+
+    answer = _beat(private, boot, _raw(input_tokens=400))
+
+    assert answer == {"accepted": True, "seq": 1, "expires_at_ms": DEADLINE_MS, "cap_micro": 300, "running_micro": 420}
+    body = door.bodies()[0]
+    assert body["Running"] == 300 and body["Usage"] == 410
 
 
 def test_the_first_heartbeat_sends_exact_bytes_with_the_basis_and_no_echo(monkeypatch: pytest.MonkeyPatch) -> None:

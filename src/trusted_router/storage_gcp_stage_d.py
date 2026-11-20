@@ -129,18 +129,28 @@ def heartbeat_gateway_atomic(
             return reject("usage_exceeds_cap")
 
         document = parse_pricing_snapshot(authorization.pricing_snapshot)
+        selected_provider = _selected_provider(authorization, selected_endpoint_id)
         try:
             running_micro = delivered_usage_charge_microdollars(
                 authorization,
                 document,
-                _selected_provider(authorization, selected_endpoint_id),
+                selected_provider,
+                selected_endpoint_id,
+                usage,
+            )
+            # The cap bounds the output: a prompt above its estimate raises
+            # it by that excess (stage_d_ceiling_microdollars).
+            ceiling_micro = stage_d_ceiling_microdollars(
+                authorization,
+                document,
+                selected_provider,
                 selected_endpoint_id,
                 usage,
             )
         except ValueError:
             return reject("endpoint_mismatch")
         cap_micro = _cap_micro(authorization)
-        if running_micro > cap_micro:
+        if running_micro > ceiling_micro:
             return reject("usage_exceeds_cap")
         updated = transaction.execute_update(
             "UPDATE tr_gateway_authorization SET heartbeat_seq=@seq, "
@@ -307,7 +317,76 @@ def _usage_exceeds_authorized_tokens(
         usage,
         model_id=_selected_model_id(authorization, selected_endpoint_id),
     )
-    return total_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
+    # The prompt the provider reports is the prompt it took: the enclave's
+    # estimate of it (chars/4 over the messages, no tools) is no bound on it,
+    # and the stream cannot un-send it. A prompt above the estimate therefore
+    # never spends the output budget; a prompt below it still lends the
+    # difference to the output, as before (stage_d_ceiling_microdollars).
+    authorized_prompt = min(total_prompt, int(prompt_limit))
+    return authorized_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
+
+
+def prompt_overrun_microdollars(
+    authorization: Any,
+    document: dict[str, Any],
+    provider: str,
+    endpoint_id: str,
+    usage: dict[str, int],
+) -> int:
+    """What the delivered prompt costs above the authorized prompt estimate,
+    priced on the selected endpoint through the same fee layers as the
+    running charge: ``max(0, charge(delivered prompt) - charge(estimate))``.
+
+    The estimate (``stage_d_prompt_tokens``, the enclave's
+    ``estimated_input_tokens``) is chars/4 over the message contents. It
+    counts no tool definitions, no provider-side tool-use system prompt and
+    no tokenizer that splits finer than four characters a token, so on a
+    tools-heavy Anthropic request the provider's prompt can exceed it by
+    thousands of tokens. The cap prices the estimate plus the output budget,
+    so without this allowance that excess spent the output budget before the
+    first token, and a stream was cut with an empty reply that was billed
+    anyway (2026-11-19 report). The provider has already taken that prompt;
+    cutting the stream recovers none of it. The ceiling bounds the output.
+    """
+    prompt_limit = authorization.stage_d_prompt_tokens
+    if prompt_limit is None:
+        return 0
+    delivered_prompt = {**usage, "output_tokens": 0, "reasoning_tokens": 0}
+    authorized_prompt = {
+        "input_tokens": int(prompt_limit),
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "price_tier_input_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    delivered = delivered_usage_charge_microdollars(
+        authorization, document, provider, endpoint_id, delivered_prompt
+    )
+    authorized = delivered_usage_charge_microdollars(
+        authorization, document, provider, endpoint_id, authorized_prompt
+    )
+    return max(0, delivered - authorized)
+
+
+def stage_d_ceiling_microdollars(
+    authorization: Any,
+    document: dict[str, Any],
+    provider: str,
+    endpoint_id: str,
+    usage: dict[str, int],
+) -> int:
+    """The running charge a heartbeat may reach: the cap (the
+    authorization's estimate, ``_cap_micro``) plus the delivered prompt's
+    overrun of the authorized prompt estimate
+    (``prompt_overrun_microdollars``). The enclave's cut
+    (quill-cloud-proxy ``stageDController.wouldExceedCapLocked``) applies the
+    same allowance. Equivalently: the running charge with the prompt priced
+    at no more than its estimate may not pass the cap, so the output keeps
+    its whole budget whatever the prompt turned out to be."""
+    return _cap_micro(authorization) + prompt_overrun_microdollars(
+        authorization, document, provider, endpoint_id, usage
+    )
 
 
 def _cap_micro(authorization: Any) -> int:

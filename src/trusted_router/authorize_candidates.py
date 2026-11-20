@@ -509,7 +509,9 @@ def hold_output_tokens(output_tokens: int) -> int:
     of the prompt plus the client's whole output budget (``max_tokens``,
     ``max_completion_tokens`` or ``max_output_tokens``, else 512). Stage D
     exports it as ``cap_micro`` and cuts a stream whose running charge passes
-    it, the heartbeat refuses usage above it, a video's settle and a
+    it, the heartbeat refuses usage above it (both raise it by what the
+    delivered prompt costs above the prompt estimate, so it bounds the
+    output: storage_gcp_stage_d.stage_d_ceiling_microdollars), a video's settle and a
     user-provided model's settle are held to it, and the Go reaper charges an
     abandoned hold at most its hold. Key admission (the lifetime cap, the
     spend windows, the strict windows) compares it too, and the reservation

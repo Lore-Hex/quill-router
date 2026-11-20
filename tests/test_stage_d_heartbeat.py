@@ -94,6 +94,8 @@ def _seed(
     estimated_microdollars: int = 300,
     credit_reserved_micro: int = 300,
     stage_d_max_output_tokens: int = 100,
+    stage_d_prompt_tokens: int = 100,
+    pricing_snapshot: str | None = None,
 ) -> tuple[FakeSpannerDatabase, GatewayAuthorization]:
     authorization = GatewayAuthorization(
         id="gwa-stage-d-fixture",
@@ -106,7 +108,9 @@ def _seed(
         credit_reservation_id="reservation",
         settled=settled,
         pricing_snapshot=(
-            _literal("pricing_document.json").decode().strip() if cohort else None
+            (pricing_snapshot or _literal("pricing_document.json").decode().strip())
+            if cohort
+            else None
         ),
         heartbeat_seq=heartbeat_seq if cohort else None,
         heartbeat_hash=heartbeat_hash,
@@ -117,7 +121,7 @@ def _seed(
             else None
         ),
         stage_d_reason="ok" if cohort else "not_streaming",
-        stage_d_prompt_tokens=100,
+        stage_d_prompt_tokens=stage_d_prompt_tokens,
         stage_d_max_output_tokens=stage_d_max_output_tokens,
         stage_d_boot_kid=stage_d_boot_kid,
         app_id="app-stage-d" if app_markup_basis_points else "",
@@ -304,6 +308,163 @@ def test_heartbeat_cap_is_the_estimate_not_the_reservation() -> None:
     past_the_estimate = _heartbeat(db, seq=2, usage=_usage(output_tokens=131_073), payload_hash="b" * 64)
     assert past_the_estimate.accepted is False
     assert past_the_estimate.reason == "usage_exceeds_cap"
+
+
+def _flat_candidate(endpoint_id: str, input_rate: int, output_rate: int) -> dict[str, Any]:
+    rates = {
+        "input_micro_per_million": input_rate,
+        "output_micro_per_million": output_rate,
+        "cached_input_micro_per_million": input_rate // 10,
+        "cache_creation_micro_per_million": input_rate * 5 // 4,
+    }
+    return {
+        "endpoint_id": endpoint_id,
+        "price_history_version": 1,
+        "rates": rates,
+        "tiers": [{"max_prompt_tokens": None, "rates": rates}],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+    }
+
+
+# claude-haiku-5.5's two routes as the catalog priced them on 2026-11-19:
+# Anthropic direct 105,500/527,500 and Bedrock 116,050/580,250 microdollars
+# a million prompt/output tokens. Both are Anthropic tokenizers, so the
+# candidates' spread gives the cap almost no slack.
+HAIKU_DIRECT = "anthropic/haiku-direct"
+HAIKU_BEDROCK = "anthropic/haiku-bedrock"
+HAIKU_DOCUMENT: dict[str, Any] = {
+    "v": 1,
+    "kind": "endpoint",
+    "candidates": [
+        _flat_candidate(HAIKU_DIRECT, 105_500, 527_500),
+        _flat_candidate(HAIKU_BEDROCK, 116_050, 580_250),
+    ],
+}
+# The enclave's default output budget (outputTokenEstimate) with no max_tokens.
+DEFAULT_OUTPUT_BUDGET = 512
+
+
+def _haiku_estimate(prompt_estimate: int, output_budget: int = DEFAULT_OUTPUT_BUDGET) -> int:
+    """The authorization's estimate, Stage D's cap: the priciest
+    candidate's price of the prompt estimate plus the output budget
+    (authorize_candidates)."""
+    return max(
+        endpoint_cost_microdollars_from_document(
+            HAIKU_DOCUMENT, candidate["endpoint_id"], prompt_estimate, output_budget
+        )
+        for candidate in HAIKU_DOCUMENT["candidates"]
+    )
+
+
+def _seed_haiku(prompt_estimate: int, **kwargs: Any) -> FakeSpannerDatabase:
+    estimate = _haiku_estimate(prompt_estimate)
+    db, _authorization = _seed(
+        estimated_microdollars=estimate,
+        credit_reserved_micro=estimate,
+        stage_d_prompt_tokens=prompt_estimate,
+        stage_d_max_output_tokens=DEFAULT_OUTPUT_BUDGET,
+        pricing_snapshot=json.dumps(HAIKU_DOCUMENT, sort_keys=True, separators=(",", ":")),
+        **kwargs,
+    )
+    return db
+
+
+# The 2026-11-19 report's matrix on claude-haiku-5.5, as the heartbeat sees
+# it. The prompt estimate is the enclave's EstimateInputTokens: len/4 of
+# each message's content plus 4, with no tools. "Say hello in five words."
+# is 24 characters: 6 + 4 = 10. The delivered prompt is the provider's
+# count: the tool JSON, Anthropic's tool-use system prompt and a tokenizer
+# finer than four characters a token. The cap is
+# 116,050 x estimate + 580,250 x 512 per million, so a stream served by
+# Anthropic direct was cut once 105,500 x delivered passed it: delivered >
+# about 1.1 x estimate + 2,816 tokens, before the first output token. The
+# heartbeat refused all five once a heartbeat carried the provider's prompt
+# (a reply past 10 s or 256 tokens): its token check held the delivered
+# prompt plus output to the estimate plus the budget.
+REPORTED_PROMPTS = [
+    # (case, prompt estimate, delivered prompt, cut before this change)
+    ("one tool, 6,000-char description", 10, 1_900, False),
+    ("one tool, 9,000-char description", 10, 2_900, True),
+    ("13 tools, 27 KB of tool JSON", 10, 9_500, True),
+    ("no tools, 24,000-char message", 6_004, 8_400, False),
+    ("no tools, 40,000-char message", 10_004, 14_000, True),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "prompt_estimate", "delivered_prompt", "was_cut"),
+    REPORTED_PROMPTS,
+    ids=[case for case, *_ in REPORTED_PROMPTS],
+)
+@pytest.mark.parametrize("endpoint_id", [HAIKU_DIRECT, HAIKU_BEDROCK])
+def test_a_prompt_above_its_estimate_does_not_spend_the_output_budget(
+    case: str, prompt_estimate: int, delivered_prompt: int, was_cut: bool, endpoint_id: str
+) -> None:
+    db = _seed_haiku(prompt_estimate)
+    cap = _haiku_estimate(prompt_estimate)
+    usage = _usage(input_tokens=delivered_prompt, output_tokens=3)
+    running = endpoint_cost_microdollars_from_document(HAIKU_DOCUMENT, endpoint_id, delivered_prompt, 3)
+    if endpoint_id == HAIKU_DIRECT:
+        # The threshold the report measured: these are exactly the cases
+        # whose running charge passed the cap on their first tokens.
+        assert (running > cap) is was_cut, case
+
+    result = _heartbeat(db, endpoint_id=endpoint_id, usage=usage)
+
+    assert result.accepted is True, (case, result)
+    assert result.cap_micro == cap
+    assert result.running_micro == running
+
+
+@pytest.mark.parametrize("endpoint_id", [HAIKU_DIRECT, HAIKU_BEDROCK])
+def test_a_prompt_above_its_estimate_still_leaves_the_output_bounded(endpoint_id: str) -> None:
+    """The allowance is the prompt's excess, never more output: past the
+    budget a stream is still cut, whatever its prompt."""
+    db = _seed_haiku(10)
+    within = _heartbeat(
+        db, endpoint_id=endpoint_id, usage=_usage(input_tokens=9_500, output_tokens=DEFAULT_OUTPUT_BUDGET)
+    )
+    assert within.accepted is True, within
+
+    past = _heartbeat(
+        db,
+        seq=2,
+        endpoint_id=endpoint_id,
+        usage=_usage(input_tokens=9_500, output_tokens=DEFAULT_OUTPUT_BUDGET + 1),
+        payload_hash="b" * 64,
+    )
+    assert past.accepted is False
+    assert past.reason == "usage_exceeds_cap"
+
+
+def test_the_prompt_allowance_is_priced_through_the_frozen_fee_layers() -> None:
+    """The fixture's estimate, 300, prices a 100-token prompt and 100 output
+    tokens. A 400-token prompt with 10 output tokens runs to 420 before
+    fees: past the cap, within the cap plus the prompt's 300 excess. With a
+    receipt fee and an app markup the running charge and the excess carry
+    the same fees, so the stream is still within its ceiling."""
+    db, _authorization = _seed(app_markup_basis_points=1_250, receipt_fee_basis_points=1_200)
+
+    result = _heartbeat(db, usage=_usage(input_tokens=400, output_tokens=10))
+
+    receipt_charge = signed_receipt_price_microdollars(420, 1_200)
+    assert result.accepted is True, result
+    assert result.cap_micro == 300
+    assert result.running_micro == receipt_charge + app_markup_microdollars(receipt_charge, 1_250)
+
+
+def test_a_cache_write_above_the_estimate_is_part_of_the_prompts_excess() -> None:
+    """A cache write bills 1.25 times the input rate (the fixture's
+    1,250,000): 300 cache-written tokens over the estimated 100 run past the
+    300 cap at once, and stay within it plus the prompt's excess."""
+    db, _authorization = _seed()
+    usage = {**_usage(input_tokens=100, output_tokens=10), "cache_creation_input_tokens": 300}
+
+    result = _heartbeat(db, usage=usage)
+
+    assert result.accepted is True, result
+    assert result.running_micro == 100 + 375 + 20
 
 
 def test_exact_duplicate_replay_is_read_only_and_returns_same_response() -> None:
