@@ -1,6 +1,7 @@
 """The refresh-input list that decides whether a snapshot may be carried onto a newer main."""
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -78,6 +79,49 @@ def test_static_inputs_cover_dynamic_and_data_reads() -> None:
         ".github/workflows/refresh-prices.yml",
     ):
         assert covered(path, specs), path
+
+
+def test_static_pages_are_not_refresh_inputs() -> None:
+    # Only the provider social cards and the logos and fonts they are drawn
+    # from feed a refresh. Site pages, styles, scripts and the public OpenAPI
+    # document merge most busy days; counting them forced a recomputation of
+    # every snapshot they overlapped (runs 44782888255, 44800370604).
+    specs = module.refresh_inputs()
+    assert covered("src/trusted_router/static/og/providers/manifest.json", specs)
+    for path in (
+        "src/trusted_router/static/choose-app.html",
+        "src/trusted_router/static/console.css",
+        "src/trusted_router/static/social-rewards.js",
+        "src/trusted_router/static/openapi-public.json",
+        "src/trusted_router/static/og.png",
+    ):
+        assert not covered(path, specs), path
+
+
+def static_references(path: Path) -> list[str]:
+    """String constants in a module that name the static directory."""
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    return [
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and (node.value == "static" or "trusted_router/static" in node.value)
+    ]
+
+
+def test_only_the_social_card_renderer_reads_static_files() -> None:
+    # The narrowed static inputs are complete only while no other refresh
+    # module names static/. A new reader must add its paths to STATIC_INPUTS.
+    entries = module.entry_points(WORKFLOW.read_text())
+    readers = {path.as_posix() for path in module.closure(entries) if static_references(path)}
+    readers.discard("scripts/pricing/refresh_inputs.py")  # the rule names the inputs it lists
+    assert readers == {"scripts/generate_provider_og.py"}
+    renderer = (ROOT / "scripts/generate_provider_og.py").read_text(encoding="utf-8")
+    # STATIC_DIR is used only for the three directories listed as inputs.
+    uses = re.findall(r"STATIC_DIR / ([^\n]+)", renderer)
+    assert sorted(uses) == ['"fonts" / "archivo-latin.woff2"', '"og" / "providers"', '"provider-logos"']
+    specs = module.refresh_inputs()
+    for path in ("og/providers/x.png", "provider-logos/x.png", "fonts/archivo-latin.woff2"):
+        assert covered(f"src/trusted_router/static/{path}", specs), path
 
 
 def test_cli_prints_one_pathspec_per_line(capsys: pytest.CaptureFixture[str]) -> None:

@@ -474,11 +474,24 @@ jobs:
           #     the whole gate again: its own ci.yml dispatch, polled by id
           #     for that exact SHA, then the status bridge and the push. No
           #     SHA reaches main without a successful CI run of that SHA.
+          # A round's CI run is superseded the moment main moves: its SHA can
+          # no longer be pushed. Waiting out that run (35-55 minutes) before
+          # carrying meant publication needed main to stay still for a whole
+          # CI run that started at an arbitrary time. With main merging every
+          # 20-40 minutes on busy days, three such rounds lost the race for
+          # 9 hours on 2026-11-19 and again on 11-20 (runs 44782888255,
+          # 44800370604). So the poll also watches main, about once a minute,
+          # and on a move cancels the superseded run and starts the next round
+          # at once: it carries onto the new head and dispatches that SHA's
+          # own CI, or recomputes. Publication then needs only one quiet
+          # CI-length window after any merge, which busy days do have. Nothing
+          # about what may be pushed changes: the push still requires a
+          # successful CI run of the exact SHA whose parent is main.
           # Rounds stop after MAX_ROUNDS exact-SHA CI runs or once the next
           # round could not finish within the job's time limit.
           REFRESH_BASE="${GITHUB_SHA}"
           PUBLISH_BASE="${GITHUB_SHA}"
-          MAX_ROUNDS=3
+          MAX_ROUNDS=6
           ROUND_START_DEADLINE=$(( $(date +%s) + 150 * 60 ))
           refresh_inputs=()
           if [ -s /tmp/refresh-inputs.txt ]; then
@@ -553,9 +566,10 @@ jobs:
             # rerun's attempt appears. It shares this round's 120-minute poll
             # budget, so MAX_ROUNDS and the round deadline bound it as before.
             ci_rerun_attempt=""
+            ci_superseded=""
             # Keep exact-SHA completion mandatory, but allow the test matrix
             # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
-            for _ in $(seq 1 480); do
+            for poll in $(seq 1 480); do
               if [ -n "${ci_run_id}" ]; then
                 # Once the listing has found the run, poll that run by id. A
                 # second dispatch on the same branch and SHA could otherwise be
@@ -582,6 +596,21 @@ jobs:
                 ci_run_id=$(jq -r .databaseId <<<"${run_json}")
                 attempt=$(jq -r '.attempt // 1' <<<"${run_json}")
                 echo "  ci run ${ci_run_id} attempt ${attempt}: status=${status} conclusion=${conclusion:-<pending>}"
+                # Every fourth poll (about a minute) of an unfinished run, ask
+                # whether main moved. If it did, this run's SHA can never be
+                # pushed: cancel it by id and let the next round carry or
+                # recompute now instead of after the run ends.
+                if [ "${status}" != "completed" ] && [ $(( poll % 4 )) -eq 0 ]; then
+                  git fetch -q origin main
+                  main_now=$(git rev-parse origin/main)
+                  if [ "${main_now}" != "${PUBLISH_BASE}" ]; then
+                    echo "  main advanced to ${main_now} during snapshot CI; cancelling superseded ci run ${ci_run_id}"
+                    gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
+                      echo "::warning::could not cancel superseded ci run ${ci_run_id}"
+                    ci_superseded=1
+                    break
+                  fi
+                fi
                 if [ -n "${ci_rerun_attempt}" ] && [ "${attempt}" -lt "${ci_rerun_attempt}" ]; then
                   # The rerun was requested; this is still the failed attempt.
                   sleep 15
@@ -609,6 +638,9 @@ jobs:
               fi
               sleep 15
             done
+            if [ -n "${ci_superseded}" ]; then
+              continue
+            fi
             if [ -z "${ci_passed}" ]; then
               echo "generated snapshot CI did not pass within 120 minutes"
               # Deleting the branch (the EXIT trap) does not cancel its run. A

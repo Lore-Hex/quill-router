@@ -749,11 +749,94 @@ def test_snapshot_is_recomputed_without_the_refresh_input_list(publication_repo:
 
 
 def test_carrying_stops_after_bounded_ci_rounds(publication_repo: PublicationRepo) -> None:
-    # Main moves during every exact-SHA CI run: three rounds, then recompute.
-    result = publication_repo.run(advance_main={"dispatches": 3, "path": None})
-    assert_snapshot_withheld(publication_repo, result, rounds=3)
-    assert "main advanced during each of 3 exact-SHA CI runs" in result.stdout
-    assert len(set(publication_repo.dispatched_shas)) == 3
+    # Main moves during every exact-SHA CI run: six rounds, then recompute.
+    result = publication_repo.run(advance_main={"dispatches": 6, "path": None})
+    assert_snapshot_withheld(publication_repo, result, rounds=6)
+    assert "main advanced during each of 6 exact-SHA CI runs" in result.stdout
+    assert len(set(publication_repo.dispatched_shas)) == 6
+
+
+def test_carrying_stops_after_bounded_superseded_rounds(publication_repo: PublicationRepo) -> None:
+    # Main moves during every run, each found and cancelled mid-run: the
+    # early restart is bounded by the same six rounds.
+    states = [("in_progress", None)] * 12 + [("completed", "success")]
+    result = publication_repo.run(advance_main={"dispatches": 6, "path": None}, run_states=states)
+    assert_snapshot_withheld(publication_repo, result, rounds=6)
+    assert "main advanced during each of 6 exact-SHA CI runs" in result.stdout
+    assert len(cancels(publication_repo)) == 6
+
+
+def cancels(repo: PublicationRepo) -> list[list[str]]:
+    return [call for call in repo.calls if call[:2] == ["run", "cancel"]]
+
+
+def round_polls(repo: PublicationRepo) -> list[int]:
+    """Poll answers each exact-SHA CI round read, in dispatch order."""
+    counts: list[int] = []
+    for event in repo.events:
+        if event[0] == "ci-dispatch":
+            counts.append(0)
+        elif event[0] == "poll" and event[2]:
+            counts[-1] += 1
+    return counts
+
+
+# Main moves just after round 1's dispatch; its run would take 13 polls.
+SLOW_RUN = [("in_progress", None)] * 12 + [("completed", "success")]
+
+
+def test_a_superseded_ci_run_is_cancelled_and_the_snapshot_carried_at_once(
+    publication_repo: PublicationRepo,
+) -> None:
+    # Round 1's SHA cannot be pushed once main moves. The poll notices within
+    # four polls, cancels that run by id and carries the snapshot onto the new
+    # main straight away. Waiting out the doomed run needed main to stay still
+    # for one whole CI run after it, which busy days never gave (2026-11-19/20).
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": None}, run_states=SLOW_RUN)
+    moved = (publication_repo.root / "main-moved").read_text().strip()
+    assert_snapshot_published(publication_repo, result, rounds=2)
+    assert_carried_onto(publication_repo, moved)
+    assert round_polls(publication_repo) == [4, 13]
+    assert cancels(publication_repo) == [["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]]
+    events = publication_repo.events
+    cancel = next(i for i, event in enumerate(events) if event[1:3] == ["run", "cancel"])
+    second = [i for i, event in enumerate(events) if event[0] == "ci-dispatch"][1]
+    assert cancel < second
+    assert "cancelling superseded ci run 1234" in result.stdout
+
+
+def test_a_superseded_ci_run_is_cancelled_before_recomputing(publication_repo: PublicationRepo) -> None:
+    # Main changed a refresh input: recompute now, not after the doomed run.
+    path = "src/trusted_router/money.py"
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, run_states=SLOW_RUN)
+    assert_snapshot_withheld(publication_repo, result, rounds=1)
+    assert round_polls(publication_repo) == [4]
+    assert len(cancels(publication_repo)) == 1
+    assert "main gained changes to refresh inputs:" in result.stdout
+
+
+def test_an_unmoved_main_never_cancels_a_running_ci_run(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(run_states=SLOW_RUN)
+    assert_snapshot_published(publication_repo, result)
+    assert round_polls(publication_repo) == [13]
+    assert cancels(publication_repo) == []
+
+
+def test_snapshot_is_carried_over_static_site_changes(publication_repo: PublicationRepo) -> None:
+    # Site pages under static/ are not refresh inputs (scripts/pricing/refresh_inputs.py).
+    path = "src/trusted_router/static/choose-app.html"
+    assert not covered_by_refresh_inputs(path)
+    page = publication_repo.clone / path
+    page.write_text("<html></html>\n")
+    publication_repo.git("add", path)
+    publication_repo.git("commit", "-qm", "Static page")
+    publication_repo.git("push", "-q", "origin", "main")
+    publication_repo.base = publication_repo.git("rev-parse", "HEAD")
+    publication_repo.env["GITHUB_SHA"] = publication_repo.base
+    (publication_repo.root / "events.jsonl").write_text("")
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, run_states=SLOW_RUN)
+    assert_snapshot_published(publication_repo, result, rounds=2)
+    assert_carried_onto(publication_repo, (publication_repo.root / "main-moved").read_text().strip())
 
 
 def test_input_check_mutation_is_detected(publication_repo: PublicationRepo) -> None:
