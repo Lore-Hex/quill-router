@@ -1,7 +1,7 @@
 {
   "provider": "grok",
   "source": "https://api.x.ai/v1/language-models",
-  "generated_at": "2026-11-20T05:10:05Z",
+  "generated_at": "2026-11-20T07:28:13Z",
   "model_count": 8,
   "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
   "models": [
@@ -256,7 +256,7 @@
       "id": "x-ai/grok-build-0.1",
       "upstream_id": "grok-build-0.1",
       "created": 1776297600,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2000000,
       "cached_input_token_price_per_m": 200000,
@@ -274,7 +274,8 @@
           "cached_input_token_price_per_m": 400000
         }
       ],
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "grok-4.7",

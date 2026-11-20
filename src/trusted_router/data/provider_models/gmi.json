@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-11-20T05:10:05Z",
+  "generated_at": "2026-11-20T07:28:13Z",
   "model_count": 116,
   "models": [
     {
@@ -420,7 +420,9 @@
       "input_token_price_per_m": 570000,
       "output_token_price_per_m": 2290000,
       "cached_input_token_price_per_m": 230000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V3 0324",
@@ -712,7 +714,9 @@
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 100000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "KAT-Coder-Pro-V2",
@@ -1506,7 +1510,9 @@
       "context_length": 262141,
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 4200000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
@@ -1548,7 +1554,9 @@
           "cached_input_token_price_per_m": 540000
         }
       ],
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3 Next 80B A3B Instruct ",
@@ -1592,7 +1600,9 @@
       "context_length": 262144,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 1500000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3.5 122B A10B",
@@ -1902,7 +1912,9 @@
           "cached_input_token_price_per_m": 1000000
         }
       ],
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiMo-V2.5",

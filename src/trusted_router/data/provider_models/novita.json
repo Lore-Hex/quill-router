@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-20T05:10:05Z",
+  "generated_at": "2026-11-20T07:28:13Z",
   "model_count": 188,
   "models": [
     {
@@ -3252,7 +3252,9 @@
       "input_token_price_per_m": 2800,
       "output_token_price_per_m": 11300,
       "cached_input_token_price_per_m": 700,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-r1",
@@ -5532,7 +5534,9 @@
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 50000,
       "cached_input_token_price_per_m": 500,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-6.2-astra",
@@ -5565,7 +5569,9 @@
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 4000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-6.2-astra-azure-dst",
@@ -5598,7 +5604,9 @@
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 4000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-6.2-astra-es",
@@ -5631,7 +5639,9 @@
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 4000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-6.2-sol",
@@ -5664,7 +5674,9 @@
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 100000,
       "cached_input_token_price_per_m": 1000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-6.2-sol-azure-dst",
@@ -5697,7 +5709,9 @@
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 100000,
       "cached_input_token_price_per_m": 1000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-6.2-sol-es",
@@ -5730,7 +5744,9 @@
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 100000,
       "cached_input_token_price_per_m": 1000,
-      "missing_since": "2026-11-20"
+      "missing_since": "2026-11-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ]
 }
