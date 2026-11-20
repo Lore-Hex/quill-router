@@ -194,6 +194,46 @@ class _ApplicationConsoleFormatter(logging.Formatter):
         return super().format(record)
 
 
+# create_app includes the API router twice: at "/" and under this prefix.
+_API_VERSION_PREFIX = "/v1"
+
+
+def matched_route_template(scope: Any) -> str | None:
+    """The template of the route that served a request, with every prefix.
+
+    Logged instead of the concrete path, which can carry a key hash. FastAPI
+    0.141 stopped copying an included router's routes under the include
+    prefix: ``scope["route"]`` is now the router's own route, so a request to
+    ``/v1/internal/gateway/authorize`` reports ``/internal/gateway/authorize``,
+    the same as the unprefixed route. Earlier versions reported the prefixed
+    copy. The ``/v1`` prefix is restored when the route matches only with it
+    removed, so one request logs one template on either layout, and a route
+    whose own template already accepts the full path is left alone.
+    """
+    route = scope.get("route")
+    own = getattr(route, "path", None)
+    if not isinstance(own, str) or not own:
+        return None
+    # Routes under a mounted sub-app carry the mount in root_path.
+    root_path = scope.get("root_path") or ""
+    template = f"{root_path}{own}"
+    path = scope.get("path")
+    path_regex = getattr(route, "path_regex", None)
+    if (
+        isinstance(path, str)
+        and path_regex is not None
+        and not template.startswith(_API_VERSION_PREFIX + "/")
+    ):
+        routed = path[len(root_path) :] if root_path and path.startswith(root_path) else path
+        if (
+            routed.startswith(_API_VERSION_PREFIX + "/")
+            and path_regex.match(routed) is None
+            and path_regex.match(routed[len(_API_VERSION_PREFIX) :]) is not None
+        ):
+            template = f"{root_path}{_API_VERSION_PREFIX}{own}"
+    return template
+
+
 def _configure_application_logging() -> None:
     """Make app logs visible to the container runtime, exactly once.
 
@@ -680,10 +720,7 @@ def create_app(
         # prompt, or body must never reach a log line. That is also why this
         # logs the matched ROUTE TEMPLATE and not the concrete path: several
         # routes carry a key or lookup hash as a path segment.
-        template = getattr(request.scope.get("route"), "path", None)
-        if template:
-            # Routes under a mounted sub-app carry the mount in root_path.
-            template = f"{request.scope.get('root_path') or ''}{template}"
+        template = matched_route_template(request.scope)
         workspace_id = getattr(request.state, "billing_workspace_id", None)
         try:
             workspace_id = str(UUID(workspace_id)) if isinstance(workspace_id, str) else "unknown"

@@ -155,7 +155,7 @@ def test_the_busy_503_is_marked_once_with_the_requests_trace(caplog: pytest.LogC
         assert f"request_id={REQUEST_ID}" in warning.getMessage()
         assert "error_class=StrictBudgetBusy" in warning.getMessage()
         assert "trace=" not in warning.getMessage()
-    assert "route=/internal/gateway/authorize" in app_warning.getMessage()
+    assert f"route={AUTHORIZE} " in app_warning.getMessage()
     assert "storage.unavailable" not in caplog.text
     # Nothing held: the answer is a refusal to try now.
     assert _reserved(database, key) == 0

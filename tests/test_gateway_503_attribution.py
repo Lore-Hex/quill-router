@@ -17,10 +17,11 @@ import httpx
 import pytest
 from fastapi import HTTPException, Request
 from google.api_core.exceptions import Aborted, DeadlineExceeded
+from starlette.routing import Route
 
 from trusted_router.config import Settings, get_settings
 from trusted_router.gateway_timing import gateway_error_timing_fields
-from trusted_router.main import create_app
+from trusted_router.main import create_app, matched_route_template
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.services.federation import FederationUnavailable
 from trusted_router.storage import STORE, InMemoryStore
@@ -120,7 +121,7 @@ async def test_app_level_conflict_503_logs_path_and_error_class(
     assert response.headers["Retry-After"] == "1"
     line = _single_warning(caplog, "storage.transaction_aborted")
     assert "method=POST" in line
-    assert "route=/internal/gateway/authorize" in line
+    assert "route=/v1/internal/gateway/authorize" in line
     assert "error_class=Aborted" in line
     _assert_attributable_and_safe(line, key, "req-app-aborted")
 
@@ -146,7 +147,7 @@ async def test_app_level_unavailable_503_logs_path_and_error_class(
 
     assert response.status_code == 503
     line = _single_warning(caplog, "storage.unavailable")
-    assert "route=/internal/gateway/authorize" in line
+    assert "route=/v1/internal/gateway/authorize" in line
     assert "error_class=DeadlineExceeded" in line
     assert f"workspace_id={key.workspace_id}" in line
     assert "key_lookup_ms=" in line
@@ -289,6 +290,53 @@ async def test_app_level_503_logs_route_template_not_hash_bearing_path(
     assert "request_id=req-hash-route" in line
     assert "hash-value-never-logged" not in line
     assert ROW_NAMING_BACKEND_MESSAGE not in line
+
+
+def _route(path: str) -> Route:
+    return Route(path, endpoint=lambda _request: None)
+
+
+@pytest.mark.parametrize(
+    ("route_path", "request_path", "expected"),
+    [
+        # FastAPI >= 0.141: the API router's own route, reached through /v1.
+        ("/internal/gateway/authorize", AUTHORIZE, AUTHORIZE),
+        # FastAPI < 0.141: the prefixed copy the include used to create.
+        (AUTHORIZE, AUTHORIZE, AUTHORIZE),
+        # The same router is also included at "/", which stays unprefixed.
+        (
+            "/internal/gateway/authorize",
+            "/internal/gateway/authorize",
+            "/internal/gateway/authorize",
+        ),
+        ("/keys/{hash}", "/v1/keys/hash-value-never-logged", "/v1/keys/{hash}"),
+        # A route whose own template accepts the full path was not reached
+        # through the /v1 include: nothing is added.
+        ("/{path:path}", "/v1/unknown", "/{path:path}"),
+        ("/v1/models", "/v1/models", "/v1/models"),
+    ],
+)
+def test_route_template_is_the_same_on_either_fastapi_include_layout(
+    route_path: str, request_path: str, expected: str
+) -> None:
+    scope = {"type": "http", "path": request_path, "root_path": "", "route": _route(route_path)}
+    assert matched_route_template(scope) == expected
+
+
+def test_route_template_keeps_a_mounted_root_path_once() -> None:
+    mounted = {
+        "path": "/v1/keys/hash-value-never-logged",
+        "root_path": "/v1",
+        "route": _route("/keys/{hash}"),
+    }
+    assert matched_route_template(mounted) == "/v1/keys/{hash}"
+    under_mount = {"path": "/app/v1/keys/h", "root_path": "/app", "route": _route("/keys/{hash}")}
+    assert matched_route_template(under_mount) == "/app/v1/keys/{hash}"
+
+
+def test_route_template_without_a_matched_route_is_none() -> None:
+    assert matched_route_template({"path": AUTHORIZE, "root_path": ""}) is None
+    assert matched_route_template({"path": AUTHORIZE, "route": SimpleNamespace(path="")}) is None
 
 
 @pytest.mark.asyncio
