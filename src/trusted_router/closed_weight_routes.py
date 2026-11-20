@@ -33,17 +33,19 @@ CLOSED_WEIGHT_FAMILY_PROVIDERS: dict[str, frozenset[str]] = {
 }
 
 # Published weights inside a closed maker's namespace. Gemma (and its
-# derivatives such as EmbeddingGemma), DePlot, gpt-oss, Whisper large and the
-# released Grok 1/2 checkpoints are independently hostable.
+# derivatives such as EmbeddingGemma), DePlot, gpt-oss and Whisper large are
+# independently hostable.
 _OPEN_WEIGHT_PREFIXES: tuple[str, ...] = (
     "google/gemma",
     "google/deplot",
     "openai/gpt-oss",
     "openai/whisper-large",
-    "x-ai/grok-1",
-    "x-ai/grok-2",
 )
 _OPEN_WEIGHT_CONTAINS: tuple[str, ...] = ("gemma", "gpt-oss")
+# xAI's released checkpoints match exactly: every other x-ai/grok* id is closed,
+# including API models such as grok-2-1212 and malformed reseller spellings
+# such as GMI's x-ai/grok4.6 and x-ai/grok4.7 (no hyphen).
+_OPEN_WEIGHT_EXACT: frozenset[str] = frozenset({"x-ai/grok-1", "x-ai/grok-2"})
 
 # Narrower per-model admissions inside a family. Each model here was verified
 # end to end on these providers only (docs/providers/2026-11-10-gemini-carbon.md);
@@ -59,7 +61,7 @@ def closed_weight_family(model_id: str) -> str | None:
     namespace, separator, _ = lowered.partition("/")
     if not separator or namespace not in CLOSED_WEIGHT_FAMILY_PROVIDERS:
         return None
-    if lowered.startswith(_OPEN_WEIGHT_PREFIXES):
+    if lowered in _OPEN_WEIGHT_EXACT or lowered.startswith(_OPEN_WEIGHT_PREFIXES):
         return None
     if any(marker in lowered for marker in _OPEN_WEIGHT_CONTAINS):
         return None

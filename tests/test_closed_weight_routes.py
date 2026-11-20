@@ -34,6 +34,11 @@ CLOSED_MODELS = (
     "anthropic/claude-future",
     "x-ai/grok-4.6",
     "x-ai/grok-future",
+    # GMI's malformed spellings (no hyphen), published via
+    # canonicalize_native_model_id; the family matches the whole namespace.
+    "x-ai/grok4.6",
+    "x-ai/grok4.7",
+    "x-ai/grok-2-1212",
 )
 # Not listed by any manifest, so no other filter can drop the direct routes.
 UNLISTED_CLOSED_MODELS = (
@@ -121,6 +126,8 @@ def test_catalog_has_no_unauthorized_closed_weight_route() -> None:
     "openai/sora-2@venice/prepaid",
     "anthropic/claude-opus-5@deepinfra/byok",
     "x-ai/grok-4.6@atlas-cloud/prepaid",
+    "x-ai/grok4.6@gmi/byok",
+    "x-ai/grok4.7@gmi/byok",
 ])
 def test_known_reseller_routes_are_absent(endpoint_id: str) -> None:
     assert endpoint_id not in MODEL_ENDPOINTS
