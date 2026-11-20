@@ -62,7 +62,7 @@ const scenarios = () => {
       await expect(page.locator("#homepage-nav")).not.toBeVisible();
       await expect(page.locator(".trnav .signin")).toBeVisible();
       await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText("Search models", { useInnerText: true });
-      await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search \d+ models/);
+      await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search 600\+ models/);
       await page.locator(".trnav .search").click();
       await expect(page.getByRole("dialog", { name: "Find a model" })).toBeVisible();
       await page.getByRole("searchbox").press("Escape");
@@ -98,7 +98,7 @@ test.describe("smallest phones", () => {
     await page.goto("/");
     await expect(page.locator(".trnav .signin")).toBeVisible();
     await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText(/^models$/i, { useInnerText: true }); // capitalised by CSS
-    await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search \d+ models/);
+    await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search 600\+ models/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 });

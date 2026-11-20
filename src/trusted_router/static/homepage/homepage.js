@@ -48,7 +48,7 @@ $$('.trc .fl button').forEach(button=>button.addEventListener('click',()=>{
  $$('.trc .fl button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));
  $$('.trc tbody').forEach(t=>t.hidden=t.dataset.f!==button.dataset.f);
  const count=$$('.trc tbody:not([hidden]) tr').length;
- $('.trc .cnt').textContent=button.dataset.f==='all'?`Featured · ${count} shown · 600+ models in the catalog`:`${button.textContent.trim()} · ${count} shown`;
+ $('.trc .cnt').textContent=button.dataset.f==='all'?`Featured · ${count} of 600+`:`${button.textContent.trim()} · ${count} shown`;
  track('home.catalog_filter',{filter:button.textContent.toLowerCase()});
 }));
 $$('[data-alias]').forEach(button=>button.addEventListener('click',async()=>{

@@ -287,7 +287,7 @@ def create_app(
         title="TrustedRouter API",
         summary="OpenAI-compatible AI router with an attested prompt path.",
         description=(
-            "TrustedRouter is an OpenAI-compatible API for 600+ models across "
+            "TrustedRouter is an OpenAI-compatible API for hundreds of models across "
             "many providers, with provider fallback, zero-retention routing, and an "
             "attested gateway whose running source commit and image digest can be "
             "verified.\n\n"
