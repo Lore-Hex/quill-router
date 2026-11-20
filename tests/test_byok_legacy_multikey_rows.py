@@ -39,3 +39,23 @@ def test_a_multi_key_row_reads_and_lists_as_its_default_key() -> None:
     listed = store.list_byok_providers("ws_multi")
     assert [(c.provider, c.secret_ref) for c in listed] == [("openai", "env://OPENAI_DEFAULT")]
     assert not hasattr(listed[0], "additional_keys")
+
+
+def test_a_legacy_gemini_alias_row_lists_under_its_public_provider() -> None:
+    from fastapi.testclient import TestClient
+
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+    from trusted_router.storage import STORE
+
+    client = TestClient(create_app(Settings(environment="test"), init_observability=False))
+    headers = {"x-trustedrouter-user": "legacy-gemini@example.com"}
+    key = client.post("/v1/keys", headers=headers, json={"name": "gemini"}).json()["data"]
+    STORE.upsert_byok_provider(
+        workspace_id=key["workspace_id"], provider="gemini", secret_ref="env://GEMINI", key_hint=None,  # noqa: S106
+    )
+    listed = client.get("/v1/byok/providers", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert [row["provider"] for row in listed.json()["data"]] == ["google-ai-studio"]
+    one = client.get("/v1/byok/providers/google-ai-studio", headers=headers)
+    assert one.status_code == 200, one.text

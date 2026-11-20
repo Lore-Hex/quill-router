@@ -136,7 +136,9 @@ def member_shape(member: Member) -> dict[str, Any]:
 def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
     return {
         "provider": config.provider,
-        "provider_name": PROVIDERS[config.provider].name,
+        # A legacy alias row (gemini) has no catalog entry of its own; the
+        # route replaces "provider" with the public slug.
+        "provider_name": PROVIDERS[config.provider].name if config.provider in PROVIDERS else config.provider,
         "configured": True,
         "secret_ref": config.secret_ref,
         "secret_storage": "envelope" if config.encrypted_secret is not None else "external_ref",
