@@ -555,12 +555,14 @@ PROVIDERS: dict[str, Provider] = {
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "TrustedRouter sends requests through its attested gateway to "
-            "OpenRouter, which routes them to a downstream operator. Routes "
-            "here are Standard privacy and are excluded from ZDR, "
+            "Retired. TrustedRouter no longer routes requests to OpenRouter. "
+            "Requests it served were Standard privacy, routed by OpenRouter to "
+            "a downstream operator, and excluded from ZDR, "
             "confidential-compute, and E2EE routing."
         ),
         provider_policy_url="https://openrouter.ai/docs/features/privacy-and-logging",
+        # Settlement-only: no public provider page, listing or social card.
+        internal_only=True,
     ),
     "meta": Provider(
         slug="meta",
@@ -2679,8 +2681,9 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "xiaomi",
         # Direct Meta Model API, Standard tier only. No ZDR claim.
         "meta",
-        # OpenRouter as a transport in its own right: prepaid credits only,
-        # no provider-direct key. Models are added as routes are enabled.
+        # Retired OpenRouter transport. Kept only so its one closed-weight
+        # route is built and archived in CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS;
+        # admission refuses it, so nothing new routes here.
         "openrouter",
     }
 )
@@ -4793,9 +4796,8 @@ MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
 
 # Author prefixes that name no maker: a host's namespace for other labs' weights
 # (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
-# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
-# and stealth/*, whose maker is unannounced.
-AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
+# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier).
+AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala"})
 
 
 def maker_provider_slug(model_id: str) -> str | None:

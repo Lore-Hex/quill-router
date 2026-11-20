@@ -90,7 +90,6 @@ def test_a_maker_without_its_own_provider_entry_is_named_without_one(
         ("cerebras/fixture-model", "cerebras"),
         ("fal/fixture-model", "fal"),
         ("phala/fixture-model", "phala"),
-        ("stealth/fixture-model", "openrouter"),
     ],
 )
 def test_a_host_namespace_names_no_publisher(model_id: str, default_route: str) -> None:
