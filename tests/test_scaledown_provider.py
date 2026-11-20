@@ -483,6 +483,15 @@ PRICED_TOKEN_TEXT = {
     "twenty-cents": "Summarize costs twenty cents for every million input tokens",
     "two-dollars": "Two dollars buys a million tokens of Extract",
     "one-euro": "One euro for every million input tokens",
+    # Round-9 review: setext headings with container markers or several text
+    # lines, a definition title, and currency symbols and ISO codes.
+    "blockquoted-setext-heading": "> Cost for 1M input tokens\n> ------------------------\n>\n> - Summarize: $0.20",
+    "multi-line-setext-heading": "Cost for 1M input tokens\non Summarize\n------------------------\n\n$0.20",
+    "definition-title": 'Summarize: $0.20 for every [unit].\n[unit]: https://scaledown.ai/docs "million input tokens"',
+    "cad-code": "Summarize costs CAD 0.20 for every million input tokens.",
+    "rupee-sign": "Summarize costs ₹20 for every million input tokens.",
+    "code-after-number": "Summarize costs 0.20CHF for every million input tokens.",
+    "won-sign": "Summarize costs ₩200 for every million input tokens.",
 }
 # Caught first by the per-token unit rule once links and tags are flattened
 # (the wrapped line ends in "per 1,000", a bare number ending a phrase).
@@ -491,7 +500,42 @@ UNIT_TEXT = {
     "strong-unit": "Summarize: $0.20 per <strong>1M</strong> input tokens",
     "dollars-words": "Classify costs 2 dollars per million tokens",
     "wrapped-per-1000": "Summarize: $0.20 per 1,000\nbillable uncached text input tokens.",
+    # Round-9 review: reference-style links, and a unit kept in a link title.
+    "reference-link": "Summarize: $0.20 per [1M][unit].\n\n[unit]: https://scaledown.ai/docs/units",
+    "collapsed-reference-link": "Summarize: $0.20 per [1M][].\n\n[1M]: https://scaledown.ai/docs/units",
+    "shortcut-reference-link": "Summarize: $0.20 per [1M].\n\n[1M]: https://scaledown.ai/docs/units",
+    "inline-link-title": 'Summarize: $0.20 per [unit](https://scaledown.ai/docs "1M input tokens")',
 }
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("SOC 2", False),
+        ("ISO 27001", False),
+        ("In progress with GDPR, HIPAA, and SOC 2 compliance.", False),
+        ("CADX 2", False),
+        ("cad 2", False),
+        ("CAD 2", True),
+        ("2 CAD", True),
+        ("CAD0.20", True),
+        ("0.20CHF", True),
+        ("₹20", True),
+        ("₩200", True),
+        ("₽15", True),
+        ("₺3", True),
+        # Accepted cost: an ISO code that is also a capitalised word.
+        ("TOP 10", True),
+    ],
+)
+def test_currency_markers(text, expected):
+    assert scaledown._has_currency(text) is expected
+
+
+def test_iso_4217_list_is_the_published_list_one():
+    assert len(scaledown._ISO_4217_CODES) == 178
+    assert {"CAD", "AUD", "CHF", "CNY", "INR", "XCG", "ZWG"} <= scaledown._ISO_4217_CODES
+    assert not {"SOC", "ISO", "GPT", "API"} & scaledown._ISO_4217_CODES
 
 
 def _both_layout_sources(text: str) -> list[tuple[str, str]]:

@@ -6,6 +6,7 @@ import html
 import json
 import os
 import re
+import unicodedata
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -184,25 +185,58 @@ def _legacy_rate(markdown: str) -> str:
 
 # Whole-document rules, independent of headings, so a second price block
 # hidden behind heading syntax the section scanner does not recognise still
-# fails closed. Every rule reads plain lines: HTML entities decoded, Markdown
-# links "[text](url)" flattened to their text, HTML tags removed, and emphasis
-# and code markers dropped, so "- **Text:** $0.20", "per **1M** input tokens",
-# "per [1M input tokens](...)" and "per <strong>1M</strong> input tokens" are
-# all seen. Paragraph and key-line rules also drop leading whitespace,
-# blockquote and list markers.
+# fails closed. Every rule reads plain lines: HTML entities decoded, links
+# flattened to their text plus any title (inline "[text](url "title")",
+# reference "[text][ref]", "[text][]" and "[text]"; a "[ref]: url" definition
+# line keeps only its title), HTML tags replaced by a space, and emphasis and
+# code markers dropped, so "- **Text:** $0.20", "per **1M** input tokens",
+# "per [1M input tokens](...)", "per [1M][unit]" and
+# "per <strong>1M</strong> input tokens" are all seen. Paragraph and key-line
+# rules also drop leading whitespace, blockquote and list markers.
 _CONTAINER_PREFIX = re.compile(r"^(?:\s*(?:>|[-*+](?=\s)|[0-9]{1,9}[.)](?=\s)))*\s*")
 _EMPHASIS = re.compile(r"[*_`]")
-_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_LINK_TITLE = r"""(?:\s+("[^"]*"|'[^']*'|\([^)]*\)))?"""
+_INLINE_LINK = re.compile(rf"\[([^\]]*)\]\(\s*(?:<[^>]*>|[^\s)]*){_LINK_TITLE}\s*\)")
+_REFERENCE_LINK = re.compile(r"\[([^\]]*)\](?:\[[^\]]*\])?")
+_REFERENCE_DEFINITION = re.compile(rf"\s{{0,3}}\[[^\]]+\]:\s*(?:<[^>]*>|\S+){_LINK_TITLE}\s*")
 _HTML_TAG = re.compile(r"<[^>]*>")
 # Outside the Pricing section, a paragraph that, together with the text of
-# its nearest preceding heading, has both a currency amount or marker and the
-# word "token(s)" is a possible tariff, so it fails closed. Currency words
-# count with or without a numeral ("twenty cents").
-_CURRENCY = re.compile(
-    r"[$¢€£¥]|(?<![a-z])(?:USD|EUR|GBP|JPY|INR)(?![a-z])|\b(?:cents?|dollars?|euros?)\b",
-    re.IGNORECASE,
+# its nearest preceding heading, has both a currency marker and the word
+# "token(s)" is a possible tariff, so it fails closed. A currency marker is
+# any Unicode currency symbol (category Sc: $, ¢, €, ₹, ₩, ₽, ₺, ...); USD,
+# EUR, GBP, JPY or INR not next to a letter; any ISO 4217 code next to a
+# number, with or without a space, in either order ("CAD 0.20", "0.20CHF");
+# or the words cent(s), dollar(s), euro(s), with or without a numeral.
+_NAMED_CURRENCY = re.compile(
+    r"(?<![a-z])(?:USD|EUR|GBP|JPY|INR)(?![a-z])|\b(?:cents?|dollars?|euros?)\b", re.IGNORECASE
+)
+_CODE_NEXT_TO_NUMBER = re.compile(r"\b([A-Z]{3})(?=\s?[0-9])|(?<=[0-9])\s?([A-Z]{3})\b")
+# ISO 4217 List One (current currency and funds codes), as published by the
+# maintenance agency SIX on 2026-09-17, copied 2026-11-19. Some codes are also
+# capitalised English words (ALL, PEN, TOP, TRY, ...). A false match next to a
+# number can only hold the refresh for review, never set a wrong price.
+_ISO_4217_CODES = frozenset(
+    """
+    AED AFN ALL AMD AOA ARS AUD AWG AZN BAM BBD BDT BHD BIF BMD BND BOB BOV BRL BSD BTN BWP
+    BYN BZD CAD CDF CHE CHF CHW CLF CLP CNY COP COU CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN
+    ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR ILS INR IQD IRR ISK
+    JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD
+    MMK MNT MOP MRU MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP
+    PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP
+    SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD USN UYI UYU UYW UZS VED VES VND VUV
+    WST XAD XAF XAG XAU XBA XBB XBC XBD XCD XCG XDR XOF XPD XPF XPT XSU XTS XUA XXX YER ZAR
+    ZMW ZWG
+    """.split()
 )
 _TOKEN_WORD = re.compile(r"\btokens?\b", re.IGNORECASE)
+
+
+def _has_currency(text: str) -> bool:
+    return (
+        any(unicodedata.category(char) == "Sc" for char in text)
+        or bool(_NAMED_CURRENCY.search(text))
+        or any((m[1] or m[2]) in _ISO_4217_CODES for m in _CODE_NEXT_TO_NUMBER.finditer(text))
+    )
 _HEADING_LINE = re.compile(r"#{1,6}(?:\s|$)")
 # Key lines and how often each must appear in the per-modality and legacy
 # layouts. The legacy layout has none of them, so one there is a second,
@@ -238,10 +272,19 @@ def _single_rate_line(text: str, *, legacy: bool) -> bool:
     return bool(_LEGACY_RATE.fullmatch(text)) if legacy else text == _PUBLIC_API_HEADING
 
 
+def _link_title(quoted: str | None) -> str:
+    return quoted[1:-1] if quoted else ""
+
+
 def _plain(decoded: str) -> str:
-    """Links flattened, each HTML tag replaced by a space, emphasis dropped,
-    whitespace collapsed, so "input<br>tokens" stays two words."""
-    return " ".join(_EMPHASIS.sub("", _HTML_TAG.sub(" ", _LINK.sub(r"\1", decoded))).split())
+    """Links flattened to text and title, each HTML tag replaced by a space,
+    emphasis dropped, whitespace collapsed, so "input<br>tokens" stays two
+    words."""
+    if definition := _REFERENCE_DEFINITION.fullmatch(decoded):
+        decoded = _link_title(definition[1])
+    decoded = _INLINE_LINK.sub(lambda m: f"{m[1]} {_link_title(m[2])}", decoded)
+    decoded = _REFERENCE_LINK.sub(r"\1", decoded)
+    return " ".join(_EMPHASIS.sub("", _HTML_TAG.sub(" ", decoded)).split())
 
 
 def _paragraphs(lines: list[str], skip: range = range(0)) -> list[tuple[int, list[str]]]:
@@ -262,14 +305,21 @@ def _paragraphs(lines: list[str], skip: range = range(0)) -> list[tuple[int, lis
 
 
 def _headings(lines: list[str]) -> dict[int, str]:
-    """Heading text by line index, for ATX lines and setext text lines."""
+    """Heading text by line index, container markers stripped first.
+
+    An ATX line gives its own text. A setext underline gives every text line
+    of the paragraph above it, so a multi-line heading keeps all its words.
+    """
+    stripped = [_CONTAINER_PREFIX.sub("", line).strip() for line in lines]
     found = {}
-    for i, line in enumerate(lines):
-        stripped = _CONTAINER_PREFIX.sub("", line).strip()
-        if _HEADING_LINE.match(stripped):
-            found[i] = stripped.lstrip("#").strip()
-        elif stripped and i + 1 < len(lines) and _SETEXT_UNDERLINE.fullmatch(lines[i + 1]):
-            found[i] = stripped
+    for i, text in enumerate(stripped):
+        if _HEADING_LINE.match(text):
+            found[i] = text.lstrip("#").strip()
+        elif i and stripped[i - 1] and _SETEXT_UNDERLINE.fullmatch(text):
+            start = i - 1
+            while start and stripped[start - 1]:
+                start -= 1
+            found[i] = " ".join(stripped[start:i])
     return found
 
 
@@ -337,7 +387,7 @@ def _check_whole_document(markdown: str, *, legacy: bool) -> None:
     for first, paragraph in _paragraphs(lines, skip=_allowlisted_lines(raw, lines, legacy=legacy)):
         previous = [i for i in headings if i < first]
         text = " ".join(([headings[max(previous)]] if previous else []) + paragraph)
-        if _CURRENCY.search(text) and _TOKEN_WORD.search(text):
+        if _has_currency(text) and _TOKEN_WORD.search(text):
             raise RuntimeError("scaledown: priced token text outside the Pricing section; review")
 
 
