@@ -458,7 +458,7 @@
     if (url) {
       node.href = url;
       node.target = "_blank";
-      node.rel = "noopener";
+      node.rel = endpoint.provider_policy_rel || "nofollow noopener";
       node.title = `${endpoint.provider_name} provider policy`;
     }
     return node;

@@ -738,7 +738,10 @@ class Settings(BaseSettings):
     # A contended Spanner authorize can occupy a worker for the full RPC
     # budget. Keep one API key from filling every worker in a service instance
     # while still allowing ordinary low-latency traffic to scale horizontally.
-    gateway_authorize_max_in_flight_per_key: int = 4
+    # 12 of an instance's 16 request slots (TR_CLOUD_RUN_CONCURRENCY): a heavy
+    # key no longer meets 429s at ordinary batch rates (4 refused about 0.3% of
+    # one customer's ~3.5 req/s), and other keys keep a quarter of the instance.
+    gateway_authorize_max_in_flight_per_key: int = 12
     # Settlement has a wider gate because it closes already-issued holds, but
     # one hot key must not consume every Spanner session in an instance.
     settle_per_key_inflight_limit: int = 16
@@ -1232,6 +1235,11 @@ class Settings(BaseSettings):
     # on, and turned on only after gate E. Both off by default.
     fastpath_pilot_streams: bool = False
     fastpath_edge_streams: bool = False
+    # The Go edge may answer exact hosted decision models on route decide.
+    # Published as optional fastpath_edge_hosted_decide and, when Python
+    # supports decide tickets, async_settle.decide_route. Keep off until
+    # every node reads both members; then shadow until agreement, then on.
+    fastpath_edge_hosted_decide: Literal["off", "shadow", "on"] = "off"
     # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
     # section 12.4, PR 4): a stream whose reservation is below its estimate is
     # admitted under a lease with the estimate as its Ceiling, so its owner
@@ -1355,6 +1363,9 @@ class Settings(BaseSettings):
     # federation serving entirely (403), so a plane cannot become a user
     # directory by accident.
     federation_peer_token: str = ""
+    # Expose writes only after every inference/edge plane enforces the policy.
+    workspace_origin_controls_enabled: bool = False
+    workspace_origin_peer_checks_enabled: bool = False
     # PEER side: the home plane this deployment resolves unknown keys from,
     # and the token it presents. Both empty = no federation, unknown key is
     # simply unknown.

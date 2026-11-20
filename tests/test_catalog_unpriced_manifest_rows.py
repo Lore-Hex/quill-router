@@ -121,8 +121,8 @@ def test_each_refused_row_is_reported_once(
 
 
 def test_explicit_zero_token_prices_are_prices(ingest: Ingest) -> None:
-    # Committed on 2026-09-28: openrouter stealth/union-alpha and together
-    # prism-ml/ternary-bonsai-27b list 0/0, and bill at the customer floor.
+    # Committed on 2026-09-28: together prism-ml/ternary-bonsai-27b listed
+    # 0/0, and bills at the customer floor.
     _models, endpoints = ingest(
         "novita", _chat_row(input_token_price_per_m=0, output_token_price_per_m=0)
     )

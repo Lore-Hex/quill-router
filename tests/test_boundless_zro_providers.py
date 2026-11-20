@@ -395,7 +395,10 @@ def test_registration_and_published_pricing(client):
         else:
             assert not _published_route_disagreements(module, endpoints, _manifest_rows(slug))
         page = client.get(f"/providers/{slug}")
-        assert page.status_code == 200 and "Cached" in page.text
+        assert page.status_code == 200
+        # The model table (with its "Cached input" column) shows only when the
+        # provider serves models; a held provider's page has none to list.
+        assert ("Cached" in page.text) == bool(endpoints)
         assert all(e.model_id in page.text for e in endpoints)
         assert not PROVIDERS[slug].provider_e2ee
     assert not PROVIDERS["boundless"].provider_zero_data_retention

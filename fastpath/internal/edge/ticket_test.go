@@ -667,12 +667,29 @@ func TestEdgeTicketWireFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fixture struct {
-		Request  json.RawMessage `json:"request"`
-		Issued   json.RawMessage `json:"issued"`
-		Declined json.RawMessage `json:"declined"`
+		Request       json.RawMessage `json:"request"`
+		DecideRequest json.RawMessage `json:"decide_request"`
+		Issued        json.RawMessage `json:"issued"`
+		Declined      json.RawMessage `json:"declined"`
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
+	}
+	var decide ticketRequest
+	if err := json.Unmarshal(fixture.DecideRequest, &decide); err != nil {
+		t.Fatal(err)
+	}
+	if decide.RouteType != "decide" || decide.Streamed {
+		t.Fatal("decide wire facts differ")
+	}
+	encoded, err := json.Marshal(decide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decideWant, decideGot map[string]any
+	if json.Unmarshal(fixture.DecideRequest, &decideWant) != nil || json.Unmarshal(encoded, &decideGot) != nil ||
+		!reflect.DeepEqual(decideWant, decideGot) {
+		t.Fatal("decide wire round trip differs")
 	}
 	var body ticketRequest
 	decoder := json.NewDecoder(bytes.NewReader(fixture.Request))

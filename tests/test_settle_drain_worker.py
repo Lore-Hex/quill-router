@@ -96,12 +96,16 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     # The BYOK documentation page and its slash alias are public HTML only.
     # Pin their identities and absence on other surfaces; retain every frozen
     # API, lifecycle, and state assertion below.
-    for path in ("/docs/byok", "/docs/byok/"):
-        docs_route = [path, ["GET", "HEAD"],
-                      "register_public_routes.<locals>.byok_docs_page"]
-        assert routes.count(docs_route) == int(byok_docs)
-        if byok_docs:
-            routes.remove(docs_route)
+    # The data-access and simple-start pages follow the same rule.
+    for base, handler in (("/docs/byok", "byok_docs_page"),
+                          ("/who-can-see-your-data", "who_can_see_your_data"),
+                          ("/docs/simple-start", "simple_start_docs")):
+        for path in (base, base + "/"):
+            docs_route = [path, ["GET", "HEAD"],
+                          f"register_public_routes.<locals>.{handler}"]
+            assert routes.count(docs_route) == int(byok_docs)
+            if byok_docs:
+                routes.remove(docs_route)
     for path, handler in (("/notes", "notes_archive"), ("/notes/{slug}", "note"),
                           ("/sitemap-notes.xml", "notes_sitemap")):
         note_route = [path, ["GET", "HEAD"], f"register_notes.<locals>.{handler}"]

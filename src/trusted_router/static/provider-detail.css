@@ -1,0 +1,152 @@
+/* Provider page (/providers/{slug}) hero, built like the model page hero.
+ * Loaded only by templates/public/provider_detail.html. The shared catalog
+ * hero rules in nyte-theme.css give it the Ink ground, the first-screen
+ * height and the Band. */
+
+.pd-hero .pd-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 880px;
+}
+
+.pd-title-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.public-hero.pd-hero h1 {
+  margin: 0;
+}
+
+.pd-logo {
+  flex: none;
+  width: 60px;
+  height: 60px;
+  background: var(--nyte-cream, #FAF8F4);
+  object-fit: contain;
+}
+
+:root[data-brand="nyte"] main > .public-hero.pd-hero .pd-lead,
+.pd-lead {
+  max-width: 780px;
+  margin: 0;
+  color: var(--tr-color-text-primary);
+  font-size: 21px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+/* Facts stay quiet: body-size values, small mono labels, no boxes. */
+.pd-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 48px;
+  margin: 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--nyte-dark-rule, #3A3631);
+}
+
+.pd-figures div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pd-figures dt {
+  color: var(--nyte-ink-2-dark, #B9B2A8);
+  font-family: var(--tr-font-family-mono, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pd-figures dd {
+  margin: 0;
+  color: var(--tr-color-text-primary);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.pd-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+/* The same button size as the model page hero. */
+:root[data-brand="nyte"] main > .public-hero.pd-hero .pd-actions .btn,
+.pd-actions .btn {
+  padding: 15px 26px;
+  font-size: 17px;
+  font-weight: 500;
+}
+
+/* Phones: the hero fills the visible screen with the Band at its bottom, and
+ * the spare room is shared evenly between the parts, so the button sits low
+ * enough for a thumb without one big gap. Spacing and type scale with the
+ * screen height so short phones still show the Band. */
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] main > .public-hero.pd-hero {
+    display: flex;
+    flex-direction: column;
+    padding-top: clamp(8px, 3.6svh, 56px);
+  }
+
+  .pd-hero .pd-copy {
+    flex: 1;
+    justify-content: space-between;
+    gap: clamp(8px, 2svh, 32px);
+    padding-bottom: clamp(4px, 1.6svh, 24px);
+  }
+
+  .pd-title-row {
+    gap: 14px;
+  }
+
+  .pd-logo {
+    width: clamp(36px, 6svh, 56px);
+    height: clamp(36px, 6svh, 56px);
+  }
+
+  .public-hero.pd-hero h1 {
+    font-size: clamp(30px, 5.6svh, 50px);
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.pd-hero .pd-lead,
+  .pd-lead {
+    font-size: clamp(17px, 2.7svh, 23px);
+    line-height: 1.45;
+  }
+
+  .pd-figures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(10px, 2svh, 20px) 16px;
+    padding-top: clamp(12px, 2.4svh, 24px);
+  }
+
+  .pd-figures dt {
+    font-size: 11px;
+  }
+
+  .pd-figures dd {
+    font-size: 16px;
+  }
+
+  .pd-actions {
+    align-items: stretch;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.pd-hero .pd-actions .btn,
+  .pd-actions .btn {
+    justify-content: center;
+    min-height: clamp(46px, 7svh, 52px);
+  }
+
+  .pd-actions .hero-free-note {
+    text-align: center;
+  }
+}

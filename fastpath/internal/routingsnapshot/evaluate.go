@@ -105,7 +105,9 @@ type Refusal struct {
 
 // Result is the evaluator's answer for one request.
 type Result struct {
-	Outcome Outcome
+	// HostedDecide records that the exact decision-only model arm answered.
+	HostedDecide bool
+	Outcome      Outcome
 	// Candidates are the endpoint ids in order; the first is selected.
 	Candidates []string
 	// ModelEstimate is the largest candidate's price at At, in microdollars,
@@ -433,7 +435,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	usage := Usage{InputTokens: prompt, OutputTokens: outputTokens}
 	reserved := Usage{InputTokens: prompt, OutputTokens: min(outputTokens, HoldOutputTokens)}
 	estimate, reservation := new(big.Int), new(big.Int)
-	out := Result{Outcome: Answered, ServiceTier: tier}
+	out := Result{Outcome: Answered, ServiceTier: tier, HostedDecide: hostedDecide}
 	for _, i := range admitted {
 		e := &s.Endpoints[i]
 		out.Candidates = append(out.Candidates, e.ID)

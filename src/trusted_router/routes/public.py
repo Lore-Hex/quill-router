@@ -1399,6 +1399,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def byok_docs_page() -> str:
         return public_page_html(settings, "docs/byok")
 
+    @public_html_route("/who-can-see-your-data")
+    def who_can_see_your_data() -> str:
+        return public_page_html(settings, "who-can-see-your-data")
+
+    @public_html_route("/docs/simple-start")
+    def simple_start_docs() -> str:
+        return public_page_html(settings, "docs/simple-start")
+
     @public_html_route("/docs/provider-routing")
     def provider_routing_docs() -> str:
         return public_page_html(settings, "docs/provider-routing")

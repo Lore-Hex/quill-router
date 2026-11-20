@@ -105,8 +105,9 @@ a one-second failover SLA. Google's reviewed docs support outlier detection on a
 global serverless backend, select the closest regional NEG, and say balancing mode
 has no effect. Geographic preflight is only a guard: verify actual placement.
 
-Choose **two** warm São Paulo instances at concurrency 8: 16 slots, versus 8 with
-one. At 2–4 s per call, one serves 2–4 calls/s (below 5.28/s), two serve 4–8/s.
+Choose **two** warm São Paulo instances at concurrency 16: 32 slots, versus 16 with
+one. At 2–4 s per call, one serves 4–8 calls/s (near 5.28/s), two serve 8–16/s.
+(Figures below this paragraph were computed at the earlier concurrency 8.)
 At the pessimistic 4 s, queue growth falls from ~3.28/s to ~1.28/s; over the first
 25 s that is roughly 82 versus 32 additional queued calls in a simple fluid model.
 Retries/bursts can make it worse and autoscaling must add capacity. The enclave's

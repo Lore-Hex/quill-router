@@ -132,7 +132,7 @@ func (d *Decision) warmCandidates(py []string) (candidates []gwauth.Candidate, e
 	if !ok {
 		return nil, 0, false
 	}
-	if r := d.Snapshot.Evaluate(on); r.Outcome != routingsnapshot.Answered || !slices.Contains(r.Candidates, py[0]) {
+	if r := evaluateRouting(d.Snapshot, on); r.Outcome != routingsnapshot.Answered || !slices.Contains(r.Candidates, py[0]) {
 		return nil, 0, false
 	}
 	e, _ := d.Snapshot.Endpoint(py[0])
@@ -140,7 +140,7 @@ func (d *Decision) warmCandidates(py []string) (candidates []gwauth.Candidate, e
 	if !ok {
 		return nil, 0, false
 	}
-	r := d.Snapshot.Evaluate(pinned)
+	r := evaluateRouting(d.Snapshot, pinned)
 	if r.Outcome != routingsnapshot.Answered || !slices.Equal(r.Candidates, py) {
 		return nil, 0, false
 	}

@@ -1,146 +1,35 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import provider_identity %}
 {% from "public/_catalog_privacy.html" import provider_privacy %}
-{% block body %}
-<section class="panel">
-  <div class="panel-head provider-detail-head">
-    <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
-    <div class="catalog-privacy-summary">{% if provider.id == 'trustedrouter' %}<span class="pill">TR gateway</span>{% else %}{{ provider_privacy(provider) }}{% endif %}</div>
-  </div>
-  <div class="panel-body">
-    <p><a href="/providers">All providers</a></p>
-    {% if provider.profile and provider.profile.description %}
-    <p>{{ provider.profile.description }}</p>
-    {% endif %}
-    {% if provider.id == 'trustedrouter' %}
-    <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
-    {% else %}
-    <p>These privacy labels describe {{ provider.name }}, the upstream model provider. Confidential requires all three: verified provider compute, end-to-end encryption and explicit zero data retention. Account and billing metadata are outside the content-retention claim.</p>
-    {% if provider.trusted_provider %}<p><a href="/docs#trusted-tier">Trusted</a> adds TrustedRouter's assessment of the operator's physical-security posture and reliability history. Tinfoil and Privatemode are the only operators in this tier.</p>{% endif %}
-    {% endif %}
-    <table>
-      <tbody>
-        <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
-        {% if provider.geography %}
-        <tr><th>API operator country</th><td>{{ provider.geography.operator_country or 'Not verified' }}<br><small>{{ provider.geography.operator_country_scope }}</small></td></tr>
-        <tr><th>Headquarters</th><td>{{ provider.geography.headquarters.location or 'Not verified' }}{% if provider.geography.headquarters.source_url %}<br><small>{{ provider.geography.headquarters.evidence }}. <a href="{{ provider.geography.headquarters.source_url }}" rel="nofollow noopener">Source</a>; reviewed {{ provider.geography.headquarters.reviewed_on }}.</small>{% endif %}</td></tr>
-        {% endif %}
-        {% if provider.profile %}
-        {% for label, value in provider.profile.company_details %}
-        <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
-        {% endfor %}
-        {% endif %}
-        <tr><th>Routing status</th><td><span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span></td></tr>
-        {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
-        <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
-        <tr><th>Credits routes</th><td>{{ provider.credits_model_count }}</td></tr>
-        {% if provider.id != 'trustedrouter' %}
-        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span>{% if provider.zero_data_retention_scope_label %} <span class="provider-scope-note">{{ provider.zero_data_retention_scope_label }}</span>{% endif %}</td></tr>
-        <tr><th>Verified confidential inference</th><td><span class="pill {% if provider.confidential_inference_verified %}good{% endif %}">{{ provider.confidential_inference_label }}</span></td></tr>
-        {% endif %}
-        <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
-        {% if provider.retention_notice %}
-        <tr><th>Strict ZDR and safety retention</th><td>{{ provider.retention_notice }} Use <code>provider.min_privacy="zdr"</code> to reject retained or unverified routes, including during fallback.</td></tr>
-        {% endif %}
-      </tbody>
-    </table>
-    {% if provider.profile and provider.profile.resources %}
-    <details>
-      <summary>Documentation and policy sources</summary>
-      <ul>
-        {% for label, url in provider.profile.resources %}
-        <li><a href="{{ url }}" rel="nofollow noopener">{{ label }}</a></li>
-        {% endfor %}
-      </ul>
-    </details>
-    {% endif %}
-  </div>
-</section>
+{% from "_free_tokens.html" import free_tokens_line %}
+{% block head_extra %}<link rel="stylesheet" href="/static/provider-detail.css?v={{ static_version|default('local') }}">{% endblock %}
 
-{% if provider.id in ['maple', 'abliteration', 'abliterate'] %}
-<section class="panel"><div class="panel-body"><p><a href="/abliterated-deepseek">Explore abliterated (uncensored) DeepSeek for cyberdefense</a>, including Maple's dedicated checkpoint and the distinction from Abliteration and Abliterate. Use this provider's model list and policy below to verify its own offerings; these are separate providers, not interchangeable privacy guarantees.</p></div></section>
-{% endif %}
-{% if provider.id == 'maple' and provider.confidential_inference_verified and served_models|selectattr('id', 'equalto', 'dealignai/deepseek-v4.1-flash-1017-uncensored')|list %}
-{% include "public/_maple_api.html" %}
-{% endif %}
-
-{% if provider.id != 'trustedrouter' %}
-{% set locations = provider.inference_locations %}
-<section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
-  <h2 id="inference-locations-heading">Inference locations</h2>
-  <p><a href="/v1/providers">Provider API</a> declarations are also available on each model's endpoint API. Direct chat and Responses replies separate advertised availability from serving location in <code>usage.inference_location</code>; the actual serving region remains unknown when not reported.</p>
-  <p><code>usage.provider_usage.gateway_region</code> identifies the TrustedRouter gateway, not the provider's inference location. A value such as <code>europe-west4</code> does not mean the model ran in Europe. <code>usage.inference_location.serving_region</code> remains <code>null</code> when the provider has not reported it. Older gateways may return the gateway-only field as <code>provider_usage.region</code>.</p>
-  <p>Where the upstream GPUs execute the model, not the provider's headquarters, API ingress, or data storage. ZDR and confidential inference do not by themselves restrict geography.</p>
-  <dl class="provider-location-facts">
-    <dt>Declared countries or regions</dt>
-    <dd>{{ locations.locations|join('; ') if locations.locations else 'Not verified' }}<br>{{ locations.scope }}</dd>
-    <dt>Can locations change?</dt><dd>{{ locations.routing }}</dd>
-    <dt>Provider region pinning</dt><dd>{{ locations.provider_pinning }}</dd>
-    <dt>Pinning through TrustedRouter</dt><dd>{{ locations.trustedrouter_pinning }}</dd>
-    <dt>Infrastructure declaration</dt><dd>{{ locations.declaration }}</dd>
-    <dt>Evidence</dt><dd>{{ locations.evidence }}{% if locations.reviewed_on %}. Reviewed <time datetime="{{ locations.reviewed_on }}">{{ locations.reviewed_on }}</time>{% endif %}.</dd>
-  </dl>
-  {% if provider.model_locations %}
-  <details class="provider-location-models">
-    <summary>Advertised regions by model ({{ provider.model_locations|length }})</summary>
-    <p>Catalog snapshot: <time>{{ provider.location_snapshot_at }}</time>. Refreshed by the catalog pipeline. Availability can change; these are not per-request receipts or enforced residency guarantees. Only models with a region declaration are shown.</p>
-    <dl class="provider-location-facts">
-      {% for model in provider.model_locations %}
-      <dt><a href="/models/{{ model.id }}">{{ model.id }}</a></dt><dd>{{ model.regions|join('; ') }}</dd>
-      {% endfor %}
-    </dl>
-  </details>
-  {% endif %}
-  {% if locations.sources %}
-  <ul>
-    {% for label, url in locations.sources %}
-    <li><a href="{{ url }}" rel="nofollow noopener">{{ label }}</a></li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-  <p class="muted-copy">Provider selection alone is not a region pin. TrustedRouter's US provider filter selects company jurisdiction, not GPU location. A regional gateway hostname does not pin a downstream GPU. For a binding residency requirement, confirm the model, region, failover scope and enforced controls before sending sensitive data.</p>
-</section>
-{% endif %}
-
-{% if measured.provider_row %}
-<section class="panel">
-  <div class="panel-head">
-    <h2>Measured performance</h2>
-    <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
-  </div>
-  <div class="panel-body">
-    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models: p50 TTFT, effective throughput, and success rate. Effective throughput uses provider-reported output tokens over complete request time. Unsupported route and probe-configuration rows are separated from provider downtime. No prompt or output content stored.</p>
-    <table>
-      <tbody>
-        <tr><th>p50 TTFT</th><td>{% if measured.provider_row.p50_ttft_ms is not none %}{{ measured.provider_row.p50_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
-        <tr><th>Effective throughput</th><td>{% if measured.provider_row.p50_tokens_per_second is not none %}{{ '%.0f'|format(measured.provider_row.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ measured.provider_row.throughput_sample_count|default(0) }}</span>{% else %}—{% endif %}</td></tr>
-        <tr><th>Uptime</th><td>{% if measured.provider_row.sample_count %}{{ '%.2f'|format(measured.provider_row.uptime * 100) }}%{% else %}—{% endif %}</td></tr>
-      </tbody>
-    </table>
-    {% if measured.models %}
-    <div class="leaderboard-table-wrap" style="margin-top:12px">
-      <table class="leaderboard-table">
-        <thead><tr><th>Model</th><th>p50 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
-        <tbody>
-          {% for m in measured.models %}
-          <tr>
-            <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a></td>
-            <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
-            <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
-            <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
-            <td>{{ m.sample_count }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+{# Built like the model page hero: logo and name, one sentence, a quiet row of
+   facts, then the sign-up button. The shared catalog hero rules give it the
+   Ink ground, the first-screen height and the Band. #}
+{% block hero %}
+<section class="public-hero catalog-hero pd-hero" aria-labelledby="pd-title">
+  <div class="pd-copy">
+    <div class="pd-title-row">
+      <img class="pd-logo" src="{{ provider_logo_url(provider.id) }}" alt="{{ heading }} logo" width="60" height="60">
+      <h1 id="pd-title">{{ heading }}</h1>
     </div>
+    <p class="pd-lead">{{ hero_pitch }}</p>
+    {% if provider_figures %}
+    <dl class="pd-figures">
+      {% for label, value in provider_figures %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+    </dl>
     {% endif %}
-    <p class="muted-copy" style="margin-top:10px"><a href="/providers/{{ provider.id }}/performance">{{ provider.name }} performance history</a> · <a href="/leaderboard">Full provider &amp; model leaderboard</a>.</p>
+    <div class="pd-actions">
+      <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup" data-catalog-cta>Start building</button>
+      {% if free_hero %}<p class="hero-free-note">{{ free_tokens_line() }}</p>{% endif %}
+    </div>
   </div>
 </section>
-{% endif %}
+{% endblock %}
 
+{% block body %}
+{% if served_models %}
 <section class="model-catalog">
   <div class="model-catalog-head">
     <div>
@@ -194,4 +83,145 @@
     </table>
   </div>
 </section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head provider-detail-head">
+    <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
+    <div class="catalog-privacy-summary">{% if provider.id == 'trustedrouter' %}<span class="pill">TR gateway</span>{% else %}{{ provider_privacy(provider) }}{% endif %}</div>
+  </div>
+  <div class="panel-body">
+    <p><a href="/providers">All providers</a></p>
+    {% if provider.profile and provider.profile.description %}
+    <p>{{ provider.profile.description }}</p>
+    {% endif %}
+    {% if provider.id == 'trustedrouter' %}
+    <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
+    {% else %}
+    <p>These privacy labels describe {{ provider.name }}, the upstream model provider. Confidential requires all three: verified provider compute, end-to-end encryption and explicit zero data retention. Account and billing metadata are outside the content-retention claim.</p>
+    {% if provider.trusted_provider %}<p><a href="/docs#trusted-tier">Trusted</a> adds TrustedRouter's assessment of the operator's physical-security posture and reliability history. Tinfoil and Privatemode are the only operators in this tier.</p>{% endif %}
+    {% endif %}
+    <table>
+      <tbody>
+        <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        {% if provider.geography %}
+        <tr><th>API operator country</th><td>{{ provider.geography.operator_country or 'Not verified' }}<br><small>{{ provider.geography.operator_country_scope }}</small></td></tr>
+        <tr><th>Headquarters</th><td>{{ provider.geography.headquarters.location or 'Not verified' }}{% if provider.geography.headquarters.source_url %}<br><small>{{ provider.geography.headquarters.evidence }}. <a href="{{ provider.geography.headquarters.source_url }}" rel="{{ provider.geography.headquarters.source_url|provider_link_rel }}">Source</a>; reviewed {{ provider.geography.headquarters.reviewed_on }}.</small>{% endif %}</td></tr>
+        {% endif %}
+        {% if provider.profile %}
+        {% for label, value in provider.profile.company_details %}
+        <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+        {% endif %}
+        <tr><th>Routing status</th><td><span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span></td></tr>
+        {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="{{ provider.homepage_url|provider_link_rel }}">{{ provider.homepage_url }}</a></td></tr>{% endif %}
+        <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
+        <tr><th>Credits routes</th><td>{{ provider.credits_model_count }}</td></tr>
+        {% if provider.id != 'trustedrouter' %}
+        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span>{% if provider.zero_data_retention_scope_label %} <span class="provider-scope-note">{{ provider.zero_data_retention_scope_label }}</span>{% endif %}</td></tr>
+        <tr><th>Verified confidential inference</th><td><span class="pill {% if provider.confidential_inference_verified %}good{% endif %}">{{ provider.confidential_inference_label }}</span></td></tr>
+        {% endif %}
+        <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}" rel="{{ provider.policy_url|provider_link_rel }}">Policy source</a>{% endif %}</td></tr>
+        {% if provider.retention_notice %}
+        <tr><th>Strict ZDR and safety retention</th><td>{{ provider.retention_notice }} Use <code>provider.min_privacy="zdr"</code> to reject retained or unverified routes, including during fallback.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+    {% if provider.profile and provider.profile.resources %}
+    <details>
+      <summary>Documentation and policy sources</summary>
+      <ul>
+        {% for label, url in provider.profile.resources %}
+        <li><a href="{{ url }}" rel="{{ url|provider_link_rel }}">{{ label }}</a></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </div>
+</section>
+
+{% if provider.id in ['maple', 'abliteration', 'abliterate'] %}
+<section class="panel"><div class="panel-body"><p><a href="/abliterated-deepseek">Explore abliterated (uncensored) DeepSeek for cyberdefense</a>, including Maple's dedicated checkpoint and the distinction from Abliteration and Abliterate. Use this provider's model list and policy below to verify its own offerings; these are separate providers, not interchangeable privacy guarantees.</p></div></section>
+{% endif %}
+{% if provider.id == 'maple' and provider.confidential_inference_verified and served_models|selectattr('id', 'equalto', 'dealignai/deepseek-v4.1-flash-1017-uncensored')|list %}
+{% include "public/_maple_api.html" %}
+{% endif %}
+
+{% if provider.id != 'trustedrouter' %}
+{% set locations = provider.inference_locations %}
+<section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
+  <h2 id="inference-locations-heading">Inference locations</h2>
+  <p><a href="/v1/providers">Provider API</a> declarations are also available on each model's endpoint API. Direct chat and Responses replies separate advertised availability from serving location in <code>usage.inference_location</code>; the actual serving region remains unknown when not reported.</p>
+  <p><code>usage.provider_usage.gateway_region</code> identifies the TrustedRouter gateway, not the provider's inference location. A value such as <code>europe-west4</code> does not mean the model ran in Europe. <code>usage.inference_location.serving_region</code> remains <code>null</code> when the provider has not reported it. Older gateways may return the gateway-only field as <code>provider_usage.region</code>.</p>
+  <p>Where the upstream GPUs execute the model, not the provider's headquarters, API ingress, or data storage. ZDR and confidential inference do not by themselves restrict geography.</p>
+  <dl class="provider-location-facts">
+    <dt>Declared countries or regions</dt>
+    <dd>{{ locations.locations|join('; ') if locations.locations else 'Not verified' }}<br>{{ locations.scope }}</dd>
+    <dt>Can locations change?</dt><dd>{{ locations.routing }}</dd>
+    <dt>Provider region pinning</dt><dd>{{ locations.provider_pinning }}</dd>
+    <dt>Pinning through TrustedRouter</dt><dd>{{ locations.trustedrouter_pinning }}</dd>
+    <dt>Infrastructure declaration</dt><dd>{{ locations.declaration }}</dd>
+    <dt>Evidence</dt><dd>{{ locations.evidence }}{% if locations.reviewed_on %}. Reviewed <time datetime="{{ locations.reviewed_on }}">{{ locations.reviewed_on }}</time>{% endif %}.</dd>
+  </dl>
+  {% if provider.model_locations %}
+  <details class="provider-location-models">
+    <summary>Advertised regions by model ({{ provider.model_locations|length }})</summary>
+    <p>Catalog snapshot: <time>{{ provider.location_snapshot_at }}</time>. Refreshed by the catalog pipeline. Availability can change; these are not per-request receipts or enforced residency guarantees. Only models with a region declaration are shown.</p>
+    <dl class="provider-location-facts">
+      {% for model in provider.model_locations %}
+      <dt><a href="/models/{{ model.id }}">{{ model.id }}</a></dt><dd>{{ model.regions|join('; ') }}</dd>
+      {% endfor %}
+    </dl>
+  </details>
+  {% endif %}
+  {% if locations.sources %}
+  <ul>
+    {% for label, url in locations.sources %}
+    <li><a href="{{ url }}" rel="{{ url|provider_link_rel }}">{{ label }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="muted-copy">Provider selection alone is not a region pin. TrustedRouter's US provider filter selects company jurisdiction, not GPU location. A regional gateway hostname does not pin a downstream GPU. For a binding residency requirement, confirm the model, region, failover scope and enforced controls before sending sensitive data.</p>
+</section>
+{% endif %}
+
+{% if measured.provider_row %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Measured performance</h2>
+    <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
+  </div>
+  <div class="panel-body">
+    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models: p50 TTFT, effective throughput, and success rate. Effective throughput uses provider-reported output tokens over complete request time. Unsupported route and probe-configuration rows are separated from provider downtime. No prompt or output content stored.</p>
+    <table>
+      <tbody>
+        <tr><th>p50 TTFT</th><td>{% if measured.provider_row.p50_ttft_ms is not none %}{{ measured.provider_row.p50_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
+        <tr><th>Effective throughput</th><td>{% if measured.provider_row.p50_tokens_per_second is not none %}{{ '%.0f'|format(measured.provider_row.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ measured.provider_row.throughput_sample_count|default(0) }}</span>{% else %}—{% endif %}</td></tr>
+        <tr><th>Uptime</th><td>{% if measured.provider_row.sample_count %}{{ '%.2f'|format(measured.provider_row.uptime * 100) }}%{% else %}—{% endif %}</td></tr>
+      </tbody>
+    </table>
+    {% if measured.models %}
+    <div class="leaderboard-table-wrap" style="margin-top:12px">
+      <table class="leaderboard-table">
+        <thead><tr><th>Model</th><th>p50 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
+        <tbody>
+          {% for m in measured.models %}
+          <tr>
+            <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a></td>
+            <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
+            <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
+            <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
+            <td>{{ m.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    <p class="muted-copy" style="margin-top:10px"><a href="/providers/{{ provider.id }}/performance">{{ provider.name }} performance history</a> · <a href="/leaderboard">Full provider &amp; model leaderboard</a>.</p>
+  </div>
+</section>
+{% endif %}
+
 {% endblock %}

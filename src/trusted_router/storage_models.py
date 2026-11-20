@@ -273,6 +273,9 @@ class Workspace:
     # workspaces, and a boolean would not say WHICH home to reconcile against.
     federated_home: str = ""
 
+    # Missing on historical workspace documents; restrictions are opt-in.
+    origin_policy: str = "unrestricted"
+
     def __post_init__(self) -> None:
         # A pre-cause workspace document can still carry the old migration
         # quiesce bit. Preserve that pause as the legacy migration owner; new
@@ -2340,6 +2343,7 @@ def federated_workspace_from_record(record: dict[str, Any]) -> Workspace:
     return Workspace(
         id=str(record.get("workspace_id") or ""),
         name=FEDERATED_WORKSPACE_NAME,
+        origin_policy=str(record.get("workspace_origin_policy", "unrestricted")),
         owner_user_id="",
         deleted=False,
         content_storage_enabled=False,

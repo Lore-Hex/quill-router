@@ -221,7 +221,7 @@ class FederationClient:
         # that would silently drop `scopes` and turn them into legacy keys.
         headers = {
             "x-trustedrouter-federation-token": self._peer_token,
-            "x-trustedrouter-federation-features": "scopes,openai-safety-v1",
+            "x-trustedrouter-federation-features": "scopes,openai-safety-v1,workspace-origin-v1",
         }
         try:
             if client is None:
