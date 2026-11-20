@@ -187,6 +187,10 @@ _MODEL_DISCOVERY_PRIORITY_INDEX = {
     model_id: index for index, model_id in enumerate(MODEL_DISCOVERY_PRIORITY)
 }
 SEO_CORE_PATHS: tuple[str, ...] = (
+    "/verify-ai-model",
+    "/llm-model-substitution",
+    "/confidential-inference-verification",
+
     "/abliterated-deepseek",
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
@@ -1409,6 +1413,36 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "trustedrouter/zdr enforces zero retention, and trustedrouter/e2e enforces "
                 "confidential compute plus provider-side encryption.",
             ),
+        ),
+    ),
+    'verify-ai-model': PublicPage(
+        template='public/verify_ai_model.html',
+        title='How to Verify Which AI Model Your API Is Serving',
+        description='Verify an LLM API with provider pinning, model precision evidence, signed receipts and confidential-compute attestation. A practical TrustedRouter checklist.',
+        faq_items=(
+            ('Can I identify an AI model by asking it its name?', 'No. A generated self-description is not authenticated evidence. Record the endpoint and route, inspect configuration evidence, and verify relevant attestations and signed records.'),
+            ('Does a signed receipt prove the exact model weights?', 'It authenticates the gateway record and request/response integrity. Exact upstream weights require additional evidence that binds and enforces the model artifacts in the attested inference workload.'),
+            ('How does TrustedRouter help verify a model API?', 'It provides explicit provider routing, reviewed precision metadata for selected endpoints, opt-in signed receipts and verified confidential routes. Each proves or documents a different part of the request path.'),
+        ),
+    ),
+    'llm-model-substitution': PublicPage(
+        template='public/llm_model_substitution.html',
+        title='LLM Model Substitution: How to Evaluate an AI API',
+        description='Understand model substitution, shadow API research and legitimate deployment changes. Learn how to evaluate providers with route controls and verifiable evidence.',
+        faq_items=(
+            ('What is LLM model substitution?', 'It is serving a different model or deployment from the one represented to a buyer. Disclosed routing, version updates and quantization should be distinguished from undisclosed substitution.'),
+            ('Do different outputs prove that an API is serving a fake model?', 'No. Sampling, prompts, quantization, tools and serving settings can all change outputs. Repeated controlled tests can reveal differences but do not alone authenticate the weights.'),
+            ('Are third-party AI APIs inherently untrustworthy?', 'No. Evaluate the individual route, disclosures and verification evidence. Research about sampled shadow APIs should not be generalized to every hosting provider or aggregator.'),
+        ),
+    ),
+    'confidential-inference-verification': PublicPage(
+        template='public/confidential_inference_verification.html',
+        title='Confidential Inference Verification: Attestation and Model Identity',
+        description='Learn what confidential computing proves about AI inference. Check workload attestation, model artifact binding, encrypted channels and signed response receipts.',
+        faq_items=(
+            ('Does confidential computing prove which AI model is running?', 'Only when the verification design also binds and enforces the expected model artifacts in the measured serving workload. Hardware or gateway attestation alone does not prove arbitrary upstream weights.'),
+            ('What is the difference between a receipt and attestation?', 'Attestation provides evidence about a measured execution environment. A signed inference receipt authenticates a request-specific gateway record. Both require verification, and neither should be given a broader scope than its claims.'),
+            ('Is TrustedRouter precision metadata runtime-verified?', 'No. Current published precision evidence is a reviewed configuration snapshot marked runtime_verified: false. Use its sources and review date alongside the route-specific attestation evidence.'),
         ),
     ),
     "compare/openrouter": PublicPage(

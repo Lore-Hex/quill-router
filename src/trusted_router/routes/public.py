@@ -1359,6 +1359,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             api_base_url=request_api_base_url(request, settings),
         )
 
+    @public_html_route("/verify-ai-model")
+    def seo_verify_ai_model() -> str:
+        return public_page_html(settings, "verify-ai-model")
+
+    @public_html_route("/llm-model-substitution")
+    def seo_llm_model_substitution() -> str:
+        return public_page_html(settings, "llm-model-substitution")
+
+    @public_html_route("/confidential-inference-verification")
+    def seo_confidential_inference_verification() -> str:
+        return public_page_html(settings, "confidential-inference-verification")
+
     @public_html_route("/compare/openrouter")
     def compare_openrouter() -> HTMLResponse:
         body = public_competitor_compare_html(settings, "openrouter")
