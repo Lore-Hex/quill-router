@@ -229,6 +229,31 @@ _ISO_4217_CODES = frozenset(
     """.split()
 )
 _TOKEN_WORD = re.compile(r"\btokens?\b", re.IGNORECASE)
+_ISO_CODE_WORD = re.compile(r"\b([A-Z]{3})\b")
+# A list item line, after any blockquote markers. A "---" or "===" line under
+# a list item is a thematic break or lazy text, never a setext underline.
+_LIST_ITEM = re.compile(r"\s*(?:>\s*)*(?:[-*+]|[0-9]{1,9}[.)])(?:\s|$)")
+# Closed rule. Outside the allowlisted Pricing section (in the legacy layout,
+# outside its single rate line), every line that mentions tokens or currency
+# must be one of these, normalised. They are the lines that did so on the live
+# llms.txt of 2026-11-19 (lines 7, 24, 27, 136 and 138). Any new token or
+# currency line holds the refresh for an operator to look at, which is the
+# accepted trade-off for closing open-ended prose.
+_PINNED_LINES = frozenset(
+    {
+        "ScaleDown (scaledown.ai) builds task-specific models, each trained to do one job well. They are "
+        "constrained decoding models: instead of generating free text token by token, they output only what "
+        "the task needs (a label, a span, a summary, a compressed context). That keeps outputs consistent and "
+        "cuts cost and latency.",
+        "Send in a long prompt or document. Get back a semantically compressed version that preserves every "
+        "fact relevant to your query, at a fraction of the token count.",
+        "Real impact: A workflow costing $10/day drops to $4/day at 60% compression",
+        "Classify vs. GPT-5.4 Mini/Nano on intent classification for LLM routing: 90.53% accuracy at "
+        "$0.0008, beating both baselines on accuracy and cost.",
+        "What ZDR means in practice: prompts are tokenized in memory, processed, and discarded - never "
+        "written to disk, in any environment, including on failure.",
+    }
+)
 
 
 def _has_currency(text: str) -> bool:
@@ -236,6 +261,15 @@ def _has_currency(text: str) -> bool:
         any(unicodedata.category(char) == "Sc" for char in text)
         or bool(_NAMED_CURRENCY.search(text))
         or any((m[1] or m[2]) in _ISO_4217_CODES for m in _CODE_NEXT_TO_NUMBER.finditer(text))
+    )
+
+
+def _mentions_token_or_currency(text: str) -> bool:
+    """"token" anywhere, any currency marker, or any ISO 4217 code as a word."""
+    return (
+        "token" in text.casefold()
+        or _has_currency(text)
+        or any(code in _ISO_4217_CODES for code in _ISO_CODE_WORD.findall(text))
     )
 _HEADING_LINE = re.compile(r"#{1,6}(?:\s|$)")
 # Key lines and how often each must appear in the per-modality and legacy
@@ -304,11 +338,14 @@ def _paragraphs(lines: list[str], skip: range = range(0)) -> list[tuple[int, lis
     return found
 
 
-def _headings(lines: list[str]) -> dict[int, str]:
+def _headings(lines: list[str], decoded: list[str]) -> dict[int, str]:
     """Heading text by line index, container markers stripped first.
 
     An ATX line gives its own text. A setext underline gives every text line
-    of the paragraph above it, so a multi-line heading keeps all its words.
+    of the paragraph above it, so a multi-line heading keeps all its words,
+    unless a line of that paragraph is a list item (CommonMark example 94:
+    "---" there is a thematic break). ``decoded`` keeps the list markers that
+    ``lines`` lost with emphasis.
     """
     stripped = [_CONTAINER_PREFIX.sub("", line).strip() for line in lines]
     found = {}
@@ -319,7 +356,8 @@ def _headings(lines: list[str]) -> dict[int, str]:
             start = i - 1
             while start and stripped[start - 1]:
                 start -= 1
-            found[i] = " ".join(stripped[start:i])
+            if not any(_LIST_ITEM.match(decoded[j]) for j in range(start, i)):
+                found[i] = " ".join(stripped[start:i])
     return found
 
 
@@ -383,12 +421,22 @@ def _check_whole_document(markdown: str, *, legacy: bool) -> None:
         or not _single_rate_line(wrapped[0], legacy=legacy)
     ):
         raise RuntimeError("scaledown: per-token unit outside the single public rate line")
-    headings = _headings(lines)
-    for first, paragraph in _paragraphs(lines, skip=_allowlisted_lines(raw, lines, legacy=legacy)):
+    headings = _headings(lines, decoded)
+    exempt = _allowlisted_lines(raw, lines, legacy=legacy)
+    for first, paragraph in _paragraphs(lines, skip=exempt):
         previous = [i for i in headings if i < first]
         text = " ".join(([headings[max(previous)]] if previous else []) + paragraph)
         if _has_currency(text) and _TOKEN_WORD.search(text):
             raise RuntimeError("scaledown: priced token text outside the Pricing section; review")
+    # The closed pinned-line rule, on both the raw and the normalised line.
+    # The message names the line number only, never the line's text.
+    for i, (source, line) in enumerate(zip(raw, lines, strict=True)):
+        if (
+            i not in exempt
+            and line not in _PINNED_LINES
+            and (_mentions_token_or_currency(source) or _mentions_token_or_currency(line))
+        ):
+            raise RuntimeError(f"scaledown: unreviewed token or currency text on llms.txt line {i + 1}; review")
 
 
 def _input_price(markdown: str, website_code: str) -> ModelPrice:

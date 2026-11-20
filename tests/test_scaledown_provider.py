@@ -561,11 +561,64 @@ def test_units_inside_links_or_html_fail_closed_in_both_layouts(text):
             scaledown._input_price(source, site)
 
 
-def test_token_text_without_currency_and_percent_still_prices():
-    # "percent" is not "cents", and a heading without currency or tokens does
-    # not make a paragraph priced token text.
+def test_new_token_text_without_currency_holds_under_the_pinned_line_rule():
+    # "percent" is not "cents", so the priced-token rule passes this line, but
+    # since round 10 any new line that mentions tokens holds for review.
+    assert not scaledown._has_currency("Compression saves 60 percent of input tokens.")
     source = LIVE_WITH_MARKETING + "\n## Savings\n\nCompression saves 60 percent of input tokens.\n"
-    assert scaledown._input_price(source, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    with pytest.raises(RuntimeError, match=r"^scaledown: unreviewed token or currency text on llms.txt line \d+; review$"):
+        scaledown._input_price(source, SITE_2026_11_19)
+
+
+# Round-10 review: open-ended constructions the earlier rules let through.
+ROUND_10_FINDINGS = {
+    "list-then-thematic-break": "## Cost for 1M input tokens\n\n- Standard service\n- Batch service\n---\n\nSummarize: $0.20",
+    "html-heading": '<h2 id="token-rates">Cost for 1M input tokens</h2>\n\nSummarize: $0.20',
+    "table": "## Summarize rates\n\n| Input tokens | Cost (CAD) |\n| --- | --- |\n| 1,000,000 | 0.20 |",
+    "parenthesised-code": "0.20 (CAD) for every million input tokens",
+}
+
+
+@pytest.mark.parametrize("text", list(ROUND_10_FINDINGS.values()), ids=list(ROUND_10_FINDINGS))
+def test_round_10_findings_hold_in_both_layouts(text):
+    for source, site in _both_layout_sources(text):
+        with pytest.raises(RuntimeError, match="^scaledown: "):
+            scaledown._input_price(source, site)
+
+
+def test_any_new_token_or_currency_line_holds_and_names_only_its_line_number():
+    line_number = len(LIVE_WITH_MARKETING.splitlines()) + 2
+    for added in ("We count tokens per request.", "Billing is in CAD.", "Prices are in euros.", "Pay with ₹."):
+        source = LIVE_WITH_MARKETING + "\n" + added + "\n"
+        with pytest.raises(RuntimeError) as raised:
+            scaledown._input_price(source, SITE_2026_11_19)
+        assert str(raised.value) == (
+            f"scaledown: unreviewed token or currency text on llms.txt line {line_number}; review"
+        )
+        assert added not in str(raised.value)
+    with pytest.raises(RuntimeError, match="unreviewed token or currency text on llms.txt line 1; review"):
+        scaledown._input_price("We count tokens per request.\n\n" + PRICE, FAQ)
+
+
+def test_pinned_live_lines_still_pass_and_edited_ones_hold():
+    line_138 = (
+        "  What ZDR means in practice: prompts are tokenized in memory, processed, and discarded - never "
+        "written to disk, in any environment, including on failure.\n"
+    )
+    assert scaledown._input_price(LIVE_WITH_MARKETING + "\n" + line_138, SITE_2026_11_19) == ModelPrice(50_000, 0)
+    assert scaledown._input_price(line_138 + "\n" + PRICE, FAQ) == ModelPrice(50_000, 0)
+    with pytest.raises(RuntimeError, match="unreviewed token or currency text"):
+        scaledown._input_price(LIVE_WITH_MARKETING + "\n" + line_138.replace("memory", "RAM"), SITE_2026_11_19)
+    assert len(scaledown._PINNED_LINES) == 5
+
+
+def test_thematic_break_after_a_list_item_is_not_a_setext_heading():
+    lines = ["Cost for 1M input tokens", "", "- Standard service", "- Batch service", "---"]
+    assert scaledown._headings(lines, lines) == {}
+    lazy = ["- Standard service", "continued", "---"]
+    assert scaledown._headings(lazy, lazy) == {}
+    setext = ["Cost for 1M input tokens", "on Summarize", "---"]
+    assert scaledown._headings(setext, setext) == {2: "Cost for 1M input tokens on Summarize"}
 
 
 def test_encoded_line_break_fails_closed():
