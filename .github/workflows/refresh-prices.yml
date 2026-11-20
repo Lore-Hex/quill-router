@@ -272,18 +272,21 @@ jobs:
           echo "TR_PRICE_QUARANTINE_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"
           printf '{"quarantined": []}\n' > /tmp/price-quarantine.json
           since=$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)
-          runs=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow refresh-prices.yml \
-            --branch main --limit 30 --json databaseId,createdAt \
-            --jq "map(select(.databaseId != ${GITHUB_RUN_ID} and .createdAt >= \"${since}\")) | .[].databaseId")
-          for run in ${runs}; do
+          # Only the newest saved state counts: every run re-saves the active
+          # entries, and falling back to an older artifact when the newest
+          # cannot be read could revive a quarantine. Any failure here keeps
+          # the empty state written above.
+          run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=price-quarantine&per_page=50" \
+            --jq "[.artifacts[] | select((.expired | not) and .workflow_run.id != ${GITHUB_RUN_ID}
+                    and .workflow_run.head_branch == \"main\" and .created_at >= \"${since}\")]
+                  | sort_by(.created_at) | last | .workflow_run.id // empty")
+          if [ -n "${run}" ]; then
             rm -rf /tmp/price-quarantine-previous
-            if gh run download "${run}" --repo "${GITHUB_REPOSITORY}" \
-                -n price-quarantine -D /tmp/price-quarantine-previous 2>/dev/null; then
-              cp /tmp/price-quarantine-previous/price-quarantine.json /tmp/price-quarantine.json
-              echo "Loaded the provider quarantine saved by run ${run}"
-              break
-            fi
-          done
+            gh run download "${run}" --repo "${GITHUB_REPOSITORY}" \
+              -n price-quarantine -D /tmp/price-quarantine-previous
+            cp /tmp/price-quarantine-previous/price-quarantine.json /tmp/price-quarantine.json
+            echo "Loaded the provider quarantine saved by run ${run}"
+          fi
           {
             echo "### Quarantined providers"
             echo '```'

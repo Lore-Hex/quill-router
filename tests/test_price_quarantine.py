@@ -295,7 +295,9 @@ def test_the_refresh_reads_the_quarantine_before_any_provider_refresh() -> None:
     run = load["run"]
     assert run.index('echo "TR_PRICE_QUARANTINE=/tmp/price-quarantine.json" >> "$GITHUB_ENV"') < run.index("gh run")
     assert "printf '{\"quarantined\": []}\\n' > /tmp/price-quarantine.json" in run
-    assert "-n price-quarantine" in run and ".databaseId != ${GITHUB_RUN_ID}" in run
+    assert "-n price-quarantine" in run and ".workflow_run.id != ${GITHUB_RUN_ID}" in run
+    # Only the newest artifact: no fallback that could revive a quarantine.
+    assert "sort_by(.created_at) | last" in run and "for run in" not in run
     assert 'echo "TR_PRICE_QUARANTINE_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"' in run
 
 
