@@ -92,10 +92,6 @@ _REVIEWED_PRICING_SECTION = " ".join((
     "\u2013 means the standard input price applies.",
     "Automatic model aliases are billed at the rate of the model selected for the request.",
 ))
-# Outside the pinned section, a table with any digit can price or condition a
-# model (plain "1.30" cells, "Above 128K tokens | 2x"), so it refuses. Tables
-# without digits, such as modality or capability tables, pass.
-_FIGURE = re.compile(r"\d")
 
 
 def _price(text: str) -> int:
@@ -118,13 +114,18 @@ def _price_tables(soup: BeautifulSoup) -> list[Tag]:
 
 
 def verify_pricing_page(html: str) -> None:
-    """Pin the reviewed pricing section; refuse tables with figures anywhere else."""
+    """Pin the reviewed pricing section, the page's only table."""
     soup = BeautifulSoup(html, "html.parser")
     for hidden in soup(["script", "style", "noscript", "template"]):
         hidden.decompose()
     tables = _price_tables(soup)
     if len(tables) != 1:
         raise RuntimeError("maple: expected exactly one token price table; review")
+    # Any other table, with or without figures, can price or condition a model
+    # ("Above one hundred thousand tokens | Double the listed rates"), so the
+    # pinned price table must be the only table on the page.
+    if len(soup.find_all("table")) != 1:
+        raise RuntimeError("maple: unexpected table on the pricing page; review")
     section = tables[0].find_parent("section")
     if section is None:
         raise RuntimeError("maple: pricing section text changed; review")
@@ -133,9 +134,6 @@ def verify_pricing_page(html: str) -> None:
         cell.append(_PRICE_CELL)
     if " ".join(section.get_text(" ", strip=True).split()) != _REVIEWED_PRICING_SECTION:
         raise RuntimeError("maple: pricing section text changed; review")
-    for table in soup.find_all("table"):
-        if section not in table.parents and _FIGURE.search(table.get_text(" ", strip=True)):
-            raise RuntimeError("maple: another table with figures; review")
 
 
 def _table_states_per_million(table: Tag) -> bool:

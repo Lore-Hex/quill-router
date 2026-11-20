@@ -419,22 +419,33 @@ ABOVE_128K_TABLE = (
     "</caption><thead><tr><th>Input</th><th>Output</th></tr></thead>"
     "<tbody><tr><td>1.30</td><td>2.90</td></tr></tbody></table>",
     _table(["Context", "Price multiplier"], ["Up to 128K tokens", "1x"], ["Above 128K tokens", "2x"]),
-    # A capability or modality table that names a model refuses too: model
-    # names carry version digits, and figures are refused wholesale.
+    # No figures at all (round-6 review): a written-out tier, and cached-input
+    # rates in words per thousand tokens.
+    _table(["Context", "Rates"], ["Above one hundred thousand tokens", "Double the listed input and output rates"]),
+    "<table><caption>Cached input, in US dollars per thousand tokens</caption>"
+    "<thead><tr><th>Model family</th><th>Cached input</th></tr></thead>"
+    "<tbody><tr><td>Inkling</td><td>Five hundredths of a cent</td></tr></tbody></table>",
+    # Trade-off: any new table holds Maple for review, even an unpriced
+    # capability or modality table, with or without model names.
     _table(["Model", "Image support"], ["Inkling 2 Small", "Yes"], ["GLM 5.3", "No"]),
     _table(["Model", "Input (modalities)", "Output (modalities)"],
            ["Inkling 2 Small", "Text, image", "Text"], ["GLM 5.3", "Text", "Text"]),
-])
-def test_another_table_with_figures_outside_the_pricing_section_is_refused(extra):
-    with pytest.raises(RuntimeError, match="maple: another table with figures; review"):
-        maple.verify_pricing_page(live_pricing_page() + extra)
-
-
-@pytest.mark.parametrize("extra", [
-    # Digit-free capability and modality tables.
     _table(["Feature", "Chat", "API"], ["Image support", "Yes", "Yes"], ["Tool calls", "Yes", "No"]),
     _table(["Model family", "Input (modalities)", "Output (modalities)"],
            ["Inkling", "Text, image", "Text"], ["Kimi", "Text, image", "Text"]),
+])
+def test_any_other_table_on_the_pricing_page_is_refused(extra):
+    with pytest.raises(RuntimeError, match="maple: unexpected table on the pricing page; review"):
+        maple.verify_pricing_page(live_pricing_page() + extra)
+
+
+def test_an_extra_table_inside_the_pricing_section_is_refused():
+    page = _edited(("</table>", "</table><table><tr><td>Rates double for long prompts</td></tr></table>"))
+    with pytest.raises(RuntimeError, match="maple: unexpected table on the pricing page; review"):
+        maple.verify_pricing_page(page)
+
+
+@pytest.mark.parametrize("extra", [
     # Prose outside the parsed structures is out of scope: ordinary copy,
     # even with a price, never refuses the page.
     "<h3>What is a context window?</h3>",
@@ -443,7 +454,7 @@ def test_another_table_with_figures_outside_the_pricing_section_is_refused(extra
     "<p>Over 1M downloads.</p>",
     "<p>Try Inkling 2 Small with Pro for $20/month.</p>",
 ])
-def test_digit_free_tables_and_ordinary_copy_outside_the_section_pass(extra):
+def test_ordinary_copy_outside_a_table_passes(extra):
     page = live_pricing_page() + extra
     maple.verify_pricing_page(page)
     assert maple.parse_prices(page, "Inkling 2 Small") == INKLING_PRICE
@@ -455,7 +466,7 @@ def test_extra_tier_table_fails_the_whole_refresh(monkeypatch, tmp_path):
     pages = live_pages_2026_11_19()
     pages[maple.PRICING_URL] += ABOVE_128K_TABLE
     monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
-    with pytest.raises(RuntimeError, match="another table with figures"):
+    with pytest.raises(RuntimeError, match="unexpected table on the pricing page"):
         maple.fetch()
     assert maple._DISCOVERED == {}
 
