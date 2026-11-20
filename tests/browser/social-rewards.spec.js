@@ -178,7 +178,7 @@ test("platform actions have a single appropriate button", async ({ page }) => {
   await expect(page.locator("[data-rewards-list] button")).toHaveCount(5);
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Star on GitHub: Star the repository" })).toHaveText("Star");
-  await expect(page.getByRole("button", { name: "Subscribe on YouTube: Subscribe to New York Token Exchange" })).toHaveText("Subscribe");
+  await expect(page.getByRole("button", { name: "Subscribe on YouTube: New York Token Exchange" })).toHaveText("Subscribe");
   await expect(page.locator("[data-rewards-list]")).not.toContainText("I followed");
 });
 

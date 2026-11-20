@@ -43,7 +43,7 @@
     x_trustedrouter: ["X", "Follow @TrustedRouter", "Follow"],
     x_founder: ["X", "Follow @jperla", "Follow"],
     linkedin: ["LinkedIn", "Follow TrustedRouter", "Follow"],
-    youtube: ["YouTube", "Subscribe to New York Token Exchange", "Subscribe"],
+    youtube: ["YouTube", "New York Token Exchange", "Subscribe"],
   };
   function platformIcon(id) {
     const icon = document.createElement("span");
@@ -128,8 +128,10 @@
     dialog.querySelector("[data-rewards-progress]").textContent = `${count} of ${total} rewards claimed`;
     if (total > 0) {
       const thousands = total * 200;
-      const upTo = thousands >= 1000 ? `${thousands / 1000}M` : `${thousands}K`;
-      dialog.querySelector("h2").textContent = `Earn up to ${upTo} tokens of API credit`;
+      const upTo = thousands >= 1000 ? `${thousands / 1000} million` : `${thousands}K`;
+      const amount = document.createElement("strong");
+      amount.textContent = `${upTo} free tokens`;
+      dialog.querySelector("h2").replaceChildren("Earn up to ", amount);
     }
     dialog.querySelector("[data-rewards-meter]").max = total || 1;
     dialog.querySelector("[data-rewards-meter]").value = count;

@@ -257,7 +257,6 @@
   --tr-legacy-0a0d12: var(--nyte-cream);
   --tr-legacy-0a0e0b: var(--nyte-cream);
   --tr-legacy-0a1726: var(--nyte-white);
-  --tr-legacy-0a66c2: var(--nyte-sky);
   --tr-legacy-0b121a: var(--nyte-white);
   --tr-legacy-0b1220: var(--nyte-white);
   --tr-legacy-0b1220-8f: color-mix(in srgb, var(--nyte-white) 56.1%, transparent);
@@ -512,7 +511,6 @@
   --tr-legacy-fbbf24: #6B5300;
   --tr-legacy-fbfcfd: var(--nyte-ink);
   --tr-legacy-fecaca: #A8360F;
-  --tr-legacy-ff0033: var(--nyte-orange);
   --tr-legacy-ffb1a4: #A8360F;
   --tr-legacy-ffeb3b-73: color-mix(in srgb, var(--nyte-yellow) 45.1%, transparent);
   --tr-legacy-fff7f6: var(--nyte-ink);
@@ -542,7 +540,7 @@
 
 /* Ink areas: the header bar, the footer and the console top bar keep the
    kit's dark theme, so their own colours read Cream on Ink. */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head) {
   /* Surfaces */
   --tr-color-surface-bg: var(--nyte-ink);
   --tr-color-surface-bg-alt: var(--nyte-surface);
@@ -687,7 +685,6 @@
   --tr-legacy-0a0d12: var(--nyte-ink);
   --tr-legacy-0a0e0b: var(--nyte-ink);
   --tr-legacy-0a1726: var(--nyte-ink);
-  --tr-legacy-0a66c2: var(--nyte-deep-purple);
   --tr-legacy-0b121a: var(--nyte-ink);
   --tr-legacy-0b1220: var(--nyte-ink);
   --tr-legacy-0b1220-8f: color-mix(in srgb, var(--nyte-ink) 56.1%, transparent);
@@ -942,7 +939,6 @@
   --tr-legacy-fbbf24: var(--nyte-yellow);
   --tr-legacy-fbfcfd: var(--nyte-cream);
   --tr-legacy-fecaca: #FFB49A;
-  --tr-legacy-ff0033: var(--nyte-orange);
   --tr-legacy-ffb1a4: #FFB49A;
   --tr-legacy-ffeb3b-73: color-mix(in srgb, var(--nyte-yellow-tint) 45.1%, transparent);
   --tr-legacy-fff7f6: var(--nyte-cream);
@@ -1039,18 +1035,18 @@
 }
 
 /* Buttons inside Ink areas: Cream rule; primary keeps Orange with an Orange rule */
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
   :is(.button.button-secondary, .btn.secondary, .btn:not(.primary, .danger)) {
   border-color: var(--nyte-cream);
   color: var(--nyte-cream);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
   :is(.button.button-primary, .btn.primary) {
   border-color: var(--nyte-orange);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
   :is(.button, .btn):hover {
   border-color: var(--nyte-cream);
   background: var(--nyte-cream);
@@ -1095,7 +1091,7 @@
   background: var(--nyte-ink);
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro)
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head)
   :is(.eyebrow, .kicker) {
   color: var(--nyte-cream);
 }
@@ -1119,7 +1115,7 @@
   outline-offset: 2px;
 }
 
-:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro) :focus-visible {
+:root[data-brand="nyte"] :is(.trnav .tbar, .site-footer, .console-topbar, .verify-section, .public-hero, .models-page-hero, .md-hero, .compare-hero, .blog-index-head, .routing-feature-hero, .company-intro, .status-hero, .ti-hero, .lb-hero, .green-hero, .tm-hero, .ts-heading, .tx-heading, .bgb-hero, .cc-hero, .media-intro, .social-rewards-head) :focus-visible {
   outline-color: var(--nyte-cream);
 }
 
@@ -1164,12 +1160,11 @@
 }
 
 /* No decorative gradients or dot textures in the kit */
-:root[data-brand="nyte"] :is(.console-topbar, .social-rewards-head) {
+:root[data-brand="nyte"] .console-topbar {
   background-image: none;
 }
 
-:root[data-brand="nyte"] :is(.console-topbar, .social-rewards-head)::before,
-:root[data-brand="nyte"] .social-rewards-head::after {
+:root[data-brand="nyte"] .console-topbar::before {
   background-image: none;
 }
 
