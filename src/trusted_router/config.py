@@ -1073,6 +1073,8 @@ class Settings(BaseSettings):
     async_settle_accept_regions: str = ""
     _async_settle_accept_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
+    # Permit ordinary decide async eligibility; off preserves the previous answer.
+    async_settle_decide_route: bool = False
     async_settle_protection: bool = False
     async_settle_admission_refresh_enabled: bool = False
     async_settle_handoff_mode: Literal["outbox", "memory"] = "outbox"

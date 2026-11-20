@@ -991,6 +991,21 @@ def test_verbatim_retained_pins(source: str, member: str) -> None:
     root = Path(__file__).parents[1]
     original = ast_members(root / source)[member]
     frozen = ast_members(root / "src/trusted_router/async_settle_shadow_v2_retained.py")[member]
+    # Pin the exact live additions while retaining every other class member.
+    if member == "TicketClaims":
+        route = next(node for node in frozen.body if isinstance(node, ast.AnnAssign)
+                     and isinstance(node.target, ast.Name) and node.target.id == "route_type")
+        prior = ast.parse('Literal["chat.completions", "responses"]', mode="eval").body
+        assert ast.dump(route.annotation) == ast.dump(prior)
+        route.annotation = ast.parse('Literal["chat.completions", "responses", "decide"]', mode="eval").body
+        frozen.body.append(ast.parse('''@model_validator(mode="after")
+def decide_is_not_streamed(self) -> Self:
+    if self.route_type == "decide" and self.streamed:
+        raise ValueError("decide must not be streamed")
+    return self
+''').body[0])
+    elif member == "ShadowClaims":
+        frozen.body.insert(0, ast.parse('route_type: Literal["chat.completions", "responses"]').body[0])
     assert ast.dump(frozen, include_attributes=False) == ast.dump(original, include_attributes=False)
     if isinstance(original, ast.Assign):
         module = source.removeprefix("src/").removesuffix(".py").replace("/", ".")

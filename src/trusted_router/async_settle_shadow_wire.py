@@ -196,6 +196,8 @@ def parse_header(headers: tuple[str, ...]) -> Envelope:
         else:
             terminal = billing.TerminalEnvelope.model_validate(terminal_value) if terminal_value is not None else None
         if terminal is not None:
+            if terminal.route_type == "decide":
+                _refuse("json_shape")
             for name in ("authorization_id", "workspace_id", "key_id", "invocation_nonce"):
                 if len(getattr(terminal, name)) > 64:
                     _refuse("identity")

@@ -25,6 +25,7 @@ Three things are held here:
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -66,7 +67,7 @@ from trusted_router.types import UsageType
 from trusted_router.web_fetch import FETCH_MODEL_ID
 
 FALSE_ONLY = {"async_eligible": False}
-ASYNC_ROUTES = ("chat.completions", "responses")
+ASYNC_ROUTES = ("chat.completions", "responses", "decide")
 
 # How a pricing statement or an input is covered, when not by a requested fact.
 PLAIN = "the plain endpoint formula, or an input every ordinary request has"
@@ -319,7 +320,7 @@ def _covering_facts() -> set[str]:
 
 # ------------------------------------------- each fact, where the settle path's is --
 
-SETTINGS = settings()
+SETTINGS = settings(async_settle_decide_route=True)
 RUNTIME = runtime()
 
 
@@ -418,9 +419,10 @@ def _witnesses() -> dict[str, list[Witness]]:
     }
 
 
-def test_the_witnesses_start_from_an_eligible_authorization() -> None:
+@pytest.mark.parametrize("route", ASYNC_ROUTES)
+def test_the_witnesses_start_from_an_eligible_authorization(route: str) -> None:
     model = ORDINARY.model_id
-    answer = _answer(_body(model), _authorization(model), [ORDINARY])
+    answer = _answer(_body(model, route_type=route), _authorization(model), [ORDINARY])
     assert answer["async_eligible"] is True and "settlement_ticket" in answer
     assert billing.exclusion(_facts(_body(model), _authorization(model), [ORDINARY])) is None
     assert gateway._provider_price_tier_input_tokens(ORDINARY, 7) is None
@@ -430,9 +432,14 @@ def test_every_covering_fact_has_a_witness() -> None:
     assert _covering_facts() == set(_witnesses())
 
 
+@pytest.mark.parametrize("route", ASYNC_ROUTES)
 @pytest.mark.parametrize("fact", sorted(_witnesses()))
-def test_a_fact_is_true_where_the_settle_paths_predicate_is_and_answers_false_only(fact: str) -> None:
+def test_a_fact_is_true_where_the_settle_paths_predicate_is_and_answers_false_only(fact: str, route: str) -> None:
+    assert _answer(_body(ORDINARY.model_id, route_type=route),
+                   _authorization(ORDINARY.model_id), [ORDINARY])["async_eligible"] is True
     for witness in _witnesses()[fact]:
+        if witness.body.route_type == "chat.completions":
+            witness = witness._replace(body=witness.body.model_copy(update={"route_type": route}))
         assert witness.settle_predicate is True, fact
         facts = _facts(witness.body, witness.authorization, witness.routes)
         value = getattr(facts, fact)
@@ -441,7 +448,7 @@ def test_a_fact_is_true_where_the_settle_paths_predicate_is_and_answers_false_on
         # The fact alone excludes: every other is at its ordinary value, bar
         # the route of a partner request, which is not an async route either.
         others = {name for name in FACTS - {fact, "streamed"} if getattr(facts, name) != getattr(
-            billing.Eligibility(), name)}
+            billing.Eligibility(route_type=route), name)}
         assert others <= ({"route_type"} if fact == "partner" else set()), (fact, others)
         assert billing.exclusion(facts.model_copy(update={"route_type": "chat.completions"})) == REASONS.get(
             fact, fact)
@@ -530,7 +537,7 @@ def test_every_program_routing_knows_is_a_program_name() -> None:
 
 def test_no_requestable_name_the_settle_path_prices_specially_is_async_eligible() -> None:
     """For every spelling, as the model and as a fallback of an ordinary one,
-    on both async routes: when the settle path's partner classifier answers
+    on all async routes: when the settle path's partner classifier answers
     for it (or refuses its markers), or it is a program, the answer is false
     only. An ordinary name stays eligible, so this cannot pass by excluding
     everything."""
@@ -590,7 +597,8 @@ def test_a_partner_marker_never_reaches_an_async_answer(key: str | None) -> None
                 assert answer["async_eligible"] is True, (name, route, key)
 
 
-def test_no_endpoint_the_settle_path_prices_specially_is_async_eligible() -> None:
+@pytest.mark.parametrize("route_type", ASYNC_ROUTES)
+def test_no_endpoint_the_settle_path_prices_specially_is_async_eligible(route_type: str) -> None:
     """For every Credits endpoint in the catalog, authorized as its own
     model's request: when the settle path would read a private tier basis for
     it, treat it as the selector, meter its model as a tool or media request,
@@ -610,9 +618,9 @@ def test_no_endpoint_the_settle_path_prices_specially_is_async_eligible() -> Non
             or route.request_price_microdollars != 0
             or route.model_id in programs or names_router_model(route.model_id)
         )
-        answer = _answer(_body(route.model_id), _authorization(route.model_id, model_id=route.model_id), [route])
+        answer = _answer(_body(route.model_id, route_type=route_type), _authorization(route.model_id, model_id=route.model_id), [route])
         # Among an ordinary request's candidates too.
-        beside = _answer(_body(ORDINARY.model_id),
+        beside = _answer(_body(ORDINARY.model_id, route_type=route_type),
                          _authorization(ORDINARY.model_id, model_id=ORDINARY.model_id), [ORDINARY, route])
         if special:
             assert answer == FALSE_ONLY, route.id
@@ -633,3 +641,25 @@ def test_a_tool_or_media_model_is_not_a_chat_model() -> None:
     for model_id in (FETCH_MODEL_ID, *TRANSCRIPTION_MODELS, *SPEECH_MODELS):
         model = MODELS.get(model_id)
         assert model is None or not model.supports_chat, model_id
+
+
+@pytest.mark.parametrize("tokens", [0, 1, 11, 12, 1234, 32000])
+def test_decide_catalog_input_only_price_matches_settle(tokens: int) -> None:
+    hosted = [e for e in MODEL_ENDPOINTS.values() if MODELS[e.model_id].supports_decide
+              and not MODELS[e.model_id].supports_chat]
+    assert hosted
+    for candidate in hosted:
+        if UsageType.for_endpoint(candidate) != UsageType.CREDITS:
+            auth = _authorization(candidate.model_id, usage_type=UsageType.BYOK)
+            assert _answer(_body(candidate.model_id, route_type="decide"), auth, [candidate]) == FALSE_ONLY
+            continue
+        assert candidate.completion_price_microdollars_per_million_tokens == 0
+        auth = _authorization(candidate.model_id, model_id=candidate.model_id)
+        reply = _answer(_body(candidate.model_id, route_type="decide", max_output_tokens=1), auth, [candidate])
+        assert reply["async_eligible"] is True
+        snapshot = billing.parse_snapshot(json.dumps(reply["billing_snapshot"]))
+        raw = billing.RawUsage(input_tokens=tokens, output_tokens=0)
+        frozen = billing.evaluate(snapshot, candidate.id, raw, billing.Eligibility(route_type="decide"))
+        assert frozen.charge_micro == gateway._endpoint_cost_microdollars(candidate, tokens, 0)
+        # The vendor does not meter output; its zero rate remains zero.
+        assert frozen.charge_micro == gateway._endpoint_cost_microdollars(candidate, tokens, 1)

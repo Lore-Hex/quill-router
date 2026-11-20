@@ -304,6 +304,8 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                                           resolve=not memory_mode)
 
             excluded = billing.exclusion(value.observed)
+            if not synchronous and claims.route_type == "decide" and not settings.async_settle_decide_route:
+                excluded = "unsupported_route"
             if synchronous or excluded:
                 timing.stop_validation()
                 existing = lookup(claims.authorization_id, kind)
