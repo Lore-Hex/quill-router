@@ -63,6 +63,7 @@ SECRET_VALUES = {
 EXPECTED_ENV_NAMES = {
     "TR_ENVIRONMENT",
     "TR_SERVICE_SURFACE",
+    "TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED",
     "TR_OPERATOR_IDENTITIES",
     "TR_RELEASE",
     "TR_TRUSTED_DOMAIN",
@@ -161,6 +162,7 @@ def test_internal_deploy_pins_each_region_stage_and_exact_secret_allowlist(
         env = _mapping(call, "--set-env-vars", "|")
         assert set(env) == EXPECTED_ENV_NAMES
         assert env["TR_SERVICE_SURFACE"] == "internal"
+        assert env["TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED"] == "true"
         assert env["TR_RATE_LIMIT_CLIENT_IP_MODE"] == client_ip_mode
         assert _mapping(call, "--set-secrets", ",") == EXPECTED_SECRETS
         assert call[call.index("--ingress") + 1] == "all"
