@@ -815,9 +815,12 @@ In this order, each step done before the next:
    past the workspaces that become eligible: the rank is by lifetime
    usage, and a rank short of them leaves the smaller ones out and, past
    its margin, turns off workspaces already on. Read the enabler's next
-   report: a run enables up to 500, so `eligible` and `enabled` should
-   meet in the first run after the deploy (a dry run on 2026-11-20
-   counted 114 to enable), with nothing under `would_disable` for `rank`.
+   report: a run enables up to 500, so the first run after the deploy
+   should turn on every eligible workspace (a dry run on 2026-11-20
+   counted 114 to enable). That report's `enabled` is counted before its
+   writes, so it still shows the old figure: read `writes.enabled` there,
+   or `eligible` equal to `enabled` in the run after it, with nothing
+   under `would_disable` for `rank`.
    Workspaces whose trust watermark is stale that run are counted
    `frozen` and join at a later one.
 
