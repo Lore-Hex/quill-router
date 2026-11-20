@@ -213,13 +213,13 @@ locals {
   # 541e687bf does not compose. Go changes since 541e687bf:
   #   - #2752: an authorize that negotiates X-TR-OpenAI-Safety: v1 and has a
   #     direct OpenAI candidate answers with the stable safety subject,
-  #     derived from the key's creator or else the workspace owner; the key
-  #     and workspace records now carry creator_user_id and owner_user_id.
+  #     derived from the key's creator or else the workspace owner; Go now
+  #     reads the records' existing creator_user_id and owner_user_id.
   #   - #2732: every request of a workspace with BYOK keys passes to Python
   #     (candidates.byok), which alone reads their filters and order.
   #   - #2717: the uncensored GLM 5.3 Flash identifier resolves.
-  # The other fastpath/ changes are test vectors. Off switch: pin 541e687bf
-  # again. One node at a time.
+  # The other fastpath/ changes are test vectors and #2722's test race fix.
+  # Off switch: pin 541e687bf again. One node at a time.
   fastpath_release        = "65e856777546e0d0c67f0c8d049c3d54ba63c443"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
