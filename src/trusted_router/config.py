@@ -1235,8 +1235,8 @@ class Settings(BaseSettings):
     # The Go edge may answer exact hosted decision models on route decide.
     # Published as optional fastpath_edge_hosted_decide and, when Python
     # supports decide tickets, async_settle.decide_route. Keep off until
-    # every node reads both members; older nodes refuse the whole policy.
-    fastpath_edge_hosted_decide: bool = False
+    # every node reads both members; then shadow until agreement, then on.
+    fastpath_edge_hosted_decide: Literal["off", "shadow", "on"] = "off"
     # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
     # section 12.4, PR 4): a stream whose reservation is below its estimate is
     # admitted under a lease with the estimate as its Ceiling, so its owner

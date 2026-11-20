@@ -768,10 +768,9 @@ ENV_VARS=(
   # on the decide shadow, all agree_full), both nodes on b2d12a046
   # (increments 5 and 6, #2242).
   "TR_FASTPATH_PILOT_STREAMS=true"
-  # Stay false until every fast-path node reads the new policy members.
-  # Older nodes refuse an unknown member and, when their last good policy
-  # lapses, pass every request to Python.
-  "TR_FASTPATH_EDGE_HOSTED_DECIDE=false"
+  # "off" until every fast-path node runs a release that reads the members;
+  # then "shadow" until the shadow shows agreement; then "on".
+  "TR_FASTPATH_EDGE_HOSTED_DECIDE=off"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
   # section 12.4, PR 4): a stream whose reservation is below its estimate is

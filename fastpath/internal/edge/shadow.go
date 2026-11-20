@@ -544,11 +544,11 @@ func (sh *shadow) compare(c comparison) result {
 	every := req
 	every.BYOKProviders = h.providers
 	byok, goAnswer := "determined", none
-	if !sameResult(none, s.Evaluate(every)) {
+	if !sameResult(none, evaluateRouting(s, every)) {
 		byok = "consistent"
 		implied := req
 		implied.BYOKProviders = h.impliedBYOK(py.candidates)
-		goAnswer = s.Evaluate(implied)
+		goAnswer = evaluateRouting(s, implied)
 		if goAnswer.Outcome == routingsnapshot.PassToPython {
 			return passed(redact(goAnswer.Reason))
 		}
@@ -559,7 +559,7 @@ func (sh *shadow) compare(c comparison) result {
 	// difference.
 	later := req
 	later.At = c.done
-	if !sameResult(goAnswer, s.Evaluate(later)) {
+	if !sameResult(goAnswer, evaluateRouting(s, later)) {
 		return passed("the snapshot's answer changed while python decided")
 	}
 
@@ -703,7 +703,7 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 	}
 	// A BYOK endpoint Python chose is one whose provider it found present.
 	on.BYOKProviders = append(slices.Clone(on.BYOKProviders), h.impliedBYOK(py)...)
-	r := h.snapshot.Evaluate(on)
+	r := evaluateRouting(h.snapshot, on)
 	return r.Outcome == routingsnapshot.Answered && slices.Contains(r.Candidates, py[0])
 }
 
@@ -717,7 +717,7 @@ func (h *held) warmEstimate(req routingsnapshot.Request, endpoint string) (int64
 		return 0, false
 	}
 	pinned.BYOKProviders = append(slices.Clone(req.BYOKProviders), h.impliedBYOK([]string{endpoint})...)
-	r := h.snapshot.Evaluate(pinned)
+	r := evaluateRouting(h.snapshot, pinned)
 	if r.Outcome != routingsnapshot.Answered || !slices.Equal(r.Candidates, []string{endpoint}) {
 		return 0, false
 	}

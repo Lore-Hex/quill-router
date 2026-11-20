@@ -251,15 +251,16 @@ def render_stream_ceiling() -> str:
 
 def render_hosted() -> str:
     cases = []
-    for edge in (False, True):
+    for edge in ("off", "shadow", "on"):
         for decide in (False, True):
             settings = fixture_settings().model_copy(update={
                 "fastpath_edge_hosted_decide": edge, "async_settle_decide_route": decide})
             body = canonical_edge_policy_bytes(policy(settings)).decode("ascii")
-            if not edge and body != render_body().decode("ascii"):
+            if edge == "off" and body != render_body().decode("ascii"):
                 raise AssertionError("the dormant policy changed")
             cases.append({"name": f"publisher:{edge}:{decide}", "body": body, "accept": True,
-                          "hosted": edge, "decide": edge and decide})
+                          "mode": edge, "python_decide": decide,
+                          "hosted": edge == "on", "decide": edge != "off" and decide})
     enabled = cases[-1]["body"]
     for member in ("fastpath_edge_hosted_decide", "decide_route"):
         for name, spelling in STREAMS_REFUSED:

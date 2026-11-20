@@ -98,7 +98,6 @@ const (
 	AsyncReasonCandidateRefused   = "candidate_refused" // Candidate's validation
 	AsyncReasonCandidateSet       = "candidate_set"     // none, more than 64, or twice
 	AsyncReasonTicketAuthority    = "ticket_authority"
-	AsyncReasonDecideNonce        = "decide_nonce"
 )
 
 // Async is the additions Stage spliced into the 200: the shape, shape A's
@@ -294,10 +293,11 @@ func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, er
 	if !in.Policy.TicketAuthority {
 		return falseOnly(AsyncReasonTicketAuthority), nil
 	}
-	// Python returns false-only if signing a decide ticket lacks a valid nonce.
+	// Python may stop before signing; its negotiation regions are not published.
+	// A decide ticket without a valid nonce therefore needs Python.
 	if in.WantTicket && r.RouteType != nil && *r.RouteType == "decide" &&
 		(r.InvocationNonce == nil || !ticketNonce.MatchString(*r.InvocationNonce)) {
-		return falseOnly(AsyncReasonDecideNonce), nil
+		return Async{}, composeErr("decide ticket requires a valid nonce")
 	}
 	canonical, err := pyjson.Canonical(snapshot)
 	if err != nil {

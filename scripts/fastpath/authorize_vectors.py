@@ -452,7 +452,8 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         # neither; the journal region is primary_region; the edge's switch.
         async_settle_enabled=facts["admission_enabled"],
         async_settle_decide_route=facts.get("decide_route", False),
-        fastpath_edge_hosted_decide=policy.get("fastpath_edge_hosted_decide", False),
+        fastpath_edge_hosted_decide="on" if policy.get("fastpath_edge_hosted_decide", False) else "off",
+        async_settle_negotiation_regions=facts.get("negotiation_regions", ""),
         async_settle_protection=facts["admission_enabled"],
         async_settle_pilot_workspaces=",".join(facts.get("admission_workspaces", ())),
         async_settle_fastpath_overlap_workspaces=",".join(facts.get("fastpath_overlap_workspaces", ())),
@@ -536,7 +537,7 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         # the switch and admission on.
         **edge_leased(settings),
         **({"decide_route": True}
-           if settings.fastpath_edge_hosted_decide and settings.async_settle_decide_route else {}),
+           if settings.fastpath_edge_hosted_decide in ("shadow", "on") and settings.async_settle_decide_route else {}),
     }} if "async_settle" in policy else {}
     return {
         **async_settle,
@@ -566,7 +567,7 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "internal_models": internal_models(),
         # Optional: only when the publisher would carry them.
         **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
-        **({"fastpath_edge_hosted_decide": True} if settings.fastpath_edge_hosted_decide else {}),
+        **({"fastpath_edge_hosted_decide": True} if settings.fastpath_edge_hosted_decide == "on" else {}),
         **({"fastpath_stream_ceiling": True} if settings.fastpath_stream_ceiling else {}),
     }
 
@@ -2890,8 +2891,10 @@ def hosted_cases() -> list[dict[str, Any]]:
     ticket_policy = {"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}}
     add("answer:hosted:C:eligible", body={"invocation_nonce": "nonce-hosted"}, policy=ticket_policy, admits=True)
     add("answer:hosted:C:ineligible", body={"invocation_nonce": "nonce-hosted"}, policy=ticket_policy)
-    add("answer:hosted:A:nonce_absent", policy=ticket_policy)
-    add("answer:hosted:A:nonce_invalid", body={"invocation_nonce": "space nonce"}, policy=ticket_policy)
+    add("pass:hosted:nonce_absent", "compose.refused", policy=ticket_policy)
+    add("pass:hosted:nonce_invalid", "compose.refused", body={"invocation_nonce": "space nonce"}, policy=ticket_policy)
+    add("pass:hosted:nonce_out_of_region", "compose.refused",
+        policy={"async_settle": {**ticket_policy["async_settle"], "negotiation_regions": "europe-west1"}})
     add("answer:hosted:B:leased", policy={**ALL_MODE, "async_settle": LEASED_ADMISSION})
     add("answer:native:A:route_off", body={"model": GPT41}, policy={"async_settle": {"decide_route": False}})
     add("answer:native:B", body={"model": GPT41})

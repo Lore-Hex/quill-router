@@ -2496,18 +2496,23 @@ def test_hosted_decide_policy_vectors(case):
 
 def test_hosted_decide_policy_dormancy_and_current_vectors():
     deployed = _rendered_rollout_env()
-    assert deployed["TR_FASTPATH_EDGE_HOSTED_DECIDE"] == "false"
+    assert deployed["TR_FASTPATH_EDGE_HOSTED_DECIDE"] == "off"
     assert deployed["TR_ASYNC_SETTLE_DECIDE_ROUTE"] == "true"
     assert VECTORS.OUTPUT_HOSTED.read_text() == VECTORS.render_hosted()
     # The committed pre-member body is the baseline, with production's
     # decide setting on but the new switch off. No new bytes reach old nodes.
     for decide in (False, True):
-        cfg = VECTORS.fixture_settings(fastpath_edge_hosted_decide=False, async_settle_decide_route=decide)
+        cfg = VECTORS.fixture_settings(fastpath_edge_hosted_decide="off", async_settle_decide_route=decide)
         assert canonical_edge_policy_bytes(VECTORS.policy(cfg)) == VECTORS.OUTPUT_BODY.read_bytes()
 
 
 def test_hosted_decide_setting_default_and_environment(monkeypatch):
     monkeypatch.delenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", raising=False)
-    assert Settings(_env_file=None).fastpath_edge_hosted_decide is False
-    monkeypatch.setenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", "true")
-    assert Settings(_env_file=None).fastpath_edge_hosted_decide is True
+    assert Settings(_env_file=None).fastpath_edge_hosted_decide == "off"
+    for mode in ("off", "shadow", "on"):
+        monkeypatch.setenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", mode)
+        assert Settings(_env_file=None).fastpath_edge_hosted_decide == mode
+    for mode in ("true", "false", "preview", "ON"):
+        monkeypatch.setenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", mode)
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)

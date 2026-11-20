@@ -302,7 +302,7 @@ func (a *AsyncSettle) AdmitsLeased(workspace string) bool {
 
 // SupportsDecide is Python's published permission for decide tickets.
 func (a *AsyncSettle) SupportsDecide() bool {
-	return a.DecideRoute != nil && *a.DecideRoute
+	return a != nil && a.DecideRoute != nil && *a.DecideRoute
 }
 
 func (a *AsyncSettle) validate() error {

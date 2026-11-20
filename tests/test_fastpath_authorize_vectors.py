@@ -1155,3 +1155,13 @@ def test_hosted_decide_vectors_are_the_real_app_answers():
             assert case["expect"]["async_shape"] == "A"
     for name in ("pass:hosted:stream", "pass:native:stream"):
         assert cases[name]["expect"]["python"]["async_shape"] == "B"
+
+
+def test_hosted_decide_nonce_passes_record_python_shapes():
+    cases = {c["name"]: c for c in json.loads(
+        (ROOT / "fastpath/testdata/authorize_hosted_decide_v1.json").read_text())["cases"]}
+    for suffix, shape in (("absent", "A"), ("invalid", "A"), ("out_of_region", "B")):
+        expect = cases[f"pass:hosted:nonce_{suffix}"]["expect"]
+        assert expect["outcome"] == "pass"
+        assert expect["reason"] == "compose.refused"
+        assert expect["python"]["async_shape"] == shape

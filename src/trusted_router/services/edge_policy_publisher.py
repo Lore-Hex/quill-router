@@ -285,7 +285,7 @@ def settings_facts(
             )} if settings.fastpath_edge_async_tickets_enabled and settings.async_settle_admission_enabled else {}),
             **edge_leased(settings),
             **({"decide_route": True}
-               if settings.fastpath_edge_hosted_decide and settings.async_settle_decide_route else {}),
+               if settings.fastpath_edge_hosted_decide in ("shadow", "on") and settings.async_settle_decide_route else {}),
         },
         # Optional, published only when not off (docs/design/
         # fast-admission-e2-key-windows.md section 5): the default body stays
@@ -299,7 +299,7 @@ def settings_facts(
         **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
         # Hosted decide has no stream booking prerequisite. The ordinary
         # pilot, workspace and async answer gates still apply at the edge.
-        **({"fastpath_edge_hosted_decide": True} if settings.fastpath_edge_hosted_decide else {}),
+        **({"fastpath_edge_hosted_decide": True} if settings.fastpath_edge_hosted_decide == "on" else {}),
         # Optional, published only while a stream's ceiling is sent beside its
         # hold (docs/design/fast-admission-streams.md section 12.4, PR 4).
         # Absent otherwise, so the default body stays byte-identical.

@@ -95,8 +95,8 @@ Six top-level fields are optional:
   so each mode has exactly one encoding.
 - ``fastpath_edge_hosted_decide``: ``true`` when the setting of that name is
   on; absent otherwise. Permits the exact hosted decision model arm. The
-  nested ``async_settle.decide_route`` is present as ``true`` only when both
-  this switch and ``async_settle_decide_route`` are on. Neither member changes
+  nested ``async_settle.decide_route`` is present as ``true`` when this mode is
+  ``shadow`` or ``on`` and ``async_settle_decide_route`` is on. Neither member changes
   the dormant canonical bytes; false, null and other types are refused.
 - ``fastpath_edge_streams``: ``true`` when the settings
   ``fastpath_edge_streams``, ``fastpath_pilot_streams`` and

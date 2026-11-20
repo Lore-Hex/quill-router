@@ -4,8 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	gotoken "go/token"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
@@ -89,22 +96,79 @@ func TestHostedDecidePipeline(t *testing.T) {
 
 func TestHostedDecideDarkShadow(t *testing.T) {
 	f := hostedGoldens(t)
-	for _, name := range []string{"answer:hosted:none", "answer:hosted:B", "answer:hosted:C:eligible"} {
-		c := hostedCase(t, f, name)
-		in, _ := caseInputs(t, f, c)
-		p := *in.Policy
-		p.FastpathEdgeHostedDecide = nil
-		in.Policy = &p
-		out := Decide(in)
-		if out.Pass != PassHostedDecideOff || out.ForShadow() == nil {
-			t.Fatalf("dark pass=%s", out.Pass)
+	raw, err := readTestdata("edge_policy_hosted_decide_v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct {
+		Cases []struct {
+			Name, Body, Mode string
+			Accept           bool
+			PythonDecide     bool `json:"python_decide"`
 		}
-		if _, ok := out.Admit(); ok {
-			t.Fatal("dark decision admitted")
+	}
+	if json.Unmarshal(raw, &vectors) != nil {
+		t.Fatal("policy vectors unreadable")
+	}
+	for _, v := range vectors.Cases {
+		if !v.Accept {
+			continue
 		}
-		result := (&fullShadow{}).safeCompare(out, pyAnswer{status: 200, body: []byte(c.Expect.Response)}, nil, PassHostedDecideOff)
-		if result.class != ClassAgreeFull || len(result.fields) != 0 {
-			t.Fatalf("shadow=%s fields=%v", result.class, result.fields)
+		published, err := routingsnapshot.ParseEdgePolicy([]byte(v.Body))
+		if err != nil {
+			t.Fatal("published policy unreadable")
+		}
+		names := []string{"answer:hosted:none", "answer:hosted:A:route_off"}
+		if v.PythonDecide {
+			names = []string{"answer:hosted:none", "answer:hosted:B", "answer:hosted:C:eligible"}
+		}
+		for _, name := range names {
+			t.Run(v.Name+"/"+name, func(t *testing.T) {
+				c := hostedCase(t, f, name)
+				in, _ := caseInputs(t, f, c)
+				// Hold the case's cohort and ticket admission settings fixed, using
+				// both optional members exactly as the Python publisher emitted them.
+				p, async := *in.Policy, *in.Policy.AsyncSettle
+				p.FastpathEdgeHostedDecide = published.FastpathEdgeHostedDecide
+				async.DecideRoute = published.AsyncSettle.DecideRoute
+				p.AsyncSettle = &async
+				in.Policy = &p
+				out := Decide(in)
+				unknown := name != "answer:hosted:none" && !p.HostedDecide() && !p.AsyncSettle.SupportsDecide()
+				wantPass := ""
+				if unknown {
+					wantPass = PassHostedDecideAsyncUnknown
+				} else if v.Mode != "on" {
+					wantPass = PassHostedDecideOff
+				}
+				if out.Pass != wantPass || (out.ForShadow() == nil) != unknown {
+					t.Fatalf("pass=%s decision=%v", out.Pass, out.ForShadow() != nil)
+				}
+				if _, ok := out.Admit(); ok != (v.Mode == "on") {
+					t.Fatal("admission differs")
+				}
+				py := pyAnswer{status: 200, body: []byte(c.Expect.Response)}
+				result := (&fullShadow{}).safeCompare(out, py, nil, out.Pass)
+				if unknown {
+					// The base binary passed this arm without a decision. Keep its
+					// class family; the suffix now identifies the unpublished async fact.
+					baseRequest, _, why := requestOf(c.body(), &shadowCall{})
+					if why != "" {
+						t.Fatal(why)
+					}
+					baseRequest.At, baseRequest.HostedDecide = c.at(), false
+					if in.Snapshot.Evaluate(baseRequest).Outcome != routingsnapshot.PassToPython {
+						t.Fatal("base evaluator did not pass hosted decide")
+					}
+					base := (&fullShadow{}).safeCompare(Decided{Pass: PassEvaluate}, py, nil, PassEvaluate)
+					if strings.Split(result.class, ".")[0] != strings.Split(base.class, ".")[0] ||
+						result.class != ClassPythonAnsweredGoPassed+"."+PassHostedDecideAsyncUnknown || len(result.fields) != 0 {
+						t.Fatalf("shadow=%s fields=%v", result.class, result.fields)
+					}
+				} else if result.class != ClassAgreeFull || len(result.fields) != 0 {
+					t.Fatalf("shadow=%s fields=%v", result.class, result.fields)
+				}
+			})
 		}
 	}
 }
@@ -216,7 +280,11 @@ func TestHostedDecideTicketFailureAndTimeout(t *testing.T) {
 				case "failure":
 					return nil, errors.New("unavailable")
 				default:
-					<-r.Context().Done()
+					select {
+					case <-r.Context().Done():
+					case <-time.After(2 * time.Second):
+						t.Error("ticket context did not finish")
+					}
 					return nil, context.DeadlineExceeded
 				}
 			}))
@@ -322,13 +390,36 @@ func TestHostedDecideInFlightLimit(t *testing.T) {
 	}))
 	h.policy.GatewayAuthorizeMaxInFlightPerKey = 1
 	release, entered := make(chan struct{}), make(chan struct{})
-	h.rows.insert = func(context.Context) store.InsertOutcome { close(entered); <-release; return store.Inserted }
+	defer close(release)
+	h.rows.insert = func(context.Context) store.InsertOutcome {
+		close(entered)
+		select {
+		case <-release:
+		case <-time.After(2 * time.Second):
+			t.Error("insert was not released")
+		}
+		return store.Inserted
+	}
 	done := make(chan int, 1)
 	go func() { done <- h.send(t, c).Code }()
-	<-entered
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("hosted request never reached insert")
+	}
 	second := h.send(t, c)
-	close(release)
-	if <-done != http.StatusOK || second.Code != http.StatusTeapot || h.edge.DecideCounts().Passed[PassInFlightKey] != 1 {
+	select {
+	case release <- struct{}{}:
+	case <-time.After(2 * time.Second):
+		t.Fatal("insert did not accept release")
+	}
+	var first int
+	select {
+	case first = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first hosted request did not finish")
+	}
+	if first != http.StatusOK || second.Code != http.StatusTeapot || h.edge.DecideCounts().Passed[PassInFlightKey] != 1 {
 		t.Fatal("hosted in-flight rule differs")
 	}
 }
@@ -348,6 +439,8 @@ func TestHostedDecideOtherShapesKeepTheirCounters(t *testing.T) {
 		func(r *routingsnapshot.Request) { r.RouteType = nil },
 		func(r *routingsnapshot.Request) { r.Models = []string{"openai/gpt-4.1"} },
 		func(r *routingsnapshot.Request) { r.Model += "+price" },
+		func(r *routingsnapshot.Request) { r.Model += ":nitro" },
+		func(r *routingsnapshot.Request) { r.Model += "-2026-10-01" },
 	} {
 		for _, provider := range []json.RawMessage{nil, json.RawMessage(`{"sort":"unknown"}`)} {
 			request := base
@@ -361,5 +454,106 @@ func TestHostedDecideOtherShapesKeepTheirCounters(t *testing.T) {
 				t.Fatal("an excluded hosted shape changed its outcome or counter")
 			}
 		}
+	}
+}
+
+// Like TestOnlyAdmitHandsOutADecision, inspect production Go syntax so each
+// future routing evaluation has to use the shared rule. keywindow.Evaluate
+// is a separate package function, not a routing snapshot method.
+func TestRoutingEvaluationsUseWrapper(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fs := gotoken.NewFileSet()
+		file, err := parser.ParseFile(fs, name, raw, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			wrapper := ok && name == "shadow.go" && fn.Name.Name == "evaluateRouting"
+			ast.Inspect(decl, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Evaluate" {
+					return true
+				}
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "keywindow" {
+					return true
+				}
+				if !wrapper {
+					t.Errorf("%s: routing evaluation must use evaluateRouting", fs.Position(call.Pos()))
+				} else {
+					seen++
+				}
+				return true
+			})
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("wrapper has %d evaluations, want 2", seen)
+	}
+}
+
+func TestHostedDecideSuffixCallers(t *testing.T) {
+	f := hostedGoldens(t)
+	c := hostedCase(t, f, "answer:hosted:none")
+	for _, suffix := range []string{":nitro", "-2026-10-01"} {
+		t.Run(suffix, func(t *testing.T) {
+			in, _ := caseInputs(t, f, c)
+			body := withFields(t, c.body(), map[string]any{"model": "fixture.invalid/hosted-decision" + suffix})
+			req, _, why := requestOf(body, &shadowCall{})
+			if why != "" {
+				t.Fatal(why)
+			}
+			req.At = c.at()
+			old := req
+			old.HostedDecide = false
+			before := in.Snapshot.Evaluate(old)
+			if before.Outcome != routingsnapshot.Refused {
+				t.Fatal("base must refuse suffix")
+			}
+			after := evaluateRouting(in.Snapshot, req)
+			if !sameResult(before, after) || redact(before.Reason) != redact(after.Reason) {
+				t.Fatal("suffix changed result or counter")
+			}
+			in.Request.Body = body
+			if out := Decide(in); out.Pass != PassEvaluateRefused {
+				t.Fatalf("Decide pass=%s", out.Pass)
+			}
+			refusal := before.Refusal
+			response, err := json.Marshal(map[string]any{"error": map[string]any{
+				"type": refusal.Type, "message": refusal.Message, "param": refusal.Param}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := (&shadow{}).compare(comparison{
+				call:   &shadowCall{held: &held{snapshot: in.Snapshot}, at: c.at(), body: body},
+				status: refusal.Status, response: response, complete: true, done: c.at(),
+			})
+			if result.class != ClassAgree || result.goOutcome != "refused" || len(result.fields) != 0 {
+				t.Fatalf("routing shadow=%s outcome=%s fields=%v", result.class, result.goOutcome, result.fields)
+			}
+		})
+	}
+}
+
+func TestHostedDecideAsyncSupportIsNilSafe(t *testing.T) {
+	var absent *routingsnapshot.AsyncSettle
+	if absent.SupportsDecide() {
+		t.Fatal("absent async policy permits decide")
 	}
 }
