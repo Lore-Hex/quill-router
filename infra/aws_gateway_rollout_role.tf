@@ -190,9 +190,11 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
       },
       {
         # Refresh to an explicit numbered template, with automatic rollback.
+        # Cancel only stops a refresh that outlived its verification window,
+        # before the rollback to the recorded template.
         Sid    = "RefreshGatewayFleet"
         Effect = "Allow"
-        Action = ["autoscaling:StartInstanceRefresh"]
+        Action = ["autoscaling:StartInstanceRefresh", "autoscaling:CancelInstanceRefresh"]
         Resource = [for region in local.gateway_rollout_regions :
         "arn:aws:autoscaling:${region}:${local.aws_account_id}:autoScalingGroup:*:autoScalingGroupName/quill-enclave-asg"]
       },
@@ -211,12 +213,6 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
         Effect   = "Allow"
         Action   = ["ssm:StartSession"]
         Resource = [for region in local.gateway_rollout_regions : "arn:aws:ssm:${region}::document/AWS-StartPortForwardingSession"]
-      },
-      {
-        Sid      = "EndOwnSessions"
-        Effect   = "Allow"
-        Action   = ["ssm:TerminateSession", "ssm:ResumeSession"]
-        Resource = "arn:aws:ssm:*:${local.aws_account_id}:session/$${aws:userid}-*"
       },
       {
         # aws_kms_admission.check_keys: both recipient-only policies must equal
