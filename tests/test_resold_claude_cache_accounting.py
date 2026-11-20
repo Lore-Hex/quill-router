@@ -220,9 +220,10 @@ def test_the_rule_is_the_enclaves_dispatch_over_the_whole_catalog() -> None:
     assert not _bedrock_runtime_table_disagreements(MODEL_ENDPOINTS.values(), _bedrock_manifest_rows())
     # The equivalence is over a catalog that reaches every branch of it.
     assert by_kind["anthropic"] >= 1 and by_kind["amazon-bedrock"] >= 1 and by_kind["google-vertex"] >= 1, by_kind
-    # Other providers serving an anthropic/ model (deepinfra's BYOK routes
-    # today) relay OpenAI-style counts and stay inclusive.
-    assert by_kind["other_anthropic_publisher"] >= 1, by_kind
+    # Claude routes only through Anthropic and its authorized clouds
+    # (closed_weight_routes), so no other provider serves an anthropic/ model.
+    # Were one admitted, it would relay OpenAI-style counts and stay inclusive.
+    assert by_kind["other_anthropic_publisher"] == 0, by_kind
     # The three relays the rule does not cover are absent from the catalog.
     assert not any(e.provider == "vertex" for e in MODEL_ENDPOINTS.values())
     assert not any(e.provider == "azure" and (_claude_wire_name(e.upstream_id) or _claude_wire_name(e.model_id))

@@ -233,6 +233,9 @@ def test_the_catalog_build_drops_retired_routes_explicit_ones_included(
     # which skips the allowlists: the retirement must still end it, prepaid and
     # BYOK, and must leave another host's route alone.
     monkeypatch.setattr(catalog_ingest, "provider_model_operator_held", lambda *_args: False)
+    # The closed-weight maker rule is a separate gate (test_closed_weight_routes)
+    # that would also end the other host's route for a closed model.
+    monkeypatch.setattr(catalog_ingest, "closed_weight_route_disallowed", lambda *_args: False)
     monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {})
     monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})

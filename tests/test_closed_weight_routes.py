@@ -97,10 +97,13 @@ def test_open_weights_in_a_closed_namespace_are_unrestricted(
 
 
 def test_catalog_has_no_unauthorized_closed_weight_route() -> None:
+    from tests.catalog_vehicles import registry_endpoints
     from trusted_router.closed_weight_routes import authorized_closed_weight_providers
 
+    # The registry's own output: test vehicles frozen from an older catalog
+    # (tests/catalog_vehicles.py) are not routes the catalog built.
     offenders = sorted(
-        endpoint.id for endpoint in MODEL_ENDPOINTS.values()
+        endpoint.id for endpoint in registry_endpoints().values()
         if (allowed := authorized_closed_weight_providers(endpoint.model_id)) is not None
         and endpoint.provider not in allowed
     )
