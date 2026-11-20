@@ -31,6 +31,9 @@ def test_state_round_trips_and_only_unexpired_entries_are_active(tmp_path: Path)
     ])
     entries = quarantine.load_state(path)
     assert len(entries) == 3
+    # An expiry beyond one quarantine from now was not written by diagnose.
+    forged = quarantine.Entry("forged", "r", NOW + timedelta(days=30))
+    assert quarantine.active([forged], NOW) == []
     assert [(e.slug, e.until) for e in quarantine.active(entries, NOW)] == [("live", NOW + timedelta(hours=5))]
 
 
@@ -118,14 +121,17 @@ def test_the_probe_budget_bounds_the_search() -> None:
 # --- failure records --------------------------------------------------------
 
 def test_failed_tests_union_every_shard_record(tmp_path: Path) -> None:
-    for shard, failed, errors in (("1", [], []), ("3", ["tests/a.py::t[x y]"], []),
+    for shard, failed, errors in (("1", ["tests/d.py::t@p3-dormancy", "tests/e.py::t[a@b]"], []),
+                                  ("3", ["tests/a.py::t[x y]"], []),
                                   ("heavy-1", ["tests/b.py::t"], ["tests/c.py"])):
         (tmp_path / f"test-failures-{shard}").mkdir()
         (tmp_path / f"test-failures-{shard}" / "failures.json").write_text(
             json.dumps({"failed": failed, "collection_errors": errors}))
     (tmp_path / "broken").mkdir()
     (tmp_path / "broken" / "failures.json").write_text("{")
-    assert quarantine.failed_tests(tmp_path) == (["tests/a.py::t[x y]", "tests/b.py::t"], ["tests/c.py"])
+    # xdist group suffixes are dropped so a serial pytest finds the test.
+    assert quarantine.failed_tests(tmp_path) == (
+        ["tests/a.py::t[x y]", "tests/b.py::t", "tests/d.py::t", "tests/e.py::t[a@b]"], ["tests/c.py"])
 
 
 def test_collection_errors_quarantine_nothing(tmp_path: Path) -> None:
@@ -298,6 +304,9 @@ def test_the_refresh_reads_the_quarantine_before_any_provider_refresh() -> None:
     assert "-n price-quarantine" in run and ".workflow_run.id != ${GITHUB_RUN_ID}" in run
     # Only the newest artifact: no fallback that could revive a quarantine.
     assert "sort_by(.created_at) | last" in run and "for run in" not in run
+    # Only this workflow's own scheduled or dispatched runs on main may write it.
+    assert '--workflow refresh-prices.yml' in run and 'select(.event == "schedule" or .event == "workflow_dispatch")' in run
+    assert r"\$trusted | index(\$id)" in run
     assert 'echo "TR_PRICE_QUARANTINE_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"' in run
 
 

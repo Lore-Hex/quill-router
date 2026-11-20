@@ -276,9 +276,17 @@ jobs:
           # entries, and falling back to an older artifact when the newest
           # cannot be read could revive a quarantine. Any failure here keeps
           # the empty state written above.
+          # Trusted writers only: this workflow's own scheduled or dispatched
+          # runs on main (it has no pull_request trigger, and dispatch needs
+          # write access), never another workflow's or a fork's artifact.
+          trusted=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow refresh-prices.yml \
+            --branch main --limit 100 --json databaseId,event \
+            --jq '[.[] | select(.event == "schedule" or .event == "workflow_dispatch") | .databaseId]')
           run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=price-quarantine&per_page=50" \
-            --jq "[.artifacts[] | select((.expired | not) and .workflow_run.id != ${GITHUB_RUN_ID}
-                    and .workflow_run.head_branch == \"main\" and .created_at >= \"${since}\")]
+            --jq "${trusted} as \$trusted | [.artifacts[] | select((.expired | not)
+                    and .workflow_run.id != ${GITHUB_RUN_ID}
+                    and (.workflow_run.id as \$id | \$trusted | index(\$id))
+                    and .created_at >= \"${since}\")]
                   | sort_by(.created_at) | last | .workflow_run.id // empty")
           if [ -n "${run}" ]; then
             rm -rf /tmp/price-quarantine-previous

@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -98,10 +99,15 @@ def load_state(path: Path) -> list[Entry]:
 
 
 def active(entries: Iterable[Entry], now: datetime) -> list[Entry]:
-    """Unexpired entries, the latest per provider, sorted by slug."""
+    """Unexpired entries, the latest per provider, sorted by slug.
+
+    An entry that claims to last longer than one quarantine from now was not
+    written by diagnose; it is ignored rather than trusted.
+    """
     latest: dict[str, Entry] = {}
+    horizon = now + timedelta(hours=QUARANTINE_HOURS, minutes=5)
     for entry in entries:
-        if entry.until > now and (entry.slug not in latest or entry.until > latest[entry.slug].until):
+        if now < entry.until <= horizon and (entry.slug not in latest or entry.until > latest[entry.slug].until):
             latest[entry.slug] = entry
     return [latest[slug] for slug in sorted(latest)]
 
@@ -196,6 +202,11 @@ def find_culprits(
 
 # --- the repository side ----------------------------------------------------
 
+def _runnable_node_id(node_id: str) -> str:
+    """Drop the "@group" suffix pytest-xdist's loadgroup adds to a recorded ID."""
+    return re.sub(r"@[^\[\]:/@]+$", "", node_id)
+
+
 def failed_tests(failures_dir: Path) -> tuple[list[str], list[str]]:
     """(failed node IDs, collection errors) over every shard's record."""
     failed: set[str] = set()
@@ -205,7 +216,7 @@ def failed_tests(failures_dir: Path) -> tuple[list[str], list[str]]:
             body = json.loads(record.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        failed.update(str(test) for test in body.get("failed", []))
+        failed.update(_runnable_node_id(str(test)) for test in body.get("failed", []))
         collection.update(str(item) for item in body.get("collection_errors", []))
     return sorted(failed), sorted(collection)
 
