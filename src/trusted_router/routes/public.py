@@ -170,6 +170,7 @@ from trusted_router.receipt_keys import (
 )
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
+from trusted_router.routes.notes import register_notes
 from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.reserved_tokens import (
@@ -1098,6 +1099,7 @@ def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
+    register_notes(app)
     app.mount(
         "/static",
         _CachedStaticFiles(directory=STATIC_DIR, release=settings.release),
@@ -1396,6 +1398,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/byok")
     def byok_docs_page() -> str:
         return public_page_html(settings, "docs/byok")
+
+    @public_html_route("/who-can-see-your-data")
+    def who_can_see_your_data() -> str:
+        return public_page_html(settings, "who-can-see-your-data")
+
+    @public_html_route("/docs/simple-start")
+    def simple_start_docs() -> str:
+        return public_page_html(settings, "docs/simple-start")
 
     @public_html_route("/docs/provider-routing")
     def provider_routing_docs() -> str:

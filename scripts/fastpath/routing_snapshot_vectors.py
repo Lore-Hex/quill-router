@@ -116,7 +116,14 @@ def _endpoint(model_id: str, provider: str, usage: str, prompt: int, completion:
     )
 
 
-def fixture_inputs() -> CatalogInputs:
+# Reserved synthetic namespace; never a live catalog lookup.
+DECIDE_SINGLE = "fixture.invalid/hosted-decision-single"
+DECIDE_MULTI = "fixture.invalid/hosted-decision-multi"
+DECIDE_BYOK = "fixture.invalid/hosted-decision-byok"
+EMBEDDING_ONLY = "fixture.invalid/embedding-only"
+
+
+def fixture_inputs(*, hosted_decide: bool = False) -> CatalogInputs:
     flash, glm, gemini = "deepseek/deepseek-v4-flash", "z-ai/glm-5.3", "google/gemini-3.1-pro-preview"
     tencent_flash, fugu = "deepseek/deepseek-v4.1-flash", "sakana-ai/fugu-ultra-v1.1"
     bedrock, inkling = "minimax/minimax-m2", "thinkingmachines/inkling"
@@ -184,6 +191,24 @@ def fixture_inputs() -> CatalogInputs:
         _model(gemini, "google-ai-studio", 0), _model(inkling, "thinkingmachines"),
         _model(kimi, "kimi"),
     )
+    if hosted_decide:
+        models += tuple(
+            Model(id=model_id, name=model_id, provider="deepinfra", context_length=16,
+                  supports_chat=False, supports_decide=model_id != EMBEDDING_ONLY,
+                  supports_embeddings=model_id == EMBEDDING_ONLY)
+            for model_id in (DECIDE_SINGLE, DECIDE_MULTI, DECIDE_BYOK, EMBEDDING_ONLY)
+        )
+        endpoints += (
+            _endpoint(DECIDE_SINGLE, "amazon-bedrock", "Credits", 1_234_567, 0, context_length=8),
+            # Catalog order, privacy and price favor different providers.
+            # Fireworks has faster measured rank evidence; Together has ZDR.
+            _endpoint(DECIDE_MULTI, "together", "Credits", 500_000, 0),
+            _endpoint(DECIDE_MULTI, "fireworks", "Credits", 2_000_000, 0,
+                      supported_parameters=("max_tokens",)),
+            _endpoint(DECIDE_BYOK, "google-ai-studio", "BYOK", 750_000, 0),
+            _endpoint(DECIDE_BYOK, "together", "Credits", 1_500_000, 0),
+            _endpoint(EMBEDDING_ONLY, "deepinfra", "Credits", 100_000, 0),
+        )
     credits = RequestedOverrides(**{**NO_OVERRIDES.model_dump(), "usage": "Credits"})
     requested = (
         RequestedModel(id="trustedrouter/auto", expands_to=(flash, glm, gemini),
@@ -227,6 +252,11 @@ def fixture_inputs() -> CatalogInputs:
             {**row, "provider": "tencent", "samples": 3},
         ],
     }
+    if hosted_decide:
+        evidence["providers"].extend([
+            {**row, "provider": "fireworks", "p50_ttft_ms": 400, "tokens_per_second": 400},
+            {**row, "provider": "together", "p50_ttft_ms": 1800, "tokens_per_second": 60},
+        ])
     return CatalogInputs(
         providers={slug: PROVIDERS[slug] for slug in _PROVIDER_SLUGS},
         models=models,
@@ -281,11 +311,11 @@ def fixture_settings() -> SnapshotSettings:
     )
 
 
-def snapshot() -> RoutingSnapshotV3:
+def snapshot(*, hosted_decide: bool = False) -> RoutingSnapshotV3:
     return compile_routing_snapshot(
         at=COMPILED_AT, horizon=HORIZON_SECONDS, settings=fixture_settings(),
         source_revision="golden-fixture", plane=Plane(cloud="gcp", region="us-central1"),
-        inputs=fixture_inputs(),
+        inputs=fixture_inputs(hosted_decide=hosted_decide),
     )
 
 
@@ -295,11 +325,11 @@ def golden_signer() -> RoutingSnapshotSigner:
     )
 
 
-def render_body() -> bytes:
-    return canonical_snapshot_bytes(snapshot())
+def render_body(*, hosted_decide: bool = False) -> bytes:
+    return canonical_snapshot_bytes(snapshot(hosted_decide=hosted_decide))
 
 
-def render_manifest() -> str:
+def render_manifest(*, hosted_decide: bool = False) -> str:
     manifest = {
         "generator": GENERATOR,
         "test_key": True,
@@ -308,12 +338,17 @@ def render_manifest() -> str:
         "iss": TEST_KEY.iss,
         "aud": TEST_KEY.aud,
         "public_key_b64url": TEST_KEY.public_key_b64url,
-        "jws": golden_signer().sign(render_body()),
+        "jws": golden_signer().sign(render_body(hosted_decide=hosted_decide)),
     }
     return json.dumps(manifest, indent=1, sort_keys=True) + "\n"
 
 
 if __name__ == "__main__":
-    OUTPUT_BODY.write_bytes(render_body())
-    OUTPUT_MANIFEST.write_text(render_manifest())
-    print(f"wrote {OUTPUT_BODY.relative_to(ROOT)} and {OUTPUT_MANIFEST.relative_to(ROOT)}")
+    decide = sys.argv[1:] == ["--decide"]
+    if sys.argv[1:] and not decide:
+        raise SystemExit("usage: routing_snapshot_vectors.py [--decide]")
+    body_path = OUTPUT_BODY.with_name("routing_snapshot_decide_v3.body.json") if decide else OUTPUT_BODY
+    manifest_path = OUTPUT_MANIFEST.with_name("routing_snapshot_decide_v3.manifest.json") if decide else OUTPUT_MANIFEST
+    body_path.write_bytes(render_body(hosted_decide=decide))
+    manifest_path.write_text(render_manifest(hosted_decide=decide))
+    print(f"wrote {body_path.relative_to(ROOT)} and {manifest_path.relative_to(ROOT)}")

@@ -1,0 +1,84 @@
+{% extends "public/_base.html" %}
+{% block hero_aside %}{% endblock %}
+{% block body %}
+<div class="content-reader" data-content-toc>
+<div class="content-document">
+<section class="content-section" id="one-model">
+  <h2>One key, one model, one provider</h2>
+  <p>TrustedRouter is a public hosted API at <code>api.trustedrouter.com</code>, independent of OpenRouter. It provides an OpenAI-compatible interface to named upstream providers through an attested gateway.</p>
+  <p>Create an inference key in the console using the Create key button above, fund credits, and set <code>TRUSTEDROUTER_API_KEY</code> in your environment. These examples call <a href="/models/deepseek/deepseek-v4-pro">DeepSeek V4 Pro</a> on DeepSeek. <code>provider.only</code> pins the provider and <code>provider.allow_fallbacks: false</code> disables fallback to another candidate. If that route cannot serve the request, it fails. No automatic model selection or provider fallback is enabled by these examples.</p>
+  <h3>curl</h3>
+  <pre data-example="curl"><code>curl https://api.trustedrouter.com/v1/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek/deepseek-v4-pro",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "provider": {"only": ["deepseek"], "allow_fallbacks": false}
+  }'</code></pre>
+  <h3>Python with the OpenAI SDK</h3>
+  <p>Install the SDK with <code>pip install openai</code>. Pass TrustedRouter's provider controls in <code>extra_body</code>.</p>
+  <pre data-example="python"><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="https://api.trustedrouter.com/v1",
+)
+response = client.chat.completions.create(
+    model="deepseek/deepseek-v4-pro",
+    messages=[{"role": "user", "content": "Hello"}],
+    extra_body={
+        "provider": {"only": ["deepseek"], "allow_fallbacks": False}
+    },
+)
+print(response.choices[0].message.content)</code></pre>
+  <p>The OpenAI SDK uses normal HTTPS and does not verify gateway attestation automatically. See <a href="/who-can-see-your-data#verify">gateway verification</a> for the checks and their limits. Pinning DeepSeek does not itself impose ZDR or confidential compute; use the <a href="/docs/provider-routing">privacy filters</a> with an eligible route when required.</p>
+</section>
+
+<section class="content-section" id="same-key">
+  <h2>What you can call through the same key</h2>
+  <ul>
+    <li><a href="/docs">Chat</a>: <code>POST /v1/chat/completions</code>.</li>
+    <li><a href="/models/openai/text-embedding-3-small">Embeddings</a>: <code>POST /v1/embeddings</code>, including <code>openai/text-embedding-3-small</code>.</li>
+    <li><a href="/docs#transcription">Transcription</a>: <code>POST /v1/audio/transcriptions</code>, including <code>openai/whisper-large-v3-turbo</code> on Tinfoil.</li>
+    <li><a href="/docs/batch">Batch</a>: asynchronous requests with a separate encrypted retention boundary.</li>
+    <li><a href="/docs/video">Video</a>: asynchronous generation through <code>POST /v1/videos</code>.</li>
+  </ul>
+  <p>Supported inputs, route controls, and retention differ by endpoint. Check the linked documentation before reusing chat settings.</p>
+</section>
+
+<section class="content-section" id="not-a-model-host">
+  <h2>What TrustedRouter is not</h2>
+  <ul>
+    <li>There is no reranking endpoint today.</li>
+    <li>TrustedRouter does not offer fine-tuning.</li>
+    <li>It does not run inference GPUs itself. Routes go to named upstream providers.</li>
+    <li>Gateway attestation does not make every upstream provider confidential. <a href="/who-can-see-your-data">Who can see your data</a> explains each party and its retention boundary.</li>
+  </ul>
+  <p>Even for a single-model app, TrustedRouter provides one key and one bill across 600+ models and 100+ providers, <a href="/docs/spend-controls">per-key spend controls</a>, opt-in provider failover from this pinned setup, and a <a href="/who-can-see-your-data#verify">verifiable gateway</a>. Switching to a compatible model or provider is a one-string change to the model ID or provider selection, with no new provider account; keep any provider pin and privacy filters compatible with the route you select.</p>
+  <p>A gateway adds a network hop and a service dependency. Pinning removes provider selection and fallback, but it does not remove that hop. TrustedRouter is your contact for its hosted API, routing, and billing; upstream availability and processing remain dependencies. Use the <a href="/support">support path</a> for incidents and the <a href="/legal">business terms</a> to establish responsibilities in writing.</p>
+</section>
+
+<section class="content-section" id="grow">
+  <h2>When you outgrow one model</h2>
+  <p>To enable provider failover from this setup, set <code>provider.allow_fallbacks: true</code> and expand or remove <code>provider.only</code>. Use <code>provider.order</code> to prefer providers. To enable automatic model selection, choose <code>trustedrouter/auto</code> and review its eligible pool. Privacy and provider filters still apply.</p>
+  <p>Fallbacks default to enabled when you omit the setting, so keep the explicit <code>false</code> for a single-provider app. The <a href="/docs/provider-routing">routing guide</a> explains these choices.</p>
+  <p><code>provider.preferred_max_latency</code> and <code>provider.preferred_min_throughput</code> are preferences, not guarantees or timeouts. Pinning gives you control over the provider, not a latency guarantee. Consult <a href="/docs/performance-routing">performance routing</a>, <a href="/status">status</a>, and <a href="/benchmarks/reports">published benchmark reports</a> for measured behavior.</p>
+</section>
+
+<section class="content-section" id="capacity-and-fee">
+  <h2>Capacity and fee</h2>
+  <p>The New York Token Exchange sells <a href="https://nytokenexchange.com/buy">2027 reserved tokens by card</a>. For larger capacity arrangements, <a href="/contact">contact the team</a>. A reserved-token purchase is not a claim that TrustedRouter operates dedicated GPUs.</p>
+  <p>The standard platform fee is 5.5% on provider prices, the same rate as OpenRouter's standard gateway fee. It pays for the hosted gateway, unified API and billing, and available routing controls. With a single direct provider, you would not pay this platform fee and would not get these TrustedRouter features. See <a href="/pricing">pricing</a> for minimum charges and optional service pricing.</p>
+</section>
+
+<section class="content-section" id="business-terms">
+  <h2>Business terms and evidence</h2>
+  <p>SOC 2 is in its observation window. No SOC 2 certification is claimed. SLA, MSA and DPA are available to business customers on request through <a href="/contact">contact</a>. Review the <a href="/legal">legal packet</a>, <a href="/legal/dpa">DPA</a>, and <a href="/legal/soc2-readiness">SOC 2 readiness page</a>; confirm scope and uptime commitments in the written agreement.</p>
+  <p>The <a href="/privacy">privacy policy</a> sets out retention terms. The <a href="/trust">trust page</a> supplies verifiable gateway release evidence. The <a href="/status">status page</a> reports service health; it is not an uptime SLA.</p>
+  <p>The homepage links coverage in <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">Axios</a> and <a href="https://semafor.com/article/10/16/2026/openrouter-challenger-closes-seed-round">Semafor</a>, and names <a href="/customers/robot-robot-human">Robot, Robot &amp; Human</a> as a customer. Press coverage and a customer story provide context, not a security certification or performance guarantee.</p>
+</section>
+</div>
+</div>
+{% endblock %}
