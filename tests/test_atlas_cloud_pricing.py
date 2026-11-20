@@ -71,12 +71,33 @@ def test_an_override_without_a_valid_base_holds_the_provider(extra):
         atlas_cloud.atlas_model_price(row)
 
 
-def test_a_zero_base_with_a_paid_override_holds_the_provider():
-    # Discovery would drop the all-zero headline as free and disable the route.
+@pytest.mark.parametrize("zeroed", [("prompt",), ("completion",), ("prompt", "completion")])
+def test_a_zero_base_with_a_paid_override_holds_the_provider(zeroed):
+    # Discovery drops an all-zero headline, and ingestion refuses a tier with a
+    # zero token price: either would silently remove the route.
     row = _row("openai/gpt-6-sol-codex")
-    row["pricing"]["prompt"] = "0"
-    row["pricing"]["completion"] = "0"
+    for field in zeroed:
+        row["pricing"][field] = "0"
     with pytest.raises(RuntimeError, match="zero base rate"):
+        atlas_cloud.atlas_model_price(row)
+
+
+@pytest.mark.parametrize("alias", ["input_cache_reads", "cache_read"])
+def test_a_base_cache_alias_is_kept(alias):
+    row = _row("openai/gpt-6-sol-codex")
+    row["pricing"][alias] = row["pricing"].pop("input_cache_read")
+    tiers = atlas_cloud.atlas_model_price(row).tiers
+    assert [tier.prompt_cached_micro_per_m for tier in tiers] == [200_000, 400_000]
+    # With the override's cache rate removed, one tier would be cache-free.
+    del row["pricing"]["overrides"][0]["input_cache_read"]
+    with pytest.raises(RuntimeError, match="only one tier"):
+        atlas_cloud.atlas_model_price(row)
+
+
+def test_two_base_cache_fields_hold_the_provider():
+    row = _row("openai/gpt-6-sol-codex")
+    row["pricing"]["cache_read"] = "0.0000001"
+    with pytest.raises(RuntimeError, match="more than one base cache rate"):
         atlas_cloud.atlas_model_price(row)
 
 

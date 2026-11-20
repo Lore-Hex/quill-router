@@ -73,6 +73,8 @@ _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 # "input≤{threshold}k" for the base rate and "{threshold}k<input" for the
 # override, so the base tier covers prompts up to and including min_context.
 _OVERRIDE_FIELDS = frozenset({"prompt", "completion", "input_cache_read", "min_context"})
+# The base cache-read field names openai_model_price accepts, in its order.
+_BASE_CACHE_FIELDS = ("input_cache_read", "input_cache_reads", "cache_read")
 
 
 def atlas_model_price(row: dict[str, Any]) -> ModelPrice | None:
@@ -108,15 +110,20 @@ def atlas_model_price(row: dict[str, Any]) -> ModelPrice | None:
     has_cached = override.get("input_cache_read") is not None
     cached = dollars_per_token_to_micro_per_m(override.get("input_cache_read")) if has_cached else None
     flat = base.tiers[0]
-    if flat.prompt_micro_per_m == 0 and flat.completion_micro_per_m == 0:
-        # Discovery drops an all-zero headline as free, which would disable a
-        # route whose long-context tier is paid.
+    if flat.prompt_micro_per_m == 0 or flat.completion_micro_per_m == 0:
+        # Discovery drops an all-zero headline as free, and catalog ingestion
+        # refuses a tier with a zero token price, so either would silently
+        # remove a route whose long-context tier is paid.
         raise RuntimeError(f"atlas-cloud: {model}: zero base rate with a paid override")
-    # Read the base cache rate from Atlas's own field: the shared parser's
-    # fallback chain turns an invalid value, or a numeric 0, into "absent".
+    # Read the base cache rate from the same fields the shared parser accepts,
+    # but strictly: its fallback chain turns an invalid value, or a numeric 0,
+    # into "absent". More than one of them is ambiguous.
+    cache_fields = [field for field in _BASE_CACHE_FIELDS if pricing.get(field) is not None]
+    if len(cache_fields) > 1:
+        raise RuntimeError(f"atlas-cloud: {model}: more than one base cache rate {cache_fields}")
     base_cached: int | None = None
-    if pricing.get("input_cache_read") is not None:
-        base_cached = dollars_per_token_to_micro_per_m(pricing["input_cache_read"])
+    if cache_fields:
+        base_cached = dollars_per_token_to_micro_per_m(pricing[cache_fields[0]])
         if base_cached is None:
             raise RuntimeError(f"atlas-cloud: {model}: invalid cached-input base rate")
     if has_cached and cached is None:
