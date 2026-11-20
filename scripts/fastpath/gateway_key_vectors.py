@@ -122,6 +122,10 @@ ROUTE_READS: dict[str, str] = {
     ),
     "api_key.hash": "returned (the authorization's key_hash)",
     "workspace.federated_home": "workspace_federated",
+    "_openai_response_fields": (
+        "response only: compare creator_user_id and workspace owner_user_id for local keys; "
+        "federated keys are delegated to Python before composition"
+    ),
     "speculation_shadow.resolved": "not a check: an isolated shadow observation",
 }
 
@@ -259,7 +263,8 @@ def key_facts(body: str, at: dt.datetime) -> dict[str, Any]:
         return value if isinstance(value, str) else None
 
     return {"error": None, "reason": None, "tags": [[k, v] for k, v in tags.items()], "hash": text(key.hash),
-            "workspace_id": text(key.workspace_id), "lookup_hash": text(key.lookup_hash)}
+            "workspace_id": text(key.workspace_id), "lookup_hash": text(key.lookup_hash),
+            "creator_user_id": text(key.creator_user_id)}
 
 
 def workspace_facts(body: str | None) -> dict[str, Any]:
@@ -286,7 +291,8 @@ def workspace_facts(body: str | None) -> dict[str, Any]:
         return {**failure, "error": type(exc).__name__}
     reason = "workspace_paused" if paused else "workspace_federated" if federated else None
     return {"error": None, "reason": reason, "pause_causes": causes,
-            "billed_workspace_id": billed if isinstance(billed, str) else None}
+            "billed_workspace_id": billed if isinstance(billed, str) else None,
+            "owner_user_id": workspace.owner_user_id if reason is None else None}
 
 
 def _iso(at: dt.datetime) -> str:

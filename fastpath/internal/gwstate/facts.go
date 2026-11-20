@@ -82,6 +82,7 @@ type KeyFacts struct {
 	// lookup hash its body records (what a boot signature binds), and
 	// WorkspaceID the workspace the key spends from.
 	Hash, LookupHash, WorkspaceID string
+	CreatorUserID                 string
 	// ExpiresAt is when the key stops working, zero for never.
 	ExpiresAt time.Time
 	// Tags are the key's default tags in the order its body lists them, as
@@ -164,6 +165,11 @@ func ParseKey(body string) KeyFacts {
 		}
 	}
 	var k KeyFacts
+	if !isNull(f["creator_user_id"]) {
+		if k.CreatorUserID, ok = f.str("creator_user_id"); !ok {
+			return keyShape("creator_user_id")
+		}
+	}
 	for _, id := range []struct {
 		name string
 		into *string
@@ -309,6 +315,7 @@ const maxKeyUsageShards = 64
 // runs them): each is read here, or needs no reading, as each says. A field
 // the route starts to consult fails the vector test until it is listed.
 var consultedKeyFields = map[string]string{
+	"creator_user_id":            "CreatorUserID, used to derive the direct OpenAI pseudonym",
 	"app_id":                     "key_app",
 	"budget_alert_only":          "Windows.AlertOnly when a window is set (key_shape:budget_alert_only unless a JSON bool); not read otherwise",
 	"budget_strict":              "key_budget_strict",
@@ -329,6 +336,7 @@ var consultedKeyFields = map[string]string{
 }
 
 var consultedWorkspaceFields = map[string]string{
+	"owner_user_id":        "OwnerUserID, the fallback when the key has no creator",
 	"billing_pause_causes": "PauseCauses, workspace_paused",
 	"billing_paused":       "PauseCauses (the legacy flag)",
 	"deleted":              "Deleted, workspace_unavailable",
@@ -426,8 +434,9 @@ func portable(s string) bool {
 
 // WorkspaceFacts is a key's workspace as the edge's cohort gate reads it.
 type WorkspaceFacts struct {
-	Eligible bool
-	Reason   string
+	OwnerUserID string
+	Eligible    bool
+	Reason      string
 	// Deleted is a workspace row marked deleted (Python reads it as none).
 	Deleted bool
 	// PauseCauses are the document's causes as Workspace.__post_init__
@@ -461,6 +470,9 @@ func ParseWorkspace(body string, found bool, keyWorkspace string) WorkspaceFacts
 		return workspaceShape("id_mismatch")
 	}
 	var w WorkspaceFacts
+	if w.OwnerUserID, ok = f.str("owner_user_id"); !ok {
+		return workspaceShape("owner_user_id")
+	}
 	if w.Deleted, ok = f.boolean("deleted"); !ok {
 		return workspaceShape("deleted")
 	}
