@@ -362,12 +362,13 @@ locals {
   fastpath_required_tier = "1"
   fastpath_allowance     = "1000000000"
   # The floor, $2 since 2026-11-20 ($20 before; the design's (b), amended
-  # that day). It is the headroom a grant leaves outside leases for the same
-  # workspace's synchronous requests, not a fraud control: the required tier
-  # and the allowances are. A grant is all or nothing, refused unless the
-  # headroom is at least the floor plus the amount asked, and an ask is
-  # about a minute of the shard's spend, at least $0.01 and at most $10, so
-  # at $20 no balance under about $20 was ever leased. Read on 2026-11-20
+  # that day). It is the headroom a new lease must leave outside leases for
+  # the same workspace's synchronous requests, not a fraud control: the
+  # required tier and the allowances are. A lease is taken whole or not at
+  # all: the node's lease check refuses it unless the headroom is at least
+  # the floor plus the whole amount asked, and an ask is about a minute of
+  # the shard's spend, at least $0.01 and at most $10, so at $20 no balance
+  # under about $20 was ever leased. Read on 2026-11-20
   # over seven days: of the workspaces at tier 1 or above left out for their
   # balance alone, 55 had traffic, about 20% of all requests, most of it
   # from balances under $5; the largest ordinary hold each could make (its
@@ -379,7 +380,7 @@ locals {
   # Applying this changes the instances' metadata only. A node takes the
   # value when its unit starts again, one node at a time, the other
   # serving, by fastpath-deploy.md's "Lowering the floor", and until both
-  # have, a grant is made at whichever floor its owner runs. The enabler's
+  # have, a lease is checked at whichever floor its owner runs. The enabler's
   # join and leave balances come down only after both nodes run it
   # (tests/test_fastpath_enabler_deploy.py holds the order). The way back
   # is "20000000" written here again, by reverting the change that lowered
