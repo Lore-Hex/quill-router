@@ -2,7 +2,13 @@
 import json
 
 from scripts.axiom_growth.admin_api import query
-from scripts.axiom_growth.dashboards import DECL, REWARD_STAGES, REWARDS_QUERY, onboarding_query
+from scripts.axiom_growth.dashboards import (
+    DECL,
+    REWARD_STAGES,
+    REWARDS_QUERY,
+    onboarding_query,
+    signup_cta_query,
+)
 from scripts.axiom_growth.model import rows
 
 
@@ -101,5 +107,58 @@ def validate_console():
     return stages
 
 
+def signup_cta_fixture():
+    """Seven visitors for the sign-up button test. Times are minutes past midnight."""
+    free, building = 'signup_cta_v1:start_for_free', 'signup_cta_v1:start_building'
+    # (visitor, event, minute, cta, utm_source, exported minute)
+    events = [
+        # Converts after assignment: counts at every step.
+        ('free_converts', 'signup_cta_assigned', 10, free, 'google', 60),
+        ('free_converts', 'sign_in_opened', 11, '', 'google', 60),
+        ('free_converts', 'signup_completed', 12, '', 'google', 60),
+        ('free_converts', 'first_successful_api_call', 13, '', 'google', 60),
+        # The same assignment exported twice must count once.
+        ('free_converts', 'signup_cta_assigned', 10, free, 'google', 61),
+        # Opened sign-in only BEFORE being assigned: counts as a visitor, no open.
+        ('building_early', 'sign_in_opened', 5, '', 'google', 60),
+        ('building_early', 'signup_cta_assigned', 10, building, 'google', 60),
+        # Opens after assignment, never signs up.
+        ('building_opens', 'signup_cta_assigned', 10, building, 'google', 60),
+        ('building_opens', 'sign_in_opened', 20, '', 'google', 60),
+        # Never assigned: stays out of the table.
+        ('unassigned', 'signup_completed', 12, '', 'google', 60),
+        ('free_idle', 'signup_cta_assigned', 10, free, 'google', 60),
+        ('free_bing', 'signup_cta_assigned', 10, free, 'bing', 60),
+    ]
+    values = []
+    for visitor, event, minute, cta, source, exported in events:
+        values.append(','.join([
+            f"datetime(2026-11-20T00:{minute:02d}:00Z)", f"datetime(2026-11-20T01:{exported - 60:02d}:00Z)",
+            repr('acquisition.' + event), repr(f'{visitor}:{event}'), repr(visitor), repr(cta),
+            repr(source), "'cpc'", "'launch'", "'/'",
+        ]))
+    return (
+        'datatable(_time:datetime, exported_at:datetime, event:string, event_id:string, '
+        'anonymous_fingerprint:string, cta:string, utm_source:string, utm_medium:string, '
+        'utm_campaign:string, landing_path:string)[' + ','.join(values) + ']'
+    )
+
+
+def validate_signup_cta():
+    apl = signup_cta_query().replace("['trustedrouter-marketing']", signup_cta_fixture(), 1)
+    columns = ('Visitors', 'Opened_signup', 'Signed_up', 'First_API_call')
+    actual = {r['Button']: tuple(r[c] for c in columns) for r in rows(query(DECL + apl))}
+    expected = {'Start building': (2, 1, 0, 0), 'Start for free': (3, 1, 1, 1)}
+    if actual != expected:
+        raise ValueError('Sign-up button test APL regression: ' + json.dumps(actual))
+    filtered = DECL.replace("source_filter:string = ''", "source_filter:string = 'bing'", 1)
+    bing = {r['Button']: tuple(r[c] for c in columns) for r in rows(query(filtered + apl))}
+    if bing != {'Start for free': (1, 0, 0, 0)}:
+        raise ValueError('Sign-up button test ignores the source filter: ' + json.dumps(bing))
+    return actual
+
+
 if __name__ == '__main__':
-    print(json.dumps({'onboarding': validate(), 'console': validate_console()}))
+    print(json.dumps({
+        'onboarding': validate(), 'console': validate_console(), 'signup_cta': validate_signup_cta(),
+    }))

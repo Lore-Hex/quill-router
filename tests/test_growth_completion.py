@@ -433,3 +433,34 @@ def test_signup_cta_results_count_only_events_after_assignment():
     assert "column_ifexists('cta','')" in query
     for column in ('Opened_at>=Assigned_at', 'Signed_up_at>=Assigned_at', 'Called_at>=Assigned_at'):
         assert column in query
+
+
+def test_signup_cta_assignment_and_sign_in_open_export_under_one_visitor(client, caplog):
+    """The whole chain the results table depends on: the assignment and a later
+    sign-in open reach the export with the cell, the same visitor fingerprint
+    and the campaign fields the dashboard filters on."""
+    import json
+
+    from scripts.axiom_growth.model import project_event
+    from trusted_router.main import _ApplicationConsoleFormatter
+
+    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
+    page = client.get('/providers/tinfoil?utm_source=newsletter&utm_medium=email&utm_campaign=launch')
+    cell = page.cookies.get('tr_cta')
+    assert client.post('/analytics/events', json={'event': 'sign_in_opened'}).status_code == 204
+
+    def exported(name):
+        record = next(r for r in caplog.records if r.getMessage() == name)
+        # Exactly what Cloud Logging receives, then the worker's allowlist.
+        cloud_row = json.loads(_ApplicationConsoleFormatter().format(record))
+        return project_event({**cloud_row, '_time': '2026-11-20T12:00:00Z'}, source='cloud_logging')
+
+    assigned = exported('acquisition.signup_cta_assigned')
+    opened = exported('acquisition.sign_in_opened')
+    assert assigned['cta'] == f'signup_cta_v1:{cell}'
+    assert assigned['anonymous_fingerprint'] == opened['anonymous_fingerprint']
+    assert assigned['event_id'] != opened['event_id']
+    for row in (assigned, opened):
+        assert (row['utm_source'], row['utm_medium'], row['utm_campaign']) == ('newsletter', 'email', 'launch')
+    # The onboarding experiment columns stay empty on the assignment row.
+    assert not assigned.get('experiment_id')
