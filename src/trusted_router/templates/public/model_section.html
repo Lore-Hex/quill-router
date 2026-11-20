@@ -44,7 +44,7 @@
             <td><a href="{{ s.about_url }}">{{ s.label }}</a>{% if s.config_note %}<div class="lb-note">{{ s.config_note }}</div>{% endif %}</td>
             <td>{{ s.category }}</td>
             <td>{{ s.display }}</td>
-            <td><a href="{{ s.source_url }}" rel="nofollow noopener">{{ s.source_name }}</a>{% if s.reproducible %} <span class="lb-badge">replay</span>{% endif %}{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
+            <td><a href="{{ s.source_url }}" rel="{{ s.source_url|provider_link_rel }}">{{ s.source_name }}</a>{% if s.reproducible %} <span class="lb-badge">replay</span>{% endif %}{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

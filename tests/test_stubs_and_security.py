@@ -572,7 +572,7 @@ def test_dashboard_emits_open_graph_and_twitter_card(
     assert '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">' in dashboard.text
     assert '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">' in dashboard.text
     title = "TrustedRouter: Encrypt all your AI chats"
-    description = "Access hundreds of models confidentially through a single OpenAI-compatible API."
+    description = "Access 600+ models confidentially through a single OpenAI-compatible API."
     social_card = "https://trustedrouter.com/static/homepage/social-card-v2.jpg"
     assert 'property="og:type" content="website"' in dashboard.text
     assert f'property="og:title" content="{title}"' in dashboard.text
@@ -594,7 +594,7 @@ def test_og_svg_copy_matches_current_positioning() -> None:
     svg = og_image_svg(Settings())
 
     assert "End-to-End Encrypted Router" in svg
-    assert "Hundreds of models. One verifiable prompt path." in svg
+    assert "600+ models. One verifiable prompt path." in svg
     assert "base_url=https://api.quillrouter.com/v1" in svg
     assert "api.trustedrouter.com" not in svg
 

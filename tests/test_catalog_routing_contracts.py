@@ -2196,10 +2196,6 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee(
     assert provider.provider_e2ee is False
 
     video_models = {
-        "bytedance/seedance-2.5",
-        "bytedance/seedance-2.0",
-        "bytedance/seedance-2.0-fast",
-        "runway/gen-4.5",
         "kling/v3-pro",
         "kling/o3-pro",
         "alibaba/wan-2.7",
@@ -2207,14 +2203,16 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee(
         "pixverse/c1",
         "lightricks/ltx-2.3",
         "lightricks/ltx-2.3-fast",
-        "minimax/hailuo-3",
     }
     endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"]
     assert video_models <= {endpoint.model_id for endpoint in endpoints}
-    # Closed Google and OpenAI video models route only through their makers.
+    # Closed Google, OpenAI, ByteDance, MiniMax Hailuo and Runway video models
+    # route only through their makers.
     assert not {
         "google/veo-3.1", "google/veo-3.1-fast", "google/gemini-omni-flash",
         "openai/sora-2", "openai/sora-2-pro",
+        "bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast",
+        "minimax/hailuo-3", "runway/gen-4.5",
     } & {endpoint.model_id for endpoint in endpoints}
     assert all(
         PROVIDERS[endpoint.provider].provider_confidential_compute is False

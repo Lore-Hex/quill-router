@@ -67,7 +67,8 @@ def inventory_settings(surface, enabled):
 
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
-              wallet_email_verify=False, routing_evidence=False, request_billing=False, byok_keys=False):
+              wallet_email_verify=False, routing_evidence=False, request_billing=False, byok_keys=False,
+              byok_docs=False, notes=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
@@ -92,6 +93,25 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
             assert routes.count(key_route) == int(byok_keys)
             if byok_keys:
                 routes.remove(key_route)
+    # The BYOK documentation page and its slash alias are public HTML only.
+    # Pin their identities and absence on other surfaces; retain every frozen
+    # API, lifecycle, and state assertion below.
+    # The data-access and simple-start pages follow the same rule.
+    for base, handler in (("/docs/byok", "byok_docs_page"),
+                          ("/who-can-see-your-data", "who_can_see_your_data"),
+                          ("/docs/simple-start", "simple_start_docs")):
+        for path in (base, base + "/"):
+            docs_route = [path, ["GET", "HEAD"],
+                          f"register_public_routes.<locals>.{handler}"]
+            assert routes.count(docs_route) == int(byok_docs)
+            if byok_docs:
+                routes.remove(docs_route)
+    for path, handler in (("/notes", "notes_archive"), ("/notes/{slug}", "note"),
+                          ("/sitemap-notes.xml", "notes_sitemap")):
+        note_route = [path, ["GET", "HEAD"], f"register_notes.<locals>.{handler}"]
+        assert routes.count(note_route) == int(notes)
+        if notes:
+            routes.remove(note_route)
     evidence_route = ["/routing-evidence.json", ["GET"],
                       "register_public_routes.<locals>.model_routing_evidence"]
     assert routes.count(evidence_route) == int(routing_evidence)
@@ -164,6 +184,8 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
                      abliterated_page=surface in {"combined", "public", "observer"},
+                     byok_docs=surface in {"combined", "public", "observer"},
+                     notes=surface in {"combined", "public", "observer"},
                      routing_evidence=surface in {"combined", "public", "observer"},
                      management_key=surface in {"combined", "control"},
                      console_support=surface in {"combined", "control"},

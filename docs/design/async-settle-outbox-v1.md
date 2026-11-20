@@ -90,7 +90,9 @@ or unknown pricing programs, requested TrustedRouter programs, meta-routers and
 aliases, untyped reservations, spend/regional leases and
 federated/deferred-home settlement. Also exclude estimated/missing usage,
 malformed counts, overflow, unsupported routes and unknown features.
-`/decide` is **not** in #1390's route enum; it remains synchronous pending §10.
+`/decide` is **not** in #1390's route enum; it remains synchronous pending §10
+(since 2026-11-19 an ordinary `decide` call may negotiate behind
+`TR_ASYNC_SETTLE_DECIDE_ROUTE`; see "Gated site" below).
 Claims that this is “the bulk of traffic” require a shadow denominator.
 
 ## 3. Wire contract
@@ -988,7 +990,7 @@ Billing review, CI, attestation and rollout gates remain in force for later PRs.
 > The rules identified in [v2 §§9, 13](async-settle-shadow-v2.md) amend this section once P6 land; v2 §1.1 defines the exact scope.
 
 1. **Pilot workspace/key.** Workspace `45819281-0ce9-4811-a0cd-c660ab3a116d` (Joseph's operator workspace; already the spend-lease Stage B pilot in `scripts/deploy/rollout.sh`), key hash `key_1ZXjS8vNqWdQ7qRUkZj8Meuj` (prepaid, $5,000 lifetime cap, no auto-refill). The router's 4 authorize / 16 settle in-flight limits per instance (`config.py`) are RPC handler limits released when each RPC returns; they do **not** bound outstanding inference or §6's set I. The pilot's outstanding inference concurrency is operator-set in the AnyEval sweeps and is left **unbounded pending measurement**: the pilot report records the observed maximum, and nothing here strengthens §6's exposure statement. The first pilot **excludes** auto-refill-dependent traffic and metadata-broadcast / budget-notification expectations: the operator key has neither, and the drain's narrower side effects are acceptable for it.
-2. **`pending` for `/decide`.** No. v1 keeps `/decide` synchronous; the cohort stays chat.completions and responses. Revisit after the pilot with its own route/envelope/evaluator fixtures.
+2. **`pending` for `/decide`.** No. v1 keeps `/decide` synchronous; the cohort stays chat.completions and responses. Revisit after the pilot with its own route/envelope/evaluator fixtures. Revisited 2026-11-19: `decide` joins the route set behind `TR_ASYNC_SETTLE_DECIDE_ROUTE` (default off), always with `streamed=false`, with the wire fixture `tests/fixtures/async_settlement/decide_v1.json`.
 3. **SLO numbers.** 95% ≤ 5 s and 100% ≤ 60 s are adopted as **operating targets with alerting**, including crash reclaim and repair completion. 60 s is an alert threshold with explicit outage accounting, not an absolute promise. Meeting them requires PR D's fast-drain mode; its poll/batch/concurrency/lease values are selected from the PR D measurement plan on the pilot's own exports before the admission flip, and the pilot publishes real region p50/p95/p99 instead of the sketch's forecast.
 4. **Cap policy.** $25 (tier 2) and $100 (tier 3) are accepted as the **cached admission/lag guard** described in §6, with a **$5 pilot override** (`async_settle_pilot_cap_micro=5000000`) on either eligible tier. They are not a strict exposure cap; the reservation-based balance bound remains the money-safety invariant, and the guard's worst case is the bound stated in §6. The approved $5 threshold means: the pilot admits a new async settlement only while the workspace's fresh pending frozen sum is at most $5. Tier 1 stays ineligible.
 5. **Missing evidence.** The 2026-10-05 raw timing export and the 93,561-probe parity report are **not release evidence**; neither was located. The release relies on the versioned 759-case contract and wire fixtures, the F1 proof set, the seven-day shadow report, and the pilot's own region measurements.
@@ -2021,8 +2023,9 @@ The binding October 9 decisions select workspace
 `key_1ZXjS8vNqWdQ7qRUkZj8Meuj`, prepaid, $5,000 lifetime limit, no auto-refill.
 Record observed peak concurrency (existing per-instance limits: 4 authorizes,
 16 settles). The pilot excludes auto-refill-dependent traffic and expectations
-of metadata broadcast/budget notifications. `/decide` stays synchronous;
-only the existing chat.completions/Responses cohort can negotiate. Tier 1 was
+of metadata broadcast/budget notifications. `/decide` stayed synchronous
+for the pilot; only the chat.completions/Responses cohort could negotiate
+(`decide` since 2026-11-19, behind `TR_ASYNC_SETTLE_DECIDE_ROUTE`). Tier 1 was
 ineligible for the pilot (admitted at $0.10 since 2026-11-10).
 `TR_ASYNC_SETTLE_PILOT_WORKSPACES` is a comma list with the shadow
 list's whitespace, duplicate, identifier and 32-workspace rules. Empty preserves

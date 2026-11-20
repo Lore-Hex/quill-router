@@ -12,7 +12,7 @@ from pytest import MonkeyPatch
 
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
-from trusted_router.catalog import PROVIDERS, endpoints_for_model
+from trusted_router.catalog import endpoints_for_model
 from trusted_router.catalog_data import Model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.pricing import (
@@ -363,10 +363,10 @@ def test_router_comparisons_publish_current_catalog_and_composable_litellm_stack
     assert "LiteLLM and TrustedRouter fit in the same stack." in litellm.text
     assert "Direct provider A" in litellm.text
     assert "TrustedRouter completes the map" in litellm.text
-    assert "600+ additional models" in litellm.text
+    assert "600+ models" in litellm.text
     assert "Use LiteLLM in front of TrustedRouter." in litellm_seo.text
-    assert "600+ model ids across 80+ providers" in openrouter.text
-    assert "TrustedRouter's public API lists 600+ model ids" in openrouter.text
+    assert "600+ models across 100+ providers" in openrouter.text
+    assert "TrustedRouter offers 600+ models" in openrouter.text
 
 
 def test_paid_search_landing_pages_drive_a_runnable_first_call(
@@ -378,7 +378,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert "import os" in openai_page.text
     assert 'model="trustedrouter/cheap"' in openai_page.text
     assert 'data-action="copy-code"' in openai_page.text
-    assert openai_page.text.count("Create my API key") == 2
+    assert openai_page.text.count("Start building") == 3
     assert "No card required." in openai_page.text
     assert '<a class="btn primary" href="/docs">' not in openai_page.text
 
@@ -386,7 +386,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert migration_page.status_code == 200
     assert "Switch from OpenRouter in one base URL." in migration_page.text
     assert "import os" in migration_page.text
-    assert migration_page.text.count("Create my API key") == 4
+    assert migration_page.text.count("Start building") == 4
     assert "No card required." in migration_page.text
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
@@ -460,7 +460,7 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "Upstream privacy floor" in response.text
     assert 'id="providerCount"' in response.text
     assert "/static/choose-app.css?v=2" in response.text
-    assert "/static/choose-app.js?v=5" in response.text
+    assert "/static/choose-app.js?v=6" in response.text
     assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
@@ -588,14 +588,11 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert "Cached input" in body
     assert "/static/models.js" in body
     assert 'href="/for-developers"' in body
-    assert 'data-signin-mode="signup">Create my API key</button>' in body
+    assert 'data-signin-mode="signup">Start building</button>' in body
     assert 'href="/docs/quickstart"' not in body
     assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
-    public_provider_count = sum(
-        slug != "trustedrouter" and not provider.internal_only
-        for slug, provider in PROVIDERS.items()
-    )
-    assert f"{public_provider_count} providers" in body
+    assert "100+ providers" in body
+    assert "600+ models" in body
 
     glm = body.index('data-model-id="z-ai/glm-5.3-flash"')
     kimi = body.index('data-model-id="moonshotai/kimi-k3"')

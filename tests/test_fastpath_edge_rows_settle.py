@@ -993,3 +993,95 @@ def test_a_row_go_wrote_wrong_fails_the_comparison(
     with pytest.raises(AssertionError, match=r"Go-shaped rows diverge at " + diverges_at.replace(".", r"\.")):
         compare(_case(CONTROL_CASE), scenario, corrupt=corrupt, ignore=ignore)
 
+
+
+@contextlib.contextmanager
+def _hosted_catalog() -> Iterator[None]:
+    from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS
+    fixture = _routing_cases_vectors()._snapshot_vectors()
+    model_id = "fixture.invalid/hosted-decision"
+    model = fixture.Model(id=model_id, name=model_id, provider="openai", context_length=8,
+                          supports_chat=False, supports_decide=True)
+    endpoint = fixture._endpoint(model_id, "openai", "Credits", 1_234_567, 0)
+    original = _routing_cases_vectors().fixture_catalog
+
+    @contextlib.contextmanager
+    def catalog(at):
+        with original(at):
+            MODELS[model.id] = model
+            MODEL_ENDPOINTS[endpoint.id] = endpoint
+            yield
+
+    with _patched(_routing_cases_vectors(), "fixture_catalog", catalog):
+        yield
+
+
+def _hosted_case(name: str) -> dict[str, Any]:
+    vectors = json.loads((ROOT / "fastpath/testdata/authorize_hosted_decide_v1.json").read_text())
+    return next(case for case in vectors["cases"] if case["name"] == name)
+
+
+@pytest.mark.parametrize("scenario", ["settle", "refund", "drain"])
+def test_python_settles_hosted_decide_rows_as_its_own(scenario):
+    with _hosted_catalog():
+        compare(_hosted_case("answer:hosted:none"), scenario)
+
+
+def test_async_route_settles_hosted_decide_edge_rows(monkeypatch):
+    import time
+
+    from tests.test_async_settle_handler import WIRE, _drain_async
+    from tests.test_async_settle_ticket import runtime
+    from trusted_router import billing_snapshot as billing
+    from trusted_router.async_settle_ticket import verify_lookup_ticket
+    from trusted_router.routes.internal.fastpath_async_ticket import EdgeTicketRequest
+    from trusted_router.services.async_settle import edge_ticket
+
+    case = _hosted_case("answer:hosted:C:eligible")
+    data = json.loads(case["expect"]["response"])["data"]
+    at = _from_us(case["at_us"])
+    assert at is not None
+    now = int(at.timestamp())
+    monkeypatch.setattr(time, "time", lambda: now)
+    with _hosted_catalog(), _pinned(at, "hosted-async"):
+        world = build_world(case, "go")
+        cfg = _settings(case)
+        cfg.async_settle_enabled = cfg.async_settle_protection = cfg.async_settle_decide_route = True
+        cfg.async_settle_fastpath_overlap_workspaces = world.store.get_gateway_authorization(world.authorization_id).workspace_id
+        cfg.parse_fastpath_overlap_workspaces()
+        cfg.fastpath_edge_async_ticket_workspaces = "*"
+        cfg.parse_fastpath_edge_async_ticket_workspaces()
+        rt = runtime()
+        auth = world.store.get_gateway_authorization(world.authorization_id)
+        world.store.trust_settings = cfg
+        world.store.settle_outbox._async_fence = True
+        client = _client(cfg)
+        client.app.state.async_settle = rt
+        snapshot = billing.parse_snapshot(json.dumps(data["billing_snapshot"]))
+        requested = billing.Eligibility(route_type="decide", streamed=False)
+        raw = billing.RawUsage(input_tokens=900, output_tokens=0)
+        priced = billing.evaluate(snapshot, auth.endpoint_id, raw, requested)
+        reply = edge_ticket(body=EdgeTicketRequest(
+            v=1, authorization_id=auth.id, workspace_id=auth.workspace_id, key_hash=auth.key_hash,
+            reservation_id=auth.credit_reservation_id, invocation_nonce=auth.invocation_nonce,
+            route_type="decide", streamed=False, region=auth.region, candidate_endpoint_ids=[auth.endpoint_id],
+            priced_at=now, billing_snapshot_hash=data["billing_snapshot_hash"],
+        ), settings=cfg, runtime=rt, typed=True, now=now)
+        assert reply["async_eligible"] is True
+        claims = verify_lookup_ticket(reply["settlement_ticket"], [rt.signer.trusted], now)
+        terminal = {**WIRE["terminal"], "authorization_id": auth.id, "generation_id": data["generation_id"],
+                    "workspace_id": auth.workspace_id, "key_id": auth.key_hash,
+                    "invocation_nonce": auth.invocation_nonce, "snapshot_hash": claims.snapshot_hash,
+                    "selected_endpoint": auth.endpoint_id, "route_type": "decide", "streamed": False,
+                    "usage": priced.usage.model_dump(), "charge_micro": priced.charge_micro}
+        body = {**WIRE, "terminal": terminal, "billing_snapshot": snapshot.model_dump(mode="json"),
+                "settlement_ticket": reply["settlement_ticket"], "raw_usage": raw.model_dump(),
+                "observed": requested.model_dump()}
+        response = client.post("/internal/gateway/settle", json=body,
+                               headers=[_token(), ("X-TR-Settlement-Mode", "async-v1")])
+        assert response.status_code == 202
+        with _front_door(world.door):
+            assert _drain_async()["outcomes"] == {"settled_now": 1}
+        settled = world.store.get_gateway_authorization(auth.id)
+        assert settled.settled and settled.finalized_cost_microdollars == priced.charge_micro
+        assert world.database.settle_outbox[(auth.id, "settle")]["actual_cost_micro"] == priced.charge_micro

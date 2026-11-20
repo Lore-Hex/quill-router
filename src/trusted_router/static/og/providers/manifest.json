@@ -226,10 +226,10 @@
   },
   "decisionmodelsio": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 5,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 3,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -673,15 +673,6 @@
     "route_count": 69,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
-  },
-  "openrouter": {
-    "card_version": 2,
-    "model_count": 1,
-    "name": "OpenRouter",
-    "privacy": "Policy documented",
-    "route_count": 1,
-    "route_mode": "Prepaid",
-    "slug": "openrouter"
   },
   "ovhcloud": {
     "card_version": 2,

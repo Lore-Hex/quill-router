@@ -1815,9 +1815,10 @@ class PostgresStore(OperationalAnalyticsReads):
         deleted: bool | None = None,
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         return self._run_transaction(lambda conn: self._update_workspace_tx(
-            conn, workspace_id, name=name, deleted=deleted,
+            conn, workspace_id, name=name, deleted=deleted, origin_policy=origin_policy,
             billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
         ))
 
@@ -1825,6 +1826,7 @@ class PostgresStore(OperationalAnalyticsReads):
         self, conn: Any, workspace_id: str, *, name: str | None = None,
         deleted: bool | None = None, billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         workspace = self._read_entity_tx(
             conn, "workspace", workspace_id, Workspace, for_update=True
@@ -1881,6 +1883,8 @@ class PostgresStore(OperationalAnalyticsReads):
             workspace.deleted = deleted
         if name is not None:
             workspace.name = name
+        if origin_policy is not None:
+            workspace.origin_policy = origin_policy
         if billing_paused is not None:
             causes = set(workspace.billing_pause_causes)
             if billing_paused:

@@ -28,5 +28,21 @@
   },
   "declined": {
     "async_eligible": false
-  }
+  },
+  "decide_request": {
+  "v": 1,
+  "authorization_id": "auth_wire_1",
+  "workspace_id": "ws_test_1",
+  "key_hash": "key_wire_1",
+  "reservation_id": "res_wire_1",
+  "invocation_nonce": "nonce_wire_1",
+  "route_type": "decide",
+  "streamed": false,
+  "region": "us-central1",
+  "candidate_endpoint_ids": [
+    "openai/billing-v1@openai/prepaid"
+  ],
+  "priced_at": 1792368000,
+  "billing_snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4"
+}
 }

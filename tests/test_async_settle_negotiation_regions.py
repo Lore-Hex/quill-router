@@ -177,6 +177,17 @@ def terminal_route_enabled() -> bool:
     return module.terminal_route_enabled()
 
 
+def test_the_deployed_pin_turns_decide_async_settlement_on(monkeypatch):
+    # One literal, read the way the service reads it. Turning it off is an
+    # edit of this pin and of this test together, on purpose.
+    value = deployed_pin('TR_ASYNC_SETTLE_DECIDE_ROUTE')
+    assert value == 'true'
+    monkeypatch.setenv('TR_ASYNC_SETTLE_DECIDE_ROUTE', value)
+    assert Settings(environment='test', _env_file=None).async_settle_decide_route is True
+    monkeypatch.delenv('TR_ASYNC_SETTLE_DECIDE_ROUTE')
+    assert Settings(environment='test', _env_file=None).async_settle_decide_route is False
+
+
 def test_every_negotiated_region_settles_where_it_is_accepted():
     # With the terminal route on, every enclave's settle lands in us-central1.
     # With it off, a region settles in its own router. The exception is a

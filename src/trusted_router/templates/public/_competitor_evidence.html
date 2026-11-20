@@ -9,7 +9,7 @@
   <div class="panel-body">
     <ul class="link-list">
       {% for source in comparison.sources %}
-      <li><a href="{{ source.url }}" rel="noopener">{{ source.label }}</a><span>{{ source.url }}</span></li>
+      <li><a href="{{ source.url }}" rel="{{ source.url|provider_link_rel }}">{{ source.label }}</a><span>{{ source.url }}</span></li>
       {% endfor %}
       <li><a href="/benchmarks/reports">TrustedRouter monthly benchmark reports</a><span>Stable first-party route evidence</span></li>
       <li><a href="https://trust.trustedrouter.com" rel="noopener">TrustedRouter live trust record</a><span>Release and attestation evidence</span></li>

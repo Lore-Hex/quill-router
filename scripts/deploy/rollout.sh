@@ -531,6 +531,7 @@ ENV_VARS=(
   "TR_SOCIAL_REWARDS_ENABLED=true"
   "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
   "TR_SOCIAL_REWARDS_ISSUER_ID=gcp-primary"
+  "TR_SOCIAL_REWARDS_YOUTUBE_URL=https://www.youtube.com/@NYTokenExchange"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   # Owner notifications. The identifiers here are not secrets — the numbers are
   # public and the ids name resources, not authorise them — so they live in
@@ -768,6 +769,9 @@ ENV_VARS=(
   # on the decide shadow, all agree_full), both nodes on b2d12a046
   # (increments 5 and 6, #2242).
   "TR_FASTPATH_PILOT_STREAMS=true"
+  # "off" until every fast-path node runs a release that reads the members;
+  # then "shadow" until the shadow shows agreement; then "on".
+  "TR_FASTPATH_EDGE_HOSTED_DECIDE=off"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
   # section 12.4, PR 4): a stream whose reservation is below its estimate is
@@ -901,6 +905,14 @@ ENV_VARS=(
   # sync_required("unsupported_cohort") before opening a transaction. Add a
   # region only with measured handoff percentiles.
   "TR_ASYNC_SETTLE_ACCEPT_REGIONS=us-central1,us-east4"
+  # 2026-11-20 (Joseph): hosted typed-decision calls negotiate async
+  # settlement as chat does. On only now that every region runs a release
+  # with decide async support: an older release answers 400 to a decide
+  # envelope, and the enclave does not fall back from that answer. The way
+  # back is this one pin, set to false: accepted rows keep draining and the
+  # snapshot-sync retry keeps its frozen price (docs/runbook.md, "Decide
+  # async settlement").
+  "TR_ASYNC_SETTLE_DECIDE_ROUTE=true"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity

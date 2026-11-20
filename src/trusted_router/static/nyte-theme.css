@@ -257,7 +257,6 @@
   --tr-legacy-0a0d12: var(--nyte-cream);
   --tr-legacy-0a0e0b: var(--nyte-cream);
   --tr-legacy-0a1726: var(--nyte-white);
-  --tr-legacy-0a66c2: var(--nyte-sky);
   --tr-legacy-0b121a: var(--nyte-white);
   --tr-legacy-0b1220: var(--nyte-white);
   --tr-legacy-0b1220-8f: color-mix(in srgb, var(--nyte-white) 56.1%, transparent);
@@ -512,7 +511,6 @@
   --tr-legacy-fbbf24: #6B5300;
   --tr-legacy-fbfcfd: var(--nyte-ink);
   --tr-legacy-fecaca: #A8360F;
-  --tr-legacy-ff0033: var(--nyte-orange);
   --tr-legacy-ffb1a4: #A8360F;
   --tr-legacy-ffeb3b-73: color-mix(in srgb, var(--nyte-yellow) 45.1%, transparent);
   --tr-legacy-fff7f6: var(--nyte-ink);
@@ -687,7 +685,6 @@
   --tr-legacy-0a0d12: var(--nyte-ink);
   --tr-legacy-0a0e0b: var(--nyte-ink);
   --tr-legacy-0a1726: var(--nyte-ink);
-  --tr-legacy-0a66c2: var(--nyte-deep-purple);
   --tr-legacy-0b121a: var(--nyte-ink);
   --tr-legacy-0b1220: var(--nyte-ink);
   --tr-legacy-0b1220-8f: color-mix(in srgb, var(--nyte-ink) 56.1%, transparent);
@@ -942,7 +939,6 @@
   --tr-legacy-fbbf24: var(--nyte-yellow);
   --tr-legacy-fbfcfd: var(--nyte-cream);
   --tr-legacy-fecaca: #FFB49A;
-  --tr-legacy-ff0033: var(--nyte-orange);
   --tr-legacy-ffb1a4: #FFB49A;
   --tr-legacy-ffeb3b-73: color-mix(in srgb, var(--nyte-yellow-tint) 45.1%, transparent);
   --tr-legacy-fff7f6: var(--nyte-cream);
@@ -1164,12 +1160,11 @@
 }
 
 /* No decorative gradients or dot textures in the kit */
-:root[data-brand="nyte"] :is(.console-topbar, .social-rewards-head) {
+:root[data-brand="nyte"] .console-topbar {
   background-image: none;
 }
 
-:root[data-brand="nyte"] :is(.console-topbar, .social-rewards-head)::before,
-:root[data-brand="nyte"] .social-rewards-head::after {
+:root[data-brand="nyte"] .console-topbar::before {
   background-image: none;
 }
 
@@ -1228,6 +1223,26 @@
 
 :root[data-brand="nyte"] .sp * {
   color: var(--nyte-ink);
+}
+
+/* Social rewards popup header: a lead-colour field with Ink text, so it
+   matches the page underneath. Its title is a heading, not display type,
+   so it takes Medium rather than the display Light. */
+:root[data-brand="nyte"] .social-rewards-head {
+  --tr-color-text-primary: var(--nyte-ink);
+  --tr-color-accent-base: var(--nyte-ink);
+  --tr-color-surface-selected: rgb(21 19 17 / 18%);
+
+  background: var(--nyte-lead);
+  border-bottom: 1px solid var(--nyte-ink);
+}
+
+:root[data-brand="nyte"] .social-rewards-head h2 {
+  font-weight: 500;
+}
+
+:root[data-brand="nyte"] .social-rewards-head h2 strong {
+  font-weight: 700;
 }
 
 /* Status badges on /encrypted-ai (page-local colours, not the old dark site) */

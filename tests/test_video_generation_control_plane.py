@@ -6,6 +6,7 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.catalog import (
     MODELS,
     PRIVACY_TIER_STANDARD,
@@ -39,8 +40,6 @@ VIDEO_MODELS = {
     "pixverse/c1",
     "lightricks/ltx-2.3",
     "lightricks/ltx-2.3-fast",
-    "minimax/hailuo-3",
-    "minimax/h3-max",
     "x-ai/grok-imagine-video",
     "decart/lucy-2.5",
     "decart/lucy-vton-3.5",
@@ -171,8 +170,17 @@ def test_closed_video_models_route_only_through_their_makers() -> None:
     omni = MODELS["google/gemini-omni-flash"]
     assert not endpoints_for_model(omni.id)
     assert omni.prepaid_available is False and omni.byok_available is False
+    # Seedance routes only through BytePlus, Runway only through Runway, and
+    # MiniMax Hailuo (Venice, Atlas Cloud, fal) has no first-party route.
+    for model_id in ("bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast"):
+        assert [endpoint.provider for endpoint in endpoints_for_model(model_id)] == ["byteplus"]
+    assert [endpoint.provider for endpoint in endpoints_for_model("runway/gen-4.5")] == ["runway"]
+    for model_id in ("minimax/hailuo-3", "minimax/h3-max"):
+        assert not endpoints_for_model(model_id)
+        assert MODELS[model_id].prepaid_available is False
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
     candidates = video_route_endpoint_candidates(
         {
@@ -196,6 +204,7 @@ def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
     ]
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 @pytest.mark.parametrize(
     ("model_id", "provider", "resolution"),
     [("minimax/hailuo-3", "atlas-cloud", "2K"), ("bytedance/seedance-2.5", "venice", "480p")],
@@ -253,6 +262,7 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     assert benchmark.video_resolution == resolution
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_video_settlement_cannot_exceed_content_free_quote(
     client: TestClient,
     inference_key: str,
@@ -275,6 +285,7 @@ def test_video_settlement_cannot_exceed_content_free_quote(
     assert authorization.settled is False
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_video_idempotency_binds_request_not_fresh_provider_quote(
     client: TestClient,
     inference_key: str,
@@ -312,6 +323,7 @@ def test_video_idempotency_binds_request_not_fresh_provider_quote(
     assert mismatch.status_code == 409
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_video_job_state_is_content_free_idempotent_and_key_scoped(
     client: TestClient,
     inference_key: str,
@@ -413,6 +425,7 @@ def test_video_job_state_is_content_free_idempotent_and_key_scoped(
     assert lookup.status_code == 404
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_failed_video_job_records_one_public_safe_benchmark_sample(
     client: TestClient,
     inference_key: str,
@@ -462,6 +475,7 @@ def test_failed_video_job_records_one_public_safe_benchmark_sample(
     assert "private prompt" not in repr(rows[0])
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_video_job_prepare_rejects_mismatched_quote(
     client: TestClient,
     inference_key: str,
@@ -482,6 +496,7 @@ def test_video_job_prepare_rejects_mismatched_quote(
     assert response.status_code == 400
 
 
+@pytest.mark.usefixtures("archived_video_routes")
 def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
     client: TestClient,
     inference_key: str,

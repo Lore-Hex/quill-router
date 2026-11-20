@@ -54,3 +54,32 @@ def test_a_refusal_is_the_declined_answer(facts):
     refused = service.edge_ticket(body=body, settings=settings(fastpath_edge_async_ticket_workspaces="ws_other"),
                                   runtime=facts.runtime, typed=True, now=NOW)
     assert refused == WIRE["declined"]
+
+
+def test_decide_wire_model_and_signing(facts):
+    body = route.EdgeTicketRequest.model_validate(WIRE["decide_request"])
+    assert body.model_dump() == WIRE["decide_request"]
+    result = service.edge_ticket(body=body, settings=settings(async_settle_decide_route=True),
+                                 runtime=facts.runtime, typed=True, now=NOW)
+    assert result["async_eligible"] is True
+    from trusted_router.async_settle_ticket import verify_lookup_ticket
+    claims = verify_lookup_ticket(result["settlement_ticket"], [facts.runtime.signer.trusted], NOW)
+    assert claims.route_type == "decide" and claims.streamed is False
+
+
+def test_decide_off_refuses_before_signing(facts, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
+    body = route.EdgeTicketRequest.model_validate(WIRE["decide_request"])
+    assert service.edge_ticket(body=body, settings=settings(async_settle_decide_route=False),
+                               runtime=facts.runtime, typed=True, now=NOW) == WIRE["declined"]
+    facts.runtime.signer.sign.assert_not_called()
+    assert "reason=decide_route_off" in caplog.text
+
+
+def test_streamed_decide_has_the_local_422(client):
+    response = client.post(route.PATH, json={**WIRE["decide_request"], "streamed": True},
+                           headers={"X-Trustedrouter-Internal-Token": TOKEN})
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid request body"}
+    assert response.headers["cache-control"] == "no-store"

@@ -458,7 +458,7 @@
     if (url) {
       node.href = url;
       node.target = "_blank";
-      node.rel = "noopener";
+      node.rel = endpoint.provider_policy_rel || "nofollow noopener";
       node.title = `${endpoint.provider_name} provider policy`;
     }
     return node;
@@ -826,10 +826,10 @@
       const response = await fetch(CATALOG_URL, { headers: { accept: "application/json" } });
       if (!response.ok) throw new Error(`Catalog request failed with HTTP ${response.status}.`);
       state.catalog = normalizeCatalog(await response.json());
-      dom.liveCount.textContent = String(state.catalog.catalog_model_count);
-      dom.providerCount.textContent = String(state.catalog.catalog_provider_count);
+      dom.liveCount.textContent = "600+";
+      dom.providerCount.textContent = "100+";
       dom.evaluatedCount.textContent = String(state.catalog.evaluated_model_count);
-      setLoadState(`${state.catalog.evaluated_model_count} independently scored models matched against ${state.catalog.catalog_route_count} live routes across ${state.catalog.catalog_provider_count} providers.`);
+      setLoadState(`${state.catalog.evaluated_model_count} independently scored models matched against a catalog of 600+ models across 100+ providers.`);
       render();
     } catch (error) {
       state.catalog = null;

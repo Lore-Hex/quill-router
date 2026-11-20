@@ -199,6 +199,23 @@ lines, summed, are its counts. It prints JSON:
   `cache_affinity_key`, then measured apart); the report sums it under
   `decide_shadow.by_name.affinity` and no figure reads it, so read a span
   from the first line of a node on this release.
+- `hosted_decide.off`: the hosted answer is composed for comparison, but
+  Python answers because the policy does not permit the edge to answer.
+- `hosted_decide.async_unknown`: async-v1 hosted decide passes without a
+  decision because the policy does not publish Python's decide support.
+  This counts as `python_answered_go_passed`, with no difference fields.
+
+  `TR_FASTPATH_EDGE_HOSTED_DECIDE` has three values. Keep `off` until every
+  fast-path node reads the new members: neither member is published and the
+  policy bytes remain unchanged. Then use `shadow` until agreement: publish
+  `async_settle.decide_route: true` when Python's decide setting is on, but
+  leave the top-level member absent. Finally use `on`: also publish
+  `fastpath_edge_hosted_decide: true`, permitting the hosted answer after the
+  remaining gates. With neither member, a hosted request without async-v1
+  still composes for the shadow; with async-v1 it passes without a decision.
+  In `shadow`, if Python's decide setting is off, the member remains absent
+  and async-v1 still passes without a decision. Native decide keeps its
+  existing routing; its async shape follows the published `decide_route`.
 - `i3`: the I3 gate's figures (`docs/design/fast-admission-e2-g15-async.md`
   §4.4, §6.2), each one number. From G15c the shadow composes every
   request whose `X-TR-Settlement-Mode` is exactly `async-v1` and, while

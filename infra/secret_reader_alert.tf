@@ -50,7 +50,9 @@
 # entries out would hide a read by an unknown account from inside a service.
 #
 # Adding an account: put it in secret_readers with where its reads come from,
-# in the same change that gives it a secret, or its first read pages.
+# in the same change that gives it a secret, or its first read pages. An
+# account this public repository must not name goes in the confidential list
+# instead (infra/confidential_secret_readers.tf), before its first read.
 #
 # The two policies are separate because a policy with a log-match condition
 # takes no other condition.
@@ -120,11 +122,15 @@ locals {
     ])})",
   ])
 
+  # The listed accounts plus the confidential ones that this public repository
+  # does not name (infra/confidential_secret_readers.tf).
+  all_secret_readers = sort(concat(values(local.secret_readers), local.confidential_secret_readers))
+
   # An entry with no principalEmail (a federated identity used directly,
   # with no service account) matches both NOT clauses, so it pages.
   unexpected_secret_reader_filter = join(" AND ", [
     local.secret_read_filter,
-    "NOT protoPayload.authenticationInfo.principalEmail=(${join(" OR ", formatlist("\"%s\"", sort(values(local.secret_readers))))})",
+    "NOT protoPayload.authenticationInfo.principalEmail=(${join(" OR ", formatlist("\"%s\"", local.all_secret_readers))})",
     "NOT (${local.operator_login_at_known_address})",
   ])
 
@@ -183,6 +189,25 @@ resource "google_monitoring_alert_policy" "unexpected_secret_reader" {
     precondition {
       condition     = length(distinct(values(local.secret_readers))) == length(local.secret_readers)
       error_message = "secret_readers names the same account twice."
+    }
+    # The confidential list (infra/confidential_secret_readers.tf) may name only whole
+    # service accounts of this project: no other project's, no Google-managed
+    # account, no user, group, domain or wildcard. Fixed messages: the list
+    # is private and the plan log is public.
+    # The whole entry is matched, start to end: the list is interpolated into
+    # the Logging filter, so a quote, space, second "@" or operator inside an
+    # entry could otherwise add alternatives to the exemption.
+    precondition {
+      condition = alltrue([
+        for email in local.confidential_secret_readers :
+        can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", email))
+        && endswith(email, "@${local.service_account_domain}")
+      ])
+      error_message = "tr-confidential-secret-readers holds an entry that is not one whole service account of this project. Entries are separated by commas."
+    }
+    precondition {
+      condition     = length(distinct(local.all_secret_readers)) == length(local.all_secret_readers)
+      error_message = "tr-confidential-secret-readers names an account twice, or one that secret_readers already lists."
     }
     # The Logging query language takes at most 20,000 characters.
     precondition {

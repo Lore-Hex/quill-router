@@ -6,7 +6,7 @@ Use TrustedRouter before talking about it. Show one concrete developer task,
 report what happened, and keep your own opinion. The sponsorship pays for the
 work and distribution. It does not buy a positive conclusion.
 
-TrustedRouter is an OpenAI-compatible gateway for hundreds of model routes.
+TrustedRouter is an OpenAI-compatible gateway for 600+ models.
 The hosted prompt gateway is open source and hardware attested. TrustedRouter
 does not durably store prompt or output content by default. Downstream provider
 retention and confidential-compute properties differ by route and are listed

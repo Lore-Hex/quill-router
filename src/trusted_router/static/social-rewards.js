@@ -43,7 +43,7 @@
     x_trustedrouter: ["X", "Follow @TrustedRouter", "Follow"],
     x_founder: ["X", "Follow @jperla", "Follow"],
     linkedin: ["LinkedIn", "Follow TrustedRouter", "Follow"],
-    youtube: ["YouTube", "Subscribe to TrustedRouter", "Subscribe"],
+    youtube: ["YouTube", "New York Token Exchange", "Subscribe"],
   };
   function platformIcon(id) {
     const icon = document.createElement("span");
@@ -128,8 +128,10 @@
     dialog.querySelector("[data-rewards-progress]").textContent = `${count} of ${total} rewards claimed`;
     if (total > 0) {
       const thousands = total * 200;
-      const upTo = thousands >= 1000 ? `${thousands / 1000}M` : `${thousands}K`;
-      dialog.querySelector("h2").textContent = `Earn up to ${upTo} tokens of API credit`;
+      const upTo = thousands >= 1000 ? `${thousands / 1000}\u00a0million` : `${thousands}K`;
+      const amount = document.createElement("strong");
+      amount.textContent = `${upTo} free tokens`;
+      dialog.querySelector("h2").replaceChildren("Earn up to ", amount);
     }
     dialog.querySelector("[data-rewards-meter]").max = total || 1;
     dialog.querySelector("[data-rewards-meter]").value = count;
@@ -184,6 +186,7 @@
       button.setAttribute("aria-label", action.claimed || busy || errors.has(action.id)
         ? button.textContent : `${presentation[action.id][2]} on ${presentation[action.id][0]}: ${presentation[action.id][1]}`);
       row.classList.toggle("claimed", Boolean(action.claimed));
+      button.classList.toggle("secondary", !action.claimed);
       const status = row.querySelector('[role="status"]');
       status.hidden = !errors.has(action.id) || action.claimed;
       status.textContent = status.hidden ? "" : "We couldn’t confirm your reward yet.";

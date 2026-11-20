@@ -1,10 +1,10 @@
 {
-  "_about": "Explicitly allowlisted OpenRouter-only models. OpenRouter is the downstream API and billing source. These routes are not BYOK, ZDR, confidential-compute, or E2EE. Explicit zero upstream prices receive the normal TrustedRouter customer price floor.",
+  "_about": "Settlement-only archive. OpenRouter is retired as a routing provider and this manifest has no price refresher. Its one row, ByteDance Seed 2.1 Turbo, is refused at admission by the closed-weight rule (trusted_router.closed_weight_routes) and is kept only so requests authorized before that rule shipped settle or refund at the tariff they were quoted (catalog_registry.CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS).",
   "provider": "openrouter",
   "source": "https://openrouter.ai/api/v1/models",
-  "generated_at": "2026-11-20T13:20:36Z",
+  "generated_at": "2026-11-20T15:28:39Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 2,
+  "model_count": 1,
   "models": [
     {
       "id": "bytedance-seed/seed-2-1-turbo",
@@ -44,42 +44,6 @@
         "tool_choice"
       ],
       "pricing_source": "https://openrouter.ai/api/v1/models/bytedance-seed/seed-2-1-turbo/endpoints"
-    },
-    {
-      "id": "stealth/union-alpha",
-      "upstream_id": "stealth/union-alpha",
-      "display_name": "Union Alpha",
-      "context_length": 262144,
-      "max_completion_tokens": 131072,
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_modalities": [
-        "text",
-        "image"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "supported_parameters": [
-        "max_tokens",
-        "temperature",
-        "top_p",
-        "tools",
-        "tool_choice",
-        "response_format"
-      ],
-      "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0,
-      "pricing_source": "https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints",
-      "reliability": {
-        "first_token_timeout_seconds": 45,
-        "completion_timeout_seconds": 600,
-        "stream_idle_timeout_seconds": 120
-      },
-      "missing_since": "2026-09-17",
-      "routable": false,
-      "routable_reason": "delisted-upstream"
     }
   ],
   "pricing_source": "https://openrouter.ai/api/v1/models"

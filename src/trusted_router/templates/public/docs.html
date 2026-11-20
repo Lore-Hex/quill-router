@@ -4,12 +4,14 @@
 <link rel="stylesheet" href="/static/docs-hub.css?v={{ static_version|default('local') }}">
 {% endblock %}
 {% block body %}
+{% include "public/_sdk_choice.html" %}
 <div class="docs-main-reader" data-content-toc>
 <div class="content-document">
 
 <section class="marketing-split" aria-label="Quickstart">
   <div class="marketing-copy">
     <h2>Quickstart: one base_url change.</h2>
+    <p><a href="/docs/simple-start">Call one model, nothing else</a>: pin one provider with curl or the OpenAI Python SDK and disable fallback.</p>
     <ul class="check-list">
       <li>OpenAI-compatible — point any OpenAI/Anthropic SDK at TrustedRouter</li>
       <li>Read your key from <code>TRUSTEDROUTER_API_KEY</code></li>
@@ -108,6 +110,7 @@ response = client.chat.completions.create(
     <a class="marketing-card card-as-link" href="/docs/agent-setup#codex-skill"><h3>Agent skill</h3><p>Help Codex, Claude Code, Hermes, and other agents choose models using speed, cost, AI IQ, privacy, context length, and prompt-cache fit.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/tagging"><h3>Request tagging</h3><p>Allocate cost and usage with AWS style tags while keeping metadata out of model prompts.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/byok"><h3>Bring your own key (BYOK)</h3><p>Manage upstream keys and use them for inference.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/provider-routing"><h3>Provider routing &amp; pinning</h3><p>Pin, prefer, or exclude providers per request — filters that fail closed, never silently relax.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/performance-routing"><h3>Performance routing</h3><p>Set latency and throughput preferences while preserving hard provider and privacy requirements.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/spend-controls"><h3>Spend controls</h3><p>Choose key budgets and opt into strict estimated-cost admission for concurrent requests.</p><span class="card-link">Open →</span></a>
@@ -168,7 +171,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
 
 <section id="deidentification" style="margin-top:48px">
   <h2 class="section-center">Optional de-identification</h2>
-  <p>Send <code>"deidentify": true</code> to replace detected personal information with placeholders before a provider receives it. TrustedRouter runs <a href="https://huggingface.co/nationaldesignstudio/rampart">National Design Studio's Rampart</a> locally inside the confidential gateway, then restores the original values for you in JSON and streaming replies. The mapping stays inside the gateway for that request. The flag works with text and function tools on Chat Completions, Responses, and native Anthropic Messages.</p>
+  <p>Send <code>"deidentify": true</code> to replace detected personal information with placeholders before a provider receives it. TrustedRouter runs <a href="https://huggingface.co/nationaldesignstudio/rampart" rel="nofollow">National Design Studio's Rampart</a> locally inside the confidential gateway, then restores the original values for you in JSON and streaming replies. The mapping stays inside the gateway for that request. The flag works with text and function tools on Chat Completions, Responses, and native Anthropic Messages.</p>
   <pre><code>response = client.chat.completions.create(
     model="anthropic/claude-opus-5.5",
     messages=[{"role": "user", "content": "Write a greeting to Alice Smith."}],

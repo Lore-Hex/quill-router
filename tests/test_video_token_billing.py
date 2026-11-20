@@ -4,9 +4,13 @@ from dataclasses import replace
 
 import pytest
 
+from tests.video_vehicles import archived_video_routes  # noqa: F401 - fixture
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
+
+# Mixed-host video routes the closed-weight rule archived (tests/video_vehicles.py).
+pytestmark = pytest.mark.usefixtures("archived_video_routes")
 
 MODEL = "bytedance/seedance-2.5"
 ENDPOINT = f"{MODEL}@venice/prepaid"

@@ -2030,9 +2030,23 @@ representable in UTC, keeps a NULL `indexed_at` and is skipped.
 
 ### Decide async settlement
 
-To disable decide async admission, set the config-as-code pin
-`TR_ASYNC_SETTLE_DECIDE_ROUTE=false`. Rows already accepted keep draining;
-snapshot-sync retries retain their frozen price. Do not roll the router or
-the drain worker back to a release older than decide async support while
-decide rows are pending: older releases do not support the decide async
-ticket and terminal-envelope contract.
+A router release from before decide async support answers 400 to a decide
+terminal envelope, on the async route and on the snapshot-sync retry alike.
+The enclave does not fall back to the ordinary settle after that answer, so
+the call fails and its hold waits for expiry. Three rules follow.
+
+To turn it on: set the config-as-code pin `TR_ASYNC_SETTLE_DECIDE_ROUTE=true`
+only once every router region already runs a release with decide async
+support. A region that runs such a release with the pin still off answers
+`sync_required` and takes the snapshot-sync retry at the frozen price, so the
+pin itself may roll out region by region.
+
+To turn it off: set the pin to `false`. Rows already accepted keep draining,
+and snapshot-sync retries keep their frozen price.
+
+To roll the router back past decide async support: first turn the pin off in
+every region, then wait until every decide call authorized before the pin
+went off has finished and until the pending decide rows have drained. The
+ticket's lifetime does not bound that wait: a call that outlives its ticket
+still presents it on the snapshot-sync retry. The drain worker's apply path does not read the route, so
+an older drain worker applies decide rows correctly; the limit is the router.
