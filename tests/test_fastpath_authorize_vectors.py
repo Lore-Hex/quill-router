@@ -1131,3 +1131,51 @@ def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
     assert member_absent["python"]["leased"] and member_absent["shadow"]["status"] == 200
     shadow_row = json.loads(member_absent["shadow"]["authorization_row"]["payload"])
     assert shadow_row["heartbeat_seq"] == 0 and "billing_snapshot" not in shadow_row
+
+
+def test_hosted_decide_vectors_are_the_real_app_answers():
+    target = ROOT / "fastpath/testdata/authorize_hosted_decide_v1.json"
+    result = subprocess.run(  # noqa: S603 - fixed local generator
+        [sys.executable, str(GENERATOR), "--print", "hosted"],
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")}, cwd=ROOT,
+        capture_output=True, timeout=900, check=False,
+    )
+    assert result.returncode == 0, "hosted generator failed"
+    assert target.read_bytes() == result.stdout, "hosted vectors are stale"
+    cases = {case["name"]: case for case in json.loads(result.stdout)["cases"]}
+    for name, case in cases.items():
+        if case["expect"]["outcome"] == "answer":
+            response = json.loads(case["expect"]["response"])["data"]
+            assert response["stage_d"]["eligible"] is False
+            if "settlement_ticket" in response:
+                from trusted_router.detached_jws import b64decode
+                claims = json.loads(b64decode(response["settlement_ticket"].split(".")[1]))
+                assert claims["route_type"] == "decide" and claims["streamed"] is False
+        if ":A:" in name:
+            assert case["expect"]["async_shape"] == "A"
+    for name in ("pass:hosted:stream", "pass:native:stream"):
+        assert cases[name]["expect"]["python"]["async_shape"] == "B"
+
+
+def test_hosted_decide_vectors_spell_no_schema_change_carrier():
+    """The repository-wide carrier scan reads this golden as text. A ticket's
+    base64 can spell one of its tokens by chance; say so here, where the
+    generator is, rather than in an unrelated conformance failure."""
+    from tests.conformance.spanner_schema_source import ddl_transport_matches
+
+    text = (ROOT / "fastpath/testdata/authorize_hosted_decide_v1.json").read_text()
+    spelled = [text.count("\n", 0, match.start()) + 1 for match in ddl_transport_matches(text)]
+    assert not spelled, (
+        f"lines {spelled} of the hosted golden spell a carrier token inside generated text: "
+        "change that case's nonce in scripts/fastpath/authorize_vectors.py and regenerate"
+    )
+
+
+def test_hosted_decide_nonce_passes_record_python_shapes():
+    cases = {c["name"]: c for c in json.loads(
+        (ROOT / "fastpath/testdata/authorize_hosted_decide_v1.json").read_text())["cases"]}
+    for suffix, shape in (("absent", "A"), ("invalid", "A"), ("out_of_region", "B")):
+        expect = cases[f"pass:hosted:nonce_{suffix}"]["expect"]
+        assert expect["outcome"] == "pass"
+        assert expect["reason"] == "compose.refused"
+        assert expect["python"]["async_shape"] == shape

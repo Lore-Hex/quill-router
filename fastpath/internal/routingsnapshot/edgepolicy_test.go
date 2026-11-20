@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -1091,5 +1093,32 @@ func TestTheAllModeMembersAreOptional(t *testing.T) {
 	// is the golden body's own bytes.
 	if got := withAllMembers(t, raw, "true", `["ws-synthetic-excluded-a","ws-synthetic-excluded-b"]`, `[]`); !bytes.Equal(got, raw) {
 		t.Fatalf("the splice does not rebuild the golden body:\n%s\n%s", got, raw)
+	}
+}
+
+func TestHostedDecidePolicyVectors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "edge_policy_hosted_decide_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []struct {
+			Name, Body             string
+			Accept, Hosted, Decide bool
+		}
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			p, err := ParseEdgePolicy([]byte(c.Body))
+			if (err == nil) != c.Accept {
+				t.Fatalf("accept=%v, error=%v", c.Accept, err)
+			}
+			if c.Accept && (p.HostedDecide() != c.Hosted || p.AsyncSettle.SupportsDecide() != c.Decide) {
+				t.Fatal("policy permissions differ")
+			}
+		})
 	}
 }

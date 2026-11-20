@@ -29,6 +29,27 @@ var decidePasses = map[string]string{
 	"embeddings_only":        `model "fixture.invalid/embedding-only" is served by the embeddings or decide resolver`,
 }
 
+// chatArmWording are the cases where a chat model's request names a
+// decision-only model as an alternative on route decide. Python refuses with
+// its decision wording; the chat arm refuses with its own, with the flag on
+// or off, as it did before the flag existed. The edge passes every refusal
+// to Python, so the wording reaches no caller.
+var chatArmWording = map[string]string{
+	"chat_then_decision": "Model does not support chat completions: fixture.invalid/hosted-decision-multi",
+}
+
+func checkChatArmWording(t *testing.T, name string, got Result) bool {
+	t.Helper()
+	message, listed := chatArmWording[name]
+	if !listed {
+		return false
+	}
+	if want := refused(400, "model_not_supported", message); !reflect.DeepEqual(got, want) {
+		t.Fatalf("want %+v (%+v), got %+v (%+v)", want, want.Refusal, got, got.Refusal)
+	}
+	return true
+}
+
 func decideFixture(t *testing.T) (*Snapshot, routingCases) {
 	t.Helper()
 	var manifest manifestFile
@@ -97,6 +118,9 @@ func TestHostedDecideCases(t *testing.T) {
 				}
 				return
 			}
+			if checkChatArmWording(t, c.Name, got) {
+				return
+			}
 			checkPythonCase(t, s, file, c, req, got)
 		})
 	}
@@ -117,8 +141,13 @@ func TestHostedDecideDisabled(t *testing.T) {
 			req := c.request(t)
 			req.HostedDecide = false
 			got := s.Evaluate(req)
+			if checkChatArmWording(t, c.Name, got) {
+				return
+			}
 			switch c.Name {
-			case "native_chat_decide", "invalid_privacy", "invalid_parameters":
+			case "native_chat_decide", "invalid_privacy", "invalid_parameters",
+				"chat_and_decision", "chat_and_decision_fits", "chat_and_decision_chat_route",
+				"chat_then_decision_chat_route":
 				checkPythonCase(t, s, file, c, req, got)
 				return
 			case "variant", "dated":
@@ -141,6 +170,13 @@ func TestHostedDecideDisabled(t *testing.T) {
 	// Every existing case still runs with the zero-value flag, against its
 	// original Python expectation and explicit original pass table.
 	t.Run("existing", TestTheEvaluatorReproducesEveryRoutingCase)
+}
+
+// The flag selects an arm only for a decision-only model. The existing
+// fixture has none, so with the flag set every existing case must give the
+// result it gives without it.
+func TestHostedDecideFlagLeavesEveryExistingCaseAlone(t *testing.T) {
+	checkEveryRoutingCase(t, true)
 }
 
 func TestHostedDecideAliasPasses(t *testing.T) {

@@ -85,7 +85,7 @@ Fields, all required:
   ticketed, so the edge passes them. Both members are absent with the switch
   off; null and false are refused.
 
-Five fields are optional:
+Six top-level fields are optional:
 
 - ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
   that name (docs/design/fast-admission-e2-key-windows.md section 5): which
@@ -93,6 +93,11 @@ Five fields are optional:
   ``off``, so the default body is byte-identical to one from before the field
   existed, and Go reads absent as ``off``. ``null`` and ``"off"`` are refused,
   so each mode has exactly one encoding.
+- ``fastpath_edge_hosted_decide``: ``true`` when the setting of that name is
+  on; absent otherwise. Permits the exact hosted decision model arm. The
+  nested ``async_settle.decide_route`` is present as ``true`` when this mode is
+  ``shadow`` or ``on`` and ``async_settle_decide_route`` is on. Neither member changes
+  the dormant canonical bytes; false, null and other types are refused.
 - ``fastpath_edge_streams``: ``true`` when the settings
   ``fastpath_edge_streams``, ``fastpath_pilot_streams`` and
   ``reap_snapshot_booking_enabled`` are all on
@@ -173,6 +178,8 @@ class EdgeStageD(Frozen):
 class EdgeAsyncSettle(Frozen):
     admission_enabled: Flag
     edge_decide: Flag
+    # Optional, true only: Python supports decide tickets.
+    decide_route: Flag | None = Field(default=None, exclude_if=lambda value: value is None)
     ticket_authority: Flag
     typed_records: Flag
     # Optional: the pilot set admission covers, present only with admission
@@ -218,6 +225,8 @@ class EdgeAsyncSettle(Frozen):
 
     @model_validator(mode="after")
     def admission_set(self) -> Self:
+        if "decide_route" in self.model_fields_set and self.decide_route is not True:
+            raise ValueError("decide_route is absent when off, never null or false")
         for switch, on in (("edge_tickets", self.edge_tickets), ("edge_leased", self.edge_leased)):
             if switch in self.model_fields_set and on is not True:
                 raise ValueError(f"{switch} is absent when off, never null or false")
@@ -281,6 +290,9 @@ class EdgePolicyV1(Frozen):
         default=None, exclude_if=lambda value: value is None,
     )
     # Optional: absent is off, and the canonical bytes omit it then.
+    fastpath_edge_hosted_decide: Flag | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     fastpath_edge_streams: Flag | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
@@ -299,6 +311,8 @@ class EdgePolicyV1(Frozen):
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        if "fastpath_edge_hosted_decide" in self.model_fields_set and self.fastpath_edge_hosted_decide is not True:
+            raise ValueError("fastpath_edge_hosted_decide is absent when off, never null or false")
         if self.fastpath_pilot_key_windows is None and "fastpath_pilot_key_windows" in self.model_fields_set:
             raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
         if self.fastpath_edge_streams is not True and "fastpath_edge_streams" in self.model_fields_set:

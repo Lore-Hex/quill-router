@@ -451,6 +451,9 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         # pair below; ticket authority is a mounted TEST key and epoch 1, or
         # neither; the journal region is primary_region; the edge's switch.
         async_settle_enabled=facts["admission_enabled"],
+        async_settle_decide_route=facts.get("decide_route", False),
+        fastpath_edge_hosted_decide="on" if policy.get("fastpath_edge_hosted_decide", False) else "off",
+        async_settle_negotiation_regions=facts.get("negotiation_regions", ""),
         async_settle_protection=facts["admission_enabled"],
         async_settle_pilot_workspaces=",".join(facts.get("admission_workspaces", ())),
         async_settle_fastpath_overlap_workspaces=",".join(facts.get("fastpath_overlap_workspaces", ())),
@@ -533,6 +536,8 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         # The leased-answer members as the publisher writes them: only with
         # the switch and admission on.
         **edge_leased(settings),
+        **({"decide_route": True}
+           if settings.fastpath_edge_hosted_decide in ("shadow", "on") and settings.async_settle_decide_route else {}),
     }} if "async_settle" in policy else {}
     return {
         **async_settle,
@@ -562,6 +567,7 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "internal_models": internal_models(),
         # Optional: only when the publisher would carry them.
         **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
+        **({"fastpath_edge_hosted_decide": True} if settings.fastpath_edge_hosted_decide == "on" else {}),
         **({"fastpath_stream_ceiling": True} if settings.fastpath_stream_ceiling else {}),
     }
 
@@ -2205,10 +2211,10 @@ def run_async_case(case: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def render_async() -> str:
+def render_async(selected: list[dict[str, Any]] | None = None) -> str:
     header_policy = edge_policy_body(ASYNC_POLICY, DEFAULT_KEY, ROUTING._instant(INSTANTS["peak"]))
     rows = []
-    for case in sorted(async_cases(), key=lambda c: c["name"]):
+    for case in sorted(async_cases() if selected is None else selected, key=lambda c: c["name"]):
         at = ROUTING._instant(case["_at"])
         policy = edge_policy_body(case["_policy"], case["_world"]["key"], at)
         result = run_async_case(case)
@@ -2854,8 +2860,65 @@ def render_fingerprints() -> str:
     }, fingerprint_vectors())
 
 
+HOSTED_OUTPUT = "fastpath/testdata/authorize_hosted_decide_v1.json"
+HOSTED_MODEL = "fixture.invalid/hosted-decision"
+
+
+def hosted_cases() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    base = {"model": HOSTED_MODEL, "estimated_input_tokens": 1234, "max_output_tokens": 1,
+            "region": "us-central1", "route_type": "decide", "idempotency_key": "hosted-decide",
+            "user": "fixture-user", "session_id": "fixture-session"}
+    policy = _merge(ASYNC_POLICY, {"fastpath_edge_hosted_decide": True,
+                                  "async_settle": {"decide_route": True}})
+
+    def add(name: str, reason: str | None = None, **kwargs: Any) -> None:
+        headers = kwargs.pop("headers", ASYNC_V1)
+        out.append(make_case(name, reason, base_policy=policy, base_body=base, headers=headers, **kwargs))
+
+    add("answer:hosted:none", headers=())
+    add("answer:hosted:A:route_off", policy={"async_settle": {"decide_route": False}})
+    add("answer:hosted:B")
+    add("answer:hosted:A:parameters", body={"requested_parameters": [UNLISTED_PARAMETER]})
+    add("answer:hosted:A:modalities", body={"input_modalities": ["text"]})
+    add("answer:hosted:A:undeclared", body={"future_feature": True})
+    add("pass:hosted:receipt", "body.priced_extra", body={"inference_receipt": True})
+    add("pass:hosted:tier", "body.service_tier", body={"service_tier": "default"})
+    add("pass:hosted:stream", "body.stream", body={"stream": True})
+    add("pass:hosted:off", "hosted_decide.off", headers=(), policy={"fastpath_edge_hosted_decide": False})
+    add("pass:hosted:replay", "insert.scope_taken",
+        prior=(({"idempotency_key": "hosted-decide"}, ADMIT),))
+    ticket_policy = {"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}}
+    # The repository's scan for schema-change carriers reads this golden as
+    # text, and a ticket's base64 can spell one of its tokens by chance. This
+    # nonce gives a ticket that does not; if a regeneration trips the scan
+    # (tests/test_fastpath_authorize_vectors.py says so), choose another.
+    add("answer:hosted:C:eligible", body={"invocation_nonce": "nonce-hosted-a"}, policy=ticket_policy, admits=True)
+    add("answer:hosted:C:ineligible", body={"invocation_nonce": "nonce-hosted"}, policy=ticket_policy)
+    add("pass:hosted:nonce_absent", "compose.refused", policy=ticket_policy)
+    add("pass:hosted:nonce_invalid", "compose.refused", body={"invocation_nonce": "space nonce"}, policy=ticket_policy)
+    add("pass:hosted:nonce_out_of_region", "compose.refused",
+        policy={"async_settle": {**ticket_policy["async_settle"], "negotiation_regions": "europe-west1"}})
+    add("answer:hosted:B:leased", policy={**ALL_MODE, "async_settle": LEASED_ADMISSION})
+    add("answer:native:A:route_off", body={"model": GPT41}, policy={"async_settle": {"decide_route": False}})
+    add("answer:native:B", body={"model": GPT41})
+    add("answer:native:C:eligible", body={"model": GPT41, "invocation_nonce": "nonce-native"},
+        policy=ticket_policy, admits=True)
+    add("pass:native:stream", "body.stream", body={"model": GPT41, "stream": True})
+    return out
+
+
+def render_hosted() -> str:
+    model = Model(id=HOSTED_MODEL, name=HOSTED_MODEL, provider="openai", context_length=8,
+                  supports_chat=False, supports_decide=True)
+    endpoint = SNAPSHOT_VECTORS._endpoint(HOSTED_MODEL, "openai", "Credits", 1_234_567, 0)
+    with patched(sys.modules[__name__], "ASYNC_MODELS", (*ASYNC_MODELS, model)), \
+            patched(sys.modules[__name__], "ASYNC_ENDPOINTS", (*ASYNC_ENDPOINTS, endpoint)):
+        return render_async(hosted_cases())
+
+
 RENDERS = {"cases": (CASES_OUTPUT, render_cases), "fingerprints": (FINGERPRINT_OUTPUT, render_fingerprints),
-           "async": (ASYNC_OUTPUT, render_async)}
+           "async": (ASYNC_OUTPUT, render_async), "hosted": (HOSTED_OUTPUT, render_hosted)}
 
 if __name__ == "__main__":
     args = sys.argv[1:]

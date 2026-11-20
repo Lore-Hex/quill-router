@@ -533,7 +533,7 @@ func (sh *shadow) compare(c comparison) result {
 	// gives Python's answer, that one does, and a difference means none
 	// does. Python's presence is taken as its answer implies it, never
 	// guessed.
-	none := s.Evaluate(req)
+	none := evaluateRouting(s, req)
 	if none.Outcome == routingsnapshot.PassToPython {
 		return passed(redact(none.Reason))
 	}
@@ -544,11 +544,11 @@ func (sh *shadow) compare(c comparison) result {
 	every := req
 	every.BYOKProviders = h.providers
 	byok, goAnswer := "determined", none
-	if !sameResult(none, s.Evaluate(every)) {
+	if !sameResult(none, evaluateRouting(s, every)) {
 		byok = "consistent"
 		implied := req
 		implied.BYOKProviders = h.impliedBYOK(py.candidates)
-		goAnswer = s.Evaluate(implied)
+		goAnswer = evaluateRouting(s, implied)
 		if goAnswer.Outcome == routingsnapshot.PassToPython {
 			return passed(redact(goAnswer.Reason))
 		}
@@ -559,7 +559,7 @@ func (sh *shadow) compare(c comparison) result {
 	// difference.
 	later := req
 	later.At = c.done
-	if !sameResult(goAnswer, s.Evaluate(later)) {
+	if !sameResult(goAnswer, evaluateRouting(s, later)) {
 		return passed("the snapshot's answer changed while python decided")
 	}
 
@@ -642,6 +642,20 @@ func (sh *shadow) compare(c comparison) result {
 	return out
 }
 
+// evaluateRouting preserves the old evaluator outcome and counter label for
+// shapes outside the exact hosted arm. Its three early shape guards precede
+// provider parsing; the old evaluator may have refused those providers first.
+func evaluateRouting(s *routingsnapshot.Snapshot, req routingsnapshot.Request) routingsnapshot.Result {
+	result := s.Evaluate(req)
+	switch result.Reason {
+	case "hosted decide requires an exact catalog id", "hosted decide requires route_type decide",
+		"hosted decide with a nonempty models array":
+		req.HostedDecide = false
+		return s.Evaluate(req)
+	}
+	return result
+}
+
 func sameResult(a, b routingsnapshot.Result) bool {
 	if a.Outcome != b.Outcome || !slices.Equal(a.Candidates, b.Candidates) || a.ModelEstimate != b.ModelEstimate ||
 		a.ServiceTier != b.ServiceTier || a.Reason != b.Reason || (a.Refusal == nil) != (b.Refusal == nil) {
@@ -689,7 +703,7 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 	}
 	// A BYOK endpoint Python chose is one whose provider it found present.
 	on.BYOKProviders = append(slices.Clone(on.BYOKProviders), h.impliedBYOK(py)...)
-	r := h.snapshot.Evaluate(on)
+	r := evaluateRouting(h.snapshot, on)
 	return r.Outcome == routingsnapshot.Answered && slices.Contains(r.Candidates, py[0])
 }
 
@@ -703,7 +717,7 @@ func (h *held) warmEstimate(req routingsnapshot.Request, endpoint string) (int64
 		return 0, false
 	}
 	pinned.BYOKProviders = append(slices.Clone(req.BYOKProviders), h.impliedBYOK([]string{endpoint})...)
-	r := h.snapshot.Evaluate(pinned)
+	r := evaluateRouting(h.snapshot, pinned)
 	if r.Outcome != routingsnapshot.Answered || !slices.Equal(r.Candidates, []string{endpoint}) {
 		return 0, false
 	}
@@ -935,6 +949,7 @@ func requestOf(body []byte, call *shadowCall) (req routingsnapshot.Request, affi
 	if v, ok := f["estimated_input_tokens"]; ok && isJSONNull(v) {
 		return req, false, "an explicit null estimated_input_tokens"
 	}
+	req.HostedDecide = true
 	req.Model, req.Models = *model, models
 	if present("provider") {
 		req.Provider = f["provider"]

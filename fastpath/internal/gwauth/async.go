@@ -41,6 +41,8 @@ type AsyncRequest struct {
 	// V1 is whether the header list is exactly ["async-v1"].
 	V1       bool
 	Streamed bool
+	// InvocationNonce is needed when Python signs a decide ticket.
+	InvocationNonce *string
 	// Undeclared is body.model_extra non-empty: any top-level member the
 	// schema does not declare, one whose value is null included.
 	Undeclared bool
@@ -121,6 +123,9 @@ var ordinaryParameters = map[string]bool{
 	"top_k": true, "top_a": true, "min_p": true, "repetition_penalty": true,
 	"prediction": true, "prompt_cache_key": true, "service_tier": true,
 }
+
+// ticketNonce is async_settle_ticket.TicketClaims.invocation_nonce.
+var ticketNonce = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // identity is billing_snapshot.Identity: 1 to 512 characters of this set.
 var identity = regexp.MustCompile(`^[A-Za-z0-9_./:@+\-]{1,512}$`)
@@ -237,7 +242,8 @@ func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, er
 	switch {
 	case r.Undeclared:
 		return falseOnly(AsyncReasonUndeclared), nil
-	case r.RouteType == nil || (*r.RouteType != "chat.completions" && *r.RouteType != "responses"):
+	case r.RouteType == nil || (*r.RouteType != "chat.completions" && *r.RouteType != "responses" &&
+		!(*r.RouteType == "decide" && in.Policy.SupportsDecide())):
 		return falseOnly(AsyncReasonRouteType), nil
 	case r.InputModalities:
 		return falseOnly(AsyncReasonInputModalities), nil
@@ -286,6 +292,12 @@ func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, er
 	// region, which the policy publishes as one fact.
 	if !in.Policy.TicketAuthority {
 		return falseOnly(AsyncReasonTicketAuthority), nil
+	}
+	// Python may stop before signing; its negotiation regions are not published.
+	// A decide ticket without a valid nonce therefore needs Python.
+	if in.WantTicket && r.RouteType != nil && *r.RouteType == "decide" &&
+		(r.InvocationNonce == nil || !ticketNonce.MatchString(*r.InvocationNonce)) {
+		return Async{}, composeErr("decide ticket requires a valid nonce")
 	}
 	canonical, err := pyjson.Canonical(snapshot)
 	if err != nil {

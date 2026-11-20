@@ -121,6 +121,8 @@ DECIDE_SINGLE = "fixture.invalid/hosted-decision-single"
 DECIDE_MULTI = "fixture.invalid/hosted-decision-multi"
 DECIDE_BYOK = "fixture.invalid/hosted-decision-byok"
 EMBEDDING_ONLY = "fixture.invalid/embedding-only"
+# A chat model the gateway may also drive as a decision: it keeps the chat arm.
+DECIDE_CHAT = "fixture.invalid/chat-and-decision"
 
 
 def fixture_inputs(*, hosted_decide: bool = False) -> CatalogInputs:
@@ -198,6 +200,8 @@ def fixture_inputs(*, hosted_decide: bool = False) -> CatalogInputs:
                   supports_embeddings=model_id == EMBEDDING_ONLY)
             for model_id in (DECIDE_SINGLE, DECIDE_MULTI, DECIDE_BYOK, EMBEDDING_ONLY)
         )
+        models += (Model(id=DECIDE_CHAT, name=DECIDE_CHAT, provider="deepinfra", context_length=16,
+                         supports_chat=True, supports_decide=True, supports_embeddings=False),)
         endpoints += (
             _endpoint(DECIDE_SINGLE, "amazon-bedrock", "Credits", 1_234_567, 0, context_length=8),
             # Catalog order, privacy and price favor different providers.
@@ -208,6 +212,7 @@ def fixture_inputs(*, hosted_decide: bool = False) -> CatalogInputs:
             _endpoint(DECIDE_BYOK, "google-ai-studio", "BYOK", 750_000, 0),
             _endpoint(DECIDE_BYOK, "together", "Credits", 1_500_000, 0),
             _endpoint(EMBEDDING_ONLY, "deepinfra", "Credits", 100_000, 0),
+            _endpoint(DECIDE_CHAT, "together", "Credits", 900_000, 300_000),
         )
     credits = RequestedOverrides(**{**NO_OVERRIDES.model_dump(), "usage": "Credits"})
     requested = (

@@ -2480,3 +2480,39 @@ def test_edge_ticket_off_preserves_published_bytes():
         cfg.fastpath_edge_async_ticket_workspaces = ""
         cfg.parse_fastpath_edge_async_ticket_workspaces()
         assert canonical_edge_policy_bytes(VECTORS.policy(cfg)) == before
+
+
+@pytest.mark.parametrize("case", json.loads(VECTORS.OUTPUT_HOSTED.read_text())["cases"], ids=lambda c: c["name"])
+def test_hosted_decide_policy_vectors(case):
+    if not case["accept"]:
+        with pytest.raises(ValidationError):
+            parse_edge_policy(case["body"])
+        return
+    policy = parse_edge_policy(case["body"])
+    assert (policy.fastpath_edge_hosted_decide is True) is case["hosted"]
+    assert (policy.async_settle.decide_route is True) is case["decide"]
+    assert canonical_edge_policy_bytes(policy).decode() == case["body"]
+
+
+def test_hosted_decide_policy_dormancy_and_current_vectors():
+    deployed = _rendered_rollout_env()
+    assert deployed["TR_FASTPATH_EDGE_HOSTED_DECIDE"] == "off"
+    assert deployed["TR_ASYNC_SETTLE_DECIDE_ROUTE"] == "true"
+    assert VECTORS.OUTPUT_HOSTED.read_text() == VECTORS.render_hosted()
+    # The committed pre-member body is the baseline, with production's
+    # decide setting on but the new switch off. No new bytes reach old nodes.
+    for decide in (False, True):
+        cfg = VECTORS.fixture_settings(fastpath_edge_hosted_decide="off", async_settle_decide_route=decide)
+        assert canonical_edge_policy_bytes(VECTORS.policy(cfg)) == VECTORS.OUTPUT_BODY.read_bytes()
+
+
+def test_hosted_decide_setting_default_and_environment(monkeypatch):
+    monkeypatch.delenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", raising=False)
+    assert Settings(_env_file=None).fastpath_edge_hosted_decide == "off"
+    for mode in ("off", "shadow", "on"):
+        monkeypatch.setenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", mode)
+        assert Settings(_env_file=None).fastpath_edge_hosted_decide == mode
+    for mode in ("true", "false", "preview", "ON"):
+        monkeypatch.setenv("TR_FASTPATH_EDGE_HOSTED_DECIDE", mode)
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None)
