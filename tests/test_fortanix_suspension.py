@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from tests.catalog_vehicles import registry_endpoints
 from tests.lifecycle_clock import catalog_predates
+from trusted_router import fortanix_launch
 from trusted_router.catalog import endpoints_for_model
 from trusted_router.config import Settings
 from trusted_router.fortanix_launch import (
@@ -102,6 +103,8 @@ def test_public_model_has_no_route_during_the_suspension(monkeypatch: pytest.Mon
 
 @pytest.mark.usefixtures("fortanix_route_live")
 def test_launch_offer_turns_off_at_the_cutover(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Isolate the route gate from the promotion's own end date (Nov 27 Pacific).
+    monkeypatch.setattr(fortanix_launch, "_offer_window_open", lambda: True)
     _pin(monkeypatch, _BEFORE)
     assert fortanix_launch_offer()
     _pin(monkeypatch, _AT)
