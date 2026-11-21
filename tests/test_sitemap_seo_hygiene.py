@@ -163,6 +163,11 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
 def test_seo_metadata_helpers_bound_generated_text() -> None:
     assert seo_title("Models | TrustedRouter") == "Models | TrustedRouter"
     assert seo_title("Security") == "Security | TrustedRouter"
+    assert seo_title("TrustedRouter MCP Server") == "TrustedRouter MCP Server"
+    assert seo_title("TrustedRouter MCP Server | TrustedRouter") == "TrustedRouter MCP Server"
+    assert seo_title("Confidential Computing for LLMs — TrustedRouter") == (
+        "Confidential Computing for LLMs — TrustedRouter"
+    )
     assert seo_title("A" * 80).endswith("...")
     assert len(seo_title("A" * 80)) == 60
     assert seo_meta_description("Repeated words " * 20).endswith("...")

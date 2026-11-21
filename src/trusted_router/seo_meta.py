@@ -51,6 +51,10 @@ def seo_title(value: str) -> str:
         base = base[: -len(brand)].rstrip()
     if not had_brand_suffix and " | " in base:
         return truncate_seo_text(base, SEO_TITLE_MAX_LENGTH)
+    if "TrustedRouter" in base:
+        # The title already names the product; a suffix would repeat it
+        # ("TrustedRouter API Docs | TrustedRouter").
+        return truncate_seo_text(base, SEO_TITLE_MAX_LENGTH)
     branded = f"{base}{brand}"
     if len(branded) <= SEO_TITLE_MAX_LENGTH:
         return branded
