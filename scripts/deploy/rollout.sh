@@ -514,6 +514,13 @@ ENV_VARS=(
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
   "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
+  # One workspace's synchronous authorizes, settles and refunds on its single
+  # credit row take turns inside each process instead of piling up in Spanner
+  # and aborting each other (docs/spanner-reliability.md, "One workspace on
+  # one credit row"). It delays when a transaction starts, by at most a
+  # second inside the deadline the transaction already has, and nothing else.
+  # A literal, so no revision inherits it; 0 is the way back.
+  "TR_WORKSPACE_BILLING_GATE_WIDTH=1"
   "TR_RELEASE=${RELEASE_ID}"
   "TR_SOURCE_REVISION=${SOURCE_REVISION}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled

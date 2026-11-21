@@ -177,6 +177,15 @@ def remaining_rpc_budget(max_seconds: float) -> float:
     return remaining
 
 
+def shared_rpc_budget_remaining() -> float | None:
+    """Seconds left of the caller's shared Spanner deadline; None without one.
+
+    Never raises: a spent budget reads as zero, and the next RPC reports it.
+    """
+    deadline = _SPANNER_RPC_DEADLINE.get()
+    return None if deadline is None else max(0.0, deadline - time.monotonic())
+
+
 def shared_rpc_budget_spent() -> bool:
     """True once the caller's shared Spanner deadline has passed.
 

@@ -284,6 +284,69 @@ billing shard distribution only when the hot row belongs to a billing table;
 otherwise repair the specific metadata or worker access pattern before raising
 capacity.
 
+### One workspace on one credit row
+
+A workspace with one credit shard (every workspace starts with one) writes the
+same `tr_credit_balance` row on every synchronous authorize, settle and
+refund, and a capped key's `tr_key_limit` row beside it. The reserves scan
+under the exclusive lock and queue for the row. The settle and refund
+releases still scan under a shared lock and upgrade
+([reserves on one row aborting each other](incidents/2026-11-10-reserve-lock-upgrade-aborts.md),
+"Not repaired here"). A burst from one such workspace therefore makes its
+releases abort each other and be aborted by older reserves, and every abort
+redoes its statements on the same row. The signature: in
+`SPANNER_SYS.TXN_STATS_TOP_MINUTE`, `tr_settle_one_commit` and `tr_finalize`
+show several aborts for each commit while `tr_authorize` shows few; authorize
+and settle both take seconds; `LOCK_STATS_TOP_MINUTE` puts the wait on one
+credit row and one key row; contended settles answer `intent_durable`
+(`commit_path=deferred`) and the drain charges them minutes later. A
+workspace whose key has a spend cap is on this path even when it is enabled
+on the fast path (`fastpath pilot passed over reason=key_cap`).
+
+`TR_WORKSPACE_BILLING_GATE_WIDTH` (`trusted_router/workspace_billing_gate.py`)
+lets that many of a workspace's credit-row transactions from one process be
+inside Spanner at a time: the reserve, the one-commit settle or refund, the
+two-commit finalize and the snapshot settle's frozen apply. The rest wait in
+the process, in arrival order.
+
+- It changes when a transaction starts and nothing about it. A caller without
+  a slot runs the same transaction at once.
+- A caller waits at most `TR_WORKSPACE_BILLING_GATE_WAIT_MS` and at most a
+  quarter of the Spanner budget it has left, inside that budget, so no request
+  takes longer than it could before. Then it starts ungated.
+- At most `TR_WORKSPACE_BILLING_GATE_MAX_WAITERS` callers of one workspace
+  wait in a process and at most 12 across workspaces (of an instance's 16
+  request slots). One more starts ungated at once.
+- It does not apply to a workspace the process knows to be sharded, to a
+  caller with no Spanner deadline to wait inside (the settle-outbox drain,
+  whose applies already take turns per workspace), or to a strict-budget
+  key's authorize, which already takes turns on its key's own slot
+  ("Strict budget busy" below). That key's settles are gated like any other.
+
+It is per process. The row still sees up to that many transactions from each
+instance, and releases from different instances can still abort each other,
+so it bounds the pile-up; it does not remove the lock upgrade. `0` turns it
+off, and is the way back.
+
+Each caller that waited or went around writes one line, with no workspace,
+key or request identifier; a caller that found the slot free writes nothing:
+
+```
+metric=workspace_billing_gate outcome=waited kind=settle_one_commit wait_ms=41.3 queued=2
+```
+
+`outcome` is `waited` (got the slot after waiting), `timeout` (reached its
+bound and started ungated), `waiters_full` (the workspace's or the process's
+waiters were full), `no_budget` (no Spanner budget left to wait in) or
+`subjects_full`. `kind` is `authorize`, `settle_one_commit`, `finalize` or
+`frozen_finalize`. `queued` is how many callers of the workspace were already
+waiting. During a burst from one workspace, read these beside the statistics
+above: mostly `waited`, with fewer aborts than commits for
+`tr_settle_one_commit` and few `commit_path=deferred` settles, means the gate
+is absorbing the burst; mostly `timeout` or `waiters_full` means the burst is
+larger than one process's queue, and the excess is running as it did before
+the gate.
+
 ### Latency and API failures
 
 A one-minute commit-latency event (2026-10-11 09:13Z: every transaction shape

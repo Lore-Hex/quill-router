@@ -745,6 +745,18 @@ class Settings(BaseSettings):
     # Settlement has a wider gate because it closes already-issued holds, but
     # one hot key must not consume every Spanner session in an instance.
     settle_per_key_inflight_limit: int = 16
+    # A workspace with one credit shard writes one tr_credit_balance row on
+    # every synchronous authorize, settle and refund. This many of its
+    # credit-row transactions from one process may be inside Spanner at a
+    # time; the rest wait in the process, in arrival order, for at most the
+    # wait below (and at most a quarter of the Spanner budget they have left),
+    # then start as they would have without it. It changes when a transaction
+    # starts and nothing about it (workspace_billing_gate.py). 0 is off.
+    workspace_billing_gate_width: int = Field(default=0, ge=0, le=4)
+    workspace_billing_gate_wait_ms: int = Field(default=1000, ge=1, le=5000)
+    # Callers of one workspace parked at the gate in one process; one more
+    # starts at once. Half of an instance's 16 request slots.
+    workspace_billing_gate_max_waiters: int = Field(default=8, ge=1, le=12)
     # Only front doors that overwrite X-TrustedRouter-Client-IP may opt into
     # edge_header. Public origins that cannot perform that overwrite must stay
     # on the safe default and aggregate into the untrusted_lb bucket.
