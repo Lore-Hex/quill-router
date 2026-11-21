@@ -46,7 +46,7 @@
   const PRIVACY_COPY = {
     4: {
       title: "Trusted operators only",
-      body: "Confidential inference from Tinfoil and Privatemode, selected by TrustedRouter for operator physical security and reliability history.",
+      body: "Confidential inference from operators selected by TrustedRouter for operator physical security and reliability history.",
     },
     0: {
       title: "Open upstream routing",
@@ -502,7 +502,7 @@
       "div",
       "route-guard",
       state.privacy === 4
-        ? "Filtered to Trusted confidential routes from Tinfoil and Privatemode."
+        ? "Filtered to confidential routes from Trusted operators."
         : state.privacy >= 3
         ? "Filtered to verified confidential compute + E2EE + ZDR provider routes."
         : state.privacy >= 2

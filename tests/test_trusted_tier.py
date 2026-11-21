@@ -26,6 +26,7 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
 )
 from trusted_router.config import Settings
+from trusted_router.provider_contracts import MAPLE_MODEL_ID, MAPLE_NATIVE_ID
 from trusted_router.routing import chat_route_endpoint_candidates, resolve_model_alias
 from trusted_router.routing_snapshot import live_requested_models
 
@@ -76,10 +77,20 @@ def test_specific_model_can_require_trusted(pinned_model) -> None:
     assert {e.provider for _, e in candidates} == {"tinfoil", "privatemode"}
 
 
+def test_trusted_alias_with_maple_only_never_selects_another_workload() -> None:
+    candidates = chat_route_endpoint_candidates({
+        "model": "nyte/trusted",
+        "provider": {"only": ["maple"], "allow_fallbacks": False},
+    }, Settings())
+    assert {(e.provider, e.model_id, e.upstream_id, e.usage_type) for _, e in candidates} == {
+        ("maple", MAPLE_MODEL_ID, MAPLE_NATIVE_ID, "Credits"),
+    }
+
+
 @pytest.mark.parametrize("provider", [
     {"only": ["openai"]}, {"only": ["phala"]},
     {"order": ["openai"], "allow_fallbacks": False},
-    {"ignore": ["tinfoil", "privatemode"]},
+    {"ignore": ["tinfoil", "privatemode", "maple"]},
 ])
 def test_conflicting_provider_filter_fails_closed(provider) -> None:
     with pytest.raises(HTTPException):
@@ -119,7 +130,7 @@ def test_catalog_and_snapshot_publish_the_same_trusted_contract() -> None:
     tr = payload["trustedrouter"]
     assert "nyte/trusted" in tr["aliases"]
     assert tr["route_kind"] == "trusted_pool"
-    assert tr["required_provider_slugs"] == ["tinfoil", "privatemode"]
+    assert tr["required_provider_slugs"] == ["tinfoil", "privatemode", "maple"]
     assert tr["required_privacy_tier"] == PRIVACY_TIER_TRUSTED
     snapshot_model = next(m for m in live_requested_models(Settings()) if m.id == TRUSTED_MODEL_ID)
     assert snapshot_model.overrides.privacy_requirements == (PRIVACY_TIER_TRUSTED,)
@@ -154,7 +165,7 @@ def test_public_labels_and_docs(client: TestClient) -> None:
         card["data-provider-id"] for card in soup.select("[data-provider-row]")
         if card.select('[data-privacy="trusted"]')
     }
-    assert trusted == {"tinfoil", "privatemode"}
+    assert trusted == {"tinfoil", "privatemode", "maple"}
     assert soup.select_one('select[data-provider-privacy] option[value="trusted"]')
     assert {card["data-provider-id"] for card in soup.select('[data-trusted="true"]')} == trusted
     filtered = BeautifulSoup(client.get("/models?filter=trusted").text, "html.parser")

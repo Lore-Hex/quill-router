@@ -73,7 +73,7 @@ const r = await client.chat.completions.create({
 
 <section style="margin-top:48px" id="trusted-tier">
   <h2 id="trusted-selected-operators-confidential-inference">{{ topic("trusted-tier", "Trusted: selected operators, confidential inference") }}</h2>
-  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a>. TrustedRouter selects these operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
+  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through eligible Confidential endpoints from <a href="/providers/tinfoil">Tinfoil</a>, <a href="/providers/privatemode">Privatemode</a>, and <a href="/providers/maple">Maple</a>. For Maple, only the managed <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">DeepSeek V4.1 Flash Uncensored</a> route qualifies. Other Maple models and customer keys do not. TrustedRouter selects these operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
   <p>Every eligible endpoint must also meet the Confidential requirements: verified confidential compute, provider-side E2EE and explicit ZDR. Every fallback keeps those requirements and the same two-provider restriction. When no qualifying route remains, the request fails before inference.</p>
   <pre><code>{
   "model": "trustedrouter/trusted",

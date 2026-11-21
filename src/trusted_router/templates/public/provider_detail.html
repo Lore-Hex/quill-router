@@ -99,7 +99,7 @@
     <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
     {% else %}
     <p>These privacy labels describe {{ provider.name }}, the upstream model provider. Confidential requires all three: verified provider compute, end-to-end encryption and explicit zero data retention. Account and billing metadata are outside the content-retention claim.</p>
-    {% if provider.trusted_provider %}<p><a href="/docs#trusted-tier">Trusted</a> adds TrustedRouter's assessment of the operator's physical-security posture and reliability history. Tinfoil and Privatemode are the only operators in this tier.</p>{% endif %}
+    {% if provider.trusted_provider %}<p><a href="/docs#trusted-tier">Trusted</a> adds TrustedRouter's assessment of the operator's physical-security posture and reliability history. Only qualifying confidential routes receive this designation.{% if provider.id == "maple" %} For Maple, this covers only the TR-managed DeepSeek V4.1 Flash Uncensored route, not other models or customer keys.{% endif %}</p>{% endif %}
     {% endif %}
     <table>
       <tbody>

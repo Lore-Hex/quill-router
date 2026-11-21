@@ -21,6 +21,16 @@ i02 deployment, not the inference host. It does not alias stock DeepSeek.
 Only this exact model/native-ID pair under the managed credential qualifies;
 unknown models, alternate native IDs and BYOK cannot inherit its privacy claims.
 
+### Trusted operator decision (2026-11-20)
+
+TrustedRouter's operator signed off on Maple's physical-security and
+operating-history review for this managed route. This
+is TrustedRouter's operator assessment, not independent certification of the
+facility, hardware supplier, or current serving hardware. The route still
+has to pass the same confidential-compute, encryption, retention, model and
+regional admission checks. The decision does not qualify any other Maple
+model, credential or region.
+
 The public [Maple provider page](https://trustedrouter.com/providers/maple#maple-api)
 and [model page](https://trustedrouter.com/models/dealignai/deepseek-v4.1-flash-1017-uncensored#maple-api)
 include the same copyable Chat Completions example whenever the qualified route
@@ -109,13 +119,14 @@ this separate authorization mismatch after catalog publication was repaired.
 - [Transport V2 specification](https://github.com/MaplePrivacyLabs/Maple/blob/c668d817dceec5c2e7390de7c68a581c88ea2eea/services/opensecret/docs/transport-v2-protocol.md).
 - [Dedicated model routing and worker policy](https://github.com/MaplePrivacyLabs/Maple/blob/c668d817dceec5c2e7390de7c68a581c88ea2eea/services/opensecret/src/maple_inference.rs).
 
-The companion gateway repository's `enclave-go/maple-transport` uses the pinned SDK for
-qualification, not a new home-grown cryptographic implementation. Its fixed
-PCR0 was independently reproduced as recorded below; it does not fetch a mutable
-remote allowlist. The handshake authenticates the front enclave and binds session
-keys. GPU/model identity additionally depends on the reviewed, enforced downstream
-i02 policy, not just a successful front-enclave handshake. The SDK's default
-remote-history auto-approval is not used in the production TR connector.
+The companion gateway's `enclave-go/maple-transport` authenticates the front
+enclave and binds session keys with the pinned SDK. Its serving policy accepts
+the SDK's embedded production measurements and TR's independently reproduced
+measurement. On GCP and Azure it also accepts Maple's signed production
+measurement history; the AWS tunnel allows only the static set. That history
+is vendor-signed, not an independent TR reproduction of each entry. GPU/model
+identity additionally depends on the reviewed, enforced downstream i02 policy,
+not just a successful front-enclave handshake.
 
 Maple's [published measurement approval](https://github.com/MaplePrivacyLabs/Maple/commit/942efea0bfcbb7523d320186404dcb4cd8f27c0a)
 identifies backend source `7957ce78ad8eee7a173a9d877ff6e320876894c8` and
