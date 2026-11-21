@@ -5358,7 +5358,10 @@ def _llms_common_objections(domain: str) -> list[str]:
         "the upstream still processes content under its route terms; "
         f"[data visibility and retention]({data}) explains provider.only and provider.min_privacy "
         "restrictions that fail closed, region controls, and Batch's separate encrypted "
-        "retention boundary.",
+        "retention boundary. "
+        f"[Trace a request: provider, route, and charge](https://{domain}/docs#request-audit) "
+        "shows how to look up the gateway request ID, read the billing outcome, and use "
+        "the generation ID to confirm the provider and BYOK status without retrieving content.",
         "- C. Pin one provider with provider.only and provider.allow_fallbacks: false; the "
         "same key supports chat, embeddings, transcription, Batch, and video. "
         f"[Simple start]({simple}) also explains that TrustedRouter does not offer fine-tuning "

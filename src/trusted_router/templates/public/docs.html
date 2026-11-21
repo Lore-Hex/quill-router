@@ -388,6 +388,26 @@ with httpx.Client() as client:
   <p>Other routes report a settled or durable charge when known; an unknown cost is omitted, not shown as zero. BYOK, partner minimums, orchestration, hosted search, video, refunds, receipt surcharges, and custom or app markups retain their existing billing and reporting contracts.</p>
 </section>
 
+<section class="marketing-section" id="request-audit">
+  <h2>{{ topic("request-audit", "Trace a request: provider, route, and charge") }}</h2>
+  <p>Start with the <code>x-request-id</code> (also returned as <code>x-tr-request-id</code>) from the inference response headers. It starts with <code>rlog_</code>. This is not the completion ID in the response body. The lookups below are read-only: you do not need to send the prompt again.</p>
+  <p><strong>1. Check the charge.</strong> Use the same TrustedRouter inference key that made the request, but send the lookup to <code>{{ control_plane_api_base_url }}</code>, not the inference host. Lookups are workspace-scoped; a delegated key can only look up its own requests.</p>
+  <pre><code># Set REQUEST_ID to the rlog_ value from your response headers.
+BILLING=$(curl -fsS "{{ control_plane_api_base_url }}/requests/${REQUEST_ID:?set REQUEST_ID}/billing" \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY") &amp;&amp;
+  printf '%s\n' "$BILLING" | jq '.data | {billing_status, cost_microdollars, currency, generation_id}'</code></pre>
+  <p>For example, <code>"billing_status":"settled"</code> with <code>"cost_microdollars":1250</code> means TrustedRouter charged $0.00125. A settled zero is a known zero; <code>refunded</code> means this authorization was finalized at zero. For <code>pending</code>, check the same ID later. For <code>unknown</code>, no final amount is available. Neither a null cost nor a <code>404</code> proves the call was free. If you cannot reconcile it, give support the request ID and UTC time, not your key or prompt.</p>
+  <p><strong>2. Identify the provider.</strong> When the billing record includes a <code>generation_id</code>, pass that value (not the <code>rlog_</code> ID) to the generation lookup:</p>
+  <pre><code>GENERATION_ID=$(printf '%s\n' "$BILLING" | jq -er '.data.generation_id') &amp;&amp;
+  curl -fsSG "{{ control_plane_api_base_url }}/generation" \
+    -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+    --data-urlencode "id=$GENERATION_ID" | \
+  jq '.data | {requested_model, model, provider_name, is_byok, tokens_prompt, tokens_completion, total_cost_microdollars}'</code></pre>
+  <p><code>requested_model</code> is the model or alias you asked for when recorded; <code>model</code> and <code>provider_name</code> identify the recorded result. Use <code>is_byok</code>, not a zero cost, to confirm use of your own provider key. The TrustedRouter charge is not the upstream provider's invoice. Some billing outcomes have no generation ID.</p>
+  <p><strong>3. Keep the exact route when you need it.</strong> On a non-streaming Chat Completions response, capture <code>trustedrouter.routing.selected_endpoint</code> and <code>trustedrouter.routing.fallback_attempt_count</code> when present. The generation lookup does not return the endpoint ID or a full attempt history. Some routes intentionally hide the underlying endpoint. Save these metadata fields with the gateway request ID rather than logging the whole response.</p>
+  <p>For a list across the workspace, use a management key with <code>GET {{ control_plane_api_base_url }}/activity?group_by=request</code>. Activity is analytics, not the authoritative billing outcome. These audit lookups return metadata, not prompts or completions; <code>/v1/generation/content</code> returns <code>404</code>. See <a href="/who-can-see-your-data">who can see your data</a> for provider and retention boundaries.</p>
+</section>
+
 </div>
 </div>
 {% endblock %}

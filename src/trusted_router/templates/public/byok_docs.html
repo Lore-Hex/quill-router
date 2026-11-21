@@ -29,6 +29,7 @@
   -H "Content-Type: application/json" \
   --data '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello"}],"provider":{"only":["openai"],"allow_fallbacks":false,"usage":"byok"}}'</code></pre>
   <p>Choose a current BYOK-capable model from the <a href="/models">catalog</a>. You can also require <code>provider.min_privacy</code>; see <a href="/docs/provider-routing">provider routing and privacy controls</a>.</p>
+  <p>To confirm which credential was used, <a href="/docs#request-audit">trace the request</a> and check <code>is_byok</code> on its generation record. A zero charge alone does not identify BYOK.</p>
 </section>
 <section class="content-section">
   <h2>Delete a provider configuration</h2>
