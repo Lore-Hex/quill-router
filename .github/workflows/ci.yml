@@ -1029,7 +1029,9 @@ jobs:
           print(f"lifecycle clock pinned to {stamp}")
           '
       - name: Copy oracle split weights for recording
-        run: cp .test_durations durations-${{ matrix.shard }}.json
+        # Median non-coverage proof timings from main runs 44865658379,
+        # 44870202393 and 44870524042. Keep coverage and clock profiles separate.
+        run: cp .test_durations-oracle durations-${{ matrix.shard }}.json
       - name: Frozen-main proof matrix without coverage
         run: >-
           uv run pytest -q -n 4 --dist loadgroup

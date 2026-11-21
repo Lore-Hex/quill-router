@@ -121,7 +121,7 @@ jobs:
           print(f"lifecycle clock pinned to {stamp}")
           '
       - name: Copy oracle split weights for recording
-        run: cp .test_durations durations-${{ matrix.shard }}.json
+        run: cp .test_durations-oracle durations-${{ matrix.shard }}.json
       - name: Frozen-main proof matrix without coverage
         run: >-
           uv run pytest -q -n 4 --dist loadgroup

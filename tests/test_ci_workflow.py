@@ -187,6 +187,21 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
         assert upload["with"]["retention-days"] == 7
 
 
+def test_default_oracle_uses_its_own_weights_without_filtering_cases() -> None:
+    from scripts.ci.commit_scope import ORACLE_INPUTS, ORACLE_TESTS
+
+    job = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]["proof-oracle"]
+    steps = job["steps"]
+    index = next(i for i, step in enumerate(steps) if "uv run pytest" in step.get("run", ""))
+    path = "durations-${{ matrix.shard }}.json"
+    assert steps[index - 1]["run"] == f"cp .test_durations-oracle {path}"
+    assert ".test_durations-oracle" in ORACLE_INPUTS
+    command = steps[index]["run"]
+    assert f"-m proof_oracle {' '.join(ORACLE_TESTS)}" in command
+    assert f"--splits {len(job['strategy']['matrix']['shard'])} --group ${{{{ matrix.shard }}}}" in command
+    assert f"--durations-path={path}" in command
+
+
 def test_the_heavy_lane_and_the_shards_partition_the_suite() -> None:
     # Every test of the default suite runs once at the default clock: the
     # eight shards ignore exactly the files the heavy lane runs, both lists
