@@ -424,10 +424,10 @@
   },
   "io-net": {
     "card_version": 2,
-    "model_count": 40,
+    "model_count": 41,
     "name": "IO Intelligence",
     "privacy": "Policy documented",
-    "route_count": 40,
+    "route_count": 41,
     "route_mode": "Prepaid",
     "slug": "io-net"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
