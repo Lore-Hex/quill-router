@@ -585,12 +585,6 @@
       ],
       "default_effort": "high"
     },
-    "dots-studio/dots-3-note-preview:free": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "elorian/glimpse": {
       "mandatory": false,
       "default_enabled": false,
@@ -1067,12 +1061,6 @@
     "liquid/lfm-3-1.7b:free": {
       "mandatory": true,
       "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "meituan/longcat-2.0": {
-      "mandatory": false,
-      "default_enabled": true,
       "supported_efforts": [],
       "default_effort": null
     },
