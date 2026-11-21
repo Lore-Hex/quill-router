@@ -749,9 +749,9 @@ class Settings(BaseSettings):
     # every synchronous authorize, settle and refund. This many of its
     # credit-row transactions from one process may be inside Spanner at a
     # time; the rest wait in the process, settles and refunds ahead of
-    # reserves and otherwise in arrival order, then start as they would have
-    # without it. It changes when a transaction starts and nothing about it
-    # (workspace_billing_gate.py). 0 is off.
+    # reserves and otherwise in arrival order, then start ungated. It changes
+    # when a transaction starts, and so how much of its deadline is left, and
+    # nothing else about it (workspace_billing_gate.py). 0 is off.
     workspace_billing_gate_width: int = Field(default=0, ge=0, le=4)
     # One wait is at most a quarter of the Spanner budget the caller has
     # left (five seconds of a reserve's twenty, a second and a quarter of a

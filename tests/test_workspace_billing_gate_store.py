@@ -15,7 +15,7 @@ What they pin:
   are inside the store one at a time and none is redone; with it off they
   pile up and abort each other;
 * the money is identical either way: the gate changes when a transaction
-  starts and nothing about it;
+  starts, never what it writes;
 * a caller over the waiter cap or past the wait bound runs as it does with
   the gate off, and is charged exactly once;
 * a waiting settle goes before a waiting reserve;

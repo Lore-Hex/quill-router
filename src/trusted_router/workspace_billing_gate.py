@@ -12,8 +12,8 @@ here"). The row then serves a fraction of what it can.
 
 This gate lets ``width`` of a workspace's credit-row transactions from this
 process be inside Spanner at a time. The rest wait here for a bounded time
-and then start exactly as they would have without it. The settle-outbox
-worker already takes turns per workspace this way
+and then start ungated, the same transaction with what is left of its
+deadline. The settle-outbox worker already takes turns per workspace this way
 (services/settle_outbox_worker._WorkspaceGate); this is the same idea for
 the request path.
 
