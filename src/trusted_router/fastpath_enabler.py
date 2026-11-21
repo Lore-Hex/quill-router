@@ -77,9 +77,19 @@ GUARD_ROWS = (FLEET_HOLD, PAUSE_ROW, ARMED_ROW)
 # an operator's list; guarded, a change of facts that could be a reading
 # defect. Each list is in precedence order, and a workspace is counted under
 # its first cause alone. A rank past the margin is paced, not guarded.
+#
+# "debt_rules" (credit rows that break section 4.7's debt rules,
+# breaks_debt_rules) is guarded, not uncapped. The grant does not refuse such
+# a workspace (it reads the mark and the signed sum, not each row's sign), so
+# its disable is a real change, not a formality, and it stands beside
+# "credit_rows", the other cause read from the rows' own shape. A few go at
+# the next run; more than the cap at once is a writer or a reading gone
+# wrong, which the guard holds for an operator, who also has the fleet
+# audit's fleet_audit_fault for each.
 UNCAPPED = ("latched", "paused", "in_debt", "held")
 WHOLE = ("excluded", "async_shadow")
-GUARDED = ("credit_rows", "tier", "balance", "bypass", "deleted", "federated", "probe", "monitor_key")
+GUARDED = ("credit_rows", "debt_rules", "tier", "balance", "bypass", "deleted", "federated", "probe",
+           "monitor_key")
 PRECEDENCE = UNCAPPED + WHOLE + GUARDED
 RANK = "rank"
 
@@ -252,6 +262,7 @@ class CreditRow:
     credits: int
     usage: int
     reconciled_through: datetime | None
+    reserved: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,10 +313,10 @@ class EnablerConfig:
 
 
 def _row(values: Sequence[Any]) -> CreditRow:
-    shard, tier, latched_at, _override_tier, causes, in_debt, credits, usage, _reserved, reconciled = values
+    shard, tier, latched_at, _override_tier, causes, in_debt, credits, usage, reserved, reconciled = values
     return CreditRow(shard=int(shard), tier=int(tier or 0), latched=latched_at is not None,
                      paused=bool(causes), in_debt=bool(in_debt), credits=int(credits or 0),
-                     usage=int(usage or 0), reconciled_through=reconciled)
+                     usage=int(usage or 0), reconciled_through=reconciled, reserved=int(reserved or 0))
 
 
 def unspent(rows: Sequence[CreditRow]) -> int:
@@ -316,15 +327,42 @@ def lifetime_usage(rows: Sequence[CreditRow]) -> int:
     return sum(row.usage for row in rows)
 
 
+def breaks_debt_rules(rows: Sequence[CreditRow]) -> bool:
+    """Whether the rows break section 4.7's debt rules, read exactly as the
+    node's audit reads them (Go's store.CheckIdentity, the switch that ends
+    fastpath/internal/store/identity.go), on each row's headroom, its credit
+    less its usage and its reservations: the rows' marks differ; or a row
+    is negative and the rows are not marked; or the rows are marked and
+    their signed sum is not negative. Every writer since the debt rules
+    (2026-10-07) leaves none of these, but a row a settle overran before
+    them stays negative until money comes into its workspace, a later
+    settle squares its rows, or scripts/settle_negative_shards.py does, and
+    the fleet audit raises fleet_audit_fault for an enabled workspace that
+    has one. The sums are exact (Python's integers), as Go's are."""
+    if not rows:
+        return False
+    marked = rows[0].in_debt
+    if any(row.in_debt != marked for row in rows):
+        return True
+    headroom = [row.credits - row.usage - row.reserved for row in rows]
+    if marked:
+        return sum(headroom) >= 0
+    return any(value < 0 for value in headroom)
+
+
 def credit_causes(rows: Sequence[CreditRow], override: Override | None, *, enabled: bool, included: bool,
                   config: EnablerConfig) -> list[str]:
     """The causes the credit rows and the override give, in precedence
     order: the grant's own refusals read as Go's rowsRefuse reads them
     (debt mark, pause, the least tier with a latched row at zero), the
     rows' completeness (shards 0..n-1, as Go's readCreditRows requires),
-    the tier below the config's required tier, the balance (the enable
-    balance to join, the disable balance to stay), and a tier resting on an
-    identity bypass, unless included."""
+    complete rows that break the debt rules (breaks_debt_rules; Go's
+    CheckIdentity gives no verdict on incomplete rows either), the tier
+    below the config's required tier, the balance (the enable balance to
+    join, the disable balance to stay), and a tier resting on an identity
+    bypass, unless included. Rows with any mark are "in_debt" first, so
+    "debt_rules" is a workspace's first cause only when a row is negative
+    and none is marked."""
     causes = []
     if any(row.latched for row in rows):
         causes.append("latched")
@@ -334,8 +372,11 @@ def credit_causes(rows: Sequence[CreditRow], override: Override | None, *, enabl
         causes.append("in_debt")
     if not rows or [row.shard for row in rows] != list(range(len(rows))):
         causes.append("credit_rows")
-    elif min(0 if row.latched else row.tier for row in rows) < config.required_tier:
-        causes.append("tier")
+    else:
+        if breaks_debt_rules(rows):
+            causes.append("debt_rules")
+        if min(0 if row.latched else row.tier for row in rows) < config.required_tier:
+            causes.append("tier")
     balance = unspent(rows)
     if (balance < config.disable_balance) if enabled else (balance < config.enable_balance):
         causes.append("balance")
