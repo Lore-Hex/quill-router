@@ -33,6 +33,12 @@ TERRAFORM = ROOT / "infra" / "fastpath_enabler_alerts.tf"
 RUNBOOK = ROOT / "docs" / "runbooks" / "fastpath-alerts.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-production.yml"
 SECRETS = "trustedrouter-sentry-dsn\ntrustedrouter-synthetic-monitor-api-key\n"
+# The job's pinned literals (2026-11-20): the rank's reach, and the join and
+# leave balances over the nodes' $2 floor, which the order rules below hold
+# them to. Each is written once here and once in the job's script.
+MAX_RANK = 250
+ENABLE_BALANCE = 3_000_000
+DISABLE_BALANCE = 2_000_000
 
 
 def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, secrets: str = SECRETS,
@@ -62,15 +68,16 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     run = _run(tmp_path, monkeypatch)
     assert run.returncode == 0, summarise(run)
     env, bindings, job = _job(run)
-    # WS5: apply writes the allow-list once armed; the hundred largest join.
-    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "100"
+    # Apply writes the allow-list once armed; the rank reaches past every
+    # workspace that could be eligible (the script's comment).
+    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == str(MAX_RANK)
     lists = resolved_lists()
     # The include list is its own literal since WS2 emptied the pilot set.
     assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_ENABLER_INCLUDE"] != ""
     assert lists["TR_FASTPATH_PILOT_WORKSPACES"] == "" and "TR_FASTPATH_PILOT_ALL" not in env
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
-    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "30000000"
-    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "5000000"
+    assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == str(ENABLE_BALANCE)
+    assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == str(DISABLE_BALANCE)
     # The required tier, a literal no lower than the nodes' (section 4(b)).
     assert env["TR_FASTPATH_ENABLER_REQUIRED_TIER"] == "1"
     assert env["TR_STORAGE_BACKEND"] == "spanner-clickhouse" and env["TR_SERVICE_SURFACE"] == "control"
@@ -94,7 +101,8 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "apply" and config.max_rank == 100 and config.required_tier == 1
+    assert config.mode == "apply" and config.max_rank == MAX_RANK and config.required_tier == 1
+    assert (config.enable_balance, config.disable_balance) == (ENABLE_BALANCE, DISABLE_BALANCE)
     assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
 
 
@@ -160,6 +168,7 @@ def test_the_enablers_join_balance_is_above_the_nodes_floor() -> None:
     alone, fails here (widening design (b); fastpath-deploy.md, "Lowering
     the floor")."""
     assert _job_balance("ENABLE") >= _nodes_floor() + JOIN_ABOVE_FLOOR
+    assert _job_balance("ENABLE") == ENABLE_BALANCE
 
 
 def test_the_enablers_leave_balance_is_no_lower_than_the_nodes_floor() -> None:
@@ -168,21 +177,31 @@ def test_the_enablers_leave_balance_is_no_lower_than_the_nodes_floor() -> None:
     door hop for each request while its owner asks Spanner for a lease once
     a second and is refused. A leave balance at the floor or above removes
     that band, where an enabled workspace can never lease. Until 2026-11-20
-    the band was there: the leave balance was $5 under a $20 floor.
+    the band was there: the leave balance was $5 under a $20 floor. Since
+    the balances followed the floor, the leave balance is the floor, $2.
 
-    The rule promises no lease above the floor. A workspace at exactly the
-    leave balance stays on (it leaves only under it) and cannot fund even
-    the least ask, $0.01, over the floor. Reservations lower the headroom
-    the check reads but not the unspent credit the enabler measures. And the
-    floor plus the whole amount asked must fit, so a workspace a little over
-    the floor is refused any ask larger than the difference. Such requests
-    pass to the synchronous path, as every request of the old band did.
+    The rule promises no lease above the floor, and a band of refusals
+    remains. A workspace at exactly the leave balance stays on (it leaves
+    only under it), and one with $2.005 unspent cannot fund even the least
+    ask, $0.01, over the floor. Reservations lower the headroom the check
+    reads but not the unspent credit the enabler measures: $3 unspent with
+    $1 reserved is at the floor. And the floor plus the whole amount asked
+    must fit: $3 does not cover an ask of $1.10. Such requests pass to the
+    synchronous path, as every request of the old band did.
+
+    What that band costs: while such a workspace has traffic, its owner
+    asks again at most once a second for each admission shard (one by
+    default; the nodes' startup passes no -shards), each ask a transaction
+    that reads all of the workspace's credit rows and, refused, writes
+    nothing. Nothing backs off further, and the asks stop when the traffic
+    does.
 
     With the auto-refill rule below (the leave balance under the least
     auto-refill threshold, $10) this holds only for a floor under $10: a
     return to the $20 floor is the revert of the change that lowered it,
     this rule with it, after the enabler's balances are back up."""
     assert _job_balance("DISABLE") >= _nodes_floor()
+    assert _job_balance("DISABLE") == DISABLE_BALANCE
 
 
 def test_the_floor_checks_read_each_literal() -> None:

@@ -1,0 +1,5 @@
+{% macro topic(fragment, label) -%}
+  {%- if docs_index_topics -%}
+    <a class="docs-topic-link" href="#{{ fragment }}" title="Permalink to {{ label }}">{{ label }}</a>
+  {%- else -%}{{ label }}{%- endif -%}
+{%- endmacro %}

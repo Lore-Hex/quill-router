@@ -75,10 +75,13 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
 
     assert response.status_code == 200
     assert "List your models on TrustedRouter." in response.text
-    assert "provider.ops@nytex.com" in response.text
+    assert "provider.ops@nytex.com" not in response.text.lower()
     assert "providers@trustedrouter.com" not in response.text
     soup = BeautifulSoup(response.text, "html.parser")
-    assert len(soup.select('a[href^="mailto:provider.ops@nytex.com"]')) == 4
+    contact = soup.select('a[data-provider-contact]')
+    assert [a["data-provider-contact"] for a in contact] == ["application", "email", "application", "application"]
+    assert all(a["href"] == "/support#support-inquiry" and a.get_text(strip=True) for a in contact)
+    assert soup.select_one('script[src^="/static/provider-marketplace-contact.js"]')
     assert "Legal company name:" in response.text
     assert "Privacy policy:" in response.text
     assert "DUNS number:" in response.text
@@ -122,10 +125,6 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "&#34;example_input&#34;" in response.text
     assert "Provider sign in" in response.text
     assert "Exclude account administration, billing, user management" in response.text
-    assert (
-        'href="mailto:provider.ops@nytex.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D"'
-        in response.text
-    )
     assert (
         '<link rel="canonical" href="https://trustedrouter.com/providers/marketplace">'
         in response.text

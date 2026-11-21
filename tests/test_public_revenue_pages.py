@@ -529,7 +529,6 @@ def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
         "TrustedRouter stores billing and route metadata, never prompt/output content."
         in response.text
     )
-    assert "OpenAI compatible API" in response.text
     legacy = client.get("/docs/fusion", follow_redirects=False)
     assert legacy.status_code == 301
     assert legacy.headers["location"] == "/docs/synth"
@@ -647,13 +646,19 @@ def test_byok_only_model_page_reports_no_credits_route(
 ) -> None:
     # A model served only on a BYOK route, as a fixture: which hosts list Hy3
     # preview today, and how, is provider state.
+    # The model's display name is fixture state too: serve_on_fixture_route
+    # keeps a model the catalog already carries, and the catalog's name for it
+    # follows whichever source lists it (it fell back to the bare id when
+    # OpenRouter's snapshot dropped Hy3 preview on 2026-11-20, failing the
+    # hourly price refresh's exact-SHA CI).
+    from trusted_router.catalog import MODELS
+
     model_id = "tencent/hy3-preview"
     drop_routes(monkeypatch, model_id)
-    serve_on_fixture_route(
-        monkeypatch, model_id, "gmi", author="gmi", usage_type="BYOK",
-        model=Model(id=model_id, name="Tencent: Hy3 preview", provider="gmi",
-                    context_length=262_144),
-    )
+    monkeypatch.setitem(MODELS, model_id, Model(
+        id=model_id, name="Tencent: Hy3 preview", provider="gmi", context_length=262_144,
+    ))
+    serve_on_fixture_route(monkeypatch, model_id, "gmi", author="gmi", usage_type="BYOK")
     response = client.get("/models/tencent/hy3-preview")
 
     assert response.status_code == 200

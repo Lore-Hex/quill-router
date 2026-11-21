@@ -1,5 +1,6 @@
+{% from "public/_docs_topic.html" import topic with context %}
 <section class="content-section" aria-label="Python SDK choice">
-  <h2>Python SDK choice</h2>
+  <h2 id="python-sdk-choice">{{ topic("python-sdk-choice", "Python SDK choice") }}</h2>
   <p>Recommended default: the official <code>openai</code> SDK with <code>base_url="https://api.trustedrouter.com/v1"</code>. No new dependency if you already use it.</p>
   <p>Optional typed SDK: <code>pip install trusted-router-py</code>, then <code>import trustedrouter</code>. <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK source</a>.</p>
 </section>
