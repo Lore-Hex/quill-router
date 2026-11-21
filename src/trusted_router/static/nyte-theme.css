@@ -2579,6 +2579,101 @@
   :root[data-brand="nyte"] .pricing-page #minimum-charges td:nth-child(6)::before { content: "Multiple"; }
 }
 
+/* /best-llm-router: the /pricing reading column (plain rules, no cards)
+   for a gateway comparison table, a copy-and-code split, three route
+   notes and a short checklist. */
+:root[data-brand="nyte"] .router-guide-page .guide-section {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 72px 0 0;
+}
+:root[data-brand="nyte"] .router-guide-page .guide-section:last-of-type { padding-bottom: 72px; }
+:root[data-brand="nyte"] .router-guide-page .guide-section h2 {
+  margin: 0 0 28px;
+  font-size: 36px;
+  font-weight: 300;
+  letter-spacing: -.02em;
+}
+:root[data-brand="nyte"] .router-guide-page .guide-section p {
+  font-size: 17px;
+  line-height: 1.6;
+  font-weight: 450;
+  color: var(--nyte-ink, #151311);
+}
+:root[data-brand="nyte"] .router-guide-page .guide-lead { max-width: 62ch; margin: 0 0 28px; }
+:root[data-brand="nyte"] .router-guide-page .guide-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+  line-height: 1.5;
+}
+:root[data-brand="nyte"] .router-guide-page .guide-table :is(th, td) {
+  padding: 18px 24px 18px 0;
+  border-bottom: 1px solid var(--nyte-stone, #DEDAD0);
+  background: transparent;
+  color: var(--nyte-ink, #151311);
+  text-align: left;
+  vertical-align: top;
+  font-weight: 450;
+}
+:root[data-brand="nyte"] .router-guide-page .guide-table thead th {
+  padding-top: 0;
+  border-bottom: 1.5px solid var(--nyte-ink, #151311);
+  font: 550 14px/1.4 var(--tr-font-family-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-brand="nyte"] .router-guide-page .guide-table tbody th {
+  width: 22%;
+  font: 550 17px/1.5 var(--tr-font-family-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-brand="nyte"] .router-guide-page .guide-steps tr:first-child > * { border-top: 1.5px solid var(--nyte-ink, #151311); }
+:root[data-brand="nyte"] .router-guide-page .guide-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 48px;
+  align-items: start;
+  padding-top: 24px;
+  border-top: 1.5px solid var(--nyte-ink, #151311);
+}
+:root[data-brand="nyte"] .router-guide-page .guide-split p:first-child { margin-top: 0; }
+:root[data-brand="nyte"] .router-guide-page .guide-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+:root[data-brand="nyte"] .router-guide-page .guide-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px;
+  padding-top: 24px;
+  border-top: 1.5px solid var(--nyte-ink, #151311);
+}
+:root[data-brand="nyte"] .router-guide-page .guide-columns h3 { margin: 0 0 10px; font-size: 21px; font-weight: 550; letter-spacing: -.01em; }
+:root[data-brand="nyte"] .router-guide-page .guide-columns p { margin: 0; }
+:root[data-brand="nyte"] .router-guide-page .guide-section :is(p, td) code { font-size: .9em; }
+
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] .router-guide-page .guide-section { padding-top: var(--tr-phone-section-space); }
+  :root[data-brand="nyte"] .router-guide-page .guide-section:last-of-type { padding-bottom: var(--tr-phone-section-space); }
+  :root[data-brand="nyte"] .router-guide-page .guide-section h2 { font-size: 30px; }
+  :root[data-brand="nyte"] .router-guide-page .guide-split,
+  :root[data-brand="nyte"] .router-guide-page .guide-columns { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  :root[data-brand="nyte"] .router-guide-page .guide-table thead { display: none; }
+  :root[data-brand="nyte"] .router-guide-page .guide-table :is(tbody, tr, th, td),
+  :root[data-brand="nyte"] .router-guide-page .guide-table tbody th { display: block; width: auto; }
+  :root[data-brand="nyte"] .router-guide-page .guide-table tbody tr { border-bottom: 1px solid var(--nyte-stone, #DEDAD0); padding: 16px 0; }
+  :root[data-brand="nyte"] .router-guide-page .guide-table tbody tr:first-child { border-top: 1.5px solid var(--nyte-ink, #151311); }
+  :root[data-brand="nyte"] .router-guide-page .guide-table :is(th, td),
+  :root[data-brand="nyte"] .router-guide-page .guide-steps tr:first-child > * { border: 0; padding: 0 0 10px; }
+  :root[data-brand="nyte"] .router-guide-page .guide-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--nyte-ink-2, #57514A);
+    font: 600 13px/1.4 var(--tr-font-family-sans);
+  }
+}
+
 /* Phones: one section rhythm for every page. Each section gets
    --tr-phone-section-space above and below its content, whatever its own
    sheet sets for laptops and desktops. Page sheets keep their desktop values;

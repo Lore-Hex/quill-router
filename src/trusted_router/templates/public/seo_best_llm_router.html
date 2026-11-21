@@ -1,28 +1,34 @@
 {% extends "public/_base.html" %}
+{% block body_attributes %}class="router-guide-page"{% endblock %}
 {% block body %}
-<section class="panel" aria-label="Choose an AI router by your workload">
-  <div class="panel-head"><h2>Choose your AI router by the decision that matters</h2></div>
-  <div class="panel-body">
-    <ul>
-      <li><strong>Lower cost:</strong> compare input and output prices for your actual token mix, then measure quality on the same tasks. Start with <a href="/pricing">live pricing</a>.</li>
-      <li><strong>Reliable failover:</strong> verify the fallback model, provider and privacy floor, not just whether a retry succeeds. Review <a href="/llm-failover">failover controls</a>.</li>
-      <li><strong>Private inference:</strong> separate gateway attestation from the upstream provider's policy. Inspect <a href="/trust">verification evidence</a> before sending sensitive work.</li>
-      <li><strong>Distinctive models:</strong> test a named checkpoint such as <a href="/abliterated-deepseek">uncensored DeepSeek for cyberdefense</a> without changing the API used by your application.</li>
-    </ul>
-    <p>Run a small <a href="/docs/evals">workload-specific evaluation</a> before selecting a default. A single leaderboard or a long provider list cannot choose for your application.</p>
-  </div>
+<section class="guide-section" aria-labelledby="guide-compare">
+  <h2 id="guide-compare">Choose your AI router by the decision that matters</h2>
+  <p class="guide-lead">Compare gateways on four things: where the gateway runs, what happens when a provider fails, how it controls spend, and what it does with your prompts. Each row cites the vendor's own documentation, checked November 2026.</p>
+  <table class="guide-table">
+    <thead><tr><th scope="col">Gateway</th><th scope="col">Hosting, failover and cost</th><th scope="col">Prompt privacy</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><a href="/docs">TrustedRouter</a></th><td data-label="Hosting, failover and cost">Hosted. 600+ models across 100+ providers. Automatic provider fallback and model pools such as <code>trustedrouter/auto</code>. Daily, weekly and monthly spend limits per key. <a href="/pricing">Provider cost plus 5.5%</a>.</td><td data-label="Prompt privacy">The gateway keeps zero prompt or output logs. <code>provider.min_privacy</code> requires zero-retention or confidential routes and fails before inference when none qualify. <a href="/trust">Verify the gateway</a>.</td></tr>
+      <tr><th scope="row"><a href="https://openrouter.ai/docs/quickstart" rel="noopener">OpenRouter</a></th><td data-label="Hosting, failover and cost">Hosted. Automatic provider fallback and a very large catalog. Budgets on paid plans. <a href="https://openrouter.ai/pricing" rel="noopener">5.5% fee on credit purchases</a>, 8% on Business.</td><td data-label="Prompt privacy">Zero-retention routing on every plan. EU in-region routing on Business and Enterprise.</td></tr>
+      <tr><th scope="row"><a href="https://docs.litellm.ai/docs/proxy/architecture" rel="noopener">LiteLLM</a></th><td data-label="Hosting, failover and cost">Open-source proxy you self-host. Retries and fallbacks you configure. Budgets on virtual keys.</td><td data-label="Prompt privacy">Runs on your infrastructure. What it logs depends on the callbacks you enable.</td></tr>
+      <tr><th scope="row"><a href="https://portkey.ai" rel="noopener">Portkey</a></th><td data-label="Hosting, failover and cost">Now PRISMA AIRS AI Gateway from Palo Alto Networks. Routing strategies and budget limits.</td><td data-label="Prompt privacy">Guardrails, PII redaction and detailed activity logs for governance.</td></tr>
+      <tr><th scope="row"><a href="https://requesty.ai" rel="noopener">Requesty</a></th><td data-label="Hosting, failover and cost">Hosted. Failover chains plus cost, latency and availability routing. Budget caps. 5% markup on model costs.</td><td data-label="Prompt privacy">PII masking and EU data residency.</td></tr>
+      <tr><th scope="row"><a href="https://developers.cloudflare.com/ai-gateway/" rel="noopener">Cloudflare AI Gateway</a></th><td data-label="Hosting, failover and cost">Hosted. Retries, model fallback, caching and rate limits.</td><td data-label="Prompt privacy"><a href="https://developers.cloudflare.com/ai-gateway/observability/logging/" rel="noopener">Logs prompts and responses by default</a>; payload logging can be switched off per request.</td></tr>
+      <tr><th scope="row"><a href="https://vercel.com/docs/ai-gateway" rel="noopener">Vercel AI Gateway</a></th><td data-label="Hosting, failover and cost">Hosted. Provider failover and budgets. <a href="https://vercel.com/docs/ai-gateway/pricing" rel="noopener">Provider list prices with zero token markup</a>.</td><td data-label="Prompt privacy">Per-request zero data retention on paid plans. Searchable request logs.</td></tr>
+    </tbody>
+  </table>
 </section>
-<section class="marketing-split" aria-label="Best LLM router and AI gateway comparison 2026">
-  <div class="marketing-copy">
-    <span class="eyebrow">Best LLM router · AI gateway comparison · 2026</span>
-    <h2>The best AI router is the one whose privacy claims you can verify with a curl command.</h2>
-    <p>Every AI router in this comparison does the basics well: one API, many models, failover when a provider drops. OpenRouter popularized the aggregator approach and has a very large catalog. LiteLLM is an open-source proxy you can self-host. Portkey builds deep observability. Requesty optimizes spend. They differ most on one dimension: what happens to your prompt inside the gateway.</p>
-    <p>TrustedRouter is an OpenAI-compatible AI gateway with 600+ models across 100+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, and Qwen. The prompt path runs inside a hardware-attested confidential-compute enclave: the source is open, the image digest is published, and the attestation is checkable live against the running gateway. {{ content_handling_claim }}</p>
-    <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/security">Verify the gateway</a></p>
-  </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>Switch in one line</span><span>Python</span></div>
-    <pre><code>from openai import OpenAI
+
+<section class="guide-section" aria-labelledby="guide-failover">
+  <h2 id="guide-failover">Failover keeps your model. Model routing changes it.</h2>
+  <div class="guide-split">
+    <div>
+      <p>Every AI router in this comparison gives you one API across many providers. The useful question is which decision it makes for you. Provider failover sends a request for the same model to another provider when one fails. Model routing sends it to a different model. Check which one a product does before relying on "automatic routing".</p>
+      <p>TrustedRouter is OpenAI-compatible, so switching is a base URL and key change. {{ content_handling_claim }}</p>
+      <p class="guide-actions"><a class="btn primary" href="/chat">Open the playground</a> <a class="btn secondary" href="/security">Verify the gateway</a></p>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>Switch in one line</span><span>Python</span></div>
+      <pre><code>from openai import OpenAI
 
 client = OpenAI(
     base_url="{{ api_base_url }}",
@@ -31,25 +37,39 @@ client = OpenAI(
 
 reply = client.chat.completions.create(
     model="trustedrouter/auto",
-    messages=[{"role": "user", "content": "Pick the best route for this."}],
+    messages=[{"role": "user", "content": "Hello"}],
 )</code></pre>
+    </div>
   </div>
 </section>
-<section class="marketing-grid three">
-  <div class="marketing-card"><span class="card-label">Routing</span><h3>Meta-routes do the picking</h3><p>Send trustedrouter/auto and the gateway picks the best fit per request. trustedrouter/cheap finds the cheapest capable route, still through the attested gateway. <code>trustedrouter/frontier</code>, <code>trustedrouter/advanced</code>, <code>trustedrouter/professional</code>, and <code>trustedrouter/efficient</code> use fixed ordered pools with no synthesis or implicit privacy floor. trustedrouter/synth fuses a panel of open models and beats single frontier models on <a href="/synth">published evals</a>.</p></div>
-  <div class="marketing-card"><span class="card-label">Reliability</span><h3>Failover, with numbers</h3><p>Automatic provider fallback keeps requests flowing when a provider goes down. Measured latency comes from real routed requests and is published at the <a href="/llm-provider-latency-benchmarks">latency benchmarks page</a>, so you can check the numbers before you commit.</p></div>
-  <div class="marketing-card"><span class="card-label">Payments</span><h3>Credits, BYOK, or a wallet</h3><p>Prepaid credits through Stripe, bring-your-own provider keys, or x402 pay-per-request with Continue with MetaMask sign-in that works without a traditional account. <a href="/pricing">Per-model pricing</a> is transparent, with a thin markup over provider list prices.</p></div>
+
+<section class="guide-section" aria-labelledby="guide-routes">
+  <h2 id="guide-routes">TrustedRouter routes</h2>
+  <div class="guide-columns">
+    <div>
+      <h3><code>trustedrouter/auto</code></h3>
+      <p>Tries a fixed list of recommended models across several providers, in order, and moves down the list when one fails. Privacy requirements filter the list before any provider is contacted.</p>
+    </div>
+    <div>
+      <h3><code>trustedrouter/cheap</code></h3>
+      <p>Tries low-priced chat models from several model makers, cheapest first. Each response reports <code>usage.cost_microdollars</code>, so you can check what every call cost.</p>
+    </div>
+    <div>
+      <h3>Fixed tiers</h3>
+      <p><code>trustedrouter/frontier</code>, <code>advanced</code>, <code>professional</code> and <code>efficient</code> use fixed ordered pools. Compare them at the <a href="/choose">model chooser</a>.</p>
+    </div>
+  </div>
 </section>
-<section class="compare-matrix" aria-label="LLM gateway comparison 2026">
-  <div class="matrix-row matrix-head"><span></span><strong>Their strength</strong><strong>TrustedRouter</strong></div>
-  <div class="matrix-row"><span>OpenRouter</span><span>Very large public catalog, big community, quick start.</span><span>600+ models and an attested prompt path; switching is a base_url change (see the <a href="/openrouter-alternative">OpenRouter comparison</a>).</span></div>
-  <div class="matrix-row"><span>LiteLLM</span><span>Open-source proxy you self-host and fully control.</span><span>Works well as LiteLLM's final upstream: keep direct providers first, then reach 600+ models through TrustedRouter.</span></div>
-  <div class="matrix-row"><span>Portkey</span><span>Deep observability, logging, and guardrails tooling.</span><span>No prompt or output logs; real-time inference is content-stateless; Batch retention is explicit.</span></div>
-  <div class="matrix-row"><span>Requesty</span><span>Cost-aware routing and spend controls.</span><span>trustedrouter/cheap picks the cheapest capable route through the attested gateway.</span></div>
-  <div class="matrix-row"><span>All of them</span><span>One API across many model providers.</span><span>The same, plus a privacy tier on every route: Open, Zero-Data-Retention, or TEE.</span></div>
-</section>
-<section class="quote-feature">
-  <div><span class="eyebrow">The verification test</span><h2>Attestation beats a privacy policy.</h2></div>
-  <div><p>Any gateway can publish a policy document. TrustedRouter answers a curl with a JWT signed by the CPU vendor's root key, bound to the live TLS session, with an image digest you can match against the published open-source artifact. Your compliance team can run that check before the first prompt flows, and your CI can run it every day after.</p><p>One proof point, anonymized: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Compare smart, cheap, and fast routes at the <a href="/choose">model chooser</a>, read the <a href="/openrouter-alternative">OpenRouter deep-dive</a>, or see how <a href="/security">end-to-end confidential compute</a> works.</p></div>
+
+<section class="guide-section" aria-labelledby="guide-test">
+  <h2 id="guide-test">Test it yourself</h2>
+  <table class="guide-table guide-steps">
+    <tbody>
+      <tr><th scope="row">Fallback</th><td>Pick a model served by several providers on its <a href="/models">model page</a>. Send the same request with <code>provider.only</code> or <code>provider.ignore</code> and check which provider served each call. The <a href="/llm-failover">failover guide</a> covers rollover behaviour.</td></tr>
+      <tr><th scope="row">Price</th><td>Send the same prompt through each route you are comparing and record <code>usage.cost_microdollars</code>. Compare real charges for your token mix against <a href="/pricing">live pricing</a>.</td></tr>
+      <tr><th scope="row">Privacy</th><td>Add <code>"provider": {"min_privacy": "zdr"}</code>, then exclude the qualifying providers. The request should fail before inference instead of taking a weaker route. The confidential endpoint returns <code>400 confidential_privacy_required</code> when the setting is missing.</td></tr>
+      <tr><th scope="row">Managed or self-hosted</th><td>A self-hosted proxy such as LiteLLM gives you full control of deployment and keys, and your team maintains it. A managed gateway removes that work. Either way, run a small <a href="/docs/evals">workload-specific evaluation</a> before picking a default.</td></tr>
+    </tbody>
+  </table>
 </section>
 {% endblock %}
