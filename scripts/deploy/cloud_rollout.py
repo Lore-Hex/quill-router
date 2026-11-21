@@ -31,6 +31,7 @@ import re
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -99,6 +100,18 @@ WAITER_DEADLINE_MARGIN = 120
 # seconds, and at most this many checks run (each is a few GitHub API reads).
 PRUNE_BUDGET_SECONDS = 60
 PRUNE_MAX_CHECKS = 4
+# A lease owner's re-check of the holdback (Coordinator.check) waits this long
+# between whole-probe retries while the holdback gives NO answer: a timeout, a
+# dropped connection, or a 429/502/503/504 that fetch() already retried. Any
+# answer that shows the holdback unhealthy, wrong or changing still refuses at
+# once. 2026-11-21: azure's single Container Apps replica was rescheduled
+# (about 07:44-07:48Z, RestartCount 0, no deploy), both re-checks timed out
+# within one minute, and the gcp lease went blocked although gcp had shipped.
+# 195 s of waits plus five probes (each at most about 50 s of timed-out
+# fetches) stays inside every job that calls check().
+HOLDBACK_UNREACHABLE_WAITS = (15, 30, 60, 90)
+# fetch() retries these itself; still seeing one means no answer, not "unhealthy".
+NO_ANSWER_HTTP = frozenset({429, 502, 503, 504})
 # A repository name can be re-created after a rename; its immutable id cannot.
 GITHUB_REPOSITORY_IDS = {
     "Lore-Hex/quill-router": 1227431177,
@@ -116,6 +129,14 @@ class Busy(Refused):
 
 class Redirected(Refused):
     """The cloud answered with a redirect, not a document of its own."""
+
+
+class Unreachable(Refused):
+    """The cloud gave no answer (timeout, dropped connection, gateway error).
+
+    Still a refusal everywhere it is raised. Only Coordinator.check, where a
+    refusal blocks a lease that already changed production, retries it.
+    """
 
 
 class Conflict(RuntimeError):
@@ -286,7 +307,23 @@ def probe_cloud(cloud: str) -> str:
         # The cause is printed with the refusal: a deploy that stops here
         # leaves a blocked lease, and the operator recovering it needs to know
         # whether the holdback was down, answered badly, or was changing.
-        raise Refused(f"{cloud} is not a verified healthy holdback ({step}: {probe_failure(exc)})") from exc
+        refusal = Unreachable if no_answer(exc) else Refused
+        raise refusal(f"{cloud} is not a verified healthy holdback ({step}: {probe_failure(exc)})") from exc
+
+
+def no_answer(exc: BaseException) -> bool:
+    """True when EXC means the cloud did not answer, not that it answered badly.
+
+    A redirect, a non-JSON body, an unhealthy status or changing evidence is an
+    answer. A timeout, a refused or reset connection, a DNS failure, or a
+    429/502/503/504 that outlived fetch()'s own retries is not.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in NO_ANSWER_HTTP
+    if isinstance(exc, urllib.error.URLError):
+        # A certificate the cloud should not be presenting is an answer.
+        return not isinstance(exc.reason, ssl.SSLCertVerificationError)
+    return isinstance(exc, (TimeoutError, ConnectionError))
 
 
 # A /health status printed verbatim. Anything else the remote server sends is
@@ -980,8 +1017,10 @@ class Coordinator:
                 if lease["state"] != "active" or lease["expires_at"] <= self.now():
                     raise Refused("lease blocked or expired; recovery required, slot remains reserved")
                 protected = state["holdback"]
-                if self.probe(protected["cloud"]) != protected["release"]:
+                if self.probe_holdback(protected["cloud"]) != protected["release"]:
                     raise Refused("protected cloud release changed")
+                if lease["expires_at"] <= self.now():
+                    raise Refused("lease expired while the holdback was checked; recovery required")
                 current_raw, current = self.store.read()
                 # Waiter heartbeats move the generation without touching any
                 # lease or the holdback; only those must be unchanged.
@@ -991,6 +1030,29 @@ class Coordinator:
             except Conflict:
                 continue
         raise Refused("release journal changed during guard verification")
+
+    def probe_holdback(self, cloud: str) -> str:
+        """self.probe(cloud), retried while the holdback gives no answer.
+
+        Only Unreachable is retried, HOLDBACK_UNREACHABLE_WAITS apart; every
+        answer (unhealthy, wrong cloud, changing evidence) refuses at once, and
+        a holdback still silent after the last wait refuses as before, saying
+        it never answered.
+        """
+        waits = iter(HOLDBACK_UNREACHABLE_WAITS)
+        tries = 0
+        while True:
+            tries += 1
+            try:
+                return self.probe(cloud)
+            except Unreachable as exc:
+                delay = next(waits, None)
+                if delay is None:
+                    raise Unreachable(f"{exc}; no answer on {tries} tries over "
+                                      f"{sum(HOLDBACK_UNREACHABLE_WAITS)} s of waits") from exc
+                print(f"cloud_rollout.holdback_no_answer: {exc}; retry {tries} in {delay} s",
+                      file=sys.stderr, flush=True)
+                time.sleep(delay)
 
     @staticmethod
     def owned_key(state: dict[str, Any], cloud: str, operation: str) -> tuple[str, dict[str, Any]]:
