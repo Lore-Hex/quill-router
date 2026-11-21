@@ -2798,16 +2798,6 @@
       ],
       "default_effort": "high"
     },
-    "tencent/hy3-preview": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "high",
-        "low",
-        "none"
-      ],
-      "default_effort": "high"
-    },
     "tencent/hy4": {
       "mandatory": false,
       "default_enabled": true,

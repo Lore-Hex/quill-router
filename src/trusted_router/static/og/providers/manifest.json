@@ -73,10 +73,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 51,
+    "model_count": 39,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 51,
+    "route_count": 39,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 80,
+    "model_count": 76,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 159,
+    "route_count": 151,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -289,10 +289,10 @@
   },
   "fal": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 1,
     "name": "fal.ai",
     "privacy": "Policy documented",
-    "route_count": 2,
+    "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "fal"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -955,10 +955,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 61,
+    "model_count": 56,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 109,
+    "route_count": 104,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },
@@ -1018,10 +1018,10 @@
   },
   "zero-g": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "0G Private Computer",
     "privacy": "Provider TEE claim",
-    "route_count": 3,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "zero-g"
   },

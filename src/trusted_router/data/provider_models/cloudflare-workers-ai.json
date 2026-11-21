@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-11-20T15:28:38Z",
+  "generated_at": "2026-11-21T00:16:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 42,
   "models": [
@@ -47,7 +47,8 @@
       "routable": true,
       "context_length": 80000,
       "input_token_price_per_m": 497000,
-      "output_token_price_per_m": 4881000
+      "output_token_price_per_m": 4881000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/google/gemma-2b-it-lora",
@@ -69,7 +70,8 @@
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
       "routable": false,
       "routable_reason": "awaiting-price",
-      "context_length": 8192
+      "context_length": 8192,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/google/gemma-4-26b-a4b-it",
@@ -113,7 +115,8 @@
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
       "routable": false,
       "routable_reason": "awaiting-price",
-      "context_length": 3500
+      "context_length": 3500,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/ibm-granite/granite-4.0-h-micro",
@@ -155,7 +158,8 @@
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
       "routable": false,
       "routable_reason": "awaiting-price",
-      "context_length": 8192
+      "context_length": 8192,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/meta/llama-3.1-8b-instruct-fp8",
@@ -178,7 +182,8 @@
       "routable": true,
       "context_length": 32000,
       "input_token_price_per_m": 152000,
-      "output_token_price_per_m": 287000
+      "output_token_price_per_m": 287000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/meta/llama-3.2-11b-vision-instruct",
@@ -222,7 +227,8 @@
       "routable": true,
       "context_length": 60000,
       "input_token_price_per_m": 27000,
-      "output_token_price_per_m": 201000
+      "output_token_price_per_m": 201000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/meta/llama-3.2-3b-instruct",
@@ -245,7 +251,8 @@
       "routable": true,
       "context_length": 80000,
       "input_token_price_per_m": 50900,
-      "output_token_price_per_m": 335000
+      "output_token_price_per_m": 335000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
@@ -373,7 +380,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 160000
+      "cached_input_token_price_per_m": 160000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/moonshotai/kimi-k2.7-code",
@@ -397,7 +405,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 190000
+      "cached_input_token_price_per_m": 190000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "Kimi K3",
@@ -449,7 +458,8 @@
       "routable": true,
       "context_length": 256000,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/openai/gpt-oss-120b",
@@ -535,7 +545,8 @@
       "routable": true,
       "context_length": 32768,
       "input_token_price_per_m": 50900,
-      "output_token_price_per_m": 335000
+      "output_token_price_per_m": 335000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/qwen/qwq-32b",
@@ -558,7 +569,8 @@
       "routable": true,
       "context_length": 24000,
       "input_token_price_per_m": 660000,
-      "output_token_price_per_m": 1000000
+      "output_token_price_per_m": 1000000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/zai-org/glm-4.7-flash",
@@ -603,7 +615,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/deepseek-ai/deepseek-v4-flash-0731",
@@ -627,7 +640,8 @@
       "routable": true,
       "input_token_price_per_m": 440000,
       "output_token_price_per_m": 1320000,
-      "cached_input_token_price_per_m": 14000
+      "cached_input_token_price_per_m": 14000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/deepseek-ai/deepseek-v4-pro-0813",
@@ -651,7 +665,8 @@
       "routable": true,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 44000
+      "cached_input_token_price_per_m": 44000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/qwen/qwen3.8-27b",
@@ -697,7 +712,8 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/zai-org/glm-5.3",
