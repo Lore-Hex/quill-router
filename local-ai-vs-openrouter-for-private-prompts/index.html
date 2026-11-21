@@ -1,0 +1,181 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local AI or a private API after OpenRouter? | TrustedRouter Notes</title><meta name="description" content="Compare an offline model and a hosted endpoint on the same confidential workflow.">
+<link rel="canonical" href="https://trustedrouter.com/notes/local-ai-vs-openrouter-for-private-prompts"><meta property="og:title" content="Local AI or a private API after OpenRouter?">
+<meta property="og:description" content="Compare an offline model and a hosted endpoint on the same confidential workflow."><meta property="og:url" content="https://trustedrouter.com/notes/local-ai-vs-openrouter-for-private-prompts">
+<style>/* NYTE design tokens · CSS custom properties · V2 (Nov 2026). Generated from nyte.tokens.json. */
+/* Fonts: load ABC Pelikan, Pelikan Condensed and Pelikan Mono (licensed from Dinamo) before use. */
+
+:root {
+  /* Hero tier (≈80% with Ink and Cream as grounds) */
+  --ink: #151311;
+  --cream: #FAF8F4;
+  --gray: #F1EEE7;
+  --stone: #DEDAD0;
+  --ink-2: #57514A;
+  --ink-2-dark: #B9B2A8;
+  --dark-rule: #3A3631;
+  /* Color tier (≈15%: page lead color + accent hits) */
+  --purple: #9B93F5;
+  --yellow: #FFC800;
+  --lime: #C9E265;
+  --sky: #BFE3EC;
+  /* Functional tier (≈5%) */
+  --orange: #FF6B35;
+  --deep-purple: #4B3FA8;
+  --green: #2E3313;
+  /* Tints (highlights only, never a section ground) */
+  --lilac: #DCD8FB;
+  --yellow-tint: #FCE79F;
+  --lime-tint: #E9F0C2;
+  --sky-tint: #E5F1F1;
+  /* Page theme (COL-01): set --lead on the page root */
+  --lead-market: var(--purple);
+  --lead-price: var(--yellow);
+  --lead-trust: var(--lime);
+  --lead-knowledge: var(--sky);
+  --lead: var(--purple);
+  /* Type families */
+  --font-sans: "ABC Pelikan", "Helvetica Neue", Arial, sans-serif;
+  --font-condensed: "ABC Pelikan Condensed", "Arial Narrow", sans-serif;
+  --font-mono: "ABC Pelikan Mono", Menlo, monospace;
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --space-10: 128px;
+  /* Radius: square corners everywhere */
+  --radius-none: 0px;
+  --radius-round: 50%;
+  /* Stroke */
+  --stroke-rule: 1.5px;
+  --stroke-head: 2.5px;
+  --stroke-accent: 4px;
+  --stroke-bar: 10px;
+  --stroke-illustration: 6px;
+  --band-1: 2px;
+  --band-2: 5px;
+  --band-3: 8px;
+  --band-4: 12px;
+  --band-5: 17px;
+  --band-6: 22px;
+  --band-pitch: 24px;
+  /* Motion */
+  --duration-ui: 160ms;
+  --duration-reveal: 320ms;
+  --duration-data: 800ms;
+  --ticker-speed: 60;  /* px per second, after a 2s pause */
+  --ease-standard: cubic-bezier(.2, .7, .2, 1);
+  /* Layout */
+  --grid-columns: 12;
+  --grid-gutter: 24px;
+  --grid-margin: 64px;
+  --grid-max: 1440px;
+  --section-padding: 128px;
+}
+
+/* Semantic colors · light theme */
+:root, [data-theme="light"] {
+  --ground: #FAF8F4;
+  --text: #151311;
+  --text-2: #57514A;
+  --rule: #DEDAD0;
+  --sunken: #F1EEE7;
+  --surface: #FFFFFF;
+  --link: #4B3FA8;
+  --verified-ink: #2E3313;
+}
+
+/* Semantic colors · dark theme */
+[data-theme="dark"] {
+  --ground: #151311;
+  --text: #FAF8F4;
+  --text-2: #B9B2A8;
+  --rule: #3A3631;
+  --sunken: #221F1C;
+  --surface: #1E1B18;
+  --link: #B7AEF7;
+  --verified-ink: #C9E265;
+}
+
+[data-page="market"] { --lead: var(--purple); }
+[data-page="price"] { --lead: var(--yellow); }
+[data-page="trust"] { --lead: var(--lime); }
+[data-page="knowledge"] { --lead: var(--sky); }
+
+/* Type styles */
+.display-1 { font-family: var(--font-sans); font-size: 104px; line-height: 0.96; font-weight: 300; letter-spacing: -0.02em; }
+.display-2 { font-family: var(--font-sans); font-size: 72px; line-height: 1.0; font-weight: 300; letter-spacing: -0.015em; }
+.display-3 { font-family: var(--font-sans); font-size: 48px; line-height: 1.05; font-weight: 300; letter-spacing: -0.01em; }
+.heading-1 { font-family: var(--font-sans); font-size: 32px; line-height: 1.15; font-weight: 500; letter-spacing: -0.01em; }
+.heading-2 { font-family: var(--font-sans); font-size: 24px; line-height: 1.2; font-weight: 500; }
+.heading-3 { font-family: var(--font-sans); font-size: 19px; line-height: 1.3; font-weight: 500; }
+.lead { font-family: var(--font-sans); font-size: 22px; line-height: 1.45; font-weight: 400; }
+.body { font-family: var(--font-sans); font-size: 17px; line-height: 1.55; font-weight: 400; }
+.small { font-family: var(--font-sans); font-size: 14px; line-height: 1.5; font-weight: 400; }
+.label { font-family: var(--font-condensed); font-size: 13px; line-height: 1.2; font-weight: 500; letter-spacing: 0.10em; text-transform: uppercase; }
+.data { font-family: var(--font-mono); font-size: 14px; line-height: 1.5; font-weight: 400; font-feature-settings: 'tnum'; }
+.ticker { font-family: var(--font-mono); font-size: 13px; line-height: 1.4; font-weight: 500; letter-spacing: 0.02em; font-feature-settings: 'tnum'; }
+.figure { font-family: var(--font-sans); font-size: 72px; line-height: 1.0; font-weight: 300; letter-spacing: -0.02em; font-feature-settings: 'tnum'; }
+
+@media (max-width: 767px) {
+  .display-1 { font-size: 48px; } .display-2 { font-size: 40px; } .display-3 { font-size: 32px; }
+}
+
+/* Focus: never remove */
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-duration: 0ms !important; }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--cream); color: var(--ink);
+  font: 400 1.125rem/1.65 var(--font-sans); -webkit-font-smoothing: antialiased;
+}
+.frame { width: min(100% - 2.5rem, 72rem); margin-inline: auto; }
+nav, footer { background: var(--ink); color: var(--cream); }
+nav .frame, footer .frame { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; }
+nav a, footer a { color: inherit; }
+.brand { font-weight: 700; text-decoration: none; letter-spacing: -.035em; font-size: 1.3rem; }
+nav a:last-child, time, footer { font: .875rem/1.5 var(--font-mono); }
+a { color: var(--deep-purple); text-underline-offset: .19em; }
+a:hover { text-decoration-thickness: .14em; }
+a:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+header { padding-block: clamp(2.5rem, 6vw, 5rem); }
+h1, h2, h3 { line-height: 1.1; text-wrap: balance; }
+h1 { max-width: 22ch; margin: 0; font: 700 clamp(2.35rem, 6vw, 5rem)/1.02 var(--font-condensed); letter-spacing: -.045em; overflow-wrap: anywhere; }
+header p { max-width: 57ch; margin: 1rem 0 0; }
+.band { height: 48px; overflow: hidden; background: var(--ink); }
+.band svg { display: block; width: 100%; height: auto; }
+main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
+.story { max-width: 64ch; margin-inline: auto; overflow-wrap: anywhere; }
+.story time, .listing time { color: var(--ink-2); }
+.story h2 { margin-top: 1.6em; }
+.story pre, .story table { max-width: 100%; overflow-x: auto; display: block; }
+.story pre { padding: 1rem; background: var(--gray); }
+.listing { border-top: var(--stroke-head) solid var(--ink); }
+.listing article { display: grid; grid-template-columns: 9rem 1fr; gap: 1.5rem; border-bottom: var(--stroke-rule) solid var(--stone); padding: 1.5rem 0; }
+.listing h2 { margin: 0; }
+.listing h2 a { color: var(--ink); text-decoration-color: var(--sky); text-decoration-thickness: 3px; }
+.listing p { max-width: 65ch; margin: .6rem 0 0; }
+@media (max-width: 42rem) {
+  .listing article { grid-template-columns: 1fr; gap: .5rem; }
+  .band { display: none; }
+  footer .frame { flex-wrap: wrap; }
+}
+</style><script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Local AI or a private API after OpenRouter?", "description": "Compare an offline model and a hosted endpoint on the same confidential workflow.", "datePublished": "2026-11-21", "url": "https://trustedrouter.com/notes/local-ai-vs-openrouter-for-private-prompts", "author": {"@type": "Organization", "name": "TrustedRouter"}}</script></head>
+<body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
+<header class="frame"><h1>Local AI or a private API after OpenRouter?</h1><p>Compare an offline model and a hosted endpoint on the same confidential workflow.</p></header>
+<div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
+<main class="frame"><div class="story"><time datetime="2026-11-21">2026-11-21</time><article><p>For document classification, an offline model can keep the source files on a managed workstation. Verify that the app can complete the task with networking disabled. A local interface may still call a remote embedding service, telemetry endpoint or tool.</p>
+<h2>Run a two-part trial</h2>
+<p>Use ten fictional documents with known labels. Measure accuracy, turnaround and memory use locally. Send the same fictional set to a hosted candidate and review its data path. Decide which documents can leave the workstation before considering whether a hosted route is cheaper.</p>
+<p><a href="/openrouter-alternative">Compare OpenRouter alternatives</a> · <a href="/notes/openrouter-privacy-alternative-vendor-questions">How to evaluate an OpenRouter privacy alternative for your company</a></p>
+</article></div></main>
+<footer><div class="frame"><a href="/notes">All notes</a><a href="/models">Browse models</a></div></footer></body></html>
