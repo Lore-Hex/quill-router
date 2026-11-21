@@ -111,6 +111,7 @@ def test_window_keeps_one_workspace_from_the_start_and_matches_tags_exactly() ->
     window = generations_in_window(generations, workspace_id=WORKSPACE, start_at=START_AT)
     assert [gen.id for gen in window] == [
         "g01", "g02", "g03", "g04", "g05", "g06", "g07", "g08", "g09", "g10", "g11", "g14",
+        "g15", "g16",
     ]
 
     def matching(**tag: str | None) -> list[str]:
@@ -135,13 +136,15 @@ def test_keys_and_values_rank_by_requests_then_text() -> None:
     )
 
     assert count_tag_keys(window, limit=10) == [
-        {"key": "team", "requests": 10},
+        {"key": "team", "requests": 12},
         {"key": "environment", "requests": 5},
     ]
-    assert count_tag_keys(window, limit=1) == [{"key": "team", "requests": 10}]
-    assert count_tag_values(window, tag_key="team", limit=4) == [
+    assert count_tag_keys(window, limit=1) == [{"key": "team", "requests": 12}]
+    # Equal counts fall back to the text: "ads" before "zeta", "" before "Search".
+    assert count_tag_values(window, tag_key="team", limit=5) == [
         {"value": "search", "requests": 4},
         {"value": "ads", "requests": 2},
+        {"value": "zeta", "requests": 2},
         {"value": "", "requests": 1},
         {"value": "Search", "requests": 1},
     ]
@@ -156,23 +159,50 @@ def test_breakdown_folds_the_tail_into_other_and_keeps_untagged_apart() -> None:
 
     assert [(row["kind"], row["value"], row["values"]) for row in rows] == [
         ("value", "search", 1),
-        # "ads" and "billing" both cost 700 in credits; ads has more requests.
-        ("value", "ads", 1),
-        ("other", None, 4),
+        # The cut is by cost: "billing" (800, one request) keeps its row and
+        # "ads" (700 in credits, two requests) does not.
+        ("value", "billing", 1),
+        ("other", None, 5),
         ("untagged", None, 0),
     ]
-    search, ads, other, untagged = rows
+    search, billing, other, untagged = rows
     assert search["cost_microdollars"] == 1350
     assert search["median_elapsed_ms"] == 400  # g04 has no latency and is not counted
+    assert (billing["requests"], billing["cost_microdollars"]) == (1, 800)
     # BYOK spend is reported apart from credit cost, as the usage chart does.
-    assert (ads["cost_microdollars"], ads["byok_microdollars"]) == (700, 500)
-    assert (other["requests"], other["cost_microdollars"], other["median_elapsed_ms"]) == (
-        4, 740, 700,
+    assert (other["requests"], other["cost_microdollars"], other["byok_microdollars"]) == (
+        7, 750, 500,
     )
+    assert other["median_elapsed_ms"] == 800
     assert (untagged["requests"], untagged["cost_microdollars"]) == (2, 100)
     # Nothing is lost: the rows add up to the window.
     assert sum(row["requests"] for row in rows) == len(window)
     assert sum(row["prompt_tokens"] for row in rows) == sum(gen.tokens_prompt for gen in window)
+
+
+@pytest.mark.parametrize(
+    ("limit", "kept", "folded"),
+    [
+        # Cost decides before requests: billing over ads.
+        (2, ["search", "billing"], 5),
+        # At equal cost, more requests first: zeta over Search and delta.
+        (5, ["search", "billing", "ads", "", "zeta"], 2),
+        # At equal cost and requests, the text decides: Search over delta.
+        (6, ["search", "billing", "ads", "", "zeta", "Search"], 1),
+        (7, ["search", "billing", "ads", "", "zeta", "Search", "delta"], 0),
+    ],
+)
+def test_the_values_that_keep_a_row_are_the_most_expensive(
+    limit: int, kept: list[str], folded: int
+) -> None:
+    window = generations_in_window(
+        fixture_generations(), workspace_id=WORKSPACE, start_at=START_AT
+    )
+
+    rows = order_breakdown(break_down_by_tag(window, group_by="team", limit=limit))
+
+    assert [row["value"] for row in rows if row["kind"] == "value"] == kept
+    assert [row["values"] for row in rows if row["kind"] == "other"] == ([folded] if folded else [])
 
 
 def test_summary_spends_one_read_on_a_workspace_without_tags() -> None:
@@ -457,10 +487,40 @@ def test_memory_and_clickhouse_agree_when_keys_and_values_are_cut(
     from_memory = _memory_store().activity_tag_summary(WORKSPACE, start_at=START_AT, **kwargs)
 
     assert from_memory == from_sql
-    assert from_sql["keys"] == [{"key": "team", "requests": 10}]
+    assert from_sql["keys"] == [{"key": "team", "requests": 12}]
     assert from_sql["keys_truncated"] is True
     assert from_sql["group_by"] == kwargs["group_by"]
     assert from_sql["filter_values_truncated"] is ("tag_key" in kwargs)
+
+
+@pytest.mark.parametrize(
+    ("limit", "kept", "folded"),
+    [
+        (2, ["search", "billing"], 5),
+        (5, ["search", "billing", "ads", "", "zeta"], 2),
+        (6, ["search", "billing", "ads", "", "zeta", "Search"], 1),
+    ],
+)
+def test_memory_and_clickhouse_keep_the_same_values_at_every_cut(
+    monkeypatch: pytest.MonkeyPatch, limit: int, kept: list[str], folded: int
+) -> None:
+    """Which values survive the cap is decided by cost, then requests, then text.
+
+    Each limit puts the cut where a different one of those three decides, so
+    a ranking that drops or reorders one of them, in SQL or in Python, shows.
+    """
+    monkeypatch.setattr(storage_activity_tags, "TAG_VALUE_LIMIT", limit)
+
+    from_sql = _sql_store([]).activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
+    from_memory = _memory_store().activity_tag_summary(
+        WORKSPACE, start_at=START_AT, group_by="team"
+    )
+
+    assert from_memory == from_sql
+    rows = from_sql["breakdown"]
+    assert [row["value"] for row in rows if row["kind"] == "value"] == kept
+    assert [row["values"] for row in rows if row["kind"] == "other"] == [folded]
+    assert [row["kind"] for row in rows][-2:] == ["other", "untagged"]
 
 
 def test_the_agreed_summary_is_the_expected_one() -> None:
@@ -476,7 +536,7 @@ def test_the_agreed_summary_is_the_expected_one() -> None:
         return {"kind": kind, "value": value, "values": values, **dict(zip(names, numbers, strict=True))}
 
     assert summary == {
-        "keys": [{"key": "team", "requests": 10}, {"key": "environment", "requests": 5}],
+        "keys": [{"key": "team", "requests": 12}, {"key": "environment", "requests": 5}],
         "keys_truncated": False,
         "group_by": "environment",
         "breakdown": [
@@ -488,10 +548,11 @@ def test_the_agreed_summary_is_the_expected_one() -> None:
         "filter_values": [
             {"value": "search", "requests": 4},
             {"value": "ads", "requests": 2},
+            {"value": "zeta", "requests": 2},
             {"value": "", "requests": 1},
             {"value": "Search", "requests": 1},
             {"value": "billing", "requests": 1},
-            {"value": "zeta", "requests": 1},
+            {"value": "delta", "requests": 1},
         ],
         "filter_values_truncated": False,
     }
@@ -503,7 +564,7 @@ def test_the_agreed_summary_is_the_expected_one() -> None:
         ({"tag_key": "team", "tag_value": "search"}, ["g04", "g03", "g02", "g01"], False),
         ({"tag_key": "environment"}, ["g10", "g05", "g03", "g02", "g01"], False),
         ({"tag_key": "team", "tag_value": ""}, ["g08"], False),
-        ({"tag_key": "team", "limit": 3}, ["g14", "g11", "g08"], True),
+        ({"tag_key": "team", "limit": 3}, ["g16", "g15", "g14"], True),
         ({"tag_key": "cost-center"}, [], False),
     ],
     ids=["key-and-value", "key-only", "empty-value", "cut", "no-match"],

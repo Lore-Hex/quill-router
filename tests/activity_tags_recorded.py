@@ -42,6 +42,13 @@ START_AT = "2026-03-01T00:00:00Z"
 # g04 has no latency, g06 is BYOK, g08 carries an empty value, g09 and g10 lack
 # the team key, g11 differs from "search" only by case, g12 is one millisecond
 # before the window and g13 belongs to another workspace.
+#
+# The team values are built so that every rule of the ranking decides a cut:
+#   search 1350, billing 800, ads 700 (in credits), "" 20, zeta 10, Search 10,
+#   delta 10
+# billing outranks ads on cost although ads has more requests (limit 2); zeta
+# outranks Search on requests at equal cost (limit 5); Search outranks delta on
+# text at equal cost and requests (limit 6).
 FIXTURE: list[tuple[str, str, str, dict[str, str], int, str, int, int, int | None]] = [
     ("g01", WORKSPACE, "2026-03-02T10:00:00.000Z", {"team": "search", "environment": "production"}, 900, "Credits", 100, 50, 400),  # noqa: E501
     ("g02", WORKSPACE, "2026-03-02T11:00:00.000Z", {"team": "search", "environment": "production"}, 300, "Credits", 40, 20, 200),  # noqa: E501
@@ -49,7 +56,7 @@ FIXTURE: list[tuple[str, str, str, dict[str, str], int, str, int, int, int | Non
     ("g04", WORKSPACE, "2026-03-03T09:30:00.000Z", {"team": "search"}, 50, "Credits", 20, 5, None),
     ("g05", WORKSPACE, "2026-03-04T08:00:00.000Z", {"team": "ads", "environment": "production"}, 700, "Credits", 70, 30, 150),  # noqa: E501
     ("g06", WORKSPACE, "2026-03-04T08:05:00.000Z", {"team": "ads"}, 500, "BYOK", 60, 25, 250),
-    ("g07", WORKSPACE, "2026-03-04T12:00:00.000Z", {"team": "billing"}, 700, "Credits", 80, 40, 90),
+    ("g07", WORKSPACE, "2026-03-04T12:00:00.000Z", {"team": "billing"}, 800, "Credits", 80, 40, 90),
     ("g08", WORKSPACE, "2026-03-05T01:00:00.000Z", {"team": ""}, 20, "Credits", 5, 5, 1000),
     ("g09", WORKSPACE, "2026-03-05T02:00:00.000Z", {}, 40, "Credits", 8, 4, 300),
     ("g10", WORKSPACE, "2026-03-05T03:00:00.000Z", {"environment": "production"}, 60, "Credits", 9, 3, 500),  # noqa: E501
@@ -57,6 +64,8 @@ FIXTURE: list[tuple[str, str, str, dict[str, str], int, str, int, int, int | Non
     ("g12", WORKSPACE, "2026-02-28T23:59:59.999Z", {"team": "search", "environment": "production"}, 9999, "Credits", 999, 999, 5),  # noqa: E501
     ("g13", OTHER_WORKSPACE, "2026-03-02T10:30:00.000Z", {"team": "other-workspace", "environment": "production"}, 8888, "Credits", 888, 888, 7),  # noqa: E501
     ("g14", WORKSPACE, "2026-03-05T05:00:00.000Z", {"team": "zeta"}, 10, "Credits", 3, 2, 800),
+    ("g15", WORKSPACE, "2026-03-05T06:00:00.000Z", {"team": "zeta"}, 0, "Credits", 1, 1, 900),
+    ("g16", WORKSPACE, "2026-03-05T07:00:00.000Z", {"team": "delta"}, 10, "Credits", 4, 2, 950),
 ]
 
 
@@ -84,24 +93,6 @@ def _breakdown(
     }
 
 
-_TEAM_VALUES = [
-    {"tag_value": "search", "requests": 4},
-    {"tag_value": "ads", "requests": 2},
-    {"tag_value": "", "requests": 1},
-    {"tag_value": "Search", "requests": 1},
-    {"tag_value": "billing", "requests": 1},
-    {"tag_value": "zeta", "requests": 1},
-]
-_TEAM_ROWS = [
-    _breakdown("value", "zeta", 1, 1, 10, 0, 3, 2, 800),
-    _breakdown("value", "", 1, 1, 20, 0, 5, 5, 1000),
-    _breakdown("value", "Search", 1, 1, 10, 0, 2, 1, 700),
-    _breakdown("value", "billing", 1, 1, 700, 0, 80, 40, 90),
-    _breakdown("value", "ads", 1, 2, 700, 500, 130, 55, 150),
-    _breakdown("value", "search", 1, 4, 1350, 0, 190, 85, 400),
-]
-_TEAM_UNTAGGED = _breakdown("untagged", "", 0, 2, 100, 0, 17, 7, 300)
-
 # Keyed by the read and its bound values:
 #   ("keys", workspace, limit)
 #   ("values", workspace, tag_key, limit)
@@ -110,11 +101,11 @@ _TEAM_UNTAGGED = _breakdown("untagged", "", 0, 2, 100, 0, 17, 7, 300)
 # ORDER BY, so the order of its rows carries no meaning.
 RECORDED: dict[tuple[Any, ...], list[dict[str, Any]]] = {
     ("keys", WORKSPACE, 101): [
-        {"tag_key": "team", "requests": 10},
+        {"tag_key": "team", "requests": 12},
         {"tag_key": "environment", "requests": 5},
     ],
     ("keys", WORKSPACE, 2): [
-        {"tag_key": "team", "requests": 10},
+        {"tag_key": "team", "requests": 12},
         {"tag_key": "environment", "requests": 5},
     ],
     ("keys", OTHER_WORKSPACE, 101): [
@@ -122,42 +113,88 @@ RECORDED: dict[tuple[Any, ...], list[dict[str, Any]]] = {
         {"tag_key": "team", "requests": 1},
     ],
     ("keys", EMPTY_WORKSPACE, 101): [],
-    ("values", WORKSPACE, "team", 51): _TEAM_VALUES,
-    ("values", WORKSPACE, "team", 3): _TEAM_VALUES[:3],
+    ("values", WORKSPACE, "team", 51): [
+        {"tag_value": "search", "requests": 4},
+        {"tag_value": "ads", "requests": 2},
+        {"tag_value": "zeta", "requests": 2},
+        {"tag_value": "", "requests": 1},
+        {"tag_value": "Search", "requests": 1},
+        {"tag_value": "billing", "requests": 1},
+        {"tag_value": "delta", "requests": 1},
+    ],
+    ("values", WORKSPACE, "team", 3): [
+        {"tag_value": "search", "requests": 4},
+        {"tag_value": "ads", "requests": 2},
+        {"tag_value": "zeta", "requests": 2},
+    ],
     ("values", WORKSPACE, "environment", 51): [
         {"tag_value": "production", "requests": 4},
         {"tag_value": "staging", "requests": 1},
     ],
     ("breakdown", WORKSPACE, "team", 50, None, None): [
-        _TEAM_ROWS[0],
-        _TEAM_UNTAGGED,
-        *_TEAM_ROWS[1:],
+        _breakdown("value", "zeta", 1, 2, 10, 0, 4, 3, 800),
+        _breakdown("value", "delta", 1, 1, 10, 0, 4, 2, 950),
+        _breakdown("untagged", "", 0, 2, 100, 0, 17, 7, 300),
+        _breakdown("value", "", 1, 1, 20, 0, 5, 5, 1000),
+        _breakdown("value", "Search", 1, 1, 10, 0, 2, 1, 700),
+        _breakdown("value", "billing", 1, 1, 800, 0, 80, 40, 90),
+        _breakdown("value", "ads", 1, 2, 700, 500, 130, 55, 150),
+        _breakdown("value", "search", 1, 4, 1350, 0, 190, 85, 400),
     ],
     ("breakdown", WORKSPACE, "team", 2, None, None): [
-        _breakdown("other", "", 4, 4, 740, 0, 90, 48, 700),
-        _TEAM_UNTAGGED,
-        _TEAM_ROWS[4],
-        _TEAM_ROWS[5],
+        _breakdown("other", "", 5, 7, 750, 500, 145, 66, 800),
+        _breakdown("untagged", "", 0, 2, 100, 0, 17, 7, 300),
+        _breakdown("value", "billing", 1, 1, 800, 0, 80, 40, 90),
+        _breakdown("value", "search", 1, 4, 1350, 0, 190, 85, 400),
+    ],
+    ("breakdown", WORKSPACE, "team", 5, None, None): [
+        _breakdown("other", "", 2, 2, 20, 0, 6, 3, 700),
+        _breakdown("value", "zeta", 1, 2, 10, 0, 4, 3, 800),
+        _breakdown("untagged", "", 0, 2, 100, 0, 17, 7, 300),
+        _breakdown("value", "", 1, 1, 20, 0, 5, 5, 1000),
+        _breakdown("value", "billing", 1, 1, 800, 0, 80, 40, 90),
+        _breakdown("value", "ads", 1, 2, 700, 500, 130, 55, 150),
+        _breakdown("value", "search", 1, 4, 1350, 0, 190, 85, 400),
+    ],
+    ("breakdown", WORKSPACE, "team", 6, None, None): [
+        _breakdown("other", "", 1, 1, 10, 0, 4, 2, 950),
+        _breakdown("value", "zeta", 1, 2, 10, 0, 4, 3, 800),
+        _breakdown("untagged", "", 0, 2, 100, 0, 17, 7, 300),
+        _breakdown("value", "", 1, 1, 20, 0, 5, 5, 1000),
+        _breakdown("value", "Search", 1, 1, 10, 0, 2, 1, 700),
+        _breakdown("value", "billing", 1, 1, 800, 0, 80, 40, 90),
+        _breakdown("value", "ads", 1, 2, 700, 500, 130, 55, 150),
+        _breakdown("value", "search", 1, 4, 1350, 0, 190, 85, 400),
     ],
     ("breakdown", WORKSPACE, "environment", 50, "team", "search"): [
         _breakdown("value", "staging", 1, 1, 100, 0, 30, 10, 600),
         _breakdown("value", "production", 1, 2, 1200, 0, 140, 70, 200),
         _breakdown("untagged", "", 0, 1, 50, 0, 20, 5, None),
     ],
-    ("breakdown", WORKSPACE, "team", 50, "team", None): _TEAM_ROWS,
+    ("breakdown", WORKSPACE, "team", 50, "team", None): [
+        _breakdown("value", "zeta", 1, 2, 10, 0, 4, 3, 800),
+        _breakdown("value", "delta", 1, 1, 10, 0, 4, 2, 950),
+        _breakdown("value", "", 1, 1, 20, 0, 5, 5, 1000),
+        _breakdown("value", "Search", 1, 1, 10, 0, 2, 1, 700),
+        _breakdown("value", "billing", 1, 1, 800, 0, 80, 40, 90),
+        _breakdown("value", "ads", 1, 2, 700, 500, 130, 55, 150),
+        _breakdown("value", "search", 1, 4, 1350, 0, 190, 85, 400),
+    ],
     ("breakdown", WORKSPACE, "environment", 2, None, None): [
         _breakdown("value", "staging", 1, 1, 100, 0, 30, 10, 600),
         _breakdown("value", "production", 1, 4, 1960, 0, 219, 103, 200),
-        _breakdown("untagged", "", 0, 7, 830, 500, 178, 82, 300),
+        _breakdown("untagged", "", 0, 9, 940, 500, 183, 85, 700),
     ],
     ("breakdown", WORKSPACE, "environment", 2, "team", None): [
         _breakdown("value", "staging", 1, 1, 100, 0, 30, 10, 600),
         _breakdown("value", "production", 1, 3, 1900, 0, 210, 100, 200),
-        _breakdown("untagged", "", 0, 6, 790, 500, 170, 78, 700),
+        _breakdown("untagged", "", 0, 8, 900, 500, 175, 81, 800),
     ],
-    ("breakdown", WORKSPACE, "team", 50, "team", ""): [_TEAM_ROWS[1]],
+    ("breakdown", WORKSPACE, "team", 50, "team", ""): [
+        _breakdown("value", "", 1, 1, 20, 0, 5, 5, 1000),
+    ],
     ("breakdown", WORKSPACE, "cost-center", 50, None, None): [
-        _breakdown("untagged", "", 0, 12, 2890, 500, 427, 195, 400),
+        _breakdown("untagged", "", 0, 14, 3000, 500, 432, 198, 500),
     ],
     ("breakdown", OTHER_WORKSPACE, "environment", 50, None, None): [
         _breakdown("value", "production", 1, 1, 8888, 0, 888, 888, 7),
