@@ -23639,9 +23639,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.0000002",
-        "completion": "0.00000175",
-        "input_cache_read": "0.00000002"
+        "prompt": "0.00000026",
+        "completion": "0.0000026"
       },
       "top_provider": {
         "context_length": 262144,
@@ -23759,23 +23758,6 @@
             "prompt": "0.0000003",
             "completion": "0.0000024",
             "input_cache_read": "0.00000003"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "chutes | qwen/qwen3.5-27b",
-          "model_id": "Qwen/Qwen3.5-27B-TEE",
-          "model_name": "Qwen: Qwen3.5-27B",
-          "provider_name": "chutes",
-          "tag": "chutes",
-          "tr_provider_slug": "chutes",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.0000002",
-            "completion": "0.00000175",
-            "input_cache_read": "0.00000002"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -24064,7 +24046,7 @@
       "pricing": {
         "prompt": "0.00000045",
         "completion": "0.000003",
-        "input_cache_read": "0.000000045"
+        "input_cache_read": "0.00000022"
       },
       "top_provider": {
         "context_length": 262144,
@@ -24349,23 +24331,6 @@
             "prompt": "0.0000006",
             "completion": "0.0000036",
             "input_cache_read": "0.00000006"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "chutes | qwen/qwen3.5-397b-a17b",
-          "model_id": "Qwen/Qwen3.5-397B-A17B-TEE",
-          "model_name": "Qwen: Qwen3.5 397B A17B",
-          "provider_name": "chutes",
-          "tag": "chutes",
-          "tr_provider_slug": "chutes",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000045",
-            "completion": "0.000003",
-            "input_cache_read": "0.000000045"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],

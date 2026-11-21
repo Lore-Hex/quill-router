@@ -145,10 +145,10 @@
   },
   "chutes": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 9,
     "name": "Chutes",
     "privacy": "Confidential + ZDR",
-    "route_count": 22,
+    "route_count": 18,
     "route_mode": "Prepaid + BYOK",
     "slug": "chutes"
   },

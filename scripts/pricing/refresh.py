@@ -841,6 +841,10 @@ def _index_provider_prices(
 SNAPSHOT_EXCLUDED_HOLD_REASONS: frozenset[str] = frozenset(
     {
         "provider-access-unavailable",
+        # An operator-confirmed route the provider itself cannot serve (Chutes
+        # TEE rows answering HTTP 502 for every caller): a customer's key
+        # reaches the same dead route, so it is not a BYOK route either.
+        "provider-route-unavailable",
         *PREPAID_PROVIDER_HOLD_REASONS.values(),
         *PROVIDER_INCIDENT_HOLD_REASONS.values(),
     }
