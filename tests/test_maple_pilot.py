@@ -7,7 +7,11 @@ from bs4 import BeautifulSoup
 
 from tests.fixture_routes import bypass_catalog_caches
 from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, MODEL_ENDPOINTS, PROVIDERS
-from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION
+from trusted_router.catalog_data import (
+    PRIVACY_TIER_CONFIDENTIAL,
+    PRIVACY_TIER_TRUSTED,
+    PRIVACY_TIER_ZERO_RETENTION,
+)
 from trusted_router.catalog_privacy import endpoint_meets_privacy_requirement
 from trusted_router.provider_contracts import MAPLE_MODEL_ID, MAPLE_NATIVE_ID
 from trusted_router.provider_precision import endpoint_precision
@@ -38,7 +42,7 @@ def test_only_exact_managed_maple_route_qualifies_for_confidential(variant):
         endpoint = replace(endpoint, upstream_id=None)
     elif variant == "byok":
         endpoint = replace(endpoint, usage_type="BYOK")
-    for requirement in (PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION):
+    for requirement in (PRIVACY_TIER_TRUSTED, PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION):
         assert endpoint_meets_privacy_requirement(endpoint, requirement) is (variant == "approved")
 
 

@@ -390,7 +390,7 @@ test("model picker applies privacy to exact provider routes", async ({ page }) =
   const trustedRouteLabels = await picker.locator(".provider-route").allTextContents();
   expect(trustedRouteLabels.length).toBeGreaterThan(0);
   expect(trustedRouteLabels.every((label) =>
-    /^(Tinfoil|Privatemode) · .* · Trusted$/.test(label),
+    /^(Tinfoil|Privatemode|Maple) · .* · Trusted$/.test(label),
   )).toBe(true);
 
   await picker.locator("#privacy").selectOption("2");

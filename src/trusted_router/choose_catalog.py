@@ -102,7 +102,7 @@ _ROUTE_DESCRIPTIONS = {
         "Readable alias for the same verified compute, provider-E2EE and explicit-ZDR route pool."
     ),
     TRUSTED_MODEL_ID: (
-        "Confidential inference only from Tinfoil and Privatemode, selected by TrustedRouter "
+        "Confidential inference only from operators selected by TrustedRouter "
         "for operator physical security and reliability history. Every fallback stays in this tier."
     ),
     SYNTH_MODEL_ID: (
