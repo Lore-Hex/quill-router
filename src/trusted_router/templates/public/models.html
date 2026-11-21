@@ -46,7 +46,12 @@
     <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
     {% endfor %}
   </nav>
-  <p class="catalog-privacy-legend"><strong>Trusted</strong> = Confidential routes from operators selected for operator physical security and reliability history. <strong>Confidential</strong> = verified provider compute + E2EE + explicit ZDR. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#trusted-tier">Privacy routing</a></p>
+  <dl class="catalog-privacy-legend">
+    <div><dt>Trusted</dt><dd>Confidential routes from vetted operators</dd></div>
+    <div><dt>Confidential</dt><dd>Verified hardware, end-to-end encrypted, zero retention</dd></div>
+    <div><dt>ZDR</dt><dd>Zero data retention</dd></div>
+    <div class="catalog-privacy-legend-link"><dd><a href="/docs#trusted-tier">How privacy labels work</a></dd></div>
+  </dl>
 
   <div class="model-explorer-status">
     <p><strong data-model-result-count role="status">600+ models</strong><span data-model-result-detail> in the public catalog</span></p>

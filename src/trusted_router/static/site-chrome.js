@@ -61,6 +61,14 @@
   }
 
   const catalogSearch = $("[data-model-search]");
+  // Narrow phones have room for one word in the header box; the label stays "Search models".
+  if (catalogSearch) {
+    const fullHint = catalogSearch.placeholder;
+    const narrow = window.matchMedia("(max-width: 360px)");
+    const setHint = () => { catalogSearch.placeholder = narrow.matches ? "Search" : fullHint; };
+    setHint();
+    narrow.addEventListener("change", setHint);
+  }
   document.addEventListener("keydown", (event) => {
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
     // Leave the shortcut to text fields: Ctrl+K deletes to the end of the line on macOS.
