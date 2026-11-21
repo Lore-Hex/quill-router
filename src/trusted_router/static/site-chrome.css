@@ -374,9 +374,9 @@ html {
   .trnav .tbar--catalog .search input::placeholder { font-size: 13px; }
 }
 
-/* The smallest phones fit the word or the icon, not both; keep the word. */
+/* The smallest phones: tighter header gaps so the box still reads "Models" in full. */
 @media (max-width: 340px) {
-  .trnav .tbar--catalog .search svg { display: none; }
+  .trnav .tbar--catalog { gap: 8px; padding-inline: 16px; }
 }
 
 /* Buttons shared with the homepage */
