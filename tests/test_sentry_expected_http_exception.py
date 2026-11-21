@@ -111,3 +111,49 @@ def test_the_real_sdk_drops_only_the_expected_503() -> None:
     assert len(transport.events) == 1, values
     assert any("Settlement durability" in value for value in values)
     assert not any("Google did not respond" in value for value in values)
+
+
+def test_lease_headroom_503_is_dropped_with_the_same_response() -> None:
+    """QUILL-ROUTER-HX: a workspace's credits held by its own in-flight
+    requests is a designed, retryable authorize answer. The INFO line
+    billing.lease_headroom_unavailable (and its log-based counter) is the
+    signal, so the 503 is not a Sentry error event; the enclave still gets
+    the same status, body and Retry-After."""
+    from types import SimpleNamespace
+
+    from trusted_router.routes.internal import gateway
+
+    error = gateway._lease_headroom_error(
+        SimpleNamespace(id="ws-1"), reservation=82_960, estimate=82_960,
+        key_id="key-hash", request_id="req-1", trace_id="-",
+    )
+    assert isinstance(error, HTTPException)
+    ordinary = api_error(
+        503, gateway.LEASE_HEADROOM_MESSAGE, "service_unavailable",
+        headers={"Retry-After": "1"},
+    )
+    assert (error.status_code, error.detail, error.headers) == (
+        ordinary.status_code, ordinary.detail, ordinary.headers,
+    )
+    assert error.detail["error"]["message"] == (
+        "This workspace's credits are held by requests in flight; retry shortly."
+    )
+    assert _event(error) is None
+
+
+def test_authorize_contention_503_is_dropped_with_the_same_response() -> None:
+    """The escrow-conflict arm of authorize: the workspace's own concurrent
+    requests exhausted OCC retries on its hot row. The raise site refunds the
+    escrow and logs billing.authorize_conflict_after_escrow, so the retryable
+    503 is not a Sentry error event; the response is unchanged."""
+    from trusted_router.routes.internal import gateway
+
+    error = gateway._authorize_contention_error()
+    ordinary = api_error(
+        503, "Authorization contention; retry shortly.", "service_unavailable",
+        headers={"Retry-After": "1"},
+    )
+    assert (error.status_code, error.detail, error.headers) == (
+        ordinary.status_code, ordinary.detail, ordinary.headers,
+    )
+    assert _event(error) is None
