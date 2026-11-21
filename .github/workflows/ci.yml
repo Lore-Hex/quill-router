@@ -1006,10 +1006,9 @@ jobs:
         # change never disagreed. post-cutover-daily.yml, run by hand, runs
         # the post-cutover clock.
         clock: [default]
-        # Four-group runs 38924732345 took 43 to 45+ minutes with 1,252 cases.
-        # Six groups per clock bound estimated single-worker work per group
-        # to about two thirds of the four-group work; keep the 45-minute cap.
-        shard: [1, 2, 3, 4, 5, 6]
+        # Even balanced, the six-group run 44875188622 waited 27m for its
+        # slowest runner. Use smaller groups; retain all cases and the 45m cap.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -1036,7 +1035,7 @@ jobs:
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           -m proof_oracle tests/test_async_settle_proof_oracle.py tests/test_async_settle_shadow_v2_gate_window.py
-          --splits 6 --group ${{ matrix.shard }}
+          --splits 8 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload oracle durations separately from the full suites
