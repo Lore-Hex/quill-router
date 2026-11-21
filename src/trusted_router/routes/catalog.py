@@ -45,6 +45,7 @@ from trusted_router.image_generation import (
     image_pricing_by_resolution,
     image_supported_parameters,
 )
+from trusted_router.media_discovery import dedicated_video_row
 from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.model_changes import last_route_changes, timestamp
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
@@ -503,6 +504,13 @@ def register_catalog_routes(router: APIRouter) -> None:
                 if model.id in IMAGE_MODEL_ID_SET and endpoints_for_model(model.id)
             ]
         }
+
+    @router.get("/videos/models")
+    def video_models() -> dict[str, Any]:
+        return {"data": [
+            dedicated_video_row(row) for row in _current_catalog_payload().shapes
+            if "supported_durations" in row
+        ]}
 
     @router.get("/images/models/{author}/{slug}/endpoints")
     def image_model_endpoints(

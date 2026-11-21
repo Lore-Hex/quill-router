@@ -224,6 +224,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.managed_retention import provider_retention_notice
+from trusted_router.media_discovery import media_discovery, video_list_fields
 from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
     MICRODOLLARS_PER_DOLLAR,
@@ -1120,6 +1121,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             for endpoint, capability in zip(endpoints, capabilities, strict=True)
         ],
     }
+    media = media_discovery(model.id, endpoints, pricing)
+    video_fields: dict[str, object] = {}
+    if media is not None:
+        tr_block["media"] = media
+        supported_parameters = union_supported_parameters(supported_parameters, tuple(media["parameters"]))
+        if media["endpoint"] == "/v1/videos":
+            video_fields = video_list_fields(media)
+            if not completion_min and not prompt_min:
+                pricing = {}
     # Orchestrators can select/subcall different models and have no stable
     # endpoint contract. Do not manufacture capabilities from an empty pool.
     if not is_meta and not model.hidden_public_metadata:
@@ -1202,6 +1212,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "instruct_type": None,
         },
         "pricing": pricing,
+        **video_fields,
         **({"supported_voices": list(SPEECH_MODELS[model.id].voices)} if model.id in SPEECH_MODELS else {}),
         "top_provider": {
             "context_length": context_length,

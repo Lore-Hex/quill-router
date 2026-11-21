@@ -111,10 +111,6 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
     def videos() -> JSONResponse:
         return not_supported()
 
-    @router.get("/videos/models")
-    def video_models() -> JSONResponse:
-        return not_supported()
-
     @router.get("/videos/{jobId}")
     def video_status(jobId: str) -> JSONResponse:  # noqa: N803
         _ = jobId
