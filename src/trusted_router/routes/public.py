@@ -3051,6 +3051,7 @@ def _json_body(payload: dict[str, Any]) -> bytes:
 
 def _unserved_routes_json_body() -> bytes:
     from trusted_router.synthetic.route_health import (
+        UNAVAILABLE_MIN_SPAN,
         UNSERVED_MAX_AGE,
         UNSERVED_MAX_PROBE_GAP,
         UNSERVED_MIN_SAMPLES,
@@ -3067,6 +3068,7 @@ def _unserved_routes_json_body() -> bytes:
         "policy": {
             "min_consecutive_samples": UNSERVED_MIN_SAMPLES,
             "min_span_seconds": int(UNSERVED_MIN_SPAN.total_seconds()),
+            "min_unavailable_span_seconds": int(UNAVAILABLE_MIN_SPAN.total_seconds()),
             "max_age_seconds": int(UNSERVED_MAX_AGE.total_seconds()),
             "max_probe_gap_seconds": int(UNSERVED_MAX_PROBE_GAP.total_seconds()),
             "sibling_success_window_seconds": int(UNSERVED_SIBLING_SUCCESS_WINDOW.total_seconds()),
@@ -3079,6 +3081,7 @@ def _unserved_routes_json_body() -> bytes:
                 "first_failure_at": route.first_failure_at,
                 "last_failure_at": route.last_failure_at,
                 "error_types": list(route.error_types),
+                "kind": route.kind,
             }
             for route in routes
         ],

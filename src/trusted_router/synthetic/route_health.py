@@ -72,7 +72,10 @@ _ALERT_ERROR_TYPE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*")
 # dropped connections) are NOT actionable that way: the model may recover, and
 # quarantining it would stop us ever re-probing it. They still count toward the
 # public leaderboard's uptime display. Sustained outages page separately and
-# must never become automatic quarantine decisions.
+# must never become remediator quarantine decisions; the only automatic action
+# on an outage is the bounded, self-expiring hold of evaluate_unserved_routes
+# (UNAVAILABLE_MIN_SPAN of uninterrupted failure, proven per-route by a sibling
+# success, lifted after 24h so the route is probed again).
 # Structural failures — 4xx model-not-found / bad-request / auth (except 429) —
 # do page.
 _TRANSIENT_ERROR_TYPES = frozenset(
@@ -254,6 +257,16 @@ UNSERVED_SIBLING_SUCCESS_WINDOW = dt.timedelta(hours=6)
 # episodes. It must stay well under the hold length and well over the
 # routine gap between two rotation picks of one route; a test pins both.
 UNSERVED_MAX_PROBE_GAP = dt.timedelta(hours=16)
+# A route whose every probe has failed, of any provider-side class (5xx, 429,
+# timeouts and 4xx included), for this long is held the same way. Chutes
+# answered HTTP 502 for qwen/qwen3.5-27b for over 13 hours while serving its
+# other models (Sentry QUILL-ROUTER-HR): the route stayed advertised, customer
+# requests tried it first, and route-availability paged every hour. Transient
+# classes are excluded from the model-not-served streak above because one
+# capacity blip proves nothing; six hours of nothing else is an outage.
+# Router- and monitor-origin failures and probe_config_error still break the
+# streak: they are our failures, not the provider's.
+UNAVAILABLE_MIN_SPAN = dt.timedelta(hours=6)
 
 
 @dataclass(frozen=True)
@@ -264,6 +277,23 @@ class UnservedRoute:
     first_failure_at: str
     last_failure_at: str
     error_types: tuple[str, ...]
+    # "unserved": a model-not-served streak; "unavailable": a sustained outage.
+    kind: str = "unserved"
+
+
+def _breaks_outage_streak(sample: ProviderBenchmarkSample) -> bool:
+    from trusted_router.synthetic.components import is_router_origin_error
+
+    error_type = sample.error_type
+    if sample.status == "unsupported":
+        # A model-not-served answer is a provider refusal; an outage that
+        # alternates it with 5xx is still an outage of this route.
+        return error_type not in _UNSERVED_ERROR_TYPES
+    return (
+        sample.status != "error"
+        or error_type == "probe_config_error"
+        or is_router_origin_error(error_type)
+    )
 
 
 def evaluate_unserved_routes(
@@ -274,6 +304,11 @@ def evaluate_unserved_routes(
     window_hours: int = 48,
 ) -> list[UnservedRoute]:
     """Routable routes the provider lists but has refused for hours.
+
+    Two kinds qualify: a model-not-served streak (UNSERVED_MIN_SPAN) and a
+    sustained outage of every probe (UNAVAILABLE_MIN_SPAN). Both need a fresh
+    sibling success, so a provider-wide or TrustedRouter-side failure is never
+    held one route at a time.
 
     Reads the same bounded per-route sample query as evaluate_route_health.
     Raises whatever the analytics read raises: callers must treat an error as
@@ -335,26 +370,53 @@ def evaluate_unserved_routes(
             ):
                 break
             streak.append((created, sample))
-        if (
-            len(streak) < UNSERVED_MIN_SAMPLES
-            or now - streak[0][0] > UNSERVED_MAX_AGE
-            or streak[0][0] - streak[-1][0] < UNSERVED_MIN_SPAN
-            # The sibling success must come after this route began failing:
-            # a success from before a provider-wide break proves nothing.
-            or not any(
-                sibling != model and created >= streak[-1][0]
-                for created, sibling in successes.get(provider, [])
+        outage: list[tuple[dt.datetime, ProviderBenchmarkSample]] = []
+        for created, sample in recent:
+            if _breaks_outage_streak(sample) or (
+                outage and outage[-1][0] - created > UNSERVED_MAX_PROBE_GAP
+            ):
+                break
+            outage.append((created, sample))
+
+        def qualifies(
+            run: list[tuple[dt.datetime, ProviderBenchmarkSample]],
+            min_span: dt.timedelta,
+            *,
+            _provider: str = provider,
+            _model: str = model,
+        ) -> bool:
+            return not (
+                len(run) < UNSERVED_MIN_SAMPLES
+                or now - run[0][0] > UNSERVED_MAX_AGE
+                or run[0][0] - run[-1][0] < min_span
+                # The sibling success must come after this route began failing:
+                # a success from before a provider-wide break proves nothing.
+                or not any(
+                    sibling != _model and created >= run[-1][0]
+                    for created, sibling in successes.get(_provider, [])
+                )
             )
+
+        if qualifies(streak, UNSERVED_MIN_SPAN):
+            evidence, kind = streak, "unserved"
+        elif qualifies(outage, UNAVAILABLE_MIN_SPAN) and (
+            # Refusal answers may sit inside an outage, but a streak that is
+            # mostly refusals is judged by the model-not-served rule above
+            # (where a transient head deliberately restarts it).
+            sum(sample.status == "error" for _, sample in outage) >= UNSERVED_MIN_SAMPLES
         ):
+            evidence, kind = outage, "unavailable"
+        else:
             continue
         unserved.append(
             UnservedRoute(
                 provider=provider,
                 model=model,
-                samples=len(streak),
-                first_failure_at=_iso_z(streak[-1][0]),
-                last_failure_at=_iso_z(streak[0][0]),
-                error_types=tuple(sorted({str(sample.error_type) for _, sample in streak})),
+                samples=len(evidence),
+                first_failure_at=_iso_z(evidence[-1][0]),
+                last_failure_at=_iso_z(evidence[0][0]),
+                error_types=tuple(sorted({str(sample.error_type) for _, sample in evidence})),
+                kind=kind,
             )
         )
     return unserved
@@ -742,6 +804,48 @@ def report_route_health(
             scope.set_tag("route_model", flag.model)
             scope.set_tag("failure_rate", f"{flag.failure_rate:.4f}")
             sentry_sdk.capture_message(message, level="error")
+
+
+# Flag kinds a hold supersedes. Configuration flags keep their own alert (auth
+# and probe setup stay observable) and degradation goes to the daily digest.
+_HOLD_SUPERSEDES_KINDS = frozenset({"availability", "structural"})
+
+
+def split_held_flags(
+    flags: list[RouteHealthFlag], held: Iterable[tuple[str, str]],
+) -> tuple[list[RouteHealthFlag], list[RouteHealthFlag]]:
+    """Split flags into (still paging, superseded by a pending hold)."""
+    held_routes = frozenset(held)
+    paging: list[RouteHealthFlag] = []
+    holding: list[RouteHealthFlag] = []
+    for flag in flags:
+        if flag.kind in _HOLD_SUPERSEDES_KINDS and (flag.provider, flag.model) in held_routes:
+            holding.append(flag)
+        else:
+            paging.append(flag)
+    return paging, holding
+
+
+def report_route_holds(flags: list[RouteHealthFlag]) -> None:
+    """One grouped alert per route that the next price refresh will hold.
+
+    Replaces the hourly route-availability / route-health page for a route
+    already proven down long enough to hold: the hold, not another page, is
+    the action. The route leaves rotation once the hold deploys, so this
+    stops on its own; if the route still fails after the 24h hold lifts, the
+    same issue re-opens.
+    """
+    from trusted_router.synthetic.alerts import ops_alert
+
+    for flag in flags:
+        ops_alert(
+            f"route-hold: {flag.provider}/{flag.model} has failed every probe for hours "
+            f"while {flag.provider} serves other models{_availability_cause(flag)}; the hourly "
+            "price refresh holds it from routing and the catalog "
+            "(provider-route-unserved) for 24h, then re-probes it",
+            fingerprint=["route-hold", flag.provider, flag.model],
+            tags={"route_provider": flag.provider, "route_model": flag.model},
+        )
 
 
 ROUTE_HEALTH_UNEVALUABLE_FINGERPRINT = ["route-health-unevaluable", "analytics_unavailable"]
