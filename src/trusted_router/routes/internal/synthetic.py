@@ -7,7 +7,7 @@ import random
 import re
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
@@ -29,7 +29,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.storage_rate_limits import InMemoryRateLimits
-from trusted_router.synthetic.alerts import alert_on_failure_streak
+from trusted_router.synthetic.alerts import alert_on_failure_streak, alerts_once
 from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.client_watch import evaluate_client_watch, report_client_watch
 from trusted_router.synthetic.components import OPS_PROBE_TYPES, sample_slo_class_ids
@@ -594,18 +594,16 @@ def register(router: APIRouter) -> None:
                     log_analytics_unavailable(log, "synthetic_account_refusals", exc)
                     return {"data": {"flagged": [], "evaluated": False,
                                      "reason": "analytics_unavailable"}}
-                fresh = await run_in_threadpool(
-                    _claimed_refusals, unreported_account_refusals(refusals),
+                await run_in_threadpool(
+                    _report_once, report_route_health, unreported_account_refusals(refusals),
                 )
-                await run_in_threadpool(report_route_health, fresh)
                 return {"data": {"flagged": [asdict(flag) for flag in refusals],
                                  "evaluated": True, "scope": "account_refusals"}}
             # Two regional monitors post every full sweep, each to its own
-            # regional instance. Both evaluate; only the first to claim this
-            # hour's sweep reports, so each alert is emitted once per sweep.
-            reporter = await run_in_threadpool(_claim_report, "route-health-sweep", _sweep_hour())
-            if reporter:
-                await run_in_threadpool(report_catalog_freshness)
+            # regional instance, and both evaluate. Every alert either raises
+            # is claimed per fingerprint and hour in this deployment's store,
+            # so each is emitted once per sweep by whichever reaches it first.
+            await run_in_threadpool(_report_once, report_catalog_freshness)
             try:
                 flags = await run_in_threadpool(evaluate_route_health, STORE)
             except Exception as exc:
@@ -614,8 +612,7 @@ def register(router: APIRouter) -> None:
                 # Blind, not healthy: no route was evaluated. Say so in the
                 # body and raise one grouped alert instead of a 500 per pass.
                 log_analytics_unavailable(log, "synthetic_route_health", exc)
-                if reporter:
-                    await run_in_threadpool(report_route_health_unevaluable, exc)
+                await run_in_threadpool(_report_once, report_route_health_unevaluable, exc)
                 return {
                     "data": {
                         "flagged": [],
@@ -623,14 +620,11 @@ def register(router: APIRouter) -> None:
                         "reason": "analytics_unavailable",
                     }
                 }
-            if reporter:
-                held = await run_in_threadpool(_pending_route_holds)
-                paging, holding = split_held_flags(flags, held)
-                await run_in_threadpool(report_route_health, paging)
-                if holding:
-                    await run_in_threadpool(report_route_holds, holding)
-            else:
-                log.info("synthetic_route_health.sweep_already_reported hour=%s", _sweep_hour())
+            held = await run_in_threadpool(_pending_route_holds)
+            paging, holding = split_held_flags(flags, held)
+            await run_in_threadpool(_report_once, report_route_health, paging)
+            if holding:
+                await run_in_threadpool(_report_once, report_route_holds, holding)
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -693,22 +687,15 @@ def _sweep_hour(now: dt.datetime | None = None) -> str:
     return (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).strftime("%Y-%m-%dT%H")
 
 
-def _claim_report(kind: str, key: str) -> bool:
-    """True for the first caller to claim (kind, key) in this deployment's
-    store. A store error reports anyway: a duplicate page beats silence."""
-    try:
-        return STORE.record_webhook_event_once(kind, key)
-    except Exception:  # noqa: BLE001 - alert dedupe must never suppress alerts on its own failure
-        log.warning("synthetic_route_health.report_claim_failed kind=%s", kind, exc_info=True)
-        return True
+def _claim_alert(fingerprint: list[str]) -> bool:
+    """True for the first instance to emit this fingerprint this hour."""
+    key = f"{'|'.join(fingerprint)}@{_sweep_hour()}"
+    return STORE.record_webhook_event_once("route-health-alert", key)
 
 
-def _claimed_refusals(flags: list[Any]) -> list[Any]:
-    hour = _sweep_hour()
-    return [
-        flag for flag in flags
-        if _claim_report("route-health-refusal", f"{flag.provider}/{flag.model}@{hour}")
-    ]
+def _report_once(report: Callable[..., Any], *args: Any) -> Any:
+    with alerts_once(_claim_alert):
+        return report(*args)
 
 
 def _pending_route_holds() -> frozenset[tuple[str, str]]:

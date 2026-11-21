@@ -842,8 +842,13 @@ def report_route_health(
             f"route-health: {flag.provider}/{flag.model} {flag.failure_rate:.0%} failure "
             f"over {flag.samples} samples (latest: {latest})"
         )
+        from trusted_router.synthetic.alerts import alert_claimed
+
+        fingerprint = ["route-health", flag.provider, flag.model]
+        if not alert_claimed(fingerprint):
+            continue
         with sentry_sdk.push_scope() as scope:
-            scope.fingerprint = ["route-health", flag.provider, flag.model]
+            scope.fingerprint = fingerprint
             scope.set_tag("route_provider", flag.provider)
             scope.set_tag("route_model", flag.model)
             scope.set_tag("failure_rate", f"{flag.failure_rate:.4f}")

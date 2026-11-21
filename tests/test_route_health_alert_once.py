@@ -51,16 +51,22 @@ def _reset_operation_limits() -> Iterator[None]:
 
 @pytest.fixture
 def alerts(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    sent: list[list[str]] = []
-    monkeypatch.setattr(
-        "trusted_router.synthetic.alerts.ops_alert",
-        lambda message, *, fingerprint, tags=None: sent.append(fingerprint) or True,
-    )
+    """Fingerprints of the events that actually reach the Sentry SDK."""
+    import sentry_sdk
 
-    class _Scope:
+    sent: list[list[str]] = []
+
+    def capture(*_args: object, **_kwargs: object) -> None:
+        # ops_alert captures inside sentry_sdk.new_scope().
+        fingerprint = list(sentry_sdk.get_current_scope()._fingerprint or [])  # noqa: SLF001
+        if fingerprint[:1] == ["ops-alert"]:
+            sent.append(fingerprint[1:])
+
+    class _LegacyScope:
+        # The structural route-health alert still uses push_scope.
         fingerprint: list[str] = []
 
-        def __enter__(self) -> _Scope:
+        def __enter__(self) -> _LegacyScope:
             return self
 
         def __exit__(self, *_exc: object) -> None:
@@ -69,19 +75,25 @@ def alerts(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         def set_tag(self, *_args: object) -> None:
             return None
 
-    import sentry_sdk
-
-    monkeypatch.setattr(sentry_sdk, "push_scope", lambda: _Scope())
-    monkeypatch.setattr(sentry_sdk, "capture_message", lambda *_a, **_k: None)
+    monkeypatch.setattr(sentry_sdk, "capture_message", capture)
+    monkeypatch.setattr(sentry_sdk, "push_scope", lambda: _LegacyScope())
     return sent
 
 
-def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _client(monkeypatch: pytest.MonkeyPatch, evaluations: list[Any] | None = None) -> TestClient:
     from tests.test_synthetic_monitoring import _benchmark_ingest_settings
     from trusted_router.main import create_app
     from trusted_router.routes.internal import synthetic as synthetic_routes
 
-    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", lambda _store: _flags())
+    queue = list(evaluations or [])
+
+    def evaluate(_store: Any) -> list[RouteHealthFlag]:
+        result = queue.pop(0) if queue else _flags()
+        if isinstance(result, Exception):
+            raise result
+        return list(result)
+
+    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", evaluate)
     monkeypatch.setattr(synthetic_routes, "_pending_route_holds", lambda: frozenset({HELD}))
     monkeypatch.setattr(synthetic_routes, "report_catalog_freshness", lambda: None)
     # The daily digest fires only in its hour; make every hour that hour.
@@ -160,3 +172,31 @@ def test_fast_refusal_scope_alerts_once_across_instances(
     assert [fp for fp in alerts if fp[0] == "route-configuration"] == [
         ["route-configuration", "maple", "x/y"],
     ]
+
+
+def test_a_failed_first_evaluation_does_not_silence_the_second(
+    monkeypatch: pytest.MonkeyPatch, alerts: list[list[str]],
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    monkeypatch.setattr(synthetic_routes, "_sweep_hour", lambda now=None: "2026-11-21T08")
+    monkeypatch.setattr(synthetic_routes, "is_analytics_unavailable", lambda exc: True)
+    client = _client(monkeypatch, [RuntimeError("analytics timed out"), _flags()])
+    blind = client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
+    assert blind.json()["data"]["evaluated"] is False
+    client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
+    assert ["route-availability", "chutes", "qwen/qwen3.5-397b-a17b"] in alerts
+    assert ["route-hold", *HELD] in alerts
+
+
+def test_a_flag_only_the_second_caller_sees_still_alerts(
+    monkeypatch: pytest.MonkeyPatch, alerts: list[list[str]],
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    monkeypatch.setattr(synthetic_routes, "_sweep_hour", lambda now=None: "2026-11-21T08")
+    configuration = [flag for flag in _flags() if flag.kind == "configuration"]
+    client = _client(monkeypatch, [[], configuration])
+    client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
+    client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
+    assert alerts == [["route-configuration", "maple", "x/y"]]

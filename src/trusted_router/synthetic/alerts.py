@@ -15,6 +15,9 @@ probe path is its own issue and re-opens if it regresses after recovery.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -84,6 +87,39 @@ def alert_on_failure_streak(
     return True
 
 
+# Set while a caller wants each alert fingerprint emitted at most once across
+# its peers (see alerts_once). Unset everywhere else, so ordinary ops alerts
+# are untouched.
+_ALERT_CLAIM: ContextVar[Callable[[list[str]], bool] | None] = ContextVar(
+    "alert_claim", default=None,
+)
+
+
+@contextmanager
+def alerts_once(claim: Callable[[list[str]], bool]) -> Iterator[None]:
+    """Within the block, emit an alert only if ``claim(fingerprint)`` is True.
+
+    ``claim`` returns False when a peer already emitted that fingerprint.
+    """
+    token = _ALERT_CLAIM.set(claim)
+    try:
+        yield
+    finally:
+        _ALERT_CLAIM.reset(token)
+
+
+def alert_claimed(fingerprint: list[str]) -> bool:
+    """True when this alert should be emitted (no claim scope, or claim won)."""
+    claim = _ALERT_CLAIM.get()
+    if claim is None:
+        return True
+    try:
+        return claim(fingerprint)
+    except Exception:  # noqa: BLE001 - dedupe must never suppress an alert on its own failure
+        logger.warning("alert claim failed; emitting", exc_info=True)
+        return True
+
+
 def ops_alert(
     message: str,
     *,
@@ -104,6 +140,9 @@ def ops_alert(
     the money path it is reporting on. Returns True when the capture reached
     the Sentry SDK.
     """
+    if not alert_claimed(fingerprint):
+        logger.info("alert already emitted by a peer: %s", message)
+        return False
     logger.error(message)
     try:
         import sentry_sdk
