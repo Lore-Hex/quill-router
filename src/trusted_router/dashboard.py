@@ -2441,6 +2441,7 @@ def _launch_offer_lede(offer: LaunchOfferFacts) -> dict[str, object]:
     others_input, others_output = offer.others_input_microdollars, offer.others_output_microdollars
     return {
         "model_name": offer.model_name,
+        "end_label": offer.end_label,
         "input": cents_label(offer.input_microdollars),
         "output": cents_label(offer.output_microdollars),
         # The sentence names one price, so it needs input and output to match.
@@ -4791,7 +4792,7 @@ def _launch_offer_title_description(offer: LaunchOfferFacts) -> tuple[str, str]:
     return (
         f"{name} for {offer.price_label} ({provider_name}) | TrustedRouter",
         f"{name} on {provider_name}: {offer.price_phrase}{lowest}. "
-        "Zero data retention. Intro price, may change.",
+        f"Zero data retention. Ends {offer.end_label}.",
     )
 
 
@@ -4809,9 +4810,9 @@ def _launch_offer_faq_sentences(
     lowest = f", the lowest {name} price on TrustedRouter," if offer.lowest else ""
     return (
         f"{provider_name} also serves {name} under the separate model ID {offer.model_id} "
-        f"at an introductory {offer.price_label}: {url}",
+        f"at an introductory {offer.price_label} through {offer.end_label}: {url}",
         f"The separate {provider_name} route, {offer.model_id}, costs {offer.price_phrase}"
-        f"{lowest} as an introductory price that may change: {url}",
+        f"{lowest} through {offer.end_label}: {url}",
     )
 
 
@@ -5390,7 +5391,7 @@ def _llms_launch_offer_lines(domain: str) -> list[str]:
         return []
     return [
         f"- Introductory offer: {offer.model_id} ({offer.model_name} on {offer.provider_name}, zero data "
-        f"retention) costs {offer.price_phrase}; pricing may change. "
+        f"retention) costs {offer.price_phrase} through {offer.end_label}. "
         f"[Model page](https://{domain}{offer.path})"
     ]
 
@@ -5640,7 +5641,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
     offer = launch_offer_facts()
     for model in models:
         offer_note = (
-            "; offer=introductory price, may change"
+            f"; offer=introductory price through {offer.end_label}"
             if offer is not None and model["id"] == offer.model_id
             else ""
         )

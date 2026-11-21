@@ -97,7 +97,8 @@ def test_catalog_prices_and_privacy_follow_application_view(
     assert result["homepage_data"]["migration"]["base_url"] == "https://example.test/v1"
 
 
-def test_homepage_banner_shows_the_live_glm_offer() -> None:
+def test_homepage_banner_shows_the_live_glm_offer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trusted_router.fortanix_launch._offer_window_open", lambda: True)
     settings = Settings(environment="test", storage_backend="memory")
     page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
     banner = page.select_one("main > a[data-glm-offer-banner]")
@@ -107,6 +108,7 @@ def test_homepage_banner_shows_the_live_glm_offer() -> None:
     assert "GLM 5.3 Flash" in banner.get_text()
     assert "is basically free" in banner.get_text()
     assert "1¢ per million tokens" in banner.get_text()
+    assert "Ends Nov 27, 2026" in banner.get_text()
     assert banner.find_next_sibling("section")["id"] == "top"
 
 

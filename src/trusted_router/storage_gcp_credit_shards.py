@@ -119,6 +119,15 @@ class CreditShardCountCache:
             self._put(workspace_id, loaded)
             return loaded
 
+    def peek(self, workspace_id: str) -> int | None:
+        """The fresh cached count, or None. Never loads, evicts or reorders."""
+        now = self._clock()
+        with self._lock:
+            entry = self._entries.get(workspace_id)
+            if entry is None or entry.expires_at <= now:
+                return None
+            return entry.shard_count
+
     def _get_fresh(self, workspace_id: str) -> int | None:
         now = self._clock()
         with self._lock:

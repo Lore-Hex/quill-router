@@ -36,7 +36,7 @@
 {% if brand_theme() == "nyte" %}<script src="/static/nyte-page.js?v={{ static_version|default('local') }}"></script><link rel="stylesheet" href="/static/nyte-theme.css?v={{ static_version|default('local') }}">{% endif %}</head><body><div class="page">{% include "public/_nav.html" %}
 <main id="main">
 {% set home_offer = launch_offer_facts() %}{% if home_offer %}<a class="exchange-banner" data-glm-offer-banner href="{{ home_offer.path }}">
-  <span class="exchange-banner-copy offer-banner-copy"><strong>{{ home_offer.model_name }} is basically free</strong><em class="offer-banner-price">{{ home_offer.price_label }}</em></span>
+  <span class="exchange-banner-copy offer-banner-copy"><strong>{{ home_offer.model_name }} is basically free</strong><em class="offer-banner-price">{{ home_offer.price_label }} &middot; Ends {{ home_offer.end_label }}</em></span>
   <span class="exchange-banner-action"><span class="exchange-banner-arrow" aria-hidden="true">&rarr;</span></span>
 </a>{% else %}<a class="exchange-banner" data-token-exchange-banner href="https://nytokenexchange.com/?utm_source=trustedrouter.com&amp;utm_medium=referral&amp;utm_campaign=token-exchange-launch&amp;utm_content=homepage-banner">
   <span class="exchange-banner-copy"><strong>New York Token Exchange</strong><span>The market built for Enterprise AI.</span></span>
