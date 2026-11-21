@@ -42,7 +42,6 @@ import argparse
 import importlib
 import json
 import sys
-from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -52,22 +51,24 @@ import httpx
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HELD_AT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
-    provider_manifest_row_price_is_valid,
 )
 from trusted_router.unserved_route_hold_plan import (
+    HOLD_HOURS,
+    MAX_CLOCK_SKEW,
     MAX_PROVIDER_FRACTION,
     MAX_ROUTES,
+    lift_expired_unserved_holds,
     plan_unserved_route_holds,
 )
 
 SOURCE = "https://trustedrouter.com/route-health/unserved.json"
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "src/trusted_router/data/provider_models"
 HELD_AT_FIELD = UNSERVED_ROUTE_HELD_AT_FIELD
-HOLD_HOURS = 24
 MAX_EVIDENCE_AGE = timedelta(hours=2)
-# The server stamps generated_at when it builds; tolerate runner/server skew.
-MAX_CLOCK_SKEW = timedelta(minutes=5)
-__all__ = ["MAX_PROVIDER_FRACTION", "MAX_ROUTES", "apply_unserved_route_holds", "parse_evidence"]
+__all__ = [
+    "HOLD_HOURS", "MAX_CLOCK_SKEW", "MAX_PROVIDER_FRACTION", "MAX_ROUTES",
+    "apply_unserved_route_holds", "parse_evidence",
+]
 
 Route = tuple[str, str]
 
@@ -114,36 +115,6 @@ def fetch_evidence(source: str) -> set[Route]:
     return parse_evidence(response.json(), now=datetime.now(UTC))
 
 
-def _lift_expired(rows: Iterable[Any], *, now: datetime) -> list[str]:
-    lifted = []
-    for row in rows:
-        if not isinstance(row, dict) or row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
-            continue
-        held_at = _parse_time(row.get(HELD_AT_FIELD))
-        # A missing, malformed or future-dated stamp cannot prove the hold is
-        # young; lift it rather than risk a hold that never expires.
-        if held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS):
-            continue
-        row.pop(HELD_AT_FIELD, None)
-        # While held, discovery could not record its own state (the hold
-        # outranks it). Never lift into a delisted or unpriced routable row:
-        # one such row expires the provider's whole manifest.
-        # Judge the price as the row would be published once lifted: some
-        # validators accept fields only on a row that is not routable.
-        as_lifted = {key: value for key, value in row.items() if key not in {"routable", "routable_reason"}}
-        if row.get("missing_since"):
-            row["routable"] = False
-            row["routable_reason"] = "delisted-upstream"
-        elif not provider_manifest_row_price_is_valid(as_lifted):
-            row["routable"] = False
-            row["routable_reason"] = "price-unavailable"
-        else:
-            row.pop("routable", None)
-            row.pop("routable_reason", None)
-        lifted.append(str(row.get("id")))
-    return lifted
-
-
 def _load(path: Path) -> dict[str, Any] | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -183,7 +154,7 @@ def apply_unserved_route_holds(
             continue
         if raw is None:
             continue
-        lifted = _lift_expired(raw["models"], now=now)
+        lifted = lift_expired_unserved_holds(raw["models"], now=now)
         if lifted:
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")
         manifests.append((path, raw, bool(lifted)))

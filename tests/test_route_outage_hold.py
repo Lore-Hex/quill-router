@@ -354,3 +354,47 @@ def test_a_502_outage_mixed_with_model_not_served_answers_counts() -> None:
         for i in range(14)
     ] + [_sibling_success()]
     assert [route.kind for route in _evaluate(samples)] == ["unavailable"]
+
+
+def _manifest_rows(models: list[str], *, held: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for model in models:
+        row: dict[str, Any] = {
+            "id": model, "model_type": "chat", "endpoints": ["chat/completions"],
+            "input_token_price_per_m": 1_000_000, "output_token_price_per_m": 2_000_000,
+        }
+        if held and model in held:
+            row.update(routable=False, routable_reason=holds.UNSERVED_ROUTE_HOLD_REASON,
+                       **{holds.HELD_AT_FIELD: held[model]})
+        rows.append(row)
+    return rows
+
+
+def test_pending_holds_match_what_the_refresh_writes_after_expiry(tmp_path: Path) -> None:
+    # Review case: an expired hold on provider a changes both a's provider cap
+    # and the global route cap once the refresh lifts it. The control plane
+    # must reach the refresh's verdict, here: hold nothing at all.
+    from trusted_router.unserved_route_hold_plan import pending_unserved_route_holds
+
+    expired = (NOW - dt.timedelta(hours=holds.HOLD_HOURS + 1)).isoformat().replace("+00:00", "Z")
+    active = (NOW - dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    a_models = ["a/held", "a/1", "a/2", "a/3", "a/4"]
+    b_models = ["b/held", *(f"b/{i}" for i in range(48))]
+    manifests = {
+        "a": _manifest_rows(a_models, held={"a/held": expired}),
+        "b": _manifest_rows(b_models, held={"b/held": active}),
+    }
+    for stem, rows in manifests.items():
+        (tmp_path / f"{stem}.json").write_text(json.dumps({"provider": stem, "models": rows}), encoding="utf-8")
+    evidence = {("a", "a/1"), ("a", "a/2"), *(("b", f"b/{i}") for i in range(23))}
+
+    pending = pending_unserved_route_holds(evidence, manifest_dir=tmp_path, now=NOW)
+    holds.apply_unserved_route_holds(evidence, manifest_dir=tmp_path, now=NOW)
+    written = {
+        (stem, row["id"])
+        for stem in manifests
+        for row in json.loads((tmp_path / f"{stem}.json").read_text())["models"]
+        if row.get("routable_reason") == holds.UNSERVED_ROUTE_HOLD_REASON
+        and row["id"] not in {"a/held", "b/held"}
+    }
+    assert pending == written == set()

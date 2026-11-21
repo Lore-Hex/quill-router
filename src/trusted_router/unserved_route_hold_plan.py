@@ -9,18 +9,68 @@ replaces a page with a hold that the caps would refuse.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from trusted_router.provider_manifest_policy import UNSERVED_ROUTE_HOLD_REASON
+from trusted_router.provider_manifest_policy import (
+    UNSERVED_ROUTE_HELD_AT_FIELD,
+    UNSERVED_ROUTE_HOLD_REASON,
+    provider_manifest_row_price_is_valid,
+)
 
 PACKAGED_MANIFEST_DIR = Path(__file__).parent / "data" / "provider_models"
 MAX_ROUTES = 25
 MAX_PROVIDER_FRACTION = 0.5
+HOLD_HOURS = 24
+# Hold stamps and evidence timestamps tolerate this much clock skew.
+MAX_CLOCK_SKEW = timedelta(minutes=5)
 
 Route = tuple[str, str]
+
+
+def _parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
+
+
+def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[str]:
+    """Lift every expired hold in place; return the lifted model ids."""
+    lifted = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
+            continue
+        held_at = _parse_time(row.get(UNSERVED_ROUTE_HELD_AT_FIELD))
+        # A missing, malformed or future-dated stamp cannot prove the hold is
+        # young; lift it rather than risk a hold that never expires.
+        if held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS):
+            continue
+        row.pop(UNSERVED_ROUTE_HELD_AT_FIELD, None)
+        # While held, discovery could not record its own state (the hold
+        # outranks it). Never lift into a delisted or unpriced routable row:
+        # one such row expires the provider's whole manifest.
+        # Judge the price as the row would be published once lifted: some
+        # validators accept fields only on a row that is not routable.
+        as_lifted = {key: value for key, value in row.items() if key not in {"routable", "routable_reason"}}
+        if row.get("missing_since"):
+            row["routable"] = False
+            row["routable_reason"] = "delisted-upstream"
+        elif not provider_manifest_row_price_is_valid(as_lifted):
+            row["routable"] = False
+            row["routable_reason"] = "price-unavailable"
+        else:
+            row.pop("routable", None)
+            row.pop("routable_reason", None)
+        lifted.append(str(row.get("id")))
+    return lifted
 
 
 def _routable(row: dict[str, Any]) -> bool:
@@ -101,11 +151,12 @@ def plan_unserved_route_holds(
 
 
 def pending_unserved_route_holds(
-    evidence: set[Route], *, manifest_dir: Path | None = None,
+    evidence: set[Route], *, manifest_dir: Path | None = None, now: datetime | None = None,
 ) -> set[Route]:
-    """The evidenced routes the next refresh would hold, judged on the
-    deployed manifests. Expired holds count as still held here (the refresh
-    lifts them first), which can only make this stricter than the refresh."""
+    """The evidenced routes the next refresh would hold, judged on copies of
+    the deployed manifests after the same expiry lift the refresh applies
+    first. Quarantine state is not known here."""
+    now = now or datetime.now(UTC)
     manifests: list[tuple[str, list[Any]]] = []
     for path in sorted((manifest_dir or PACKAGED_MANIFEST_DIR).glob("*.json")):
         try:
@@ -113,7 +164,9 @@ def pending_unserved_route_holds(
         except (OSError, ValueError):
             continue
         if isinstance(raw, dict) and isinstance(raw.get("models"), list):
-            manifests.append((path.stem, raw["models"]))
+            rows = copy.deepcopy(raw["models"])
+            lift_expired_unserved_holds(rows, now=now)
+            manifests.append((path.stem, rows))
     planned, _notes = plan_unserved_route_holds(
         evidence, manifests, manifest_stems=[stem for stem, _ in manifests],
     )
