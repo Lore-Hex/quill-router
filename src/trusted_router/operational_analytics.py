@@ -916,23 +916,6 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
     )
 
 
-def _tag_breakdown_row(row: dict[str, Any]) -> dict[str, Any]:
-    kind = str(row["kind"])
-    if kind not in {"value", "other", "untagged"}:
-        raise RuntimeError("ClickHouse tag breakdown returned an unknown row kind")
-    return {
-        "kind": kind,
-        "value": str(row["group_value"]) if kind == "value" else None,
-        "values": int(row["value_count"]),
-        "requests": int(row["requests"]),
-        "cost_microdollars": int(row["cost_microdollars"]),
-        "byok_microdollars": int(row["byok_microdollars"]),
-        "prompt_tokens": int(row["prompt_tokens"]),
-        "completion_tokens": int(row["completion_tokens"]),
-        "median_elapsed_ms": _optional_int(row.get("median_elapsed_ms")),
-    }
-
-
 def _client_event(row: dict[str, Any]) -> dict[str, Any]:
     status = _optional_int(row.get("final_http_status"))
     return {
@@ -954,3 +937,20 @@ def _client_event(row: dict[str, Any]) -> dict[str, Any]:
 
 def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
+
+
+def _tag_breakdown_row(row: dict[str, Any]) -> dict[str, Any]:
+    kind = str(row["kind"])
+    if kind not in {"value", "other", "untagged"}:
+        raise RuntimeError("ClickHouse tag breakdown returned an unknown row kind")
+    return {
+        "kind": kind,
+        "value": str(row["group_value"]) if kind == "value" else None,
+        "values": int(row["value_count"]),
+        "requests": int(row["requests"]),
+        "cost_microdollars": int(row["cost_microdollars"]),
+        "byok_microdollars": int(row["byok_microdollars"]),
+        "prompt_tokens": int(row["prompt_tokens"]),
+        "completion_tokens": int(row["completion_tokens"]),
+        "median_elapsed_ms": _optional_int(row.get("median_elapsed_ms")),
+    }
