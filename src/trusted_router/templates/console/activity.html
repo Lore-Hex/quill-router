@@ -777,7 +777,9 @@
   let keySelect = null;
   let valueSelect = null;
   let valueNote = null;
+  let valueNoteText = null;
   let valueInput = null;
+  let valueError = null;
   let breakdownRows = null;
   let listBody = null;
   let listNote = null;
@@ -910,7 +912,7 @@
       const limit = numberFormat.format(data.distinct_limit || 0);
       breakdownRows.appendChild(emptyRow(
         BREAKDOWN_COLUMNS,
-        `This key has more than ${limit} distinct values in ${rangePhrases[state.range]}, too many to break down. Choose another key or a shorter range.`
+        `This key has about ${limit} or more distinct values in ${rangePhrases[state.range]}, too many to break down. Choose another key or a shorter range.`
       ));
       return;
     }
@@ -924,7 +926,10 @@
       if (item.kind === "value") {
         first.appendChild(chip(groupBy, String(item.value)));
       } else if (item.kind === "other") {
-        first.appendChild(note(`Other (${numberFormat.format(item.values || 0)} values)`));
+        // How many values the row folds is an estimate when the key has too
+        // many to rank exactly.
+        const folded = numberFormat.format(item.values || 0);
+        first.appendChild(note(data.breakdown_approximate ? `Other (about ${folded} values)` : `Other (${folded} values)`));
       } else {
         const untagged = note("Untagged");
         untagged.title = "Requests without this tag";
@@ -968,9 +973,14 @@
     );
     valueSelect.disabled = state.filterKey === null;
     // The list holds at most the key's most used values. Say so when it is
-    // cut, and take a typed value for the ones it leaves out.
+    // cut, say when even that is approximate, and take a typed value for the
+    // ones it leaves out.
     const partial = state.filterKey !== null && Boolean(filter.values_truncated || filter.values_approximate);
+    valueNoteText.textContent = filter.values_approximate
+      ? "This key has more values than are counted exactly, so the list is approximately its most used ones."
+      : "The list holds this key's most used values.";
     valueNote.hidden = !partial;
+    showValueError("");
     panel.querySelectorAll("[data-tags-clear]").forEach((button) => {
       button.hidden = state.filterKey === null;
     });
@@ -1018,6 +1028,9 @@
     const parts = [`Every request in ${rangePhrases[state.range]} is counted.`];
     if (filtered) {
       parts.push(`Filtered to ${tagText(state.filterKey, state.filterValue)}.`);
+    }
+    if (data.breakdown_approximate) {
+      parts.push("This key has too many values to rank exactly: the rows are approximately its most expensive ones.");
     }
     if (data.keys_approximate) {
       parts.push("This workspace has more tag keys than are counted exactly: the most used are listed.");
@@ -1154,8 +1167,36 @@
     state.filterKey = key;
     state.filterValue = value;
     valueInput.value = "";
+    showValueError("");
     loadTags();
     loadRequests();
+  }
+
+  function showValueError(text) {
+    valueError.textContent = text;
+    valueError.hidden = !text;
+  }
+
+  // A typed value is sent as typed or not at all. The server counts a
+  // value's characters as code points, so they are counted the same way
+  // here: the field has no maxlength, which counts UTF-16 units and would cut
+  // a value of characters outside the basic plane to half its allowed length.
+  function filterByTypedValue() {
+    if (state.filterKey === null) {
+      return;
+    }
+    const typed = valueInput.value;
+    const limit = Number(valueInput.getAttribute("data-max-characters"));
+    const length = Array.from(typed).length;
+    if (length === 0) {
+      showValueError("Type a value first. For requests whose value is empty, use the button for the empty value.");
+      return;
+    }
+    if (length > limit) {
+      showValueError(`A tag value has at most ${numberFormat.format(limit)} characters. This one has ${numberFormat.format(length)}.`);
+      return;
+    }
+    setFilter(state.filterKey, typed);
   }
 
   // The range belongs to the usage panel, which announces every change of
@@ -1183,7 +1224,9 @@
     keySelect = panel.querySelector("[data-tags-filter-key]");
     valueSelect = panel.querySelector("[data-tags-filter-value]");
     valueNote = panel.querySelector("[data-tags-value-note]");
+    valueNoteText = panel.querySelector("[data-tags-value-note-text]");
     valueInput = panel.querySelector("[data-tags-value-input]");
+    valueError = panel.querySelector("[data-tags-value-error]");
     breakdownRows = panel.querySelector("[data-tags-rows]");
     listBody = document.querySelector("[data-activity-rows]");
     listNote = document.querySelector("[data-activity-filter-note]");
@@ -1203,8 +1246,13 @@
     });
     panel.querySelector("[data-tags-value-form]").addEventListener("submit", (event) => {
       event.preventDefault();
-      if (state.filterKey !== null && valueInput.value !== "") {
-        setFilter(state.filterKey, valueInput.value);
+      filterByTypedValue();
+    });
+    // An empty string is a real tag value. An empty field cannot stand for
+    // it, so it has a control of its own.
+    panel.querySelector("[data-tags-value-empty]").addEventListener("click", () => {
+      if (state.filterKey !== null) {
+        setFilter(state.filterKey, "");
       }
     });
     document.querySelectorAll("[data-tags-clear]").forEach((button) => {
@@ -1403,10 +1451,12 @@
         <button class="btn" type="button" data-tags-clear hidden>Clear filter</button>
       </div>
       <form class="tag-value-note" data-tags-value-note data-tags-value-form hidden>
-        <label>The list holds this key's most used values. To filter by another, type it:
-          <input type="text" data-tags-value-input maxlength="256" autocomplete="off" spellcheck="false">
+        <label><span data-tags-value-note-text>The list holds this key's most used values.</span> To filter by another, type it (at most 256 characters):
+          <input type="text" data-tags-value-input data-max-characters="256" autocomplete="off" spellcheck="false">
         </label>
         <button class="btn" type="submit">Filter</button>
+        <button class="btn" type="button" data-tags-value-empty>Filter by the empty value</button>
+        <p class="tag-value-error" data-tags-value-error role="alert" hidden></p>
       </form>
       <div class="table-scroll">
         <table class="tags-table">

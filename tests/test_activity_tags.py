@@ -17,6 +17,7 @@ from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.transport import Transport
 
 from tests.activity_tags_recorded import (
+    APPROXIMATE_CASES,
     EMPTY_WORKSPACE,
     EVENT_CASES,
     OTHER_WORKSPACE,
@@ -52,6 +53,7 @@ from trusted_router.operational_analytics import (
 from trusted_router.storage import InMemoryStore
 from trusted_router.storage_activity_tags import (
     TAG_HISTOGRAM_READS,
+    TagBreakdown,
     break_down_by_tag,
     clickhouse_breakdown,
     count_tag_keys,
@@ -64,8 +66,8 @@ from trusted_router.storage_activity_tags import (
 )
 from trusted_router.storage_operational_analytics import analytics_surrogate
 
-# One name for each statement shape the tag reads send: the six reads, and
-# the four breakdown reads again with a key filter and with a tag filter.
+# One name for each statement shape the tag reads send: the five reads, and
+# the three breakdown reads again with a key filter and with a tag filter.
 READ_SHAPES = sorted(reader_statements())
 
 
@@ -176,8 +178,8 @@ def test_breakdown_folds_the_tail_into_other_and_keeps_untagged_apart() -> None:
     )
 
     found = break_down_by_tag(window, group_by="team", limit=2)
-    assert found is not None
-    rows = order_breakdown(found)
+    assert found is not None and found.approximate is False
+    rows = order_breakdown(found.rows)
 
     assert rows == [
         _row("value", "search", 1, 4, 1350, 0, 190, 85, 400),
@@ -211,7 +213,7 @@ def test_the_values_that_keep_a_row_are_the_most_expensive(
 ) -> None:
     found = break_down_by_tag(_memory_window(), group_by="team", limit=limit)
     assert found is not None
-    rows = order_breakdown(found)
+    rows = order_breakdown(found.rows)
 
     assert [row["value"] for row in rows if row["kind"] == "value"] == kept
     assert [row["values"] for row in rows if row["kind"] == "other"] == ([folded] if folded else [])
@@ -241,7 +243,7 @@ def test_summary_spends_one_read_on_a_workspace_without_tags() -> None:
         calls.append("keys")
         return []
 
-    def never(*_args: Any) -> list[dict[str, Any]]:
+    def never(*_args: Any) -> Any:
         raise AssertionError("no further read is needed when there are no tags")
 
     summary = tag_summary(
@@ -260,6 +262,7 @@ def test_summary_spends_one_read_on_a_workspace_without_tags() -> None:
         "group_by": None,
         "breakdown": [],
         "breakdown_too_many_values": False,
+        "breakdown_approximate": False,
         "filter_values": [],
         "filter_values_truncated": False,
         "filter_values_approximate": False,
@@ -271,9 +274,9 @@ def test_summary_tries_further_default_keys_but_not_an_asked_one() -> None:
             for name, count in (("request", 9), ("session", 8), ("team", 7), ("tier", 6))]
     tried: list[str] = []
 
-    def read_breakdown(key: str, _limit: int) -> list[dict[str, Any]] | None:
+    def read_breakdown(key: str, _limit: int) -> TagBreakdown | None:
         tried.append(key)
-        return [] if key in {"team", "tier"} else None
+        return TagBreakdown([]) if key in {"team", "tier"} else None
 
     def summary(group_by: str | None) -> dict[str, Any]:
         tried.clear()
@@ -305,7 +308,7 @@ def test_summary_reports_cut_and_approximate_lists() -> None:
     summary = tag_summary(
         read_keys=lambda: list(reversed(keys)),
         read_values=lambda _key: list(reversed(values)),
-        read_breakdown=lambda _key, _limit: [],
+        read_breakdown=lambda _key, _limit: TagBreakdown([], approximate=True),
         group_by="key-140",
         tag_key="key-000",
     )
@@ -318,6 +321,7 @@ def test_summary_reports_cut_and_approximate_lists() -> None:
     assert [row["value"] for row in summary["filter_values"]] == [f"v{index:02d}" for index in range(50)]
     assert (summary["filter_values_truncated"], summary["filter_values_approximate"]) == (True, True)
     assert "overcount" not in summary["keys"][0] and "overcount" not in summary["filter_values"][0]
+    assert (summary["breakdown_too_many_values"], summary["breakdown_approximate"]) == (False, True)
 
     # One count that may be too high, even on a key past the listed hundred,
     # makes the key list approximate. An exact value list is not.
@@ -325,7 +329,7 @@ def test_summary_reports_cut_and_approximate_lists() -> None:
     approximate = tag_summary(
         read_keys=lambda: list(keys),
         read_values=lambda _key: [{"value": "search", "requests": 2, "overcount": 0}],
-        read_breakdown=lambda _key, _limit: [],
+        read_breakdown=lambda _key, _limit: TagBreakdown([]),
         group_by=None,
         tag_key="key-000",
     )
@@ -359,18 +363,26 @@ Group = tuple[str, int, int]
 
 def _histogram_reads(
     snapshots: list[dict[Group, list[int | None]]],
-) -> tuple[Any, list[list[tuple[str, int, int, int]]]]:
-    """A histogram read over fake rows. Each read sees the next snapshot, then the last."""
-    asked: list[list[tuple[str, int, int, int]]] = []
+    costs: dict[Group, list[tuple[str, int]]] | None = None,
+) -> tuple[Any, list[tuple[list[tuple[int, int]], list[tuple[str, int, int, int]]]]]:
+    """A histogram read over fake rows. Each read sees the next snapshot, then the last.
 
-    def read(_top: Any, _byok: Any, opened: list[tuple[str, int, int, int]]) -> list[dict[str, Any]]:
+    A group costs three for each generation, all Credits, unless ``costs``
+    gives its cost by stored usage type.
+    """
+    asked: list[tuple[list[tuple[int, int]], list[tuple[str, int, int, int]]]] = []
+
+    def read(top: list[tuple[int, int]], opened: list[tuple[str, int, int, int]]) -> list[dict[str, Any]]:
         groups = snapshots[min(len(asked), len(snapshots) - 1)]
-        asked.append(opened)
+        asked.append((top, opened))
         return [
             {
                 "kind": kind, "hash_a": hash_a, "hash_b": hash_b,
-                "requests": len(elapsed), "cost_microdollars": 3 * len(elapsed),
-                "byok_microdollars": 0, "prompt_tokens": 5 * len(elapsed),
+                "requests": len(elapsed),
+                "cost_by_usage_type": (costs or {}).get(
+                    (kind, hash_a, hash_b), [("Credits", 3 * len(elapsed))]
+                ),
+                "prompt_tokens": 5 * len(elapsed),
                 "completion_tokens": len(elapsed),
                 "histogram": _histogram(
                     elapsed, {cell[3] for cell in opened if cell[:3] == (kind, hash_a, hash_b)}
@@ -382,17 +394,210 @@ def _histogram_reads(
     return read, asked
 
 
+def _no_candidates(_count: int) -> dict[str, Any]:
+    return {"distinct_values": 0, "by_cost": [], "by_requests": []}
+
+
+def _never(*_args: Any) -> Any:
+    raise AssertionError("this read is not needed")
+
+
 def _breakdown_of(snapshots: list[dict[Group, list[int | None]]]) -> tuple[Any, Any]:
-    """Break down groups that are all ``other`` or ``untagged``: no ranking needed."""
+    """Break down groups that are all ``other`` or ``untagged``: nothing to rank."""
     read, asked = _histogram_reads(snapshots)
-    rows = clickhouse_breakdown(
-        read_cardinality=lambda: {"distinct_values": 0, "usage_types": []},
-        read_ranking=lambda _limit, _byok: [],
-        read_names=lambda _top: [],
+    found = clickhouse_breakdown(
+        read_candidates=_no_candidates,
+        read_candidate_totals=_never,
         read_histogram=read,
         limit=50,
     )
-    return rows, asked
+    assert found is not None and found.approximate is False
+    return found.rows, [opened for _top, opened in asked]
+
+
+def _totals_row(digest: int, value: str, usage_type: str, requests: int, cost: int) -> dict[str, Any]:
+    # The second hash is the first plus one: enough for a fake.
+    return {"hash_a": digest, "hash_b": digest + 1, "usage_type": usage_type, "value": value,
+            "requests": requests, "cost_microdollars": cost}
+
+
+def test_breakdown_ranks_the_candidates_by_credit_cost_then_requests_then_text() -> None:
+    asked: list[Any] = []
+
+    def candidates(count: int) -> dict[str, Any]:
+        asked.append(("candidates", count))
+        return {
+            # The estimate is one too high. With every value listed, the
+            # count of the list is used and not the estimate.
+            "distinct_values": 6,
+            # Most generations first, then most cost: the two lists overlap.
+            "by_requests": [(40, 9, 0), (10, 4, 0), (20, 2, 0), (30, 2, 0), (50, 1, 0)],
+            "by_cost": [(40, 900, 0), (10, 12, 0), (20, 6, 0), (30, 6, 0), (50, 6, 0)],
+        }
+
+    def totals(digests: list[int]) -> list[dict[str, Any]]:
+        asked.append(("totals", digests))
+        return [
+            _totals_row(10, "search", "Credits", 4, 12),
+            # Equal in credit cost: more generations first, then the text.
+            _totals_row(20, "beta", "Credits", 2, 6),
+            _totals_row(30, "alpha", "Credits", 2, 6),
+            _totals_row(50, "solo", "Credits", 1, 6),
+            # The most cost of all, none of it credits: " byok " and "BYOK"
+            # are BYOK by the rule a generation is billed under.
+            _totals_row(40, "own-keys", "BYOK", 5, 500),
+            _totals_row(40, "own-keys", " byok ", 4, 400),
+        ]
+
+    groups: dict[Group, list[int | None]] = {
+        ("value", 10, 11): [400, 200, 600, None],
+        ("value", 30, 31): [150, 300],
+        ("value", 20, 21): [100, 500],
+        ("other", 0, 0): [700] * 10,
+    }
+    read, reads = _histogram_reads([groups])
+
+    found = clickhouse_breakdown(
+        read_candidates=candidates, read_candidate_totals=totals, read_histogram=read, limit=3,
+    )
+
+    # One candidates read for as many as the module allows, then one totals
+    # read for exactly those candidates, each named once.
+    assert asked == [
+        ("candidates", storage_activity_tags.TAG_RANK_CANDIDATES),
+        ("totals", [40, 10, 20, 30, 50]),
+    ]
+    # search, then alpha before beta on text; solo has fewer generations and
+    # own-keys has no credit cost at all.
+    assert [top for top, _opened in reads] == [[(10, 11), (30, 31), (20, 21)]] * 2
+    assert found == TagBreakdown(
+        [
+            _row("value", "search", 1, 4, 12, 0, 20, 4, 400),
+            _row("value", "alpha", 1, 2, 6, 0, 10, 2, 225),
+            _row("value", "beta", 1, 2, 6, 0, 10, 2, 300),
+            # Five values, three with a row: two folded, counted exactly.
+            _row("other", None, 2, 10, 30, 0, 50, 10, 700),
+        ],
+        approximate=False,
+    )
+
+
+def test_a_wide_key_is_ranked_from_what_the_sketches_found_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(storage_activity_tags, "TAG_RANK_CANDIDATES", 2)
+    groups: dict[Group, list[int | None]] = {("value", 10, 11): [100], ("other", 0, 0): [100] * 7}
+    listed = {"by_requests": [(10, 4, 0), (20, 2, 0)], "by_cost": [(10, 12, 0), (30, 6, 0)]}
+
+    asked: list[list[int]] = []
+
+    def breakdown(facts: dict[str, Any]) -> TagBreakdown | None:
+        read, _reads = _histogram_reads([groups])
+
+        def totals(digests: list[int]) -> list[dict[str, Any]]:
+            asked.append(digests)
+            return [_totals_row(digest, f"value-{digest}", "Credits", 1, 100 - digest) for digest in digests]
+
+        return clickhouse_breakdown(
+            read_candidates=lambda _count: facts, read_candidate_totals=totals, read_histogram=read, limit=1,
+        )
+
+    # A requests list as long as it was allowed to be may have left values
+    # out: the ranking is approximate, and the folded values are estimated.
+    full = breakdown({"distinct_values": 40, **listed})
+    assert full is not None and full.approximate is True
+    # The candidates are the heaviest by generations and the heaviest by
+    # cost, each once: a value heavy in cost alone is still ranked.
+    assert asked == [[10, 20, 30]]
+    assert [(row["kind"], row["value"], row["values"]) for row in full.rows] == [
+        ("value", "value-10", 1), ("other", None, 39),
+    ]
+    # So may a list whose counts the sketch could not vouch for.
+    doubtful = breakdown({"distinct_values": 1, "by_requests": [(10, 4, 3)], "by_cost": []})
+    assert doubtful is not None and doubtful.approximate is True
+    # A shorter list with exact counts is every value.
+    exact = breakdown({"distinct_values": 1, "by_requests": [(10, 4, 0)], "by_cost": [(10, 12, 0)]})
+    assert exact is not None and exact.approximate is False
+
+
+def test_values_that_arrive_after_the_candidates_are_folded_and_never_ranked() -> None:
+    """The reviewer's interleaving: one value when the candidates are read,
+    a million more before the next statement."""
+    asked: list[list[int]] = []
+
+    def totals(digests: list[int]) -> list[dict[str, Any]]:
+        asked.append(digests)
+        return [_totals_row(10, "search", "Credits", 1, 100)]
+
+    arrived = 1_000_000
+    read, reads = _histogram_reads(
+        [{("value", 10, 11): [200], ("other", 0, 0): [300] * 3}],
+        costs={("other", 0, 0): [("Credits", arrived)]},
+    )
+
+    found = clickhouse_breakdown(
+        read_candidates=lambda _count: {
+            "distinct_values": 1, "by_requests": [(10, 1, 0)], "by_cost": [(10, 100, 0)],
+        },
+        read_candidate_totals=totals,
+        read_histogram=read,
+        limit=50,
+    )
+
+    # The totals read was asked about the one candidate and the histogram
+    # about the one chosen value: neither grows with what arrived since.
+    assert asked == [[10]]
+    assert [top for top, _opened in reads] == [[(10, 11)]] * 2
+    assert found is not None
+    assert found.rows == [
+        _row("value", "search", 1, 1, 3, 0, 5, 1, 200),
+        # Everything that arrived is in one row.
+        _row("other", None, 1, 3, arrived, 0, 15, 3, 300),
+    ]
+
+
+def test_a_byok_generation_that_arrives_between_reads_is_counted_as_byok() -> None:
+    """The reviewer's interleaving: the candidates and their totals see one
+    Credits generation costing 100; the tenant's first BYOK generation,
+    costing 900 with the same tag, arrives before the histogram is read."""
+    read, _reads = _histogram_reads(
+        [{("value", 10, 11): [200, 400]}],
+        costs={("value", 10, 11): [("BYOK", 900), ("Credits", 100)]},
+    )
+
+    found = clickhouse_breakdown(
+        read_candidates=lambda _count: {
+            "distinct_values": 1, "by_requests": [(10, 1, 0)], "by_cost": [(10, 100, 0)],
+        },
+        read_candidate_totals=lambda _digests: [_totals_row(10, "search", "Credits", 1, 100)],
+        read_histogram=read,
+        limit=50,
+    )
+
+    # What a fresh read gives: 100 of credits and 900 of BYOK, not 1,000 of credits.
+    assert found is not None
+    assert found.rows == [_row("value", "search", 1, 2, 100, 900, 10, 2, 300)]
+
+
+def test_a_candidate_gone_before_the_totals_or_the_histogram_keeps_no_row() -> None:
+    read, reads = _histogram_reads([{("value", 20, 21): [100], ("untagged", 0, 0): [100]}])
+
+    found = clickhouse_breakdown(
+        read_candidates=lambda _count: {
+            "distinct_values": 3, "by_requests": [(10, 2, 0), (20, 1, 0), (30, 1, 0)], "by_cost": [],
+        },
+        # The first candidate's rows were replaced away before this read, and
+        # the third's before the histogram.
+        read_candidate_totals=lambda _digests: [
+            _totals_row(20, "ads", "Credits", 1, 5), _totals_row(30, "billing", "Credits", 1, 9),
+        ],
+        read_histogram=read,
+        limit=50,
+    )
+
+    assert [top for top, _opened in reads] == [[(30, 31), (20, 21)]] * 2
+    assert found is not None
+    assert [(row["kind"], row["value"]) for row in found.rows] == [("value", "ads"), ("untagged", None)]
 
 
 def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_known() -> None:
@@ -403,43 +608,37 @@ def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_kno
         ("untagged", 0, 0): [300, 90_000],
     }
     read, reads = _histogram_reads([groups])
-    asked: list[Any] = []
 
-    def ranking(limit: int, byok: list[int]) -> list[dict[str, Any]]:
-        asked.append(("ranking", limit, byok))
-        return [
-            {"hash_a": 11, "hash_b": 12, "requests": 4, "cost_microdollars": 12, "value_count": 9},
-            {"hash_a": 21, "hash_b": 22, "requests": 2, "cost_microdollars": 6, "value_count": 9},
-        ]
-
-    def names(top: list[tuple[int, int]]) -> list[dict[str, Any]]:
-        asked.append(("names", top))
-        return [{"value": "ads", "hash_a": 21, "hash_b": 22}, {"value": "search", "hash_a": 11, "hash_b": 12}]
-
-    rows = clickhouse_breakdown(
-        # " byok " and "BYOK" are BYOK by the rule a generation is billed under.
-        read_cardinality=lambda: {
-            "distinct_values": 9,
-            "usage_types": [("Credits", 100), ("BYOK", 200), (" byok ", 300), ("other", 400)],
+    found = clickhouse_breakdown(
+        read_candidates=lambda _count: {
+            "distinct_values": 3,
+            "by_requests": [(11, 4, 0), (21, 2, 0), (31, 6, 0)],
+            "by_cost": [(11, 12, 0), (21, 6, 0), (31, 1, 0)],
         },
-        read_ranking=ranking,
-        read_names=names,
+        read_candidate_totals=lambda _digests: [
+            {"hash_a": 11, "hash_b": 12, "usage_type": "Credits", "value": "search",
+             "requests": 4, "cost_microdollars": 12},
+            {"hash_a": 21, "hash_b": 22, "usage_type": "Credits", "value": "ads",
+             "requests": 2, "cost_microdollars": 6},
+            {"hash_a": 31, "hash_b": 32, "usage_type": "Credits", "value": "zzz",
+             "requests": 6, "cost_microdollars": 1},
+        ],
         read_histogram=read,
         limit=2,
     )
 
-    assert asked == [("ranking", 2, [200, 300]), ("names", [(11, 12), (21, 22)])]
-    assert rows == [
+    assert found is not None
+    assert found.rows == [
         _row("value", "search", 1, 4, 12, 0, 20, 4, 400),
         _row("value", "ads", 1, 2, 6, 0, 10, 2, 225),
-        # Nine distinct values, two with a row: seven folded. Six elapsed
-        # times: the middle two are 900 and 1100, in two slots.
-        _row("other", None, 7, 6, 18, 0, 30, 6, 1000),
+        # Three values, two with a row: one folded. Six elapsed times: the
+        # middle two are 900 and 1100, in two slots.
+        _row("other", None, 1, 6, 18, 0, 30, 6, 1000),
         _row("untagged", None, 0, 2, 6, 0, 10, 2, 45_150),
     ]
     # Two reads: one that opens nothing, one that opens each group's own
     # middle slots and no other group's.
-    assert reads == [
+    assert [opened for _top, opened in reads] == [
         [],
         [("other", 0, 0, 0), ("other", 0, 0, 1), ("untagged", 0, 0, 0), ("untagged", 0, 0, 87),
          ("value", 11, 12, 0), ("value", 21, 22, 0)],
@@ -514,16 +713,31 @@ def test_a_group_whose_middle_moved_is_read_again_and_the_others_stay_settled() 
     ]
 
 
-def test_breakdown_refuses_before_ranking_and_gives_up_on_a_moving_median() -> None:
-    def no_read(*_args: Any) -> Any:
-        raise AssertionError("nothing may be ranked or counted for a refused key")
+def test_too_many_values_is_decided_by_the_candidates_read_itself() -> None:
+    limit = storage_activity_tags.TAG_DISTINCT_LIMIT
 
-    over = storage_activity_tags.TAG_DISTINCT_LIMIT + 1
-    assert clickhouse_breakdown(
-        read_cardinality=lambda: {"distinct_values": over, "usage_types": []},
-        read_ranking=no_read, read_names=no_read, read_histogram=no_read, limit=50,
-    ) is None
+    def breakdown(estimate: int, **reads: Any) -> TagBreakdown | None:
+        return clickhouse_breakdown(
+            read_candidates=lambda _count: {
+                "distinct_values": estimate, "by_requests": [(10, 1, 0)], "by_cost": [],
+            },
+            read_candidate_totals=reads.get("totals", _never),
+            read_histogram=reads.get("histogram", _never),
+            limit=50,
+        )
 
+    # Past the limit nothing else is read: the statement that counted the
+    # values is the one that refuses.
+    assert breakdown(limit + 1) is None
+    # At the limit the breakdown goes ahead.
+    read, _reads = _histogram_reads([{("value", 10, 11): [100]}])
+    at_limit = breakdown(
+        limit, totals=lambda _digests: [_totals_row(10, "search", "Credits", 1, 5)], histogram=read,
+    )
+    assert at_limit is not None and [row["value"] for row in at_limit.rows] == ["search"]
+
+
+def test_breakdown_gives_up_on_a_median_that_keeps_moving() -> None:
     # A group whose middle is in an unopened slot on every read, as when rows
     # keep arriving between reads, next to a group that settles at once.
     snapshots: list[dict[Group, list[int | None]]] = [
@@ -565,7 +779,7 @@ def test_the_breakdown_settles_with_the_helper_the_page_median_uses() -> None:
 
 
 def test_recorded_answers_belong_to_the_sql_the_reader_sends_today() -> None:
-    assert len(READ_SHAPES) == 14
+    assert len(READ_SHAPES) == 11
     current = {
         hashlib.sha256(sql.encode()).hexdigest() for sql, _bound in reader_statements().values()
     }
@@ -611,17 +825,26 @@ def test_tag_reads_bind_every_value_and_cover_the_whole_window(name: str) -> Non
         assert sql.index("groupArray(") < sql.index("FROM\n(\n") < sql.index("FROM activity_generations FINAL")
     else:
         assert "groupArray(" not in sql
+    # No statement is told which usage types are BYOK: each groups by the
+    # stored usage type and the caller decides.
+    assert "byok" not in sql.lower() and "byok" not in bound
     if name in {"keys", "values"}:
         assert "topK(" in sql and "'counts'" in sql and "GROUP BY" not in sql
-    if name.startswith("cardinality"):
-        assert "uniqCombinedIf(" in sql and "groupUniqArray(101)" in sql and "GROUP BY" not in sql
-    if name.startswith("ranking"):
-        # Grouped by hashes of the value, never by its text.
-        assert "GROUP BY hash_a, hash_b" in sql and "LIMIT {limit:UInt32}" in sql
-        assert bound["byok"] == "[7]" and bound["limit"] == "50"
-    if name.startswith("names"):
-        assert "IN {top:Array(Tuple(UInt64, UInt64))}" in sql and bound["top"] == "[(1,2)]"
+    if name.startswith("candidates"):
+        # Fixed-size sketches over a hash of the value and no grouping at
+        # all: nothing here grows with the number of distinct values.
+        assert "GROUP BY" not in sql and "ORDER BY" not in sql
+        assert "uniqCombined(cityHash64(tags[{group_by:String}])) AS distinct_values" in sql
+        assert "topKWeighted({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}])," in sql
+        assert "topK({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}])) AS by_requests" in sql
+        assert bound["candidates"] == "2000"
+    if name.startswith("totals"):
+        # Only the named candidates are grouped, by hashes and usage type.
+        assert "AND cityHash64(tags[{group_by:String}]) IN {candidates:Array(UInt64)}\n" in sql
+        assert "GROUP BY hash_a, hash_b, usage_type\n" in sql
+        assert bound["candidates"] == "[1,3]"
     if name.startswith("histogram"):
+        assert "sumMap([toString(usage_type)], [total_cost_microdollars]) AS cost_at_value" in sql
         # The helper's own grouping, with the tag group in front, then one
         # row a group.
         assert "  GROUP BY kind, hash_a, hash_b, slot, elapsed_value\n)\nGROUP BY kind, hash_a, hash_b\n" in sql
@@ -648,14 +871,15 @@ def test_reader_rows_are_typed_whatever_the_profile_quotes() -> None:
             # A reader profile that quotes 64-bit integers returns strings.
             "keys": [{"tag_key": "team", "requests": "9", "overcount": "0"}],
             "values": [{"tag_value": "", "requests": "2", "overcount": "1"}],
-            "cardinality": [{"distinct_values": "7", "usage_types": [["BYOK", "200"], ["Credits", 100]]}],
-            "ranking": [{"hash_a": "18446744073709551615", "hash_b": 2, "requests": "4",
-                         "cost_microdollars": "12", "value_count": "9"}],
-            "names": [{"named_value": "search", "hash_a": "11", "hash_b": "12"}],
+            "candidates": [{"distinct_values": "7",
+                            "by_cost": [["18446744073709551615", "12", "0"]],
+                            "by_requests": [["18446744073709551615", "4", "0"], [11, 2, 1]]}],
+            "totals": [{"hash_a": "18446744073709551615", "hash_b": 2, "usage_type": "BYOK",
+                        "named_value": "search", "requests": "4", "cost_microdollars": "12"}],
             # A packed histogram: -1 stands for NULL, and 64-bit counts are quoted.
             "histogram": [{"kind": "other", "hash_a": "0", "hash_b": "0", "requests": "6",
-                           "cost_microdollars": "11", "byok_microdollars": "0", "prompt_tokens": "5",
-                           "completion_tokens": "2",
+                           "cost_by_usage_type": [["BYOK", "Credits"], ["4", "7"]],
+                           "prompt_tokens": "5", "completion_tokens": "2",
                            "histogram": [[-1, -1, "1"], [3, -1, "2"], [4, 4100, "3"]]}],
         }
         return httpx.Response(200, json={"data": answers[read_name(sql)]})
@@ -667,21 +891,19 @@ def test_reader_rows_are_typed_whatever_the_profile_quotes() -> None:
     assert client.activity_tag_values(tag_key="team", **window) == [
         {"value": "", "requests": 2, "overcount": 1}
     ]
-    assert client.activity_tag_cardinality(group_by="team", **window) == {
-        "distinct_values": 7, "usage_types": [("BYOK", 200), ("Credits", 100)],
+    assert client.activity_tag_candidates(group_by="team", candidates=0, **window) == {
+        "distinct_values": 7,
+        "by_cost": [(18446744073709551615, 12, 0)],
+        "by_requests": [(18446744073709551615, 4, 0), (11, 2, 1)],
     }
-    assert client.activity_tag_ranking(group_by="team", limit=0, byok_hashes=[], **window) == [
-        {"hash_a": 18446744073709551615, "hash_b": 2, "requests": 4, "cost_microdollars": 12,
-         "value_count": 9}
+    assert client.activity_tag_candidate_totals(group_by="team", candidates=[11], **window) == [
+        {"hash_a": 18446744073709551615, "hash_b": 2, "usage_type": "BYOK", "value": "search",
+         "requests": 4, "cost_microdollars": 12}
     ]
-    assert client.activity_tag_names(group_by="team", top=[(11, 12)], **window) == [
-        {"value": "search", "hash_a": 11, "hash_b": 12}
-    ]
-    assert client.activity_tag_histogram(
-        group_by="team", top=[], byok_hashes=[], opened=[], **window
-    ) == [{
-        "kind": "other", "hash_a": 0, "hash_b": 0, "requests": 6, "cost_microdollars": 11,
-        "byok_microdollars": 0, "prompt_tokens": 5, "completion_tokens": 2,
+    assert client.activity_tag_histogram(group_by="team", top=[], opened=[], **window) == [{
+        "kind": "other", "hash_a": 0, "hash_b": 0, "requests": 6,
+        "cost_by_usage_type": [("BYOK", 4), ("Credits", 7)],
+        "prompt_tokens": 5, "completion_tokens": 2,
         "histogram": [(None, None, 1), (3, None, 2), (4, 4100, 3)],
     }]
 
@@ -692,16 +914,18 @@ def test_reader_refuses_answers_it_does_not_know() -> None:
 
     with pytest.raises(RuntimeError, match="unknown row kind"):
         _client(unknown_kind).activity_tag_histogram(
-            tenant_id="t", group_by="team", start_at=START_AT, top=[], byok_hashes=[], opened=[],
+            tenant_id="t", group_by="team", start_at=START_AT, top=[], opened=[],
         )
 
-    def too_many_usage_types(_request: httpx.Request) -> httpx.Response:
-        types = [[f"type-{index}", index] for index in range(101)]
-        return httpx.Response(200, json={"data": [{"distinct_values": 1, "usage_types": types}]})
+    def lopsided(_request: httpx.Request) -> httpx.Response:
+        row = {"kind": "other", "hash_a": 0, "hash_b": 0, "requests": 1, "prompt_tokens": 1,
+               "completion_tokens": 1, "histogram": [], "cost_by_usage_type": [["BYOK", "Credits"], [4]]}
+        return httpx.Response(200, json={"data": [row]})
 
-    with pytest.raises(RuntimeError, match="more than 100 distinct usage types"):
-        _client(too_many_usage_types).activity_tag_cardinality(
-            tenant_id="t", group_by="team", start_at=START_AT
+    # A cost without its usage type could not be told apart: an error, not a guess.
+    with pytest.raises(ValueError):
+        _client(lopsided).activity_tag_histogram(
+            tenant_id="t", group_by="team", start_at=START_AT, top=[], opened=[],
         )
 
 
@@ -723,23 +947,20 @@ class _FakeAnalytics:
         self.calls.append(("values", kwargs))
         return [{"value": "search", "requests": 2, "overcount": 0}]
 
-    def activity_tag_cardinality(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(("cardinality", kwargs))
-        return {"distinct_values": self.distinct_values, "usage_types": [("BYOK", 200), ("Credits", 100)]}
+    def activity_tag_candidates(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("candidates", kwargs))
+        return {"distinct_values": self.distinct_values, "by_cost": [(11, 9, 0)], "by_requests": [(11, 3, 0)]}
 
-    def activity_tag_ranking(self, **kwargs: Any) -> list[dict[str, Any]]:
-        self.calls.append(("ranking", kwargs))
-        return [{"hash_a": 11, "hash_b": 12, "requests": 3, "cost_microdollars": 9, "value_count": 1}]
-
-    def activity_tag_names(self, **kwargs: Any) -> list[dict[str, Any]]:
-        self.calls.append(("names", kwargs))
-        return [{"value": "search", "hash_a": 11, "hash_b": 12}]
+    def activity_tag_candidate_totals(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls.append(("totals", kwargs))
+        return [{"hash_a": 11, "hash_b": 12, "usage_type": "Credits", "value": "search",
+                 "requests": 3, "cost_microdollars": 9}]
 
     def activity_tag_histogram(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append(("histogram", kwargs))
         return [{
-            "kind": "value", "hash_a": 11, "hash_b": 12, "requests": 3, "cost_microdollars": 9,
-            "byok_microdollars": 0, "prompt_tokens": 30, "completion_tokens": 15,
+            "kind": "value", "hash_a": 11, "hash_b": 12, "requests": 3,
+            "cost_by_usage_type": [("Credits", 9)], "prompt_tokens": 30, "completion_tokens": 15,
             "histogram": [(None, None, 3)],
         }]
 
@@ -761,11 +982,9 @@ def test_store_reads_one_tenant_and_passes_the_filter_to_every_breakdown_read() 
     assert fake.calls == [
         ("keys", window),
         ("values", {"tag_key": "tier", **window}),
-        ("cardinality", {"group_by": "team", **window, **tag}),
-        ("ranking", {"group_by": "team", "limit": 50, "byok_hashes": [200], **window, **tag}),
-        ("names", {"group_by": "team", "top": [(11, 12)], **window, **tag}),
-        ("histogram", {"group_by": "team", "top": [(11, 12)], "byok_hashes": [200],
-                       "opened": [], **window, **tag}),
+        ("candidates", {"group_by": "team", "candidates": 2000, **window, **tag}),
+        ("totals", {"group_by": "team", "candidates": [11], **window, **tag}),
+        ("histogram", {"group_by": "team", "top": [(11, 12)], "opened": [], **window, **tag}),
     ]
     assert summary["breakdown"] == [_row("value", "search", 1, 3, 9, 0, 30, 15, None)]
     for _name, kwargs in fake.calls:
@@ -777,7 +996,7 @@ def test_store_asks_nothing_more_about_a_key_with_too_many_values() -> None:
 
     summary = sql_store(cast(Any, fake)).activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
 
-    assert [name for name, _kwargs in fake.calls] == ["keys", "cardinality"]
+    assert [name for name, _kwargs in fake.calls] == ["keys", "candidates"]
     assert summary["breakdown"] == [] and summary["breakdown_too_many_values"] is True
 
 
@@ -863,14 +1082,15 @@ def test_the_agreed_default_summary_is_the_expected_one() -> None:
             _row("untagged", None, 0, 2, 100, 0, 17, 7, 45_150),
         ],
         "breakdown_too_many_values": False,
+        "breakdown_approximate": False,
         "filter_values": [],
         "filter_values_truncated": False,
         "filter_values_approximate": False,
     }
-    # Keys, cardinality, ranking, names, and two histogram reads: the second
+    # Keys, the candidates, their totals, and two histogram reads: the second
     # opens each group's middle slots.
     assert [read_name(statement(request)[0]) for request in requests] == [
-        "keys", "cardinality", "ranking", "names", "histogram", "histogram",
+        "keys", "candidates", "totals", "histogram", "histogram",
     ]
 
 
@@ -922,6 +1142,60 @@ def test_the_agreed_cut_and_filtered_summaries_are_the_expected_ones() -> None:
     assert store.activity_tag_summary(EMPTY_WORKSPACE, start_at=START_AT)["keys"] == []
 
 
+def test_a_tie_at_the_cut_is_decided_by_text_in_both_stores() -> None:
+    # Six rows of seven values: "Search" and "delta" are equal in cost and in
+    # requests, and the last row goes to the one that sorts first.
+    with limits({"TAG_VALUE_LIMIT": 6}):
+        from_sql = sql_store(recorded_client([])).activity_tag_summary(
+            WORKSPACE, start_at=START_AT, group_by="team"
+        )
+        from_memory = _memory_store().activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
+
+    kept = [row["value"] for row in from_sql["breakdown"] if row["kind"] == "value"]
+    assert kept == ["search", "billing", "ads", "", "zeta", "Search"]
+    assert from_sql["breakdown"][6] == _row("other", None, 1, 1, 10, 0, 4, 2, 4_194_303)
+    assert from_sql == from_memory and from_sql["breakdown_approximate"] is False
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "overrides", "kept", "folded"),
+    [
+        # Three candidates by requests (search, ads, zeta) and three by cost
+        # (search, ads, billing): four values keep a row and three are folded.
+        (APPROXIMATE_CASES[0][1], APPROXIMATE_CASES[0][2], ["search", "billing", "ads", "zeta"], 3),
+        # A list as long as it was allowed to be is not known to be complete,
+        # even when, as here, it does hold every value.
+        (APPROXIMATE_CASES[1][1], APPROXIMATE_CASES[1][2],
+         ["search", "billing", "ads", "", "zeta", "Search", "delta"], 0),
+    ],
+    ids=[case[0] for case in APPROXIMATE_CASES],
+)
+def test_a_key_with_more_values_than_candidates_is_ranked_approximately(
+    kwargs: dict[str, Any], overrides: dict[str, int], kept: list[str], folded: int
+) -> None:
+    with limits(overrides):
+        from_sql = sql_store(recorded_client([])).activity_tag_summary(
+            WORKSPACE, start_at=START_AT, **kwargs
+        )
+        from_memory = _memory_store().activity_tag_summary(WORKSPACE, start_at=START_AT, **kwargs)
+
+    assert (from_sql["breakdown_approximate"], from_memory["breakdown_approximate"]) == (True, False)
+    assert [row["value"] for row in from_sql["breakdown"] if row["kind"] == "value"] == kept
+    assert [row["values"] for row in from_sql["breakdown"] if row["kind"] == "other"] == (
+        [folded] if folded else []
+    )
+    # Which values keep a row is approximate. What the rows add up to is not.
+    for total in ("requests", "cost_microdollars", "byok_microdollars", "prompt_tokens", "completion_tokens"):
+        assert sum(row[total] for row in from_sql["breakdown"]) == sum(
+            row[total] for row in from_memory["breakdown"]
+        ), total
+    # And a row that both stores show is the same row.
+    shown = {row["value"]: row for row in from_memory["breakdown"] if row["kind"] == "value"}
+    for row in from_sql["breakdown"]:
+        if row["kind"] == "value":
+            assert row == shown[row["value"]]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "ids", "truncated"),
     [
@@ -958,7 +1232,7 @@ def test_tag_reads_send_every_bound_value_in_the_body_not_the_url() -> None:
     )
     store.activity_tag_events(WORKSPACE, start_at=START_AT, tag_key="team", tag_value="search")
 
-    assert len(requests) == 8
+    assert len(requests) == 7
     for request in requests:
         # The URL names the database and nothing else.
         assert str(request.url) == "http://clickhouse.test:8123?database=tr"
@@ -1009,7 +1283,7 @@ def test_no_log_record_carries_tag_text_even_with_http_client_logging_on(
         store.activity_tag_events(WORKSPACE, start_at=START_AT, tag_key="team", tag_value="search")
 
     logged = [record.getMessage() for record in caplog.records]
-    assert sum("HTTP Request: POST http://clickhouse.test:8123" in line for line in logged) == 8
+    assert sum("HTTP Request: POST http://clickhouse.test:8123" in line for line in logged) == 7
     for record in caplog.records:
         text = record.getMessage() + repr(record.__dict__)
         assert "param_" not in text, record.name
@@ -1096,8 +1370,8 @@ def test_a_clickhouse_error_does_not_name_the_bound_values(
 
     client = _client(handler)
     with pytest.raises(httpx.HTTPStatusError) as raised:
-        client.activity_tag_cardinality(
-            tenant_id="t", group_by="zq-private-group", start_at=START_AT,
+        client.activity_tag_candidates(
+            tenant_id="t", group_by="zq-private-group", start_at=START_AT, candidates=2000,
             tag_key="zq-private-key", tag_value="zq-private-value",
         )
 

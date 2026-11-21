@@ -33,6 +33,9 @@ FILTERS = (
 # The id-per-request workspace is answered with a small distinct-value limit,
 # so that 55 ids are "too many" without a fixture of half a million rows.
 MANY_DISTINCT_LIMIT = 40
+# A value the server accepts that a UTF-16 length limit would cut in half:
+# 129 letters from outside the basic plane, two UTF-16 units each.
+ASTRAL = "\U00020000" * 129
 
 
 def _generation(workspace_id: str, index: int, tags: dict[str, str], cost: int,
@@ -126,6 +129,7 @@ def render() -> dict[str, Any]:
     assert page.status_code == plain_page.status_code == many_page.status_code == 200
     result: dict[str, Any] = {
         "markup": MARKUP,
+        "astral": ASTRAL,
         "tagged": {
             "page": page.text,
             "usage": usage,
@@ -140,7 +144,10 @@ def render() -> dict[str, Any]:
             "tags": _answers(plain, "/console/activity/tags.json", _summaries((None,), ((None, None),))),
         },
     }
-    many_filters = ((None, None), ("request", None), ("request", "req-07"), ("request", "req-54"))
+    many_filters = (
+        (None, None), ("request", None), ("request", "req-07"), ("request", "req-54"),
+        ("request", ""), ("request", ASTRAL),
+    )
     storage_activity_tags.TAG_DISTINCT_LIMIT = MANY_DISTINCT_LIMIT
     result["many"] = {
         "page": many_page.text,

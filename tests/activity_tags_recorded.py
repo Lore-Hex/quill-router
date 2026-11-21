@@ -60,8 +60,9 @@ START_AT = "2026-03-01T00:00:00Z"
 # The team values are built so that each rule of the ranking decides a cut:
 #   search 1350, billing 800, ads 700 (in credits), "" 20, zeta 10, Search 10,
 #   delta 10
-# billing outranks ads on cost although ads has more requests (limit 2), and
-# zeta outranks Search and delta on requests at equal cost (limit 5).
+# billing outranks ads on cost although ads has more requests (limit 2), zeta
+# outranks Search and delta on requests at equal cost (limit 5), and Search
+# outranks delta on text at equal cost and requests (limit 6).
 #
 # The elapsed times put the middle of a group at one value (search), at two
 # values of one histogram slot (ads), in two slots (the untagged rows), at
@@ -105,11 +106,20 @@ SUMMARY_CASES: list[tuple[str, str, dict[str, Any], dict[str, int]]] = [
     ("no-tags", EMPTY_WORKSPACE, {"group_by": "team", "tag_key": "team", "tag_value": "search"}, {}),
     ("cut-by-cost", WORKSPACE, {"group_by": "team"}, {"TAG_VALUE_LIMIT": 2}),
     ("cut-by-requests", WORKSPACE, {"group_by": "team"}, {"TAG_VALUE_LIMIT": 5}),
+    ("cut-by-text", WORKSPACE, {"group_by": "team"}, {"TAG_VALUE_LIMIT": 6}),
     ("keys-cut", WORKSPACE, {"group_by": "environment"}, {"TAG_KEY_LIMIT": 1}),
     ("values-cut", WORKSPACE, {"group_by": "environment", "tag_key": "team"}, {"TAG_VALUE_LIMIT": 2}),
     ("too-many-values", WORKSPACE, {"group_by": "team"}, {"TAG_DISTINCT_LIMIT": 6}),
     ("default-skips-too-many", WORKSPACE, {}, {"TAG_DISTINCT_LIMIT": 6}),
     ("every-default-too-many", WORKSPACE, {}, {"TAG_DISTINCT_LIMIT": 1}),
+]
+# With fewer candidates than the key has values, ClickHouse ranks only the
+# heaviest values its sketches return and says the ranking is approximate.
+# The in-memory store ranks every value, so these are recorded but compared
+# with it on totals only.
+APPROXIMATE_CASES: list[tuple[str, dict[str, Any], dict[str, int]]] = [
+    ("fewer-candidates-than-values", {"group_by": "team"}, {"TAG_RANK_CANDIDATES": 3}),
+    ("as-many-candidates-as-values", {"group_by": "team"}, {"TAG_RANK_CANDIDATES": 7}),
 ]
 EVENT_CASES: list[tuple[str, dict[str, Any]]] = [
     ("key-and-value", {"tag_key": "team", "tag_value": "search"}),
@@ -211,9 +221,8 @@ def read_name(sql: str) -> str:
     for name, marker in (
         ("keys", "arrayJoin(mapKeys(tags))"),
         ("values", "AS tag_value"),
-        ("cardinality", "uniqCombinedIf"),
-        ("ranking", "count() OVER () AS value_count"),
-        ("names", "AS named_value"),
+        ("candidates", "AS by_requests"),
+        ("totals", "AS named_value"),
         ("histogram", "AS generations_at_value"),
         ("generations", "generation_id, request_id"),
     ):
@@ -282,7 +291,6 @@ def reader_statements() -> dict[str, tuple[str, dict[str, str]]]:
     histogram: dict[str, Any] = {
         "group_by": "team",
         "top": [(1, 2), (3, 4)],
-        "byok_hashes": [7],
         "opened": [("value", 1, 2, 3), ("other", 0, 0, 5)],
     }
     names = ["keys", "values"]
@@ -295,11 +303,10 @@ def reader_statements() -> dict[str, tuple[str, dict[str, str]]]:
         ("-by-tag", {"tag_key": "environment", "tag_value": "production"}),
     ]
     for suffix, tag in filters:
-        client.activity_tag_cardinality(group_by="team", **window, **tag)
-        client.activity_tag_ranking(group_by="team", limit=50, byok_hashes=[7], **window, **tag)
-        client.activity_tag_names(group_by="team", top=[(1, 2)], **window, **tag)
+        client.activity_tag_candidates(group_by="team", candidates=2000, **window, **tag)
+        client.activity_tag_candidate_totals(group_by="team", candidates=[1, 3], **window, **tag)
         client.activity_tag_histogram(**histogram, **window, **tag)
-        names += [name + suffix for name in ("cardinality", "ranking", "names", "histogram")]
+        names += [name + suffix for name in ("candidates", "totals", "histogram")]
     return {name: statement(request) for name, request in zip(names, sent, strict=True)}
 
 
@@ -388,6 +395,9 @@ def record(url: str, user: str, password: str) -> None:  # pragma: no cover - ne
     for _name, workspace, kwargs, overrides in SUMMARY_CASES:
         with limits(overrides):
             store.activity_tag_summary(workspace, start_at=START_AT, **kwargs)
+    for _name, kwargs, overrides in APPROXIMATE_CASES:
+        with limits(overrides):
+            store.activity_tag_summary(WORKSPACE, start_at=START_AT, **kwargs)
     for _name, kwargs in EVENT_CASES:
         store.activity_tag_events(WORKSPACE, start_at=START_AT, **kwargs)
     TRANSCRIPT.write_text(

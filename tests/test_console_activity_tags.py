@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from trusted_router import storage_activity_tags
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.request_tags import MAX_TAG_VALUE_CHARS
 from trusted_router.routes.console.activity import USAGE_RANGE_PRESETS
 from trusted_router.routes.console.activity_tags import checked_tag, window_start
 from trusted_router.storage import STORE, Generation, InMemoryStore
@@ -499,6 +500,8 @@ def test_summary_endpoint_shape() -> None:
     ]
     assert payload["group_by"] == "team" and payload["value_limit"] == 50
     assert (payload["keys_approximate"], payload["breakdown_too_many_values"]) == (False, False)
+    # The in-memory store ranks every value: its choice of rows is never approximate.
+    assert payload["breakdown_approximate"] is False
     assert payload["distinct_limit"] == 500_000
     assert payload["breakdown"] == [
         {
@@ -560,12 +563,25 @@ def test_page_names_the_median_and_offers_a_typed_value() -> None:
     assert ">Median generation time</th>" in panel
     assert "Median latency" not in panel
     assert "This is not the client-observed latency in the reliability panel above" in panel
-    # A value the list leaves out can be typed. The field is bounded like a tag value.
-    assert '<input type="text" data-tags-value-input maxlength="256"' in panel
+    # A value the list leaves out can be typed. The page states the limit the
+    # server enforces and counts characters the way the server does; the
+    # field has no maxlength, which counts UTF-16 units and would cut a value
+    # of characters outside the basic plane short.
+    assert f'data-tags-value-input data-max-characters="{MAX_TAG_VALUE_CHARS}"' in panel
+    assert f"(at most {MAX_TAG_VALUE_CHARS} characters)" in panel
+    assert "maxlength" not in panel
     assert "data-tags-value-note data-tags-value-form hidden" in panel
+    # The empty value is a real one and has a control of its own.
+    assert '<button class="btn" type="button" data-tags-value-empty>Filter by the empty value</button>' in panel
     script = TEMPLATE.read_text(encoding="utf-8")
     assert "values_truncated || filter.values_approximate" in script
-    assert "too many to break down" in script
+    assert "Array.from(typed).length" in script
+    # A refusal rests on a count that is an estimate in ClickHouse, and an
+    # approximate list or ranking is called approximate.
+    assert "or more distinct values in" in script and "has more than" not in script
+    assert "the list is approximately its most used ones" in script
+    assert "the rows are approximately its most expensive ones" in script
+    assert "Other (about ${folded} values)" in script
 
 
 def test_page_script_follows_the_range_without_reading_the_chart() -> None:

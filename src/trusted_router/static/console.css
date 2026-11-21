@@ -816,6 +816,16 @@ body.console {
   min-height: 36px;
 }
 
+.tag-value-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--red);
+}
+
+.tag-value-error[hidden] {
+  display: none;
+}
+
 .tag-filter-note .btn {
   min-height: 32px;
   padding: 5px 10px;

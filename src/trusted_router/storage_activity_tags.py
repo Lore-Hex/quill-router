@@ -14,6 +14,7 @@ Tag keys and values are customer text. Nothing here logs them.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -27,14 +28,18 @@ from trusted_router.storage_models import Generation, _is_byok
 TAG_KEY_LIMIT = 100
 TAG_VALUE_LIMIT = 50
 TAG_EVENT_LIMIT = 50
-# A breakdown ranks every distinct value of its key before it keeps
-# TAG_VALUE_LIMIT, and that ranking holds one group per value: two hashes and
-# two sums, about 85 bytes measured, whatever the value's length. Above this
-# many distinct values the breakdown is refused instead of attempted, so the
-# ranking never holds more than about 45 MiB of the reader's 1 GiB. A key
-# with more values than this is an identifier, not a dimension to allocate
-# cost by.
+# A key with more distinct values than this is an identifier, not a dimension
+# to allocate cost by, and its breakdown is refused. The in-memory store
+# counts the values exactly. ClickHouse estimates the count in the statement
+# that picks the candidates, within about one percent, so the page words the
+# refusal as "about this many or more". No read's memory depends on this
+# limit: it is a statement about usefulness, not a guard.
 TAG_DISTINCT_LIMIT = 500_000
+# How many values each of the two candidate sketches returns. A key with
+# fewer distinct values than this is ranked exactly, ties included. With more,
+# ClickHouse ranks the heaviest values its sketches found and the breakdown is
+# marked approximate.
+TAG_RANK_CANDIDATES = 2_000
 # When the page did not ask for a key, how many of the most used keys are
 # tried before the breakdown is reported as refused.
 TAG_DEFAULT_KEY_TRIES = 3
@@ -46,6 +51,14 @@ TAG_HISTOGRAM_READS = 4
 
 TagRows = list[dict[str, Any]]
 TagGroup = tuple[str, int, int]
+
+
+@dataclasses.dataclass(frozen=True)
+class TagBreakdown:
+    """A breakdown's rows, and whether the choice of its value rows is approximate."""
+
+    rows: TagRows
+    approximate: bool = False
 
 
 def parse_window_start(start_at: str) -> dt.datetime:
@@ -109,14 +122,14 @@ def rank_by_requests(rows: TagRows, name: str) -> TagRows:
 
 def break_down_by_tag(
     generations: Iterable[Generation], *, group_by: str, limit: int
-) -> TagRows | None:
+) -> TagBreakdown | None:
     """Totals per value of ``group_by``, unordered; None for too many values.
 
     The ``limit`` most expensive values each keep a row. Every other value is
     summed into one ``other`` row, and generations without the key into one
-    ``untagged`` row. Ranking is by credit cost, then requests, as in the
-    ClickHouse ranking. Values equal in both are ordered by text here and by
-    a hash there, so the two can keep different ones of them at the cut.
+    ``untagged`` row. Ranking is by credit cost, then requests, then the
+    value's text: the order ``clickhouse_breakdown`` uses. This store counts
+    and ranks every value, so its ranking is never approximate.
     """
     rows = list(generations)
     by_value: dict[str, list[Generation]] = {}
@@ -151,48 +164,81 @@ def break_down_by_tag(
         result.append(
             {"kind": "untagged", "value": None, "values": 0, **_totals(untagged)}
         )
-    return result
+    return TagBreakdown(result)
 
 
 def clickhouse_breakdown(
     *,
-    read_cardinality: Callable[[], dict[str, Any]],
-    read_ranking: Callable[[int, list[int]], TagRows],
-    read_names: Callable[[list[tuple[int, int]]], TagRows],
-    read_histogram: Callable[
-        [list[tuple[int, int]], list[int], list[tuple[str, int, int, int]]], TagRows
-    ],
+    read_candidates: Callable[[int], dict[str, Any]],
+    read_candidate_totals: Callable[[list[int]], TagRows],
+    read_histogram: Callable[[list[tuple[int, int]], list[tuple[str, int, int, int]]], TagRows],
     limit: int,
-) -> TagRows | None:
+) -> TagBreakdown | None:
     """The breakdown from the bounded ClickHouse reads; None for too many values.
 
-    The cardinality read decides whether the ranking may run at all. The
-    ranking picks the values that keep a row, by their hashes, and the names
-    read fetches the text of those values only.
+    No read here leans on what an earlier one saw to stay bounded, because
+    rows keep arriving between them:
+
+    * The candidates read has no GROUP BY. From fixed-size sketches it says
+      about how many distinct values the key has, which decides the refusal,
+      and names the values that could keep a row.
+    * The totals read groups those candidates and nothing else, however many
+      new values have arrived since, and returns their text, generations and
+      cost by stored usage type. The rows are ranked here by credit cost,
+      then generations, then text: the in-memory order.
+    * The histogram reads group the at most ``limit`` chosen values, every
+      other value as one row and untagged generations as one row.
+
+    Credits and BYOK are told apart here, with ``UsageType.coerce``, from the
+    usage type each statement groups by, so a usage type that first appears
+    between two reads is classified like any other.
+
+    With fewer distinct values than TAG_RANK_CANDIDATES the candidates are
+    every value, with exact counts, and the ranking is exact. With more, they
+    are the heaviest values by cost and by generations that the sketches
+    found, and the result is marked approximate: the totals of every row are
+    still exact for the rows the last read saw, but a value that belongs
+    among the ``limit`` may be in the ``other`` row instead.
 
     Medians are the page's own (``settle_elapsed_median``), settled for each
     group apart: the first histogram read opens no slot and tells each group
     which one or two slots hold its middle values, and the next read opens
     those slots for that group. Every read returns every group with its
     totals, so the totals and the medians both come from the last read alone
-    and describe one snapshot. A group whose middle moved to another slot between reads, which
-    takes rows arriving in between, is read again with the new slots; one
-    that has still not settled after TAG_HISTOGRAM_READS reads is reported
-    without a median rather than failing the whole breakdown.
+    and describe one snapshot. A group whose middle moved to another slot
+    between reads, which takes rows arriving in between, is read again with
+    the new slots; one that has still not settled after TAG_HISTOGRAM_READS
+    reads is reported without a median rather than failing the whole
+    breakdown.
     """
-    facts = read_cardinality()
-    if int(facts["distinct_values"]) > TAG_DISTINCT_LIMIT:
+    facts = read_candidates(TAG_RANK_CANDIDATES)
+    estimate = int(facts["distinct_values"])
+    if estimate > TAG_DISTINCT_LIMIT:
         return None
-    # The same decision generation_metrics makes for one generation, made
-    # here for each stored usage type and handed back as hashes.
-    byok = sorted(int(digest) for text, digest in facts["usage_types"] if _is_byok(str(text)))
-    ranked = read_ranking(limit, byok)
-    top = [(int(row["hash_a"]), int(row["hash_b"])) for row in ranked]
-    names: dict[tuple[int, int], str] = {}
-    for row in read_names(top) if top else []:
+    by_requests = facts["by_requests"]
+    # Every value has at least one generation, so a requests list shorter
+    # than it was allowed to be, with no count in doubt, is every value.
+    complete = len(by_requests) < TAG_RANK_CANDIDATES and all(
+        int(error) == 0 for _digest, _count, error in by_requests
+    )
+    candidates = list(
+        dict.fromkeys(int(digest) for digest, _weight, _error in [*by_requests, *facts["by_cost"]])
+    )
+    ranked: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in read_candidate_totals(candidates) if candidates else []:
         pair = (int(row["hash_a"]), int(row["hash_b"]))
+        entry = ranked.setdefault(pair, {"value": str(row["value"]), "credit": 0, "requests": 0})
         # Two values with both hashes equal would share a row; keep one name.
-        names[pair] = min(names.get(pair, str(row["value"])), str(row["value"]))
+        entry["value"] = min(entry["value"], str(row["value"]))
+        entry["requests"] += int(row["requests"])
+        if not _is_byok(str(row["usage_type"])):
+            entry["credit"] += int(row["cost_microdollars"])
+    order = sorted(
+        ranked,
+        key=lambda pair: (-ranked[pair]["credit"], -ranked[pair]["requests"], ranked[pair]["value"]),
+    )
+    top = order[:limit]
+    names = {pair: str(ranked[pair]["value"]) for pair in top}
     # The slots opened for each group. A settled group keeps its slots open:
     # the next read has to settle it again.
     opened: dict[TagGroup, set[int]] = {}
@@ -202,7 +248,7 @@ def clickhouse_breakdown(
         cells = sorted((*group, slot) for group, slots in opened.items() for slot in slots)
         groups = {
             (str(row["kind"]), int(row["hash_a"]), int(row["hash_b"])): row
-            for row in read_histogram(top, byok, cells)
+            for row in read_histogram(top, cells)
         }
         medians = {}
         for group, row in groups.items():
@@ -221,10 +267,11 @@ def clickhouse_breakdown(
 
     def totals(group: TagGroup) -> dict[str, Any]:
         row = groups[group]
+        costs = [(_is_byok(str(usage_type)), int(cost)) for usage_type, cost in row["cost_by_usage_type"]]
         return {
             "requests": int(row["requests"]),
-            "cost_microdollars": int(row["cost_microdollars"]),
-            "byok_microdollars": int(row["byok_microdollars"]),
+            "cost_microdollars": sum(cost for byok, cost in costs if not byok),
+            "byok_microdollars": sum(cost for byok, cost in costs if byok),
             "prompt_tokens": int(row["prompt_tokens"]),
             "completion_tokens": int(row["completion_tokens"]),
             "median_elapsed_ms": medians.get(group),
@@ -233,16 +280,18 @@ def clickhouse_breakdown(
     result: TagRows = []
     for pair in top:
         group = ("value", *pair)
-        # A value read by the ranking and gone by the later reads has no row.
-        if group in groups and pair in names:
+        # A value chosen above and gone by the last read has no row.
+        if group in groups:
             result.append({"kind": "value", "value": names[pair], "values": 1, **totals(group)})
     if ("other", 0, 0) in groups:
-        distinct = int(ranked[0]["value_count"]) if ranked else 0
+        # How many values the row folds: counted when every value was a
+        # candidate, estimated otherwise.
+        distinct = len(order) if complete else max(estimate, len(order))
         result.append(
             {
                 "kind": "other",
                 "value": None,
-                "values": max(1, distinct - len(ranked)),
+                "values": max(1, distinct - len(top)),
                 **totals(("other", 0, 0)),
             }
         )
@@ -250,14 +299,14 @@ def clickhouse_breakdown(
         result.append(
             {"kind": "untagged", "value": None, "values": 0, **totals(("untagged", 0, 0))}
         )
-    return result
+    return TagBreakdown(result, approximate=not complete)
 
 
 def tag_summary(
     *,
     read_keys: Callable[[], TagRows],
     read_values: Callable[[str], TagRows],
-    read_breakdown: Callable[[str, int], TagRows | None],
+    read_breakdown: Callable[[str, int], TagBreakdown | None],
     group_by: str | None,
     tag_key: str | None,
 ) -> dict[str, Any]:
@@ -289,7 +338,7 @@ def tag_summary(
         values_truncated = len(ranked_values) > TAG_VALUE_LIMIT
         values_approximate = any(int(row["overcount"]) > 0 for row in ranked_values)
     chosen: str | None = None
-    breakdown: TagRows | None = []
+    breakdown: TagBreakdown | None = TagBreakdown([])
     for candidate in candidates:
         breakdown = read_breakdown(candidate, TAG_VALUE_LIMIT)
         if chosen is None or breakdown is not None:
@@ -301,8 +350,9 @@ def tag_summary(
         "keys_truncated": keys_truncated,
         "keys_approximate": keys_approximate,
         "group_by": chosen,
-        "breakdown": order_breakdown(breakdown or []),
+        "breakdown": order_breakdown(breakdown.rows if breakdown is not None else []),
         "breakdown_too_many_values": breakdown is None,
+        "breakdown_approximate": breakdown is not None and breakdown.approximate,
         "filter_values": [
             {"value": row["value"], "requests": row["requests"]} for row in values
         ],

@@ -111,7 +111,7 @@ def test_postgres_tag_reads_match_gcp_and_memory(
             ["g16", "g15", "g14"] if "limit" in kwargs else ["g04", "g03", "g02", "g01"]
         )
     else:
-        assert reads[0] == "keys" and reads[-3:] == ["names", "histogram", "histogram"]
+        assert reads[0] == "keys" and reads[-3:] == ["totals", "histogram", "histogram"]
         assert [row["key"] for row in result["keys"]] == ["team", "environment"]
         assert result["group_by"] == kwargs.get("group_by", "team")
         assert result["breakdown"] and result["breakdown_too_many_values"] is False

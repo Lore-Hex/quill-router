@@ -19,8 +19,9 @@ function key(body) {
 
 // `usage` answers the chart's request: a function of the range, or undefined
 // for the fixture's real answers. `refuse` picks tag requests, by their body,
-// that the server fails.
-async function open(page, workspace, seen, usage, refuse) {
+// that the server fails. `rewrite(name, body, answer)` returns the answer to
+// send in place of the fixture's, and may wait first.
+async function open(page, workspace, seen, usage, refuse, rewrite) {
   await page.route("**/console/activity", (route) => route.fulfill({ contentType: "text/html", body: workspace.page }));
   await page.route("**/console/activity/usage.json*", (route) => {
     const range = new URL(route.request().url()).searchParams.get("range");
@@ -32,14 +33,15 @@ async function open(page, workspace, seen, usage, refuse) {
     json: { data: null, meta: { reason: "unavailable" } },
   }));
   for (const name of ["tags", "requests"]) {
-    await page.route(`**/console/activity/${name}.json*`, (route) => {
+    await page.route(`**/console/activity/${name}.json*`, async (route) => {
       const request = route.request();
       const body = request.postDataJSON();
       seen.push({ name, method: request.method(), url: request.url(), body });
       if (refuse && refuse(body)) return route.fulfill({ status: 503, json: { error: { message: "unavailable" } } });
       const answer = (workspace[name] || {})[key(body || {})];
       if (!answer) return route.fulfill({ status: 500, json: { error: "the fixture has no answer for this request" } });
-      return route.fulfill({ status: answer.status, json: answer.body });
+      const sent = rewrite ? await rewrite(name, body, answer.body) : answer.body;
+      return route.fulfill({ status: answer.status, json: sent });
     });
   }
   await page.goto("/console/activity");
@@ -345,21 +347,23 @@ test("a key with many values says so and takes a typed value", async ({ page }, 
   // Asked for, the key gets an answer: why there is no table.
   await panel.locator("[data-tags-group]").selectOption({ label: "request" });
   await expect(rows).toHaveCount(1);
+  // The count behind a refusal is an estimate in ClickHouse, and the page
+  // words it as one.
   await expect(rows.locator("td")).toHaveText(
-    `This key has more than ${fixture.many.distinct_limit} distinct values in the last 30 days, too many to break down. Choose another key or a shorter range.`
+    `This key has about ${fixture.many.distinct_limit} or more distinct values in the last 30 days, too many to break down. Choose another key or a shorter range.`
   );
 
   // Its value list holds the 50 most used of 55 values and says it is cut.
   await panel.locator("[data-tags-filter-key]").selectOption({ label: "request" });
   await expect(valueNote).toBeVisible();
-  await expect(valueNote).toContainText("The list holds this key's most used values.");
+  await expect(valueNote).toContainText("The list holds this key's most used values. To filter by another, type it (at most 256 characters):");
   await expect(panel.locator("[data-tags-filter-value] option")).toHaveCount(51);
   await expect(panel.locator("[data-tags-filter-value] option", { hasText: "req-54" })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("activity-tags-many-values.png"), fullPage: true });
 
   // A value the list leaves out can be typed.
   await panel.locator("[data-tags-value-input]").fill("req-54");
-  await valueNote.getByRole("button", { name: "Filter" }).click();
+  await valueNote.getByRole("button", { name: "Filter", exact: true }).click();
   await expect(page.locator("[data-activity-filter-note]")).toContainText("Showing requests tagged request: req-54 in the last 30 days.");
   await expect(list.locator("tr")).toHaveCount(1);
   await expect(list.locator("[data-tag-chip]", { hasText: "request: req-54" })).toHaveCount(1);
@@ -368,6 +372,126 @@ test("a key with many values says so and takes a typed value", async ({ page }, 
   const typed = seen.filter((request) => request.body.tag_value === "req-54");
   expect(typed.map((request) => request.name).sort()).toEqual(["requests", "tags"]);
   for (const request of typed) expect(request.url).not.toContain("req-54");
+});
+
+test("a typed value is sent as typed: empty, long, and outside the basic plane", async ({ page }) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await open(page, fixture.many, seen);
+  const panel = page.locator("[data-tags-panel]");
+  const input = panel.locator("[data-tags-value-input]");
+  const error = panel.locator("[data-tags-value-error]");
+  const note = page.locator("[data-activity-filter-note]");
+  const filtered = () => seen.filter((request) => request.body.tag_value !== null && request.body.tag_key === "request");
+
+  await panel.locator("[data-tags-filter-key]").selectOption({ label: "request" });
+  await expect(panel.locator("[data-tags-value-note]")).toBeVisible();
+  // The field has no length limit of its own to cut what is typed.
+  await expect(input).not.toHaveAttribute("maxlength", /.*/);
+
+  // 129 letters from outside the basic plane: 258 UTF-16 units, 129
+  // characters by the server's count, under its limit of 256. All of it is
+  // sent, and the server accepts it.
+  expect(fixture.astral.length).toBe(258);
+  await input.fill(fixture.astral);
+  await panel.getByRole("button", { name: "Filter", exact: true }).click();
+  await expect(note).toContainText("No requests tagged request: ");
+  await expect(error).toBeHidden();
+  expect(filtered().map((request) => request.body.tag_value)).toEqual([fixture.astral, fixture.astral]);
+  expect(Array.from(filtered()[0].body.tag_value).length).toBe(129);
+
+  // One character past the server's limit is refused here, in words, and
+  // nothing is sent. The text stays as typed.
+  const tooLong = "x".repeat(257);
+  await input.fill(tooLong);
+  await panel.getByRole("button", { name: "Filter", exact: true }).click();
+  await expect(error).toHaveText("A tag value has at most 256 characters. This one has 257.");
+  await expect(input).toHaveValue(tooLong);
+  expect(filtered().length).toBe(2);
+
+  // An empty field is not the empty value. The empty value has its own
+  // control, because a request can carry it.
+  await input.fill("");
+  await panel.getByRole("button", { name: "Filter", exact: true }).click();
+  await expect(error).toHaveText("Type a value first. For requests whose value is empty, use the button for the empty value.");
+  expect(filtered().length).toBe(2);
+  await panel.getByRole("button", { name: "Filter by the empty value" }).click();
+  await expect(note).toContainText("No requests tagged request: (empty) in the last 30 days.");
+  await expect(error).toBeHidden();
+  await expect(panel.locator("[data-tags-filter-value]")).toHaveValue("(empty)");
+  expect(filtered().slice(2).map((request) => [request.name, request.body.tag_value]).sort()).toEqual([
+    ["requests", ""], ["tags", ""],
+  ]);
+});
+
+test("an approximate ranking and an approximate value list say so", async ({ page }) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  // What the durable stores answer for a key with more values than they rank
+  // or count exactly. The in-memory store behind the fixture never does, so
+  // the two flags are set on its answers here.
+  await open(page, fixture.tagged, seen, undefined, undefined, (name, body, answer) => {
+    if (name !== "tags") return answer;
+    const filter = answer.filter ? { ...answer.filter, values_approximate: true } : null;
+    return { ...answer, breakdown_approximate: body.group_by === "team", filter };
+  });
+  const panel = page.locator("[data-tags-panel]");
+  const message = panel.locator("[data-tags-message]");
+
+  await expect(message).toHaveText("Every request in the last 30 days is counted.");
+  await panel.locator("[data-tags-group]").selectOption({ label: "team" });
+  await expect(message).toHaveText(
+    "Every request in the last 30 days is counted. This key has too many values to rank exactly: the rows are approximately its most expensive ones."
+  );
+  await panel.locator("[data-tags-filter-key]").selectOption({ label: "team" });
+  await expect(panel.locator("[data-tags-value-note]")).toContainText(
+    "This key has more values than are counted exactly, so the list is approximately its most used ones. To filter by another, type it"
+  );
+});
+
+test("a late answer for a superseded choice is ignored", async ({ page }) => {
+  const seen = [];
+  let release = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  // The filtered answers for 30 days are held back until the test lets them
+  // go. They differ from the 24-hour ones: three requests, not two.
+  await open(page, fixture.tagged, seen, undefined, undefined, async (name, body, answer) => {
+    if (body.range === "30d" && body.tag_key === "team") await held;
+    return answer;
+  });
+  const panel = page.locator("[data-tags-panel]");
+  const list = page.locator("[data-activity-rows]");
+  const message = panel.locator("[data-tags-message]");
+  const note = page.locator("[data-activity-filter-note]");
+  const requests = panel.locator("[data-tags-rows] tr").nth(0).locator("td").nth(1);
+
+  await expect(message).toHaveText("Every request in the last 30 days is counted.");
+  // Filter by a chip: both answers for 30 days are now on their way and held.
+  await list.locator("[data-tag-chip]", { hasText: "team: search" }).first().click();
+  await expect(message).toHaveText("Loading tags…");
+  await expect(note).toContainText("Loading tagged requests…");
+  // Choose 24 hours before they arrive. Its answers come at once.
+  await page.locator("[data-usage-panel] label", { hasText: "24h" }).click();
+  await expect(message).toHaveText("Every request in the last 24 hours is counted. Filtered to team: search.");
+  await expect(note).toContainText("Showing requests tagged team: search in the last 24 hours.");
+  await expect(list.locator("tr")).toHaveCount(2);
+  await expect(requests).toHaveText("2");
+
+  // The 30-day answers arrive late, for the breakdown and for the list. The
+  // page keeps what it shows for the range the viewer chose last.
+  const late = Promise.all(["tags", "requests"].map((name) => page.waitForResponse((response) => {
+    const body = response.request().postDataJSON();
+    return response.url().endsWith(`/${name}.json`) && body.range === "30d" && body.tag_key === "team";
+  })));
+  release();
+  await late;
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(list.locator("tr")).toHaveCount(2);
+  await expect(requests).toHaveText("2");
+  await expect(message).toHaveText("Every request in the last 24 hours is counted. Filtered to team: search.");
+  await expect(note).toContainText("Showing requests tagged team: search in the last 24 hours.");
+  expect(ranges(seen)).toEqual(["30d", "30d", "24h"]);
 });
 
 // Elements of the Tags panel or the request list whose right edge is past the

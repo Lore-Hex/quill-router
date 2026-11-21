@@ -18,6 +18,7 @@ from trusted_router.storage_activity import (
 )
 from trusted_router.storage_activity_tags import (
     TAG_EVENT_LIMIT,
+    TagBreakdown,
     clickhouse_breakdown,
     tag_summary,
 )
@@ -165,19 +166,16 @@ class OperationalAnalyticsReads:
         window: dict[str, Any] = {"tenant_id": tenant_id, "start_at": start_at}
         tag: dict[str, Any] = {"tag_key": tag_key, "tag_value": tag_value}
 
-        def read_breakdown(key: str, limit: int) -> list[dict[str, Any]] | None:
+        def read_breakdown(key: str, limit: int) -> TagBreakdown | None:
             return clickhouse_breakdown(
-                read_cardinality=lambda: client.activity_tag_cardinality(
-                    group_by=key, **window, **tag
+                read_candidates=lambda count: client.activity_tag_candidates(
+                    group_by=key, candidates=count, **window, **tag
                 ),
-                read_ranking=lambda count, byok: client.activity_tag_ranking(
-                    group_by=key, limit=count, byok_hashes=byok, **window, **tag
+                read_candidate_totals=lambda candidates: client.activity_tag_candidate_totals(
+                    group_by=key, candidates=candidates, **window, **tag
                 ),
-                read_names=lambda top: client.activity_tag_names(
-                    group_by=key, top=top, **window, **tag
-                ),
-                read_histogram=lambda top, byok, opened: client.activity_tag_histogram(
-                    group_by=key, top=top, byok_hashes=byok, opened=opened, **window, **tag
+                read_histogram=lambda top, opened: client.activity_tag_histogram(
+                    group_by=key, top=top, opened=opened, **window, **tag
                 ),
                 limit=limit,
             )

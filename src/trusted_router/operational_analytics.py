@@ -909,20 +909,23 @@ FORMAT JSON
     # Request tags for the console ------------------------------------------
     # Every read covers every generation of one tenant since ``start_at``, not
     # a sample, and holds a bounded amount of state however many rows, tag
-    # values or latencies the range has:
+    # values or latencies the range has. Each bound is in the statement that
+    # needs it; none rests on what an earlier statement saw:
     #
     #   keys, values   a top-K sketch with a fixed number of counters
-    #   cardinality    one fixed-size distinct-count sketch
-    #   ranking        one small group per distinct value, keyed by hashes of
-    #                  the value, run only after the cardinality read found
-    #                  at most a set number of them
-    #   names          the text of the at most 50 values that keep a row
+    #   candidates     two top-K sketches and one distinct-count sketch, with
+    #                  no GROUP BY
+    #   totals         one group per candidate and stored usage type, for the
+    #                  candidates named in the statement and no other value
     #   histogram      at most 52 groups, each the bounded elapsed-time
     #                  histogram of ``elapsed_histogram_columns``, cut off at
     #                  TAG_ELAPSED_SLOTS slots
     #
-    # Tag keys and values are always bound, and inside
-    # ``bound_values_stay_private`` they travel in the request body.
+    # Credits and BYOK are told apart by the caller, with ``UsageType.coerce``,
+    # from the stored usage type each statement groups by: no statement takes
+    # a list of usage types that an earlier one saw. Tag keys and values are
+    # always bound, and inside ``bound_values_stay_private`` they travel in
+    # the request body.
 
     def activity_tag_keys(self, *, tenant_id: str, start_at: str) -> list[dict[str, Any]]:
         """Tag keys by the number of generations carrying them, unordered.
@@ -994,151 +997,116 @@ FORMAT JSON
             for row in rows
         ]
 
-    def activity_tag_cardinality(
+    def activity_tag_candidates(
         self,
         *,
         tenant_id: str,
         group_by: str,
         start_at: str,
+        candidates: int,
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> dict[str, Any]:
-        """About how many distinct values a key has, and the usage types seen.
+        """Which values of ``group_by`` could keep a row, from fixed-size state.
 
-        The count comes from a fixed-size sketch, so it costs the same for
-        ten values as for ten million; it decides whether the ranking, which
-        keeps one group per value, may run. The usage types are returned with
-        their hashes so the caller can tell the later reads which of them are
-        BYOK without sending text back.
+        One pass with no GROUP BY, so its memory does not depend on how many
+        distinct values the key has, in this read or in any other: about how
+        many distinct values there are, the ``candidates`` values with the
+        most cost, and the ``candidates`` values with the most generations.
+        A value is named by a 64-bit hash here; its text is read by
+        ``activity_tag_candidate_totals``.
+
+        Each list holds ``(hash, weight, error)``. With fewer distinct values
+        than ``candidates`` both lists hold every value with ``error`` 0, and
+        the caller's ranking is exact. With more, they hold the heaviest
+        values the sketches found, and the ranking is approximate. Cost here
+        is every usage type's: the caller separates Credits from BYOK from
+        the totals read.
         """
         where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
         with bound_values_stay_private():
             rows = self._query(
                 """
 SELECT
-  uniqCombinedIf(tags[{group_by:String}], mapContains(tags, {group_by:String})) AS distinct_values,
-  groupUniqArray(101)((usage_type, cityHash64(usage_type))) AS usage_types
-FROM activity_generations FINAL
-WHERE """
-                + where
-                + """
-FORMAT JSON
-""",
-                params={**params, "group_by": group_by},
-            )
-        row = rows[0] if rows else {}
-        usage_types = [
-            (str(item[0]), int(item[1])) for item in row.get("usage_types") or []
-        ]
-        if len(usage_types) > 100:
-            raise RuntimeError("ClickHouse returned more than 100 distinct usage types")
-        return {
-            "distinct_values": int(row.get("distinct_values") or 0),
-            "usage_types": usage_types,
-        }
-
-    def activity_tag_ranking(
-        self,
-        *,
-        tenant_id: str,
-        group_by: str,
-        start_at: str,
-        limit: int,
-        byok_hashes: list[int],
-        tag_key: str | None = None,
-        tag_value: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """The ``limit`` values of ``group_by`` with the highest credit cost, as hashes.
-
-        One group per distinct value. The group is keyed by two independent
-        64-bit hashes of the value, not by the value: a group then costs the
-        same few dozen bytes whether the value is one character or the
-        longest a tag may hold, where grouping by the text ran the reader out
-        of memory on long values. The caller runs this only after
-        ``activity_tag_cardinality`` found few enough values, and reads the
-        winners' text with ``activity_tag_names``.
-
-        Values equal in cost and in requests are ordered by their hashes:
-        which of them are inside ``limit`` is stable but not alphabetical.
-        ``value_count`` is the number of distinct values in all.
-        """
-        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
-        with bound_values_stay_private():
-            rows = self._query(
-                """
-SELECT hash_a, hash_b, requests, cost_microdollars, value_count
+  distinct_values,
+  arrayMap(item -> [tupleElement(item, 1), tupleElement(item, 2), tupleElement(item, 3)], by_cost) AS by_cost,
+  arrayMap(item -> [tupleElement(item, 1), tupleElement(item, 2), tupleElement(item, 3)], by_requests) AS by_requests
 FROM
 (
   SELECT
-    cityHash64(tags[{group_by:String}]) AS hash_a,
-    sipHash64(tags[{group_by:String}]) AS hash_b,
-    count() AS requests,
-    sumIf(total_cost_microdollars, NOT has({byok:Array(UInt64)}, cityHash64(usage_type))) AS cost_microdollars,
-    count() OVER () AS value_count
+    uniqCombined(cityHash64(tags[{group_by:String}])) AS distinct_values,
+    topKWeighted({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}]), toUInt64(greatest(total_cost_microdollars, 0))) AS by_cost,
+    topK({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}])) AS by_requests
   FROM activity_generations FINAL
   WHERE """
                 + where
                 + """
     AND mapContains(tags, {group_by:String})
-  GROUP BY hash_a, hash_b
 )
-ORDER BY cost_microdollars DESC, requests DESC, hash_a ASC, hash_b ASC
-LIMIT {limit:UInt32}
 FORMAT JSON
 """,
-                params={
-                    **params,
-                    "group_by": group_by,
-                    "limit": max(1, limit),
-                    "byok": _integer_array(byok_hashes),
-                },
+                params={**params, "group_by": group_by, "candidates": max(1, candidates)},
             )
-        return [
-            {
-                "hash_a": int(row["hash_a"]),
-                "hash_b": int(row["hash_b"]),
-                "requests": int(row["requests"]),
-                "cost_microdollars": int(row["cost_microdollars"]),
-                "value_count": int(row["value_count"]),
-            }
-            for row in rows
-        ]
+        row = rows[0] if rows else {}
 
-    def activity_tag_names(
+        def listed(name: str) -> list[tuple[int, int, int]]:
+            return [(int(item[0]), int(item[1]), int(item[2])) for item in row.get(name) or []]
+
+        return {
+            "distinct_values": int(row.get("distinct_values") or 0),
+            "by_cost": listed("by_cost"),
+            "by_requests": listed("by_requests"),
+        }
+
+    def activity_tag_candidate_totals(
         self,
         *,
         tenant_id: str,
         group_by: str,
         start_at: str,
-        top: list[tuple[int, int]],
+        candidates: list[int],
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
-        """The text of the values whose hashes are in ``top``: one group each."""
+        """Text, generations and cost of the candidate values, by stored usage type.
+
+        Only values whose hash is in ``candidates`` are grouped, so this holds
+        at most one group for each candidate and usage type whatever the key
+        has become since the candidates were read. The stored usage type is a
+        grouping key, not a condition: the caller decides Credits or BYOK for
+        each stored value with ``UsageType.coerce``. Two values that shared
+        both hashes would share a group and the smaller text.
+        """
         where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
         with bound_values_stay_private():
             rows = self._query(
                 """
 SELECT
-  tags[{group_by:String}] AS named_value,
-  cityHash64(named_value) AS hash_a,
-  sipHash64(named_value) AS hash_b
+  cityHash64(tags[{group_by:String}]) AS hash_a,
+  sipHash64(tags[{group_by:String}]) AS hash_b,
+  usage_type,
+  min(tags[{group_by:String}]) AS named_value,
+  count() AS requests,
+  sum(total_cost_microdollars) AS cost_microdollars
 FROM activity_generations FINAL
 WHERE """
                 + where
                 + """
   AND mapContains(tags, {group_by:String})
-  AND (cityHash64(tags[{group_by:String}]), sipHash64(tags[{group_by:String}])) IN {top:Array(Tuple(UInt64, UInt64))}
-GROUP BY named_value
+  AND cityHash64(tags[{group_by:String}]) IN {candidates:Array(UInt64)}
+GROUP BY hash_a, hash_b, usage_type
 FORMAT JSON
 """,
-                params={**params, "group_by": group_by, "top": _tuple_array(top)},
+                params={**params, "group_by": group_by, "candidates": _integer_array(candidates)},
             )
         return [
             {
-                "value": str(row["named_value"]),
                 "hash_a": int(row["hash_a"]),
                 "hash_b": int(row["hash_b"]),
+                "usage_type": str(row["usage_type"]),
+                "value": str(row["named_value"]),
+                "requests": int(row["requests"]),
+                "cost_microdollars": int(row["cost_microdollars"]),
             }
             for row in rows
         ]
@@ -1150,7 +1118,6 @@ FORMAT JSON
         group_by: str,
         start_at: str,
         top: list[tuple[int, int]],
-        byok_hashes: list[int],
         opened: list[tuple[str, int, int, int]],
         tag_key: str | None = None,
         tag_value: str | None = None,
@@ -1160,7 +1127,9 @@ FORMAT JSON
         A generation belongs to the ``value`` group of its tag value when the
         value's hashes are in ``top``, to ``other`` when it has another
         value, and to ``untagged`` without the key: at most 52 groups, one
-        row each.
+        row each. Cost is summed by the stored usage type inside this
+        statement (``cost_by_usage_type``), so a usage type that first
+        appears after an earlier read is still told apart by the caller.
 
         Each group's elapsed times are counted with the histogram the page's
         own median uses (``elapsed_histogram_columns``): slots of 1,024 ms,
@@ -1188,8 +1157,7 @@ FORMAT JSON
 SELECT
   kind, hash_a, hash_b,
   sum(generations_at_value) AS requests,
-  sum(cost_at_value) AS cost_microdollars,
-  sum(byok_at_value) AS byok_microdollars,
+  sumMap(tupleElement(cost_at_value, 1), tupleElement(cost_at_value, 2)) AS cost_by_usage_type,
   sum(prompt_at_value) AS prompt_tokens,
   sum(completion_at_value) AS completion_tokens,
   groupArray(tuple(ifNull(toInt32(slot), -1), ifNull(toInt32(elapsed_value), -1), generations_at_value)) AS histogram
@@ -1211,8 +1179,7 @@ FROM
                 )
                 + """,
     count() AS generations_at_value,
-    sumIf(total_cost_microdollars, NOT has({byok:Array(UInt64)}, cityHash64(usage_type))) AS cost_at_value,
-    sumIf(total_cost_microdollars, has({byok:Array(UInt64)}, cityHash64(usage_type))) AS byok_at_value,
+    sumMap([toString(usage_type)], [total_cost_microdollars]) AS cost_at_value,
     sum(tokens_prompt) AS prompt_at_value,
     sum(tokens_completion) AS completion_at_value
   FROM activity_generations FINAL
@@ -1228,7 +1195,6 @@ FORMAT JSON
                     **params,
                     "group_by": group_by,
                     "top": _tuple_array(top),
-                    "byok": _integer_array(byok_hashes),
                     "opened": _cell_array(opened),
                 },
             )
@@ -1505,13 +1471,15 @@ def _tag_histogram_row(row: dict[str, Any]) -> dict[str, Any]:
         (None if int(slot) < 0 else int(slot), None if int(value) < 0 else int(value), int(count))
         for slot, value, count in row.pop("histogram")
     ]
+    types, costs = row["cost_by_usage_type"]
     return {
         "kind": kind,
         "hash_a": int(row["hash_a"]),
         "hash_b": int(row["hash_b"]),
         "requests": int(row["requests"]),
-        "cost_microdollars": int(row["cost_microdollars"]),
-        "byok_microdollars": int(row["byok_microdollars"]),
+        "cost_by_usage_type": [
+            (str(usage_type), int(cost)) for usage_type, cost in zip(types, costs, strict=True)
+        ],
         "prompt_tokens": int(row["prompt_tokens"]),
         "completion_tokens": int(row["completion_tokens"]),
         "histogram": histogram,

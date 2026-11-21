@@ -2,125 +2,441 @@
  "clickhouse_version": "26.8.36.3",
  "exchanges": [
   {
-   "read": "cardinality",
+   "read": "candidates",
    "rows": [
     {
-     "distinct_values": 2,
-     "usage_types": [
+     "by_cost": [
       [
-       "BYOK",
-       13422773509954285240
+       11428714975519389707,
+       1200,
+       0
       ],
       [
-       "Credits",
-       4100539028429700565
+       12086206624544669848,
+       100,
+       0
       ]
-     ]
-    }
-   ],
-   "statement": "2c02b0744dd97f0238c19d62eaed256bd91812c2a43116a27a1a093d3c6357dd {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "cardinality",
-   "rows": [
-    {
-     "distinct_values": 1,
-     "usage_types": [
+     ],
+     "by_requests": [
       [
-       "Credits",
-       4100539028429700565
-      ]
-     ]
-    }
-   ],
-   "statement": "2c02b0744dd97f0238c19d62eaed256bd91812c2a43116a27a1a093d3c6357dd {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\"}"
-  },
-  {
-   "read": "cardinality",
-   "rows": [
-    {
-     "distinct_values": 7,
-     "usage_types": [
-      [
-       "BYOK",
-       13422773509954285240
+       11428714975519389707,
+       2,
+       0
       ],
       [
-       "Credits",
-       4100539028429700565
+       12086206624544669848,
+       1,
+       0
       ]
-     ]
+     ],
+     "distinct_values": 2
     }
    ],
-   "statement": "2c02b0744dd97f0238c19d62eaed256bd91812c2a43116a27a1a093d3c6357dd {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+   "statement": "01cfc86b829fe4f545c0fb0edaddf5d278b787671a42e2c76d16955895efefbe {\"candidates\": \"2000\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
   },
   {
-   "read": "cardinality",
+   "read": "candidates",
    "rows": [
     {
-     "distinct_values": 2,
-     "usage_types": [
+     "by_cost": [
       [
-       "Credits",
-       4100539028429700565
+       11160318154034397263,
+       20,
+       0
       ]
-     ]
+     ],
+     "by_requests": [
+      [
+       11160318154034397263,
+       1,
+       0
+      ]
+     ],
+     "distinct_values": 1
     }
    ],
-   "statement": "98a5b58830ab0c0acc4dfddb308e545e68416a9f82dcf8fec02becb9adbfb063 {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+   "statement": "01cfc86b829fe4f545c0fb0edaddf5d278b787671a42e2c76d16955895efefbe {\"candidates\": \"2000\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
   },
   {
-   "read": "cardinality",
+   "read": "candidates",
    "rows": [
     {
-     "distinct_values": 1,
-     "usage_types": [
+     "by_cost": [
       [
-       "Credits",
-       4100539028429700565
-      ]
-     ]
-    }
-   ],
-   "statement": "98a5b58830ab0c0acc4dfddb308e545e68416a9f82dcf8fec02becb9adbfb063 {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "cardinality",
-   "rows": [
-    {
-     "distinct_values": 2,
-     "usage_types": [
-      [
-       "BYOK",
-       13422773509954285240
+       11428714975519389707,
+       1960,
+       0
       ],
       [
-       "Credits",
-       4100539028429700565
+       12086206624544669848,
+       100,
+       0
       ]
-     ]
-    }
-   ],
-   "statement": "d08f99d186a5aee90ee07f6478ac64bdc0c32afb24cc4b86be12f582a69aa648 {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "cardinality",
-   "rows": [
-    {
-     "distinct_values": 7,
-     "usage_types": [
+     ],
+     "by_requests": [
       [
-       "BYOK",
-       13422773509954285240
+       11428714975519389707,
+       4,
+       0
       ],
       [
-       "Credits",
-       4100539028429700565
+       12086206624544669848,
+       1,
+       0
       ]
-     ]
+     ],
+     "distinct_values": 2
     }
    ],
-   "statement": "d08f99d186a5aee90ee07f6478ac64bdc0c32afb24cc4b86be12f582a69aa648 {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+   "statement": "41820b4ca277d8432b63ccbfa74aade6c43a58517df5e356d4fd6e9d691b39cb {\"candidates\": \"2000\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "candidates",
+   "rows": [
+    {
+     "by_cost": [
+      [
+       11428714975519389707,
+       8888,
+       0
+      ]
+     ],
+     "by_requests": [
+      [
+       11428714975519389707,
+       1,
+       0
+      ]
+     ],
+     "distinct_values": 1
+    }
+   ],
+   "statement": "41820b4ca277d8432b63ccbfa74aade6c43a58517df5e356d4fd6e9d691b39cb {\"candidates\": \"2000\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\"}"
+  },
+  {
+   "read": "candidates",
+   "rows": [
+    {
+     "by_cost": [
+      [
+       10302221083623165500,
+       1350,
+       0
+      ],
+      [
+       18098325971644278084,
+       1200,
+       0
+      ],
+      [
+       11676983471955714414,
+       800,
+       0
+      ],
+      [
+       11160318154034397263,
+       20,
+       0
+      ],
+      [
+       17055266810281513265,
+       10,
+       0
+      ],
+      [
+       3351461251694445025,
+       10,
+       0
+      ],
+      [
+       13991416765648508260,
+       10,
+       0
+      ]
+     ],
+     "by_requests": [
+      [
+       10302221083623165500,
+       4,
+       0
+      ],
+      [
+       18098325971644278084,
+       2,
+       0
+      ],
+      [
+       17055266810281513265,
+       2,
+       0
+      ],
+      [
+       13991416765648508260,
+       1,
+       0
+      ],
+      [
+       3351461251694445025,
+       1,
+       0
+      ],
+      [
+       11676983471955714414,
+       1,
+       0
+      ],
+      [
+       11160318154034397263,
+       1,
+       0
+      ]
+     ],
+     "distinct_values": 7
+    }
+   ],
+   "statement": "41820b4ca277d8432b63ccbfa74aade6c43a58517df5e356d4fd6e9d691b39cb {\"candidates\": \"2000\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "candidates",
+   "rows": [
+    {
+     "by_cost": [
+      [
+       10302221083623165500,
+       1350,
+       0
+      ],
+      [
+       18098325971644278084,
+       1200,
+       0
+      ],
+      [
+       11676983471955714414,
+       800,
+       0
+      ]
+     ],
+     "by_requests": [
+      [
+       10302221083623165500,
+       4,
+       0
+      ],
+      [
+       17055266810281513265,
+       2,
+       0
+      ],
+      [
+       18098325971644278084,
+       2,
+       0
+      ]
+     ],
+     "distinct_values": 7
+    }
+   ],
+   "statement": "41820b4ca277d8432b63ccbfa74aade6c43a58517df5e356d4fd6e9d691b39cb {\"candidates\": \"3\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "candidates",
+   "rows": [
+    {
+     "by_cost": [
+      [
+       10302221083623165500,
+       1350,
+       0
+      ],
+      [
+       18098325971644278084,
+       1200,
+       0
+      ],
+      [
+       11676983471955714414,
+       800,
+       0
+      ],
+      [
+       11160318154034397263,
+       20,
+       0
+      ],
+      [
+       17055266810281513265,
+       10,
+       0
+      ],
+      [
+       3351461251694445025,
+       10,
+       0
+      ],
+      [
+       13991416765648508260,
+       10,
+       0
+      ]
+     ],
+     "by_requests": [
+      [
+       10302221083623165500,
+       4,
+       0
+      ],
+      [
+       18098325971644278084,
+       2,
+       0
+      ],
+      [
+       17055266810281513265,
+       2,
+       0
+      ],
+      [
+       13991416765648508260,
+       1,
+       0
+      ],
+      [
+       3351461251694445025,
+       1,
+       0
+      ],
+      [
+       11676983471955714414,
+       1,
+       0
+      ],
+      [
+       11160318154034397263,
+       1,
+       0
+      ]
+     ],
+     "distinct_values": 7
+    }
+   ],
+   "statement": "41820b4ca277d8432b63ccbfa74aade6c43a58517df5e356d4fd6e9d691b39cb {\"candidates\": \"7\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "candidates",
+   "rows": [
+    {
+     "by_cost": [
+      [
+       11428714975519389707,
+       1900,
+       0
+      ],
+      [
+       12086206624544669848,
+       100,
+       0
+      ]
+     ],
+     "by_requests": [
+      [
+       11428714975519389707,
+       3,
+       0
+      ],
+      [
+       12086206624544669848,
+       1,
+       0
+      ]
+     ],
+     "distinct_values": 2
+    }
+   ],
+   "statement": "6e3aac6e0f63c4177eb472ad66b5da7aa08a6c56b34372b62cef162d9dd0184a {\"candidates\": \"2000\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "candidates",
+   "rows": [
+    {
+     "by_cost": [
+      [
+       10302221083623165500,
+       1350,
+       0
+      ],
+      [
+       18098325971644278084,
+       1200,
+       0
+      ],
+      [
+       11676983471955714414,
+       800,
+       0
+      ],
+      [
+       11160318154034397263,
+       20,
+       0
+      ],
+      [
+       17055266810281513265,
+       10,
+       0
+      ],
+      [
+       3351461251694445025,
+       10,
+       0
+      ],
+      [
+       13991416765648508260,
+       10,
+       0
+      ]
+     ],
+     "by_requests": [
+      [
+       10302221083623165500,
+       4,
+       0
+      ],
+      [
+       18098325971644278084,
+       2,
+       0
+      ],
+      [
+       17055266810281513265,
+       2,
+       0
+      ],
+      [
+       13991416765648508260,
+       1,
+       0
+      ],
+      [
+       3351461251694445025,
+       1,
+       0
+      ],
+      [
+       11676983471955714414,
+       1,
+       0
+      ],
+      [
+       11160318154034397263,
+       1,
+       0
+      ]
+     ],
+     "distinct_values": 7
+    }
+   ],
+   "statement": "6e3aac6e0f63c4177eb472ad66b5da7aa08a6c56b34372b62cef162d9dd0184a {\"candidates\": \"2000\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
   },
   {
    "read": "generations",
@@ -666,1131 +982,43 @@
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
-     "completion_tokens": 103,
-     "cost_microdollars": 1960,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "histogram": [
-      [
-       87,
-       -1,
-       1
-      ],
-      [
-       0,
-       400,
-       1
-      ],
-      [
-       0,
-       150,
-       1
-      ],
-      [
-       0,
-       200,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 219,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 10,
-     "cost_microdollars": 100,
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "histogram": [
-      [
-       0,
-       600,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 30,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 85,
-     "cost_microdollars": 940,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       0,
-       900,
-       1
-      ],
-      [
-       65535,
-       -1,
-       1
-      ],
-      [
-       0,
-       700,
-       1
-      ],
-      [
-       4095,
-       -1,
-       1
-      ],
-      [
-       0,
-       300,
-       2
-      ],
-      [
-       0,
-       800,
-       1
-      ],
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       1000,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 183,
-     "requests": 9
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"environment\", \"opened\": \"[('untagged',0,0,0),('value',11428714975519389707,3146253288579348352,0),('value',12086206624544669848,14379675343010640269,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 103,
-     "cost_microdollars": 1960,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "histogram": [
-      [
-       87,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       3
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 219,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 10,
-     "cost_microdollars": 100,
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 30,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 85,
-     "cost_microdollars": 940,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       6
-      ],
-      [
-       4095,
-       -1,
-       1
-      ],
-      [
-       -1,
-       -1,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 183,
-     "requests": 9
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 40,
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 80,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 85,
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "histogram": [
-      [
-       0,
-       400,
-       1
-      ],
-      [
-       0,
-       200,
-       1
-      ],
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       600,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 190,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "histogram": [
-      [
-       0,
-       1000,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 5,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "histogram": [
-      [
-       0,
-       900,
-       1
-      ],
-      [
-       0,
-       800,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 4,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 20,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       4095,
-       4194303,
-       1
-      ],
-      [
-       0,
-       700,
-       1
-      ]
-     ],
-     "kind": "other",
-     "prompt_tokens": 6,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 7,
-     "cost_microdollars": 100,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       87,
-       90000,
-       1
-      ],
-      [
-       0,
-       300,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 17,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 55,
-     "cost_microdollars": 700,
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "histogram": [
-      [
-       0,
-       300,
-       1
-      ],
-      [
-       0,
-       150,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 130,
-     "requests": 2
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[('other',0,0,0),('other',0,0,4095),('untagged',0,0,0),('untagged',0,0,87),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 40,
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 80,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 85,
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "histogram": [
-      [
-       0,
-       400,
-       1
-      ],
-      [
-       0,
-       200,
-       1
-      ],
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       600,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 190,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 66,
-     "cost_microdollars": 750,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       0,
-       800,
-       1
-      ],
-      [
-       0,
-       300,
-       1
-      ],
-      [
-       0,
-       150,
-       1
-      ],
-      [
-       0,
-       1000,
-       1
-      ],
-      [
-       0,
-       900,
-       1
-      ],
-      [
-       4095,
-       -1,
-       1
-      ],
-      [
-       0,
-       700,
-       1
-      ]
-     ],
-     "kind": "other",
-     "prompt_tokens": 145,
-     "requests": 7
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 7,
-     "cost_microdollars": 100,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       87,
-       90000,
-       1
-      ],
-      [
-       0,
-       300,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 17,
-     "requests": 2
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[('other',0,0,0),('untagged',0,0,0),('untagged',0,0,87),('value',10302221083623165500,3101482876547296862,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 40,
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 80,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 85,
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "histogram": [
-      [
-       0,
-       400,
-       1
-      ],
-      [
-       0,
-       200,
-       1
-      ],
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       600,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 190,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "histogram": [
-      [
-       0,
-       1000,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 5,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "histogram": [
-      [
-       0,
-       900,
-       1
-      ],
-      [
-       0,
-       800,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 4,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 1,
-     "cost_microdollars": 10,
-     "hash_a": 13991416765648508260,
-     "hash_b": 3266711761466284607,
-     "histogram": [
-      [
-       0,
-       700,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 2,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 7,
-     "cost_microdollars": 100,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       87,
-       90000,
-       1
-      ],
-      [
-       0,
-       300,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 17,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 2,
-     "cost_microdollars": 10,
-     "hash_a": 3351461251694445025,
-     "hash_b": 12489305839358356581,
-     "histogram": [
-      [
-       4095,
-       4194303,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 4,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 55,
-     "cost_microdollars": 700,
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "histogram": [
-      [
-       0,
-       300,
-       1
-      ],
-      [
-       0,
-       150,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 130,
-     "requests": 2
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[('untagged',0,0,0),('untagged',0,0,87),('value',3351461251694445025,12489305839358356581,4095),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',13991416765648508260,3266711761466284607,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(3351461251694445025,12489305839358356581),(13991416765648508260,3266711761466284607)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 40,
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 80,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 85,
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "histogram": [
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       3
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 190,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 5,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "histogram": [
-      [
-       0,
-       -1,
-       2
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 4,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 1,
-     "cost_microdollars": 10,
-     "hash_a": 13991416765648508260,
-     "hash_b": 3266711761466284607,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 2,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 7,
-     "cost_microdollars": 100,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ],
-      [
-       87,
-       -1,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 17,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 2,
-     "cost_microdollars": 10,
-     "hash_a": 3351461251694445025,
-     "hash_b": 12489305839358356581,
-     "histogram": [
-      [
-       4095,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 4,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 55,
-     "cost_microdollars": 700,
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "histogram": [
-      [
-       0,
-       -1,
-       2
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 130,
-     "requests": 2
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(3351461251694445025,12489305839358356581),(13991416765648508260,3266711761466284607)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 40,
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 80,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 85,
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "histogram": [
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       3
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 190,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 5,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "histogram": [
-      [
-       0,
-       -1,
-       2
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 4,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 20,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       4095,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       1
-      ]
-     ],
-     "kind": "other",
-     "prompt_tokens": 6,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 7,
-     "cost_microdollars": 100,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ],
-      [
-       87,
-       -1,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 17,
-     "requests": 2
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 55,
-     "cost_microdollars": 700,
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "histogram": [
-      [
-       0,
-       -1,
-       2
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 130,
-     "requests": 2
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 40,
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "histogram": [
-      [
-       65535,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 80,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 85,
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "histogram": [
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       3
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 190,
-     "requests": 4
-    },
-    {
-     "byok_microdollars": 500,
-     "completion_tokens": 66,
-     "cost_microdollars": 750,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       4095,
-       -1,
-       1
-      ],
-      [
-       0,
-       -1,
-       6
-      ]
-     ],
-     "kind": "other",
-     "prompt_tokens": 145,
-     "requests": 7
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 7,
-     "cost_microdollars": 100,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ],
-      [
-       87,
-       -1,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 17,
-     "requests": 2
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 888,
-     "cost_microdollars": 8888,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "histogram": [
-      [
-       0,
-       7,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 888,
-     "requests": 1
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[]\", \"group_by\": \"environment\", \"opened\": \"[('value',11428714975519389707,3146253288579348352,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\", \"top\": \"[(11428714975519389707,3146253288579348352)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 888,
-     "cost_microdollars": 8888,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "histogram": [
-      [
-       0,
-       -1,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 888,
-     "requests": 1
-    }
-   ],
-   "statement": "27f396054d117524bd6af5054abc1c41bc504ac5c712d0686340ed01215c9620 {\"byok\": \"[]\", \"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\", \"top\": \"[(11428714975519389707,3146253288579348352)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 100,
-     "cost_microdollars": 1900,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "histogram": [
-      [
-       0,
-       400,
-       1
-      ],
-      [
-       0,
-       150,
-       1
-      ],
-      [
-       0,
-       200,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 210,
-     "requests": 3
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 10,
-     "cost_microdollars": 100,
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "histogram": [
-      [
-       0,
-       600,
-       1
-      ]
-     ],
-     "kind": "value",
-     "prompt_tokens": 30,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 500,
      "completion_tokens": 81,
-     "cost_microdollars": 900,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       900
+      ]
+     ],
      "hash_a": 0,
      "hash_b": 0,
      "histogram": [
       [
        0,
-       900,
+       800,
+       1
+      ],
+      [
+       -1,
+       -1,
        1
       ],
       [
        65535,
        -1,
+       1
+      ],
+      [
+       0,
+       1000,
+       1
+      ],
+      [
+       0,
+       900,
        1
       ],
       [
@@ -1806,38 +1034,85 @@
       [
        0,
        300,
-       1
-      ],
-      [
-       0,
-       800,
-       1
-      ],
-      [
-       -1,
-       -1,
-       1
-      ],
-      [
-       0,
-       1000,
        1
       ]
      ],
      "kind": "untagged",
      "prompt_tokens": 175,
      "requests": 8
+    },
+    {
+     "completion_tokens": 100,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1900
+      ]
+     ],
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "histogram": [
+      [
+       0,
+       150,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 210,
+     "requests": 3
+    },
+    {
+     "completion_tokens": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 12086206624544669848,
+     "hash_b": 14379675343010640269,
+     "histogram": [
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 30,
+     "requests": 1
     }
    ],
-   "statement": "4e948a8dc94d62de31826cf7ca52ec1bcc1a00e793ee5d014b149eedecd02dce {\"byok\": \"[13422773509954285240]\", \"group_by\": \"environment\", \"opened\": \"[('untagged',0,0,0),('value',11428714975519389707,3146253288579348352,0),('value',12086206624544669848,14379675343010640269,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
+   "statement": "5bd6ef07245859ff5ea70f90e9dac4b5a39d3b331484f7a13e3e2d52a2eb0017 {\"group_by\": \"environment\", \"opened\": \"[('untagged',0,0,0),('value',11428714975519389707,3146253288579348352,0),('value',12086206624544669848,14379675343010640269,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
   },
   {
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
      "completion_tokens": 100,
-     "cost_microdollars": 1900,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1900
+      ]
+     ],
      "hash_a": 11428714975519389707,
      "hash_b": 3146253288579348352,
      "histogram": [
@@ -1852,9 +1127,15 @@
      "requests": 3
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 10,
-     "cost_microdollars": 100,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
      "hash_a": 12086206624544669848,
      "hash_b": 14379675343010640269,
      "histogram": [
@@ -1869,12 +1150,25 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 500,
      "completion_tokens": 81,
-     "cost_microdollars": 900,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       900
+      ]
+     ],
      "hash_a": 0,
      "hash_b": 0,
      "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
       [
        65535,
        -1,
@@ -1889,11 +1183,6 @@
        4095,
        -1,
        1
-      ],
-      [
-       -1,
-       -1,
-       1
       ]
      ],
      "kind": "untagged",
@@ -1901,15 +1190,21 @@
      "requests": 8
     }
    ],
-   "statement": "4e948a8dc94d62de31826cf7ca52ec1bcc1a00e793ee5d014b149eedecd02dce {\"byok\": \"[13422773509954285240]\", \"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
+   "statement": "5bd6ef07245859ff5ea70f90e9dac4b5a39d3b331484f7a13e3e2d52a2eb0017 {\"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
   },
   {
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
      "completion_tokens": 40,
-     "cost_microdollars": 800,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
      "hash_a": 11676983471955714414,
      "hash_b": 17040401635997276096,
      "histogram": [
@@ -1924,12 +1219,23 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 85,
-     "cost_microdollars": 1350,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
      "hash_a": 10302221083623165500,
      "hash_b": 3101482876547296862,
      "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
       [
        0,
        400,
@@ -1938,11 +1244,6 @@
       [
        0,
        200,
-       1
-      ],
-      [
-       -1,
-       -1,
        1
       ],
       [
@@ -1956,26 +1257,15 @@
      "requests": 4
     },
     {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "histogram": [
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
       [
-       0,
-       1000,
-       1
+       "Credits"
+      ],
+      [
+       10
       ]
      ],
-     "kind": "value",
-     "prompt_tokens": 5,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 10,
      "hash_a": 17055266810281513265,
      "hash_b": 11258218370038389287,
      "histogram": [
@@ -1995,9 +1285,38 @@
      "requests": 2
     },
     {
-     "byok_microdollars": 0,
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       1000,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
      "completion_tokens": 1,
-     "cost_microdollars": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
      "hash_a": 13991416765648508260,
      "hash_b": 3266711761466284607,
      "histogram": [
@@ -2012,9 +1331,15 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 2,
-     "cost_microdollars": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
      "hash_a": 3351461251694445025,
      "hash_b": 12489305839358356581,
      "histogram": [
@@ -2029,20 +1354,28 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 500,
      "completion_tokens": 55,
-     "cost_microdollars": 700,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
      "hash_a": 18098325971644278084,
      "hash_b": 14624514788639376918,
      "histogram": [
       [
        0,
-       300,
+       150,
        1
       ],
       [
        0,
-       150,
+       300,
        1
       ]
      ],
@@ -2051,15 +1384,21 @@
      "requests": 2
     }
    ],
-   "statement": "4e948a8dc94d62de31826cf7ca52ec1bcc1a00e793ee5d014b149eedecd02dce {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[('value',3351461251694445025,12489305839358356581,4095),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',13991416765648508260,3266711761466284607,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(3351461251694445025,12489305839358356581),(13991416765648508260,3266711761466284607)]\"}"
+   "statement": "5bd6ef07245859ff5ea70f90e9dac4b5a39d3b331484f7a13e3e2d52a2eb0017 {\"group_by\": \"team\", \"opened\": \"[('value',3351461251694445025,12489305839358356581,4095),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',13991416765648508260,3266711761466284607,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(13991416765648508260,3266711761466284607),(3351461251694445025,12489305839358356581)]\"}"
   },
   {
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
      "completion_tokens": 40,
-     "cost_microdollars": 800,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
      "hash_a": 11676983471955714414,
      "hash_b": 17040401635997276096,
      "histogram": [
@@ -2074,9 +1413,15 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 85,
-     "cost_microdollars": 1350,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
      "hash_a": 10302221083623165500,
      "hash_b": 3101482876547296862,
      "histogram": [
@@ -2096,26 +1441,15 @@
      "requests": 4
     },
     {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "histogram": [
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
       [
-       0,
-       -1,
-       1
+       "Credits"
+      ],
+      [
+       10
       ]
      ],
-     "kind": "value",
-     "prompt_tokens": 5,
-     "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 3,
-     "cost_microdollars": 10,
      "hash_a": 17055266810281513265,
      "hash_b": 11258218370038389287,
      "histogram": [
@@ -2130,9 +1464,38 @@
      "requests": 2
     },
     {
-     "byok_microdollars": 0,
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
      "completion_tokens": 1,
-     "cost_microdollars": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
      "hash_a": 13991416765648508260,
      "hash_b": 3266711761466284607,
      "histogram": [
@@ -2147,9 +1510,15 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 2,
-     "cost_microdollars": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
      "hash_a": 3351461251694445025,
      "hash_b": 12489305839358356581,
      "histogram": [
@@ -2164,9 +1533,17 @@
      "requests": 1
     },
     {
-     "byok_microdollars": 500,
      "completion_tokens": 55,
-     "cost_microdollars": 700,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
      "hash_a": 18098325971644278084,
      "hash_b": 14624514788639376918,
      "histogram": [
@@ -2181,15 +1558,44 @@
      "requests": 2
     }
    ],
-   "statement": "4e948a8dc94d62de31826cf7ca52ec1bcc1a00e793ee5d014b149eedecd02dce {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(3351461251694445025,12489305839358356581),(13991416765648508260,3266711761466284607)]\"}"
+   "statement": "5bd6ef07245859ff5ea70f90e9dac4b5a39d3b331484f7a13e3e2d52a2eb0017 {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(13991416765648508260,3266711761466284607),(3351461251694445025,12489305839358356581)]\"}"
   },
   {
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       50
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 20,
+     "requests": 1
+    },
+    {
      "completion_tokens": 70,
-     "cost_microdollars": 1200,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1200
+      ]
+     ],
      "hash_a": 11428714975519389707,
      "hash_b": 3146253288579348352,
      "histogram": [
@@ -2209,9 +1615,15 @@
      "requests": 2
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 10,
-     "cost_microdollars": 100,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
      "hash_a": 12086206624544669848,
      "hash_b": 14379675343010640269,
      "histogram": [
@@ -2224,11 +1636,23 @@
      "kind": "value",
      "prompt_tokens": 30,
      "requests": 1
-    },
+    }
+   ],
+   "statement": "99f62258b4ea90522b80b875e15d786d099fd6470dd2ccb23b51cefd5051a508 {\"group_by\": \"environment\", \"opened\": \"[('value',11428714975519389707,3146253288579348352,0),('value',12086206624544669848,14379675343010640269,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
     {
-     "byok_microdollars": 0,
      "completion_tokens": 5,
-     "cost_microdollars": 50,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       50
+      ]
+     ],
      "hash_a": 0,
      "hash_b": 0,
      "histogram": [
@@ -2241,17 +1665,17 @@
      "kind": "untagged",
      "prompt_tokens": 20,
      "requests": 1
-    }
-   ],
-   "statement": "e8e368be68158857d9f6484afc7309b2507805fdd939efa860e3c07d785f3e26 {\"byok\": \"[]\", \"group_by\": \"environment\", \"opened\": \"[('value',11428714975519389707,3146253288579348352,0),('value',12086206624544669848,14379675343010640269,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
-  },
-  {
-   "read": "histogram",
-   "rows": [
+    },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 70,
-     "cost_microdollars": 1200,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1200
+      ]
+     ],
      "hash_a": 11428714975519389707,
      "hash_b": 3146253288579348352,
      "histogram": [
@@ -2266,9 +1690,15 @@
      "requests": 2
     },
     {
-     "byok_microdollars": 0,
      "completion_tokens": 10,
-     "cost_microdollars": 100,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
      "hash_a": 12086206624544669848,
      "hash_b": 14379675343010640269,
      "histogram": [
@@ -2281,34 +1711,23 @@
      "kind": "value",
      "prompt_tokens": 30,
      "requests": 1
-    },
-    {
-     "byok_microdollars": 0,
-     "completion_tokens": 5,
-     "cost_microdollars": 50,
-     "hash_a": 0,
-     "hash_b": 0,
-     "histogram": [
-      [
-       -1,
-       -1,
-       1
-      ]
-     ],
-     "kind": "untagged",
-     "prompt_tokens": 20,
-     "requests": 1
     }
    ],
-   "statement": "e8e368be68158857d9f6484afc7309b2507805fdd939efa860e3c07d785f3e26 {\"byok\": \"[]\", \"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
+   "statement": "99f62258b4ea90522b80b875e15d786d099fd6470dd2ccb23b51cefd5051a508 {\"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
   },
   {
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
      "completion_tokens": 5,
-     "cost_microdollars": 20,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
      "hash_a": 11160318154034397263,
      "hash_b": 2202906307356721367,
      "histogram": [
@@ -2323,15 +1742,21 @@
      "requests": 1
     }
    ],
-   "statement": "e8e368be68158857d9f6484afc7309b2507805fdd939efa860e3c07d785f3e26 {\"byok\": \"[]\", \"group_by\": \"team\", \"opened\": \"[('value',11160318154034397263,2202906307356721367,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11160318154034397263,2202906307356721367)]\"}"
+   "statement": "99f62258b4ea90522b80b875e15d786d099fd6470dd2ccb23b51cefd5051a508 {\"group_by\": \"team\", \"opened\": \"[('value',11160318154034397263,2202906307356721367,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11160318154034397263,2202906307356721367)]\"}"
   },
   {
    "read": "histogram",
    "rows": [
     {
-     "byok_microdollars": 0,
      "completion_tokens": 5,
-     "cost_microdollars": 20,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
      "hash_a": 11160318154034397263,
      "hash_b": 2202906307356721367,
      "histogram": [
@@ -2346,7 +1771,2137 @@
      "requests": 1
     }
    ],
-   "statement": "e8e368be68158857d9f6484afc7309b2507805fdd939efa860e3c07d785f3e26 {\"byok\": \"[]\", \"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11160318154034397263,2202906307356721367)]\"}"
+   "statement": "99f62258b4ea90522b80b875e15d786d099fd6470dd2ccb23b51cefd5051a508 {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11160318154034397263,2202906307356721367)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       940
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       800,
+       1
+      ],
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       900,
+       1
+      ],
+      [
+       0,
+       700,
+       1
+      ],
+      [
+       4095,
+       -1,
+       1
+      ],
+      [
+       0,
+       300,
+       2
+      ],
+      [
+       65535,
+       -1,
+       1
+      ],
+      [
+       0,
+       1000,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 183,
+     "requests": 9
+    },
+    {
+     "completion_tokens": 103,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1960
+      ]
+     ],
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "histogram": [
+      [
+       0,
+       150,
+       1
+      ],
+      [
+       87,
+       -1,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 219,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 12086206624544669848,
+     "hash_b": 14379675343010640269,
+     "histogram": [
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 30,
+     "requests": 1
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"environment\", \"opened\": \"[('untagged',0,0,0),('value',11428714975519389707,3146253288579348352,0),('value',12086206624544669848,14379675343010640269,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 888,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       8888
+      ]
+     ],
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "histogram": [
+      [
+       0,
+       7,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 888,
+     "requests": 1
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"environment\", \"opened\": \"[('value',11428714975519389707,3146253288579348352,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\", \"top\": \"[(11428714975519389707,3146253288579348352)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       940
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       65535,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       6
+      ],
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 183,
+     "requests": 9
+    },
+    {
+     "completion_tokens": 103,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1960
+      ]
+     ],
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "histogram": [
+      [
+       0,
+       -1,
+       3
+      ],
+      [
+       87,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 219,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 10,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 12086206624544669848,
+     "hash_b": 14379675343010640269,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 30,
+     "requests": 1
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 888,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       8888
+      ]
+     ],
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 888,
+     "requests": 1
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"environment\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\", \"top\": \"[(11428714975519389707,3146253288579348352)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ],
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       900,
+       1
+      ],
+      [
+       0,
+       800,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       700,
+       1
+      ],
+      [
+       4095,
+       4194303,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 6,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       1000,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       90000,
+       1
+      ],
+      [
+       0,
+       300,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       300,
+       1
+      ],
+      [
+       0,
+       150,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[('other',0,0,0),('other',0,0,4095),('untagged',0,0,0),('untagged',0,0,87),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ],
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       900,
+       1
+      ],
+      [
+       0,
+       800,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 8,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       40
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       700,
+       1
+      ],
+      [
+       0,
+       1000,
+       1
+      ],
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 11,
+     "requests": 3
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       90000,
+       1
+      ],
+      [
+       0,
+       300,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       300,
+       1
+      ],
+      [
+       0,
+       150,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[('other',0,0,0),('untagged',0,0,0),('untagged',0,0,87),('value',10302221083623165500,3101482876547296862,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(17055266810281513265,11258218370038389287)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ],
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 66,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       750
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       300,
+       1
+      ],
+      [
+       0,
+       700,
+       1
+      ],
+      [
+       0,
+       800,
+       1
+      ],
+      [
+       0,
+       1000,
+       1
+      ],
+      [
+       0,
+       900,
+       1
+      ],
+      [
+       0,
+       150,
+       1
+      ],
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 145,
+     "requests": 7
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       90000,
+       1
+      ],
+      [
+       0,
+       300,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[('other',0,0,0),('untagged',0,0,0),('untagged',0,0,87),('value',10302221083623165500,3101482876547296862,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ],
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       900,
+       1
+      ],
+      [
+       0,
+       800,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 2,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       4095,
+       4194303,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 4,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       1000,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       90000,
+       1
+      ],
+      [
+       0,
+       300,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 1,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 13991416765648508260,
+     "hash_b": 3266711761466284607,
+     "histogram": [
+      [
+       0,
+       700,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 2,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       300,
+       1
+      ],
+      [
+       0,
+       150,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[('other',0,0,4095),('untagged',0,0,0),('untagged',0,0,87),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',13991416765648508260,3266711761466284607,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(13991416765648508260,3266711761466284607)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       400,
+       1
+      ],
+      [
+       0,
+       200,
+       1
+      ],
+      [
+       0,
+       600,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       900,
+       1
+      ],
+      [
+       0,
+       800,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       1000,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       90000,
+       1
+      ],
+      [
+       0,
+       300,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 1,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 13991416765648508260,
+     "hash_b": 3266711761466284607,
+     "histogram": [
+      [
+       0,
+       700,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 2,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 2,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 3351461251694445025,
+     "hash_b": 12489305839358356581,
+     "histogram": [
+      [
+       4095,
+       4194303,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       150,
+       1
+      ],
+      [
+       0,
+       300,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[('untagged',0,0,0),('untagged',0,0,87),('value',3351461251694445025,12489305839358356581,4095),('value',10302221083623165500,3101482876547296862,0),('value',11160318154034397263,2202906307356721367,0),('value',13991416765648508260,3266711761466284607,0),('value',17055266810281513265,11258218370038389287,0),('value',18098325971644278084,14624514788639376918,0)]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(13991416765648508260,3266711761466284607),(3351461251694445025,12489305839358356581)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       3
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 1,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 13991416765648508260,
+     "hash_b": 3266711761466284607,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 2,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 2,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 3351461251694445025,
+     "hash_b": 12489305839358356581,
+     "histogram": [
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(13991416765648508260,3266711761466284607),(3351461251694445025,12489305839358356581)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       3
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 2,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 4,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ],
+      [
+       87,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 1,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 13991416765648508260,
+     "hash_b": 3266711761466284607,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 2,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(13991416765648508260,3266711761466284607)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       3
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       4095,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 6,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 5,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       20
+      ]
+     ],
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 5,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       87,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       3
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 3,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       10
+      ]
+     ],
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 4,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 8,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       40
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ],
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 11,
+     "requests": 3
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ],
+      [
+       87,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    },
+    {
+     "completion_tokens": 55,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       700
+      ]
+     ],
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "histogram": [
+      [
+       0,
+       -1,
+       2
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 130,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(17055266810281513265,11258218370038389287)]\"}"
+  },
+  {
+   "read": "histogram",
+   "rows": [
+    {
+     "completion_tokens": 40,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       800
+      ]
+     ],
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "histogram": [
+      [
+       65535,
+       -1,
+       1
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 80,
+     "requests": 1
+    },
+    {
+     "completion_tokens": 85,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       1350
+      ]
+     ],
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "histogram": [
+      [
+       -1,
+       -1,
+       1
+      ],
+      [
+       0,
+       -1,
+       3
+      ]
+     ],
+     "kind": "value",
+     "prompt_tokens": 190,
+     "requests": 4
+    },
+    {
+     "completion_tokens": 66,
+     "cost_by_usage_type": [
+      [
+       "BYOK",
+       "Credits"
+      ],
+      [
+       500,
+       750
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       -1,
+       6
+      ],
+      [
+       4095,
+       -1,
+       1
+      ]
+     ],
+     "kind": "other",
+     "prompt_tokens": 145,
+     "requests": 7
+    },
+    {
+     "completion_tokens": 7,
+     "cost_by_usage_type": [
+      [
+       "Credits"
+      ],
+      [
+       100
+      ]
+     ],
+     "hash_a": 0,
+     "hash_b": 0,
+     "histogram": [
+      [
+       0,
+       -1,
+       1
+      ],
+      [
+       87,
+       -1,
+       1
+      ]
+     ],
+     "kind": "untagged",
+     "prompt_tokens": 17,
+     "requests": 2
+    }
+   ],
+   "statement": "a793149bc5819cf9b3172cb5eeb486996869849e6bfdcd7362233e28ffdc22bf {\"group_by\": \"team\", \"opened\": \"[]\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096)]\"}"
   },
   {
    "read": "keys",
@@ -2386,460 +3941,284 @@
    "statement": "24c6e9e9ac079b72043f265d08b338757199dfbbd195898e9dc8f20f272160ea {\"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\"}"
   },
   {
-   "read": "names",
+   "read": "totals",
    "rows": [
     {
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "named_value": "production"
-    },
-    {
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "named_value": "staging"
-    }
-   ],
-   "statement": "577020c0b2d93cfaa2253b669e4a9fb9860b9b4cf7425084951433b67de97e48 {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "named_value": "production"
-    }
-   ],
-   "statement": "577020c0b2d93cfaa2253b669e4a9fb9860b9b4cf7425084951433b67de97e48 {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\", \"top\": \"[(11428714975519389707,3146253288579348352)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "named_value": ""
-    },
-    {
-     "hash_a": 13991416765648508260,
-     "hash_b": 3266711761466284607,
-     "named_value": "Search"
-    },
-    {
-     "hash_a": 3351461251694445025,
-     "hash_b": 12489305839358356581,
-     "named_value": "delta"
-    },
-    {
+     "cost_microdollars": 10,
      "hash_a": 17055266810281513265,
      "hash_b": 11258218370038389287,
-     "named_value": "zeta"
-    },
-    {
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "named_value": "ads"
-    },
-    {
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "named_value": "billing"
-    },
-    {
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "named_value": "search"
-    }
-   ],
-   "statement": "577020c0b2d93cfaa2253b669e4a9fb9860b9b4cf7425084951433b67de97e48 {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(3351461251694445025,12489305839358356581),(13991416765648508260,3266711761466284607)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "named_value": ""
-    },
-    {
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "named_value": "zeta"
-    },
-    {
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "named_value": "ads"
-    },
-    {
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "named_value": "billing"
-    },
-    {
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "named_value": "search"
-    }
-   ],
-   "statement": "577020c0b2d93cfaa2253b669e4a9fb9860b9b4cf7425084951433b67de97e48 {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "named_value": "billing"
-    },
-    {
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "named_value": "search"
-    }
-   ],
-   "statement": "577020c0b2d93cfaa2253b669e4a9fb9860b9b4cf7425084951433b67de97e48 {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "named_value": "production"
-    },
-    {
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "named_value": "staging"
-    }
-   ],
-   "statement": "7346a7e51b0217db1a565a08f2b2637d102de7e8fa489ac7af67d08335fbfeba {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "named_value": ""
-    },
-    {
-     "hash_a": 13991416765648508260,
-     "hash_b": 3266711761466284607,
-     "named_value": "Search"
-    },
-    {
-     "hash_a": 3351461251694445025,
-     "hash_b": 12489305839358356581,
-     "named_value": "delta"
-    },
-    {
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "named_value": "zeta"
-    },
-    {
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "named_value": "ads"
-    },
-    {
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "named_value": "billing"
-    },
-    {
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "named_value": "search"
-    }
-   ],
-   "statement": "7346a7e51b0217db1a565a08f2b2637d102de7e8fa489ac7af67d08335fbfeba {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(10302221083623165500,3101482876547296862),(11676983471955714414,17040401635997276096),(18098325971644278084,14624514788639376918),(11160318154034397263,2202906307356721367),(17055266810281513265,11258218370038389287),(3351461251694445025,12489305839358356581),(13991416765648508260,3266711761466284607)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "named_value": "production"
-    },
-    {
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "named_value": "staging"
-    }
-   ],
-   "statement": "77febaa693f6596927b133fa3fc63638a45c312b49133a6742761f3c5d96b95a {\"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11428714975519389707,3146253288579348352),(12086206624544669848,14379675343010640269)]\"}"
-  },
-  {
-   "read": "names",
-   "rows": [
-    {
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "named_value": ""
-    }
-   ],
-   "statement": "77febaa693f6596927b133fa3fc63638a45c312b49133a6742761f3c5d96b95a {\"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\", \"top\": \"[(11160318154034397263,2202906307356721367)]\"}"
-  },
-  {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 1200,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
+     "named_value": "zeta",
      "requests": 2,
-     "value_count": 2
-    },
-    {
-     "cost_microdollars": 100,
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "requests": 1,
-     "value_count": 2
-    }
-   ],
-   "statement": "3071670ee98dda6e4475bc6e3fbb03bd0b85f01c178f4d6f3213c82f113ec47a {\"byok\": \"[]\", \"group_by\": \"environment\", \"limit\": \"50\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "requests": 1,
-     "value_count": 1
-    }
-   ],
-   "statement": "3071670ee98dda6e4475bc6e3fbb03bd0b85f01c178f4d6f3213c82f113ec47a {\"byok\": \"[]\", \"group_by\": \"team\", \"limit\": \"50\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 1900,
-     "hash_a": 11428714975519389707,
-     "hash_b": 3146253288579348352,
-     "requests": 3,
-     "value_count": 2
-    },
-    {
-     "cost_microdollars": 100,
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "requests": 1,
-     "value_count": 2
-    }
-   ],
-   "statement": "80f0a8000074040452501ab1b94953c70b0dec24054aae1f8b761d39c8c84520 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"environment\", \"limit\": \"2\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "requests": 4,
-     "value_count": 7
+     "usage_type": "Credits"
     },
     {
      "cost_microdollars": 800,
      "hash_a": 11676983471955714414,
      "hash_b": 17040401635997276096,
+     "named_value": "billing",
      "requests": 1,
-     "value_count": 7
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 500,
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "named_value": "ads",
+     "requests": 1,
+     "usage_type": "BYOK"
+    },
+    {
+     "cost_microdollars": 1350,
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "named_value": "search",
+     "requests": 4,
+     "usage_type": "Credits"
     },
     {
      "cost_microdollars": 700,
      "hash_a": 18098325971644278084,
      "hash_b": 14624514788639376918,
-     "requests": 2,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
+     "named_value": "ads",
      "requests": 1,
-     "value_count": 7
+     "usage_type": "Credits"
+    }
+   ],
+   "statement": "06e576cb49855ea98f7616c6211c240f0301b1f0930627b8cfba5b612cba0236 {\"candidates\": \"[10302221083623165500,17055266810281513265,18098325971644278084,11676983471955714414]\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "totals",
+   "rows": [
+    {
+     "cost_microdollars": 1350,
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "named_value": "search",
+     "requests": 4,
+     "usage_type": "Credits"
     },
     {
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "requests": 2,
-     "value_count": 7
+     "cost_microdollars": 700,
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "named_value": "ads",
+     "requests": 1,
+     "usage_type": "Credits"
     },
     {
      "cost_microdollars": 10,
      "hash_a": 3351461251694445025,
      "hash_b": 12489305839358356581,
+     "named_value": "delta",
      "requests": 1,
-     "value_count": 7
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 800,
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "named_value": "billing",
+     "requests": 1,
+     "usage_type": "Credits"
     },
     {
      "cost_microdollars": 10,
      "hash_a": 13991416765648508260,
      "hash_b": 3266711761466284607,
+     "named_value": "Search",
      "requests": 1,
-     "value_count": 7
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 500,
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "named_value": "ads",
+     "requests": 1,
+     "usage_type": "BYOK"
+    },
+    {
+     "cost_microdollars": 20,
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "named_value": "",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 10,
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "named_value": "zeta",
+     "requests": 2,
+     "usage_type": "Credits"
     }
    ],
-   "statement": "80f0a8000074040452501ab1b94953c70b0dec24054aae1f8b761d39c8c84520 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"limit\": \"50\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+   "statement": "06e576cb49855ea98f7616c6211c240f0301b1f0930627b8cfba5b612cba0236 {\"candidates\": \"[10302221083623165500,18098325971644278084,17055266810281513265,13991416765648508260,3351461251694445025,11676983471955714414,11160318154034397263]\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
   },
   {
-   "read": "ranking",
+   "read": "totals",
    "rows": [
+    {
+     "cost_microdollars": 100,
+     "hash_a": 12086206624544669848,
+     "hash_b": 14379675343010640269,
+     "named_value": "staging",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
     {
      "cost_microdollars": 1960,
      "hash_a": 11428714975519389707,
      "hash_b": 3146253288579348352,
+     "named_value": "production",
      "requests": 4,
-     "value_count": 2
-    },
-    {
-     "cost_microdollars": 100,
-     "hash_a": 12086206624544669848,
-     "hash_b": 14379675343010640269,
-     "requests": 1,
-     "value_count": 2
+     "usage_type": "Credits"
     }
    ],
-   "statement": "c2fc1a02f7d2c316c3d50871d528c2c99ec1f72ec77aa29feb6c3086dbd0f2a7 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"environment\", \"limit\": \"50\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+   "statement": "06e576cb49855ea98f7616c6211c240f0301b1f0930627b8cfba5b612cba0236 {\"candidates\": \"[11428714975519389707,12086206624544669848]\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
   },
   {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "requests": 4,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "requests": 1,
-     "value_count": 7
-    }
-   ],
-   "statement": "c2fc1a02f7d2c316c3d50871d528c2c99ec1f72ec77aa29feb6c3086dbd0f2a7 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"limit\": \"2\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "requests": 4,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "requests": 1,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 700,
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "requests": 2,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "requests": 1,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "requests": 2,
-     "value_count": 7
-    }
-   ],
-   "statement": "c2fc1a02f7d2c316c3d50871d528c2c99ec1f72ec77aa29feb6c3086dbd0f2a7 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"limit\": \"5\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "ranking",
-   "rows": [
-    {
-     "cost_microdollars": 1350,
-     "hash_a": 10302221083623165500,
-     "hash_b": 3101482876547296862,
-     "requests": 4,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 800,
-     "hash_a": 11676983471955714414,
-     "hash_b": 17040401635997276096,
-     "requests": 1,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 700,
-     "hash_a": 18098325971644278084,
-     "hash_b": 14624514788639376918,
-     "requests": 2,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 20,
-     "hash_a": 11160318154034397263,
-     "hash_b": 2202906307356721367,
-     "requests": 1,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 10,
-     "hash_a": 17055266810281513265,
-     "hash_b": 11258218370038389287,
-     "requests": 2,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 10,
-     "hash_a": 3351461251694445025,
-     "hash_b": 12489305839358356581,
-     "requests": 1,
-     "value_count": 7
-    },
-    {
-     "cost_microdollars": 10,
-     "hash_a": 13991416765648508260,
-     "hash_b": 3266711761466284607,
-     "requests": 1,
-     "value_count": 7
-    }
-   ],
-   "statement": "c2fc1a02f7d2c316c3d50871d528c2c99ec1f72ec77aa29feb6c3086dbd0f2a7 {\"byok\": \"[13422773509954285240]\", \"group_by\": \"team\", \"limit\": \"50\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
-  },
-  {
-   "read": "ranking",
+   "read": "totals",
    "rows": [
     {
      "cost_microdollars": 8888,
      "hash_a": 11428714975519389707,
      "hash_b": 3146253288579348352,
+     "named_value": "production",
      "requests": 1,
-     "value_count": 1
+     "usage_type": "Credits"
     }
    ],
-   "statement": "c2fc1a02f7d2c316c3d50871d528c2c99ec1f72ec77aa29feb6c3086dbd0f2a7 {\"byok\": \"[]\", \"group_by\": \"environment\", \"limit\": \"50\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\"}"
+   "statement": "06e576cb49855ea98f7616c6211c240f0301b1f0930627b8cfba5b612cba0236 {\"candidates\": \"[11428714975519389707]\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tenant_id\": \"e6df511d16313a6b1db38e4b87112b5277778914743d921ba68bfe0d285f0983\"}"
+  },
+  {
+   "read": "totals",
+   "rows": [
+    {
+     "cost_microdollars": 20,
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "named_value": "",
+     "requests": 1,
+     "usage_type": "Credits"
+    }
+   ],
+   "statement": "94c6b5972ff7dcd765a0b752659139cd343f057cc5258d0ddf75d546fc08dbeb {\"candidates\": \"[11160318154034397263]\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "totals",
+   "rows": [
+    {
+     "cost_microdollars": 100,
+     "hash_a": 12086206624544669848,
+     "hash_b": 14379675343010640269,
+     "named_value": "staging",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 1200,
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "named_value": "production",
+     "requests": 2,
+     "usage_type": "Credits"
+    }
+   ],
+   "statement": "94c6b5972ff7dcd765a0b752659139cd343f057cc5258d0ddf75d546fc08dbeb {\"candidates\": \"[11428714975519389707,12086206624544669848]\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tag_value\": \"search\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "totals",
+   "rows": [
+    {
+     "cost_microdollars": 1350,
+     "hash_a": 10302221083623165500,
+     "hash_b": 3101482876547296862,
+     "named_value": "search",
+     "requests": 4,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 700,
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "named_value": "ads",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 800,
+     "hash_a": 11676983471955714414,
+     "hash_b": 17040401635997276096,
+     "named_value": "billing",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 10,
+     "hash_a": 13991416765648508260,
+     "hash_b": 3266711761466284607,
+     "named_value": "Search",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 500,
+     "hash_a": 18098325971644278084,
+     "hash_b": 14624514788639376918,
+     "named_value": "ads",
+     "requests": 1,
+     "usage_type": "BYOK"
+    },
+    {
+     "cost_microdollars": 20,
+     "hash_a": 11160318154034397263,
+     "hash_b": 2202906307356721367,
+     "named_value": "",
+     "requests": 1,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 10,
+     "hash_a": 17055266810281513265,
+     "hash_b": 11258218370038389287,
+     "named_value": "zeta",
+     "requests": 2,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 10,
+     "hash_a": 3351461251694445025,
+     "hash_b": 12489305839358356581,
+     "named_value": "delta",
+     "requests": 1,
+     "usage_type": "Credits"
+    }
+   ],
+   "statement": "c10b5e71aeb3e91e1cf7fda1a24880549d6c0f207e37d20f7df9a796cd5ad32e {\"candidates\": \"[10302221083623165500,18098325971644278084,17055266810281513265,13991416765648508260,3351461251694445025,11676983471955714414,11160318154034397263]\", \"group_by\": \"team\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
+  },
+  {
+   "read": "totals",
+   "rows": [
+    {
+     "cost_microdollars": 1900,
+     "hash_a": 11428714975519389707,
+     "hash_b": 3146253288579348352,
+     "named_value": "production",
+     "requests": 3,
+     "usage_type": "Credits"
+    },
+    {
+     "cost_microdollars": 100,
+     "hash_a": 12086206624544669848,
+     "hash_b": 14379675343010640269,
+     "named_value": "staging",
+     "requests": 1,
+     "usage_type": "Credits"
+    }
+   ],
+   "statement": "c10b5e71aeb3e91e1cf7fda1a24880549d6c0f207e37d20f7df9a796cd5ad32e {\"candidates\": \"[11428714975519389707,12086206624544669848]\", \"group_by\": \"environment\", \"start_at\": \"2026-03-01T00:00:00Z\", \"tag_key\": \"team\", \"tenant_id\": \"1dcfa5faddda2c473a8663634848f988901dca313882c0983bfa192d9aebd66d\"}"
   },
   {
    "read": "values",

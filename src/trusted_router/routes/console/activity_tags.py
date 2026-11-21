@@ -139,9 +139,14 @@ def register(app: FastAPI) -> None:
             "keys_approximate": summary["keys_approximate"],
             "group_by": summary["group_by"],
             "breakdown": summary["breakdown"],
-            # True when the key has more distinct values than a breakdown
-            # ranks; the rows are then empty and the page says why.
+            # True when the store counted more distinct values than a
+            # breakdown is given for; the rows are then empty and the page
+            # says why. ClickHouse's count is an estimate.
             "breakdown_too_many_values": summary["breakdown_too_many_values"],
+            # True when the key has too many values to rank exactly: the
+            # value rows are then the heaviest values found, and a value
+            # that belongs among them may be in the Other row.
+            "breakdown_approximate": summary["breakdown_approximate"],
             # Read when the request is served, so the page states the limits
             # the store applied to this answer.
             "distinct_limit": tag_limits.TAG_DISTINCT_LIMIT,
