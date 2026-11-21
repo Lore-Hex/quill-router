@@ -1789,6 +1789,13 @@ SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS = [
 # same text (snapshot and manifest) appear once.
 _ATLAS_SOL_CODEX = "openai/gpt-6-sol-codex [atlas-cloud:atlas-cloud:openai/gpt-6-sol-codex]"
 _GMI_ARGON = "google/gemini-4-argon [gmi:gmi:google/gemini-4-argon]"
+NOVEMBER_20_INCEPTRON_TRANSITIONS = [
+    (
+        "deepseek/deepseek-v4-flash-0731 [inceptron:inceptron:deepseek-ai/DeepSeek-V4-Flash-0731]",
+        "prompt", "6.2E-8", "1.3E-7",
+    ),
+    ("z-ai/glm-5.3 [inceptron:inceptron:zai-org/GLM-5.3]", "prompt", "2.445E-7", "1.05E-6"),
+]
 NOVEMBER_19_REFRESH_TRANSITIONS = [
     (_ATLAS_SOL_CODEX, "prompt", "1E-7", "0.000002"),
     (_ATLAS_SOL_CODEX, "completion", "5E-7", "0.00001"),
@@ -1824,7 +1831,8 @@ NOVEMBER_19_REFRESH_TRANSITIONS = [
     CONFIRMED_REFRESH_TRANSITIONS
     + SEPTEMBER_22_REFRESH_TRANSITIONS
     + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
-    + NOVEMBER_19_REFRESH_TRANSITIONS,
+    + NOVEMBER_19_REFRESH_TRANSITIONS
+    + NOVEMBER_20_INCEPTRON_TRANSITIONS,
 )
 def test_confirmed_refresh_transition_is_allowed(
     route: str, dimension: str, old: str, new: str,
@@ -1874,7 +1882,8 @@ def test_november_19_verified_transitions_pass_only_with_their_approvals(
     CONFIRMED_REFRESH_TRANSITIONS
     + SEPTEMBER_22_REFRESH_TRANSITIONS
     + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS
-    + NOVEMBER_19_REFRESH_TRANSITIONS,
+    + NOVEMBER_19_REFRESH_TRANSITIONS
+    + NOVEMBER_20_INCEPTRON_TRANSITIONS,
 )
 @pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
 def test_confirmed_refresh_mutations_still_block(
