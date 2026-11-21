@@ -294,8 +294,8 @@ reconciler rather than at workspaces, the enabler raises
     first, so "the last request or two" understated it. On 2026-11-21 a
     fast-spending workspace within cents of empty, with a lease still
     holding part of what was left, was answered the 503 on every request
-    for three minutes (each request failing after the enclave's three
-    authorize attempts) until it bought credit. No retry
+    (each failing after the enclave's three authorize attempts) until it
+    bought credit, minutes later. No retry
     could have succeeded, and before the floor change it would have been
     answered 402, which is true and can be acted on. The 503 is now
     answered only while the workspace's headroom, counting what its live
