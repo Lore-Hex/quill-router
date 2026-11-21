@@ -365,6 +365,7 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
+| Credit rows that break the debt rules (`fast-admission-and-batched-settlement.md` §4.7): a shard negative with none marked, marks that differ, or a mark over a signed sum that is not negative | enabler; counted in the report as `debt_rules` | the rule the fleet audit's `identity` check ends with (`store.CheckIdentity`), read the same way from each shard's credit less its usage and reservations. The grant does not refuse such a workspace (it reads the mark and the signed sum), so before this exclusion the enabler enabled it and the audit raised `fleet_audit_fault` on it every pass. Every writer since the debt rules (2026-10-07) keeps them; a shard a synchronous settle overran before them stays negative until money comes into its workspace, a later settle squares its rows, or `scripts/settle_negative_shards.py` covers it. Rows with any mark are counted `in_debt` first |
 | Unspent credit under $2 (under $3 to join; $5 and $30 until 2026-11-20, $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
 | Deleted workspaces | enabler (the entity's deletion); edge `workspace.deleted` | |
 | BYOK candidates | request (`funding`; `candidates.byok`) | per request: the same workspace's credit requests stay in |
@@ -544,12 +545,18 @@ needs no analytics read; the largest spenders carry most of the traffic
   it is disabled as latched; a mass latch never reaches the guard below
   and never raises `fastpath_enabler_mass_disable`. The guard and the pace
   count only workspaces whose every cause is capped. For any other cause
-  that came from a change of facts (tier below the required tier, balance under the leave threshold, a
+  that came from a change of facts (tier below the required tier, balance under the leave threshold,
+  credit rows that break the debt rules, a
   federated home, a deletion, a probe, a bypass), the cap is a guard: when
   a run would disable more than 10% of the enabled set or 20 workspaces,
   whichever is larger, for those causes, it disables none of them that run
   and raises `fastpath_enabler_mass_disable`, since a sudden mass change
-  of facts is more likely a reading defect than a fact. A rank past the
+  of facts is more likely a reading defect than a fact. Rows that break
+  the debt rules ((c)) are in this group, not the uncapped one, because the
+  grant does not refuse them: unlike a latch, a pause or a mark, their
+  disable is a real change, and the audit's `fleet_audit_fault` already
+  names each one to an operator. A few leave at the next run; a mass of
+  them at once is a writer or a reading gone wrong. A rank past the
   margin of §5.2 is not guarded but paced: each run disables at most the
   same number, lowest rank first, and raises nothing, since a large rank
   change comes from the operator lowering `max_rank` and a small one from
@@ -567,6 +574,16 @@ would enable and would disable by reason, excluded by each reason of (c),
 held, frozen, capped, `bypass`, enabled rows outside the include list, and
 in apply mode the commit times. The lists of workspaces to enable and
 disable go in the job's own log, which only operators read.
+
+A workspace is counted in `excluded` under its first cause alone, in the
+order uncapped, whole, guarded (`PRECEDENCE`). `excluded.debt_rules` leads
+the tier and the balance, so it counts every workspace whose rows break
+the debt rules and that no cause before it (a latch, a pause, a mark, a
+hold, an exclude entry, incomplete rows) already keeps out, whatever its
+tier or balance: workspaces `scripts/settle_negative_shards.py` has yet
+to settle. In apply mode an
+enable whose own transaction finds such rows is counted under `writes` as
+`ineligible:debt_rules`.
 
 The report also counts `unheld_disabled`: every `enabled = false` row of
 `tr_fastpath_workspace` with no hold of its own, fleet-wide, whatever its

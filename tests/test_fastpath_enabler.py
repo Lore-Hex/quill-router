@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,14 @@ def _run(db: FakeDatabase, config: fe.EnablerConfig = BASE, **kwargs: Any) -> fe
 
 def _hold_writes(db: FakeDatabase) -> list[tuple[str, str]]:
     return [w for w in db.writes if w[0] == "tr_fastpath_workspace_hold"]
+
+
+def _overrun(db: FakeDatabase, workspace: str, by: int = 1) -> None:
+    """Give the workspace one more shard, overrun by a microdollar, with no
+    row marked: a row a settle left negative before the debt rules. Its
+    other rows keep its balance, its tier and its marks as they were."""
+    rows = db.credit[workspace]
+    rows.append(Credit(shard=len(rows), credits=1_000_000, usage=1_000_000 + by))
 
 
 # -- the fixture --------------------------------------------------------------
@@ -167,6 +176,7 @@ FLIPS: list[tuple[str, dict[str, Any], str]] = [
     ("synthetic client events", {"config": {"synthetic": frozenset({"ws-synthetic-x"})}}, "probe"),
     ("held", {"hold": "operator"}, "held"),
     ("a shard missing", {"gap": True}, "credit_rows"),
+    ("a negative shard with none marked", {"overrun": True}, "debt_rules"),
 ]
 
 
@@ -179,6 +189,7 @@ def test_each_exclusion_flips_one_fact(name: str, flip: dict[str, Any], reason: 
     override = flip.pop("override", None)
     hold = flip.pop("hold", None)
     gap = flip.pop("gap", False)
+    overrun = flip.pop("overrun", False)
     _seed(db, "ws-synthetic-x", entity=None if entity in (None, "missing") else entity, override=override, **flip)
     if entity == "missing":
         del db.entities[("workspace", "ws-synthetic-x")]
@@ -186,6 +197,8 @@ def test_each_exclusion_flips_one_fact(name: str, flip: dict[str, Any], reason: 
         db.holds["ws-synthetic-x"] = (hold, T0)
     if gap:
         db.credit["ws-synthetic-x"][0].shard = 1
+    if overrun:
+        _overrun(db, "ws-synthetic-x")
     report = _run(db, config).report
     assert report["excluded"] == {reason: 1}, name
     assert report["would_enable"] == {} and report["eligible"] == 0
@@ -342,6 +355,218 @@ def test_an_exclude_entry_is_applied_whole() -> None:
     assert [w for w in names if not db.switch[w][0]] == names[:30]
     assert result.report["would_disable"] == {"excluded": 30}
     assert result.plan is not None and not result.plan.mass_disable
+
+
+# -- the debt rules ------------------------------------------------------------------
+
+
+def _debt_rows(headroom: list[int], marks: list[bool] | None = None, *, reserved: int = 0, tier: int = 3,
+               latched: bool = False) -> list[fe.CreditRow]:
+    """Credit rows with the headroom given, each row's credit being its
+    headroom and its reservation over no usage."""
+    marks = marks if marks is not None else [False] * len(headroom)
+    return [fe.CreditRow(shard=shard, tier=tier, latched=latched, paused=False, in_debt=mark,
+                         credits=value + reserved, usage=0, reconciled_through=T0, reserved=reserved)
+            for shard, (value, mark) in enumerate(zip(headroom, marks, strict=True))]
+
+
+INT64_MAX = 2**63 - 1
+DEBT_RULES: list[tuple[str, list[int], list[bool] | None, bool]] = [
+    ("no row negative, none marked", [100, 0, 5], None, False),
+    ("a negative row unmarked", [100, -1], None, True),  # Go's own case, identity_test.go
+    ("one row, negative, unmarked", [-1], None, True),
+    ("a negative sum, none marked", [-100, 30], None, True),
+    ("in debt and marked on every row", [-100, 30], [True, True], False),
+    ("marked while solvent", [70], [True], True),  # Go's: "marked and their signed sum is 70"
+    ("marked, a row negative, the sum zero", [-5, 5], [True, True], True),
+    ("the marks differ", [100, 100], [True, False], True),  # Go's: "the rows' marks differ"
+    ("the marks differ in real debt", [-100, 30], [False, True], True),
+    # Exact sums, as Go's big.Int: an int64 would wrap these to the other sign.
+    ("marked, a sum past int64", [INT64_MAX, INT64_MAX, -1], [True, True, True], True),
+    ("marked, a sum below int64", [-INT64_MAX, -INT64_MAX, 1], [True, True, True], False),
+]
+
+
+@pytest.mark.parametrize(("name", "headroom", "marks", "breaks"), DEBT_RULES, ids=[c[0] for c in DEBT_RULES])
+def test_the_debt_rules_are_read_as_the_nodes_audit_reads_them(name: str, headroom: list[int],
+                                                              marks: list[bool] | None, breaks: bool) -> None:
+    assert fe.breaks_debt_rules(_debt_rows(headroom, marks)) is breaks, name
+    # A row's reservations are off its headroom, as they are in the audit's read.
+    assert fe.breaks_debt_rules(_debt_rows(headroom, marks, reserved=7)) is breaks, name
+
+
+def test_the_debt_rules_are_the_switch_the_nodes_audit_ends_with() -> None:
+    """breaks_debt_rules is a copy of the switch that ends Go's
+    store.CheckIdentity, on the same columns. If the audit's rule or its
+    read changes, this fails, and the enabler's copy changes with it."""
+    go = (ROOT / "fastpath" / "internal" / "store" / "identity.go").read_text()
+    assert "SELECT shard, reserved, total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)" in go
+    switch = go[go.index("negative, marked, alike := false, marks[0], true"):]
+    assert re.findall(r"^\tcase (.+):$", switch, re.M) == [
+        "!alike", "negative && !marked", "marked && signed.Sign() >= 0"]
+    # And the enabler reads those columns, in the snapshot and in the enable.
+    for sql in (fe.ENABLER_BALANCE_SQL, fe.ENABLER_CREDIT_ROWS_SQL):
+        assert "in_debt, total_credits, total_usage, reserved" in sql
+    assert fe.breaks_debt_rules([]) is False  # no rows is "credit_rows", as the audit's ErrCreditRowsIncomplete
+
+
+def test_a_reservation_counts_against_a_rows_headroom() -> None:
+    """The headroom is credit less usage less reservations: a row whose
+    reservations alone exceed what it has left is negative."""
+    row = fe._row((0, 3, None, None, None, False, 100, 50, 60, T0))
+    assert row.reserved == 60 and fe.breaks_debt_rules([row])
+    assert not fe.breaks_debt_rules([fe._row((0, 3, None, None, None, None, 100, 50, 50, T0))])
+    db = FakeDatabase()
+    _seed(db, "ws-synthetic-x", shards=2)
+    db.credit["ws-synthetic-x"][1].reserved = db.credit["ws-synthetic-x"][1].credits + 1
+    report = _run(db, dataclasses.replace(BASE, mode="dry-run")).report
+    assert report["excluded"] == {"debt_rules": 1} and report["would_enable"] == {}
+
+
+def test_a_negative_shard_with_none_marked_is_never_enabled(caplog: pytest.LogCaptureFixture) -> None:
+    """The state the fleet audit faulted on 2026-11-21, a day the join
+    balance came down: sixteen shards, one overrun before the debt rules
+    and never covered, the signed sum well over the join balance, no row
+    marked. It is left out as debt_rules and listed nowhere to enable,
+    while its twin, with a row at zero in place of the negative one, joins."""
+    db = _armed()
+    for name in ("ws-synthetic-legacy", "ws-synthetic-twin"):
+        _seed(db, name, shards=16, credits=10_000_000)
+    db.credit["ws-synthetic-legacy"][4].usage = 10_400_000
+    db.credit["ws-synthetic-twin"][4].usage = 10_000_000
+    with caplog.at_level(logging.INFO, logger="trusted_router.fastpath_enabler"):
+        result = _run(db)
+    assert {w for w, (on, _) in db.switch.items() if on} == {"ws-synthetic-twin"}
+    assert "ws-synthetic-legacy" not in db.switch
+    assert result.report["excluded"] == {"debt_rules": 1} and result.report["eligible"] == 1
+    assert result.report["would_enable"] == {"rank": 1} and result.report["writes"] == {"enabled": 1}
+    assert "fastpath_enabler.list enable=ws-synthetic-twin" in [r.getMessage() for r in caplog.records]
+    # Covered, as scripts/settle_negative_shards.py covers it (the negative
+    # row from the lowest positive one), it joins at the next run.
+    db.credit["ws-synthetic-legacy"][0].credits -= 400_000
+    db.credit["ws-synthetic-legacy"][4].credits += 400_000
+    assert _run(db).report["writes"] == {"enabled": 1} and db.switch["ws-synthetic-legacy"][0] is True
+
+
+def test_the_enables_own_transaction_rechecks_the_debt_rules() -> None:
+    """The enable reads the rows again in its own transaction, their
+    reservations too, and writes nothing for rows that break the rules."""
+    for column in ("usage", "reserved"):
+        db = _armed()
+        _seed(db, "ws-synthetic-x", shards=2)
+
+        def goes_negative(db: FakeDatabase, column: str = column) -> None:
+            row = db.credit["ws-synthetic-x"][1]
+            setattr(row, column, row.credits + 1)
+
+        db.before_transaction.append(goes_negative)
+        report = _run(db).report
+        assert "ws-synthetic-x" not in db.switch and report["writes"] == {"ineligible:debt_rules": 1}, column
+
+
+def test_an_enabled_workspace_that_breaks_the_debt_rules_is_disabled_unheld(caplog: pytest.LogCaptureFixture) -> None:
+    """An enabled workspace found with a negative shard and no mark leaves
+    at the next run, as for any guarded cause: the switch off, its leases
+    revoked, no hold. It does not come back while its rows stay so."""
+    db = _armed()
+    names = _fleet(db, 40, enabled=True)
+    for name in names[:2]:
+        _overrun(db, name)
+        db.open_leases[name] = 1
+    with caplog.at_level(logging.INFO, logger="trusted_router.fastpath_enabler"):
+        result = _run(db, dataclasses.replace(BASE, max_rank=100))
+    assert [w for w in names if not db.switch[w][0]] == names[:2]
+    assert result.report["would_disable"] == {"debt_rules": 2} and result.report["excluded"] == {"debt_rules": 2}
+    assert result.report["writes"] == {"disabled": 2} and result.report["revoked_leases"] == 2
+    assert result.plan is not None and not result.plan.mass_disable
+    assert _hold_writes(db) == [] and not any(name in db.holds for name in names)
+    lists = [r.getMessage() for r in caplog.records if r.getMessage().startswith("fastpath_enabler.list ")]
+    assert f"fastpath_enabler.list disable={names[0]}:debt_rules,{names[1]}:debt_rules" in lists
+    again = _run(db, dataclasses.replace(BASE, max_rank=100)).report
+    assert again["would_enable"] == {} and again["would_disable"] == {} and again["excluded"] == {"debt_rules": 2}
+    assert [w for w in names if not db.switch[w][0]] == names[:2]
+
+
+def test_a_mass_of_rows_that_break_the_debt_rules_is_held_by_the_guard(caplog: pytest.LogCaptureFixture) -> None:
+    """The grant does not refuse a workspace for a negative unmarked row,
+    so this disable is a real change and is guarded: past the cap none of
+    them goes and the run alerts, since that many at once is a writer or
+    a reading gone wrong; at the cap they go."""
+    db = _armed()
+    names = _fleet(db, 40, enabled=True)
+    for name in names[:21]:
+        _overrun(db, name)
+    db.credit[names[30]][0].in_debt = True
+    with caplog.at_level(logging.ERROR, logger="trusted_router.fastpath_enabler"):
+        result = _run(db, dataclasses.replace(BASE, max_rank=100))
+    assert all(db.switch[w][0] for w in names[:21])
+    assert not db.switch[names[30]][0]  # the uncapped cause still goes
+    assert result.report["would_disable"] == {"debt_rules": 21, "in_debt": 1}
+    assert result.report["capped"]["guarded"] == 21 and result.report["capped"]["cap"] == 20
+    assert "fastpath_enabler_mass_disable guarded=21 cap=20" in caplog.text
+    db2 = _armed()
+    names2 = _fleet(db2, 40, enabled=True)
+    for name in names2[:20]:
+        _overrun(db2, name)
+    _run(db2, dataclasses.replace(BASE, max_rank=100))
+    assert [w for w in names2 if not db2.switch[w][0]] == names2[:20]
+
+
+def test_the_debt_rules_cause_follows_the_marks_and_leads_the_tier() -> None:
+    """Counted once, under the first cause: rows with any mark are in_debt
+    (uncapped, refused by the grant) though they break the rules too; a
+    latch or a pause leads as before; incomplete rows are credit_rows
+    alone, as the audit gives no verdict on them; and a negative unmarked
+    row leads the tier and the balance, so the report's debt_rules counts
+    every such workspace that no cause before it already keeps out."""
+    def causes(rows: list[fe.CreditRow]) -> list[str]:
+        return fe.credit_causes(rows, None, enabled=False, included=False, config=BASE)
+
+    rich = 1_000_000_000
+    assert causes(_debt_rows([rich, -1])) == ["debt_rules"]
+    assert causes(_debt_rows([5, -1], tier=0)) == ["debt_rules", "tier", "balance"]
+    assert causes(_debt_rows([rich, rich], [True, False])) == ["in_debt", "debt_rules"]
+    assert causes(_debt_rows([rich], [True])) == ["in_debt", "debt_rules"]
+    assert causes(_debt_rows([-100, 30], [True, True])) == ["in_debt", "balance"]
+    assert causes(_debt_rows([rich, -1], latched=True)) == ["latched", "debt_rules", "tier"]
+    gap = [dataclasses.replace(row, shard=row.shard + 1) for row in _debt_rows([rich, -1])]
+    assert causes(gap) == ["credit_rows"]
+    order = fe.PRECEDENCE
+    assert order.index("in_debt") < order.index("credit_rows") < order.index("debt_rules") < order.index("tier")
+    assert "debt_rules" in fe.GUARDED and "debt_rules" not in fe.UNCAPPED + fe.WHOLE
+
+
+def test_marked_rows_that_break_the_rules_leave_uncapped_as_in_debt(caplog: pytest.LogCaptureFixture) -> None:
+    """Marks that differ, or a mark over a balance that is not negative,
+    break the rules too, but the grant refuses any marked row, so they
+    leave as in_debt, uncapped: thirty at once raise nothing."""
+    db = _armed()
+    names = _fleet(db, 40, enabled=True)
+    for name in names[:15]:
+        db.credit[name][0].in_debt = True  # marked while solvent
+    for name in names[15:30]:
+        db.credit[name].append(Credit(shard=1, in_debt=True))  # the marks differ
+    with caplog.at_level(logging.ERROR, logger="trusted_router.fastpath_enabler"):
+        result = _run(db, dataclasses.replace(BASE, max_rank=100))
+    assert [w for w in names if not db.switch[w][0]] == names[:30]
+    assert result.report["would_disable"] == {"in_debt": 30} and result.report["capped"]["guarded"] == 0
+    assert "fastpath_enabler_mass_disable" not in caplog.text
+
+
+def test_the_documents_name_the_debt_rules_exclusion() -> None:
+    """The report's excluded and would_disable counts carry debt_rules;
+    the design's exclusion set and guard, and the runbook's rows for the
+    audit's fault and the guard's alert, say what it is and what to do."""
+    design = (ROOT / "docs" / "design" / "fast-admission-widening.md").read_text()
+    runbook = (ROOT / "docs" / "runbooks" / "fastpath-alerts.md").read_text()
+    exclusions = design[design.index("### (c) The exclusion set"):design.index("### (d) The enabler job")]
+    assert "counted in the report as `debt_rules`" in exclusions
+    run = design[design.index("### 5.3 What a run does"):design.index("### 5.4 The report")]
+    assert "credit rows that break the debt rules" in run
+    fault = next(line for line in runbook.splitlines() if line.startswith("| `fleet_audit_fault` |"))
+    assert "`debt_rules`" in fault and "scripts/settle_negative_shards.py" in fault
+    guard = next(line for line in runbook.splitlines() if line.startswith("| `mass_disable` |"))
+    assert "credit rows that break the debt rules" in guard
 
 
 # -- the watermark freeze ------------------------------------------------------------
