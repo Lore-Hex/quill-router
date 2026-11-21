@@ -240,12 +240,14 @@ def observe_first_heartbeat(
     if mode == MODE_OFF or int(seq) != 1:
         return
     try:
-        if not heartbeating_stream(authorization) or not never_started(authorization):
+        # The cheap tests first: nearly every first heartbeat is seconds
+        # old and stops at its age, before the snapshot is parsed.
+        if not never_started(authorization):
             return
         age = age_seconds(authorization, now or datetime.now(UTC))
         if age is None or age * SLOW_FIRST_HEARTBEAT_SHARE < int(after_seconds):
             return
-        if not declared_before(authorization, declared_since):
+        if not heartbeating_stream(authorization) or not declared_before(authorization, declared_since):
             return
         if age < int(after_seconds):
             log.info(
@@ -285,7 +287,9 @@ def observe_settle(
     if mode == MODE_OFF or not success:
         return
     try:
-        if not heartbeating_stream(authorization) or not never_started(authorization):
+        # The cheap test first: a stream that heartbeated, which is every
+        # ordinary stream's settle, stops here, before the snapshot is parsed.
+        if not never_started(authorization) or not heartbeating_stream(authorization):
             return
         if not declared_before(authorization, declared_since):
             return

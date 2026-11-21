@@ -259,6 +259,24 @@ def test_a_charging_settle_with_no_heartbeat_is_a_contradiction_at_any_age(rende
     assert rendered.lines == []
 
 
+def test_an_ordinary_settle_or_first_heartbeat_stops_before_the_snapshot_is_parsed(
+    rendered: _Rendered, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The observers sit on every stream's first heartbeat and settle in
+    log mode: a stream that heartbeated, and a first heartbeat seconds
+    after its authorize, are decided on fields alone."""
+    def forbidden(_snapshot: str) -> Any:
+        raise AssertionError("the pricing snapshot was parsed for an ordinary request")
+
+    monkeypatch.setattr(rule, "parse_pricing_snapshot", forbidden)
+    rule.observe_settle(
+        _authorization(heartbeat_seq=4, started_at="2026-11-21T12:00:02Z"), success=True, mode="log",
+        declared_since=lambda _kid: SINCE,
+    )
+    rule.observe_first_heartbeat(_authorization(), **_late(now=CREATED + dt.timedelta(seconds=4)))
+    assert rendered.lines == []
+
+
 def test_an_observer_never_raises(rendered: _Rendered) -> None:
     def broken(_kid: str) -> str:
         raise RuntimeError("storage unavailable")
