@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-11-21T14:28:06Z",
+  "generated_at": "2026-11-21T16:28:14Z",
   "model_count": 50,
   "models": [
     {
