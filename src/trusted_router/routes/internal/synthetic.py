@@ -594,10 +594,18 @@ def register(router: APIRouter) -> None:
                     log_analytics_unavailable(log, "synthetic_account_refusals", exc)
                     return {"data": {"flagged": [], "evaluated": False,
                                      "reason": "analytics_unavailable"}}
-                await run_in_threadpool(report_route_health, unreported_account_refusals(refusals))
+                fresh = await run_in_threadpool(
+                    _claimed_refusals, unreported_account_refusals(refusals),
+                )
+                await run_in_threadpool(report_route_health, fresh)
                 return {"data": {"flagged": [asdict(flag) for flag in refusals],
                                  "evaluated": True, "scope": "account_refusals"}}
-            await run_in_threadpool(report_catalog_freshness)
+            # Two regional monitors post every full sweep, each to its own
+            # regional instance. Both evaluate; only the first to claim this
+            # hour's sweep reports, so each alert is emitted once per sweep.
+            reporter = await run_in_threadpool(_claim_report, "route-health-sweep", _sweep_hour())
+            if reporter:
+                await run_in_threadpool(report_catalog_freshness)
             try:
                 flags = await run_in_threadpool(evaluate_route_health, STORE)
             except Exception as exc:
@@ -606,7 +614,8 @@ def register(router: APIRouter) -> None:
                 # Blind, not healthy: no route was evaluated. Say so in the
                 # body and raise one grouped alert instead of a 500 per pass.
                 log_analytics_unavailable(log, "synthetic_route_health", exc)
-                await run_in_threadpool(report_route_health_unevaluable, exc)
+                if reporter:
+                    await run_in_threadpool(report_route_health_unevaluable, exc)
                 return {
                     "data": {
                         "flagged": [],
@@ -614,11 +623,14 @@ def register(router: APIRouter) -> None:
                         "reason": "analytics_unavailable",
                     }
                 }
-            held = await run_in_threadpool(_pending_route_holds)
-            paging, holding = split_held_flags(flags, held)
-            await run_in_threadpool(report_route_health, paging)
-            if holding:
-                await run_in_threadpool(report_route_holds, holding)
+            if reporter:
+                held = await run_in_threadpool(_pending_route_holds)
+                paging, holding = split_held_flags(flags, held)
+                await run_in_threadpool(report_route_health, paging)
+                if holding:
+                    await run_in_threadpool(report_route_holds, holding)
+            else:
+                log.info("synthetic_route_health.sweep_already_reported hour=%s", _sweep_hour())
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -675,6 +687,28 @@ def register(router: APIRouter) -> None:
             response.status_code = 202
             return {"data": {"scheduled": True}}
         return await _run_with_deadline(settings, body, slot)
+
+
+def _sweep_hour(now: dt.datetime | None = None) -> str:
+    return (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).strftime("%Y-%m-%dT%H")
+
+
+def _claim_report(kind: str, key: str) -> bool:
+    """True for the first caller to claim (kind, key) in this deployment's
+    store. A store error reports anyway: a duplicate page beats silence."""
+    try:
+        return STORE.record_webhook_event_once(kind, key)
+    except Exception:  # noqa: BLE001 - alert dedupe must never suppress alerts on its own failure
+        log.warning("synthetic_route_health.report_claim_failed kind=%s", kind, exc_info=True)
+        return True
+
+
+def _claimed_refusals(flags: list[Any]) -> list[Any]:
+    hour = _sweep_hour()
+    return [
+        flag for flag in flags
+        if _claim_report("route-health-refusal", f"{flag.provider}/{flag.model}@{hour}")
+    ]
 
 
 def _pending_route_holds() -> frozenset[tuple[str, str]]:
