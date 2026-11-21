@@ -145,10 +145,11 @@ def _seed_leases(database: Any, workspace: str, leases: tuple[Lease, ...], *, pr
 
 def _authorize(
     store: Any, key: Any, estimate: int, *, on: bool, floor: int = 0, idempotency_key: str | None = None,
-) -> tuple[str, Any]:
+) -> tuple[Any, Any]:
     """`floor` is the nodes' floor the 503 is held to
     (tests/test_fastpath_lease_headroom_floor.py); 0, as everywhere in this
-    file, compares nothing."""
+    file, compares nothing. The verdict is a str that also carries what the
+    read found (credit_read, lease_under_floor), hence Any."""
     return store.authorize_gateway_typed(
         workspace_id=WS,
         key_hash=key.hash,
@@ -688,7 +689,7 @@ def _route_store(*, lease_held: int) -> tuple[Any, Any, Any]:
 
 
 def _route_body(key: Any, *, idempotency_key: str | None = None) -> Any:
-    body = _lookup_body(key, idempotency_key=idempotency_key)
+    body = _lookup_body(key) if idempotency_key is None else _lookup_body(key, idempotency_key=idempotency_key)
     body.estimated_input_tokens = 42_000
     body.max_output_tokens = 8192
     return body
@@ -708,9 +709,11 @@ def _route_request(trace_context: str | None = None) -> Request:
 def _authorize_route(
     key: Any, *, on: bool, trace_context: str | None = None, floor: int = 0,
     idempotency_key: str | None = None,
-) -> HTTPException:
+) -> Any:
     """`floor` is the nodes' floor the 503 is held to
-    (tests/test_fastpath_lease_headroom_floor.py); 0 is the setting's default."""
+    (tests/test_fastpath_lease_headroom_floor.py); 0 is the setting's default.
+    Returns the HTTPException raised, as Any: its detail is the error
+    envelope (a dict), which the base class types as str."""
     settings = Settings(
         environment="test", fastpath_lease_headroom_503=on, fastpath_lease_headroom_503_floor_micro=floor,
     )
