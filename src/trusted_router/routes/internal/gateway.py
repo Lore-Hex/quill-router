@@ -1522,6 +1522,8 @@ def _authorize_gateway_sync_impl(
         endpoint_candidates, workspace.id,
         folded_rows=folded_byok,
     )
+    # Routing ranks the origin-filtered candidates, never the unfiltered set.
+    resolved_candidates = replace(resolved_candidates, candidates=endpoint_candidates)
     byok_providers = _byok_present_providers(endpoint_candidates, workspace.id, byok_configs)
     additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
     if is_transcription_request:
