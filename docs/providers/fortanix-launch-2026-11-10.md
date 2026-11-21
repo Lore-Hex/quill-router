@@ -15,6 +15,13 @@ attestation of provider compute, per-request location, provider-wide policies,
 corporate headquarters, or provider-side end-to-end encryption. Geographic
 failover behavior and a per-request location pin have not been verified.
 
+On November 20, 2026, the operator also declared that this managed route runs
+on Fortanix confidential compute. The catalog now sets
+`provider_confidential_compute` for Fortanix on that declaration.
+TrustedRouter does not verify a per-request attestation of Fortanix's compute,
+so `provider_e2ee` stays false and the route does not reach the confidential
+privacy tier or the `trustedrouter/confidential` and `trustedrouter/e2e` aliases.
+
 ## Published Offer
 
 - Public model: `fortanix/glm-5.3-flash`.

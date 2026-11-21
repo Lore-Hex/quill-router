@@ -10,8 +10,10 @@ from PIL import Image
 from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     MODELS,
+    PRIVACY_TIER_CONFIDENTIAL,
     PROVIDERS,
     endpoint_e2ee,
+    endpoint_privacy_tier,
     endpoint_zero_data_retention,
     endpoints_for_model,
 )
@@ -66,7 +68,10 @@ def test_managed_zdr_does_not_imply_byok_confidentiality_or_attested_location():
     assert endpoint_zero_data_retention(route)
     assert not endpoint_e2ee(route)
     assert not endpoint_zero_data_retention(replace(route, usage_type="BYOK"))
-    assert not PROVIDERS["fortanix"].provider_confidential_compute
+    # Operator-declared confidential compute (2026-11-20) without TR-verified attestation:
+    # shown as confidential compute, never as E2EE or the confidential routing tier.
+    assert PROVIDERS["fortanix"].provider_confidential_compute
+    assert endpoint_privacy_tier(route) < PRIVACY_TIER_CONFIDENTIAL
     assert PROVIDERS["fortanix"].prepaid_zero_data_retention_effective_on == "2026-11-10"
     location = provider_inference_locations("fortanix")
     assert location.locations == ("Santa Clara, California, United States",)
