@@ -19,7 +19,10 @@ from tests.activity_tags_recorded import (
     START_AT,
     WORKSPACE,
     fixture_generations,
+    form_fields,
+    read_name,
     recorded_handler,
+    statement,
 )
 
 # The Postgres store under a fake connection pool, as the other record-read
@@ -38,7 +41,7 @@ _TAG_READS = [
         {"group_by": "environment", "tag_key": "team", "tag_value": "search"},
     ),
     ("activity_tag_events", {"tag_key": "team", "tag_value": "search"}),
-    ("activity_tag_events", {"tag_key": "environment", "limit": 3}),
+    ("activity_tag_events", {"tag_key": "team", "limit": 3}),
 ]
 
 
@@ -69,15 +72,15 @@ def test_postgres_tag_reads_match_gcp_and_memory(
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "plane-clickhouse.test"
-        assert request.url.params["database"] == "default"
+        # The plane's own database in the URL, and no bound value beside it.
+        assert dict(request.url.params) == {"database": "default"}
         assert request.headers["authorization"] == f"Basic {expected_auth}"
-        assert request.url.params["param_tenant_id"] == tenant_id
-        sql = request.content.decode()
+        sql, bound = statement(request)
+        assert bound["tenant_id"] == tenant_id
         assert "FROM activity_generations FINAL" in sql
         assert "tenant_id = {tenant_id:String}" in sql
         for text in (WORKSPACE, "team", "search", "environment"):
             assert text not in sql
-        assert WORKSPACE not in str(request.url)
         return recorded(request)
 
     store._operational_analytics._transport = httpx.MockTransport(handler)
@@ -95,17 +98,20 @@ def test_postgres_tag_reads_match_gcp_and_memory(
     assert sent >= 1 and len(requests) == 2 * sent
     for first, second in zip(requests[:sent], requests[sent:], strict=True):
         assert first.url == second.url
-        assert first.content == second.content
+        assert form_fields(first) == form_fields(second)
+    reads = [read_name(statement(request)[0]) for request in requests[:sent]]
     if method == "activity_tag_events":
-        [request] = requests[:sent]
-        assert request.url.params["param_start_at"] == START_AT
-        assert request.url.params["param_tag_key"] == kwargs["tag_key"]
-        assert request.url.params["param_limit"] == str(kwargs.get("limit", 50) + 1)
+        assert reads == ["generations"]
+        _sql, bound = statement(requests[0])
+        assert bound["start_at"] == START_AT
+        assert bound["tag_key"] == "team"
+        assert bound["limit"] == str(kwargs.get("limit", 50) + 1)
         assert result.truncated is ("limit" in kwargs)
         assert [event["id"] for event in result.data] == (
-            ["g10", "g05", "g03"] if "limit" in kwargs else ["g04", "g03", "g02", "g01"]
+            ["g16", "g15", "g14"] if "limit" in kwargs else ["g04", "g03", "g02", "g01"]
         )
     else:
+        assert reads[0] == "keys" and reads[-3:] == ["names", "histogram", "histogram"]
         assert [row["key"] for row in result["keys"]] == ["team", "environment"]
         assert result["group_by"] == kwargs.get("group_by", "team")
-        assert result["breakdown"]
+        assert result["breakdown"] and result["breakdown_too_many_values"] is False

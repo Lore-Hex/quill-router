@@ -5313,7 +5313,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:usage_buckets_query:1": {
-      "fingerprint": "6bd18a89666019480ccf861c4e7509d53f6c6c9a42781748597cbf304262b2ab",
+      "fingerprint": "81cb55a5afdc60aacee74822f2dc17924f4ac21736b259947741e5f64c31e716",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_elapsed_summary:1": {
@@ -5469,15 +5469,27 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_keys:1": {
-      "fingerprint": "ba139ecaf1234900728023c3853c5e4a59953e0025ca141457abe6fe0cadd803",
+      "fingerprint": "39cad4fc37561c2beda1951840705c613c6a58744996604901b2f881b022126d",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_values:1": {
-      "fingerprint": "aa00ca7e243a203ae380ca412919f75aaf8f0f1e2bd2da04a568b4aad3b32f61",
+      "fingerprint": "b1630baeefebfdea663d6b60ddb901165e99db72b906cd2da55bff9a1aa3e356",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
-    "operational_analytics:activity_tag_breakdown:1": {
-      "fingerprint": "c446bf8fb9c38e8e3f4a7965756e1f8c805688cf916bab363de1de1dd05bc800",
+    "operational_analytics:activity_tag_cardinality:1": {
+      "fingerprint": "d9f69e2b9fe3c4494a7c65e021c216abe45638e243831e4371f5d579faecd41b",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_ranking:1": {
+      "fingerprint": "7aa2b6c5f194b168a453accd8b4a5d65c65f0fd57c9bd3281d15717a399786bc",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_names:1": {
+      "fingerprint": "719383cecc3b444646c63a99c45f8b7903ac18313ce394afd0c8314943dd89a4",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_histogram:1": {
+      "fingerprint": "0f29075a03b3c35fa43b1dea899466d5645916fb3fcd997518c58ce5e64cd31e",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "storage_legacy_trust:recover_released_postgres:7": {

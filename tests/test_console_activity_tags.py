@@ -15,11 +15,13 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_activity_tags
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.console.activity import USAGE_RANGE_PRESETS
 from trusted_router.routes.console.activity_tags import checked_tag, window_start
 from trusted_router.storage import STORE, Generation, InMemoryStore
+from trusted_router.types import UsageType
 
 TAGS = "/console/activity/tags.json"
 REQUESTS = "/console/activity/requests.json"
@@ -84,7 +86,7 @@ def _add(
             tokens_prompt=10,
             tokens_completion=5,
             total_cost_microdollars=cost,
-            usage_type="Credits",
+            usage_type=UsageType.CREDITS,
             speed_tokens_per_second=10.0,
             finish_reason="stop",
             status="success",
@@ -140,7 +142,7 @@ def test_window_start_agrees_with_what_the_usage_chart_counts(range_: str) -> No
                 tokens_prompt=1,
                 tokens_completion=1,
                 total_cost_microdollars=1,
-                usage_type="Credits",
+                usage_type=UsageType.CREDITS,
                 speed_tokens_per_second=1.0,
                 finish_reason="stop",
                 status="success",
@@ -381,7 +383,7 @@ def test_page_has_the_tag_panel_between_reliability_and_the_request_list() -> No
     # The state most workspaces see: what tags are for, one example, the docs.
     empty = page[page.index("data-tags-empty") : page.index("<h2>Recent activity</h2>")]
     assert "Tags label each request with your own keys and values" in empty
-    assert "splits requests, cost, tokens and latency by tag" in empty
+    assert "splits requests, cost, tokens and generation time by tag" in empty
     assert '<code>"tags": {"team": "search"}</code>' in empty
     assert '<a href="/docs/tagging">Read the tagging docs.</a>' in empty
     assert client.get("/docs/tagging").status_code == 200
@@ -496,6 +498,8 @@ def test_summary_endpoint_shape() -> None:
         {"key": "environment", "requests": 2},
     ]
     assert payload["group_by"] == "team" and payload["value_limit"] == 50
+    assert (payload["keys_approximate"], payload["breakdown_too_many_values"]) == (False, False)
+    assert payload["distinct_limit"] == 500_000
     assert payload["breakdown"] == [
         {
             "kind": "value", "value": "search", "values": 1, "requests": 1,
@@ -508,12 +512,83 @@ def test_summary_endpoint_shape() -> None:
         "value": "production",
         "values": [{"value": "production", "requests": 1}, {"value": "staging", "requests": 1}],
         "values_truncated": False,
+        "values_approximate": False,
     }
     unfiltered = client.post(TAGS, json={"range": "24h"}).json()
     assert [(row["kind"], row["value"], row["requests"]) for row in unfiltered["breakdown"]] == [
         ("value", "search", 2), ("value", "ads", 1), ("untagged", None, 1),
     ]
     assert unfiltered["filter"] is None
+
+
+def test_a_key_with_too_many_values_gets_an_answer_not_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, workspace = _signed_in("tags-many@example.com")
+    for index in range(4):
+        _add(workspace, f"many-{index}", {"request": f"req-{index}", "team": "search"})
+    monkeypatch.setattr(storage_activity_tags, "TAG_DISTINCT_LIMIT", 3)
+
+    # Asked for by name, the key is answered for: refused, with the reason.
+    asked = client.post(TAGS, json={"range": "24h", "group_by": "request"})
+    assert asked.status_code == 200
+    payload = asked.json()
+    assert (payload["group_by"], payload["breakdown"]) == ("request", [])
+    assert payload["breakdown_too_many_values"] is True
+    assert payload["distinct_limit"] == 3
+    # Not asked for, the next key is tried, so the first view is not a refusal
+    # just because every request carries its own id.
+    default = client.post(TAGS, json={"range": "24h"}).json()
+    assert [item["key"] for item in default["keys"]] == ["request", "team"]
+    assert (default["group_by"], default["breakdown_too_many_values"]) == ("team", False)
+    assert [row["value"] for row in default["breakdown"]] == ["search"]
+    # Its values can still be filtered by, which needs no ranking.
+    found = client.post(
+        REQUESTS, json={"range": "24h", "tag_key": "request", "tag_value": "req-2"}
+    ).json()
+    assert [item["tags"]["request"] for item in found["data"]] == ["req-2"]
+
+
+def test_page_names_the_median_and_offers_a_typed_value() -> None:
+    client, _workspace = _signed_in("tags-header@example.com")
+
+    page = client.get("/console/activity").text
+    panel = page[page.index("<h2>Tags</h2>") : page.index("<h2>Recent activity</h2>")]
+
+    # The column is the server's generation time, and says it is not the
+    # client-observed latency of the panel above.
+    assert ">Median generation time</th>" in panel
+    assert "Median latency" not in panel
+    assert "This is not the client-observed latency in the reliability panel above" in panel
+    # A value the list leaves out can be typed. The field is bounded like a tag value.
+    assert '<input type="text" data-tags-value-input maxlength="256"' in panel
+    assert "data-tags-value-note data-tags-value-form hidden" in panel
+    script = TEMPLATE.read_text(encoding="utf-8")
+    assert "values_truncated || filter.values_approximate" in script
+    assert "too many to break down" in script
+
+
+def test_page_script_follows_the_range_without_reading_the_chart() -> None:
+    template = TEMPLATE.read_text(encoding="utf-8")
+    script = template[template.index("// Request tags.") : template.index("{% endblock %}")]
+
+    # The published range at start, then the usage panel's announcement.
+    assert 'usage.getAttribute("data-usage-range")' in script
+    assert script.count('document.addEventListener("activity:range-change"') == 1
+    # Nothing else: not the label the chart rewrites after a successful
+    # request, not the radios or the "Show ..." control, whose changes the
+    # usage panel already announces, and no range event of its own.
+    assert "data-usage-range-label" not in script and "MutationObserver" not in script
+    assert "data-usage-expand-range" not in script
+    assert 'document.addEventListener("change"' not in script
+    assert "dispatchEvent" not in script
+    # The usage panel's side of the contract, which this panel depends on.
+    usage = template[: template.index("// Request tags.")]
+    assert 'new CustomEvent("activity:range-change", { detail: { range } })' in usage
+    assert "panel.dataset.usageRange = range" in usage
+    # A range change keeps the viewer's filter.
+    change = script[script.index("function applyRange(range)") : script.index("function initTagsPanel()")]
+    assert "filterKey = null" not in change and "filterValue = null" not in change
 
 
 # --------------------------------------------------- outages and what is logged

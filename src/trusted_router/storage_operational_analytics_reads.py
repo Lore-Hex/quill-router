@@ -16,7 +16,11 @@ from trusted_router.storage_activity import (
     generation_events,
     summarize_activity_result,
 )
-from trusted_router.storage_activity_tags import TAG_EVENT_LIMIT, tag_summary
+from trusted_router.storage_activity_tags import (
+    TAG_EVENT_LIMIT,
+    clickhouse_breakdown,
+    tag_summary,
+)
 from trusted_router.storage_models import Generation
 from trusted_router.storage_operational_analytics import analytics_surrogate
 
@@ -158,21 +162,30 @@ class OperationalAnalyticsReads:
     ) -> dict[str, Any]:
         client = self._require_operational_analytics()
         tenant_id = analytics_surrogate("workspace", workspace_id)
-        return tag_summary(
-            read_keys=lambda limit: client.activity_tag_keys(
-                tenant_id=tenant_id, start_at=start_at, limit=limit
-            ),
-            read_values=lambda key, limit: client.activity_tag_values(
-                tenant_id=tenant_id, tag_key=key, start_at=start_at, limit=limit
-            ),
-            read_breakdown=lambda key, limit: client.activity_tag_breakdown(
-                tenant_id=tenant_id,
-                group_by=key,
-                start_at=start_at,
+        window: dict[str, Any] = {"tenant_id": tenant_id, "start_at": start_at}
+        tag: dict[str, Any] = {"tag_key": tag_key, "tag_value": tag_value}
+
+        def read_breakdown(key: str, limit: int) -> list[dict[str, Any]] | None:
+            return clickhouse_breakdown(
+                read_cardinality=lambda: client.activity_tag_cardinality(
+                    group_by=key, **window, **tag
+                ),
+                read_ranking=lambda count, byok: client.activity_tag_ranking(
+                    group_by=key, limit=count, byok_hashes=byok, **window, **tag
+                ),
+                read_names=lambda top: client.activity_tag_names(
+                    group_by=key, top=top, **window, **tag
+                ),
+                read_histogram=lambda top, byok, opened: client.activity_tag_histogram(
+                    group_by=key, top=top, byok_hashes=byok, opened=opened, **window, **tag
+                ),
                 limit=limit,
-                tag_key=tag_key,
-                tag_value=tag_value,
-            ),
+            )
+
+        return tag_summary(
+            read_keys=lambda: client.activity_tag_keys(**window),
+            read_values=lambda key: client.activity_tag_values(tag_key=key, **window),
+            read_breakdown=read_breakdown,
             group_by=group_by,
             tag_key=tag_key,
         )

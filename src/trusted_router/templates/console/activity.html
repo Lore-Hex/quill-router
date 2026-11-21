@@ -746,6 +746,7 @@
   const REQUESTS_ENDPOINT = "/console/activity/requests.json";
   const MAX_CHIPS = 8;
   const LIST_COLUMNS = 8;
+  const BREAKDOWN_COLUMNS = 5;
   const numberFormat = new Intl.NumberFormat("en-US");
   const rangePhrases = {
     "1h": "the last hour",
@@ -755,9 +756,11 @@
     "30d": "the last 30 days",
     "90d": "the last 90 days"
   };
+  // The viewer's choices outlive a range change: chosenGroupBy and the
+  // filter are sent with every load and only the viewer clears them.
   const state = {
     range: "30d",
-    groupBy: null,
+    chosenGroupBy: null,
     filterKey: null,
     filterValue: null,
     groupKeys: [],
@@ -773,6 +776,8 @@
   let groupSelect = null;
   let keySelect = null;
   let valueSelect = null;
+  let valueNote = null;
+  let valueInput = null;
   let breakdownRows = null;
   let listBody = null;
   let listNote = null;
@@ -782,7 +787,15 @@
   let listToken = 0;
   let retriedAfterRejection = false;
 
-  function selectedRange() {
+  // The usage panel publishes its current range on itself as
+  // data-usage-range before this panel starts. The checked radio is the same
+  // value, read only if the attribute is somehow absent.
+  function usageRange() {
+    const usage = document.querySelector("[data-usage-panel]");
+    const published = usage ? usage.getAttribute("data-usage-range") : null;
+    if (published && rangePhrases[published]) {
+      return published;
+    }
     const input = document.querySelector('input[name="usage-range"]:checked');
     return input && rangePhrases[input.value] ? input.value : "30d";
   }
@@ -813,7 +826,7 @@
     }).format(dollars);
   }
 
-  function formatLatency(value) {
+  function formatElapsed(value) {
     return value === null || value === undefined ? "n/a" : `${numberFormat.format(value)} ms`;
   }
 
@@ -890,10 +903,19 @@
     message.classList.toggle("error", Boolean(isError));
   }
 
-  function renderBreakdown(items, groupBy) {
+  function renderBreakdown(data, groupBy) {
+    const items = Array.isArray(data.breakdown) ? data.breakdown : [];
     breakdownRows.replaceChildren();
+    if (data.breakdown_too_many_values) {
+      const limit = numberFormat.format(data.distinct_limit || 0);
+      breakdownRows.appendChild(emptyRow(
+        BREAKDOWN_COLUMNS,
+        `This key has more than ${limit} distinct values in ${rangePhrases[state.range]}, too many to break down. Choose another key or a shorter range.`
+      ));
+      return;
+    }
     if (items.length === 0) {
-      breakdownRows.appendChild(emptyRow(5, "No requests match this filter in the range."));
+      breakdownRows.appendChild(emptyRow(BREAKDOWN_COLUMNS, "No requests match this filter in the range."));
       return;
     }
     items.forEach((item) => {
@@ -918,36 +940,15 @@
         cell(numberFormat.format(item.requests || 0)),
         cost,
         cell(numberFormat.format(tokens)),
-        cell(formatLatency(item.median_elapsed_ms))
+        cell(formatElapsed(item.median_elapsed_ms))
       );
       breakdownRows.appendChild(row);
     });
   }
 
-  function renderTags(data) {
-    const keys = (Array.isArray(data.keys) ? data.keys : []).map((item) => String(item.key));
-    if (keys.length === 0) {
-      // No request in the range carries a tag: explain tags, do not draw an
-      // empty table. A filter left over from another range no longer applies.
-      state.groupBy = null;
-      if (state.filterKey !== null) {
-        state.filterKey = null;
-        state.filterValue = null;
-        restoreList();
-      }
-      content.hidden = true;
-      emptyRange.textContent = rangePhrases[state.range];
-      empty.hidden = false;
-      showMessage("", false);
-      return;
-    }
-    empty.hidden = true;
-    content.hidden = false;
-
-    state.groupBy = data.group_by === null || data.group_by === undefined ? keys[0] : String(data.group_by);
-    state.groupKeys = keys.includes(state.groupBy) ? keys : [state.groupBy].concat(keys);
-    fillSelect(groupSelect, state.groupKeys, state.groupKeys.indexOf(state.groupBy));
-
+  // The filter controls always show the viewer's filter, whether or not the
+  // range has a request that matches it.
+  function renderFilter(keys, filter) {
     state.filterKeys = state.filterKey === null || keys.includes(state.filterKey)
       ? keys
       : [state.filterKey].concat(keys);
@@ -956,8 +957,6 @@
       ["No filter"].concat(state.filterKeys),
       state.filterKey === null ? 0 : state.filterKeys.indexOf(state.filterKey) + 1
     );
-
-    const filter = data.filter || {};
     const values = (Array.isArray(filter.values) ? filter.values : []).map((item) => String(item.value));
     state.filterValues = state.filterValue === null || values.includes(state.filterValue)
       ? values
@@ -968,16 +967,61 @@
       state.filterValue === null ? 0 : state.filterValues.indexOf(state.filterValue) + 1
     );
     valueSelect.disabled = state.filterKey === null;
+    // The list holds at most the key's most used values. Say so when it is
+    // cut, and take a typed value for the ones it leaves out.
+    const partial = state.filterKey !== null && Boolean(filter.values_truncated || filter.values_approximate);
+    valueNote.hidden = !partial;
     panel.querySelectorAll("[data-tags-clear]").forEach((button) => {
       button.hidden = state.filterKey === null;
     });
+  }
 
-    renderBreakdown(Array.isArray(data.breakdown) ? data.breakdown : [], state.groupBy);
+  function renderTags(data) {
+    const keys = (Array.isArray(data.keys) ? data.keys : []).map((item) => String(item.key));
+    const filtered = state.filterKey !== null;
+    if (keys.length === 0 && !filtered) {
+      // No request in the range carries a tag: explain tags, do not draw an
+      // empty table.
+      content.hidden = true;
+      emptyRange.textContent = rangePhrases[state.range];
+      empty.hidden = false;
+      showMessage("", false);
+      return;
+    }
+    empty.hidden = true;
+    content.hidden = false;
+    renderFilter(keys, data.filter || {});
+
+    if (keys.length === 0) {
+      // The range has no tags at all, but the viewer has a filter. Keep it in
+      // view with its Clear control: it applies again in a range that has it.
+      state.groupKeys = [];
+      fillSelect(groupSelect, ["No tag keys in this range"], 0);
+      groupSelect.disabled = true;
+      breakdownRows.replaceChildren(emptyRow(
+        BREAKDOWN_COLUMNS,
+        `No request in ${rangePhrases[state.range]} carries a tag.`
+      ));
+      showMessage(
+        `No request in ${rangePhrases[state.range]} is tagged ${tagText(state.filterKey, state.filterValue)}. The filter is kept for other ranges.`,
+        false
+      );
+      return;
+    }
+
+    const groupBy = data.group_by === null || data.group_by === undefined ? keys[0] : String(data.group_by);
+    state.groupKeys = keys.includes(groupBy) ? keys : [groupBy].concat(keys);
+    fillSelect(groupSelect, state.groupKeys, state.groupKeys.indexOf(groupBy));
+    groupSelect.disabled = false;
+    renderBreakdown(data, groupBy);
+
     const parts = [`Every request in ${rangePhrases[state.range]} is counted.`];
-    if (state.filterKey !== null) {
+    if (filtered) {
       parts.push(`Filtered to ${tagText(state.filterKey, state.filterValue)}.`);
     }
-    if (data.keys_truncated) {
+    if (data.keys_approximate) {
+      parts.push("This workspace has more tag keys than are counted exactly: the most used are listed.");
+    } else if (data.keys_truncated) {
       parts.push(`Showing the ${numberFormat.format(keys.length)} most used keys.`);
     }
     showMessage(parts.join(" "), false);
@@ -989,7 +1033,7 @@
     try {
       const data = await postJson(TAGS_ENDPOINT, {
         range: state.range,
-        group_by: state.groupBy,
+        group_by: state.chosenGroupBy,
         tag_key: state.filterKey,
         tag_value: state.filterValue
       });
@@ -1006,7 +1050,7 @@
         // The server holds keys and values to the limits tags are accepted
         // under. Drop the selection it refused and load the defaults once.
         retriedAfterRejection = true;
-        state.groupBy = null;
+        state.chosenGroupBy = null;
         state.filterKey = null;
         state.filterValue = null;
         restoreList();
@@ -1020,7 +1064,9 @@
       }
       content.hidden = true;
       empty.hidden = true;
-      showMessage("Couldn't load tags right now.", true);
+      // Besides an outage, a read fails when the range holds more tag text
+      // than the reader may load at once. Nothing partial is shown.
+      showMessage("Couldn't load tags for this range right now. A shorter range may load.", true);
     }
   }
 
@@ -1038,6 +1084,7 @@
 
   function renderRequests(data) {
     const items = Array.isArray(data.data) ? data.data : [];
+    const tag = tagText(state.filterKey, state.filterValue);
     listBody.replaceChildren();
     if (items.length === 0) {
       listBody.appendChild(emptyRow(LIST_COLUMNS, "No requests with this tag in the range."));
@@ -1058,8 +1105,12 @@
       );
       listBody.appendChild(row);
     });
-    const shown = data.truncated ? `the newest ${numberFormat.format(items.length)} requests` : "requests";
-    listNoteText.textContent = `Showing ${shown} tagged ${tagText(state.filterKey, state.filterValue)} in ${rangePhrases[state.range]}.`;
+    if (items.length === 0) {
+      listNoteText.textContent = `No requests tagged ${tag} in ${rangePhrases[state.range]}.`;
+    } else {
+      const shown = data.truncated ? `the newest ${numberFormat.format(items.length)} requests` : "requests";
+      listNoteText.textContent = `Showing ${shown} tagged ${tag} in ${rangePhrases[state.range]}.`;
+    }
     listNote.hidden = false;
   }
 
@@ -1102,13 +1153,16 @@
   function setFilter(key, value) {
     state.filterKey = key;
     state.filterValue = value;
+    valueInput.value = "";
     loadTags();
     loadRequests();
   }
 
-  function syncRange() {
-    const range = selectedRange();
-    if (range === state.range) {
+  // The range belongs to the usage panel, which announces every change of
+  // it, by any path and whatever becomes of its own request. This panel
+  // follows that announcement, never what the chart managed to draw.
+  function applyRange(range) {
+    if (!rangePhrases[range] || range === state.range) {
       return;
     }
     state.range = range;
@@ -1128,13 +1182,15 @@
     groupSelect = panel.querySelector("[data-tags-group]");
     keySelect = panel.querySelector("[data-tags-filter-key]");
     valueSelect = panel.querySelector("[data-tags-filter-value]");
+    valueNote = panel.querySelector("[data-tags-value-note]");
+    valueInput = panel.querySelector("[data-tags-value-input]");
     breakdownRows = panel.querySelector("[data-tags-rows]");
     listBody = document.querySelector("[data-activity-rows]");
     listNote = document.querySelector("[data-activity-filter-note]");
     listNoteText = document.querySelector("[data-activity-filter-text]");
 
     groupSelect.addEventListener("change", () => {
-      state.groupBy = state.groupKeys[groupSelect.selectedIndex] || null;
+      state.chosenGroupBy = state.groupKeys[groupSelect.selectedIndex] || null;
       loadTags();
     });
     keySelect.addEventListener("change", () => {
@@ -1145,39 +1201,35 @@
       const index = valueSelect.selectedIndex;
       setFilter(state.filterKey, index > 0 ? state.filterValues[index - 1] : null);
     });
+    panel.querySelector("[data-tags-value-form]").addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (state.filterKey !== null && valueInput.value !== "") {
+        setFilter(state.filterKey, valueInput.value);
+      }
+    });
     document.querySelectorAll("[data-tags-clear]").forEach((button) => {
       button.addEventListener("click", () => setFilter(null, null));
     });
-    // A chip anywhere on the page filters by its tag. The key and the value
-    // are read back from the chip's own text nodes.
     document.addEventListener("click", (event) => {
-      const target = event.target instanceof Element ? event.target.closest("[data-tag-chip]") : null;
+      const target = event.target instanceof Element ? event.target : null;
       if (!target) {
         return;
       }
-      const keyNode = target.querySelector("[data-tag-chip-key]");
-      const valueNode = target.querySelector("[data-tag-chip-value]");
-      if (keyNode && valueNode) {
-        setFilter(keyNode.textContent, valueNode.textContent);
+      // A chip anywhere on the page filters by its tag. The key and the value
+      // are read back from the chip's own text nodes.
+      const tagChip = target.closest("[data-tag-chip]");
+      if (tagChip) {
+        const keyNode = tagChip.querySelector("[data-tag-chip-key]");
+        const valueNode = tagChip.querySelector("[data-tag-chip-value]");
+        if (keyNode && valueNode) {
+          setFilter(keyNode.textContent, valueNode.textContent);
+        }
       }
     });
-    // The range belongs to the usage panel. Follow it without touching that
-    // panel's code: a change event covers a click on a range, and the range
-    // label it rewrites on every render covers a range set from script.
-    document.addEventListener("change", (event) => {
-      if (event.target instanceof HTMLInputElement && event.target.name === "usage-range") {
-        syncRange();
-      }
+    document.addEventListener("activity:range-change", (event) => {
+      applyRange(String((event.detail || {}).range || ""));
     });
-    const rangeLabel = document.querySelector("[data-usage-range-label]");
-    if (rangeLabel && "MutationObserver" in window) {
-      new MutationObserver(syncRange).observe(rangeLabel, {
-        childList: true,
-        characterData: true,
-        subtree: true
-      });
-    }
-    state.range = selectedRange();
+    state.range = usageRange();
     loadTags();
   }
 
@@ -1331,7 +1383,7 @@
   <div class="panel-head usage-panel-head">
     <div>
       <h2>Tags</h2>
-      <p class="panel-kicker">Requests, cost, tokens and latency by request tag, for the range selected under Usage.</p>
+      <p class="panel-kicker">Requests, cost, tokens and generation time by request tag, for the range selected under Usage.</p>
     </div>
     <span class="pill">metadata only</span>
   </div>
@@ -1350,15 +1402,21 @@
         </label>
         <button class="btn" type="button" data-tags-clear hidden>Clear filter</button>
       </div>
+      <form class="tag-value-note" data-tags-value-note data-tags-value-form hidden>
+        <label>The list holds this key's most used values. To filter by another, type it:
+          <input type="text" data-tags-value-input maxlength="256" autocomplete="off" spellcheck="false">
+        </label>
+        <button class="btn" type="submit">Filter</button>
+      </form>
       <div class="table-scroll">
         <table class="tags-table">
-          <thead><tr><th>Value</th><th>Requests</th><th>Cost</th><th>Tokens</th><th>Median latency</th></tr></thead>
+          <thead><tr><th>Value</th><th>Requests</th><th>Cost</th><th>Tokens</th><th title="Median time the server took to generate a response. This is not the client-observed latency in the reliability panel above, which your SDKs measure and which includes retries and the network.">Median generation time</th></tr></thead>
           <tbody data-tags-rows></tbody>
         </table>
       </div>
     </div>
     <div class="empty usage-empty-state" data-tags-empty role="status" aria-live="polite" hidden>
-      <p>No tagged requests in <span data-tags-empty-range>the last 30 days</span>. Tags label each request with your own keys and values, such as a team or an environment. Once requests carry them, this panel splits requests, cost, tokens and latency by tag and filters the request list. Send <code>"tags": {"team": "search"}</code> in a request body, or set default tags on an API key. <a href="/docs/tagging">Read the tagging docs.</a></p>
+      <p>No tagged requests in <span data-tags-empty-range>the last 30 days</span>. Tags label each request with your own keys and values, such as a team or an environment. Once requests carry them, this panel splits requests, cost, tokens and generation time by tag and filters the request list. Send <code>"tags": {"team": "search"}</code> in a request body, or set default tags on an API key. <a href="/docs/tagging">Read the tagging docs.</a></p>
     </div>
   </div>
 </section>

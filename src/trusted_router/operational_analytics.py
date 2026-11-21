@@ -13,6 +13,7 @@ import re
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any, TypeVar
 
@@ -158,6 +159,8 @@ def usage_buckets_query(*, granularity: str, by_model: bool, key_filtered: bool)
 
     ClickHouse groups the rows instead of sending them to the caller, so the
     result is small whatever the tenant's volume, and nothing is cut off.
+    Its row count does depend on how many distinct spellings of the usage
+    type are stored, normally a handful because writers canonicalise it.
     FINAL stays: it is what counts a redelivered generation once. Every value
     is a bound parameter; the only variable text is the bucket expression,
     chosen from a fixed table by granularity.
@@ -205,29 +208,41 @@ def _iso(value: Any) -> str:
     return text.replace(" ", "T") + "Z"
 
 
+# Set while a read's bound values must stay out of the request URL.
+_BOUND_VALUES_IN_BODY: ContextVar[bool] = ContextVar("clickhouse_bound_values_in_body", default=False)
+
+
 @contextmanager
 def bound_values_stay_private() -> Iterator[None]:
-    """Run a read whose bound values must not leave in telemetry or errors.
+    """Run a read whose bound values must not reach a log, a trace or an error.
 
-    ClickHouse takes bound values as URL parameters. Sentry's httpx
-    integration copies an outgoing request's query string into a span and a
-    breadcrumb, and httpx names the whole URL in an ``HTTPStatusError``. Tag
-    keys and values are customer text that must never reach a log or Sentry
-    (docs/design/request-tagging.md, section 10). So a tag read runs under a
-    scope whose client has no integrations and no transport, and a status
-    error is raised again without its URL. The price is that these requests
-    are absent from traces.
+    Tag keys and values are customer text that must never reach a log or
+    Sentry (docs/design/request-tagging.md, section 10). ClickHouse normally
+    takes bound values as URL parameters, and a URL is written down by more
+    than one layer: httpx logs it at INFO, Sentry's httpx integration copies
+    its query string into a span and a breadcrumb, and httpx names it in an
+    ``HTTPStatusError``.
+
+    Inside this scope ``_query`` sends the statement and every bound value as
+    multipart form fields instead, which the ClickHouse HTTP interface reads
+    the same way, so the URL carries only the database name. The Sentry scope
+    without integrations and the status error without its URL remain as a
+    second line: neither has anything to leak while the first holds.
     """
-    with _private_sentry_scope():
-        try:
-            yield
-        except httpx.HTTPStatusError as exc:
-            raise httpx.HTTPStatusError(
-                f"ClickHouse answered HTTP {exc.response.status_code} "
-                "to a read with private bound values",
-                request=exc.request,
-                response=exc.response,
-            ) from None
+    in_body = _BOUND_VALUES_IN_BODY.set(True)
+    try:
+        with _private_sentry_scope():
+            try:
+                yield
+            except httpx.HTTPStatusError as exc:
+                raise httpx.HTTPStatusError(
+                    f"ClickHouse answered HTTP {exc.response.status_code} "
+                    "to a read with private bound values",
+                    request=exc.request,
+                    response=exc.response,
+                ) from None
+    finally:
+        _BOUND_VALUES_IN_BODY.reset(in_body)
 
 
 @contextmanager
@@ -298,8 +313,10 @@ class OperationalAnalyticsClient:
                 "ClickHouse was unreachable moments ago; not trying again yet"
             )
         query_params: dict[str, str] = {"database": self._database}
-        for key, value in (params or {}).items():
-            query_params[f"param_{key}"] = str(value)
+        bound = {f"param_{key}": str(value) for key, value in (params or {}).items()}
+        in_body = _BOUND_VALUES_IN_BODY.get()
+        if not in_body:
+            query_params.update(bound)
         answered = False
 
         def note_answer(_response: httpx.Response) -> None:
@@ -316,12 +333,27 @@ class OperationalAnalyticsClient:
                 response = send_with_failover(
                     client,
                     self._endpoints,
-                    lambda endpoint: client.build_request(
-                        "POST",
-                        endpoint,
-                        params=query_params,
-                        content=sql,
-                        headers={"content-type": "text/plain; charset=utf-8"},
+                    lambda endpoint: (
+                        # Form fields without a file name: ClickHouse reads
+                        # "query" and every "param_*" field as it reads them
+                        # from the URL.
+                        client.build_request(
+                            "POST",
+                            endpoint,
+                            params=query_params,
+                            files={
+                                "query": (None, sql),
+                                **{name: (None, value) for name, value in bound.items()},
+                            },
+                        )
+                        if in_body
+                        else client.build_request(
+                            "POST",
+                            endpoint,
+                            params=query_params,
+                            content=sql,
+                            headers={"content-type": "text/plain; charset=utf-8"},
+                        )
                     ),
                     retry_read_disconnect=retry_read_disconnect,
                 )
@@ -875,138 +907,332 @@ FORMAT JSON
         return rollups
 
     # Request tags for the console ------------------------------------------
-    # Each read covers every generation of one tenant since ``start_at``, not
-    # a sample, and returns a bounded number of groups. Tag keys and values
-    # are always bound; ``bound_values_stay_private`` keeps them out of Sentry
-    # and out of error text.
+    # Every read covers every generation of one tenant since ``start_at``, not
+    # a sample, and holds a bounded amount of state however many rows, tag
+    # values or latencies the range has:
+    #
+    #   keys, values   a top-K sketch with a fixed number of counters
+    #   cardinality    one fixed-size distinct-count sketch
+    #   ranking        one small group per distinct value, keyed by hashes of
+    #                  the value, run only after the cardinality read found
+    #                  at most a set number of them
+    #   names          the text of the at most 50 values that keep a row
+    #   histogram      at most 52 groups, each the bounded elapsed-time
+    #                  histogram of ``elapsed_histogram_columns``, cut off at
+    #                  TAG_ELAPSED_SLOTS slots
+    #
+    # Tag keys and values are always bound, and inside
+    # ``bound_values_stay_private`` they travel in the request body.
 
-    def activity_tag_keys(
-        self, *, tenant_id: str, start_at: str, limit: int
-    ) -> list[dict[str, Any]]:
-        """Tag keys by the number of generations carrying them."""
+    def activity_tag_keys(self, *, tenant_id: str, start_at: str) -> list[dict[str, Any]]:
+        """Tag keys by the number of generations carrying them, unordered.
+
+        ``topK`` keeps 10,000 counters. With no more distinct keys than that
+        every count is exact and ``overcount`` is 0; beyond it the function
+        still returns the most frequent keys, each with the most its count
+        can be too high by.
+        """
         with bound_values_stay_private():
             rows = self._query(
                 """
-SELECT tag_key, count() AS requests
+SELECT tupleElement(item, 1) AS tag_key, tupleElement(item, 2) AS requests, tupleElement(item, 3) AS overcount
 FROM
 (
-  SELECT arrayJoin(mapKeys(tags)) AS tag_key
+  SELECT arrayJoin(topK(1000, 10, 'counts')(tag_key)) AS item
+  FROM
+  (
+    SELECT arrayJoin(mapKeys(tags)) AS tag_key
+    FROM activity_generations FINAL
+    WHERE tenant_id = {tenant_id:String}
+      AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  )
+)
+FORMAT JSON
+""",
+                params={"tenant_id": tenant_id, "start_at": start_at},
+            )
+        return [
+            {
+                "key": str(row["tag_key"]),
+                "requests": int(row["requests"]),
+                "overcount": int(row["overcount"]),
+            }
+            for row in rows
+        ]
+
+    def activity_tag_values(
+        self, *, tenant_id: str, tag_key: str, start_at: str
+    ) -> list[dict[str, Any]]:
+        """One key's values by the number of generations carrying them, unordered.
+
+        The same sketch as the keys, with 5,000 counters: exact for a key
+        with no more distinct values than that, the most frequent values with
+        an ``overcount`` beyond it.
+        """
+        with bound_values_stay_private():
+            rows = self._query(
+                """
+SELECT tupleElement(item, 1) AS tag_value, tupleElement(item, 2) AS requests, tupleElement(item, 3) AS overcount
+FROM
+(
+  SELECT arrayJoin(topK(500, 10, 'counts')(tags[{tag_key:String}])) AS item
   FROM activity_generations FINAL
   WHERE tenant_id = {tenant_id:String}
     AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+    AND mapContains(tags, {tag_key:String})
 )
-GROUP BY tag_key
-ORDER BY requests DESC, tag_key ASC
-LIMIT {limit:UInt32}
 FORMAT JSON
 """,
-                params={"tenant_id": tenant_id, "start_at": start_at, "limit": max(1, limit)},
+                params={"tenant_id": tenant_id, "tag_key": tag_key, "start_at": start_at},
             )
-        return [{"key": str(row["tag_key"]), "requests": int(row["requests"])} for row in rows]
+        return [
+            {
+                "value": str(row["tag_value"]),
+                "requests": int(row["requests"]),
+                "overcount": int(row["overcount"]),
+            }
+            for row in rows
+        ]
 
-    def activity_tag_values(
-        self, *, tenant_id: str, tag_key: str, start_at: str, limit: int
-    ) -> list[dict[str, Any]]:
-        """One key's values by the number of generations carrying them."""
+    def activity_tag_cardinality(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        """About how many distinct values a key has, and the usage types seen.
+
+        The count comes from a fixed-size sketch, so it costs the same for
+        ten values as for ten million; it decides whether the ranking, which
+        keeps one group per value, may run. The usage types are returned with
+        their hashes so the caller can tell the later reads which of them are
+        BYOK without sending text back.
+        """
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
         with bound_values_stay_private():
             rows = self._query(
                 """
-SELECT tags[{tag_key:String}] AS tag_value, count() AS requests
+SELECT
+  uniqCombinedIf(tags[{group_by:String}], mapContains(tags, {group_by:String})) AS distinct_values,
+  groupUniqArray(101)((usage_type, cityHash64(usage_type))) AS usage_types
 FROM activity_generations FINAL
-WHERE tenant_id = {tenant_id:String}
-  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
-  AND mapContains(tags, {tag_key:String})
-GROUP BY tag_value
-ORDER BY requests DESC, tag_value ASC
-LIMIT {limit:UInt32}
+WHERE """
+                + where
+                + """
 FORMAT JSON
 """,
-                params={
-                    "tenant_id": tenant_id,
-                    "tag_key": tag_key,
-                    "start_at": start_at,
-                    "limit": max(1, limit),
-                },
+                params={**params, "group_by": group_by},
             )
-        return [{"value": str(row["tag_value"]), "requests": int(row["requests"])} for row in rows]
+        row = rows[0] if rows else {}
+        usage_types = [
+            (str(item[0]), int(item[1])) for item in row.get("usage_types") or []
+        ]
+        if len(usage_types) > 100:
+            raise RuntimeError("ClickHouse returned more than 100 distinct usage types")
+        return {
+            "distinct_values": int(row.get("distinct_values") or 0),
+            "usage_types": usage_types,
+        }
 
-    def activity_tag_breakdown(
+    def activity_tag_ranking(
         self,
         *,
         tenant_id: str,
         group_by: str,
         start_at: str,
         limit: int,
+        byok_hashes: list[int],
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Totals per value of ``group_by``, at most ``limit`` + 2 rows.
+        """The ``limit`` values of ``group_by`` with the highest credit cost, as hashes.
 
-        The ``limit`` values with the highest credit cost keep a row each, the
-        rest are summed into ``other`` and generations without the key into
-        ``untagged``. The ranking is an uncorrelated subquery, so ClickHouse
-        runs it once. ``tag_key``/``tag_value`` narrow both passes to one tag.
-        The median is exact: ``quantileExactWeighted`` keeps one counter per
-        distinct latency, where ``quantileExact`` would keep every row's.
+        One group per distinct value. The group is keyed by two independent
+        64-bit hashes of the value, not by the value: a group then costs the
+        same few dozen bytes whether the value is one character or the
+        longest a tag may hold, where grouping by the text ran the reader out
+        of memory on long values. The caller runs this only after
+        ``activity_tag_cardinality`` found few enough values, and reads the
+        winners' text with ``activity_tag_names``.
+
+        Values equal in cost and in requests are ordered by their hashes:
+        which of them are inside ``limit`` is stable but not alphabetical.
+        ``value_count`` is the number of distinct values in all.
         """
-        clauses = [
-            "tenant_id = {tenant_id:String}",
-            "created_at >= parseDateTime64BestEffort({start_at:String}, 3)",
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
+        with bound_values_stay_private():
+            rows = self._query(
+                """
+SELECT hash_a, hash_b, requests, cost_microdollars, value_count
+FROM
+(
+  SELECT
+    cityHash64(tags[{group_by:String}]) AS hash_a,
+    sipHash64(tags[{group_by:String}]) AS hash_b,
+    count() AS requests,
+    sumIf(total_cost_microdollars, NOT has({byok:Array(UInt64)}, cityHash64(usage_type))) AS cost_microdollars,
+    count() OVER () AS value_count
+  FROM activity_generations FINAL
+  WHERE """
+                + where
+                + """
+    AND mapContains(tags, {group_by:String})
+  GROUP BY hash_a, hash_b
+)
+ORDER BY cost_microdollars DESC, requests DESC, hash_a ASC, hash_b ASC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+                params={
+                    **params,
+                    "group_by": group_by,
+                    "limit": max(1, limit),
+                    "byok": _integer_array(byok_hashes),
+                },
+            )
+        return [
+            {
+                "hash_a": int(row["hash_a"]),
+                "hash_b": int(row["hash_b"]),
+                "requests": int(row["requests"]),
+                "cost_microdollars": int(row["cost_microdollars"]),
+                "value_count": int(row["value_count"]),
+            }
+            for row in rows
         ]
-        params: dict[str, str | int] = {
-            "tenant_id": tenant_id,
-            "group_by": group_by,
-            "start_at": start_at,
-            "limit": max(1, limit),
-        }
-        if tag_key is not None:
-            clauses.append("mapContains(tags, {tag_key:String})")
-            params["tag_key"] = tag_key
-            if tag_value is not None:
-                clauses.append("tags[{tag_key:String}] = {tag_value:String}")
-                params["tag_value"] = tag_value
-        where = " AND ".join(clauses)
+
+    def activity_tag_names(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        top: list[tuple[int, int]],
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """The text of the values whose hashes are in ``top``: one group each."""
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
         with bound_values_stay_private():
             rows = self._query(
                 """
 SELECT
-  multiIf(
-    NOT mapContains(tags, {group_by:String}), 'untagged',
-    tags[{group_by:String}] IN
-    (
-      SELECT tags[{group_by:String}] AS top_value
-      FROM activity_generations FINAL
-      WHERE """
-                + where
-                + """
-        AND mapContains(tags, {group_by:String})
-      GROUP BY top_value
-      ORDER BY
-        sumIf(total_cost_microdollars, lower(trimBoth(usage_type)) != 'byok') DESC,
-        count() DESC,
-        top_value ASC
-      LIMIT {limit:UInt32}
-    ), 'value',
-    'other'
-  ) AS kind,
-  if(kind = 'value', tags[{group_by:String}], '') AS group_value,
-  uniqExactIf(tags[{group_by:String}], mapContains(tags, {group_by:String})) AS value_count,
-  count() AS requests,
-  sumIf(total_cost_microdollars, lower(trimBoth(usage_type)) != 'byok') AS cost_microdollars,
-  sumIf(total_cost_microdollars, lower(trimBoth(usage_type)) = 'byok') AS byok_microdollars,
-  sum(tokens_prompt) AS prompt_tokens,
-  sum(tokens_completion) AS completion_tokens,
-  quantileExactWeighted(0.5)(elapsed_milliseconds, 1) AS median_elapsed_ms
+  tags[{group_by:String}] AS named_value,
+  cityHash64(named_value) AS hash_a,
+  sipHash64(named_value) AS hash_b
 FROM activity_generations FINAL
 WHERE """
                 + where
                 + """
-GROUP BY kind, group_value
+  AND mapContains(tags, {group_by:String})
+  AND (cityHash64(tags[{group_by:String}]), sipHash64(tags[{group_by:String}])) IN {top:Array(Tuple(UInt64, UInt64))}
+GROUP BY named_value
 FORMAT JSON
 """,
-                params=params,
+                params={**params, "group_by": group_by, "top": _tuple_array(top)},
             )
-        return [_tag_breakdown_row(row) for row in rows]
+        return [
+            {
+                "value": str(row["named_value"]),
+                "hash_a": int(row["hash_a"]),
+                "hash_b": int(row["hash_b"]),
+            }
+            for row in rows
+        ]
+
+    def activity_tag_histogram(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        top: list[tuple[int, int]],
+        byok_hashes: list[int],
+        opened: list[tuple[str, int, int, int]],
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Totals and the elapsed-time histogram for the rows a breakdown shows.
+
+        A generation belongs to the ``value`` group of its tag value when the
+        value's hashes are in ``top``, to ``other`` when it has another
+        value, and to ``untagged`` without the key: at most 52 groups, one
+        row each.
+
+        Each group's elapsed times are counted with the histogram the page's
+        own median uses (``elapsed_histogram_columns``): slots of 1,024 ms,
+        and distinct values inside the slots named for that group in
+        ``opened``, as ``(kind, hash_a, hash_b, slot)``. Its ``histogram`` is
+        those counts as ``(slot, elapsed_value, generations_at_value)``, the
+        three columns ``settle_elapsed_median`` reads.
+
+        One group of the page's histogram can hold 65,536 slots, and 52 of
+        those ran the reader out of its memory when measured. Here an elapsed
+        time of TAG_ELAPSED_CEILING_MS or more is counted in the histogram's
+        open-ended last slot, so a group holds at most 4,097 slots plus 1,024
+        values for each slot it opens, whatever its range holds, and a median
+        that long is reported as absent, as the page's is past its own
+        ceiling.
+
+        The outer query only packs each group's histogram into one array, so
+        that a breakdown of many busy values crosses the wire as at most 52
+        rows and not as one row for each count.
+        """
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
+        with bound_values_stay_private():
+            rows = self._query(
+                """
+SELECT
+  kind, hash_a, hash_b,
+  sum(generations_at_value) AS requests,
+  sum(cost_at_value) AS cost_microdollars,
+  sum(byok_at_value) AS byok_microdollars,
+  sum(prompt_at_value) AS prompt_tokens,
+  sum(completion_at_value) AS completion_tokens,
+  groupArray(tuple(ifNull(toInt32(slot), -1), ifNull(toInt32(elapsed_value), -1), generations_at_value)) AS histogram
+FROM
+(
+  SELECT
+    multiIf(
+      NOT mapContains(tags, {group_by:String}), 'untagged',
+      (cityHash64(tags[{group_by:String}]), sipHash64(tags[{group_by:String}])) IN {top:Array(Tuple(UInt64, UInt64))}, 'value',
+      'other'
+    ) AS kind,
+    if(kind = 'value', cityHash64(tags[{group_by:String}]), 0) AS hash_a,
+    if(kind = 'value', sipHash64(tags[{group_by:String}]), 0) AS hash_b,
+"""
+                + elapsed_histogram_columns(
+                    _TAG_ELAPSED_COLUMN,
+                    "(kind, hash_a, hash_b, intDiv(elapsed_milliseconds, 1024))"
+                    " IN {opened:Array(Tuple(String, UInt64, UInt64, UInt64))}",
+                )
+                + """,
+    count() AS generations_at_value,
+    sumIf(total_cost_microdollars, NOT has({byok:Array(UInt64)}, cityHash64(usage_type))) AS cost_at_value,
+    sumIf(total_cost_microdollars, has({byok:Array(UInt64)}, cityHash64(usage_type))) AS byok_at_value,
+    sum(tokens_prompt) AS prompt_at_value,
+    sum(tokens_completion) AS completion_at_value
+  FROM activity_generations FINAL
+  WHERE """
+                + where
+                + """
+  GROUP BY kind, hash_a, hash_b, slot, elapsed_value
+)
+GROUP BY kind, hash_a, hash_b
+FORMAT JSON
+""",
+                params={
+                    **params,
+                    "group_by": group_by,
+                    "top": _tuple_array(top),
+                    "byok": _integer_array(byok_hashes),
+                    "opened": _cell_array(opened),
+                },
+            )
+        return [_tag_histogram_row(row) for row in rows]
 
     def public_snapshot(self, name: str) -> dict[str, Any] | None:
         if name not in {
@@ -1219,18 +1445,74 @@ def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
 
 
-def _tag_breakdown_row(row: dict[str, Any]) -> dict[str, Any]:
+_TAG_GROUP_KINDS = frozenset({"value", "other", "untagged"})
+# The tag breakdown's histograms stop at this many slots of ELAPSED_SLOT_MS:
+# about 70 minutes. See ``activity_tag_histogram``.
+TAG_ELAPSED_SLOTS = 4_096
+TAG_ELAPSED_CEILING_MS = TAG_ELAPSED_SLOTS * ELAPSED_SLOT_MS
+# The latency the tag histogram counts: an elapsed time at or past the tag
+# ceiling is moved to the shared histogram's own ceiling, which puts it in
+# the open-ended last slot. Built from constants only.
+_TAG_ELAPSED_COLUMN = (
+    f"if(elapsed_milliseconds >= {TAG_ELAPSED_CEILING_MS}, {ELAPSED_CEILING_MS}, elapsed_milliseconds)"
+)
+
+
+def _tag_window(
+    tenant_id: str, start_at: str, tag_key: str | None, tag_value: str | None
+) -> tuple[str, dict[str, str | int]]:
+    """The WHERE clause every tag read shares, with its bound values."""
+    clauses = [
+        "tenant_id = {tenant_id:String}",
+        "created_at >= parseDateTime64BestEffort({start_at:String}, 3)",
+    ]
+    params: dict[str, str | int] = {"tenant_id": tenant_id, "start_at": start_at}
+    if tag_key is not None:
+        clauses.append("mapContains(tags, {tag_key:String})")
+        params["tag_key"] = tag_key
+        if tag_value is not None:
+            clauses.append("tags[{tag_key:String}] = {tag_value:String}")
+            params["tag_value"] = tag_value
+    return " AND ".join(clauses), params
+
+
+# Array parameters are written from integers and the three fixed group kinds
+# only. No customer text is ever placed in one, so nothing needs escaping.
+def _integer_array(values: list[int]) -> str:
+    return "[" + ",".join(str(int(value)) for value in values) + "]"
+
+
+def _tuple_array(pairs: list[tuple[int, int]]) -> str:
+    return "[" + ",".join(f"({int(first)},{int(second)})" for first, second in pairs) + "]"
+
+
+def _cell_array(cells: list[tuple[str, int, int, int]]) -> str:
+    parts = []
+    for kind, hash_a, hash_b, slot in cells:
+        if kind not in _TAG_GROUP_KINDS:
+            raise ValueError("unknown tag group kind")
+        parts.append(f"('{kind}',{int(hash_a)},{int(hash_b)},{int(slot)})")
+    return "[" + ",".join(parts) + "]"
+
+
+def _tag_histogram_row(row: dict[str, Any]) -> dict[str, Any]:
     kind = str(row["kind"])
-    if kind not in {"value", "other", "untagged"}:
-        raise RuntimeError("ClickHouse tag breakdown returned an unknown row kind")
+    if kind not in _TAG_GROUP_KINDS:
+        raise RuntimeError("ClickHouse tag histogram returned an unknown row kind")
+    # -1 stands for NULL inside the packed array: an untimed generation has
+    # no slot, and only a value inside an opened slot is kept.
+    histogram = [
+        (None if int(slot) < 0 else int(slot), None if int(value) < 0 else int(value), int(count))
+        for slot, value, count in row.pop("histogram")
+    ]
     return {
         "kind": kind,
-        "value": str(row["group_value"]) if kind == "value" else None,
-        "values": int(row["value_count"]),
+        "hash_a": int(row["hash_a"]),
+        "hash_b": int(row["hash_b"]),
         "requests": int(row["requests"]),
         "cost_microdollars": int(row["cost_microdollars"]),
         "byok_microdollars": int(row["byok_microdollars"]),
         "prompt_tokens": int(row["prompt_tokens"]),
         "completion_tokens": int(row["completion_tokens"]),
-        "median_elapsed_ms": _optional_int(row.get("median_elapsed_ms")),
+        "histogram": histogram,
     }

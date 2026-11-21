@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from trusted_router import storage_activity_tags as tag_limits
 from trusted_router.money import format_money_precise
 from trusted_router.operational_analytics import (
     is_analytics_unavailable,
@@ -29,7 +30,6 @@ from trusted_router.request_tags import InvalidTags, validate_tags
 from trusted_router.routes.console._shared import ConsoleDep
 from trusted_router.routes.console.activity import USAGE_RANGE_PRESETS
 from trusted_router.storage import STORE
-from trusted_router.storage_activity_tags import TAG_EVENT_LIMIT, TAG_VALUE_LIMIT
 
 log = logging.getLogger(__name__)
 
@@ -133,9 +133,19 @@ def register(app: FastAPI) -> None:
             "start_at": start_at,
             "keys": summary["keys"],
             "keys_truncated": summary["keys_truncated"],
+            # True when the workspace has more distinct keys than the read
+            # counts exactly: the list is then the frequent ones, with counts
+            # that can be too high.
+            "keys_approximate": summary["keys_approximate"],
             "group_by": summary["group_by"],
             "breakdown": summary["breakdown"],
-            "value_limit": TAG_VALUE_LIMIT,
+            # True when the key has more distinct values than a breakdown
+            # ranks; the rows are then empty and the page says why.
+            "breakdown_too_many_values": summary["breakdown_too_many_values"],
+            # Read when the request is served, so the page states the limits
+            # the store applied to this answer.
+            "distinct_limit": tag_limits.TAG_DISTINCT_LIMIT,
+            "value_limit": tag_limits.TAG_VALUE_LIMIT,
             "filter": None,
         }
         if body.tag_key is not None:
@@ -144,6 +154,7 @@ def register(app: FastAPI) -> None:
                 "value": body.tag_value,
                 "values": summary["filter_values"],
                 "values_truncated": summary["filter_values_truncated"],
+                "values_approximate": summary["filter_values_approximate"],
             }
         return JSONResponse(result, headers=_HEADERS)
 
@@ -159,7 +170,7 @@ def register(app: FastAPI) -> None:
                 start_at=start_at,
                 tag_key=body.tag_key,
                 tag_value=body.tag_value,
-                limit=TAG_EVENT_LIMIT,
+                limit=tag_limits.TAG_EVENT_LIMIT,
             )
         rows = [
             {
@@ -175,7 +186,7 @@ def register(app: FastAPI) -> None:
                 "start_at": start_at,
                 "data": rows,
                 "truncated": bool(found.truncated),
-                "limit": TAG_EVENT_LIMIT,
+                "limit": tag_limits.TAG_EVENT_LIMIT,
             },
             headers=_HEADERS,
         )

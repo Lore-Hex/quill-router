@@ -5,7 +5,7 @@ which tag keys appear, which values one key takes, and what each value of a
 key cost. The in-memory store answers them from its rows with the functions
 here. The durable stores answer them in ClickHouse
 (``OperationalAnalyticsClient.activity_tag_*``) over every row in the window
-and share only the assembly below, so both paths return one shape.
+and share the assembly below, so both paths return one shape.
 ``tests/test_activity_tags.py`` holds the two to the same answer on the same
 rows.
 
@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from trusted_router.operational_analytics import TAG_ELAPSED_CEILING_MS, settle_elapsed_median
 from trusted_router.storage_models import Generation, _is_byok
 
 # How many distinct keys the page offers, and how many values of one key a
@@ -26,8 +27,25 @@ from trusted_router.storage_models import Generation, _is_byok
 TAG_KEY_LIMIT = 100
 TAG_VALUE_LIMIT = 50
 TAG_EVENT_LIMIT = 50
+# A breakdown ranks every distinct value of its key before it keeps
+# TAG_VALUE_LIMIT, and that ranking holds one group per value: two hashes and
+# two sums, about 85 bytes measured, whatever the value's length. Above this
+# many distinct values the breakdown is refused instead of attempted, so the
+# ranking never holds more than about 45 MiB of the reader's 1 GiB. A key
+# with more values than this is an identifier, not a dimension to allocate
+# cost by.
+TAG_DISTINCT_LIMIT = 500_000
+# When the page did not ask for a key, how many of the most used keys are
+# tried before the breakdown is reported as refused.
+TAG_DEFAULT_KEY_TRIES = 3
+
+# The histogram is read once without an opened slot, once with every group's
+# middle slots opened, and at most twice more for groups whose middle moved
+# to another slot between reads: the same allowance as the page's own median.
+TAG_HISTOGRAM_READS = 4
 
 TagRows = list[dict[str, Any]]
+TagGroup = tuple[str, int, int]
 
 
 def parse_window_start(start_at: str) -> dt.datetime:
@@ -61,33 +79,44 @@ def generations_in_window(
     ]
 
 
-def count_tag_keys(generations: Iterable[Generation], *, limit: int) -> TagRows:
+def count_tag_keys(generations: Iterable[Generation]) -> TagRows:
     """Keys by the number of generations carrying them, most used first."""
     counts: Counter[str] = Counter()
     for gen in generations:
         counts.update(gen.tags.keys())
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return [{"key": key, "requests": requests} for key, requests in ranked[:limit]]
+    return rank_by_requests(
+        [{"key": key, "requests": requests, "overcount": 0} for key, requests in counts.items()],
+        "key",
+    )
 
 
-def count_tag_values(
-    generations: Iterable[Generation], *, tag_key: str, limit: int
-) -> TagRows:
+def count_tag_values(generations: Iterable[Generation], *, tag_key: str) -> TagRows:
     """One key's values by the number of generations carrying them."""
     counts = Counter(gen.tags[tag_key] for gen in generations if tag_key in gen.tags)
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return [{"value": value, "requests": requests} for value, requests in ranked[:limit]]
+    return rank_by_requests(
+        [
+            {"value": value, "requests": requests, "overcount": 0}
+            for value, requests in counts.items()
+        ],
+        "value",
+    )
+
+
+def rank_by_requests(rows: TagRows, name: str) -> TagRows:
+    """Most requests first, then by text, so equal counts have one order."""
+    return sorted(rows, key=lambda row: (-int(row["requests"]), str(row[name])))
 
 
 def break_down_by_tag(
     generations: Iterable[Generation], *, group_by: str, limit: int
-) -> TagRows:
-    """Totals per value of ``group_by``, unordered.
+) -> TagRows | None:
+    """Totals per value of ``group_by``, unordered; None for too many values.
 
     The ``limit`` most expensive values each keep a row. Every other value is
     summed into one ``other`` row, and generations without the key into one
-    ``untagged`` row. Ranking is by credit cost, then requests, then value, the
-    same order the ClickHouse query uses.
+    ``untagged`` row. Ranking is by credit cost, then requests, as in the
+    ClickHouse ranking. Values equal in both are ordered by text here and by
+    a hash there, so the two can keep different ones of them at the cut.
     """
     rows = list(generations)
     by_value: dict[str, list[Generation]] = {}
@@ -97,6 +126,8 @@ def break_down_by_tag(
             by_value.setdefault(gen.tags[group_by], []).append(gen)
         else:
             untagged.append(gen)
+    if len(by_value) > TAG_DISTINCT_LIMIT:
+        return None
     totals = {value: _totals(members) for value, members in by_value.items()}
     ranked = sorted(
         totals,
@@ -123,45 +154,160 @@ def break_down_by_tag(
     return result
 
 
+def clickhouse_breakdown(
+    *,
+    read_cardinality: Callable[[], dict[str, Any]],
+    read_ranking: Callable[[int, list[int]], TagRows],
+    read_names: Callable[[list[tuple[int, int]]], TagRows],
+    read_histogram: Callable[
+        [list[tuple[int, int]], list[int], list[tuple[str, int, int, int]]], TagRows
+    ],
+    limit: int,
+) -> TagRows | None:
+    """The breakdown from the bounded ClickHouse reads; None for too many values.
+
+    The cardinality read decides whether the ranking may run at all. The
+    ranking picks the values that keep a row, by their hashes, and the names
+    read fetches the text of those values only.
+
+    Medians are the page's own (``settle_elapsed_median``), settled for each
+    group apart: the first histogram read opens no slot and tells each group
+    which one or two slots hold its middle values, and the next read opens
+    those slots for that group. Every read returns every group with its
+    totals, so the totals and the medians both come from the last read alone
+    and describe one snapshot. A group whose middle moved to another slot between reads, which
+    takes rows arriving in between, is read again with the new slots; one
+    that has still not settled after TAG_HISTOGRAM_READS reads is reported
+    without a median rather than failing the whole breakdown.
+    """
+    facts = read_cardinality()
+    if int(facts["distinct_values"]) > TAG_DISTINCT_LIMIT:
+        return None
+    # The same decision generation_metrics makes for one generation, made
+    # here for each stored usage type and handed back as hashes.
+    byok = sorted(int(digest) for text, digest in facts["usage_types"] if _is_byok(str(text)))
+    ranked = read_ranking(limit, byok)
+    top = [(int(row["hash_a"]), int(row["hash_b"])) for row in ranked]
+    names: dict[tuple[int, int], str] = {}
+    for row in read_names(top) if top else []:
+        pair = (int(row["hash_a"]), int(row["hash_b"]))
+        # Two values with both hashes equal would share a row; keep one name.
+        names[pair] = min(names.get(pair, str(row["value"])), str(row["value"]))
+    # The slots opened for each group. A settled group keeps its slots open:
+    # the next read has to settle it again.
+    opened: dict[TagGroup, set[int]] = {}
+    groups: dict[TagGroup, dict[str, Any]] = {}
+    medians: dict[TagGroup, int | None] = {}
+    for _ in range(TAG_HISTOGRAM_READS):
+        cells = sorted((*group, slot) for group, slots in opened.items() for slot in slots)
+        groups = {
+            (str(row["kind"]), int(row["hash_a"]), int(row["hash_b"])): row
+            for row in read_histogram(top, byok, cells)
+        }
+        medians = {}
+        for group, row in groups.items():
+            settled = settle_elapsed_median(
+                [
+                    {"slot": slot, "elapsed_value": value, "generations_at_value": count}
+                    for slot, value, count in row["histogram"]
+                ]
+            )
+            if isinstance(settled, dict):
+                medians[group] = settled["median_ms"]
+            else:
+                opened[group] = set(settled)
+        if len(medians) == len(groups):
+            break
+
+    def totals(group: TagGroup) -> dict[str, Any]:
+        row = groups[group]
+        return {
+            "requests": int(row["requests"]),
+            "cost_microdollars": int(row["cost_microdollars"]),
+            "byok_microdollars": int(row["byok_microdollars"]),
+            "prompt_tokens": int(row["prompt_tokens"]),
+            "completion_tokens": int(row["completion_tokens"]),
+            "median_elapsed_ms": medians.get(group),
+        }
+
+    result: TagRows = []
+    for pair in top:
+        group = ("value", *pair)
+        # A value read by the ranking and gone by the later reads has no row.
+        if group in groups and pair in names:
+            result.append({"kind": "value", "value": names[pair], "values": 1, **totals(group)})
+    if ("other", 0, 0) in groups:
+        distinct = int(ranked[0]["value_count"]) if ranked else 0
+        result.append(
+            {
+                "kind": "other",
+                "value": None,
+                "values": max(1, distinct - len(ranked)),
+                **totals(("other", 0, 0)),
+            }
+        )
+    if ("untagged", 0, 0) in groups:
+        result.append(
+            {"kind": "untagged", "value": None, "values": 0, **totals(("untagged", 0, 0))}
+        )
+    return result
+
+
 def tag_summary(
     *,
-    read_keys: Callable[[int], TagRows],
-    read_values: Callable[[str, int], TagRows],
-    read_breakdown: Callable[[str, int], TagRows],
+    read_keys: Callable[[], TagRows],
+    read_values: Callable[[str], TagRows],
+    read_breakdown: Callable[[str, int], TagRows | None],
     group_by: str | None,
     tag_key: str | None,
 ) -> dict[str, Any]:
-    """Assemble the page's tag panel from three reads.
+    """Assemble the page's tag panel from its reads.
 
-    Each read asks for one row more than it shows so that truncation is
-    reported instead of guessed. A workspace with no tags in the window costs
-    one read: the breakdown and the value list are skipped.
+    ``read_keys`` and ``read_values`` return rows with ``requests`` and an
+    ``overcount``, which is 0 unless the read had more distinct keys or
+    values than it tracks exactly. A workspace with no tags in the window
+    costs one read: the breakdown and the value list are skipped.
     """
-    keys = read_keys(TAG_KEY_LIMIT + 1)
-    keys_truncated = len(keys) > TAG_KEY_LIMIT
-    keys = keys[:TAG_KEY_LIMIT]
-    known = {str(row["key"]) for row in keys}
+    ranked_keys = rank_by_requests(read_keys(), "key")
+    keys = ranked_keys[:TAG_KEY_LIMIT]
+    keys_approximate = any(int(row["overcount"]) > 0 for row in ranked_keys)
+    keys_truncated = len(ranked_keys) > TAG_KEY_LIMIT
+    known = [str(row["key"]) for row in keys]
     # A key the page asked for is kept when it may simply have fallen outside
-    # a truncated key list; otherwise the most used key is the default.
-    if group_by is None or (group_by not in known and not keys_truncated):
-        group_by = str(keys[0]["key"]) if keys else None
+    # a cut key list. Otherwise the most used keys are tried in turn, so that
+    # a request id on every request does not make the default view a refusal.
+    if group_by is not None and (group_by in known or keys_truncated):
+        candidates = [group_by]
+    else:
+        candidates = known[:TAG_DEFAULT_KEY_TRIES]
     values: TagRows = []
     values_truncated = False
+    values_approximate = False
     if tag_key is not None and keys:
-        values = read_values(tag_key, TAG_VALUE_LIMIT + 1)
-        values_truncated = len(values) > TAG_VALUE_LIMIT
-        values = values[:TAG_VALUE_LIMIT]
+        ranked_values = rank_by_requests(read_values(tag_key), "value")
+        values = ranked_values[:TAG_VALUE_LIMIT]
+        values_truncated = len(ranked_values) > TAG_VALUE_LIMIT
+        values_approximate = any(int(row["overcount"]) > 0 for row in ranked_values)
+    chosen: str | None = None
+    breakdown: TagRows | None = []
+    for candidate in candidates:
+        breakdown = read_breakdown(candidate, TAG_VALUE_LIMIT)
+        if chosen is None or breakdown is not None:
+            chosen = candidate
+        if breakdown is not None:
+            break
     return {
-        "keys": keys,
+        "keys": [{"key": row["key"], "requests": row["requests"]} for row in keys],
         "keys_truncated": keys_truncated,
-        "group_by": group_by,
-        "breakdown": (
-            order_breakdown(read_breakdown(group_by, TAG_VALUE_LIMIT))
-            if group_by is not None
-            else []
-        ),
-        "filter_values": values,
+        "keys_approximate": keys_approximate,
+        "group_by": chosen,
+        "breakdown": order_breakdown(breakdown or []),
+        "breakdown_too_many_values": breakdown is None,
+        "filter_values": [
+            {"value": row["value"], "requests": row["requests"]} for row in values
+        ],
         "filter_values_truncated": values_truncated,
+        "filter_values_approximate": values_approximate,
     }
 
 
@@ -188,7 +334,7 @@ def _totals(generations: list[Generation]) -> dict[str, Any]:
         "byok_microdollars": sum(gen.total_cost_microdollars for gen in byok),
         "prompt_tokens": sum(gen.tokens_prompt for gen in generations),
         "completion_tokens": sum(gen.tokens_completion for gen in generations),
-        "median_elapsed_ms": lower_median(
+        "median_elapsed_ms": elapsed_median(
             [
                 gen.elapsed_milliseconds
                 for gen in generations
@@ -198,13 +344,19 @@ def _totals(generations: list[Generation]) -> dict[str, Any]:
     }
 
 
-def lower_median(values: list[int]) -> int | None:
-    """The median, or the lower of the two middle values of an even count.
+def elapsed_median(values: list[int]) -> int | None:
+    """The median, or for an even count the floor of the two middle values' mean.
 
-    This is what ClickHouse's ``quantileExactWeighted(0.5)`` returns with unit
-    weights. The reader uses that function because its memory grows with the
-    number of distinct latencies, not with the number of requests.
+    Absent when there is no value, and when the upper middle value is at or
+    beyond TAG_ELAPSED_CEILING_MS (about 70 minutes): the ClickHouse tag
+    histogram counts such a value in its open-ended last slot, for which
+    ``settle_elapsed_median`` reports no median.
     """
     if not values:
         return None
-    return sorted(values)[(len(values) - 1) // 2]
+    ordered = sorted(values)
+    low = ordered[(len(ordered) - 1) // 2]
+    high = ordered[len(ordered) // 2]
+    if high >= TAG_ELAPSED_CEILING_MS:
+        return None
+    return (low + high) // 2

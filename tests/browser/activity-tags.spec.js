@@ -5,7 +5,7 @@ const path = require("node:path");
 // The page HTML and every JSON answer come from the real routes over the
 // in-memory store (see the fixture). The browser only replays them.
 const fixture = JSON.parse(execFileSync("uv", ["run", "--no-sync", "python", "tests/browser/activity_tags_fixture.py"], {
-  cwd: path.resolve(__dirname, "../.."), encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+  cwd: path.resolve(__dirname, "../.."), encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
   env: { ...process.env, PYTHONPATH: "src", TR_ENVIRONMENT: "test", TR_STORAGE_BACKEND: "memory", TR_SENTRY_DSN: "" },
 }));
 
@@ -17,10 +17,14 @@ function key(body) {
   }, {}));
 }
 
-async function open(page, workspace, seen) {
+// `usage` answers the chart's request: a function of the range, or undefined
+// for the fixture's real answers. `refuse` picks tag requests, by their body,
+// that the server fails.
+async function open(page, workspace, seen, usage, refuse) {
   await page.route("**/console/activity", (route) => route.fulfill({ contentType: "text/html", body: workspace.page }));
   await page.route("**/console/activity/usage.json*", (route) => {
     const range = new URL(route.request().url()).searchParams.get("range");
+    if (usage) return usage(route, range);
     const empty = { granularity: "day", buckets: [], range, latest_activity_at: null };
     return route.fulfill({ json: (workspace.usage || {})[range] || empty });
   });
@@ -32,6 +36,7 @@ async function open(page, workspace, seen) {
       const request = route.request();
       const body = request.postDataJSON();
       seen.push({ name, method: request.method(), url: request.url(), body });
+      if (refuse && refuse(body)) return route.fulfill({ status: 503, json: { error: { message: "unavailable" } } });
       const answer = (workspace[name] || {})[key(body || {})];
       if (!answer) return route.fulfill({ status: 500, json: { error: "the fixture has no answer for this request" } });
       return route.fulfill({ status: answer.status, json: answer.body });
@@ -39,6 +44,10 @@ async function open(page, workspace, seen) {
   }
   await page.goto("/console/activity");
   await page.evaluate(() => document.fonts.ready);
+}
+
+function ranges(seen, name = "tags") {
+  return seen.filter((request) => request.name === name).map((request) => request.body.range);
 }
 
 test("tags show in the request list, break down by value, and filter the list", async ({ page }, testInfo) => {
@@ -66,10 +75,15 @@ test("tags show in the request list, break down by value, and filter the list", 
   await expect(panel.locator("[data-tags-message]")).toHaveText("Every request in the last 30 days is counted.");
   await expect(panel.locator("[data-tags-empty]")).toBeHidden();
   await expect(note).toBeHidden();
-  // With no filter there is nothing to clear. This also proves the page got
-  // this checkout's stylesheet: unstyled, a hidden .btn and a round chip
-  // cannot be told from broken ones.
+  // The median is the server's generation time, and the column says so.
+  const heading = panel.locator("thead th").nth(4);
+  await expect(heading).toHaveText("Median generation time");
+  await expect(heading).toHaveAttribute("title", /not the client-observed latency/);
+  // With no filter there is nothing to clear and no value to type. This also
+  // proves the page got this checkout's stylesheet: unstyled, a hidden .btn
+  // and a round chip cannot be told from broken ones.
   await expect(panel.locator("[data-tags-clear]")).toBeHidden();
+  await expect(panel.locator("[data-tags-value-note]")).toBeHidden();
   expect(await list.locator("[data-tag-chip]").first().evaluate((chip) => getComputedStyle(chip).borderTopLeftRadius)).toBe("999px");
 
   // Customer text stays text, in the server-rendered list and in the table
@@ -90,10 +104,11 @@ test("tags show in the request list, break down by value, and filter the list", 
   await expect(panel.locator("[data-tags-clear]")).toBeVisible();
   await expect(rows).toHaveCount(1);
 
-  // The filter and the breakdown key are independent.
+  // The filter and the breakdown key are independent. Two requests: the
+  // median is the floor of the mean of 760 and 820.
   await panel.locator("[data-tags-group]").selectOption({ label: "environment" });
   await expect(rows).toHaveCount(2);
-  await expect(rows.nth(0).locator("td")).toHaveText(["environment: production", "2", "$3.25", "3,010", "760 ms"]);
+  await expect(rows.nth(0).locator("td")).toHaveText(["environment: production", "2", "$3.25", "3,010", "790 ms"]);
   await expect(rows.nth(1).locator("td").nth(0)).toHaveText("Untagged");
   await page.screenshot({ path: testInfo.outputPath("activity-tags-filtered.png"), fullPage: true });
 
@@ -158,7 +173,201 @@ test("a workspace without tags is told what tags are for", async ({ page }, test
 
   await page.locator("[data-usage-panel] label", { hasText: "7d" }).click();
   await expect(empty).toContainText("No tagged requests in the last 7 days.");
-  expect(seen.map((request) => request.body.range)).toEqual(["30d", "7d"]);
+  expect(ranges(seen)).toEqual(["30d", "7d"]);
+});
+
+test("a filter survives a range that has no request for it", async ({ page }, testInfo) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await open(page, fixture.tagged, seen);
+  const panel = page.locator("[data-tags-panel]");
+  const list = page.locator("[data-activity-rows]");
+  const note = page.locator("[data-activity-filter-note]");
+  const message = panel.locator("[data-tags-message]");
+
+  await list.locator("[data-tag-chip]", { hasText: "team: search" }).first().click();
+  await panel.locator("[data-tags-group]").selectOption({ label: "environment" });
+  await expect(list.locator("tr")).toHaveCount(3);
+
+  // The last hour has no tagged request at all. The filter stays in view,
+  // with its Clear control, and the page says the range has nothing for it.
+  await page.locator("[data-usage-panel] label", { hasText: "1h" }).click();
+  await expect(message).toHaveText("No request in the last hour is tagged team: search. The filter is kept for other ranges.");
+  await expect(panel.locator("[data-tags-empty]")).toBeHidden();
+  await expect(panel.locator("[data-tags-content]")).toBeVisible();
+  await expect(panel.locator("[data-tags-filter-key]")).toHaveValue("team");
+  await expect(panel.locator("[data-tags-filter-value]")).toHaveValue("search");
+  await expect(panel.locator("[data-tags-clear]")).toBeVisible();
+  await expect(panel.locator("[data-tags-group]")).toBeDisabled();
+  await expect(panel.locator("[data-tags-rows] td")).toHaveText("No request in the last hour carries a tag.");
+  await expect(note).toContainText("No requests tagged team: search in the last hour.");
+  await expect(list.locator("td")).toHaveText("No requests with this tag in the range.");
+  await page.screenshot({ path: testInfo.outputPath("activity-tags-kept-filter.png"), fullPage: true });
+
+  // Back in a range that has it, the filter and the chosen key apply again.
+  await page.locator("[data-usage-panel] label", { hasText: "30d" }).click();
+  await expect(note).toContainText("Showing requests tagged team: search in the last 30 days.");
+  await expect(list.locator("tr")).toHaveCount(3);
+  await expect(panel.locator("[data-tags-filter-key]")).toHaveValue("team");
+  await expect(panel.locator("[data-tags-filter-value]")).toHaveValue("search");
+  await expect(panel.locator("[data-tags-group]")).toHaveValue("environment");
+  await expect(panel.locator("[data-tags-rows] tr").nth(0).locator("td").nth(0)).toHaveText("environment: production");
+
+  // Every request after the click carried the filter, in each range.
+  const filtered = seen.filter((request) => request.body.tag_key === "team");
+  expect(filtered.map((request) => request.body.range)).toEqual(expect.arrayContaining(["30d", "1h"]));
+  expect(seen.filter((request) => request.body.range === "1h").every((request) => request.body.tag_value === "search")).toBe(true);
+  // Only the viewer clears it.
+  await panel.locator("[data-tags-clear]").click();
+  await expect(note).toBeHidden();
+  await expect(list.locator("tr")).toHaveCount(6);
+});
+
+test("the panel follows the range when the chart cannot load", async ({ page }) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await open(page, fixture.tagged, seen, (route) => route.fulfill({ status: 500, json: { error: "unavailable" } }));
+  const panel = page.locator("[data-tags-panel]");
+  const message = panel.locator("[data-tags-message]");
+
+  await expect(message).toHaveText("Every request in the last 30 days is counted.");
+  await expect(page.locator("[data-usage-error]")).toBeVisible();
+  await expect(page.locator("[data-usage-layout]")).toBeHidden();
+  // The chart never draws, so its range label never changes. The usage panel
+  // still announces the range it was asked for.
+  await page.locator("[data-usage-panel] label", { hasText: "7d" }).click();
+  await expect(message).toHaveText("Every request in the last 7 days is counted.");
+  await page.locator("[data-usage-panel] label", { hasText: "1h" }).click();
+  await expect(panel.locator("[data-tags-empty]")).toContainText("No tagged requests in the last hour.");
+  expect(ranges(seen)).toEqual(["30d", "7d", "1h"]);
+});
+
+test("a range whose tags cannot be read says so and other ranges still load", async ({ page }) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await open(page, fixture.tagged, seen, undefined, (body) => body.range === "90d");
+  const panel = page.locator("[data-tags-panel]");
+  const message = panel.locator("[data-tags-message]");
+
+  await expect(message).toHaveText("Every request in the last 30 days is counted.");
+  await page.locator("[data-usage-panel] label", { hasText: "90d" }).click();
+  // No table and no empty state: nothing partial, and nothing that reads as
+  // "this workspace has no tags".
+  await expect(message).toHaveText("Couldn't load tags for this range right now. A shorter range may load.");
+  await expect(message).toHaveClass(/error/);
+  await expect(panel.locator("[data-tags-content]")).toBeHidden();
+  await expect(panel.locator("[data-tags-empty]")).toBeHidden();
+  await page.locator("[data-usage-panel] label", { hasText: "7d" }).click();
+  await expect(message).toHaveText("Every request in the last 7 days is counted.");
+  await expect(message).not.toHaveClass(/error/);
+  await expect(panel.locator("[data-tags-rows] tr")).toHaveCount(4);
+});
+
+test("the panel follows the chart's Show 90 days control", async ({ page }) => {
+  const seen = [];
+  const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  // Nothing in the last 30 days, activity 60 days ago: the chart offers the
+  // wider range with a button that checks the radio from script.
+  await open(page, fixture.tagged, seen, (route, range) => route.fulfill({
+    json: { granularity: "day", buckets: [], range, latest_activity_at: sixtyDaysAgo },
+  }));
+  const message = page.locator("[data-tags-panel] [data-tags-message]");
+
+  await expect(message).toHaveText("Every request in the last 30 days is counted.");
+  const widen = page.locator("[data-usage-expand-range]");
+  await expect(widen).toHaveText("Show 90 days");
+  await widen.click();
+  await expect(page.locator('input[name="usage-range"][value="90d"]')).toBeChecked();
+  await expect(message).toHaveText("Every request in the last 90 days is counted.");
+  expect(ranges(seen)).toEqual(["30d", "90d"]);
+});
+
+test("the panel starts on the range the usage panel restored", async ({ page }) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  // The usage panel remembers the viewer's range and opens on it. It has
+  // published that range by the time this panel starts, so the first tag
+  // request is already for it: one request, not the default and then the choice.
+  await page.addInitScript(() => window.localStorage.setItem("tr.console.activity.usage-range", "7d"));
+  await open(page, fixture.tagged, seen);
+  const message = page.locator("[data-tags-panel] [data-tags-message]");
+
+  await expect(message).toHaveText("Every request in the last 7 days is counted.");
+  await expect(page.locator('input[name="usage-range"][value="7d"]')).toBeChecked();
+  await expect(page.locator("[data-usage-panel]")).toHaveAttribute("data-usage-range", "7d");
+  expect(ranges(seen)).toEqual(["7d"]);
+});
+
+test("the panel follows the range event and nothing else", async ({ page }) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await open(page, fixture.tagged, seen);
+  const message = page.locator("[data-tags-panel] [data-tags-message]");
+  await expect(message).toHaveText("Every request in the last 30 days is counted.");
+
+  // The contract is the event's detail. A radio checked without the usage
+  // panel announcing it changes nothing here.
+  await page.evaluate(() => {
+    document.querySelector('input[name="usage-range"][value="7d"]').checked = true;
+  });
+  const announce = (range) => page.evaluate((value) => {
+    document.dispatchEvent(new CustomEvent("activity:range-change", { detail: { range: value } }));
+  }, range);
+  await announce("24h");
+  await expect(message).toHaveText("Every request in the last 24 hours is counted.");
+  // The same range again, a range that does not exist and an event without a
+  // range ask for nothing.
+  await announce("24h");
+  await announce("2h");
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent("activity:range-change")));
+  await announce("90d");
+  await expect(message).toHaveText("Every request in the last 90 days is counted.");
+  expect(ranges(seen)).toEqual(["30d", "24h", "90d"]);
+});
+
+test("a key with many values says so and takes a typed value", async ({ page }, testInfo) => {
+  const seen = [];
+  await page.setViewportSize({ width: 1280, height: 1100 });
+  await open(page, fixture.many, seen);
+  const panel = page.locator("[data-tags-panel]");
+  const rows = panel.locator("[data-tags-rows] tr");
+  const valueNote = panel.locator("[data-tags-value-note]");
+  const list = page.locator("[data-activity-rows]");
+
+  // Every request carries its own id, so "request" is the most used key and
+  // cannot be broken down. The first view is the next key, not a refusal.
+  await expect(panel.locator("[data-tags-group]")).toHaveValue("team");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.nth(0).locator("td").nth(0)).toHaveText("team: search");
+  await expect(rows.nth(0).locator("td").nth(1)).toHaveText("55");
+
+  // Asked for, the key gets an answer: why there is no table.
+  await panel.locator("[data-tags-group]").selectOption({ label: "request" });
+  await expect(rows).toHaveCount(1);
+  await expect(rows.locator("td")).toHaveText(
+    `This key has more than ${fixture.many.distinct_limit} distinct values in the last 30 days, too many to break down. Choose another key or a shorter range.`
+  );
+
+  // Its value list holds the 50 most used of 55 values and says it is cut.
+  await panel.locator("[data-tags-filter-key]").selectOption({ label: "request" });
+  await expect(valueNote).toBeVisible();
+  await expect(valueNote).toContainText("The list holds this key's most used values.");
+  await expect(panel.locator("[data-tags-filter-value] option")).toHaveCount(51);
+  await expect(panel.locator("[data-tags-filter-value] option", { hasText: "req-54" })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("activity-tags-many-values.png"), fullPage: true });
+
+  // A value the list leaves out can be typed.
+  await panel.locator("[data-tags-value-input]").fill("req-54");
+  await valueNote.getByRole("button", { name: "Filter" }).click();
+  await expect(page.locator("[data-activity-filter-note]")).toContainText("Showing requests tagged request: req-54 in the last 30 days.");
+  await expect(list.locator("tr")).toHaveCount(1);
+  await expect(list.locator("[data-tag-chip]", { hasText: "request: req-54" })).toHaveCount(1);
+  await expect(panel.locator("[data-tags-filter-value]")).toHaveValue("req-54");
+  await expect(panel.locator("[data-tags-value-input]")).toHaveValue("");
+  const typed = seen.filter((request) => request.body.tag_value === "req-54");
+  expect(typed.map((request) => request.name).sort()).toEqual(["requests", "tags"]);
+  for (const request of typed) expect(request.url).not.toContain("req-54");
 });
 
 // Elements of the Tags panel or the request list whose right edge is past the
@@ -211,3 +420,13 @@ for (const width of [320, 390]) {
     await page.screenshot({ path: testInfo.outputPath(`activity-tags-${width}.png`), fullPage: true });
   });
 }
+
+test("the typed-value note fits a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await open(page, fixture.many, []);
+  const panel = page.locator("[data-tags-panel]");
+
+  await panel.locator("[data-tags-filter-key]").selectOption({ label: "request" });
+  await expect(panel.locator("[data-tags-value-note]")).toBeVisible();
+  expect(await page.evaluate(spill)).toEqual([]);
+});

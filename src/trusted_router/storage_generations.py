@@ -260,8 +260,8 @@ class InMemoryGenerations:
             tag_value=tag_value,
         )
         return tag_summary(
-            read_keys=lambda limit: count_tag_keys(window, limit=limit),
-            read_values=lambda key, limit: count_tag_values(window, tag_key=key, limit=limit),
+            read_keys=lambda: count_tag_keys(window),
+            read_values=lambda key: count_tag_values(window, tag_key=key),
             read_breakdown=lambda key, limit: break_down_by_tag(
                 filtered, group_by=key, limit=limit
             ),

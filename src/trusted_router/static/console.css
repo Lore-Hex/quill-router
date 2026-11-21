@@ -794,6 +794,28 @@ body.console {
   display: none;
 }
 
+.tag-value-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: end;
+  margin: 0 0 14px;
+}
+
+.tag-value-note[hidden] {
+  display: none;
+}
+
+.tag-value-note label {
+  flex: 1 1 280px;
+  max-width: 520px;
+  min-width: 0;
+}
+
+.tag-value-note .btn {
+  min-height: 36px;
+}
+
 .tag-filter-note .btn {
   min-height: 32px;
   padding: 5px 10px;
