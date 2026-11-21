@@ -26,7 +26,11 @@ from tests.conformance import spanner_schema_source as schema
 from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction
 from tests.settle_drain_trace import normalize_legacy_drain_trace
 from tests.test_async_settle_drain_oracle import namespace
-from tests.test_async_settle_handler import env  # noqa: F401 - the shared fake-store fixture
+from tests.test_async_settle_handler import (
+    env,  # noqa: F401 - the shared fake-store fixture
+    prepare,
+    row_for,
+)
 from tests.test_stage_d_heartbeat import (
     _boot,
     _boot_auth_header,
@@ -39,6 +43,7 @@ from tests.test_unstarted_hold_release import (
     BOOT,
     CREATED,
     HOLD,
+    PRICING,
     _authorization,
     _counters,
     _money,
@@ -51,7 +56,7 @@ from trusted_router.config import Settings
 from trusted_router.main import _ApplicationConsoleFormatter
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayHeartbeatRequest, GatewaySettleRequest
-from trusted_router.services import settle_drain_observability
+from trusted_router.services import settle_drain_observability, settle_outbox_apply
 from trusted_router.services import settle_outbox_drain as drain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,7 +118,7 @@ def test_each_filter_matches_its_own_rules_line_and_no_other(rendered: _Rendered
     # The whole of a release's line: the rule's counter, and no customer.
     assert expired == payloads["expired"] + "value=1"
     assert unstarted == payloads["unstarted_stream"] + "value=1"
-    assert contradiction.startswith(payloads["contradiction"] + "kind=charge_without_heartbeat ")
+    assert contradiction.startswith(payloads["contradiction"] + "value=1 kind=charge_without_heartbeat ")
     for kind, line in (("expired", expired), ("unstarted_stream", unstarted), ("contradiction", contradiction)):
         assert [payload in line for payload in payloads.values()] == [kind == other for other in payloads], line
     # A longer name, another level or another logger is not it.
@@ -126,16 +131,26 @@ def test_each_filter_matches_its_own_rules_line_and_no_other(rendered: _Rendered
 
 
 def test_the_settle_drain_workers_boundary_keeps_each_counter(rendered: _Rendered) -> None:
+    """The worker applies settles from their frozen intents, so the
+    contradiction line can be written there too: its counter's name is kept,
+    and nothing else of any of the three lines."""
     payloads = _payloads()
-    assert {drain._RELEASED_EXPIRED_METRIC, drain._RELEASED_UNSTARTED_METRIC} <= settle_drain_observability._COUNTED_METRICS
+    assert {
+        drain._RELEASED_EXPIRED_METRIC, drain._RELEASED_UNSTARTED_METRIC, rule.CONTRADICTION_METRIC,
+    } <= settle_drain_observability._COUNTED_METRICS
     remove = settle_drain_observability.install_logging()
     try:
         drain._count_released_holds(drain._RELEASED_EXPIRED_METRIC, 1)
         drain._count_released_holds(drain._RELEASED_UNSTARTED_METRIC, 1)
+        rule.observe_settle(_authorization(), success=True, mode="log", heartbeat_declared=lambda _kid: True)
     finally:
         remove()
     tail = f"logger={DRAIN_LOGGER} level=WARNING exception_class=none"
-    assert rendered.lines == [payloads["expired"] + tail, payloads["unstarted_stream"] + tail]
+    assert rendered.lines == [
+        payloads["expired"] + tail,
+        payloads["unstarted_stream"] + tail,
+        payloads["contradiction"] + f"logger={RULE_LOGGER} level=ERROR exception_class=none",
+    ]
 
 
 def test_the_metrics_and_the_policies_read_one_filter_each() -> None:
@@ -191,8 +206,8 @@ def test_a_first_heartbeat_after_the_deadline_is_a_contradiction(rendered: _Rend
     rule.observe_first_heartbeat(_authorization(), **_late())
     rule.observe_first_heartbeat(_authorization(settled=True), **_late(accepted=False, mode="on"))
     assert rendered.lines == [
-        f"ERROR {RULE_LOGGER} unstarted_release.contradiction kind=late_first_heartbeat accepted=true age_seconds=900 mode=log",
-        f"ERROR {RULE_LOGGER} unstarted_release.contradiction kind=late_first_heartbeat accepted=false age_seconds=900 mode=on",
+        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat accepted=true age_seconds=900 mode=log",
+        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat accepted=false age_seconds=900 mode=on",
     ]
 
 
@@ -226,8 +241,8 @@ def test_a_charging_settle_with_no_heartbeat_is_a_contradiction_at_any_age(rende
         heartbeat_declared=declared,
     )
     assert rendered.lines == [
-        f"ERROR {RULE_LOGGER} unstarted_release.contradiction kind=charge_without_heartbeat settled=false age_seconds=3 mode=log",
-        f"ERROR {RULE_LOGGER} unstarted_release.contradiction kind=charge_without_heartbeat settled=true age_seconds=1000 mode=on",
+        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=charge_without_heartbeat settled=false age_seconds=3 mode=log",
+        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=charge_without_heartbeat settled=true age_seconds=1000 mode=on",
     ]
     del rendered.lines[:]
     # A refund, a stream that heartbeated (and a replay of its settle), another
@@ -284,7 +299,7 @@ def test_the_heartbeat_route_reports_a_late_first_heartbeat_it_accepted(rendered
     assert db.gateway_authorizations["gwa-stage-d-fixture"]["heartbeat_seq"] == 1
     assert len(rendered.lines) == 1
     assert re.fullmatch(
-        rf"ERROR {RULE_LOGGER} unstarted_release\.contradiction kind=late_first_heartbeat "
+        rf"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat "
         r"accepted=true age_seconds=\d+ mode=log",
         rendered.lines[0],
     )
@@ -344,8 +359,48 @@ def test_a_settle_for_a_released_stream_is_answered_uncharged_and_reported(
     else:
         assert len(rendered.lines) == 1
         assert rendered.lines[0].startswith(
-            f"ERROR {RULE_LOGGER} unstarted_release.contradiction kind=charge_without_heartbeat settled=true "
+            f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=charge_without_heartbeat settled=true "
         )
+
+
+@pytest.mark.parametrize("mode", ["log", "on", "off"])
+def test_a_settle_applied_from_its_frozen_intent_is_reported_too(
+    env: Any, monkeypatch: pytest.MonkeyPatch, rendered: _Rendered, mode: str  # noqa: F811 - the imported fixture
+) -> None:
+    """Async settlement's handoff and the drain apply a settle from its
+    frozen intent, not through the settle route: the same evidence line is
+    written there, and the settle is applied exactly as it is with the rule
+    off."""
+    store, db, _runtime, _cfg = env
+    body, auth, _ = prepare(env)
+    row = row_for(env, body)
+    # The row as a heartbeated stream's, with no heartbeat on it.
+    stored = db.gateway_authorizations[auth.id]
+    payload = json.loads(stored["payload"])
+    payload.update(stage_d_reason="ok", stage_d_boot_kid=BOOT)
+    stored.update(payload=json.dumps(payload), stage_d_boot_kid=BOOT, pricing_snapshot=PRICING)
+    store.observe_gateway_boot(replace(_boot(BOOT, "sha256:" + "aa" * 32)[1], declares_usage_heartbeat=True))
+    read = store.get_gateway_authorization(auth.id)
+    assert read is not None and rule.heartbeating_stream(read) and rule.never_started(read)
+    assert settle_outbox_apply._unstarted_release_mode() == "off"  # this process's own setting
+    monkeypatch.setattr(settle_outbox_apply, "_unstarted_release_mode", lambda: mode)
+
+    outcome = settle_outbox_apply.apply_frozen_settle(row)
+
+    assert outcome == settle_outbox_apply.ApplyOutcome.SETTLED_NOW
+    assert db.gateway_authorizations[auth.id]["finalization_outcome"] == "settled"
+    lines = [line for line in rendered.lines if RULE_LOGGER in line]
+    if mode == "off":
+        assert lines == []
+    else:
+        assert len(lines) == 1 and re.fullmatch(
+            rf"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=charge_without_heartbeat "
+            rf"settled=false age_seconds=-?\d+ mode={mode}",
+            lines[0],
+        )
+    # A refund's intent is never one of these.
+    source = Path(settle_outbox_apply.__file__).read_text(encoding="utf-8")
+    assert "    if success:\n        _observe_unstarted_charge(auth)\n" in source
 
 
 def test_the_drain_route_passes_the_rule_only_when_it_is_not_off() -> None:

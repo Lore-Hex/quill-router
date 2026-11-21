@@ -57,8 +57,11 @@ YOUNG = "young"
 BOOT_UNDECLARED = "boot_undeclared"
 REASONS = (NOT_TYPED, TERMINAL, BINDING, OTHER_CLASS, STARTED, YOUNG, BOOT_UNDECLARED)
 
-#: The contradiction line's event name, with the space after it in the line.
-CONTRADICTION = "unstarted_release.contradiction"
+#: The contradiction line's counter. The line starts "metric=<this> ", as
+#: the drain's release counters do, so the settle drain worker's output
+#: boundary keeps it (settle_drain_observability._COUNTED_METRICS) and one
+#: log filter matches the line wherever it is written.
+CONTRADICTION_METRIC = "unstarted_release_contradiction_total"
 LATE_FIRST_HEARTBEAT = "late_first_heartbeat"
 CHARGE_WITHOUT_HEARTBEAT = "charge_without_heartbeat"
 
@@ -165,12 +168,13 @@ def observe_first_heartbeat(
         if not heartbeat_declared(str(authorization.stage_d_boot_kid)):
             return
         log.error(
-            "%s kind=%s accepted=%s age_seconds=%d mode=%s",
-            CONTRADICTION,
+            "metric=%s value=1 kind=%s accepted=%s age_seconds=%d mode=%s",
+            CONTRADICTION_METRIC,
             LATE_FIRST_HEARTBEAT,
             str(bool(accepted)).lower(),
             int(age),
             mode,
+            extra={"metric": CONTRADICTION_METRIC, "value": 1},
         )
     except Exception:  # noqa: BLE001 - evidence must never fail a heartbeat
         log.warning("unstarted release heartbeat observation failed", exc_info=True)
@@ -198,12 +202,13 @@ def observe_settle(
             return
         age = age_seconds(authorization, now or datetime.now(UTC))
         log.error(
-            "%s kind=%s settled=%s age_seconds=%d mode=%s",
-            CONTRADICTION,
+            "metric=%s value=1 kind=%s settled=%s age_seconds=%d mode=%s",
+            CONTRADICTION_METRIC,
             CHARGE_WITHOUT_HEARTBEAT,
             str(bool(getattr(authorization, "settled", False))).lower(),
             int(age) if age is not None else -1,
             mode,
+            extra={"metric": CONTRADICTION_METRIC, "value": 1},
         )
     except Exception:  # noqa: BLE001 - evidence must never fail a settle
         log.warning("unstarted release settle observation failed", exc_info=True)

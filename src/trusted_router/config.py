@@ -1290,10 +1290,11 @@ class Settings(BaseSettings):
     # (docs/design/fast-admission-streams.md section 13;
     # trusted_router.unstarted_release). "off" is the code as it was: no
     # pass, no line. "log" runs the pass and writes what it would release,
-    # releasing nothing, and the heartbeat and settle routes write a
+    # releasing nothing, and the heartbeat and settle paths write a
     # contradiction line when a request the rule covers turns out to be
     # alive. "on" releases. The deadline is counted from the authorization's
-    # creation; its bounds are that module's.
+    # creation; its bounds are that module's. A deploy literal: the settle
+    # apply primitive reads the mode once a process.
     unstarted_hold_release_mode: Literal["off", "log", "on"] = "off"
     unstarted_hold_release_seconds: int = 900
     # Operational read-only flag. When set, write paths (credit

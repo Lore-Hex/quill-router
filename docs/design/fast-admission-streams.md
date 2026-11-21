@@ -1253,12 +1253,13 @@ transactions, so they are serial:
   with no heartbeat. It declares nothing, so its rows are not of the class.
 
 What the rule cannot rule out is a gateway change that delivers a Stage D
-stream without the first heartbeat. Two lines watch for it, from the
-heartbeat and settle routes, in log and on:
-`unstarted_release.contradiction kind=late_first_heartbeat` (a first
-heartbeat that arrived after the deadline) and
+stream without the first heartbeat. Two lines watch for it, in log and on:
+`metric=unstarted_release_contradiction_total ... kind=late_first_heartbeat` (a first
+heartbeat that arrived after the deadline), from the heartbeat route, and
 `kind=charge_without_heartbeat` (a charging settle for a stream of the
-class with no heartbeat on its row, at any age).
+class with no heartbeat on its row, at any age), from the settle route and
+from the apply of a frozen settle intent (`apply_frozen_settle`), which is
+how async settlement's handoff and the drain apply a settle.
 
 ### 13.6 Rollout and signals
 

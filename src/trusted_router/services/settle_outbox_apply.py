@@ -4,10 +4,12 @@ import datetime as dt
 import json
 import logging
 from dataclasses import replace
+from functools import lru_cache
 from typing import Any, cast
 
 from pydantic import ValidationError
 
+from trusted_router import unstarted_release
 from trusted_router.app_markup_billing import (
     APP_MARKUP_APP_ID_SETTLE_FIELD,
     APP_MARKUP_OWNER_SETTLE_FIELD,
@@ -74,6 +76,40 @@ _RETIRED_SETTLEMENTS = frozenset({"regional_lease", "spend_lease"})
 # is persisted in outbox rows and must not change). New typed rows atomically
 # enqueue ClickHouse delivery in the settlement transaction and never park.
 _ACTIVITY_PARK_NOTE = "bigtable activity index pending"
+
+
+@lru_cache(maxsize=1)
+def _unstarted_release_mode() -> str:
+    """The early rule's switch (config.unstarted_hold_release_mode), read
+    once a process: this primitive takes no settings, the switch is a deploy
+    literal, and a settle must not build a Settings of its own each time. A
+    settings error reads as off, which writes nothing."""
+    try:
+        from trusted_router.config import get_settings
+
+        return str(get_settings().unstarted_hold_release_mode)
+    except Exception:  # noqa: BLE001 - evidence must never fail a settle
+        return unstarted_release.MODE_OFF
+
+
+def _boot_declares_usage_heartbeat(kid: str) -> bool:
+    boot = STORE.get_gateway_boot(kid)
+    return bool(boot is not None and boot.declares_usage_heartbeat)
+
+
+def _observe_unstarted_charge(auth: GatewayAuthorization) -> None:
+    """Evidence for the early release of a never-started stream's hold
+    (docs/design/fast-admission-streams.md section 13.5): a charging settle
+    applied from its frozen intent (async settlement's handoff, the drain)
+    for a heartbeated stream with no heartbeat on its row. The settle route
+    writes the same line for a settle it applies itself. Off, or for any
+    other row, this is two attribute reads and nothing written."""
+    mode = _unstarted_release_mode()
+    if mode == unstarted_release.MODE_OFF:
+        return
+    unstarted_release.observe_settle(
+        auth, success=True, mode=mode, heartbeat_declared=_boot_declares_usage_heartbeat,
+    )
 
 
 class ApplyOutcome:
@@ -174,6 +210,8 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
         return ApplyOutcome.ERROR
     if auth is None:
         return ApplyOutcome.RESERVATION_MISSING
+    if success:
+        _observe_unstarted_charge(auth)
 
     # Decision 70: a heartbeat snapshot is already the charged winner. Resolve
     # a late settle/refund intent before any generation indexing. That repair

@@ -1511,9 +1511,11 @@ class), `started`, `young`, `boot_undeclared`, `terminal`, `binding`,
 `not_typed`, `reservation`.
 
 **Alert `TR Holds: early release contradicted`**: an ERROR line
-`unstarted_release.contradiction kind=... age_seconds=... mode=...` from
-logger `trusted_router.unstarted_release`, written by the heartbeat and
-settle routes in `log` and `on`:
+`metric=unstarted_release_contradiction_total value=1 kind=... age_seconds=... mode=...` from
+logger `trusted_router.unstarted_release`, written in `log` and `on` by the
+heartbeat route, the settle route, and the apply of a frozen settle intent
+(async settlement's handoff and the drain; one settle can write it from
+both places):
 
 - `kind=late_first_heartbeat`: a first heartbeat arrived after the deadline
   for a row the rule covers. In `log` it was accepted and the stream ran; in
@@ -1533,7 +1535,7 @@ The gate for `on`, read from Cloud Logging over at least seven days in `log`:
 gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"gateway.unstarted_release mode=log" AND NOT textPayload:" would_release=0 "' \
   --project=quill-cloud-proxy --freshness=7d --limit=1000 --format='value(timestamp)' | wc -l
 # Contradictions: none.
-gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"ERROR trusted_router.unstarted_release unstarted_release.contradiction "' \
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"ERROR trusted_router.unstarted_release metric=unstarted_release_contradiction_total "' \
   --project=quill-cloud-proxy --freshness=7d --limit=10 --format='value(timestamp,textPayload)'
 # Passes that failed, or ran without the outbox guard: none.
 gcloud logging read 'resource.type="cloud_run_revision" AND (textPayload:"gateway.unstarted_release failed" OR (textPayload:"gateway.unstarted_release mode=log" AND textPayload:" unguarded=true "))' \

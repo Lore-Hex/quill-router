@@ -676,7 +676,7 @@ ENV_VARS=(
   # the evidence the rule is judged by gathers in production first. Move it
   # to "on" only after the runbook's gate (docs/runbook.md, Early release of
   # unstarted holds): passes that report rows under would_release, and not
-  # one unstarted_release.contradiction line, over at least seven days.
+  # one unstarted_release_contradiction_total line, over at least seven days.
   # Literals, so no revision inherits either; "off" is the way back, and it
   # is the code as it was before the rule.
   "TR_UNSTARTED_HOLD_RELEASE_MODE=log"

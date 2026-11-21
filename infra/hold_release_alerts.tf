@@ -50,7 +50,7 @@ locals {
       what     = "The early rule gave back the hold of a heartbeated stream that never sent its first heartbeat, with no settle or refund from the gateway."
     }
     contradiction = {
-      payload  = "ERROR trusted_router.unstarted_release unstarted_release.contradiction "
+      payload  = "ERROR trusted_router.unstarted_release metric=unstarted_release_contradiction_total "
       title    = "TR Holds: early release contradicted"
       severity = "ERROR"
       period   = "300s"
