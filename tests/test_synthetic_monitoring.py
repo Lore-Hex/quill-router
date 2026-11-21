@@ -4566,6 +4566,79 @@ def test_configuration_alert_is_fingerprinted_and_carries_sanitized_message(
     assert captured[1][0].endswith("excluded from provider uptime, not operations")
 
 
+def _configuration_streak(ages: list[int]) -> list[ProviderBenchmarkSample]:
+    return [
+        _route_health_sample(
+            f"config-{i}", provider="maple", model="m", status="unsupported",
+            age_hours=age, error_type="probe_config_error", error_status=400,
+            error_message="Maple encrypted upstream request failed",
+        ) for i, age in enumerate(ages)
+    ]
+
+
+@pytest.mark.parametrize(("ages", "onset", "fresh"), [
+    # The sixth failure arrived since the last sweep: the episode's onset.
+    (list(range(6)), True, True),
+    # Still failing, already qualified one sweep ago.
+    (list(range(7)), False, True),
+    # 2026-11-21: Maple's streak ended at 01:15Z and nothing newer was probed,
+    # yet the 03:01Z and 04:01Z sweeps re-raised it while Maple served.
+    (list(range(2, 8)), False, False),
+])
+def test_configuration_flag_knows_onset_from_a_continuing_or_stale_streak(
+    ages: list[int], onset: bool, fresh: bool,
+) -> None:
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(_configuration_streak(ages)), routes=[("maple", "m")],
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "configuration"
+    assert (flags[0].onset, flags[0].fresh) == (onset, fresh)
+
+
+@pytest.mark.parametrize(("onset", "fresh", "hour", "pages"), [
+    (True, True, 3, True),
+    (False, True, 3, False),
+    (False, False, 3, False),
+    # A streak still getting new failures is re-paged once a day ...
+    (False, True, 14, True),
+    # ... a stale one never is.
+    (False, False, 14, False),
+])
+def test_configuration_alert_pages_at_onset_not_every_sweep(
+    monkeypatch: pytest.MonkeyPatch, onset: bool, fresh: bool, hour: int, pages: bool,
+) -> None:
+    from trusted_router.synthetic import alerts
+
+    captured: list[str] = []
+    monkeypatch.setattr(alerts, "ops_alert", lambda message, **_: captured.append(message))
+    report_route_health(
+        [RouteHealthFlag(
+            "maple", "m", 6, 6, 1.0, "provider_auth_config", None,
+            kind="configuration", onset=onset, fresh=fresh,
+        )],
+        now=dt.datetime(2026, 11, 21, hour, 1, tzinfo=dt.UTC),
+    )
+    assert bool(captured) == pages
+
+
+def test_account_refusal_alerts_are_not_held_by_the_onset_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import alerts
+
+    captured: list[str] = []
+    monkeypatch.setattr(alerts, "ops_alert", lambda message, **_: captured.append(message))
+    report_route_health(
+        [RouteHealthFlag(
+            "maple", "m", 3, 3, 1.0, "provider_auth_config", None,
+            kind="configuration", account_refusal=True, onset=False, fresh=False,
+        )],
+        now=dt.datetime(2026, 11, 21, 3, 1, tzinfo=dt.UTC),
+    )
+    assert len(captured) == 1
+
+
 def _refusal_sample(
     i: int, minutes: float, *, status: int = 403, usage_type: str = "Credits",
     error_type: str = "provider_error", source: str = "organic",

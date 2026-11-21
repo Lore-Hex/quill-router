@@ -117,6 +117,12 @@ class RouteHealthFlag:
     # A configuration flag raised by the account-refusal rule: every sample in
     # its streak was an HTTP 401/403 refusal of TR's managed account.
     account_refusal: bool = False
+    # Configured-route rule only: the streak did not yet qualify one sweep
+    # ago (CONFIGURATION_REPORT_INTERVAL), so this pass is the episode's onset.
+    onset: bool = True
+    # Configured-route rule only: a failure arrived since the previous sweep.
+    # False means the evidence is the same stale streak as last pass.
+    fresh: bool = True
 
 
 def evaluate_route_health(
@@ -426,6 +432,30 @@ def _iso_z(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+# The hourly sweep's cadence. A configured-route streak qualifies for up to six
+# hours after its newest failure, because one route is probed only a few times
+# a day. Paging on every sweep of it re-raised the same evidence hourly: on
+# 2026-11-21 Maple's 403 streak (newest sample 01:15Z) regressed the resolved
+# Sentry issue at 03:01Z and 04:01Z while Maple was serving again. So the rule
+# pages at onset only. A streak that keeps getting new failures is re-paged
+# once a day at the digest hour; a stale one is only logged.
+CONFIGURATION_REPORT_INTERVAL = dt.timedelta(hours=1)
+_CONFIGURATION_MAX_AGE = dt.timedelta(hours=6)
+_CONFIGURATION_MIN_SPAN = dt.timedelta(minutes=30)
+
+
+def _configuration_streak_qualifies(
+    streak: list[tuple[dt.datetime, ProviderBenchmarkSample]],
+    at: dt.datetime,
+    min_samples: int,
+) -> bool:
+    return (
+        len(streak) >= min_samples
+        and at - streak[0][0] <= _CONFIGURATION_MAX_AGE
+        and streak[0][0] - streak[-1][0] >= _CONFIGURATION_MIN_SPAN
+    )
+
+
 def _configuration_flag(
     provider: str,
     model: str,
@@ -454,17 +484,19 @@ def _configuration_flag(
         ):
             break
         streak.append(pair)
-    if (
-        len(streak) < min_samples
-        or now - streak[0][0] > dt.timedelta(hours=6)
-        or streak[0][0] - streak[-1][0] < dt.timedelta(minutes=30)
-    ):
+    if not _configuration_streak_qualifies(streak, now, min_samples):
         return None
+    # The same streak as the previous sweep saw it: a success breaks a streak
+    # wherever it falls, so the streak then is this one's older part.
+    previous = now - CONFIGURATION_REPORT_INTERVAL
+    earlier = [pair for pair in streak if pair[0] <= previous]
     return RouteHealthFlag(
         provider=provider, model=model, samples=len(streak), failures=len(streak),
         failure_rate=1.0, newest_error_type=streak[0][1].error_type,
         newest_error_message=_alert_error_message(streak[0][1].error_message),
         kind="configuration",
+        onset=not _configuration_streak_qualifies(earlier, previous, min_samples),
+        fresh=streak[0][0] > previous,
     )
 
 
@@ -770,6 +802,18 @@ def report_route_health(
                     f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
                     f"({flag.newest_error_type})"
                 )
+                reminder = (
+                    flag.fresh
+                    and (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).hour
+                    == DEGRADATION_DIGEST_HOUR_UTC
+                )
+                if not flag.onset and not reminder:
+                    # Already paged at onset (CONFIGURATION_REPORT_INTERVAL).
+                    logger.warning(
+                        "%s; ongoing, paged at onset%s", summary,
+                        "" if flag.fresh else "; no new failure since the last sweep",
+                    )
+                    continue
             ops_alert(
                 summary + "; excluded from provider uptime, not operations"
                 + (f"; latest: {latest}" if latest else ""),
