@@ -18,6 +18,7 @@ What they pin:
   starts and nothing about it;
 * a caller over the waiter cap or past the wait bound runs as it does with
   the gate off, and is charged exactly once;
+* a waiting settle goes before a waiting reserve;
 * every request-path transaction that writes the credit row takes the gate,
   by name, inside the deadline it already had; nothing takes it when the
   setting is off, the workspace is sharded, the caller has no deadline (the
@@ -261,6 +262,54 @@ def test_a_caller_over_the_waiter_cap_runs_at_once_and_is_charged_once(
     assert (fresh_gate.subjects(), fresh_gate.total_waiting()) == (0, 0)
 
 
+def test_a_waiting_settle_goes_before_a_reserve_that_arrived_first(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    fresh_gate: FifoKeyedGate,
+) -> None:
+    store, db, key = prod_store
+    store.trust_settings = _gate_settings()
+    authorized = _authorize_route(key, "gate-order-settle")
+    # Another of the workspace's transactions holds the slot.
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
+    assert holder is not None
+    order: list[str | None] = []
+    original = FakeSpannerDatabase.run_in_transaction
+
+    def run(database: Any, fn: Any, **kwargs: Any) -> Any:
+        if kwargs.get("transaction_tag") in CREDIT_ROW_TAGS:
+            order.append(kwargs.get("transaction_tag"))
+        return original(database, fn, **kwargs)
+
+    results: dict[str, Any] = {}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+        reserve = threading.Thread(
+            target=lambda: results.__setitem__("reserve", _authorize_route(key, "gate-order-reserve")),
+        )
+        reserve.start()
+        deadline = time.monotonic() + 10
+        while fresh_gate.waiting(WORKSPACE) != 1:
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        settle = threading.Thread(
+            target=lambda: results.__setitem__("settle", _settle_route(authorized)[0]),
+        )
+        settle.start()
+        while fresh_gate.waiting(WORKSPACE) != 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        assert order == []  # both are waiting; neither has started
+        fresh_gate.release(WORKSPACE, holder, width=1)
+        reserve.join(timeout=30)
+        settle.join(timeout=30)
+        assert not reserve.is_alive() and not settle.is_alive()
+    # The reserve arrived first; the settle started first.
+    assert order == ["tr_settle_one_commit", "tr_authorize"]
+    assert results["settle"]["settled"] is True and results["reserve"]["authorization_id"]
+    assert _money(db, WORKSPACE, key.hash)[0] == COST
+    assert (fresh_gate.subjects(), fresh_gate.total_waiting()) == (0, 0)
+
+
 def test_a_caller_past_the_wait_bound_runs_as_before_and_is_charged_once(
     prod_store: tuple[Any, FakeSpannerDatabase, Any],
     fresh_gate: FifoKeyedGate,
@@ -311,12 +360,15 @@ def test_a_caller_past_the_wait_bound_runs_as_before_and_is_charged_once(
 @contextmanager
 def _recorded_gate(
     patch: pytest.MonkeyPatch, seen: list[tuple[str, str, float]],
+    first: dict[str, bool] | None = None,
 ) -> Iterator[None]:
     """Replace the gate with one that only records who entered it."""
 
     @contextmanager
-    def record(workspace_id: str, *, kind: str, budget_seconds: float, **_bounds: Any) -> Iterator[GatePass]:
+    def record(workspace_id: str, *, kind: str, budget_seconds: float, **bounds: Any) -> Iterator[GatePass]:
         seen.append((workspace_id, kind, budget_seconds))
+        if first is not None:
+            first[kind] = bounds["first"]
         yield GatePass(FREE, held=True)
 
     patch.setattr(storage_gcp, "workspace_billing_gate", record)
@@ -329,7 +381,8 @@ def test_every_credit_row_transaction_takes_the_gate_inside_its_own_budget(
     store, db, key = prod_store
     store.trust_settings = _gate_settings()
     seen: list[tuple[str, str, float]] = []
-    with pytest.MonkeyPatch.context() as patch, _recorded_gate(patch, seen):
+    first: dict[str, bool] = {}
+    with pytest.MonkeyPatch.context() as patch, _recorded_gate(patch, seen, first):
         # The ordinary request: a reserve, then the one-commit settle.
         authorized = _authorize_route(key, "gate-kinds-one-commit")
         data, tasks = _settle_route(authorized)
@@ -392,6 +445,10 @@ def test_every_credit_row_transaction_takes_the_gate_inside_its_own_budget(
         # This request's intent, and the replay of the one applied above.
         assert drained[ApplyOutcome.SETTLED_NOW] == 1 and sum(drained.values()) == 2
         assert [kind for _ws, kind, _budget in seen] == ["authorize", "settle_one_commit"]
+    # Everything that completes a request waits ahead of a reserve.
+    assert first == {
+        "authorize": False, "settle_one_commit": True, "finalize": True, "frozen_finalize": True,
+    }
     assert _money(db, WORKSPACE, key.hash) == (4 * COST, 0, 4 * COST, 0)
 
 

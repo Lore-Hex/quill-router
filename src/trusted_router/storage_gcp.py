@@ -2065,6 +2065,10 @@ class SpannerStore(OperationalAnalyticsReads):
             wait_seconds=wait_ms / 1000,
             budget_seconds=budget_seconds,
             kind=kind,
+            # A settle, refund or finalize completes a request that already
+            # holds credit, and has the shorter budget: it goes before a
+            # waiting reserve, which is new work.
+            first=kind != "authorize",
         )
 
     def _heal_stale_debt_mark(

@@ -307,13 +307,22 @@ on the fast path (`fastpath pilot passed over reason=key_cap`).
 lets that many of a workspace's credit-row transactions from one process be
 inside Spanner at a time: the reserve, the one-commit settle or refund, the
 two-commit finalize and the snapshot settle's frozen apply. The rest wait in
-the process, in arrival order.
+the process.
 
 - It changes when a transaction starts and nothing about it. A caller without
   a slot runs the same transaction at once.
-- A caller waits at most `TR_WORKSPACE_BILLING_GATE_WAIT_MS` and at most a
-  quarter of the Spanner budget it has left, inside that budget, so no request
-  takes longer than it could before. Then it starts ungated.
+- A waiting settle, refund or finalize goes before a waiting reserve, and
+  within each group the order is arrival order. One row cannot serve a
+  burst's reserves and its settles at once. A settle completes a request
+  that already holds credit and has the short budget (two seconds for the
+  snapshot settle, which answers 503 past it); a reserve is new work with
+  twenty. So the reserves are the ones that wait, and a client that sends
+  requests as fast as they finish is slowed at its reserves.
+- A caller waits at most a quarter of the Spanner budget it has left, inside
+  that budget, and never more than `TR_WORKSPACE_BILLING_GATE_WAIT_MS`
+  (5000): five seconds of a reserve's twenty, a second and a quarter of a
+  one-commit settle's five, half a second of the snapshot settle's two. So
+  no request takes longer than it could before. Then it starts ungated.
 - At most `TR_WORKSPACE_BILLING_GATE_MAX_WAITERS` callers of one workspace
   wait in a process and at most 12 across workspaces (of an instance's 16
   request slots). One more starts ungated at once.

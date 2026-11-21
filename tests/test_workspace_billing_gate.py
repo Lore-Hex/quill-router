@@ -92,6 +92,61 @@ def test_waiters_get_the_slot_in_arrival_order() -> None:
     assert (gate.holders(WS), gate.total_waiting(), gate.subjects()) == (0, 0, 0)
 
 
+def test_first_callers_go_before_the_rest_and_each_group_keeps_arrival_order() -> None:
+    gate = FifoKeyedGate()
+    holder, _ = _acquire(gate)
+    assert holder is not None
+    order: list[str] = []
+    queued: dict[str, int] = {}
+    threads = []
+
+    def worker(name: str, first: bool) -> None:
+        token, passed = _acquire(gate, first=first)
+        assert token is not None and passed.outcome == WAITED
+        order.append(name)
+        queued[name] = passed.queued
+        gate.release(WS, token, width=1)
+
+    # Arrival: a reserve, a settle, a reserve, a settle.
+    arrivals = [("reserve-1", False), ("settle-1", True), ("reserve-2", False), ("settle-2", True)]
+    for index, (name, first) in enumerate(arrivals):
+        thread = threading.Thread(target=worker, args=(name, first))
+        thread.start()
+        threads.append(thread)
+        _until(lambda expected=index + 1: gate.waiting(WS) == expected)
+    gate.release(WS, holder, width=1)
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    # Both settles before both reserves, each pair in the order it arrived.
+    assert order == ["settle-1", "settle-2", "reserve-1", "reserve-2"]
+    # What each found ahead of it: a settle only the settles before it, a
+    # reserve everyone already waiting.
+    assert queued == {"reserve-1": 0, "settle-1": 0, "reserve-2": 2, "settle-2": 1}
+    assert (gate.holders(WS), gate.total_waiting(), gate.subjects()) == (0, 0, 0)
+
+
+def test_a_first_caller_counts_toward_the_same_waiter_cap() -> None:
+    gate = FifoKeyedGate()
+    holder, _ = _acquire(gate)
+    assert holder is not None
+    done = threading.Event()
+    parked = [
+        threading.Thread(target=lambda: (_acquire(gate, max_waiters=2), done.wait(10)))
+        for _ in range(2)
+    ]
+    for thread in parked:
+        thread.start()
+    _until(lambda: gate.waiting(WS) == 2)
+    # Going first is an order, not extra room: the cap is the workspace's.
+    token, passed = _acquire(gate, max_waiters=2, first=True)
+    assert token is None and passed.outcome == WAITERS_FULL and passed.queued == 2
+    gate.release(WS, holder, width=1)
+    done.set()
+    for thread in parked:
+        thread.join(timeout=10)
+
+
 def test_width_bounds_the_holders_and_the_rest_wait() -> None:
     gate = FifoKeyedGate()
     inside = 0
@@ -258,8 +313,8 @@ def test_an_interrupted_wait_leaves_no_waiter_and_passes_on_a_slot_it_was_given(
     class Interrupted(gate_module._Waiter):
         granted_first = False
 
-        def __init__(self) -> None:
-            super().__init__()
+        def __init__(self, first: bool = False) -> None:
+            super().__init__(first=first)
             waiter = self
 
             class Event:
@@ -312,11 +367,12 @@ def test_bounds_must_be_positive() -> None:
 @pytest.mark.parametrize(
     ("wait", "budget", "expected"),
     [
-        (1.0, 20.0, 1.0),  # authorize's budget: the configured bound
-        (1.0, 5.0, 1.0),  # the one-commit settle's budget
+        (5.0, 20.0, 5.0),  # a reserve: five of its twenty seconds
+        (5.0, 5.0, 1.25),  # a one-commit settle: a quarter of its five
+        (5.0, 2.0, 0.5),  # the snapshot settle's two seconds keep one and a half
+        (1.0, 20.0, 1.0),  # a shorter configured bound wins
         (1.0, 1.2, 0.3),  # never more than a quarter of what is left
         (1.0, 0.0, 0.0),  # a spent budget waits for nothing
-        (5.0, 2.0, 0.5),  # the snapshot settle's two seconds keep one and a half
     ],
 )
 def test_the_wait_is_the_configured_bound_and_at_most_a_quarter_of_the_budget_left(
@@ -472,7 +528,7 @@ def test_the_setting_is_off_by_default_bounded_and_on_as_a_literal_in_rollout() 
     rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
     assert rollout.count('"TR_WORKSPACE_BILLING_GATE_WIDTH=1"') == 1
     assert rollout.count("TR_WORKSPACE_BILLING_GATE_WIDTH=") == 1
-    assert settings.workspace_billing_gate_wait_ms == 1000
+    assert settings.workspace_billing_gate_wait_ms == 5000
     assert settings.workspace_billing_gate_max_waiters == 8
     # The per-workspace cap stays below the per-process cap, which stays
     # below an instance's 16 request slots.

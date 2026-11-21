@@ -11,11 +11,20 @@ older reserves, and every abort redoes its statements on the same row
 here"). The row then serves a fraction of what it can.
 
 This gate lets ``width`` of a workspace's credit-row transactions from this
-process be inside Spanner at a time. The rest wait here, in arrival order,
-for a bounded time, and then start exactly as they would have without it.
-The settle-outbox worker already takes turns per workspace this way
+process be inside Spanner at a time. The rest wait here for a bounded time
+and then start exactly as they would have without it. The settle-outbox
+worker already takes turns per workspace this way
 (services/settle_outbox_worker._WorkspaceGate); this is the same idea for
 the request path.
+
+Order: a waiting settle, refund or finalize goes before a waiting reserve,
+and within each group the order is arrival order. A settle completes a
+request that already holds credit and has the short budget (the snapshot
+settle has two seconds, a one-commit settle five); a reserve is new work and
+has twenty. One row cannot serve a burst's reserves and settles at once, so
+the reserves are the ones that wait. A workspace's reserves cannot be
+starved for long: each settle follows one of its own reserves, and a reserve
+that reaches its bound starts ungated.
 
 What it changes and what it does not:
 
@@ -26,9 +35,11 @@ What it changes and what it does not:
 * The wait is spent inside the caller's existing Spanner deadline, never in
   addition to it, and is capped at ``BUDGET_SHARE`` of what remains, so no
   request can take longer than it could before, and a transaction always
-  keeps at least three quarters of the budget it arrived with. A caller
-  with no such deadline (the settle-outbox drain) is not gated: its wait
-  would be extra time, and its applies already take turns.
+  keeps at least three quarters of the budget it arrived with: a reserve
+  waits at most five of its twenty seconds, a one-commit settle a second
+  and a quarter of its five, the snapshot settle half a second of its two.
+  A caller with no such deadline (the settle-outbox drain) is not gated:
+  its wait would be extra time, and its applies already take turns.
 * It is a harm limiter, not a mutex. Correctness still comes from the
   conditional updates. Other processes hold their own gates, so the row sees
   up to ``width`` transactions per process instead of every in-flight one.
@@ -91,6 +102,8 @@ OFF = "off"
 class _Waiter:
     event: threading.Event = field(default_factory=threading.Event)
     token: int | None = None
+    # Served before the waiters that are not first (see ``acquire``).
+    first: bool = False
 
 
 @dataclass
@@ -106,7 +119,8 @@ class GatePass:
 
     ``held`` says whether it holds a slot (free, waited) or runs ungated
     (every other outcome). ``queued`` is the number of callers of the same
-    subject that were waiting when it arrived.
+    subject that were ahead of it in the queue when it arrived (for one that
+    did not join the queue, the number waiting).
     """
 
     outcome: str
@@ -116,7 +130,8 @@ class GatePass:
 
 
 class FifoKeyedGate:
-    """``width`` concurrent holders per subject; the rest wait in arrival order."""
+    """``width`` concurrent holders per subject; the rest wait in arrival order,
+    callers marked ``first`` ahead of the others."""
 
     def __init__(
         self,
@@ -174,8 +189,13 @@ class FifoKeyedGate:
 
     def acquire(
         self, subject: str, *, width: int, max_waiters: int, wait_seconds: float,
+        first: bool = False,
     ) -> tuple[int | None, GatePass]:
-        """A slot token and how it was obtained, or ``None`` to run ungated."""
+        """A slot token and how it was obtained, or ``None`` to run ungated.
+
+        A ``first`` caller waits ahead of the callers that are not, behind the
+        other ``first`` ones; within each group the order is arrival order.
+        """
         if not subject:
             raise ValueError("subject must not be empty")
         if width <= 0 or max_waiters <= 0:
@@ -205,8 +225,13 @@ class FifoKeyedGate:
                 return None, GatePass(
                     WAITERS_FULL if wait_seconds > 0 else NO_BUDGET, held=False, queued=queued,
                 )
-            waiter = _Waiter()
-            state.waiters.append(waiter)
+            waiter = _Waiter(first=first)
+            if first:
+                # The first group is always the head of the queue.
+                queued = sum(1 for other in state.waiters if other.first)
+                state.waiters.insert(queued, waiter)
+            else:
+                state.waiters.append(waiter)
             self._total_waiters += 1
         started = self._clock()
         settled = False
@@ -300,6 +325,7 @@ def workspace_billing_gate(
     wait_seconds: float,
     budget_seconds: float,
     kind: str,
+    first: bool = False,
     gate: FifoKeyedGate | None = None,
 ) -> Iterator[GatePass]:
     """Hold one of the workspace's slots around the caller's transaction.
@@ -307,9 +333,10 @@ def workspace_billing_gate(
     Always yields, with or without a slot: a caller that could not get one
     runs ungated, as it would with the gate off. ``budget_seconds`` is what
     is left of the caller's Spanner deadline; the wait is spent inside it.
-    ``kind`` names the code path (authorize, settle_one_commit, finalize,
-    frozen_finalize) for the log line, which carries no workspace, key or
-    request identifier.
+    ``first`` puts the caller ahead of the waiters that are not (the store
+    passes it for every kind but a reserve). ``kind`` names the code path
+    (authorize, settle_one_commit, finalize, frozen_finalize) for the log
+    line, which carries no workspace, key or request identifier.
     """
     active = WORKSPACE_GATE if gate is None else gate
     held: set[str] | None = getattr(_HELD, "subjects", None)
@@ -322,7 +349,7 @@ def workspace_billing_gate(
         return
     token, passed = active.acquire(
         workspace_id, width=width, max_waiters=max_waiters,
-        wait_seconds=wait_bound(wait_seconds, budget_seconds),
+        wait_seconds=wait_bound(wait_seconds, budget_seconds), first=first,
     )
     if token is not None:
         held.add(workspace_id)
