@@ -1671,3 +1671,74 @@ def test_spanner_head_read_failure_keeps_the_warm_floor(
     assert source.fetch(limit=1) == [next_row]
     assert database.queries[-1][1]["after"] == first.commit_ts
     assert source.oldest_commit_ts() == next_row.commit_ts
+
+
+def test_account_refusal_samples_read_filters_in_clickhouse() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.get("query", "") + request.content.decode())
+        return httpx.Response(200, json={"data": []})
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse", user="reader", password="sec" + "ret",
+        transport=httpx.MockTransport(handler),
+    )
+    assert client.account_refusal_samples(
+        cutoff="2026-11-20T16:00:00Z", per_route_limit=20, limit=4000,
+    ) == []
+    [query] = seen
+    for clause in ("source IN ('organic', 'synthetic')", "usage_type = 'Credits'",
+                   "error_status IN (401, 403)",
+                   "route_rank <= {per_route_limit:UInt32}", "LIMIT {limit:UInt32}",
+                   "(provider, model) IN ("):
+        assert clause in query
+
+
+def test_gcp_account_refusal_read_uses_clickhouse_directly() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeAnalytics:
+        def account_refusal_samples(
+            self, *, cutoff: str, per_route_limit: int, limit: int,
+        ) -> list[ProviderBenchmarkSample]:
+            calls.append({"cutoff": cutoff, "per_route_limit": per_route_limit, "limit": limit})
+            return []
+
+    store = object.__new__(SpannerStore)
+    store._operational_analytics = FakeAnalytics()  # type: ignore[assignment]
+    assert store.provider_account_refusal_samples(
+        cutoff="2026-11-20T16:00:00Z", per_route_limit=20, limit=7,
+    ) == []
+    assert calls == [{"cutoff": "2026-11-20T16:00:00Z", "per_route_limit": 20, "limit": 7}]
+
+
+def test_memory_account_refusal_read_filters_and_orders() -> None:
+    from trusted_router.storage import InMemoryStore
+
+    store = InMemoryStore()
+    base = dict(model="maple/m", provider="maple", provider_name="Maple", status="error",
+                usage_type="Credits", streamed=True, error_type="provider_error",
+                error_status=403, source="organic")
+    for sample_id, created, changes in (
+        ("new", "2026-11-20T16:40:00Z", {}),
+        ("older", "2026-11-20T16:30:00Z", {"error_status": 401}),
+        ("byok", "2026-11-20T16:45:00Z", {"usage_type": "BYOK"}),
+        ("probe", "2026-11-20T16:45:00Z", {"source": "synthetic_throughput"}),
+        ("gone", "2026-11-20T10:00:00Z", {}),
+        ("recovered", "2026-11-20T16:50:00Z", {"status": "success", "error_status": None}),
+        ("other-route-ok", "2026-11-20T16:50:00Z",
+         {"model": "other/m", "status": "success", "error_status": None}),
+    ):
+        store.record_provider_benchmark(ProviderBenchmarkSample(
+            id=sample_id, created_at=created, **{**base, **changes},  # type: ignore[arg-type]
+        ))
+    rows = store.provider_account_refusal_samples(
+        cutoff="2026-11-20T16:00:00Z", per_route_limit=20, limit=10,
+    )
+    # A refused route's success comes back (it ends a streak); a never-refused
+    # route, BYOK, probes and samples before the cutoff do not.
+    assert [row.id for row in rows] == ["recovered", "new", "older"]
+    assert [row.id for row in store.provider_account_refusal_samples(
+        cutoff="2026-11-20T16:00:00Z", per_route_limit=2, limit=10,
+    )] == ["recovered", "new"]

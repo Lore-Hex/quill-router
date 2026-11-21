@@ -42,12 +42,14 @@ from trusted_router.synthetic.probes import (
 )
 from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
+    evaluate_account_refusals,
     evaluate_route_health,
     report_catalog_freshness,
     report_image_generation_failures,
     report_route_health,
     report_route_health_unevaluable,
     report_video_generation_failures,
+    unreported_account_refusals,
 )
 from trusted_router.types import ErrorType
 
@@ -60,6 +62,9 @@ _OPERATION_LIMITS_PER_MINUTE = {
     "samples": 60,
     "benchmark": 60,
     "route_health": 6,
+    # The every-pass account-refusal scope (one small read), beside the hourly
+    # sweep: its own slot, so it can never 429 the full sweep at the hour.
+    "account_refusals": 30,
     "remediate": 2,
     "run": 2,
 }
@@ -69,6 +74,7 @@ _OPERATION_SLOTS = {
     "samples": threading.BoundedSemaphore(2),
     "benchmark": threading.BoundedSemaphore(2),
     "route_health": threading.BoundedSemaphore(1),
+    "account_refusals": threading.BoundedSemaphore(1),
     "remediate": threading.BoundedSemaphore(1),
     "run": threading.BoundedSemaphore(1),
 }
@@ -568,8 +574,25 @@ def register(router: APIRouter) -> None:
     @router.post("/internal/synthetic/route-health")
     async def synthetic_route_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        slot = _admit_operation("route_health")
+        fast = request.query_params.get("scope") == "account_refusals"
+        slot = _admit_operation("account_refusals" if fast else "route_health")
         try:
+            if fast:
+                # Between hourly sweeps: only the account-refusal rule, from
+                # its own small read, so a refused provider account alerts
+                # within minutes. Analytics trouble is the full sweep's to
+                # report; here it only means no fast evidence this pass.
+                try:
+                    refusals = await run_in_threadpool(evaluate_account_refusals, STORE)
+                except Exception as exc:
+                    if not is_analytics_unavailable(exc):
+                        raise
+                    log_analytics_unavailable(log, "synthetic_account_refusals", exc)
+                    return {"data": {"flagged": [], "evaluated": False,
+                                     "reason": "analytics_unavailable"}}
+                await run_in_threadpool(report_route_health, unreported_account_refusals(refusals))
+                return {"data": {"flagged": [asdict(flag) for flag in refusals],
+                                 "evaluated": True, "scope": "account_refusals"}}
             await run_in_threadpool(report_catalog_freshness)
             try:
                 flags = await run_in_threadpool(evaluate_route_health, STORE)

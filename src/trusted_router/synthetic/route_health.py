@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -30,6 +31,33 @@ DEGRADATION_DIGEST_HOUR_UTC = 14
 _CONFIGURATION_ERROR_TYPES = frozenset({
     "provider_auth_config", "unsupported_route", "probe_config_error",
 })
+# A provider refusing OUR managed account (HTTP 401/403 on Credits traffic):
+# a revoked key, an exhausted plan allowance or billing, or withdrawn model
+# access. Configured-route probes reach one route only a few times a day, so
+# the six-probe streak below alerted on Maple's exhausted allowance about 8.5
+# hours after real traffic began failing (2026-11-20). Real Credits traffic
+# and probes both count here; BYOK samples never do, because a 403 there is
+# the customer's own key.
+ACCOUNT_REFUSAL_STATUSES = frozenset({401, 403})
+# provider_auth_config: probes; provider_auth_error: inline inference
+# (services/inference_errors.py); provider_error: other organic writers.
+ACCOUNT_REFUSAL_ERROR_TYPES = frozenset({
+    "provider_auth_config", "provider_auth_error", "provider_error",
+})
+ACCOUNT_REFUSAL_MIN_SAMPLES = 3
+# A streak qualifies when it spans this long, or when every one of a route's
+# newest ACCOUNT_REFUSAL_SATURATED samples is a refusal (a busy route refused
+# 20 times in a row is no burst, whatever the span).
+ACCOUNT_REFUSAL_MIN_SPAN = dt.timedelta(minutes=10)
+ACCOUNT_REFUSAL_SATURATED = 20
+ACCOUNT_REFUSAL_MAX_AGE = dt.timedelta(hours=1)
+# Total rows: one full per-route window for every candidate route, bounded.
+ACCOUNT_REFUSAL_READ_LIMIT_MAX = 50_000
+# The fast pass reports a refused route once per hour per process; the hourly
+# sweep keeps re-reporting on its own cadence while the refusal lasts.
+ACCOUNT_REFUSAL_FAST_COOLDOWN = dt.timedelta(hours=1)
+_FAST_REFUSAL_REPORTED: dict[tuple[str, str], dt.datetime] = {}
+_FAST_REFUSAL_LOCK = threading.Lock()
 # Same bound the sample write paths apply (probes._rotation_error_sample and
 # the internal benchmark ingest), re-applied here so an alert never carries
 # more than a stored sample could.
@@ -83,6 +111,9 @@ class RouteHealthFlag:
     # HTTP status of the newest failure, when the probe recorded one. Sustained
     # availability alerts carry this and the error class, never provider text.
     newest_error_status: int | None = None
+    # A configuration flag raised by the account-refusal rule: every sample in
+    # its streak was an HTTP 401/403 refusal of TR's managed account.
+    account_refusal: bool = False
 
 
 def evaluate_route_health(
@@ -118,11 +149,21 @@ def evaluate_route_health(
         route = (sample.provider, sample.model)
         if route in samples_by_route:
             samples_by_route[route].append(sample)
+    refusals_by_route = _account_refusals_by_route(store, route_set, now)
 
     flags: list[RouteHealthFlag] = []
     for provider, model in routes:
+        route_samples = samples_by_route[(provider, model)]
+        refusal = None if refusals_by_route is None else _account_refusal_flag(
+            provider, model,
+            _unique_samples(route_samples + refusals_by_route.get((provider, model), [])),
+            now, cutoff,
+        )
+        if refusal is not None:
+            flags.append(refusal)
+            continue
         configuration = _configuration_flag(
-            provider, model, samples_by_route[(provider, model)], now, cutoff, min_samples,
+            provider, model, route_samples, now, cutoff, min_samples,
         )
         if configuration is not None:
             flags.append(configuration)
@@ -365,6 +406,151 @@ def _configuration_flag(
     )
 
 
+def evaluate_account_refusals(
+    store: Store,
+    *,
+    routes: list[tuple[str, str]] | None = None,
+    now: dt.datetime | None = None,
+) -> list[RouteHealthFlag]:
+    """The account-refusal rule alone, from its own small read.
+
+    The synthetic worker runs this on every pass between the hourly full
+    sweeps, so a provider refusing TR's account alerts within minutes. Only
+    organic evidence is read here; the hourly sweep adds the probes.
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    if routes is None:
+        routes = [
+            (provider, model)
+            for provider, models in rotation_candidates().items()
+            for model in models
+        ]
+    route_set = set(routes)
+    by_route = _account_refusals_by_route(store, route_set, now, strict=True)
+    assert by_route is not None  # strict re-raises instead
+    cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
+    flags = []
+    for provider, model in sorted(by_route):
+        flag = _account_refusal_flag(provider, model, by_route[(provider, model)], now, cutoff)
+        if flag is not None:
+            flags.append(flag)
+    return flags
+
+
+def unreported_account_refusals(
+    flags: list[RouteHealthFlag], *, now: dt.datetime | None = None,
+) -> list[RouteHealthFlag]:
+    """The fast pass's flags not already reported within the cooldown.
+
+    Without this every pass (about every three minutes) re-emitted the same
+    refusal. A route that recovers and is refused again after the cooldown
+    alerts again.
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    fresh = []
+    with _FAST_REFUSAL_LOCK:
+        for flag in flags:
+            route = (flag.provider, flag.model)
+            last = _FAST_REFUSAL_REPORTED.get(route)
+            if last is not None and now - last < ACCOUNT_REFUSAL_FAST_COOLDOWN:
+                continue
+            _FAST_REFUSAL_REPORTED[route] = now
+            fresh.append(flag)
+    return fresh
+
+
+def _account_refusals_by_route(
+    store: Store, routes: set[tuple[str, str]], now: dt.datetime, *, strict: bool = False,
+) -> dict[tuple[str, str], list[ProviderBenchmarkSample]] | None:
+    """Newest Credits samples (organic and probe) of each recently refused route.
+
+    In the hourly sweep a failed read only loses the fast path; the synthetic
+    configured-route rule still alerts on its own evidence. The every-pass
+    scope has no other evidence, so there (strict) the error propagates and
+    the endpoint reports the pass as not evaluated.
+    """
+    cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
+    try:
+        samples = store.provider_account_refusal_samples(
+            cutoff=cutoff.isoformat().replace("+00:00", "Z"),
+            per_route_limit=ACCOUNT_REFUSAL_SATURATED,
+            limit=min(ACCOUNT_REFUSAL_READ_LIMIT_MAX,
+                      ACCOUNT_REFUSAL_SATURATED * max(1, len(routes))),
+        )
+    except Exception:
+        if strict:
+            raise
+        logger.warning("route_health.account_refusal_read_failed", exc_info=True)
+        # None, not {}: without this read the rule has no recovery evidence,
+        # so the sweep skips it rather than judge refusals from probes alone.
+        return None
+    by_route: dict[tuple[str, str], list[ProviderBenchmarkSample]] = {}
+    for sample in samples:
+        route = (sample.provider, sample.model)
+        if route in routes:
+            by_route.setdefault(route, []).append(sample)
+    return by_route
+
+
+def _unique_samples(samples: list[ProviderBenchmarkSample]) -> list[ProviderBenchmarkSample]:
+    # The refusal read and the synthetic window both carry probe samples.
+    seen: set[str] = set()
+    unique = []
+    for sample in samples:
+        if sample.id not in seen:
+            seen.add(sample.id)
+            unique.append(sample)
+    return unique
+
+
+def _account_refusal_flag(
+    provider: str,
+    model: str,
+    samples: list[ProviderBenchmarkSample],
+    now: dt.datetime,
+    cutoff: dt.datetime,
+) -> RouteHealthFlag | None:
+    """A fresh streak of the provider refusing TR's managed account."""
+    # The rule's own window, whatever the caller's: the organic read covers
+    # only this long, so older probe evidence must not bridge an organic
+    # recovery the read never returned.
+    cutoff = max(cutoff, now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN)
+    recent = sorted(
+        (
+            (created, sample) for sample in samples
+            if sample.usage_type == "Credits"
+            and (created := _parse_created_at(sample.created_at)) is not None
+            and cutoff <= created <= now
+        ),
+        key=lambda pair: pair[0], reverse=True,
+    )
+    streak = []
+    for pair in recent:
+        sample = pair[1]
+        if (
+            sample.status not in {"unsupported", "error"}
+            or sample.error_status not in ACCOUNT_REFUSAL_STATUSES
+            or sample.error_type not in ACCOUNT_REFUSAL_ERROR_TYPES
+        ):
+            break
+        streak.append(pair)
+    if (
+        len(streak) < ACCOUNT_REFUSAL_MIN_SAMPLES
+        or now - streak[0][0] > ACCOUNT_REFUSAL_MAX_AGE
+        or (
+            streak[0][0] - streak[-1][0] < ACCOUNT_REFUSAL_MIN_SPAN
+            and len(streak) < ACCOUNT_REFUSAL_SATURATED
+        )
+    ):
+        return None
+    return RouteHealthFlag(
+        provider=provider, model=model, samples=len(streak), failures=len(streak),
+        failure_rate=1.0, newest_error_type="provider_auth_config",
+        newest_error_message=_alert_error_message(streak[0][1].error_message),
+        kind="configuration", account_refusal=True,
+    )
+
+
 def _alert_error_message(message: str | None) -> str | None:
     # Configuration failures are probe/auth/route rejections, and the reason is
     # only in the provider's message (Sentry QUILL-ROUTER-FF carried just
@@ -507,10 +693,23 @@ def report_route_health(
             from trusted_router.synthetic.alerts import ops_alert
 
             latest = _alert_error_message(flag.newest_error_message)
+            if flag.account_refusal:
+                # Name the account, not our configuration: the provider refused
+                # TR's own key, and the fix is on the provider's side.
+                summary = (
+                    f"route-configuration: {flag.provider} refused TR's account for "
+                    f"{flag.model} ({flag.failures} consecutive HTTP 401/403): check the "
+                    "provider account for a revoked key, an exhausted plan allowance or "
+                    "billing, or withdrawn model access"
+                )
+            else:
+                summary = (
+                    f"route-configuration: {flag.provider}/{flag.model} failed "
+                    f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
+                    f"({flag.newest_error_type})"
+                )
             ops_alert(
-                f"route-configuration: {flag.provider}/{flag.model} failed "
-                f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
-                f"({flag.newest_error_type}); excluded from provider uptime, not operations"
+                summary + "; excluded from provider uptime, not operations"
                 + (f"; latest: {latest}" if latest else ""),
                 fingerprint=["route-configuration", flag.provider, flag.model],
                 tags={"route_provider": flag.provider, "route_model": flag.model},

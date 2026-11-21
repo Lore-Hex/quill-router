@@ -7776,6 +7776,59 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(list_samples)
 
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        def list_refusals(conn: Any) -> list[ProviderBenchmarkSample]:
+            # Same bounded window as provider_route_benchmark_samples: kind plus
+            # a range on indexed_at, the leading columns of tr_entities_recent.
+            # Probe samples only here. This backend records a successful organic
+            # request as a generation row, not a provider_benchmark row, so its
+            # organic recoveries are invisible to this read; counting organic
+            # refusals without them would alert on a provider that already
+            # recovered. Probes carry both outcomes. A route with one 401/403
+            # in the window returns its newest probe Credits samples whatever
+            # their outcome; the per-route cap keeps a busy route from
+            # crowding out a quiet one.
+            rows = conn.execute(
+                "WITH organic AS ("
+                "SELECT body, id, indexed_at FROM tr_entities "
+                "WHERE kind = 'provider_benchmark' "
+                "AND indexed_at >= %s::timestamptz "
+                "AND body ->> 'source' = 'synthetic' "
+                "AND body ->> 'usage_type' = 'Credits'"
+                "), refused AS ("
+                "SELECT DISTINCT body ->> 'provider' AS provider, body ->> 'model' AS model "
+                "FROM organic WHERE body ->> 'error_status' IN ('401', '403')"
+                "), ranked AS ("
+                "SELECT organic.body, organic.id, organic.indexed_at, ROW_NUMBER() OVER ("
+                "PARTITION BY organic.body ->> 'provider', organic.body ->> 'model' "
+                "ORDER BY organic.indexed_at DESC, organic.id DESC) AS route_rank "
+                "FROM organic JOIN refused "
+                "ON refused.provider = organic.body ->> 'provider' "
+                "AND refused.model = organic.body ->> 'model'"
+                ") SELECT body FROM ranked WHERE route_rank <= %s "
+                "ORDER BY indexed_at DESC, id DESC LIMIT %s",
+                (cutoff, max(1, per_route_limit), max(1, limit)),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            samples: list[ProviderBenchmarkSample] = []
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                samples.append(
+                    ProviderBenchmarkSample(
+                        **{key: value for key, value in data.items() if key in known}
+                    )
+                )
+            return samples
+
+        return self._run_transaction(list_refusals)
+
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         def record(conn: Any) -> None:
             self._write_indexed_entity_tx(

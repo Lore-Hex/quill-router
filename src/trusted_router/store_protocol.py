@@ -1088,6 +1088,13 @@ class Store(Protocol):
         per_route_limit: int,
         limit: int,
     ) -> list[ProviderBenchmarkSample]: ...
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]: ...
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None: ...
     def synthetic_probe_samples(
         self,

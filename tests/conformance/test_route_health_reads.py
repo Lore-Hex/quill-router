@@ -276,3 +276,44 @@ def test_legacy_benchmark_rows_join_the_window_after_the_backfill(pg_store: Any)
         cursor = examined[-1]
 
     assert window_ids() == ["legacy"]
+
+
+def test_account_refusal_samples_are_recent_organic_credits_401_403(pg_store: Any) -> None:
+    now = dt.datetime.now(dt.UTC)
+
+    def record(sample_id: str, minutes: int, **changes: Any) -> None:
+        base = make_benchmark_sample(
+            sample_id=sample_id, provider="maple", model="maple/m", status="error",
+            created_at=_iso(now - dt.timedelta(minutes=minutes)),
+        )
+        fields = {"source": "organic", "usage_type": "Credits", "error_status": 403,
+                  "error_type": "provider_error"}
+        fields.update(changes)
+        pg_store.record_provider_benchmark(dataclasses.replace(base, **fields))
+
+    record("r403", 5)
+    record("r401", 10, error_status=401)
+    record("old", 200)
+    record("byok", 5, usage_type="BYOK")
+    record("probe-ok", 3, source="synthetic", status="success", error_status=None,
+           error_type=None)
+    record("throughput", 5, source="synthetic_throughput")
+    record("outage", 7, error_status=502)
+    record("recovered", 1, status="success", error_status=None, error_type=None)
+    record("never-refused", 1, model="other/m", status="success", error_status=None,
+           error_type=None)
+
+    def window(per_route_limit: int) -> list[str]:
+        rows = pg_store.provider_account_refusal_samples(
+            cutoff=_iso(now - dt.timedelta(minutes=70)), per_route_limit=per_route_limit,
+            limit=100,
+        )
+        return [row.id for row in rows]
+
+    # Probe samples only: this backend records organic successes as
+    # generation rows, so organic refusals alone would never see a recovery.
+    # Here the organic rows stay out, as do BYOK, other sources and old rows.
+    assert window(20) == []
+    record("probe-403", 9, source="synthetic", error_type="provider_auth_config")
+    assert window(20) == ["probe-ok", "probe-403"]
+    assert window(1) == ["probe-ok"]
