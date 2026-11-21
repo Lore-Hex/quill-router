@@ -413,9 +413,13 @@ same lock held while the three secondary ramps, the synthetic-monitor job
 deploy, and the opt-in trust-job re-image converge, and releases it only after
 that work finishes or fails. Thus another
 cloud's rollout cannot interleave in the middle of GCP convergence.
-`verify-cloud-complete` still gates full-cloud convergence after the follow-on;
-the public-surface companion remains outside the mutex and starts only after
-the locked convergence job finishes.
+`verify-cloud-complete` still gates full-cloud convergence after the follow-on.
+The public-surface companion starts only after the locked convergence job
+finishes and also runs **inside** the gcp reservation: it imports the same
+fence, `public_surface.sh` asserts it, and `finalize-cloud` releases the lease
+only after the companion finishes. It cannot move outside the lease, because it
+changes the load balancer behind `trustedrouter.com`
+([why](design/per-component-leases.md#the-public-surface-step)).
 
 ### Holding regional traffic during an incident
 
