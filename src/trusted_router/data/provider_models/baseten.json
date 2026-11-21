@@ -2,9 +2,9 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-11-20T15:28:38Z",
+  "generated_at": "2026-11-21T01:07:44Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 33,
+  "model_count": 35,
   "models": [
     {
       "id": "reflection/beam-1.0",
@@ -1083,6 +1083,56 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "bison-1",
+      "title": "decision-models/baseten-bison-latest",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decision-models/baseten-bison-latest",
+      "upstream_id": "decision-models/baseten-bison-latest",
+      "context_length": 32768,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "routable": false,
+      "routable_reason": "systemone-adapter-not-implemented",
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "groundhog-1",
+      "title": "decision-models/baseten-groundhog-latest",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decision-models/baseten-groundhog-latest",
+      "upstream_id": "decision-models/baseten-groundhog-latest",
+      "context_length": 16384,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "routable": false,
+      "routable_reason": "systemone-adapter-not-implemented",
+      "input_token_price_per_m": 35000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
     }
   ]
 }

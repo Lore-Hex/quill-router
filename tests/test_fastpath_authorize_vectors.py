@@ -29,6 +29,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
@@ -1157,17 +1158,19 @@ def test_hosted_decide_vectors_are_the_real_app_answers():
         assert cases[name]["expect"]["python"]["async_shape"] == "B"
 
 
-def test_hosted_decide_vectors_spell_no_schema_change_carrier():
-    """The repository-wide carrier scan reads this golden as text. A ticket's
-    base64 can spell one of its tokens by chance; say so here, where the
-    generator is, rather than in an unrelated conformance failure."""
+@pytest.mark.parametrize(
+    "golden", sorted(path.name for path in (ROOT / "fastpath/testdata").glob("*.json")),
+)
+def test_no_golden_spells_a_schema_change_carrier(golden):
+    """Every generated golden, not only the hosted one: any of them can hold a
+    ticket or digest whose text spells a token of the carrier scan by chance."""
     from tests.conformance.spanner_schema_source import ddl_transport_matches
 
-    text = (ROOT / "fastpath/testdata/authorize_hosted_decide_v1.json").read_text()
+    text = (ROOT / "fastpath/testdata" / golden).read_text()
     spelled = [text.count("\n", 0, match.start()) + 1 for match in ddl_transport_matches(text)]
     assert not spelled, (
-        f"lines {spelled} of the hosted golden spell a carrier token inside generated text: "
-        "change that case's nonce in scripts/fastpath/authorize_vectors.py and regenerate"
+        f"lines {spelled} of fastpath/testdata/{golden} spell a carrier token inside generated "
+        "text: change an input of that case in its generator and regenerate"
     )
 
 

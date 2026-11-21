@@ -129,11 +129,87 @@ rules keep the race winnable without ever pushing an untested tree:
   stay still for one more whole CI run. On 2026-11-19 (about 9 hours) and
   11-20 (runs 44782888255 and 44800370604) every round lost. Publication now
   needs one quiet CI-length window after any merge.
+* **Keep the CI short on a fresh main.** A data-only snapshot CI run takes
+  13-16 minutes. Snapshots carried onto a main commit merged minutes earlier
+  ran 45-60 minutes, because data-only skips need the base's own CI run to
+  have succeeded. Without that success, ci.yml compared the snapshot with an
+  older green commit and ran the path-scoped matrix: run 44823279053 lost six
+  rounds this way on 11-20. Now, when a `scope=paths` dispatch sits on a base
+  whose push run is still running, ci.yml takes the data-only skips, and a
+  `base-ci` job waits for that push run to succeed. The run concludes success
+  only if the push run does. The quiet window a refresh needs shrinks from
+  about an hour to about the base's own CI time.
 
 Rounds are bounded: at most six exact-SHA CI dispatches, and no new round
 after 150 minutes of publication. A run that runs out of rounds queues a fresh
 recomputation and ends green without validating, which the stale alert counts
 as no publication.
+
+## Provider quarantine
+
+From 11-14 to 11-20, nearly every failed refresh had the same cause. One
+provider's fresh data broke a catalog contract test in the snapshot's
+exact-SHA CI, and that single failure held back every provider's prices. The
+cases:
+
+* GMI listing Gemini Carbon (`test_gemini_carbon`).
+* Tinker's Inkling hold (`test_thinkingmachines_pricing`).
+* Cloudflare, Regolo, Databricks and SambaNova manifests.
+
+When the failure is attributable, the workflow now isolates that provider
+instead of failing everything:
+
+1. **Diagnose.** "Quarantine providers that failed snapshot CI" runs only when
+   the exact-SHA run failed after its one rerun. It works as follows:
+   * Resets the tree to the snapshot commit CI ran.
+   * Downloads that run's per-shard failure records (`test-failures-*`).
+   * Reproduces the failed tests locally (`scripts/pricing/quarantine.py`).
+     The probes run offline: the provider credentials are stripped from their
+     environment and storage is in memory.
+   * Searches for the fewest changed providers whose committed state, restored
+     the same way a failed fetch restores it, makes those tests pass.
+2. **Quarantine only on a clean attribution.** Three conditions must all hold:
+   * The tests fail on the snapshot as published.
+   * They pass with every changed provider restored.
+   * They pass with only the chosen providers (at most three) restored.
+
+   Each of these cases quarantines nothing, and the failure stands as before:
+   * The failure does not reproduce (a flaky test).
+   * No provider explains it, as with the 11-20 Hy3 fixture bug.
+   * The failure is a collection error.
+   * More than three providers would be needed.
+   * The 40-probe budget runs out.
+3. **Hold.** The quarantined providers are saved in the run's
+   `price-quarantine` artifact. "Load provider quarantine" in every later run
+   reads the newest one and sets `TR_PRICE_QUARANTINE`. While the quarantine
+   lasts, `refresh.py` treats a quarantined provider exactly like a failed
+   fetch:
+   * It keeps the committed manifest, parser and snapshot endpoints.
+   * It lists the provider under "Held for price review", which opens the
+     held-price issue.
+   * The provider counts toward the majority-failure rule.
+
+   The run that quarantined dispatches a recompute. That new snapshot goes
+   through the whole exact-SHA CI gate. Nothing unverified is published, and
+   the held provider keeps its last published prices.
+4. **Expire.** A quarantine lasts 12 hours. After that the provider is
+   refreshed again. If its data still fails, the next failed run quarantines
+   it again.
+
+Alerting stays loud:
+* The run that quarantines still fails, so the refresh-failed alert fires
+  once per new quarantine.
+* Each quarantined provider gets a `Provider quarantined from price refresh`
+  error annotation.
+* The held-price issue names it ("refresh failed: quarantined: ...") until a
+  person closes the issue.
+* The stale alert still measures publication.
+
+A quarantine lifts by itself within 12 hours of being set. To lift it sooner,
+for example after fixing the data or the test, delete the `price-quarantine`
+artifacts of the last day's `refresh-prices.yml` runs. A run loads the newest
+artifact it finds from the last 24 hours, so deleting only the newest one is
+not enough.
 
 ## Host observer token
 

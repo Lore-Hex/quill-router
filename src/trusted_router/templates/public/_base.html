@@ -65,25 +65,31 @@
       </div>
     </section>
     {% else %}
-    <section class="public-hero marketing-hero">
-      <div>
-        <div class="kicker">OpenAI compatible API · Attested · Public status</div>
-        <h1>{{ heading }}</h1>
+    {# Inner pages: a short header as tall as its text. Brand-kit icon by page
+       family, the page sentence (phones show the shorter one when the page has
+       it; the full sentence stays in the page), the two hero buttons, then the
+       top two rows of the Band. page_headers.py holds the icons and short lines. #}
+    {% set header_url = canonical_url|default(site_url, true) %}
+    {% set short_line %}{% block header_short scoped %}{{ page_header_short_line(header_url) or "" }}{% endblock %}{% endset %}
+    {% set short_line = short_line|trim %}
+    {# A long title shows a shorter one on phones (CSS reads data-short); the
+       h1 text itself is always the full title. #}
+    {% set short_title = page_header_short_title(header_url) %}
+    <section class="public-hero marketing-hero page-header" data-title-size="{{ page_header_title_size(heading) }}" data-phone-title-size="{{ page_header_title_size(short_title or heading, true) }}">
+      <div class="page-header-copy">
+        <div class="page-header-title">{{ page_header_icon(header_url) }}<h1{% if short_title %} data-short="{{ short_title }}"{% endif %}><span class="title-full">{{ heading }}</span></h1></div>
+        {% if short_line %}
+        <p class="lead"><span class="lead-full">{{ description }}</span><span class="lead-short">{{ short_line }}</span></p>
+        {% else %}
         <p class="lead">{{ description }}</p>
+        {% endif %}
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
-          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway <span aria-hidden="true">→</span></a>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
         </div>
         {# Legal, careers and error pages empty this block: no offer line there. #}
         {% block hero_free_note %}<p class="hero-free-note">{{ free_tokens_line() }}</p>{% endblock %}
       </div>
-      {% block hero_aside %}
-      <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
-        <div><strong>One</strong><span>base URL to migrate</span></div>
-        <div><strong>600+ models</strong><span>in one catalog</span></div>
-        <div><strong>0</strong><span>prompt or output logs. Always.</span></div>
-      </div>
-      {% endblock %}
     </section>
     {% endif %}
     {% endblock %}

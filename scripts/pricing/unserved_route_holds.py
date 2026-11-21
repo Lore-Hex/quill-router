@@ -37,6 +37,7 @@ carries them forward until this step lifts them.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from collections.abc import Iterable
@@ -154,8 +155,15 @@ def apply_unserved_route_holds(
     *,
     manifest_dir: Path = MANIFEST_DIR,
     now: datetime | None = None,
+    frozen: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """Lift expired holds, then hold the evidenced routes. Returns notes."""
+    """Lift expired holds, then hold the evidenced routes. Returns notes.
+
+    ``frozen`` names manifests (by file stem) this step must leave byte for
+    byte: a quarantined provider's committed manifest (scripts/pricing/
+    quarantine.py). Lifting an expired hold there would re-enable a route
+    the quarantine is keeping exactly as published.
+    """
     now = now or datetime.now(UTC)
     notes: list[str] = []
     by_provider: dict[str, set[str]] = {}
@@ -170,8 +178,17 @@ def apply_unserved_route_holds(
             notes.append(f"{provider}: no provider manifest; not held")
 
     manifests: list[tuple[Path, dict[str, Any], bool]] = []
+    frozen_held = 0
     for path in sorted(manifest_dir.glob("*.json")):
         raw = _load(path)
+        if path.stem in frozen:
+            notes.append(f"{path.stem}: quarantined; manifest left as published")
+            # Its holds still count against the global route cap.
+            frozen_held += sum(
+                1 for row in (raw or {}).get("models", [])
+                if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+            )
+            continue
         if raw is None:
             continue
         lifted = _lift_expired(raw["models"], now=now)
@@ -215,7 +232,7 @@ def apply_unserved_route_holds(
     # Held routes stop being probed and drop out of the evidence, so the
     # route cap must count the holds already in place: otherwise it bounds
     # only each hourly run and a rolling problem accumulates without limit.
-    held_total = sum(
+    held_total = frozen_held + sum(
         1
         for _, raw, _ in manifests
         for row in raw["models"]
@@ -241,6 +258,22 @@ def apply_unserved_route_holds(
     return notes
 
 
+def quarantined_manifests() -> frozenset[str]:
+    """Manifest stems of the providers quarantined for this run."""
+    from scripts.pricing.quarantine import quarantined_providers
+
+    stems: set[str] = set()
+    for slug in quarantined_providers():
+        try:
+            module = importlib.import_module(f"scripts.pricing.providers.{slug}")
+        except ImportError:
+            stems.add(slug)
+            continue
+        manifest = getattr(module, "MANIFEST_PATH", None)
+        stems.add(Path(manifest).stem if manifest is not None else slug)
+    return frozenset(stems)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", default=SOURCE)
@@ -257,7 +290,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - any failure means no evidence, never "all healthy"
         print(f"unserved-route evidence unavailable ({type(exc).__name__})", file=sys.stderr)
         evidence = None
-    for note in apply_unserved_route_holds(evidence, manifest_dir=args.manifest_dir, now=now):
+    frozen = quarantined_manifests()
+    for note in apply_unserved_route_holds(evidence, manifest_dir=args.manifest_dir, now=now, frozen=frozen):
         print(note)
     return 0
 

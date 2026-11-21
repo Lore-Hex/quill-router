@@ -2496,8 +2496,16 @@ def test_hosted_decide_policy_vectors(case):
 
 def test_hosted_decide_policy_dormancy_and_current_vectors():
     deployed = _rendered_rollout_env()
-    assert deployed["TR_FASTPATH_EDGE_HOSTED_DECIDE"] == "off"
+    # The deployed stage: nodes answer hosted decide. The policy carries
+    # Python's decide support and the permission to answer.
+    assert deployed["TR_FASTPATH_EDGE_HOSTED_DECIDE"] == "on"
     assert deployed["TR_ASYNC_SETTLE_DECIDE_ROUTE"] == "true"
+    staged = VECTORS.policy(VECTORS.fixture_settings(
+        fastpath_edge_hosted_decide=deployed["TR_FASTPATH_EDGE_HOSTED_DECIDE"],
+        async_settle_decide_route=deployed["TR_ASYNC_SETTLE_DECIDE_ROUTE"] == "true",
+    ))
+    assert staged.async_settle.decide_route is True
+    assert staged.fastpath_edge_hosted_decide is True
     assert VECTORS.OUTPUT_HOSTED.read_text() == VECTORS.render_hosted()
     # The committed pre-member body is the baseline, with production's
     # decide setting on but the new switch off. No new bytes reach old nodes.

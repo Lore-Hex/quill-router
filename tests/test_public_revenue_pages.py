@@ -529,7 +529,6 @@ def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
         "TrustedRouter stores billing and route metadata, never prompt/output content."
         in response.text
     )
-    assert "OpenAI compatible API" in response.text
     legacy = client.get("/docs/fusion", follow_redirects=False)
     assert legacy.status_code == 301
     assert legacy.headers["location"] == "/docs/synth"
@@ -948,7 +947,7 @@ def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -
 
     assert docs.status_code == providers.status_code == agent_setup.status_code == 200
     assert "<title>TrustedRouter API Docs: Quickstart and SDKs</title>" in docs.text
-    assert "<h1>TrustedRouter API Docs: Quickstart and SDKs</h1>" in docs.text
+    assert '<span class="title-full">TrustedRouter API Docs: Quickstart and SDKs</span></h1>' in docs.text
     assert '"min_privacy": "confidential"' in docs.text
     assert "<code>e2e</code> and <code>e2ee</code>" in docs.text
     assert "Confidential requires all three on the same route" in docs.text
