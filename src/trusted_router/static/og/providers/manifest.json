@@ -307,10 +307,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
