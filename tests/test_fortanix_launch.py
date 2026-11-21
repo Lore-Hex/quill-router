@@ -7,7 +7,6 @@ from bs4 import BeautifulSoup
 from fastapi import HTTPException
 from PIL import Image
 
-from tests.lifecycle_clock import pin_request_clock_before
 from trusted_router import fortanix_launch
 from trusted_router.catalog import (
     MODEL_ENDPOINTS,
@@ -39,7 +38,6 @@ from trusted_router.fortanix_launch import (
 )
 from trusted_router.internal_model_access import require_internal_model_key
 from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
-from trusted_router.provider_lifecycle import FORTANIX_GLM_53_FLASH_SUSPENSION_AT
 from trusted_router.provider_locations import (
     PROVIDER_INFERENCE_LOCATIONS,
     provider_inference_locations,
@@ -72,14 +70,8 @@ def test_deadline_removes_public_promotion_without_changing_route(client, monkey
     assert launch_tariff_matches(MODELS[MODEL_ID], endpoints_for_model(MODEL_ID)[0])
 
 
-# Fortanix suspends this endpoint from 2026-11-27 (provider_lifecycle
-# FORTANIX_GLM_53_FLASH_SUSPENSION_AT) and is expected back around early
-# January 2027. These tests cover the route while it is live; its suspension is
-# covered in tests/test_fortanix_suspension.py. Remove this fixture with the
-# suspension entry when the route is re-admitted.
-@pytest.fixture(autouse=True)
-def _while_fortanix_endpoint_is_live(monkeypatch: pytest.MonkeyPatch) -> None:
-    pin_request_clock_before(monkeypatch, FORTANIX_GLM_53_FLASH_SUSPENSION_AT)
+# Live-route tests; see tests/fortanix_live.py for the 2026-11-27 suspension.
+pytestmark = pytest.mark.usefixtures("fortanix_route_live")
 
 
 def test_public_route_is_exact_zero_supplier_cost_at_existing_customer_floor():

@@ -7,7 +7,6 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from tests.lifecycle_clock import pin_request_clock_before
 from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
@@ -19,7 +18,6 @@ from trusted_router.config import Settings
 from trusted_router.custom_model_rules import require_custom_model_base_model
 from trusted_router.internal_model_access import require_internal_model_key
 from trusted_router.pricing import _customer_price
-from trusted_router.provider_lifecycle import FORTANIX_GLM_53_FLASH_SUSPENSION_AT
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.routing_candidates import (
     auto_candidate_models,
@@ -34,14 +32,8 @@ MODEL = "trustedrouter/fortanix-test"
 KEY = "sk-tr-internal-fortanix-fixture"
 
 
-# Fortanix suspends this endpoint from 2026-11-27 (provider_lifecycle
-# FORTANIX_GLM_53_FLASH_SUSPENSION_AT) and is expected back around early
-# January 2027. These tests cover the route while it is live; its suspension is
-# covered in tests/test_fortanix_suspension.py. Remove this fixture with the
-# suspension entry when the route is re-admitted.
-@pytest.fixture(autouse=True)
-def _while_fortanix_endpoint_is_live(monkeypatch: pytest.MonkeyPatch) -> None:
-    pin_request_clock_before(monkeypatch, FORTANIX_GLM_53_FLASH_SUSPENSION_AT)
+# Live-route tests; see tests/fortanix_live.py for the 2026-11-27 suspension.
+pytestmark = pytest.mark.usefixtures("fortanix_route_live")
 
 
 def test_reference_tariff_native_id_and_conservative_privacy() -> None:

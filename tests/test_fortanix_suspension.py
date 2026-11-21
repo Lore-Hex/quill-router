@@ -1,8 +1,8 @@
 """Fortanix's temporary GLM-5.3-Flash suspension from 2026-11-27 00:00 UTC.
 
 Fortanix's 2026-11-21 notice suspends its GLM-5.3-Flash H200/TDX endpoint for
-4-6 weeks while it moves to B200 hardware. The routes stay registered and the
-request-time lifecycle filter takes them out of routing at the cutover; delete
+4-6 weeks while it moves to B200 hardware. The catalog leaves the routes out when built after
+the cutover and the request-time filter drops them from a catalog built before; delete
 the _Retirement entry (and this module) when Fortanix returns.
 """
 
@@ -13,7 +13,9 @@ from datetime import timedelta
 import pytest
 from fastapi import HTTPException
 
-from trusted_router.catalog import MODEL_ENDPOINTS, endpoints_for_model
+from tests.catalog_vehicles import registry_endpoints
+from tests.lifecycle_clock import catalog_predates
+from trusted_router.catalog import endpoints_for_model
 from trusted_router.config import Settings
 from trusted_router.fortanix_launch import (
     COMPARISON_MODEL_ID,
@@ -68,17 +70,25 @@ def test_suspension_is_scoped_to_fortanix() -> None:
 
 
 @pytest.mark.parametrize("model_id", SUSPENDED)
-def test_route_stays_registered_but_is_routable_only_before_the_cutover(
+def test_registry_carries_the_route_only_if_built_before_the_cutover(model_id: str) -> None:
+    # Like other hand-registered routes, the import-time catalog honors it.
+    endpoint_id = f"{model_id}@fortanix/prepaid"
+    assert (endpoint_id in registry_endpoints()) is catalog_predates(_AT)
+
+
+@pytest.mark.usefixtures("fortanix_route_live")
+@pytest.mark.parametrize("model_id", SUSPENDED)
+def test_route_is_served_only_before_the_cutover(
     monkeypatch: pytest.MonkeyPatch, model_id: str
 ) -> None:
-    # Kept in the catalog so lifting the suspension is deleting one entry.
-    assert f"{model_id}@fortanix/prepaid" in MODEL_ENDPOINTS
+    # A process built before the cutover still drops the route at request time.
     _pin(monkeypatch, _BEFORE)
     assert [endpoint.provider for endpoint in endpoints_for_model(model_id)] == ["fortanix"]
     _pin(monkeypatch, _AT)
     assert endpoints_for_model(model_id) == []
 
 
+@pytest.mark.usefixtures("fortanix_route_live")
 def test_public_model_has_no_route_during_the_suspension(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(environment="test")
     _pin(monkeypatch, _BEFORE)
@@ -90,6 +100,7 @@ def test_public_model_has_no_route_during_the_suspension(monkeypatch: pytest.Mon
     assert refused.value.status_code == 400
 
 
+@pytest.mark.usefixtures("fortanix_route_live")
 def test_launch_offer_turns_off_at_the_cutover(monkeypatch: pytest.MonkeyPatch) -> None:
     _pin(monkeypatch, _BEFORE)
     assert fortanix_launch_offer()
@@ -97,6 +108,7 @@ def test_launch_offer_turns_off_at_the_cutover(monkeypatch: pytest.MonkeyPatch) 
     assert not fortanix_launch_offer()
 
 
+@pytest.mark.usefixtures("fortanix_route_live")
 def test_other_glm_53_flash_routes_are_unaffected(monkeypatch: pytest.MonkeyPatch) -> None:
     _pin(monkeypatch, _BEFORE)
     before = {endpoint.id for endpoint in endpoints_for_model(COMPARISON_MODEL_ID)}
