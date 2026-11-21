@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-21T07:28:41Z",
+  "generated_at": "2026-11-21T09:28:04Z",
   "model_count": 188,
   "models": [
     {
@@ -5403,7 +5403,7 @@
       "status": 1,
       "created": 1794812497,
       "context_length": 1000000,
-      "max_output_tokens": 131000,
+      "max_output_tokens": 262000,
       "input_token_price_per_m": 14130,
       "output_token_price_per_m": 42400,
       "cached_input_token_price_per_m": 710
