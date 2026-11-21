@@ -271,15 +271,21 @@ The Observability page (`/console/activity`) shows tags in three places:
 - Request list: each request's tags as `key: value` chips. Clicking a chip
   filters by that tag.
 - Tags panel, filter: a key and a value picked from the keys seen in the
-  selected range and that key's most used values. The filter narrows the
-  request list and the breakdown. It does not narrow the usage chart.
+  selected range and that key's most used values, or a value typed in when
+  the list does not hold it. The filter narrows the request list and the
+  breakdown. It does not narrow the usage chart.
 - Tags panel, breakdown: for one key and the selected range, one row per value
-  with requests, credit cost, tokens and median latency, ordered by cost. The
-  50 most expensive values keep a row, the rest are summed into `other`, and
-  requests without the key are shown as `untagged`.
+  with requests, credit cost, tokens and median generation time, ordered by
+  cost. The 50 most expensive values keep a row, the rest are summed into
+  `other`, and requests without the key are shown as `untagged`.
 
 A workspace with no tags in the range sees a short explanation and a link to
 `/docs/tagging` instead of an empty table.
+
+The panel follows the range of the usage panel: it reads that panel's
+`data-usage-range` when it starts and then its `activity:range-change` event.
+A filter is kept across range changes. A range with no request for it says so
+and keeps the filter in view; only the viewer clears it.
 
 The page reads two endpoints, both session-authorized exactly like the page's
 other JSON endpoints and both scoped to the session's workspace:
@@ -291,18 +297,71 @@ other JSON endpoints and both scoped to the session's workspace:
 
 Reads are computed in ClickHouse from `activity_generations FINAL` over every
 row of the tenant since the start of the range, so they are totals and not a
-sample: one pass for the keys, one for a key's values, and two for a breakdown
-(rank the values, then total them). They need no schema change, rollup or
-grant. The in-memory store computes the same answers in Python, and
-`tests/test_activity_tags.py` holds the two to what ClickHouse returned for
-the same rows. The median is `quantileExactWeighted(0.5)`, which is exact and
-whose memory grows with the number of distinct latencies, not with the number
-of requests.
+sample. They need no schema change, rollup or grant. Each read keeps a bounded
+amount of state, however many rows, values or generation times the range has:
 
-A breakdown has to rank every value of the key before it can keep 50, so a
-key with millions of distinct values in the range can exceed the reader's
-memory limit. The panel then reports that it could not load; no partial totals
-are shown.
+| Read | State it keeps |
+| --- | --- |
+| keys | a `topK` sketch with 10,000 counters |
+| one key's values | a `topK` sketch with 5,000 counters |
+| cardinality | one fixed-size distinct-count sketch, and at most 101 usage types |
+| ranking | one group per distinct value, keyed by two 64-bit hashes of the value, not by its text |
+| names | the text of the at most 50 values that keep a row |
+| histogram | at most 52 groups, each with the page's bounded elapsed-time histogram |
+
+The bounds have three visible consequences:
+
+- More keys or values than a sketch counts exactly. The list is then the most
+  frequent ones, with counts that can be too high, and the panel says so. A
+  value the list leaves out can be typed.
+- Too many values to break down. The ranking keeps one small group per
+  distinct value, so it runs only when the cardinality read finds at most
+  500,000 of them. Past that the breakdown is not attempted: the panel says
+  the key has too many distinct values and offers another key or a shorter
+  range. Such a key is an identifier, not a dimension to allocate cost by,
+  and its values can still be filtered by. When the page did not ask for a
+  key, the three most used keys are tried in turn, so a request id on every
+  request does not make the first view a refusal.
+- Medians. The median is generation time as the server measured it
+  (`elapsed_milliseconds`), not client-observed latency. It has the definition
+  of the reliability panel's server median and is computed by the same code
+  (`elapsed_histogram_columns`, `settle_elapsed_median`): the middle value, or
+  the floor of the mean of the two middle values, read from a histogram of
+  1,024 ms slots in which only a group's middle slots are counted value by
+  value. A breakdown keeps one histogram for each of its groups, and 52 full
+  histograms of 65,536 slots ran the reader out of memory when measured, so
+  the tag histogram counts every generation time of 4,194,304 ms (about 70
+  minutes) or more in its open-ended last slot: at most 4,097 slots a group.
+  A group whose median is that long is shown without one. The reliability
+  panel's own ceiling is about 18.6 hours.
+
+Totals and medians of one breakdown come from one statement, so they describe
+one snapshot. Values equal in both cost and requests are ordered by a hash in
+ClickHouse and by text in memory, so the two can keep different ones of them
+at the cut of 50.
+
+The in-memory store computes the same answers in Python.
+`tests/test_activity_tags.py` holds the two to what ClickHouse 26.8 returned
+for the same rows: `tests/fixtures/activity_tags_clickhouse.json` is a
+recording of every statement and its answer, and a changed statement has no
+answer until it is recorded again.
+
+Measured on ClickHouse 26.8 with the control reader's limits (1 GiB of memory,
+30 seconds) and synthetic tenants of one to six million generations in 90
+days: a breakdown of 200 values, a key with 495,000 values, 50,000 values of
+256 bytes, and generation times that fill every slot of every group all stay
+under 350 MiB a statement, and a key with a million values is refused after
+two statements.
+
+What these queries do not bound is the cost of reading the `tags` column under
+`FINAL`, which every tag read pays, the existing activity reads included. It
+grows with the tag text per request and with the number of unmerged parts in
+the range, not with the state above. With about 2 KiB of tags on every request
+(the limit is 4 KiB) a 90-day read peaked near 400 MiB on a merged table and
+ran out of the 1 GiB with merges stopped and some twenty parts in every
+month, where 1 and 7 days still loaded. A read that fails this way is an
+error, never partial totals: the panel says the range could not be loaded and
+that a shorter one may.
 
 Only completed generations are counted. A request that fails before it
 produces a generation has no row, so the page cannot show errors by tag.
@@ -314,14 +373,18 @@ Section 10 applies to these reads:
   copied into Sentry's request context; a body is not.
 - Console input is held to the limits of section 3.1 by the same validator as
   the inference path. Its error messages name the rule and never the text.
-- ClickHouse receives bound values as URL parameters of an internal request.
-  Sentry's HTTP client integration would record that query string in a span
-  and a breadcrumb, and an HTTP status error would carry the URL in its
-  message. The tag reads therefore run under a Sentry scope with no
-  integrations and re-raise a status error without its URL
-  (`bound_values_stay_private`). The `GET /v1/activity` tag filter predates
-  this: it takes `tag_key` and `tag_value` as query parameters and its read
-  is not wrapped. Bringing it in line is a follow-up.
+- ClickHouse normally receives bound values as URL parameters of an internal
+  request, and a URL is written down by more than one layer: httpx logs it at
+  INFO, Sentry's HTTP client integration records its query string in a span
+  and a breadcrumb, and an HTTP status error carries it in its message. The
+  console's tag reads therefore send the statement and every bound value as
+  form fields in the request body (`bound_values_stay_private`), which the
+  ClickHouse HTTP interface reads the same way, so the URL carries only the
+  database name. A Sentry scope with no integrations and a status error
+  re-raised without its URL remain as a second line. The `GET /v1/activity`
+  tag filter predates this: it takes `tag_key` and `tag_value` as query
+  parameters and its ClickHouse read still binds them in the URL. Bringing it
+  in line is a follow-up.
 - The page writes tag text with `textContent` and template escaping only,
   never as markup or as an attribute.
 
