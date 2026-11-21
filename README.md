@@ -7,7 +7,7 @@
 [![Status](https://img.shields.io/website?url=https%3A%2F%2Fstatus.trustedrouter.com&label=status)](https://status.trustedrouter.com)
 [![Verifiable trust](https://img.shields.io/website?url=https%3A%2F%2Ftrust.trustedrouter.com&label=trust)](https://trust.trustedrouter.com)
 [![JavaScript SDK](https://img.shields.io/npm/v/@lore-hex/trusted-router?label=JS%20SDK&logo=npm)](https://www.npmjs.com/package/@lore-hex/trusted-router)
-[![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
+[![Python SDK](https://img.shields.io/pypi/v/trustedrouter?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trustedrouter/)
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 # End-to-end encrypted LLMs. One API. Privacy with proof.

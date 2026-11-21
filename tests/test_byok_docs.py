@@ -34,7 +34,7 @@ def test_sdk_choice_and_official_domains(client: TestClient) -> None:
     for path in ("/docs", "/docs/agent-setup", "/for-developers", "/llms.txt"):
         text = client.get(path).text
         for claim in ("Recommended default", "openai", "https://api.trustedrouter.com/v1",
-                      "pip install trusted-router-py", "import trustedrouter",
+                      "pip install trustedrouter", "import trustedrouter",
                       "https://github.com/Lore-Hex/trusted-router-py"):
             assert claim in text, (path, claim)
     for path in ("/llms.txt", "/about"):
