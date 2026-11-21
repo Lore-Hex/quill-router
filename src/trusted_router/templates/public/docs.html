@@ -187,6 +187,14 @@ GET /v1/models/changes?upcoming=true</code></pre>
 
 <section id="model-capabilities" style="margin-top:48px">
   <h2 class="section-center" id="model-request-capabilities">{{ topic("model-capabilities", "Model request capabilities") }}</h2>
+  <h3 id="media-discovery">{{ topic("media-discovery", "Media options and prices") }}</h3>
+  <p>To budget a video, use <code>pricing</code> on <code>/v1/videos/models</code> or <code>trustedrouter.media.pricing</code> on <code>/v1/models</code>. The general catalog's <code>pricing.prompt</code> and <code>pricing.completion</code> are token prices, not the cost of a video.</p>
+  <p>Match the provider, resolution, audio and input mode. Multiply <code>usd_per_second</code> by a duration in <code>priced_durations</code>, or look up the exact total in <code>usd_by_duration</code> where rounding or a minimum applies.</p>
+  <p>Use <code>GET /v1/videos/models</code> to build a video picker. Each row lists durations in seconds, resolutions and aspect ratios. Read <code>trustedrouter.media.parameters</code> for defaults and combination rules: for example, Veo 3.1 requires an 8-second duration at 1080p. The same media details are on <code>GET /v1/models</code> for video, image generation, speech and transcription.</p>
+  <pre><code>curl -fsS '{{ api_base_url }}/models?output_modalities=video' |
+  jq '.data[] | select(.id == "lightricks/ltx-2.3-fast") |
+      {supported_durations, supported_resolutions, budget: .trustedrouter.media.pricing}'</code></pre>
+  <p>Video prices are in USD, by prepaid provider route. A job example is the total for the exact settings shown. Token rates are per million output tokens at the indicated resolution, not per second. <code>live_quote</code> means the route quotes each job; an empty route map means no prepaid price is available. Neither means free. For images, rates identify the input or output billed, the unit and any resolution variant. Audio rates distinguish tokens, characters, audio minutes and flat requests.</p>
   <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
   <pre><code>"capabilities": {
   "reasoning_effort": ["none", "low", "medium", "high", "xhigh"],

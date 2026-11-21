@@ -109,9 +109,9 @@ with client.audio.speech.with_streaming_response.create(
     model="{{ model.id }}",
     input="Hello from TrustedRouter.",
     voice="{{ model.speech.supported_voices[0] }}",
-    response_format="{{ model.speech.default_response_format }}",
+    response_format="{{ model.speech.example_response_format }}",
 ) as response:
-    response.stream_to_file("speech.{{ model.speech.default_response_format }}")
+    response.stream_to_file("speech.{{ model.speech.example_response_format }}")
 {%- elif model.supports_embeddings and not model.supports_chat %}import os
 from openai import OpenAI
 
@@ -163,8 +163,8 @@ print(response.choices[0].message.content)
 {%- elif model.speech %}curl {{ api_base_url }}/audio/speech \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "{{ model.id }}", "input": "Hello from TrustedRouter.", "voice": "{{ model.speech.supported_voices[0] }}"}' \
-  --output speech.{{ model.speech.default_response_format }}
+  -d '{"model": "{{ model.id }}", "input": "Hello from TrustedRouter.", "voice": "{{ model.speech.supported_voices[0] }}", "response_format": "{{ model.speech.example_response_format }}"}' \
+  --output speech.{{ model.speech.example_response_format }}
 {%- elif model.supports_embeddings and not model.supports_chat %}curl {{ api_base_url }}/embeddings \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \

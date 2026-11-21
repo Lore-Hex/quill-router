@@ -29,6 +29,11 @@ class SpeechModel:
     request_cost_microdollars: int = 0
 
     @property
+    def default_response_format(self) -> str | None:
+        default = "wav" if self.provider == "tinfoil" else "pcm"
+        return default if default in self.formats else None
+
+    @property
     def customer_request_price(self) -> int:
         return customer_fixed_price_microdollars(self.request_cost_microdollars)
 
@@ -231,7 +236,8 @@ def speech_metadata(model_id: str) -> dict[str, object]:
         ),
         "supported_voices": list(spec.voices),
         "response_formats": list(spec.formats),
-        "default_response_format": "wav" if spec.provider == "tinfoil" else "pcm",
+        "default_response_format": spec.default_response_format,
+        "example_response_format": spec.default_response_format or spec.formats[0],
         "max_input_characters": spec.max_characters,
         "speed": {"min": spec.min_speed, "max": spec.max_speed, "default": 1},
         "pricing_source": spec.pricing_source,
