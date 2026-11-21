@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>What does the OpenRouter MiniMax prompt notice mean? | TrustedRouter Notes</title><meta name="description" content="Read the dates, provider and request count in your own notice before deciding which applications to review.">
-<link rel="canonical" href="https://trustedrouter.com/notes/openrouter-minimax-prompt-notice"><meta property="og:title" content="What does the OpenRouter MiniMax prompt notice mean?">
-<meta property="og:description" content="Read the dates, provider and request count in your own notice before deciding which applications to review."><meta property="og:url" content="https://trustedrouter.com/notes/openrouter-minimax-prompt-notice">
+<title>Got the OpenRouter email about MiniMax? | TrustedRouter Notes</title><meta name="description" content="Find the affected requests, rotate exposed credentials, and test a confidential route before moving sensitive traffic.">
+<link rel="canonical" href="https://trustedrouter.com/notes/openrouter-minimax-prompt-notice"><meta property="og:title" content="Got the OpenRouter email about MiniMax?">
+<meta property="og:description" content="Find the affected requests, rotate exposed credentials, and test a confidential route before moving sensitive traffic."><meta property="og:url" content="https://trustedrouter.com/notes/openrouter-minimax-prompt-notice">
 <style>/* NYTE design tokens · CSS custom properties · V2 (Nov 2026). Generated from nyte.tokens.json. */
 /* Fonts: load ABC Pelikan, Pelikan Condensed and Pelikan Mono (licensed from Dinamo) before use. */
 
@@ -169,13 +169,43 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
   .band { display: none; }
   footer .frame { flex-wrap: wrap; }
 }
-</style><script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "What does the OpenRouter MiniMax prompt notice mean?", "description": "Read the dates, provider and request count in your own notice before deciding which applications to review.", "datePublished": "2026-11-21", "url": "https://trustedrouter.com/notes/openrouter-minimax-prompt-notice", "author": {"@type": "Organization", "name": "TrustedRouter"}}</script></head>
+</style><script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Got the OpenRouter email about MiniMax?", "description": "Find the affected requests, rotate exposed credentials, and test a confidential route before moving sensitive traffic.", "datePublished": "2026-11-21", "url": "https://trustedrouter.com/notes/openrouter-minimax-prompt-notice", "author": {"@type": "Organization", "name": "TrustedRouter"}}</script></head>
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
-<header class="frame"><h1>What does the OpenRouter MiniMax prompt notice mean?</h1><p>Read the dates, provider and request count in your own notice before deciding which applications to review.</p></header>
+<header class="frame"><h1>Got the OpenRouter email about MiniMax?</h1><p>Find the affected requests, rotate exposed credentials, and test a confidential route before moving sensitive traffic.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
 <main class="frame"><div class="story"><time datetime="2026-11-21">2026-11-21</time><article><p>On November 21, a customer shared an OpenRouter email describing 492 requests from their account routed through MiniMax. The email said someone may have read the prompts and outputs and that OpenRouter removed the Zero Data Retention label from the endpoints under investigation. The count belongs to that customer. <a href="https://x.com/thedda/status/2124076060660670716">Read the recipient’s post</a>.</p>
 <h2>How to use the notice</h2>
 <p>Copy the provider, timezone and affected interval into an incident record. Match those fields against application traffic, including retries. If two apps shared a key, keep both in scope until you can attribute the requests. Record the evidence for each match and leave unknowns explicit.</p>
-<p><a href="/openrouter-alternative">Compare OpenRouter alternatives</a> · <a href="/notes/openrouter-request-exposure-inventory">How to identify apps affected by an OpenRouter notice</a></p>
+<h2>What happened</h2>
+<p>The OpenRouter notice describes unique test links embedded in MiniMax prompts being opened 40 to 130 hours later. That observation is why the notice covers both prompts and outputs. Use the dates and providers in your own email to scope your review. <a href="https://news.ycombinator.com/item?id=50585962">Read the notice shared by a recipient</a>.</p>
+<p>Two earlier reports help explain why the serving provider matters. On November 10, Phala identified a separate exposure affecting DeepSeek V4 Flash 0731 on a specific server. On November 19, Dragos published research tracing test secrets through AI supply chains. Each report describes its own evidence and exposure window. <a href="https://phala.com/posts/phala-november-preliminary-incident-report">Phala incident report</a> · <a href="https://www.dragos.com/blog/ai-supply-chain-security-canary-tokens">Dragos research</a></p>
+<h2>What to do today</h2>
+<ol>
+<li><strong>Rotate credentials that appeared in affected requests.</strong> Check tool results, command output and retrieved documents for keys, tokens or passwords. Replace each affected credential at its issuer and revoke the old value.</li>
+<li><strong>Sort traffic by sensitivity.</strong> Identify which workflows send private source code, support tickets or customer records. Record which providers are approved for each workflow.</li>
+<li><strong>Keep secrets out of future prompts.</strong> Remove unnecessary fields before calling the API. Test with a fictional record and inspect the context that actually leaves your application.</li>
+<li><strong>Verify the route before migrating.</strong> A retention policy describes what may be stored. Workload attestation provides evidence about the software running inside a measured environment. Check where that environment starts, what it covers, and which party handles plaintext before or after it.</li>
+</ol>
+<h2>Switch a test request to confidential inference</h2>
+<p>Use a TrustedRouter API key, the confidential hostname, and the explicit privacy requirement on every request. A change to the base URL alone is insufficient. Start with fictional data and an eligible model. <a href="/docs#confidential-api">Confidential API documentation</a></p>
+<pre><code class="language-python">import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ[&quot;TRUSTEDROUTER_API_KEY&quot;],
+    base_url=&quot;https://api.confidential.trustedrouter.com/v1&quot;,
+)
+response = client.chat.completions.create(
+    model=&quot;nyte/trusted&quot;,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Say hello.&quot;}],
+    extra_body={&quot;provider&quot;: {&quot;min_privacy&quot;: &quot;confidential&quot;}},
+)
+print(response.choices[0].message.content)
+</code></pre>
+<h2>Questions before switching</h2>
+<p><strong>How can I check the gateway?</strong> Review the published security evidence and the workload it describes. For a particular request, a verified receipt documents the route recorded by the gateway. <a href="/security">Security</a> · <a href="/docs/receipts">Inference receipts</a></p>
+<p><strong>What happens when an approved provider is unavailable?</strong> Decide whether your workflow should stop or try another approved provider. Check your application’s own retry logic too. An SDK that retries against a standard endpoint can change where the conversation goes. <a href="/notes/openrouter-fallback-privacy-test">Test fallback behavior</a></p>
+<p><strong>Which models can I use, and what will they cost?</strong> Check the eligible endpoint and its current price in the catalog. The standard API includes routes with different privacy properties. Select the route that meets your requirements before comparing price. <a href="/models">Browse models</a></p>
+<p><a href="/docs/migrate-from-openrouter">Switch from OpenRouter</a> · <a href="/openrouter-alternative">Compare OpenRouter alternatives</a></p>
 </article></div></main>
 <footer><div class="frame"><a href="/notes">All notes</a><a href="/models">Browse models</a></div></footer></body></html>
