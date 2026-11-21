@@ -38,7 +38,7 @@ from trusted_router.app_markup_billing import (
     app_markup_payout_event_id,
 )
 from trusted_router.catalog import PROVIDERS
-from trusted_router.credit_refusal_read import REMEMBERED, CreditRefusalRead
+from trusted_router.credit_refusal_read import REMEMBERED, CreditRefusalRead, LeaseUnderFloor
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
@@ -147,17 +147,24 @@ class AuthorizeOutcome:
     # The balance covers the hold but the headroom outside the fast path's
     # leases does not (docs/design/fast-admission-and-batched-settlement.md
     # section 4.4): answered 503 with Retry-After, never the 402 the enclave
-    # caches. Returned only with lease_headroom_503 on.
+    # caches. Returned only with lease_headroom_503 on, and only for a
+    # workspace whose headroom, its leases' included, is at least the fast
+    # path nodes' floor (lease_headroom_floor): under it the answer is
+    # insufficient_credits, as with lease_headroom_503 off.
     LEASE_HEADROOM = "lease_headroom"
 
 
 class AuthorizeVerdict(str):
     """String-compatible typed-authorize outcome with its window decision,
     and, on an insufficient_credits refusal, the read of the credit rows it
-    stands on (credit_refusal_read.py), None when there was none."""
+    stands on (credit_refusal_read.py), None when there was none, and the
+    lease-aware amounts of one that live leases would have made
+    lease_headroom were the workspace not under the nodes' floor
+    (LeaseUnderFloor), None for any other."""
 
     rate_limit: KeyWindowLimitDecision | None
     credit_read: CreditRefusalRead | None
+    lease_under_floor: LeaseUnderFloor | None
 
     def __new__(
         cls,
@@ -165,22 +172,35 @@ class AuthorizeVerdict(str):
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
         credit_read: CreditRefusalRead | None = None,
+        lease_under_floor: LeaseUnderFloor | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
         verdict.credit_read = credit_read
+        verdict.lease_under_floor = lease_under_floor
         return verdict
 
 
 class CreditPrecheckVerdict(str):
     """credit_exhaustion_precheck's verdict, string-compatible, with the
-    snapshot an EXHAUSTED verdict stands on (None for any other)."""
+    snapshot an EXHAUSTED verdict stands on (None for any other), and, for an
+    EXHAUSTED verdict that would have been LEASE_HELD were the workspace not
+    under the nodes' floor, that snapshot's lease-aware amounts (None for any
+    other)."""
 
     credit_read: CreditRefusalRead | None
+    lease_under_floor: LeaseUnderFloor | None
 
-    def __new__(cls, verdict: str, *, credit_read: CreditRefusalRead | None = None) -> CreditPrecheckVerdict:
+    def __new__(
+        cls,
+        verdict: str,
+        *,
+        credit_read: CreditRefusalRead | None = None,
+        lease_under_floor: LeaseUnderFloor | None = None,
+    ) -> CreditPrecheckVerdict:
         made = super().__new__(cls, verdict)
         made.credit_read = credit_read
+        made.lease_under_floor = lease_under_floor
         return made
 
 
@@ -324,6 +344,7 @@ def credit_exhaustion_precheck(
     estimate: int,
     idempotency_scope: str | None = None,
     lease_aware: bool = False,
+    lease_floor: int = 0,
 ) -> str:
     """Recheck a cached insufficient-credit verdict without locking any credit row.
 
@@ -360,6 +381,18 @@ def credit_exhaustion_precheck(
     path stays lock-free and answers today's 402; a failed credit-row read
     is DEFER, as before. Without it, no lease is read and every verdict is as
     before.
+
+    ``lease_floor`` (fastpath_lease_headroom_503_floor_micro, the fast path
+    nodes' floor) narrows LEASE_HELD to a workspace the fast path can still
+    fund: the rows' signed headroom plus what the leases hold must also be at
+    least the floor. Under it no lease can be topped up (a node refuses one
+    unless the headroom outside leases is at least the floor plus the amount
+    asked), so what the leases hold comes back only when they close, and a
+    retry cannot help before the balance runs out. The verdict is then
+    EXHAUSTED, as for these rows with no lease read, carrying the snapshot's
+    amounts (CreditPrecheckVerdict.lease_under_floor). Zero compares nothing.
+    Only a verdict that would be LEASE_HELD changes, to EXHAUSTED: no request
+    is let through, deferred or refused that was not before.
 
     An EXHAUSTED verdict carries the snapshot it stands on (its rows and read
     timestamp, CreditPrecheckVerdict.credit_read), for the internal route's
@@ -431,8 +464,18 @@ def credit_exhaustion_precheck(
                     )
                     return exhausted
                 lease_held = int(held[0][0]) if held and held[0][0] is not None else 0
-                if lease_held > 0 and sum(available) + lease_held >= estimate:
-                    return LEASE_HELD
+                outside = sum(available)
+                if lease_held > 0 and outside + lease_held >= estimate:
+                    if outside + lease_held >= lease_floor:
+                        return LEASE_HELD
+                    # Under the nodes' floor the leases are a remnant no
+                    # top-up can add to: the rows' own verdict, with the
+                    # amounts the route's line carries.
+                    return CreditPrecheckVerdict(
+                        EXHAUSTED,
+                        credit_read=exhausted.credit_read,
+                        lease_under_floor=LeaseUnderFloor(outside, lease_held, int(lease_floor)),
+                    )
             return exhausted
     except Exception:
         log.warning(

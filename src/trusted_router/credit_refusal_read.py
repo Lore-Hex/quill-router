@@ -36,8 +36,12 @@ transaction:
 
 A later credit read is not named: with fastpath_lease_headroom_503, the route
 reads the rows and the leases once more after a final refusal
-(_lease_held_after_refusal) to tell a balance held in leases (503) from one
-exhausted (402).
+(_lease_verdict_after_refusal) to tell a balance held in leases (503) from one
+exhausted (402). When that read, or the remembered one, finds live leases
+holding the shortfall of a workspace whose headroom, theirs included, is
+under the fast path nodes' floor, the answer stays the 402 and the verdict
+carries the read's amounts (LeaseUnderFloor) for the route's log line; no
+header carries them.
 
 A snapshot read is named only with its read timestamp, which the client keeps
 for a multi-use snapshot (storage_gcp_authorize.snapshot_read_timestamp_ns);
@@ -93,6 +97,19 @@ class CreditRefusalRead:
         if not headroom:
             return None
         return cls(read, int(hold), len(headroom), sum(headroom), max(headroom), read_timestamp_ns)
+
+
+@dataclass(frozen=True)
+class LeaseUnderFloor:
+    """The lease-aware read behind a 402 that live leases would otherwise have
+    made the lease-headroom 503 (fastpath_lease_headroom_503_floor_micro): the
+    rows' signed headroom outside leases (``available``), what the workspace's
+    live leases hold (``lease_held``), both from one snapshot, and the floor
+    their sum was under. Amounts only, for the route's log line."""
+
+    available: int
+    lease_held: int
+    floor: int
 
 
 def credit_refusal_read_headers(read: CreditRefusalRead | None) -> dict[str, str]:
