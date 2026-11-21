@@ -129,6 +129,16 @@ rules keep the race winnable without ever pushing an untested tree:
   stay still for one more whole CI run. On 2026-11-19 (about 9 hours) and
   11-20 (runs 44782888255 and 44800370604) every round lost. Publication now
   needs one quiet CI-length window after any merge.
+* **Keep the CI short on a fresh main.** A data-only snapshot CI run takes
+  13-16 minutes. Snapshots carried onto a main commit merged minutes earlier
+  ran 45-60 minutes, because data-only skips need the base's own CI run to
+  have succeeded. Without that success, ci.yml compared the snapshot with an
+  older green commit and ran the path-scoped matrix: run 44823279053 lost six
+  rounds this way on 11-20. Now, when a `scope=paths` dispatch sits on a base
+  whose push run is still running, ci.yml takes the data-only skips, and a
+  `base-ci` job waits for that push run to succeed. The run concludes success
+  only if the push run does. The quiet window a refresh needs shrinks from
+  about an hour to about the base's own CI time.
 
 Rounds are bounded: at most six exact-SHA CI dispatches, and no new round
 after 150 minutes of publication. A run that runs out of rounds queues a fresh
