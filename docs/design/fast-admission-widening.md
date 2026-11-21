@@ -292,10 +292,10 @@ reconciler rather than at workspaces, the enabler raises
     plus the amount asked, and what a lease still holds comes back only
     when it closes. With a $2 floor a fast spender reaches the bottom
     first, so "the last request or two" understated it. On 2026-11-21 a
-    workspace spending $0.20 to $0.37 a minute, within about $0.14 of
-    empty with a lease still holding part of that, was answered the 503
-    on 13 requests over three minutes (39 authorize attempts, each request
-    failing after the enclave's three) until it bought credit. No retry
+    fast-spending workspace within cents of empty, with a lease still
+    holding part of what was left, was answered the 503 on every request
+    for three minutes (each request failing after the enclave's three
+    authorize attempts) until it bought credit. No retry
     could have succeeded, and before the floor change it would have been
     answered 402, which is true and can be acted on. The 503 is now
     answered only while the workspace's headroom, counting what its live
