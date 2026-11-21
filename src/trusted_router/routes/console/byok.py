@@ -6,8 +6,6 @@ secret_ref."""
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
@@ -24,10 +22,9 @@ from trusted_router.byok_cloud_credentials import (
 )
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
-from trusted_router.provider_compat import byok_storage_provider_candidates, canonical_byok_provider
+from trusted_router.provider_compat import canonical_byok_provider
 from trusted_router.routes.console._shared import ConsoleDep, render, require_manager
 from trusted_router.storage import STORE
-from trusted_router.storage_models import ByokProviderConfig
 
 _CONSOLE_BYOK_ERRORS = {
     "credential": (
@@ -113,18 +110,6 @@ def register(app: FastAPI) -> None:
             return RedirectResponse(url="/console/byok?error=provider", status_code=303)
         secret_ref = secret_ref.strip()
         explicit_hint = key_hint.strip() or None
-        # An existing row (possibly a legacy alias such as `gemini`) keeps its
-        # storage slug, so rotating its default key keeps its other keys, and
-        # every key of the row shares one envelope context.
-        existing = next(
-            (
-                config
-                for slug in byok_storage_provider_candidates(provider_slug)
-                if (config := STORE.get_byok_provider(ctx.workspace.id, slug)) is not None
-            ),
-            None,
-        )
-        storage_slug = str(existing.provider) if existing is not None else provider_slug
         stored_hint: str | None
         encrypted_secret = None
         if api_key and is_cloud_credential_provider(provider_slug):
@@ -138,13 +123,13 @@ def register(app: FastAPI) -> None:
         if api_key:
             if secret_ref and not secret_ref.startswith("byok://"):
                 return RedirectResponse(url="/console/byok?error=secret_ref", status_code=303)
-            secret_ref = _default_secret_ref(ctx.workspace.id, storage_slug)
+            secret_ref = _default_secret_ref(ctx.workspace.id, provider_slug)
             stored_hint = explicit_hint or _key_hint(api_key)
             encrypted_secret = encrypt_byok_secret(
                 api_key,
                 settings,
                 workspace_id=ctx.workspace.id,
-                provider=storage_slug,
+                provider=provider_slug,
             )
         elif secret_ref:
             if secret_ref.startswith("byok://"):
@@ -152,19 +137,13 @@ def register(app: FastAPI) -> None:
             stored_hint = explicit_hint
         else:
             return RedirectResponse(url="/console/byok?error=missing_key", status_code=303)
-        def change(current: ByokProviderConfig | None) -> ByokProviderConfig:
-            # A new row's first key gets a fresh id, like the API's, so a key
-            # deleted and re-registered never shares an id with its replacement.
-            config = current or ByokProviderConfig(
-                workspace_id=ctx.workspace.id, provider=storage_slug, secret_ref=secret_ref,
-                default_key_id=f"k_{secrets.token_hex(6)}",
-            )
-            config.secret_ref = secret_ref
-            config.key_hint = stored_hint
-            config.encrypted_secret = encrypted_secret
-            return config
-
-        STORE.mutate_byok_provider(ctx.workspace.id, storage_slug, change)
+        STORE.upsert_byok_provider(
+            workspace_id=ctx.workspace.id,
+            provider=provider_slug,
+            secret_ref=secret_ref,
+            key_hint=stored_hint,
+            encrypted_secret=encrypted_secret,
+        )
         return RedirectResponse(url="/console/byok", status_code=303)
 
 

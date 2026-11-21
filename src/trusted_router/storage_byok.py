@@ -7,9 +7,7 @@ optional envelope-encrypted secret material."""
 
 from __future__ import annotations
 
-import copy
 import threading
-from collections.abc import Callable
 
 from trusted_router.storage_models import (
     ByokProviderConfig,
@@ -52,30 +50,6 @@ class InMemoryByok:
             existing.encrypted_secret = encrypted_secret
             existing.updated_at = iso_now()
             return existing
-
-    def mutate(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        """Read, change and write one provider row atomically. None deletes it."""
-        with self._lock:
-            current = copy.deepcopy(self.providers.get((workspace_id, provider)))
-            updated = change(current)
-            if updated is None:
-                self.providers.pop((workspace_id, provider), None)
-                return None
-            updated.updated_at = iso_now()
-            self.providers[(workspace_id, provider)] = updated
-            return updated
-
-    def save(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        """Write a whole provider row: its default key and every other key."""
-        with self._lock:
-            config.updated_at = iso_now()
-            self.providers[(config.workspace_id, config.provider)] = config
-            return config
 
     def list_for_workspace(self, workspace_id: str) -> list[ByokProviderConfig]:
         with self._lock:

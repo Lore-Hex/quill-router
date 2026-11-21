@@ -216,7 +216,6 @@ func TestHostedDecideCohortGates(t *testing.T) {
 		name, reason string
 		change       func(*gwstate.Read)
 	}{
-		{"BYOK policy", PassCandidatesBYOK, func(r *gwstate.Read) { r.Facts.BYOKProviders = []string{"openai"} }},
 		{"credit stale", PassCacheWorkspace, func(r *gwstate.Read) { r.Credit = gwstate.Stale }},
 		{"expired key", PassKeyExpired, func(r *gwstate.Read) { r.Facts.Key.ExpiresAt = base.Request.At }},
 	} {

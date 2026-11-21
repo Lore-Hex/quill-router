@@ -4331,14 +4331,6 @@ class PostgresStore(OperationalAnalyticsReads):
     ) -> ByokProviderConfig:
         self._not_implemented("upsert_byok_provider")
 
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        self._not_implemented("save_byok_provider")
-
-    def mutate_byok_provider(
-        self, workspace_id: str, provider: str, change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        self._not_implemented("mutate_byok_provider")
-
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         self._not_implemented("list_byok_providers")
 

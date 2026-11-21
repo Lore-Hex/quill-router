@@ -373,7 +373,6 @@ def finish_candidates(
     user_model_prices: tuple[int, int] | None = None,
     partner_mode: PartnerBillingMode | None = None,
     rerank: Rerank | None = None,
-    byok_order: Rerank | None = None,
 ) -> CandidateOutcome:
     """Admit, order and price the candidates.
 
@@ -417,11 +416,6 @@ def finish_candidates(
         ]
     if plan.supports_live_routing and rerank is not None:
         endpoint_candidates = rerank(endpoint_candidates, resolved.effective_preferences)
-    # The workspace's BYOK key policy (BYOK first, optional no Credits
-    # fallback) outranks health order, and runs before allow_fallbacks keeps
-    # one route so that route is the key the workspace asked for.
-    if byok_order is not None:
-        endpoint_candidates = byok_order(endpoint_candidates, resolved.effective_preferences)
     # ``allow_fallbacks=false`` removes alternate models in the resolver, but
     # provider selection must happen after regional, workspace/BYOK, and
     # service-tier eligibility. Truncating the raw catalog first can pin an

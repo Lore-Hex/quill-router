@@ -57,7 +57,7 @@ def test_frozen_authorize_response_matrix(monkeypatch, workspaces, headers, has_
     # Compile only frozen source, under its real on-disk path for coverage.
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), namespace)  # noqa: S102 - frozen test oracle
     before = _state(db)
-    frozen = namespace['_gateway_authorize_response'](**_frozen_arguments(captured))
+    frozen = namespace['_gateway_authorize_response'](**captured)
     current = original(**captured)
     expected = {**frozen, 'data': dict(frozen['data'])}
     # PR #2219: the enclave's terminal identity binding requires the stored
@@ -129,14 +129,3 @@ def test_opted_in_binding_is_after_hold_without_new_rpc(monkeypatch):
     assert (claims.authorization_id, claims.workspace_id, claims.snapshot_hash, claims.async_eligible) == ('auth-opted-shadow', 'ws-rpc', data['billing_snapshot_hash'], False)
     assert 'settlement_ticket' not in data and data['billing_snapshot']['candidates']
     shadow.executor.shutdown()
-
-
-# Arguments added since the contract was frozen, with the value at which they
-# change nothing. The frozen oracle is called without them only at that value.
-_ARGUMENTS_SINCE_FROZEN = {'single_route': False}
-
-
-def _frozen_arguments(captured):
-    for name, neutral in _ARGUMENTS_SINCE_FROZEN.items():
-        assert captured.get(name, neutral) == neutral, f'{name} is not neutral; the frozen oracle cannot judge it'
-    return {name: value for name, value in captured.items() if name not in _ARGUMENTS_SINCE_FROZEN}

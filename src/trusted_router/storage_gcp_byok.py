@@ -6,11 +6,8 @@ composes this through the SpannerIO adapter."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, cast
-
 from trusted_router.storage_gcp_codec import byok_id
-from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
+from trusted_router.storage_gcp_io import SpannerIO
 from trusted_router.storage_models import (
     ByokProviderConfig,
     EncryptedSecretEnvelope,
@@ -47,36 +44,6 @@ class SpannerByok:
             config.encrypted_secret = encrypted_secret
             config.updated_at = iso_now()
         self._io.write_entity("byok", byok_id(workspace_id, provider), config)
-        return config
-
-    def mutate(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        """Read, change and write one provider row in one transaction, so
-        concurrent key edits serialize instead of overwriting each other.
-        ``change`` may run again on a retried transaction. None deletes."""
-        entity_id = byok_id(workspace_id, provider)
-
-        def txn(transaction: Any) -> ByokProviderConfig | None:
-            current = self._io.read_entity_tx(transaction, "byok", entity_id, ByokProviderConfig)
-            updated = change(current)
-            if updated is None:
-                if current is not None:
-                    self._io.delete_entities_tx(transaction, "byok", [entity_id])
-                return None
-            updated.updated_at = iso_now()
-            self._io.write_entity_tx(transaction, "byok", entity_id, updated)
-            return updated
-
-        return cast(ByokProviderConfig | None, run_in_transaction_with_retry(self._io.database, txn))
-
-    def save(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        """Write a whole provider row: its default key and every other key."""
-        config.updated_at = iso_now()
-        self._io.write_entity("byok", byok_id(config.workspace_id, config.provider), config)
         return config
 
     def list_for_workspace(self, workspace_id: str) -> list[ByokProviderConfig]:

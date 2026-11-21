@@ -6,7 +6,6 @@ import datetime as dt
 import hmac
 import threading
 import uuid
-from collections.abc import Callable
 from typing import Any, cast
 
 from trusted_router import credit_transfer, phone_verification
@@ -1727,17 +1726,6 @@ class InMemoryStore:
             key_hint=key_hint,
             encrypted_secret=encrypted_secret,
         )
-
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        return self.byok_store.save(config)
-
-    def mutate_byok_provider(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        return self.byok_store.mutate(workspace_id, provider, change)
 
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         return self.byok_store.list_for_workspace(workspace_id)

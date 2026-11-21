@@ -495,48 +495,8 @@ class EncryptedGoogleClickEnvelope:
     nonce: str
 
 
-# The id of the key stored in a provider row's own top-level fields. Rows
-# written before several keys per provider existed hold only this key.
-DEFAULT_BYOK_KEY_ID = "default"
-MAX_BYOK_KEYS_PER_PROVIDER = 20
-
-
-@dataclass
-class ByokKey:
-    """One provider credential of a workspace, with its routing policy.
-
-    ``models`` are model-id patterns (``*`` matches any run of characters);
-    empty means every model of the provider. Lower ``priority`` is tried
-    first. ``fallback_to_credits`` False keeps a request this key can serve
-    off Credits routes, so it fails rather than spend shared capacity."""
-
-    id: str
-    secret_ref: str
-    key_hint: str | None = None
-    encrypted_secret: EncryptedSecretEnvelope | None = None
-    label: str = ""
-    models: list[str] = field(default_factory=list)
-    priority: int = 0
-    fallback_to_credits: bool = True
-    disabled: bool = False
-    created_at: str = field(default_factory=iso_now)
-    updated_at: str | None = None
-
-    def __post_init__(self) -> None:
-        if isinstance(self.encrypted_secret, dict):
-            self.encrypted_secret = EncryptedSecretEnvelope(**self.encrypted_secret)
-
-
 @dataclass
 class ByokProviderConfig:
-    """A workspace's credentials for one provider: one row per provider.
-
-    The top-level secret fields are the ``default`` key, so rows written
-    before several keys existed keep their meaning. ``additional_keys`` holds
-    the rest. All keys of a row share the envelope context (workspace,
-    provider), so none of them can be replayed into another workspace or
-    provider."""
-
     workspace_id: str
     provider: str
     secret_ref: str
@@ -544,81 +504,10 @@ class ByokProviderConfig:
     encrypted_secret: EncryptedSecretEnvelope | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
-    label: str = ""
-    models: list[str] = field(default_factory=list)
-    priority: int = 0
-    fallback_to_credits: bool = True
-    # Not "disabled": rows from before several keys carry legacy "enabled" and
-    # "disabled" fields that never switched a key off, and must not start to.
-    key_disabled: bool = False
-    additional_keys: list[ByokKey] = field(default_factory=list)
-    # The id of the key in the top-level slot. A key promoted there when the
-    # default is deleted keeps its own id, so ids never move between keys and
-    # a retried delete cannot remove the key that replaced the deleted one.
-    default_key_id: str = DEFAULT_BYOK_KEY_ID
 
     def __post_init__(self) -> None:
         if isinstance(self.encrypted_secret, dict):
             self.encrypted_secret = EncryptedSecretEnvelope(**self.encrypted_secret)
-        self.additional_keys = [
-            ByokKey(**key) if isinstance(key, dict) else key for key in self.additional_keys
-        ]
-
-    def default_key(self) -> ByokKey:
-        return ByokKey(
-            id=self.default_key_id,
-            secret_ref=self.secret_ref,
-            key_hint=self.key_hint,
-            encrypted_secret=self.encrypted_secret,
-            label=self.label,
-            models=list(self.models),
-            priority=self.priority,
-            fallback_to_credits=self.fallback_to_credits,
-            disabled=self.key_disabled,
-            created_at=self.created_at,
-            updated_at=self.updated_at,
-        )
-
-    def all_keys(self) -> list[ByokKey]:
-        """Every key, in the order requests try them: priority, then age."""
-        keys = [self.default_key(), *self.additional_keys]
-        return sorted(keys, key=lambda key: (key.priority, key.created_at, key.id))
-
-    def usable_keys(self, model_ids: tuple[str, ...]) -> list[ByokKey]:
-        """Enabled keys whose model filter admits any of ``model_ids``."""
-        return [
-            key
-            for key in self.all_keys()
-            if not key.disabled and byok_key_admits_model(key.models, model_ids)
-        ]
-
-
-def byok_key_admits_model(patterns: list[str], model_ids: tuple[str, ...]) -> bool:
-    if not patterns:
-        return True
-    for pattern in patterns:
-        for model_id in model_ids:
-            if model_id and _byok_pattern_matches(pattern.strip().lower(), model_id.lower()):
-                return True
-    return False
-
-
-def _byok_pattern_matches(pattern: str, value: str) -> bool:
-    # Only "*" is special, so a model id with "?" or "[" cannot be misread
-    # the way fnmatch would.
-    parts = pattern.split("*")
-    if len(parts) == 1:
-        return pattern == value
-    if not value.startswith(parts[0]) or not value.endswith(parts[-1]):
-        return False
-    position = len(parts[0])
-    end = len(value) - len(parts[-1])
-    for middle in parts[1:-1]:
-        found = value.find(middle, position, end)
-        if found < 0:
-            return False
-        position = found + len(middle)
-    return position <= end
 
 
 @dataclass
