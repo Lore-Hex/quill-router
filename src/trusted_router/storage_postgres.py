@@ -7776,6 +7776,39 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(list_samples)
 
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        def list_refusals(conn: Any) -> list[ProviderBenchmarkSample]:
+            # Same bounded window as provider_route_benchmark_samples: kind plus
+            # a range on indexed_at, the leading columns of tr_entities_recent.
+            rows = conn.execute(
+                "SELECT body FROM tr_entities "
+                "WHERE kind = 'provider_benchmark' "
+                "AND indexed_at >= %s::timestamptz "
+                "AND body ->> 'source' = 'organic' "
+                "AND body ->> 'usage_type' = 'Credits' "
+                "AND body ->> 'error_status' IN ('401', '403') "
+                "ORDER BY indexed_at DESC, id DESC LIMIT %s",
+                (cutoff, max(1, limit)),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            samples: list[ProviderBenchmarkSample] = []
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                samples.append(
+                    ProviderBenchmarkSample(
+                        **{key: value for key, value in data.items() if key in known}
+                    )
+                )
+            return samples
+
+        return self._run_transaction(list_refusals)
+
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         def record(conn: Any) -> None:
             self._write_indexed_entity_tx(

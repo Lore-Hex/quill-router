@@ -30,6 +30,19 @@ DEGRADATION_DIGEST_HOUR_UTC = 14
 _CONFIGURATION_ERROR_TYPES = frozenset({
     "provider_auth_config", "unsupported_route", "probe_config_error",
 })
+# A provider refusing OUR managed account (HTTP 401/403 on Credits traffic):
+# a revoked key, an exhausted plan allowance or billing, or withdrawn model
+# access. Configured-route probes reach one route only a few times a day, so
+# the six-probe streak below alerted on Maple's exhausted allowance about 8.5
+# hours after real traffic began failing (2026-11-20). Real Credits traffic
+# and probes both count here; BYOK samples never do, because a 403 there is
+# the customer's own key.
+ACCOUNT_REFUSAL_STATUSES = frozenset({401, 403})
+ACCOUNT_REFUSAL_ERROR_TYPES = frozenset({"provider_auth_config", "provider_error"})
+ACCOUNT_REFUSAL_MIN_SAMPLES = 3
+ACCOUNT_REFUSAL_MIN_SPAN = dt.timedelta(minutes=10)
+ACCOUNT_REFUSAL_MAX_AGE = dt.timedelta(hours=1)
+ACCOUNT_REFUSAL_READ_LIMIT = 2000
 # Same bound the sample write paths apply (probes._rotation_error_sample and
 # the internal benchmark ingest), re-applied here so an alert never carries
 # more than a stored sample could.
@@ -118,11 +131,20 @@ def evaluate_route_health(
         route = (sample.provider, sample.model)
         if route in samples_by_route:
             samples_by_route[route].append(sample)
+    refusals_by_route = _account_refusals_by_route(store, route_set, now)
 
     flags: list[RouteHealthFlag] = []
     for provider, model in routes:
+        route_samples = samples_by_route[(provider, model)]
+        refusal = _account_refusal_flag(
+            provider, model,
+            route_samples + refusals_by_route.get((provider, model), []), now, cutoff,
+        )
+        if refusal is not None:
+            flags.append(refusal)
+            continue
         configuration = _configuration_flag(
-            provider, model, samples_by_route[(provider, model)], now, cutoff, min_samples,
+            provider, model, route_samples, now, cutoff, min_samples,
         )
         if configuration is not None:
             flags.append(configuration)
@@ -365,6 +387,72 @@ def _configuration_flag(
     )
 
 
+def _account_refusals_by_route(
+    store: Store, routes: set[tuple[str, str]], now: dt.datetime,
+) -> dict[tuple[str, str], list[ProviderBenchmarkSample]]:
+    """Organic Credits 401/403 samples from the last hour, by route.
+
+    Best effort: a failed read only loses the fast path; the synthetic
+    configured-route rule still alerts on its own evidence.
+    """
+    cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
+    try:
+        samples = store.provider_account_refusal_samples(
+            cutoff=cutoff.isoformat().replace("+00:00", "Z"),
+            limit=ACCOUNT_REFUSAL_READ_LIMIT,
+        )
+    except Exception:  # noqa: BLE001 - monitoring must not fail the sweep
+        logger.warning("route_health.account_refusal_read_failed", exc_info=True)
+        return {}
+    by_route: dict[tuple[str, str], list[ProviderBenchmarkSample]] = {}
+    for sample in samples:
+        route = (sample.provider, sample.model)
+        if route in routes:
+            by_route.setdefault(route, []).append(sample)
+    return by_route
+
+
+def _account_refusal_flag(
+    provider: str,
+    model: str,
+    samples: list[ProviderBenchmarkSample],
+    now: dt.datetime,
+    cutoff: dt.datetime,
+) -> RouteHealthFlag | None:
+    """A fresh streak of the provider refusing TR's managed account."""
+    recent = sorted(
+        (
+            (created, sample) for sample in samples
+            if sample.usage_type == "Credits"
+            and (created := _parse_created_at(sample.created_at)) is not None
+            and cutoff <= created <= now
+        ),
+        key=lambda pair: pair[0], reverse=True,
+    )
+    streak = []
+    for pair in recent:
+        sample = pair[1]
+        if (
+            sample.status not in {"unsupported", "error"}
+            or sample.error_status not in ACCOUNT_REFUSAL_STATUSES
+            or sample.error_type not in ACCOUNT_REFUSAL_ERROR_TYPES
+        ):
+            break
+        streak.append(pair)
+    if (
+        len(streak) < ACCOUNT_REFUSAL_MIN_SAMPLES
+        or now - streak[0][0] > ACCOUNT_REFUSAL_MAX_AGE
+        or streak[0][0] - streak[-1][0] < ACCOUNT_REFUSAL_MIN_SPAN
+    ):
+        return None
+    return RouteHealthFlag(
+        provider=provider, model=model, samples=len(streak), failures=len(streak),
+        failure_rate=1.0, newest_error_type="provider_auth_config",
+        newest_error_message=_alert_error_message(streak[0][1].error_message),
+        kind="configuration",
+    )
+
+
 def _alert_error_message(message: str | None) -> str | None:
     # Configuration failures are probe/auth/route rejections, and the reason is
     # only in the provider's message (Sentry QUILL-ROUTER-FF carried just
@@ -507,10 +595,23 @@ def report_route_health(
             from trusted_router.synthetic.alerts import ops_alert
 
             latest = _alert_error_message(flag.newest_error_message)
+            if flag.newest_error_type == "provider_auth_config":
+                # Name the account, not our configuration: the provider refused
+                # TR's own key, and the fix is on the provider's side.
+                summary = (
+                    f"route-configuration: {flag.provider} refused TR's account for "
+                    f"{flag.model} ({flag.failures} consecutive HTTP 401/403): check the "
+                    "provider account for a revoked key, an exhausted plan allowance or "
+                    "billing, or withdrawn model access"
+                )
+            else:
+                summary = (
+                    f"route-configuration: {flag.provider}/{flag.model} failed "
+                    f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
+                    f"({flag.newest_error_type})"
+                )
             ops_alert(
-                f"route-configuration: {flag.provider}/{flag.model} failed "
-                f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
-                f"({flag.newest_error_type}); excluded from provider uptime, not operations"
+                summary + "; excluded from provider uptime, not operations"
                 + (f"; latest: {latest}" if latest else ""),
                 fingerprint=["route-configuration", flag.provider, flag.model],
                 tags={"route_provider": flag.provider, "route_model": flag.model},

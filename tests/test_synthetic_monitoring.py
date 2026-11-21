@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import datetime as dt
 import json
 import random
@@ -4346,6 +4347,17 @@ class _RouteHealthStore:
         samples.sort(key=lambda sample: sample.created_at, reverse=True)
         return samples[:limit]
 
+    def provider_account_refusal_samples(
+        self, *, cutoff: str, limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        rows = [
+            sample for sample in self.samples
+            if sample.source == "organic" and sample.usage_type == "Credits"
+            and sample.error_status in {401, 403} and sample.created_at >= cutoff
+        ]
+        rows.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
+        return rows[:limit]
+
     def provider_route_benchmark_samples(
         self,
         *,
@@ -4459,12 +4471,20 @@ def test_excluded_configured_route_failures_still_alert_and_recover(error_type: 
     ) == []
 
 
-@pytest.mark.parametrize("ages", [list(range(7, 13)), [0] * 6, list(range(5))])
-def test_configuration_alert_requires_fresh_sustained_evidence(ages: list[int]) -> None:
+@pytest.mark.parametrize(("ages", "error_type", "error_status"), [
+    (list(range(7, 13)), "provider_auth_config", 401),
+    ([0] * 6, "provider_auth_config", 401),
+    # Five fresh 401s now alert as an account refusal (below), so the
+    # six-probe rule's own short-streak case uses a non-auth class.
+    (list(range(5)), "probe_config_error", 400),
+])
+def test_configuration_alert_requires_fresh_sustained_evidence(
+    ages: list[int], error_type: str, error_status: int,
+) -> None:
     samples = [
         _route_health_sample(
             f"config-{i}", provider="lightning", model="m", status="unsupported",
-            age_hours=age, error_type="provider_auth_config", error_status=401,
+            age_hours=age, error_type=error_type, error_status=error_status,
         ) for i, age in enumerate(ages)
     ]
     assert evaluate_route_health(  # type: ignore[arg-type]
@@ -4537,12 +4557,69 @@ def test_configuration_alert_is_fingerprinted_and_carries_sanitized_message(
     ])
     assert len(captured) == 2
     message, kwargs = captured[0]
-    assert "provider_auth_config" in message
+    assert "lightning refused TR's account for m (6 consecutive HTTP 401/403)" in message
+    assert "exhausted plan allowance" in message
     assert message.endswith("; latest: invalid api key sk-***")
     assert secret not in message
     assert kwargs["fingerprint"] == ["route-configuration", "lightning", "m"]
     assert kwargs["tags"] == {"route_provider": "lightning", "route_model": "m"}
     assert captured[1][0].endswith("excluded from provider uptime, not operations")
+
+
+def _refusal_sample(
+    i: int, minutes: float, *, status: int = 403, usage_type: str = "Credits",
+    error_type: str = "provider_error", source: str = "organic",
+) -> ProviderBenchmarkSample:
+    sample = _route_health_sample(
+        f"refusal-{i}", provider="maple", model="m", status="error",
+        error_type=error_type, error_status=status,
+        error_message="Maple encrypted upstream request failed", source=source,
+    )
+    created = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=minutes)
+    return dataclasses.replace(sample, created_at=created.isoformat(), usage_type=usage_type)
+
+
+def test_account_refusal_alerts_within_minutes_on_real_credits_traffic() -> None:
+    # Maple, 2026-11-20: Credits traffic got 403 from 16:30Z, while the
+    # six-probe configured-route rule fired only at 01:00Z the next day.
+    samples = [_refusal_sample(i, minutes) for i, minutes in enumerate((1, 6, 12))]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "configuration"
+    assert flags[0].newest_error_type == "provider_auth_config"
+    assert flags[0].failures == 3
+
+
+@pytest.mark.parametrize("samples", [
+    # A customer's own key refused (BYOK) is not TR's account.
+    [_refusal_sample(i, m, usage_type="BYOK") for i, m in enumerate((1, 6, 12))],
+    # Too few refusals.
+    [_refusal_sample(i, m) for i, m in enumerate((1, 12))],
+    # A burst inside ten minutes.
+    [_refusal_sample(i, m) for i, m in enumerate((1, 2, 3))],
+    # Stale: the newest refusal is over an hour old.
+    [_refusal_sample(i, m) for i, m in enumerate((70, 80, 90))],
+    # Not a refusal: 5xx is an outage, not the account.
+    [_refusal_sample(i, m, status=502) for i, m in enumerate((1, 6, 12))],
+    # Our own router answering 403 is not the provider's refusal.
+    [_refusal_sample(i, m, error_type="router_error") for i, m in enumerate((1, 6, 12))],
+])
+def test_account_refusal_requires_fresh_credits_streak(
+    samples: list[ProviderBenchmarkSample],
+) -> None:
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    ) == []
+
+
+def test_account_refusal_streak_breaks_on_success() -> None:
+    samples = [_refusal_sample(i, m) for i, m in enumerate((6, 12, 18))]
+    samples.insert(0, _route_health_sample("ok", provider="maple", model="m", status="success"))
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    ) == []
 
 
 def test_evaluate_route_health_ignores_transient_failures() -> None:

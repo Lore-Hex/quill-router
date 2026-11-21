@@ -5300,6 +5300,10 @@
       "fingerprint": "6980cf1ddbab84bdd422faf6f4ffbc7508ce71750bb3a6458e58077673646dcc",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
+    "operational_analytics:account_refusal_samples:1": {
+      "fingerprint": "057b671e2cbd3b4d5371d53639c95b39425088767cce57917e3bbc46c0d868c1",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
     "operational_analytics:route_benchmark_samples:1": {
       "fingerprint": "23d1f29ac267551463bfdac8354e9ce16b13d91aabd3d45c26c67907567ecb9e",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"

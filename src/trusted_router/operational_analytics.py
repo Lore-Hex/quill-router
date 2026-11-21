@@ -308,6 +308,36 @@ FORMAT JSON
         )
         return [_benchmark_sample(row) for row in rows]
 
+    def account_refusal_samples(
+        self, *, cutoff: str, limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        """Recent organic Credits samples a provider refused with HTTP 401/403.
+
+        Route health's account-refusal alert reads these beside the synthetic
+        window: real traffic shows a refused provider account within minutes,
+        while configured-route probes reach one route only a few times a day.
+        """
+        rows = self._query(
+            """
+SELECT
+  id, model, provider, provider_name, status, usage_type, streamed,
+  input_tokens, output_tokens, total_cost_microdollars,
+  speed_tokens_per_second, elapsed_milliseconds,
+  first_token_milliseconds, ttfb_milliseconds, finish_reason,
+  error_type, error_status, error_message, region, source, app, created_at
+FROM provider_benchmark_samples FINAL
+WHERE source = 'organic'
+  AND usage_type = 'Credits'
+  AND error_status IN (401, 403)
+  AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+ORDER BY created_at DESC, id DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params={"cutoff": cutoff, "limit": max(1, limit)},
+        )
+        return [_benchmark_sample(row) for row in rows]
+
     def route_workspaces(
         self, *, provider: str, model: str, start_at: str, end_at: str,
     ) -> list[str]:

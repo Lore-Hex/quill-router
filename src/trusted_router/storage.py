@@ -3613,6 +3613,14 @@ class InMemoryStore:
             limit=limit,
         )
 
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self.generation_store.account_refusal_samples(cutoff=cutoff, limit=limit)
+
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         self.synthetic_store.record(sample)
 

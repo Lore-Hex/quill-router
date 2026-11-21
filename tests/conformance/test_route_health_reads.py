@@ -276,3 +276,32 @@ def test_legacy_benchmark_rows_join_the_window_after_the_backfill(pg_store: Any)
         cursor = examined[-1]
 
     assert window_ids() == ["legacy"]
+
+
+def test_account_refusal_samples_are_recent_organic_credits_401_403(pg_store: Any) -> None:
+    now = dt.datetime.now(dt.UTC)
+
+    def record(sample_id: str, minutes: int, **changes: Any) -> None:
+        base = make_benchmark_sample(
+            sample_id=sample_id, provider="maple", model="maple/m", status="error",
+            created_at=_iso(now - dt.timedelta(minutes=minutes)),
+        )
+        fields = {"source": "organic", "usage_type": "Credits", "error_status": 403,
+                  "error_type": "provider_error"}
+        fields.update(changes)
+        pg_store.record_provider_benchmark(dataclasses.replace(base, **fields))
+
+    record("r403", 5)
+    record("r401", 10, error_status=401)
+    record("old", 200)
+    record("byok", 5, usage_type="BYOK")
+    record("synthetic", 5, source="synthetic")
+    record("outage", 5, error_status=502)
+
+    rows = pg_store.provider_account_refusal_samples(
+        cutoff=_iso(now - dt.timedelta(minutes=70)), limit=100,
+    )
+    assert [row.id for row in rows] == ["r403", "r401"]
+    assert [row.id for row in pg_store.provider_account_refusal_samples(
+        cutoff=_iso(now - dt.timedelta(minutes=70)), limit=1,
+    )] == ["r403"]
