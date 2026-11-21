@@ -325,14 +325,6 @@ func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 	ctx := context.Background()
 	h := HTTPOwners{Client: &http.Client{Timeout: 2 * time.Second}, Scheme: "http"}
 	good := answering(t, http.StatusOK, `{"Status":"won"}`)
-	// A connected socket owns its local port but does not listen on it.
-	// Closing a test listener instead lets a later server reuse its port.
-	held, err := net.DialTimeout("tcp", good, 2*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer held.Close()
-	gone := held.LocalAddr().String()
 	redirecting := func(to string) string {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "http://"+to+r.URL.Path, http.StatusTemporaryRedirect)
@@ -352,8 +344,7 @@ func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 		panic(http.ErrAbortHandler)
 	}))
 	defer cut.Close()
-	for name, addr := range map[string]string{
-		"no answer":                gone,
+	unreachable := map[string]string{
 		"a 500 that reads":         answering(t, http.StatusInternalServerError, `{}`),
 		"not JSON":                 answering(t, http.StatusOK, "not json"),
 		"a field the answer lacks": answering(t, http.StatusOK, `{"Error":"owner not reached"}`),
@@ -362,7 +353,25 @@ func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 		"past its bound":           answering(t, http.StatusOK, `{}`+strings.Repeat(" ", maxBody)),
 		"cut short":                cut.Listener.Addr().String(),
 		"a redirect":               redirecting(good),
-	} {
+	}
+	unpinged := map[string]string{
+		"a 500":      answering(t, http.StatusInternalServerError, `{}`),
+		"a redirect": redirecting(pinged.Listener.Addr().String()),
+	}
+	// A connected socket owns its local port but does not listen on it.
+	// Every server this test starts is listening before that port is taken:
+	// Linux can hand a connected socket's port to a later listener, and when
+	// the redirecting server got it, "no answer" answered (CI, 2026-11-21:
+	// "no answer: an authorize: <nil>").
+	held, err := net.DialTimeout("tcp", good, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	gone := held.LocalAddr().String()
+	unreachable["no answer"] = gone
+	unpinged["no answer"] = gone
+	for name, addr := range unreachable {
 		if _, err := h.Authorize(ctx, addr, OwnerAuthorize{}); !errors.Is(err, ErrUnreachable) {
 			t.Fatalf("%s: an authorize: %v", name, err)
 		}
@@ -376,8 +385,7 @@ func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 	if got, err := h.Terminal(ctx, good, OwnerTerminal{}); err != nil || got.Status != Won {
 		t.Fatalf("an owner that answers: %+v %v", got, err)
 	}
-	for name, addr := range map[string]string{"no answer": gone, "a 500": answering(t, http.StatusInternalServerError, `{}`),
-		"a redirect": redirecting(pinged.Listener.Addr().String())} {
+	for name, addr := range unpinged {
 		if err := h.Ping(ctx, addr); !errors.Is(err, ErrUnreachable) {
 			t.Fatalf("%s: a ping: %v", name, err)
 		}
