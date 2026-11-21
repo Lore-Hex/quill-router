@@ -98,6 +98,104 @@ def _identifier(value: str, *, label: str) -> str:
     return value
 
 
+# The bucket label of a usage series, per granularity. Each expression yields
+# exactly the string ``storage_activity.usage_bucket_key`` cuts from an ISO
+# timestamp, always in UTC, so the SQL aggregate and the in-memory store name
+# the same buckets. Fixed constants: nothing from a request reaches the SQL.
+USAGE_BUCKET_EXPRESSIONS: dict[str, str] = {
+    "minute": "formatDateTime(created_at, '%Y-%m-%dT%H:%i', 'UTC')",
+    "5min": "formatDateTime(toStartOfFiveMinutes(created_at), '%Y-%m-%dT%H:%i', 'UTC')",
+    "hour": "formatDateTime(created_at, '%Y-%m-%dT%H', 'UTC')",
+    "day": "formatDateTime(created_at, '%Y-%m-%d', 'UTC')",
+}
+
+
+# The bounded elapsed-time histogram behind every exact median here (see
+# ``elapsed_histogram_columns`` and ``settle_elapsed_median``). Slots are
+# 1,024 ms wide and the last one is open-ended, so one group of rows holds at
+# most 65,536 slots, plus 1,024 distinct values for each slot it opens,
+# however many rows or distinct values the range has.
+ELAPSED_SLOT_MS = 1024
+ELAPSED_LAST_SLOT = 65_535
+ELAPSED_CEILING_MS = ELAPSED_LAST_SLOT * ELAPSED_SLOT_MS
+# The coarse read, the read of the middle slots, and two more for a range
+# whose middle moved between them.
+_ELAPSED_READS = 4
+
+
+def elapsed_histogram_columns(column: str, opened: str) -> str:
+    """The two SELECT expressions of the bounded elapsed-time histogram.
+
+    ``column`` is the latency expression, nullable milliseconds. ``opened`` is
+    a condition that is true for a row whose slot should be opened, which for
+    one group of rows is ``intDiv(<column>, 1024) IN (<its middle slots>)``.
+    Both are SQL text fixed in the caller's code, never request input.
+
+    The query that selects these must also select ``count() AS
+    generations_at_value`` and group by ``slot, elapsed_value`` (after any
+    key of its own, such as a tag). ``slot`` is NULL for an untimed row.
+    ``elapsed_value`` is the row's value inside an opened slot and NULL
+    elsewhere. ``settle_elapsed_median`` reads one group's rows.
+    """
+    return (
+        "  CASE\n"
+        f"    WHEN {column} IS NULL THEN NULL\n"
+        f"    WHEN {column} >= {ELAPSED_CEILING_MS} THEN {ELAPSED_LAST_SLOT}\n"
+        f"    ELSE intDiv({column}, {ELAPSED_SLOT_MS})\n"
+        "  END AS slot,\n"
+        "  CASE\n"
+        f"    WHEN {column} < {ELAPSED_CEILING_MS}\n"
+        f"      AND {opened}\n"
+        f"    THEN {column}\n"
+        "  END AS elapsed_value"
+    )
+
+
+def usage_buckets_query(*, granularity: str, by_model: bool, key_filtered: bool) -> str:
+    """The usage-series aggregate: totals per time bucket, or per bucket and model.
+
+    ClickHouse groups the rows instead of sending them to the caller, so the
+    result is small whatever the tenant's volume, and nothing is cut off.
+    FINAL stays: it is what counts a redelivered generation once. Every value
+    is a bound parameter; the only variable text is the bucket expression,
+    chosen from a fixed table by granularity.
+
+    The stored usage type is a grouping key, not a condition: the caller
+    decides Credits or BYOK for each stored value with ``UsageType.coerce``,
+    the same function the row-by-row aggregation used, so the two cannot
+    disagree on a value however it is spelled.
+    """
+    bucket = USAGE_BUCKET_EXPRESSIONS.get(granularity)
+    if bucket is None:
+        raise ValueError(f"unknown granularity: {granularity}")
+    group = "bucket, model, usage_type" if by_model else "bucket, usage_type"
+    # No alias repeats a column name: ClickHouse resolves a name inside an
+    # aggregate to the alias first, which would nest the aggregate in itself.
+    select = [f"{bucket} AS bucket"]
+    if by_model:
+        select.append("model")
+    select += [
+        "usage_type",
+        "count() AS requests",
+        "sum(tokens_prompt) AS prompt_tokens",
+        "sum(tokens_completion) AS completion_tokens",
+        "sum(reasoning_tokens) AS reasoning_token_total",
+        "sum(total_cost_microdollars) AS cost_total",
+    ]
+    clauses = ["tenant_id = {tenant_id:String}"]
+    if key_filtered:
+        clauses.append("key_id = {key_id:String}")
+    clauses.append("created_at >= parseDateTime64BestEffort({start_at:String}, 3)")
+    clauses.append("created_at < parseDateTime64BestEffort({end_at:String}, 3)")
+    return (
+        "\nSELECT\n  "
+        + ",\n  ".join(select)
+        + "\nFROM activity_generations FINAL\nWHERE "
+        + "\n  AND ".join(clauses)
+        + f"\nGROUP BY {group}\nORDER BY {group}\nFORMAT JSON\n"
+    )
+
+
 def _iso(value: Any) -> str:
     text = str(value)
     if text.endswith("Z") or "+" in text[10:]:
@@ -433,6 +531,97 @@ FORMAT JSON
         )
         return [_generation(row, tenant_id=tenant_id) for row in rows]
 
+    def activity_usage_buckets(
+        self,
+        *,
+        tenant_id: str,
+        granularity: str,
+        start_at: str,
+        end_at: str,
+        key_id: str | None = None,
+        by_model: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Usage totals of ``[start_at, end_at)`` per bucket, or per bucket and model.
+
+        One row per bucket (and model when asked), in that order, carrying the
+        six integers of ``storage_activity.generation_metrics``, summed.
+        """
+        params: dict[str, str | int] = {
+            "tenant_id": tenant_id,
+            "start_at": start_at,
+            "end_at": end_at,
+        }
+        if key_id is not None:
+            params["key_id"] = key_id
+        rows = self._query(
+            usage_buckets_query(
+                granularity=granularity,
+                by_model=by_model,
+                key_filtered=key_id is not None,
+            ),
+            params=params,
+        )
+        return _usage_bucket_rows(rows, by_model=by_model)
+
+    def activity_elapsed_summary(
+        self,
+        *,
+        tenant_id: str,
+        start_at: str,
+    ) -> dict[str, int | None]:
+        """Server-side elapsed time over every generation since ``start_at``.
+
+        ``median_ms`` is the median of the rows that carry an elapsed time,
+        over the whole range rather than a newest-rows sample. For an even
+        count it is the floor of the mean of the two middle values, which is
+        what the page showed when it computed the median itself.
+
+        Memory is bounded whatever the range holds. An exact quantile function
+        keeps every row's value, and a histogram of every distinct value
+        keeps one entry per value in every thread; either runs a busy
+        tenant's range into the reader's memory limit. This reads a coarse
+        histogram instead: rows counted per slot of 1,024 ms, at most 65,536
+        slots. That locates the one or two slots the middle values fall in. A
+        second read counts the distinct values inside those slots only, at
+        most 2,048, and the median is read off the running count. Each read
+        is one statement over one snapshot and carries its own totals, so the
+        answer is exact for the rows that read saw; if rows arriving between
+        the two reads moved the middle to another slot, the read is repeated
+        for that slot.
+
+        The last slot is open-ended (about 18.6 hours and up) and is never
+        opened: a median that long is reported as absent, not approximated.
+        """
+        slots = (ELAPSED_LAST_SLOT, ELAPSED_LAST_SLOT)  # the first read opens no slot
+        for _ in range(_ELAPSED_READS):
+            rows = self._query(
+                "\nSELECT\n"
+                + elapsed_histogram_columns(
+                    "elapsed_milliseconds",
+                    "intDiv(elapsed_milliseconds, 1024)"
+                    " IN ({slot_low:UInt64}, {slot_high:UInt64})",
+                )
+                + """,
+  count() AS generations_at_value
+FROM activity_generations FINAL
+WHERE tenant_id = {tenant_id:String}
+  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+GROUP BY slot, elapsed_value
+FORMAT JSON
+""",
+                params={
+                    "tenant_id": tenant_id,
+                    "start_at": start_at,
+                    "slot_low": slots[0],
+                    "slot_high": slots[1],
+                },
+            )
+            settled = settle_elapsed_median(rows)
+            if isinstance(settled, dict):
+                return settled
+            slots = settled
+        raise RuntimeError("elapsed median did not settle: the range kept changing between reads")
+
     def routing_traffic(
         self, *, start_at: dt.datetime, end_at: dt.datetime,
     ) -> list[dict[str, Any]]:
@@ -722,6 +911,97 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         tags={str(key): str(value) for key, value in (row.get("tags") or {}).items()},
         created_at=_iso(row["created_at"]),
     )
+
+
+def _usage_bucket_rows(rows: list[dict[str, Any]], *, by_model: bool) -> list[dict[str, Any]]:
+    """Fold each bucket's stored usage types into its Credits and BYOK spend.
+
+    Keys follow the usage bucket the stores return. ClickHouse may quote
+    64-bit integers in JSON, so every count goes through int().
+    """
+    merged: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for row in rows:
+        bucket = str(row["bucket"])
+        model = str(row["model"]) if by_model else None
+        totals = merged.get((bucket, model))
+        if totals is None:
+            totals = {"bucket": bucket}
+            if model is not None:
+                totals["model"] = model
+            totals.update(
+                requests=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                reasoning_tokens=0,
+                cost_micro=0,
+                byok_micro=0,
+            )
+            merged[(bucket, model)] = totals
+        totals["requests"] += int(row["requests"])
+        totals["prompt_tokens"] += int(row["prompt_tokens"])
+        totals["completion_tokens"] += int(row["completion_tokens"])
+        totals["reasoning_tokens"] += int(row["reasoning_token_total"])
+        # The same decision generation_metrics makes for one generation.
+        spend = "byok_micro" if UsageType.coerce(str(row["usage_type"])).is_byok() else "cost_micro"
+        totals[spend] += int(row["cost_total"])
+    return list(merged.values())
+
+
+def settle_elapsed_median(
+    rows: list[dict[str, Any]],
+) -> dict[str, int | None] | tuple[int, int]:
+    """Read the median off one group's elapsed-time histogram, or say which slots to open.
+
+    ``rows`` are the ``slot``, ``elapsed_value`` and ``generations_at_value``
+    of ``elapsed_histogram_columns`` for one group, in any order. Each is a
+    count of generations: untimed ones (no slot), a whole slot (no value), or
+    one distinct value inside an opened slot.
+
+    Returns ``{"generations", "samples", "median_ms"}`` when the median is
+    settled, otherwise the two slots the middle values are in, to open in the
+    next read. The median is the one a sorted list gives: the middle value
+    for an odd count of timed rows, the floor of the mean of the two middle
+    values for an even count, ``None`` when no row is timed. It is also
+    ``None`` when a middle value is in the open-ended last slot (about 18.6
+    hours and up): that slot is never opened, so such a median is reported as
+    absent rather than approximated.
+    """
+    untimed = 0
+    groups: list[tuple[int, int, int | None]] = []
+    for row in rows:
+        count = int(row["generations_at_value"])
+        if row.get("slot") is None:
+            untimed += count
+            continue
+        groups.append((int(row["slot"]), count, _optional_int(row.get("elapsed_value"))))
+    timed = sum(count for _slot, count, _value in groups)
+    summary: dict[str, int | None] = {
+        "generations": timed + untimed,
+        "samples": timed,
+        "median_ms": None,
+    }
+    if timed == 0:
+        return summary
+    # Ascending by value: an opened slot's values are all inside that slot.
+    groups.sort(key=lambda group: (group[0], -1 if group[2] is None else group[2]))
+    # 1-based ranks of the lower and upper middle. They are equal for an odd count.
+    ranks = ((timed + 1) // 2, timed // 2 + 1)
+    middle: list[tuple[int, int | None]] = []
+    position = 0
+    through = groups[0][1]
+    for rank in ranks:
+        while through < rank:
+            position += 1
+            through += groups[position][1]
+        middle.append((groups[position][0], groups[position][2]))
+    (low_slot, low), (high_slot, high) = middle
+    if high_slot >= ELAPSED_LAST_SLOT:
+        # Beyond the histogram: report no median rather than a wrong one.
+        return summary
+    if low is None or high is None:
+        return low_slot, high_slot
+    summary["median_ms"] = (low + high) // 2
+    return summary
 
 
 def _client_event(row: dict[str, Any]) -> dict[str, Any]:

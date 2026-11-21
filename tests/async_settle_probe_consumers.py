@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import httpx
 
+from tests.fakes.clickhouse_activity import format_datetime
 from tests.test_operational_analytics import _generation
 from trusted_router.config import Settings
 from trusted_router.storage import InMemoryStore
@@ -241,6 +242,8 @@ def consumer_snapshots(monkeypatch, query_log, *, now=None):
             midnight = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
             return (midnight + dt.timedelta(minutes=((timestamp.hour * 60 + timestamp.minute) // minutes) * minutes)).isoformat()
         database.connection.create_function(func, 1, floor)
+    # The usage series labels its buckets in SQL (formatDateTime), in UTC.
+    database.connection.create_function("formatDateTime", 3, format_datetime)
     # Raw client source fixtures are identical before/after. No cohort SDK
     # telemetry is invented. Both shipped rollup SELECTs execute locally.
     database.replace_table("client_minute_counters", [_counter(
