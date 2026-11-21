@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from starlette.responses import FileResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse, Response
+
+from trusted_router.dashboard import public_openrouter_notice_html
 
 _ORIGIN = "https://raw.githubusercontent.com/Lore-Hex/quill-router/published-notes"
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -30,8 +31,7 @@ def _document(filename: str, media_type: str) -> Response:
 def register_notes(app: FastAPI) -> None:
     @app.api_route("/openrouter", methods=["GET", "HEAD"], include_in_schema=False)
     def openrouter_notice() -> Response:
-        page = Path(__file__).resolve().parents[1] / "templates/public/openrouter_notice.html"
-        return FileResponse(page, media_type="text/html")
+        return HTMLResponse(public_openrouter_notice_html())
 
     @app.api_route("/notes", methods=["GET", "HEAD"], include_in_schema=False)
     def notes_archive() -> Response:

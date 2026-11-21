@@ -3252,6 +3252,10 @@ def _green_tokens_context() -> dict[str, Any]:
     ]}
 
 
+def public_openrouter_notice_html() -> str:
+    return _env().get_template("public/openrouter_notice.html").render()
+
+
 def public_openrouter_experiment_html(settings: Settings, variant_slug: str) -> str:
     variant = OPENROUTER_PAID_LANDING_VARIANTS[variant_slug]
     path = f"/openrouter-alternative/lp/{variant.slug}"
