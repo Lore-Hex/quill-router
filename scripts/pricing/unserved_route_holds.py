@@ -9,8 +9,10 @@ several providers have no inference credential in the refresh at all.
 
 The control plane already observes the failure: configured-route probes
 classify the responses as ``unsupported_route``. ``/route-health/unserved.json``
-publishes the routes whose newest probes form a long model-not-served streak
-(see ``trusted_router.synthetic.route_health.evaluate_unserved_routes``). This
+publishes the routes whose newest probes form a long model-not-served streak,
+or have failed every probe for six hours (a sustained per-route outage, such
+as Chutes answering 502 for one model while serving the rest), see
+``trusted_router.synthetic.route_health.evaluate_unserved_routes``. This
 step, run after the provider refresh, applies that evidence to the committed
 manifests:
 

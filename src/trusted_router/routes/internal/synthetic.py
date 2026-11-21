@@ -44,11 +44,14 @@ from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
     evaluate_account_refusals,
     evaluate_route_health,
+    evaluate_unserved_routes,
     report_catalog_freshness,
     report_image_generation_failures,
     report_route_health,
     report_route_health_unevaluable,
+    report_route_holds,
     report_video_generation_failures,
+    split_held_flags,
     unreported_account_refusals,
 )
 from trusted_router.types import ErrorType
@@ -610,7 +613,11 @@ def register(router: APIRouter) -> None:
                         "reason": "analytics_unavailable",
                     }
                 }
-            await run_in_threadpool(report_route_health, flags)
+            held = await run_in_threadpool(_pending_route_holds)
+            paging, holding = split_held_flags(flags, held)
+            await run_in_threadpool(report_route_health, paging)
+            if holding:
+                await run_in_threadpool(report_route_holds, holding)
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -667,6 +674,18 @@ def register(router: APIRouter) -> None:
             response.status_code = 202
             return {"data": {"scheduled": True}}
         return await _run_with_deadline(settings, body, slot)
+
+
+def _pending_route_holds() -> frozenset[tuple[str, str]]:
+    """Routes the next price refresh will hold (the /route-health/unserved.json
+    evidence). Unreadable evidence holds nothing, so every flag keeps paging."""
+    try:
+        return frozenset(
+            (route.provider, route.model) for route in evaluate_unserved_routes(STORE)
+        )
+    except Exception:  # noqa: BLE001 - no evidence means page as before, never "held"
+        log.warning("synthetic_route_health.hold_evidence_unavailable", exc_info=True)
+        return frozenset()
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
