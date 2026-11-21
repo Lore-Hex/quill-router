@@ -2274,12 +2274,7 @@ def _authorize_gateway_sync_impl(
                 estimate,
                 type(conflict_exc).__name__,
             )
-            raise api_error(
-                503,
-                "Authorization contention; retry shortly.",
-                ErrorType.SERVICE_UNAVAILABLE,
-                headers={"Retry-After": "1"},
-            ) from conflict_exc
+            raise _authorize_contention_error() from conflict_exc
         except BaseException:
             raise
         if authorization.id != authorization_id:
@@ -3423,18 +3418,37 @@ def _lease_headroom_error(
     counter trustedrouter_gateway_lease_headroom_503 counts it for the
     authorize-503 alert and the rate (scripts/deploy/gateway_reliability.sh).
     Its prefix, "INFO <logger> billing.lease_headroom_unavailable ", and
-    "trace=<id>" are read by both, so a change to either is a change to them."""
+    "trace=<id>" are read by both, so a change to either is a change to them.
+
+    An ExpectedHTTPException (QUILL-ROUTER-HX): the line and its counter are
+    the signal, and the response is the same as api_error's, so Sentry's
+    before_send drops the designed, retryable answer."""
     logger.info(
         "billing.lease_headroom_unavailable workspace_id=%s key_id=%s request_id=%s "
         "reserved_microdollars=%d estimated_microdollars=%d trace=%s",
         _log_value(workspace.id), _log_value(key_id), _log_value(request_id), reservation, estimate,
         _log_value(trace_id),
     )
-    return api_error(
+    return expected_api_error(
         503,
         LEASE_HEADROOM_MESSAGE,
         ErrorType.SERVICE_UNAVAILABLE,
         headers={"Retry-After": LEASE_HEADROOM_RETRY_AFTER},
+    )
+
+
+def _authorize_contention_error() -> Exception:
+    """503 with Retry-After for an authorize whose escrow committed but whose
+    hold transaction exhausted its conflict retries on the workspace's hot
+    row: its own concurrent requests won. The raise site refunds the escrow
+    and logs billing.authorize_conflict_after_escrow, and the enclave retries,
+    so it is an ExpectedHTTPException that Sentry's before_send drops; the
+    response is the same as api_error's."""
+    return expected_api_error(
+        503,
+        "Authorization contention; retry shortly.",
+        ErrorType.SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "1"},
     )
 
 
