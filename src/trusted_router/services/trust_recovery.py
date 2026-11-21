@@ -11,7 +11,8 @@ PROVIDER_CONSISTENCY_DELAY_SECONDS = {"stripe": 900, "x402": 900}
 
 
 def alert_unrecovered_principal(result: Any) -> bool:
-    if result.unrecovered_micro <= 0 or result.workspace_id is None:
+    # Reconciliation replays carry the persisted payment shortfall, not a new loss.
+    if result.outcome != "applied" or result.unrecovered_micro <= 0 or result.workspace_id is None:
         return False
     return ops_alert(
         "trust.unrecovered_principal "
