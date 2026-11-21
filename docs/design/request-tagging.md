@@ -298,30 +298,57 @@ other JSON endpoints and both scoped to the session's workspace:
 Reads are computed in ClickHouse from `activity_generations FINAL` over every
 row of the tenant since the start of the range, so they are totals and not a
 sample. They need no schema change, rollup or grant. Each read keeps a bounded
-amount of state, however many rows, values or generation times the range has:
+amount of state, however many rows, values or generation times the range has,
+and each bound is in the statement that needs it: rows keep arriving between
+two statements, so none of them relies on what an earlier one saw.
 
 | Read | State it keeps |
 | --- | --- |
 | keys | a `topK` sketch with 10,000 counters |
 | one key's values | a `topK` sketch with 5,000 counters |
-| cardinality | one fixed-size distinct-count sketch, and at most 101 usage types |
-| ranking | one group per distinct value, keyed by two 64-bit hashes of the value, not by its text |
-| names | the text of the at most 50 values that keep a row |
+| candidates | two `topK` sketches of 6,000 counters and one distinct-count sketch, with no `GROUP BY` |
+| totals | one group per candidate and stored usage type, for at most 4,000 candidates named in the statement |
 | histogram | at most 52 groups, each with the page's bounded elapsed-time histogram |
 
-The bounds have three visible consequences:
+A breakdown is the last three. The candidates read names, by a 64-bit hash,
+the 2,000 values with the most cost and the 2,000 with the most generations,
+and estimates how many distinct values the key has. The totals read returns
+the text, generations and cost of those candidates and of no other value. The
+50 that keep a row are chosen from them by credit cost, then generations, then
+text, which is the order the in-memory store uses. The histogram read then
+totals those 50, every other value as one row, and untagged generations as
+one row.
 
-- More keys or values than a sketch counts exactly. The list is then the most
-  frequent ones, with counts that can be too high, and the panel says so. A
-  value the list leaves out can be typed.
-- Too many values to break down. The ranking keeps one small group per
-  distinct value, so it runs only when the cardinality read finds at most
-  500,000 of them. Past that the breakdown is not attempted: the panel says
-  the key has too many distinct values and offers another key or a shorter
-  range. Such a key is an identifier, not a dimension to allocate cost by,
-  and its values can still be filtered by. When the page did not ask for a
-  key, the three most used keys are tried in turn, so a request id on every
-  request does not make the first view a refusal.
+Credits and BYOK are told apart by the caller, with `UsageType.coerce`, from
+the stored usage type that the totals and histogram statements group by. No
+statement is handed a list of usage types that an earlier one saw, so a
+tenant's first BYOK generation arriving between two reads is counted as BYOK.
+
+The bounds have four visible consequences:
+
+- More keys or values than a sketch counts exactly. The list is then
+  approximately the most frequent ones, with counts that can be too high, and
+  the panel says so. A value the list leaves out can be typed, and the empty
+  value has a control of its own. A typed value is sent as typed: its length
+  is counted in characters, as the server counts it, and a value over the
+  limit of 256 is refused on the page in words, not cut.
+- Too many values to break down. A key with more than 500,000 distinct values
+  is an identifier, not a dimension to allocate cost by, and is not broken
+  down: the panel offers another key or a shorter range, and its values can
+  still be filtered by. Each store refuses when its own count is over the
+  limit. The in-memory store counts exactly; ClickHouse estimates the count
+  within about one percent, in the candidates statement itself, so the panel
+  says "about 500,000 or more". Nothing depends on this limit for memory: with
+  it lifted, a key of twelve million values was still read in fixed space.
+  When the page did not ask for a key, the three most used keys are tried in
+  turn, so a request id on every request does not make the first view a
+  refusal.
+- Approximate ranking. A key with fewer than 2,000 distinct values is ranked
+  exactly, ties included, and both stores choose the same 50. With 2,000 or
+  more, ClickHouse ranks the heaviest values its sketches found: the totals of
+  every row are still exact, but a value that belongs among the 50 can be in
+  the Other row instead, and the panel says the rows are approximate. The
+  in-memory store always ranks every value.
 - Medians. The median is generation time as the server measured it
   (`elapsed_milliseconds`), not client-observed latency. It has the definition
   of the reliability panel's server median and is computed by the same code
@@ -336,28 +363,33 @@ The bounds have three visible consequences:
   panel's own ceiling is about 18.6 hours.
 
 Totals and medians of one breakdown come from one statement, so they describe
-one snapshot. Values equal in both cost and requests are ordered by a hash in
-ClickHouse and by text in memory, so the two can keep different ones of them
-at the cut of 50.
+one snapshot. Which values keep a row was decided by the two statements before
+it: a value that first appears after them is counted in the Other row.
+
+A value is identified by two independent 64-bit hashes of its text. Two values
+of one key that agreed in both would be shown as one row under the smaller
+text; with at most 4,000 candidates that takes a collision in 128 bits.
 
 The in-memory store computes the same answers in Python.
 `tests/test_activity_tags.py` holds the two to what ClickHouse 26.8 returned
 for the same rows: `tests/fixtures/activity_tags_clickhouse.json` is a
-recording of every statement and its answer, and a changed statement has no
-answer until it is recorded again.
+recording of every statement and its answer, stored under a hash of the
+statement's exact text, so a changed statement has no answer until it is
+recorded again.
 
 Measured on ClickHouse 26.8 with the control reader's limits (1 GiB of memory,
-30 seconds) and synthetic tenants of one to six million generations in 90
+30 seconds) and synthetic tenants of one to twelve million generations in 90
 days: a breakdown of 200 values, a key with 495,000 values, 50,000 values of
-256 bytes, and generation times that fill every slot of every group all stay
-under 350 MiB a statement, and a key with a million values is refused after
-two statements.
+256 bytes and 100,000 values of 1 KiB stay under 250 MiB a statement,
+generation times that fill every slot of every group under 450 MiB, and a key
+with a million or with twelve million values is refused after two statements
+in about 100 MiB.
 
 What these queries do not bound is the cost of reading the `tags` column under
 `FINAL`, which every tag read pays, the existing activity reads included. It
 grows with the tag text per request and with the number of unmerged parts in
 the range, not with the state above. With about 2 KiB of tags on every request
-(the limit is 4 KiB) a 90-day read peaked near 400 MiB on a merged table and
+(the limit is 4 KiB) a 90-day read peaked near 450 MiB on a merged table and
 ran out of the 1 GiB with merges stopped and some twenty parts in every
 month, where 1 and 7 days still loaded. A read that fails this way is an
 error, never partial totals: the panel says the range could not be loaded and
