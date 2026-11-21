@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.media_discovery import media_discovery
-from trusted_router.speech import SPEECH_MODELS
+from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.transcription import TRANSCRIPTION_MODELS
 
 
@@ -61,7 +61,12 @@ def test_image_and_audio_controls_and_units(client: TestClient) -> None:
     assert Decimal(whisper["pricing"]["rates"]["input_audio_minute"]) > 0
     mistral = rows["mistralai/voxtral-mini-2602"]["trustedrouter"]["media"]["parameters"]
     assert "temperature" not in mistral and "diarize" in mistral
-    tts = rows["mistralai/voxtral-mini-tts-2603"]["trustedrouter"]
-    assert tts["speech"]["default_response_format"] is None
-    assert tts["speech"]["example_response_format"] == "mp3"
-    assert tts["media"]["parameters"]["response_format"] == {"values": ["mp3"], "required": True}
+
+
+def test_mistral_speech_requires_an_explicit_mp3_format() -> None:
+    model_id = "mistralai/voxtral-mini-tts-2603"
+    speech = speech_metadata(model_id)
+    assert speech["default_response_format"] is None
+    assert speech["example_response_format"] == "mp3"
+    media = media_discovery(model_id, [], {})
+    assert media and media["parameters"]["response_format"] == {"values": ["mp3"], "required": True}
