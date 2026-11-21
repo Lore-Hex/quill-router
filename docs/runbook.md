@@ -1440,25 +1440,36 @@ the next flip or via `release_approved`.
 ### <a id="holds-released-without-a-terminal"></a>Holds released without a terminal
 
 Every gateway request ends in a settle or a refund. A hold with neither is
-given back by the control plane, and each such release is nearly always a
-gateway exit that authorized and then sent no terminal. Until the hold is
-given back the customer's credit is locked: a small balance can be held whole
-by a handful of stranded requests, and its later requests are refused.
+ended by the control plane, and each one is nearly always a gateway exit
+that authorized and then sent no terminal. Until then the customer's credit
+is locked: a small balance can be held whole by a handful of stranded
+requests, and its later requests are refused.
 
-Two rules give a hold back, and the drain writes one WARNING line for each
+Two rules end such a hold, and the drain writes one WARNING line for each
 hold, naming the rule's counter and nothing else:
 
 | Rule | When | Line (`textPayload`) |
 |---|---|---|
 | `expired` | the reaper, at the reservation's expiry, two hours after the authorization | `WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_expired_total ` |
-| `unstarted_stream` | the early rule, 15 minutes after the authorization, for a stream the gateway heartbeats that never sent its first heartbeat | `WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_unstarted_stream_total ` |
+| `unstarted_stream` | the early rule, from 16 minutes after the authorization, for a stream the gateway heartbeats that never sent its first heartbeat | `WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_unstarted_stream_total ` |
 
 **Alert `TR Holds: released at expiry`** and **Alert `TR Holds: released
 early, stream never started`** (`infra/hold_release_alerts.tf`) notify at
 most once an hour while lines keep coming. The count of holds is the
 log-based metric `gateway_hold_release_expired` or
-`gateway_hold_release_unstarted_stream`. Money is correct after either: the
-exact recorded hold is given back and nothing is booked.
+`gateway_hold_release_unstarted_stream`. The `expired` line is written in
+every mode of the early rule, `off` included, and its policy will notify on
+today's background of such holds, tens a week, until the gateway's exits
+are fixed. That is deliberate: each one is a hold a customer waited two
+hours for.
+
+Money after either: the exact recorded hold is given back and nothing is
+booked, with one exception. A stream that had started (heartbeats on its
+row) and then lost its gateway is ended by the reaper at its last
+heartbeat's snapshot and charged that snapshot; it is counted under
+`expired` too, and the reaper's own line says how many
+(`gateway.reaped ... snapshot_bookings=N`). The early rule never books
+anything.
 
 What to do: find the gateway exit. The lines name no customer on purpose, so
 start from the class of the released rows, an aggregate over the last hour by
@@ -1489,26 +1500,40 @@ burst of 20 or more in one pass also raises `ALERT gateway reaper burst`.
 ### <a id="early-release-of-unstarted-holds"></a>Early release of unstarted holds
 
 `TR_UNSTARTED_HOLD_RELEASE_MODE` in `scripts/deploy/rollout.sh` (design:
-`docs/design/fast-admission-streams.md` section 13). `off` is the code as it
-was. `log` runs the pass after the reaper's and releases nothing. `on`
-releases. The rule only ever takes a stream the gateway heartbeats (Stage D
-reason `ok`, a boot that declared `usage_heartbeat`) with no heartbeat on its
-row, `TR_UNSTARTED_HOLD_RELEASE_SECONDS` after its authorization. Such a
-request has delivered nothing, and once its row is terminal its first
-heartbeat is refused, so it never will: the gateway answers its client 503
-and sends no settle.
+`docs/design/fast-admission-streams.md` section 13). With `off` the drain's
+statements and what it books are as they were before the rule; the pass
+does not run. `log` runs the pass after the reaper's, on read-only
+snapshots, and releases nothing. `on` releases.
+
+The rule only ever takes a stream the heartbeat contract applied to when it
+was authorized (Stage D reason `ok`, every field as authorize writes it,
+and a boot that had been declaring `usage_heartbeat` since before the row
+was made) with no heartbeat on its row, `TR_UNSTARTED_HOLD_RELEASE_SECONDS`
+plus a 60-second clock allowance after its authorization. Such a request
+has delivered nothing, and once its row is terminal its first heartbeat is
+refused, so it never will: the gateway answers its client 503 and sends no
+settle. A boot record carries the start of its declaration only from its
+first registration after this rule deployed; rows of a boot registered
+before then show as `boot_undeclared` until that boot registers again.
+
+A hold the rule may release is given back by the first pass that starts 16
+minutes or more after its authorize and reaches it: 16 to 21 minutes when
+the drain runs every five minutes and the pass is not `truncated`, and at
+the reaper's two hours at the latest.
 
 Each pass writes one INFO line:
 
 ```
-gateway.unstarted_release mode=log rule=unstarted_stream after_seconds=900 scanned=3 released=0 released_hold_micro=0 would_release=1 would_release_hold_micro=1200 would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false skipped=other_class:2 lease_refunds=0 lease_refund_failures=0
+gateway.unstarted_release mode=log rule=unstarted_stream after_seconds=900 scanned=3 released=0 released_hold_micro=0 would_release=1 would_release_hold_micro=1200 would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false truncated=false skipped=boot_undeclared:2 lease_refunds=0 lease_refund_failures=0
 ```
 
-`would_release` counts the rows past the deadline in that pass, so one
-stranded row is counted in every pass until the reaper takes it.
-`skipped` gives the rows the rule left and why: `other_class` (no heartbeat
-class), `started`, `young`, `boot_undeclared`, `terminal`, `binding`,
-`not_typed`, `reservation`.
+`scanned` counts rows of the class past the deadline (other classes are
+never read). `would_release` counts those the rule would release in that
+pass, so one stranded row is counted in every pass until the reaper takes
+it. `skipped` gives the rows the rule left and why: `boot_undeclared`,
+`malformed`, `started`, `young`, `terminal`, `binding`, `not_typed`,
+`reservation`. `truncated=true` means more than 1,000 rows of the class
+were past the deadline and the rest wait for the next pass.
 
 **Alert `TR Holds: early release contradicted`**: an ERROR line
 `metric=unstarted_release_contradiction_total value=1 kind=... age_seconds=... mode=...` from
@@ -1518,36 +1543,58 @@ heartbeat route, the settle route, and the apply of a frozen settle intent
 both places):
 
 - `kind=late_first_heartbeat`: a first heartbeat arrived after the deadline
-  for a row the rule covers. In `log` it was accepted and the stream ran; in
-  `on` it was refused and the request ended with nothing delivered. The
-  deadline is too short for that request: raise
-  `TR_UNSTARTED_HOLD_RELEASE_SECONDS`, or find why the gateway waited that
-  long before its first heartbeat.
+  for a row the rule covers; `age_seconds` is how long after its authorize.
+  In `log` it was accepted and the stream ran; in `on` it was refused and
+  the request ended with a 503 and nothing delivered. The gateway has no
+  deadline of its own before a first heartbeat (20 s for each candidate
+  before the last, 300 s for the last, over a candidate list of any
+  length), so the rule can end a slow stream that was about to succeed.
+  Raise `TR_UNSTARTED_HOLD_RELEASE_SECONDS`, or find why the gateway
+  waited that long.
 - `kind=charge_without_heartbeat`: a charging settle arrived for a stream of
   the heartbeated class with no heartbeat on its row. The rule rests on this
   never happening. Set the mode to `off`, and find the gateway path that
   delivers a Stage D stream without the first heartbeat.
 
+A first heartbeat that is slow but in time (from a third of the deadline
+on) writes an INFO line with no counter,
+`unstarted_release.slow_first_heartbeat age_seconds=... after_seconds=... mode=...`:
+the tail of the wait, to read beside the deadline.
+
 The gate for `on`, read from Cloud Logging over at least seven days in `log`:
 
 ```bash
-# Passes that found something to release: more than none.
+# 1. Passes that found something to release: more than none.
 gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"gateway.unstarted_release mode=log" AND NOT textPayload:" would_release=0 "' \
   --project=quill-cloud-proxy --freshness=7d --limit=1000 --format='value(timestamp)' | wc -l
-# Contradictions: none.
+# 2 and 3. Contradictions of either kind: none. A late_first_heartbeat line is a
+# live stream the rule would have ended.
 gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"ERROR trusted_router.unstarted_release metric=unstarted_release_contradiction_total "' \
   --project=quill-cloud-proxy --freshness=7d --limit=10 --format='value(timestamp,textPayload)'
-# Passes that failed, or ran without the outbox guard: none.
-gcloud logging read 'resource.type="cloud_run_revision" AND (textPayload:"gateway.unstarted_release failed" OR (textPayload:"gateway.unstarted_release mode=log" AND textPayload:" unguarded=true "))' \
+# 3. The tail of first heartbeats that were in time: the largest age_seconds,
+# to compare with the deadline.
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"unstarted_release.slow_first_heartbeat "' \
+  --project=quill-cloud-proxy --freshness=7d --limit=1000 --format='value(textPayload)' | sort -t= -k2 -n | tail -3
+# Passes that failed, were truncated, or ran without the outbox guard: none.
+gcloud logging read 'resource.type="cloud_run_revision" AND (textPayload:"gateway.unstarted_release failed" OR (textPayload:"gateway.unstarted_release mode=log" AND (textPayload:" unguarded=true " OR textPayload:" truncated=true ")))' \
   --project=quill-cloud-proxy --freshness=7d --limit=10 --format='value(timestamp)'
 ```
+
+4. The decision. Nothing in the gateway bounds the wait before a first
+heartbeat, so the logs can only show that no stream in the window waited
+past the deadline, not that none can. Setting `on` is a decision to accept
+that such a stream is ended with a 503; record it in the change that sets
+the literal.
 
 Then change the literal to `"TR_UNSTARTED_HOLD_RELEASE_MODE=on"` and merge.
 After the flip, `released` and the `unstarted_stream` counter move, a leased
 row also reports `lease_refunds`, and the same contradiction alert is the
 stop. A `lease_refund_failures` count is a lease's hold that stays until its
 end of life, as every such hold did before the rule; it is not a money
-error. The way back is `off`.
+error, and nothing retries it: if the process ends between a row's release
+and its lease's refund, the owner's end-of-life release is the backstop. A
+settle that arrives for a released leased row is dead-lettered with
+`ALERT settle outbox lost charge`. The way back is `off`.
 
 ---
 

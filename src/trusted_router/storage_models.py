@@ -2024,6 +2024,36 @@ class GatewayBoot:
     declares_stream_open_heartbeat: bool = False
     declares_idempotency_key_source: bool = False
     declares_settle_outbox: bool = False
+    # The registration time from which this key has declared usage_heartbeat
+    # at every registration, without a break; None while its latest
+    # registration does not declare it, or for a record no store has
+    # stamped. A registration that withdraws the declaration clears it, and
+    # one that declares it again starts from that registration, so "since S"
+    # read at any later time says every registration from S to that time
+    # declared it. The early release of an unstarted hold reads it to know
+    # the declaration held when an authorization was made
+    # (trusted_router.unstarted_release).
+    usage_heartbeat_declared_since: str | None = None
+
+
+def boot_with_heartbeat_history(
+    existing: GatewayBoot | None, merged: GatewayBoot, *, registered_at: str
+) -> GatewayBoot:
+    """``merged`` (a store's result for one registration) with
+    ``usage_heartbeat_declared_since`` set for that registration, made at
+    ``registered_at``: kept from ``existing`` only when both it and this
+    registration declare usage_heartbeat and it carries a time; otherwise
+    this registration's own time, or None when it does not declare. Every
+    store applies it in the transaction that writes the boot."""
+    since: str | None = None
+    if merged.declares_usage_heartbeat:
+        carried = (
+            existing.usage_heartbeat_declared_since
+            if existing is not None and existing.declares_usage_heartbeat
+            else None
+        )
+        since = carried or registered_at
+    return dataclasses.replace(merged, usage_heartbeat_declared_since=since)
 
 
 @dataclass(frozen=True)

@@ -934,6 +934,20 @@
         }
       ]
     },
+    "storage_gcp_authorize:constants:3": {
+      "fingerprint": "74822a0950513a49edf6198e02b4d7818c7e3c1ddcb3af5c19ca75d5214b5299",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "after_expiry": "TIMESTAMP",
+            "after_id": "STRING",
+            "limit": "INT64",
+            "now": "TIMESTAMP"
+          }
+        }
+      ]
+    },
     "storage_gcp_authorize:_apply_user_model_payout_tx:1": {
       "fingerprint": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
       "scenarios": [
@@ -5130,11 +5144,12 @@
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
-    "storage_gcp_authorize:release_unstarted_holds_result": "90570cd739d1de0f81abe267f1ce151887a4338cd5d6f91c52b4b7b31312970d",
+    "storage_gcp_authorize:release_unstarted_holds_result": "4acf0c9be57e585a016b8055ca85c5a37f02b826cd2c0ab8058c9f0544a29b71",
+    "storage_gcp_authorize:_observe_unstarted_candidate": "428ac293cdceffc1d71d455066291b02b927ee17089c229ed8d821be483d5031",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:credit_exhaustion_precheck": "2b74957c929a595d7177fa13c738d8758ef91c89e40d2c1dfd3a307857ef739b",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "b59abf0a3c472d5ce5ae8fe01a3824dfc5292e4368d3f8f566c53bf8ada75693",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "b8534290d2f75c7e83b5aeff6d5ee3412790c45862d3791e3aff01576c7ec07d",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",

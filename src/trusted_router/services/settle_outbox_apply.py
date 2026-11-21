@@ -92,9 +92,11 @@ def _unstarted_release_mode() -> str:
         return unstarted_release.MODE_OFF
 
 
-def _boot_declares_usage_heartbeat(kid: str) -> bool:
+def _boot_usage_heartbeat_declared_since(kid: str) -> str | None:
     boot = STORE.get_gateway_boot(kid)
-    return bool(boot is not None and boot.declares_usage_heartbeat)
+    if boot is None or not boot.declares_usage_heartbeat:
+        return None
+    return boot.usage_heartbeat_declared_since
 
 
 def _observe_unstarted_charge(auth: GatewayAuthorization) -> None:
@@ -108,7 +110,7 @@ def _observe_unstarted_charge(auth: GatewayAuthorization) -> None:
     if mode == unstarted_release.MODE_OFF:
         return
     unstarted_release.observe_settle(
-        auth, success=True, mode=mode, heartbeat_declared=_boot_declares_usage_heartbeat,
+        auth, success=True, mode=mode, declared_since=_boot_usage_heartbeat_declared_since,
     )
 
 
@@ -548,11 +550,19 @@ def _apply_leased(
     from trusted_router.routes.internal.gateway import _fastpath_front_door
     from trusted_router.services import fastpath_settle
 
+    charge = fastpath_settle.charge_for(success=success, actual_cost=row.actual_cost_micro, selected_usage_type=usage_type)
     if auth.settled:
+        if success and charge > 0 and str(auth.finalization_outcome or "").strip().lower() == "refunded":
+            # The row ended as a refund before this settle was made durable
+            # (the reaper, or the early release of an unstarted hold): the
+            # route answered the settle as a replay and never asked the
+            # lease, whose hold ended uncharged. That is a charge lost, and
+            # it is told as one, as the typed path tells it: the drain
+            # dead-letters the row and raises its lost-charge alert.
+            return ApplyOutcome.ALREADY_RELEASED_FREE
         # Its records are written (by the route, or by the other kind's
         # intent that won): this row is done, with nothing more to ask.
         return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
-    charge = fastpath_settle.charge_for(success=success, actual_cost=row.actual_cost_micro, selected_usage_type=usage_type)
     try:
         decision = fastpath_settle.forward_terminal(
             _fastpath_front_door(get_settings()), auth, success=success, charge=charge, generation=generation,

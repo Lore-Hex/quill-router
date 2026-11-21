@@ -113,6 +113,7 @@ from trusted_router.storage_models import (
     WalletChallenge,
     Workspace,
     _is_expired,
+    boot_with_heartbeat_history,
     federated_api_key_from_record,
     federated_workspace_from_record,
     iso_now,
@@ -419,6 +420,7 @@ class InMemoryStore:
                 or existing.attestation_kind != record.attestation_kind
             ):
                 raise ValueError("spend-lease boot kid collision")
+            registered_at = record.registered_at
             if existing is not None:
                 record = dataclasses.replace(
                     existing,
@@ -431,6 +433,7 @@ class InMemoryStore:
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
+            record = boot_with_heartbeat_history(existing, record, registered_at=registered_at)
             self.gateway_boots[record.kid] = record
             return record
 

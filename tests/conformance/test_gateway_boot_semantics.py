@@ -87,12 +87,15 @@ def test_gateway_boot_declarations_follow_the_latest_registration(
         declares_idempotency_key_source=True,
         declares_settle_outbox=True,
     )
-    assert store.observe_gateway_boot(declared) == declared
-    assert store.get_gateway_boot(declared.kid) == declared
+    # A registration that declares usage heartbeats is stored with the time
+    # that declaration began (the test below), here its own registration's.
+    since = declared.registered_at
+    assert store.observe_gateway_boot(declared) == replace(declared, usage_heartbeat_declared_since=since)
+    assert store.get_gateway_boot(declared.kid) == replace(declared, usage_heartbeat_declared_since=since)
 
     partly = replace(undeclared, declares_usage_heartbeat=True)
-    assert store.observe_gateway_boot(partly) == partly
-    assert store.get_gateway_boot(declared.kid) == partly
+    assert store.observe_gateway_boot(partly) == replace(partly, usage_heartbeat_declared_since=since)
+    assert store.get_gateway_boot(declared.kid) == replace(partly, usage_heartbeat_declared_since=since)
 
     # E4 R2: each of the two new declarations is replaced on its own too.
     outbox_only = replace(undeclared, declares_settle_outbox=True)
@@ -104,3 +107,39 @@ def test_gateway_boot_declarations_follow_the_latest_registration(
 
     assert store.observe_gateway_boot(undeclared) == undeclared
     assert store.get_gateway_boot(declared.kid) == undeclared
+
+
+def test_gateway_boot_keeps_when_its_usage_heartbeat_declaration_began(
+    store: Store,
+    unique: str,
+) -> None:
+    """The early release of an unstarted hold must know that a boot was
+    declaring usage heartbeats when an authorization was made, not only that
+    it declares them now: every backend stores the registration time from
+    which the key has declared them without a break. It is kept across
+    registrations that keep declaring, cleared by one that does not, and
+    starts again, later, when the declaration returns; whatever a caller
+    sends in the field is never taken."""
+    first = replace(_boot(unique), declares_usage_heartbeat=True, registered_at="2026-08-27T00:00:00Z")
+    stored = store.observe_gateway_boot(first)
+    assert stored.usage_heartbeat_declared_since == "2026-08-27T00:00:00Z"
+
+    again = replace(first, registered_at="2026-08-27T01:00:00Z", usage_heartbeat_declared_since="2020-01-01T00:00:00Z")
+    stored = store.observe_gateway_boot(again)
+    assert stored.usage_heartbeat_declared_since == "2026-08-27T00:00:00Z"
+    assert stored.registered_at == "2026-08-27T00:00:00Z"
+
+    withdrawn = replace(first, declares_usage_heartbeat=False, registered_at="2026-08-27T02:00:00Z")
+    assert store.observe_gateway_boot(withdrawn).usage_heartbeat_declared_since is None
+    read = store.get_gateway_boot(first.kid)
+    assert read is not None and read.declares_usage_heartbeat is False
+    assert read.usage_heartbeat_declared_since is None
+
+    restored = replace(first, registered_at="2026-08-27T03:00:00Z")
+    assert store.observe_gateway_boot(restored).usage_heartbeat_declared_since == "2026-08-27T03:00:00Z"
+    read = store.get_gateway_boot(first.kid)
+    assert read is not None and read.usage_heartbeat_declared_since == "2026-08-27T03:00:00Z"
+
+    # A first registration that does not declare has no start, whatever it sends.
+    other = replace(_boot(unique + "-other"), usage_heartbeat_declared_since="2020-01-01T00:00:00Z")
+    assert store.observe_gateway_boot(other).usage_heartbeat_declared_since is None

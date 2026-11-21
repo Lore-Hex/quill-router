@@ -235,6 +235,7 @@ from trusted_router.storage_models import (
     TypedFinalizeResult,
     UserModelPayout,
     _is_expired,
+    boot_with_heartbeat_history,
     document_pause_causes,
     shard_pause_causes,
 )
@@ -6548,9 +6549,10 @@ class SpannerStore(OperationalAnalyticsReads):
     ) -> Any:
         """One pass of the early rule over this store's reservations
         (storage_gcp_authorize.release_unstarted_holds_result). The pass
-        reads a boot's heartbeat declaration once per key id, between its
-        transactions; a read that fails counts as undeclared, which keeps
-        the hold."""
+        reads a boot's record once per key id, between its transactions,
+        for the time since which the boot has declared usage heartbeats
+        without a break; a boot that is gone, a read that fails and a record
+        with no such time all read as None, which keeps the hold."""
         from trusted_router.storage_gcp_authorize import (
             UnstartedRelease,
         )
@@ -6558,13 +6560,15 @@ class SpannerStore(OperationalAnalyticsReads):
             release_unstarted_holds_result as _release,
         )
 
-        def heartbeat_declared(kid: str) -> bool:
+        def declared_since(kid: str) -> str | None:
             try:
                 boot = self.get_gateway_boot(kid)
-            except Exception:  # noqa: BLE001 - an unread boot keeps the hold
-                log.warning("gateway early release boot read failed", exc_info=True)
-                return False
-            return bool(boot is not None and boot.declares_usage_heartbeat)
+            except Exception as exc:  # noqa: BLE001 - an unread boot keeps the hold
+                log.warning("gateway early release boot read failed error_class=%s", type(exc).__name__)
+                return None
+            if boot is None or not boot.declares_usage_heartbeat:
+                return None
+            return boot.usage_heartbeat_declared_since
 
         return _release(
             self._database,
@@ -6574,7 +6578,7 @@ class SpannerStore(OperationalAnalyticsReads):
             rule=UnstartedRelease(
                 after_seconds=int(after_seconds),
                 log_only=bool(log_only),
-                heartbeat_declared=heartbeat_declared,
+                declared_since=declared_since,
             ),
             async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)),
             operational_analytics_outbox=getattr(
@@ -7609,6 +7613,7 @@ class SpannerStore(OperationalAnalyticsReads):
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
+            merged = boot_with_heartbeat_history(existing, merged, registered_at=record.registered_at)
             self._write_entity_tx(transaction, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 

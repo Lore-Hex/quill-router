@@ -111,7 +111,11 @@ from trusted_router.storage_models import (
     UserModelPayout,
 )
 from trusted_router.types import UsageType
-from trusted_router.unstarted_release import RESERVATION_TTL_SECONDS, ineligibility
+from trusted_router.unstarted_release import (
+    CLOCK_SKEW_ALLOWANCE_SECONDS,
+    RESERVATION_TTL_SECONDS,
+    ineligibility,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1000,9 +1004,9 @@ class _ReapGuardLost(Exception):
 
 
 class _BootDeclarationUnread(Exception):
-    """Roll back an early-rule transaction that needs a boot's heartbeat
-    declaration the pass has not read yet; the pass reads it and runs the
-    transaction again."""
+    """Roll back an early-rule transaction that needs a boot's record the
+    pass has not read yet; the pass reads it and runs the transaction
+    again."""
 
     def __init__(self, kid: str) -> None:
         super().__init__("boot declaration unread")
@@ -1082,12 +1086,13 @@ class _ReapOneResult:
 class UnstartedRelease:
     """The early rule as one pass applies it (trusted_router.unstarted_release;
     docs/design/fast-admission-streams.md section 13): the deadline, whether
-    the pass only reports, and the read of a boot's heartbeat declaration by
-    its key id."""
+    the pass only reports, and the read, by a boot's key id, of the time
+    since which that boot has declared usage heartbeats without a break
+    (GatewayBoot.usage_heartbeat_declared_since; None when it has not)."""
 
     after_seconds: int
     log_only: bool
-    heartbeat_declared: Callable[[str], bool]
+    declared_since: Callable[[str], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1098,7 +1103,8 @@ class UnstartedReleaseResult:
     is a lease's, for the refund the lease is then sent; ``skipped`` counts
     the rows left alone by reason. ``unguarded`` is a pass that did nothing
     because the settle outbox, whose pending intent freezes a hold, is not
-    there to ask."""
+    there to ask. ``truncated`` is a pass that stopped at its page budget
+    with rows of the class still unread."""
 
     scanned: int = 0
     released: int = 0
@@ -1112,6 +1118,7 @@ class UnstartedReleaseResult:
     skipped: tuple[tuple[str, int], ...] = ()
     leased: tuple[str, ...] = ()
     unguarded: bool = False
+    truncated: bool = False
 
     def skipped_count(self, reason: str) -> int:
         return dict(self.skipped).get(reason, 0)
@@ -1482,6 +1489,35 @@ _REAP_SCAN_GUARDED_SQL = (
     f"AND o.status IN ({_GUARD_STATUS_SQL})) "
     "LIMIT @limit"
 )
+# The early rule's scan. It reads the expiry index for the unsettled
+# reservations that expire before @now (the pass's horizon) and keeps those
+# whose authorization is, by its columns and its Stage D reason, a
+# heartbeated stream no heartbeat has reached, with no settle intent
+# freezing it: the rows the rule can act on, and no other class's, so a
+# request of another class never takes a place in a page. Pages follow one
+# another in expiry order from a cursor (@after_expiry, @after_id), so rows
+# the transaction then leaves do not hide the ones behind them. The read is
+# bounded by the open reservations past the deadline; each is one primary-key
+# read of its authorization. Like the reaper's scan it is advisory: the
+# transaction's own reads decide.
+_UNSTARTED_SCAN_SQL = (
+    "SELECT r.reservation_id, r.authorization_id, r.credit_reserved_micro, "  # noqa: S608
+    "r.key_reserved_micro, r.expires_at "
+    "FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry} AS r "
+    "JOIN tr_gateway_authorization AS a ON a.authorization_id = r.authorization_id "
+    "WHERE r.settled=false AND r.expires_at < @now "
+    "AND (r.expires_at > @after_expiry OR (r.expires_at = @after_expiry AND r.reservation_id > @after_id)) "
+    "AND a.settled=false AND a.heartbeat_seq=0 AND a.started_at IS NULL "
+    "AND a.heartbeat_at IS NULL AND a.delivered_usage IS NULL "
+    "AND a.pricing_snapshot IS NOT NULL AND a.stage_d_boot_kid IS NOT NULL "
+    "AND JSON_VALUE(a.payload, '$.stage_d_reason') = 'ok' "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = r.authorization_id "
+    f"AND o.status IN ({_GUARD_STATUS_SQL})) "
+    "ORDER BY r.expires_at, r.reservation_id LIMIT @limit"
+)
+#: Pages of @limit rows one pass reads at most.
+_UNSTARTED_SCAN_PAGES = 5
 
 
 def reap_expired_reservations_result(
@@ -1726,16 +1762,18 @@ def release_unstarted_holds_result(
     stream that never started, ``rule.after_seconds`` after its
     authorization (docs/design/fast-admission-streams.md section 13).
 
-    It is the reaper run early. The scan is the reaper's own statement,
-    asked for the reservations that expire before ``now`` plus what is left
-    of a reservation's two hours after the deadline: every unsettled one at
-    least the deadline old, whatever its class (a reservation with a longer
-    life, a provider batch's, comes into view later still, and is not of the
-    class). Each candidate then goes through the reaper's transaction with
-    the rule applied on its strong read of the authorization, so the scan
-    decides nothing. A released row is the reaper's refund: nothing booked,
+    The scan (``_UNSTARTED_SCAN_SQL``) returns the rows of the class past
+    the horizon, in expiry order, a page of ``limit`` at a time and at most
+    ``_UNSTARTED_SCAN_PAGES`` pages; the horizon is ``now`` plus what is left
+    of a reservation's two hours after the deadline and the clock skew
+    allowance. With the rule on, each row goes through the reaper's
+    transaction with the rule applied on its strong read of the
+    authorization: a released row is the reaper's refund, nothing booked,
     the exact recorded holds given back, the claim gate against a terminal
-    racing it, the settle outbox's pending intent freezing the hold.
+    racing it, the settle outbox's pending intent freezing the hold. In log
+    mode each row is read on a read-only snapshot instead, with the same
+    tests in the same order: no read-write transaction is opened, so
+    reporting takes no lock a settle or a heartbeat could wait on.
 
     Without the settle outbox table there is no intent to ask about, so the
     pass does nothing: the reaper's unguarded release is only ever for a
@@ -1743,20 +1781,13 @@ def release_unstarted_holds_result(
     """
     pt = param_types
     reap_timestamp = _reap_datetime(now)
-    lead_seconds = RESERVATION_TTL_SECONDS - int(rule.after_seconds)
+    lead_seconds = RESERVATION_TTL_SECONDS - int(rule.after_seconds) - CLOCK_SKEW_ALLOWANCE_SECONDS
     if lead_seconds <= 0:
         raise ValueError("the early rule's deadline must be inside a reservation's life")
     horizon = reap_timestamp + timedelta(seconds=lead_seconds)
     if not _outbox_table_available(database, pt):
         return UnstartedReleaseResult(unguarded=True)
-    with database.snapshot() as snapshot:
-        rows = list(
-            snapshot.execute_sql(
-                _REAP_SCAN_GUARDED_SQL,
-                params={"now": horizon, "limit": int(limit)},
-                param_types={"now": pt.TIMESTAMP, "limit": pt.INT64},
-            )
-        )
+    scanned = 0
     released = 0
     released_hold_micro = 0
     would_release = 0
@@ -1765,23 +1796,40 @@ def release_unstarted_holds_result(
     guarded = 0
     guard_lost = 0
     errors = 0
+    truncated = False
     skipped: dict[str, int] = {}
     leased: list[str] = []
-    # A boot's declaration is read between transactions, never inside one:
-    # the transaction that first needs a key id rolls back with nothing
-    # written, the boot is read, and the transaction runs again. A boot's
-    # declaration is its process's start-up flag, so it does not change
-    # under the key id while a pass runs.
-    declared: dict[str, bool] = {}
+    # A boot's record is read between transactions, never inside one: the
+    # transaction that first needs a key id rolls back with nothing written,
+    # the boot is read, and the transaction runs again. Reading it outside
+    # the row's transaction is sound because of what is read: a start time
+    # before the row's creation, which no later registration can move back
+    # (GatewayBoot.usage_heartbeat_declared_since).
+    since_by_kid: dict[str, Any] = {}
 
-    def heartbeat_declared(kid: str) -> bool:
-        if kid not in declared:
+    def memoized_since(kid: str) -> Any:
+        if kid not in since_by_kid:
             raise _BootDeclarationUnread(kid)
-        return declared[kid]
+        return since_by_kid[kid]
 
-    pass_rule = replace(rule, heartbeat_declared=heartbeat_declared)
+    def read_since(kid: str) -> Any:
+        if kid not in since_by_kid:
+            since_by_kid[kid] = rule.declared_since(kid)
+        return since_by_kid[kid]
 
-    def finalize(reservation_id: str) -> _ReapOneResult:
+    transaction_rule = replace(rule, declared_since=memoized_since)
+    snapshot_rule = replace(rule, declared_since=read_since)
+
+    def decide(reservation_id: str) -> _ReapOneResult:
+        if rule.log_only:
+            return _observe_unstarted_candidate(
+                database,
+                pt,
+                reservation_id=reservation_id,
+                reap_timestamp=reap_timestamp,
+                expiry_bound=horizon,
+                unstarted=snapshot_rule,
+            )
         return _finalize_reaped_reservation_atomic(
             database,
             pt,
@@ -1792,42 +1840,69 @@ def release_unstarted_holds_result(
             operational_analytics_outbox=operational_analytics_outbox,
             async_fence=async_fence,
             expiry_horizon=horizon,
-            unstarted=pass_rule,
+            unstarted=transaction_rule,
         )
 
-    for reservation_id, _authorization_id, _credit_hold_micro, _key_hold_micro in rows:
-        try:
-            try:
-                result = finalize(str(reservation_id))
-            except _BootDeclarationUnread as unread:
-                declared[unread.kid] = bool(rule.heartbeat_declared(unread.kid))
-                result = finalize(str(reservation_id))
-        except Exception:
-            log.exception(
-                "gateway early release failed reservation_id=%s; continuing the pass",
-                reservation_id,
+    after_expiry: Any = datetime.min.replace(tzinfo=UTC)
+    after_id = ""
+    for page in range(_UNSTARTED_SCAN_PAGES):
+        with database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    _UNSTARTED_SCAN_SQL,
+                    params={
+                        "now": horizon,
+                        "after_expiry": after_expiry,
+                        "after_id": after_id,
+                        "limit": int(limit),
+                    },
+                    param_types={
+                        "now": pt.TIMESTAMP,
+                        "after_expiry": pt.TIMESTAMP,
+                        "after_id": pt.STRING,
+                        "limit": pt.INT64,
+                    },
+                )
             )
-            result = _ReapOneResult(SettleOutcome.ERROR)
-        if result.outcome == SettleOutcome.NOT_ELIGIBLE:
-            reason = result.skip_reason or "reservation"
-            skipped[reason] = skipped.get(reason, 0) + 1
-        elif result.outcome == SettleOutcome.OUTBOX_GUARDED:
-            guarded += 1
-        elif result.outcome == SettleOutcome.GUARD_LOST:
-            guard_lost += 1
-        elif result.outcome == SettleOutcome.WOULD_RELEASE:
-            would_release += 1
-            would_release_hold_micro += result.released_hold_micro
-            would_release_leased += int(result.leased)
-        elif result.outcome == SettleOutcome.SETTLED:
-            released += 1
-            released_hold_micro += result.released_hold_micro
-            if result.leased and result.authorization_id:
-                leased.append(result.authorization_id)
-        else:
-            errors += 1
+        for reservation_id, _authorization_id, _credit_hold_micro, _key_hold_micro, expires_at in rows:
+            scanned += 1
+            after_expiry, after_id = expires_at, str(reservation_id)
+            try:
+                try:
+                    result = decide(str(reservation_id))
+                except _BootDeclarationUnread as unread:
+                    read_since(unread.kid)
+                    result = decide(str(reservation_id))
+            except Exception as exc:  # noqa: BLE001 - one row's failure is its own
+                # The class only: no reservation, no exception text.
+                log.warning(
+                    "gateway early release failed error_class=%s; continuing the pass",
+                    type(exc).__name__,
+                )
+                result = _ReapOneResult(SettleOutcome.ERROR)
+            if result.outcome == SettleOutcome.NOT_ELIGIBLE:
+                reason = result.skip_reason or "reservation"
+                skipped[reason] = skipped.get(reason, 0) + 1
+            elif result.outcome == SettleOutcome.OUTBOX_GUARDED:
+                guarded += 1
+            elif result.outcome == SettleOutcome.GUARD_LOST:
+                guard_lost += 1
+            elif result.outcome == SettleOutcome.WOULD_RELEASE:
+                would_release += 1
+                would_release_hold_micro += result.released_hold_micro
+                would_release_leased += int(result.leased)
+            elif result.outcome == SettleOutcome.SETTLED:
+                released += 1
+                released_hold_micro += result.released_hold_micro
+                if result.leased and result.authorization_id:
+                    leased.append(result.authorization_id)
+            else:
+                errors += 1
+        if len(rows) < int(limit):
+            break
+        truncated = page == _UNSTARTED_SCAN_PAGES - 1
     return UnstartedReleaseResult(
-        scanned=len(rows),
+        scanned=scanned,
         released=released,
         released_hold_micro=released_hold_micro,
         would_release=would_release,
@@ -1838,6 +1913,63 @@ def release_unstarted_holds_result(
         errors=errors,
         skipped=tuple(sorted(skipped.items())),
         leased=tuple(leased),
+        truncated=truncated,
+    )
+
+
+def _observe_unstarted_candidate(
+    database: Any,
+    param_types: Any,
+    *,
+    reservation_id: str,
+    reap_timestamp: datetime,
+    expiry_bound: datetime,
+    unstarted: UnstartedRelease,
+) -> _ReapOneResult:
+    """Log mode's read of one candidate: the release transaction's tests, in
+    its order (the reservation, the outbox guard, the authorization, the
+    rule), on one read-only snapshot. Nothing is locked and nothing is
+    written; the answer is what a release would have found at the
+    snapshot's instant."""
+    from trusted_router.storage_gcp_counter_dml import read_reservation
+
+    pt = param_types
+    with database.snapshot(multi_use=True) as snapshot:
+        res = read_reservation(snapshot, pt, reservation_id)
+        if (
+            res is None
+            or bool(res.get("settled"))
+            or res.get("expires_at") is None
+            or _reap_datetime(res["expires_at"]) >= expiry_bound
+        ):
+            return _ReapOneResult(SettleOutcome.NOT_ELIGIBLE)
+        authorization_id = str(res.get("authorization_id") or "")
+        guarded = list(
+            snapshot.execute_sql(
+                GUARD_COUNT_SQL,
+                params={"aid": authorization_id},
+                param_types={"aid": pt.STRING},
+            )
+        )
+        if guarded and int(guarded[0][0]) > 0:
+            return _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
+        authorization = read_gateway_authorization(snapshot, pt, authorization_id)
+    reason = ineligibility(
+        authorization,
+        reservation_id=reservation_id,
+        now=reap_timestamp,
+        after_seconds=unstarted.after_seconds,
+        declared_since=unstarted.declared_since,
+    )
+    if reason is not None:
+        return _ReapOneResult(SettleOutcome.NOT_ELIGIBLE, skip_reason=reason)
+    return _ReapOneResult(
+        SettleOutcome.WOULD_RELEASE,
+        released_hold_micro=max(
+            int(res["credit_reserved_micro"] or 0),
+            int(res["key_reserved_micro"] or 0),
+        ),
+        leased=getattr(authorization, "fastpath_envelope", None) is not None,
     )
 
 
@@ -1863,7 +1995,9 @@ def _finalize_reaped_reservation_atomic(
     is a candidate that long before it expires, and ``unstarted`` decides,
     on this transaction's own read of the authorization, whether the row is
     one it may release. A row it passes goes down the refund below, the
-    reaper's own: the terminal time written is still ``reap_now``.
+    reaper's own: the terminal time written is still ``reap_now``. Only a
+    releasing pass comes here; log mode reads on a snapshot
+    (``_observe_unstarted_candidate``).
     """
 
     from trusted_router.storage_gcp_counter_dml import (
@@ -1912,19 +2046,10 @@ def _finalize_reaped_reservation_atomic(
                 reservation_id=reservation_id,
                 now=reap_timestamp,
                 after_seconds=unstarted.after_seconds,
-                heartbeat_declared=unstarted.heartbeat_declared,
+                declared_since=unstarted.declared_since,
             )
             if reason is not None:
                 return _ReapOneResult(SettleOutcome.NOT_ELIGIBLE, skip_reason=reason)
-            if unstarted.log_only:
-                return _ReapOneResult(
-                    SettleOutcome.WOULD_RELEASE,
-                    released_hold_micro=max(
-                        int(res["credit_reserved_micro"] or 0),
-                        int(res["key_reserved_micro"] or 0),
-                    ),
-                    leased=getattr(authorization, "fastpath_envelope", None) is not None,
-                )
         if authorization is None:
             return _ReapOneResult(SettleOutcome.AUTHORIZATION_NOT_TYPED)
         if authorization.credit_reservation_id != reservation_id:

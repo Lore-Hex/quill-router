@@ -438,7 +438,10 @@ def test_a_reap_that_lands_before_the_intent_answers_the_refund_and_asks_no_fron
     """The settle read the leased authorization unsettled; the reaper then
     finalized it, expired and holding nothing, before the intent was
     enqueued. The settle answers the stored refund and forwards no charge
-    the records would never show; the drain marks its intent done."""
+    the records would never show. Its charge is lost (the lease's hold ends
+    uncharged), so the drain tells the intent as a lost charge, dead with
+    the alert, as it tells the same case on a synchronous row; it used to
+    mark it done with no signal."""
     import datetime as dt
 
     from trusted_router.services import settle_outbox_drain
@@ -472,9 +475,13 @@ def test_a_reap_that_lands_before_the_intent_answers_the_refund_and_asks_no_fron
     monkeypatch.undo()
     row = _pending_intents(database, authorization.id)[0]
     row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    alerts: list[str] = []
+    monkeypatch.setattr(settle_outbox_drain, "ops_alert", lambda message, **_kwargs: alerts.append(message))
     settle_outbox_drain.drain_settle_outbox(10)
     assert len(door.seen) == doors_before
-    assert _pending_intents(database, authorization.id)[0]["status"] == "done"
+    lost = _pending_intents(database, authorization.id)[0]
+    assert lost["status"] == "dead" and lost["last_error"] == "already_released_free: settle charge was lost"
+    assert [alert.split(" authorization_id=", 1)[0] for alert in alerts] == ["ALERT settle outbox lost charge"]
 
 
 def _expiry(row: dict[str, Any]) -> Any:

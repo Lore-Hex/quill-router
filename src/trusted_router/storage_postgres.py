@@ -183,6 +183,7 @@ from trusted_router.storage_models import (
     Workspace,
     _is_byok,
     _is_expired,
+    boot_with_heartbeat_history,
     document_pause_causes,
     federated_api_key_from_record,
     federated_workspace_from_record,
@@ -1136,6 +1137,7 @@ class PostgresStore(OperationalAnalyticsReads):
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
+            merged = boot_with_heartbeat_history(existing, merged, registered_at=record.registered_at)
             self._write_entity_tx(conn, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 

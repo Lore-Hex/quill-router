@@ -1288,8 +1288,9 @@ class Settings(BaseSettings):
     reap_snapshot_booking_enabled: bool = False
     # The early release of a hold whose stream never started
     # (docs/design/fast-admission-streams.md section 13;
-    # trusted_router.unstarted_release). "off" is the code as it was: no
-    # pass, no line. "log" runs the pass and writes what it would release,
+    # trusted_router.unstarted_release). "off": the pass does not run, and
+    # the drain's statements and what it books are as they were. "log" runs
+    # the pass on read-only snapshots and writes what it would release,
     # releasing nothing, and the heartbeat and settle paths write a
     # contradiction line when a request the rule covers turns out to be
     # alive. "on" releases. The deadline is counted from the authorization's

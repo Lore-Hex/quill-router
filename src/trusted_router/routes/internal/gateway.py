@@ -764,7 +764,7 @@ def _heartbeat_gateway_sync(
             accepted=bool(result.accepted),
             mode=settings.unstarted_hold_release_mode,
             after_seconds=settings.unstarted_hold_release_seconds,
-            heartbeat_declared=_boot_declares_usage_heartbeat,
+            declared_since=_boot_usage_heartbeat_declared_since,
         )
     if not result.accepted:
         raise _heartbeat_rejection(str(result.reason))
@@ -796,12 +796,15 @@ def _heartbeat_gateway_sync(
     }
 
 
-def _boot_declares_usage_heartbeat(kid: str) -> bool:
-    """Whether the boot with this key id declared that it heartbeats every
-    Stage D stream. Read only by the early-release evidence lines, and only
-    for a request that already looks like a contradiction."""
+def _boot_usage_heartbeat_declared_since(kid: str) -> str | None:
+    """The time since which the boot with this key id has declared, without
+    a break, that it heartbeats every Stage D stream; None when it has not.
+    Read only by the early-release evidence lines, and only for a request
+    that already looks like one of theirs."""
     boot = STORE.get_gateway_boot(kid)
-    return bool(boot is not None and boot.declares_usage_heartbeat)
+    if boot is None or not boot.declares_usage_heartbeat:
+        return None
+    return boot.usage_heartbeat_declared_since
 
 
 def _forward_leased_heartbeat(
@@ -4270,7 +4273,7 @@ def _settle_gateway_authorization(
             authorization,
             success=True,
             mode=settings.unstarted_hold_release_mode,
-            heartbeat_declared=_boot_declares_usage_heartbeat,
+            declared_since=_boot_usage_heartbeat_declared_since,
         )
     if authorization.settled:
         try:

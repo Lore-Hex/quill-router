@@ -42,8 +42,10 @@ from tests.test_unstarted_hold_release import (
     AFTER,
     BOOT,
     CREATED,
+    DUE,
     HOLD,
     PRICING,
+    SINCE,
     _authorization,
     _counters,
     _money,
@@ -111,7 +113,7 @@ def test_each_filter_matches_its_own_rules_line_and_no_other(rendered: _Rendered
     drain._count_released_holds(drain._RELEASED_EXPIRED_METRIC, 1)
     drain._count_released_holds(drain._RELEASED_UNSTARTED_METRIC, 1)
     rule.observe_settle(
-        _authorization(), success=True, mode="log", heartbeat_declared=lambda _kid: True,
+        _authorization(), success=True, mode="log", declared_since=lambda _kid: SINCE,
         now=CREATED + dt.timedelta(seconds=5),
     )
     expired, unstarted, contradiction = rendered.lines
@@ -142,7 +144,7 @@ def test_the_settle_drain_workers_boundary_keeps_each_counter(rendered: _Rendere
     try:
         drain._count_released_holds(drain._RELEASED_EXPIRED_METRIC, 1)
         drain._count_released_holds(drain._RELEASED_UNSTARTED_METRIC, 1)
-        rule.observe_settle(_authorization(), success=True, mode="log", heartbeat_declared=lambda _kid: True)
+        rule.observe_settle(_authorization(), success=True, mode="log", declared_since=lambda _kid: SINCE)
     finally:
         remove()
     tail = f"logger={DRAIN_LOGGER} level=WARNING exception_class=none"
@@ -196,7 +198,7 @@ def test_the_runbook_names_each_policy_its_line_and_the_gate() -> None:
 def _late(**overrides: Any) -> dict[str, Any]:
     arguments: dict[str, Any] = {
         "seq": 1, "accepted": True, "mode": "log", "after_seconds": AFTER,
-        "heartbeat_declared": lambda _kid: True, "now": CREATED + dt.timedelta(seconds=AFTER),
+        "declared_since": lambda _kid: SINCE, "now": CREATED + dt.timedelta(seconds=AFTER),
     }
     arguments.update(overrides)
     return arguments
@@ -206,8 +208,8 @@ def test_a_first_heartbeat_after_the_deadline_is_a_contradiction(rendered: _Rend
     rule.observe_first_heartbeat(_authorization(), **_late())
     rule.observe_first_heartbeat(_authorization(settled=True), **_late(accepted=False, mode="on"))
     assert rendered.lines == [
-        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat accepted=true age_seconds=900 mode=log",
-        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat accepted=false age_seconds=900 mode=on",
+        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat accepted=true age_seconds=900 after_seconds=900 mode=log",
+        f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat accepted=false age_seconds=900 after_seconds=900 mode=on",
     ]
 
 
@@ -215,11 +217,11 @@ def test_a_first_heartbeat_after_the_deadline_is_a_contradiction(rendered: _Rend
     ("row", "arguments"),
     [
         ({}, {"mode": "off"}),
-        ({}, {"now": CREATED + dt.timedelta(seconds=AFTER - 1)}),
+        ({}, {"now": CREATED + dt.timedelta(seconds=AFTER // 3 - 1)}),
         ({}, {"seq": 2}),
         ({"heartbeat_seq": 1, "started_at": "2026-11-21T12:00:05Z"}, {}),
         ({"stage_d_reason": "not_streaming"}, {}),
-        ({}, {"heartbeat_declared": lambda _kid: False}),
+        ({}, {"declared_since": lambda _kid: None}),
     ],
     ids=["off", "in-time", "not-the-first", "a-replay-of-the-first", "another-class", "boot-undeclared"],
 )
@@ -231,14 +233,14 @@ def test_a_heartbeat_that_contradicts_nothing_writes_nothing(
 
 
 def test_a_charging_settle_with_no_heartbeat_is_a_contradiction_at_any_age(rendered: _Rendered) -> None:
-    def declared(_kid: str) -> bool:
-        return True
+    def declared(_kid: str) -> str:
+        return SINCE
 
     rule.observe_settle(_authorization(), success=True, mode="log", now=CREATED + dt.timedelta(seconds=3),
-                        heartbeat_declared=declared)
+                        declared_since=declared)
     rule.observe_settle(
         _authorization(settled=True), success=True, mode="on", now=CREATED + dt.timedelta(seconds=1000),
-        heartbeat_declared=declared,
+        declared_since=declared,
     )
     assert rendered.lines == [
         f"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=charge_without_heartbeat settled=false age_seconds=3 mode=log",
@@ -247,24 +249,26 @@ def test_a_charging_settle_with_no_heartbeat_is_a_contradiction_at_any_age(rende
     del rendered.lines[:]
     # A refund, a stream that heartbeated (and a replay of its settle), another
     # class, an undeclared boot, and the rule off: nothing.
-    rule.observe_settle(_authorization(), success=False, mode="on", heartbeat_declared=declared)
+    rule.observe_settle(_authorization(), success=False, mode="on", declared_since=declared)
     rule.observe_settle(_authorization(heartbeat_seq=3, started_at="2026-11-21T12:00:05Z", settled=True),
-                        success=True, mode="on", heartbeat_declared=declared)
+                        success=True, mode="on", declared_since=declared)
     rule.observe_settle(_authorization(stage_d_reason="not_streaming"), success=True, mode="on",
-                        heartbeat_declared=declared)
-    rule.observe_settle(_authorization(), success=True, mode="on", heartbeat_declared=lambda _kid: False)
-    rule.observe_settle(_authorization(), success=True, mode="off", heartbeat_declared=declared)
+                        declared_since=declared)
+    rule.observe_settle(_authorization(), success=True, mode="on", declared_since=lambda _kid: None)
+    rule.observe_settle(_authorization(), success=True, mode="off", declared_since=declared)
     assert rendered.lines == []
 
 
 def test_an_observer_never_raises(rendered: _Rendered) -> None:
-    def broken(_kid: str) -> bool:
+    def broken(_kid: str) -> str:
         raise RuntimeError("storage unavailable")
 
-    rule.observe_first_heartbeat(_authorization(), **_late(heartbeat_declared=broken))
-    rule.observe_settle(_authorization(), success=True, mode="on", heartbeat_declared=broken)
-    assert [line.split(" unstarted", 1)[0] for line in rendered.lines] == [f"WARNING {RULE_LOGGER}"] * 2
-    assert not any("contradiction" in line for line in rendered.lines)
+    rule.observe_first_heartbeat(_authorization(), **_late(declared_since=broken))
+    rule.observe_settle(_authorization(), success=True, mode="on", declared_since=broken)
+    assert rendered.lines == [
+        f"WARNING {RULE_LOGGER} unstarted release heartbeat observation failed error_class=RuntimeError",
+        f"WARNING {RULE_LOGGER} unstarted release settle observation failed error_class=RuntimeError",
+    ]
 
 
 # -- the routes ---------------------------------------------------------------
@@ -272,7 +276,9 @@ def test_an_observer_never_raises(rendered: _Rendered) -> None:
 
 def _heartbeat_route(mode: str, *, declared: bool = True, settled: bool = False) -> tuple[Any, Any]:
     private, boot = _boot(BOOT, "sha256:" + "aa" * 32)
-    db = _gateway_heartbeat_store(boot.kid, replace(boot, declares_usage_heartbeat=declared))
+    db = _gateway_heartbeat_store(
+        boot.kid, replace(boot, declares_usage_heartbeat=declared, registered_at="2026-09-01T00:00:00Z"),
+    )
     if settled:
         db.gateway_authorizations["gwa-stage-d-fixture"]["settled"] = True
         db.reservations["reservation"]["settled"] = True
@@ -300,7 +306,7 @@ def test_the_heartbeat_route_reports_a_late_first_heartbeat_it_accepted(rendered
     assert len(rendered.lines) == 1
     assert re.fullmatch(
         rf"ERROR {RULE_LOGGER} metric=unstarted_release_contradiction_total value=1 kind=late_first_heartbeat "
-        r"accepted=true age_seconds=\d+ mode=log",
+        r"accepted=true age_seconds=\d+ after_seconds=900 mode=log",
         rendered.lines[0],
     )
     # The same heartbeat again is a replay of a started stream: no second line.
@@ -336,7 +342,7 @@ def test_a_settle_for_a_released_stream_is_answered_uncharged_and_reported(
     as a replay of a refund with no cost, and nothing is given back twice.
     With the rule on or in log, the line says the rule's premise failed."""
     store, db, authorization = _store()
-    released = drain.release_unstarted_holds(CREATED + dt.timedelta(seconds=AFTER + 1), mode="on", after_seconds=AFTER)
+    released = drain.release_unstarted_holds(CREATED + dt.timedelta(seconds=DUE + 1), mode="on", after_seconds=AFTER)
     assert released is not None and released.released == 1
     del rendered.lines[:]
     stored = store.get_gateway_authorization(authorization.id)
@@ -377,8 +383,8 @@ def test_a_settle_applied_from_its_frozen_intent_is_reported_too(
     # The row as a heartbeated stream's, with no heartbeat on it.
     stored = db.gateway_authorizations[auth.id]
     payload = json.loads(stored["payload"])
-    payload.update(stage_d_reason="ok", stage_d_boot_kid=BOOT)
-    stored.update(payload=json.dumps(payload), stage_d_boot_kid=BOOT, pricing_snapshot=PRICING)
+    payload.update(stage_d_reason="ok", stage_d_boot_kid=BOOT, stage_d_prompt_tokens=100, stage_d_max_output_tokens=100)
+    stored.update(payload=json.dumps(payload), stage_d_boot_kid=BOOT, pricing_snapshot=PRICING, heartbeat_seq=0)
     store.observe_gateway_boot(replace(_boot(BOOT, "sha256:" + "aa" * 32)[1], declares_usage_heartbeat=True))
     read = store.get_gateway_authorization(auth.id)
     assert read is not None and rule.heartbeating_stream(read) and rule.never_started(read)
@@ -403,6 +409,77 @@ def test_a_settle_applied_from_its_frozen_intent_is_reported_too(
     assert "    if success:\n        _observe_unstarted_charge(auth)\n" in source
 
 
+def test_a_slow_first_heartbeat_short_of_the_deadline_is_written_without_the_counter(rendered: _Rendered) -> None:
+    """The tail of the wait for a first heartbeat, visible before it reaches
+    the deadline: from a third of the deadline on, one INFO line with the
+    age, no counter and no alert."""
+    payloads = _payloads()
+    for age in (AFTER // 3 - 1, AFTER // 3, AFTER - 1):
+        rule.observe_first_heartbeat(_authorization(), **_late(now=CREATED + dt.timedelta(seconds=age)))
+    assert rendered.lines == [
+        f"INFO {RULE_LOGGER} unstarted_release.slow_first_heartbeat age_seconds={AFTER // 3} after_seconds=900 mode=log",
+        f"INFO {RULE_LOGGER} unstarted_release.slow_first_heartbeat age_seconds={AFTER - 1} after_seconds=900 mode=log",
+    ]
+    assert not any(payload in line for payload in payloads.values() for line in rendered.lines)
+
+
+def test_a_leased_settle_made_durable_after_the_row_ended_as_a_refund_is_a_lost_charge(
+    env: Any, monkeypatch: pytest.MonkeyPatch  # noqa: F811 - the imported fixture
+) -> None:
+    """The one charge the early release can lose without the route seeing
+    it: a leased row is released, then its settle arrives. The route answers
+    a replay and never asks the lease; the intent it made durable is applied
+    by the drain, which must tell it as a lost charge (dead-lettered, with
+    the alert) and not mark it done. A refund's intent, and a settle with
+    nothing to charge, are still done quietly."""
+    from tests.test_async_settle_handler import LEASED, _fastpath_all_mode
+    from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
+
+    _store_, db, _runtime, cfg = env
+    # A workspace in both pilots: its leased authorization carries a settle ticket.
+    _fastpath_all_mode(cfg, pilots="", overlap="ws-v1", exclude="")
+    body, auth, _key = prepare(env, authorize=LEASED)
+    row = row_for(env, body)
+    assert row.intent_kind == "settle" and row.actual_cost_micro > 0
+    stored = db.gateway_authorizations[auth.id]
+    assert json.loads(stored["payload"]).get("fastpath_envelope")
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("a terminal row's settle was sent to the lease")
+
+    monkeypatch.setattr(gateway, "_fastpath_front_door", forbidden)
+    # The row ends as a refund, as the early release (or the reaper) ends it.
+    payload = json.loads(stored["payload"])
+    payload.update(settled=True, finalization_outcome="refunded", finalized_cost_microdollars=0)
+    stored.update(payload=json.dumps(payload), settled=True, finalization_outcome="refunded",
+                  finalized_cost_microdollars=0)
+
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_RELEASED_FREE
+    assert apply_frozen_settle(replace(row, intent_kind="refund")) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert apply_frozen_settle(replace(row, actual_cost_micro=0)) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    # A row that ended charged is a replay, as before.
+    payload.update(finalization_outcome="settled")
+    stored.update(payload=json.dumps(payload), finalization_outcome="settled")
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+
+    # The drain's handling of the outcome: dead, and the lost-charge alert.
+    alerts: list[str] = []
+    marks: list[dict[str, Any]] = []
+
+    class Outbox:
+        def mark(self, authorization_id: str, intent_kind: str, **kwargs: Any) -> str:
+            marks.append({"authorization_id": authorization_id, "intent_kind": intent_kind, **kwargs})
+            return "dead"
+
+    monkeypatch.setattr(drain, "ops_alert", lambda message, **_kwargs: alerts.append(message))
+    drain._resolve_row(cast(Any, Outbox()), row, ApplyOutcome.ALREADY_RELEASED_FREE, error_note=None)
+    assert marks == [{
+        "authorization_id": auth.id, "intent_kind": "settle", "done": False,
+        "error": "already_released_free: settle charge was lost", "lease_owner": row.lease_owner, "force_dead": True,
+    }]
+    assert len(alerts) == 1 and alerts[0].startswith("ALERT settle outbox lost charge ")
+
+
 def test_the_drain_route_passes_the_rule_only_when_it_is_not_off() -> None:
     source = Path(gateway.__file__).read_text(encoding="utf-8")
     route = source.split('@router.post("/internal/gateway/settle-outbox/drain")', 1)[1].split("@router.post(", 1)[0]
@@ -417,15 +494,17 @@ def test_the_drain_route_passes_the_rule_only_when_it_is_not_off() -> None:
 
 
 @pytest.mark.parametrize("mode", ["off", "log", "on"])
-def test_the_drain_with_the_rule_off_is_the_frozen_drain_statement_for_statement(
+def test_the_drain_with_the_rule_off_issues_the_frozen_drains_statements_and_books_the_same(
     env: Any, monkeypatch: pytest.MonkeyPatch, mode: str  # noqa: F811 - the imported fixture
 ) -> None:
     """A stream past the rule's deadline with no heartbeat, in front of the
-    frozen drain (main before the rule) and today's. Off: the same response,
-    the same durable state, the same statements with the same parameters and
-    types, the same RPC counts, and the hold still held. Log: the frozen
-    drain's statements, then the pass's reads, and the same state. On: the
-    hold given back."""
+    frozen drain (main before the rule) and today's. What this proves of
+    off: the same response, the same durable state, the same statements
+    with the same parameters and types, the same RPC counts, and the hold
+    still held. It does not compare log lines: the reaper's release counter
+    is written in every mode, off included, and no hold expires here. Log:
+    the frozen drain's statements, then the pass's snapshot reads, and the
+    same state. On: the hold given back."""
     store, db, _runtime, cfg = env
     cfg.async_settle_enabled = cfg.async_settle_protection = False
     store.settle_outbox._async_fence = False
@@ -439,7 +518,7 @@ def test_the_drain_with_the_rule_off_is_the_frozen_drain_statement_for_statement
     monkeypatch.setattr(dt, "datetime", Clock)
     monkeypatch.setattr(outbox_storage, "_iso_now", lambda: clock.isoformat().replace("+00:00", "Z"))
     monkeypatch.setattr(outbox_storage.uuid, "uuid4", lambda: SimpleNamespace(hex="fixed-oracle-owner"))
-    created = clock - dt.timedelta(seconds=AFTER + 60)
+    created = clock - dt.timedelta(seconds=DUE + 60)
     _seed(db, created_at=created.isoformat().replace("+00:00", "Z"))
     _counters(db)
     store.observe_gateway_boot(replace(_boot(BOOT, "sha256:" + "aa" * 32)[1], declares_usage_heartbeat=True))
@@ -497,13 +576,12 @@ def test_the_drain_with_the_rule_off_is_the_frozen_drain_statement_for_statement
     elif mode == "log":
         assert frozen_out[1] == live_out[1] and held
         # The frozen drain's statements come first, unchanged; the pass adds
-        # reads only: its scan, then the candidate's transaction, which runs
-        # twice (the first rolls back for the boot's declaration to be read).
+        # reads on read-only snapshots only (its scan, then the candidate's
+        # three reads): no read-write transaction, no update, no commit.
         assert live_out[2][: len(frozen_out[2])] == frozen_out[2]
         added = live_out[2][len(frozen_out[2]):]
-        assert added and {call[1] for call in added} == {"execute_sql"}
-        assert [call[0] for call in added].count("_FakeSnapshot") >= 1
-        assert live_out[3][2:4] == frozen_out[3][2:4]  # no update, no batch
+        assert added and {(call[0], call[1]) for call in added} == {("_FakeSnapshot", "execute_sql")}
+        assert live_out[3][1:] == frozen_out[3][1:]
     else:
         assert live_out[2][: len(frozen_out[2])] == frozen_out[2]
         assert not held and _money(db) == (0, 0, 0, 0)

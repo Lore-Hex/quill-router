@@ -3,12 +3,17 @@
 # docs/runbook.md, "Holds released without a terminal").
 #
 # A gateway request ends in a settle or a refund. A hold that has neither is
-# given back by one of two rules, and each release is nearly always a
-# gateway exit that authorized and then sent no terminal, so it is worth a
-# person's look the same day:
+# ended by one of two rules, and each one is nearly always a gateway exit
+# that authorized and then sent no terminal, so it is worth a person's look
+# the same day:
 #
 #   - expired: the reaper, at the reservation's expiry, two hours after the
-#     authorization (services/settle_outbox_drain.py).
+#     authorization (services/settle_outbox_drain.py). The hold is given
+#     back with nothing booked, but for a stream that had started, which is
+#     charged its last heartbeat's snapshot. Written in every mode of the
+#     early rule. Today there are tens of these a week, and the policy
+#     notifies on them on purpose: each is a hold a customer waited two
+#     hours for.
 #   - unstarted_stream: the early rule, minutes after the authorization, for
 #     a stream the gateway heartbeats that never sent its first heartbeat
 #     (trusted_router/unstarted_release.py).
@@ -40,7 +45,7 @@ locals {
       title    = "TR Holds: released at expiry"
       severity = "WARNING"
       period   = "3600s"
-      what     = "The reaper gave a hold back at its reservation's expiry, two hours after the authorization, with no settle or refund from the gateway."
+      what     = "The reaper ended a hold at its reservation's expiry, two hours after the authorization, with no settle or refund from the gateway. Expect tens a week until the gateway's exits are fixed; each is a hold a customer waited two hours for."
     }
     unstarted_stream = {
       payload  = "WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_unstarted_stream_total "

@@ -39,7 +39,7 @@ from trusted_router.storage_gcp_counter_dml import insert_reservation
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_request_records import insert_gateway_authorization
 from trusted_router.storage_gcp_stage_d import HeartbeatResult, heartbeat_gateway_atomic
-from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.storage_models import GatewayAuthorization, boot_with_heartbeat_history
 from trusted_router.types import UsageType
 from trusted_router.user_model_rules import GATEWAY_RESERVATION_TTL_SECONDS
 
@@ -47,6 +47,10 @@ ROOT = Path(__file__).resolve().parents[1]
 PRICING = (ROOT / "tests" / "fixtures" / "stage_d" / "pricing_document.json").read_text().strip()
 CREATED = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 AFTER = rule.DEFAULT_AFTER_SECONDS
+#: The age at which the rule first releases: the deadline and the clock skew allowance.
+DUE = AFTER + rule.CLOCK_SKEW_ALLOWANCE_SECONDS
+#: A boot that has declared usage heartbeats since two hours before the rows here.
+SINCE = "2026-11-21T10:00:00Z"
 TTL = timedelta(seconds=GATEWAY_RESERVATION_TTL_SECONDS)
 BOOT = "boot-kid"
 HOLD = 300
@@ -76,32 +80,35 @@ def _authorization(**overrides: Any) -> GatewayAuthorization:
     return GatewayAuthorization(**fields)
 
 
-def _declared(_kid: str) -> bool:
-    return True
+def _since(_kid: str) -> str | None:
+    return SINCE
 
 
-def _why(authorization: Any, *, age: int = AFTER, declared: Any = _declared, reservation: str = "reservation") -> str | None:
+def _why(authorization: Any, *, age: int = DUE, since: Any = _since, reservation: str = "reservation") -> str | None:
     return rule.ineligibility(
         authorization,
         reservation_id=reservation,
         now=CREATED + timedelta(seconds=age),
         after_seconds=AFTER,
-        heartbeat_declared=declared,
+        declared_since=since,
     )
 
 
 # -- the rule ----------------------------------------------------------------
 
 
-def test_the_rule_releases_at_the_deadline_and_not_a_second_before() -> None:
+def test_the_rule_releases_at_the_deadline_plus_the_skew_allowance_and_not_a_second_before() -> None:
     row = _authorization()
-    assert _why(row, age=AFTER - 1) == rule.YOUNG
-    assert _why(row, age=AFTER) is None
-    assert _why(row, age=AFTER + 1) is None
-    # A creation time a second ahead of this clock (skew) is a younger row.
-    assert _why(replace(row, created_at="2026-11-21T12:00:01Z"), age=AFTER) == rule.YOUNG
+    assert DUE == AFTER + 60
+    assert _why(row, age=AFTER) == rule.YOUNG
+    assert _why(row, age=DUE - 1) == rule.YOUNG
+    assert _why(row, age=DUE) is None
+    assert _why(row, age=DUE + 1) is None
+    # A creation time a second ahead of this clock is a younger row.
+    assert _why(replace(row, created_at="2026-11-21T12:00:01Z"), age=DUE) == rule.YOUNG
     # One that cannot be read is no age at all: the hold is kept.
-    assert _why(replace(row, created_at="not a time"), age=10 * AFTER) == rule.YOUNG
+    assert _why(replace(row, created_at="not a time"), age=10 * DUE) == rule.YOUNG
+    assert _why(replace(row, created_at=cast(Any, None)), age=10 * DUE) == rule.YOUNG
 
 
 @pytest.mark.parametrize(
@@ -110,66 +117,181 @@ def test_the_rule_releases_at_the_deadline_and_not_a_second_before() -> None:
         {"started_at": "2026-11-21T12:00:05Z"},
         {"heartbeat_seq": 1},
         {"heartbeat_at": "2026-11-21T12:00:05Z"},
+        {"heartbeat_hash": "a" * 64},
         {"delivered_usage": "{}"},
+        {"selected_endpoint_id": "anthropic/test"},
+        {"heartbeat_seq": None, "started_at": "2026-11-21T12:00:05Z"},
     ],
-    ids=["started", "heartbeated", "heartbeat-time", "delivered-usage"],
+    ids=["started", "heartbeated", "heartbeat-time", "heartbeat-hash", "delivered-usage", "selected-endpoint",
+         "no-sequence-but-started"],
 )
 def test_anything_a_heartbeat_writes_keeps_the_hold(heartbeat: dict[str, Any]) -> None:
-    assert _why(_authorization(**heartbeat), age=10 * AFTER) == rule.STARTED
+    assert _why(_authorization(**heartbeat), age=10 * DUE) == rule.STARTED
 
 
 @pytest.mark.parametrize(
-    "other",
-    [
-        {"stage_d_reason": "not_streaming"},
-        {"stage_d_reason": "route"},
-        {"stage_d_reason": "boot_not_accepted", "stage_d_boot_kid": None, "pricing_snapshot": None},
-        {"stage_d_reason": "stage_d_disabled"},
-        {"stage_d_reason": "mixed_usage_type"},
-        {"stage_d_reason": "service_tier"},
-        {"stage_d_reason": "abliterate_estimated_usage"},
-        {"stage_d_reason": None},
-        {"pricing_snapshot": None},
-        {"stage_d_boot_kid": None},
-        {"stage_d_boot_kid": ""},
-        {"native_batch_eligible": True},
-        {"video_pricing_snapshot": "{}"},
-        {"settlement": "deferred_home"},
-    ],
-    ids=lambda other: ",".join(f"{name}={value}"[:40] for name, value in other.items()),
+    "reason",
+    ["not_streaming", "route", "boot_not_accepted", "stage_d_disabled", "mixed_usage_type", "service_tier",
+     "pricing_kind", "heartbeat_undeclared", "abliterate_estimated_usage", "", "OK", None, True, 1],
 )
-def test_every_other_class_keeps_its_hold_at_any_age(other: dict[str, Any]) -> None:
+def test_every_other_class_keeps_its_hold_at_any_age(reason: Any) -> None:
     """Only a stream the gateway heartbeats is released early: a request with
     no heartbeat at all (not a stream, another route, BYOK, a priority tier,
     a batch, a video job, a boot that was not accepted) may be running for
     as long as its provider takes, and nothing on its row says otherwise."""
-    assert _why(_authorization(**other), age=GATEWAY_RESERVATION_TTL_SECONDS - 1) == rule.OTHER_CLASS
+    row = _authorization(stage_d_reason=reason)
+    assert _why(row, age=GATEWAY_RESERVATION_TTL_SECONDS - 1) == rule.OTHER_CLASS
+    assert not rule.heartbeating_stream(row)
+
+
+class _Row:
+    """A row with whatever attributes it is given, and no others."""
+
+    def __init__(self, **fields: Any) -> None:
+        self.__dict__.update(fields)
+
+
+def _row_without(name: str) -> _Row:
+    fields = dict(vars(_authorization()))
+    del fields[name]
+    return _Row(**fields)
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"pricing_snapshot": None},
+        {"pricing_snapshot": "not-json"},
+        {"pricing_snapshot": ""},
+        {"pricing_snapshot": "[]"},
+        {"pricing_snapshot": "{}"},
+        {"pricing_snapshot": json.dumps({"v": 1, "kind": "endpoint", "candidates": []})},
+        {"pricing_snapshot": json.dumps({"v": 2, "kind": "endpoint", "candidates": [{}]})},
+        {"pricing_snapshot": json.dumps({"v": 1, "kind": "video", "candidates": [{}]})},
+        {"pricing_snapshot": {"v": 1}},
+        {"stage_d_boot_kid": None},
+        {"stage_d_boot_kid": ""},
+        {"stage_d_boot_kid": 7},
+        {"native_batch_eligible": True},
+        {"native_batch_eligible": None},
+        {"video_pricing_snapshot": "{}"},
+        {"settlement": "deferred_home"},
+        {"settlement": "spend_lease"},
+        {"settlement": None},
+        {"usage_type": UsageType.BYOK},
+        {"stage_d_prompt_tokens": None},
+        {"stage_d_max_output_tokens": None},
+        {"stage_d_max_output_tokens": -1},
+        {"stage_d_prompt_tokens": "100"},
+        {"estimated_microdollars": None},
+        {"heartbeat_seq": None},
+        {"heartbeat_seq": "0"},
+        {"heartbeat_seq": False},
+        {"heartbeat_seq": -1},
+    ],
+    ids=lambda broken: ",".join(f"{name}={value!r}"[:44] for name, value in broken.items()),
+)
+def test_a_stage_d_row_that_is_not_as_authorize_writes_it_keeps_its_hold(broken: dict[str, Any]) -> None:
+    """Every field the rule reads must be there, of the type authorize
+    writes and with a value the rule knows. A snapshot that does not parse,
+    a settlement that is not local, a sequence that is null where authorize
+    writes zero: each keeps the hold."""
+    row = replace(_authorization(), **broken)
+    assert _why(row, age=GATEWAY_RESERVATION_TTL_SECONDS - 1) == rule.MALFORMED
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["settlement", "usage_type", "native_batch_eligible", "video_pricing_snapshot", "stage_d_boot_kid",
+     "pricing_snapshot", "stage_d_prompt_tokens", "stage_d_max_output_tokens", "estimated_microdollars",
+     "heartbeat_seq"],
+)
+def test_a_field_the_rule_reads_that_is_missing_keeps_the_hold(missing: str) -> None:
+    assert _why(_Row(**vars(_authorization()))) is None
+    assert _why(_row_without(missing)) == rule.MALFORMED
 
 
 def test_a_terminal_a_missing_or_a_misbound_row_is_left_alone() -> None:
     assert _why(None) == rule.NOT_TYPED
     assert _why(_authorization(settled=True)) == rule.TERMINAL
+    assert _why(replace(_authorization(), settled=cast(Any, None))) == rule.TERMINAL
+    assert _why(_row_without("settled")) == rule.TERMINAL
+    assert _why(_row_without("stage_d_reason")) == rule.OTHER_CLASS
     assert _why(_authorization(), reservation="another") == rule.BINDING
+    assert _why(_row_without("credit_reservation_id")) == rule.BINDING
 
 
-def test_a_boot_that_did_not_declare_heartbeats_keeps_the_hold_and_is_read_last() -> None:
+@pytest.mark.parametrize(
+    ("since", "released"),
+    [
+        ("2026-11-21T10:00:00Z", True),
+        ("2026-11-21T11:59:00Z", True),  # exactly the allowance before the row
+        ("2026-11-21T11:59:01Z", False),  # inside the allowance
+        ("2026-11-21T12:00:00Z", False),  # the row's own instant
+        ("2026-11-21T12:10:00Z", False),  # declared only after the row was made
+        (None, False),
+        ("", False),
+        ("not a time", False),
+        (True, False),
+    ],
+)
+def test_the_boot_must_have_been_declaring_heartbeats_when_the_row_was_made(since: Any, released: bool) -> None:
+    """Membership rests on what was true when the authorization was made:
+    the boot's record must say it has declared usage heartbeats without a
+    break since before the row's creation, by the skew allowance. That the
+    boot declares them now says nothing about then."""
+    assert (_why(_authorization(), since=lambda _kid: since) is None) is released
+    if not released:
+        assert _why(_authorization(), since=lambda _kid: since) == rule.BOOT_UNDECLARED
+
+
+def test_the_boot_is_read_last_and_only_for_a_row_that_passed_every_other_test() -> None:
     asked: list[str] = []
 
-    def undeclared(kid: str) -> bool:
+    def since(kid: str) -> str | None:
         asked.append(kid)
-        return False
+        return None
 
-    assert _why(_authorization(), declared=undeclared) == rule.BOOT_UNDECLARED
+    assert _why(_authorization(), since=since) == rule.BOOT_UNDECLARED
     assert asked == [BOOT]
-    # Any other reason answers before the boot is read.
     for row, age in (
-        (_authorization(settled=True), AFTER),
-        (_authorization(stage_d_reason="not_streaming"), AFTER),
-        (_authorization(heartbeat_seq=1), AFTER),
-        (_authorization(), AFTER - 1),
+        (_authorization(settled=True), DUE),
+        (_authorization(stage_d_reason="not_streaming"), DUE),
+        (_authorization(pricing_snapshot="not-json"), DUE),
+        (_authorization(heartbeat_seq=1), DUE),
+        (_authorization(), DUE - 1),
     ):
-        assert _why(row, age=age, declared=undeclared) not in (None, rule.BOOT_UNDECLARED)
+        assert _why(row, age=age, since=since) not in (None, rule.BOOT_UNDECLARED)
     assert asked == [BOOT]
+
+
+def _registration(*, declares: bool, at: str, since: str | None = None) -> GatewayBoot:
+    return GatewayBoot(
+        kid=BOOT, jwk={"kty": "OKP", "crv": "Ed25519", "x": "x"}, approved=True, verified=True,
+        image_digest="sha256:" + "aa" * 32, attestation_kind="gcp-cs-jwt", registered_at=at,
+        declares_usage_heartbeat=declares, usage_heartbeat_declared_since=since,
+    )
+
+
+def test_a_boots_declaration_start_is_kept_only_across_an_unbroken_run() -> None:
+    first = boot_with_heartbeat_history(None, _registration(declares=True, at="T1"), registered_at="T1")
+    assert first.usage_heartbeat_declared_since == "T1"
+    again = boot_with_heartbeat_history(first, _registration(declares=True, at="T1"), registered_at="T2")
+    assert again.usage_heartbeat_declared_since == "T1"
+    withdrawn = boot_with_heartbeat_history(again, _registration(declares=False, at="T1"), registered_at="T3")
+    assert withdrawn.usage_heartbeat_declared_since is None
+    restored = boot_with_heartbeat_history(withdrawn, _registration(declares=True, at="T1"), registered_at="T4")
+    assert restored.usage_heartbeat_declared_since == "T4"
+    # A record from before the field existed says nothing of its past: the
+    # run starts at the first registration a store stamps.
+    legacy = _registration(declares=True, at="T0")
+    assert boot_with_heartbeat_history(legacy, legacy, registered_at="T5").usage_heartbeat_declared_since == "T5"
+    # A time left on a record that does not declare is never carried.
+    stale = _registration(declares=False, at="T0", since="T0")
+    assert boot_with_heartbeat_history(stale, _registration(declares=True, at="T0"), registered_at="T6") \
+        .usage_heartbeat_declared_since == "T6"
+    undeclared = boot_with_heartbeat_history(None, _registration(declares=False, at="T7"), registered_at="T7")
+    assert undeclared.usage_heartbeat_declared_since is None
 
 
 def test_the_setting_defaults_to_off_and_its_bounds_are_the_rules() -> None:
@@ -265,9 +387,9 @@ def _state(db: FakeSpannerDatabase) -> dict[str, Any]:
 def _pass(
     db: FakeSpannerDatabase,
     *,
-    age: int = AFTER,
+    age: int = DUE,
     log_only: bool = False,
-    declared: Any = _declared,
+    since: Any = _since,
     after_seconds: int = AFTER,
     limit: int = 100,
 ) -> authorize_mod.UnstartedReleaseResult:
@@ -276,7 +398,7 @@ def _pass(
         _ParamTypes,
         now=CREATED + timedelta(seconds=age),
         limit=limit,
-        rule=UnstartedRelease(after_seconds=after_seconds, log_only=log_only, heartbeat_declared=declared),
+        rule=UnstartedRelease(after_seconds=after_seconds, log_only=log_only, declared_since=since),
     )
 
 
@@ -303,7 +425,7 @@ def test_the_hold_of_a_stream_that_never_started_is_given_back_at_the_deadline()
     db, authorization = _seed()
     _counters(db)
 
-    result = _pass(db, age=AFTER + 1)
+    result = _pass(db, age=DUE + 1)
 
     assert (result.scanned, result.released, result.released_hold_micro) == (1, 1, HOLD)
     assert (result.would_release, result.errors, result.guarded, result.guard_lost) == (0, 0, 0, 0)
@@ -316,7 +438,7 @@ def test_the_hold_of_a_stream_that_never_started_is_given_back_at_the_deadline()
     assert stored["settled"] is True and stored["finalization_outcome"] == "refunded"
     assert stored["finalized_cost_microdollars"] == 0
     # The terminal time is the pass's own time, not the horizon the scan used.
-    assert stored["terminal_at"] == CREATED + timedelta(seconds=AFTER + 1)
+    assert stored["terminal_at"] == CREATED + timedelta(seconds=DUE + 1)
     assert db.generation_records == {}
 
 
@@ -325,7 +447,7 @@ def test_a_second_before_the_deadline_the_row_is_not_even_a_candidate() -> None:
     _counters(db)
     before = _state(db)
 
-    result = _pass(db, age=AFTER - 1)
+    result = _pass(db, age=DUE - 1)
 
     assert (result.scanned, result.released) == (0, 0)
     assert _state(db) == before
@@ -347,28 +469,34 @@ def test_the_deadline_is_counted_from_the_authorizations_own_creation() -> None:
 
 
 @pytest.mark.parametrize(
-    ("overrides", "reason"),
+    ("overrides", "scanned", "reason"),
     [
-        ({"stage_d_reason": "not_streaming", "pricing_snapshot": None}, rule.OTHER_CLASS),
-        ({"stage_d_reason": "route"}, rule.OTHER_CLASS),
-        ({"stage_d_reason": "abliterate_estimated_usage"}, rule.OTHER_CLASS),
-        ({"stage_d_boot_kid": None}, rule.OTHER_CLASS),
-        ({"native_batch_eligible": True}, rule.OTHER_CLASS),
+        ({"stage_d_reason": "not_streaming", "pricing_snapshot": None, "heartbeat_seq": None}, 0, None),
+        ({"stage_d_reason": "route"}, 0, None),
+        ({"stage_d_reason": "abliterate_estimated_usage"}, 0, None),
+        ({"stage_d_boot_kid": None}, 0, None),
+        ({"native_batch_eligible": True}, 1, rule.MALFORMED),
+        ({"pricing_snapshot": "not-json"}, 1, rule.MALFORMED),
+        ({"settlement": "deferred_home"}, 1, rule.MALFORMED),
     ],
-    ids=["not-a-stream", "another-route", "estimated-usage", "no-boot-binding", "batch"],
+    ids=["not-a-stream", "another-route", "estimated-usage", "no-boot-binding", "batch", "malformed-snapshot",
+         "another-settlement"],
 )
-def test_a_request_of_another_class_keeps_its_hold_until_the_reaper(
-    overrides: dict[str, Any], reason: str
+def test_a_request_the_rule_does_not_cover_keeps_its_hold_until_the_reaper(
+    overrides: dict[str, Any], scanned: int, reason: str | None
 ) -> None:
+    """Another class is not a candidate at all (the scan returns only the
+    class), and a Stage D row that is not as authorize writes one is read
+    and left."""
     db, authorization = _seed(**overrides)
     _counters(db)
     before = _state(db)
 
-    result = _pass(db, age=GATEWAY_RESERVATION_TTL_SECONDS - 60)
-
-    assert (result.scanned, result.released, result.would_release) == (1, 0, 0)
-    assert result.skipped == ((reason, 1),)
-    assert _state(db) == before
+    for log_only in (True, False):
+        result = _pass(db, age=GATEWAY_RESERVATION_TTL_SECONDS - 120, log_only=log_only)
+        assert (result.scanned, result.released, result.would_release) == (scanned, 0, 0)
+        assert result.skipped == (((reason, 1),) if reason else ())
+        assert _state(db) == before
     # The reaper still takes it at its expiry, as before.
     reaped = reap_expired_reservations_result(db, _ParamTypes, now=CREATED + TTL + timedelta(seconds=1))
     assert reaped.count == 1 and db.gateway_authorizations[authorization.id]["settled"] is True
@@ -379,7 +507,7 @@ def test_a_boot_that_did_not_declare_heartbeats_keeps_its_streams_holds() -> Non
     _counters(db)
     before = _state(db)
 
-    result = _pass(db, age=AFTER + 1, declared=lambda _kid: False)
+    result = _pass(db, age=DUE + 1, since=lambda _kid: None)
 
     assert result.released == 0 and result.skipped == ((rule.BOOT_UNDECLARED, 1),)
     assert _state(db) == before
@@ -404,31 +532,47 @@ def test_a_boots_declaration_is_read_once_a_pass_and_outside_the_transaction(
 
     monkeypatch.setattr(db, "run_in_transaction", tracking)
 
-    def declared(kid: str) -> bool:
+    def since(kid: str) -> str | None:
         assert not in_transaction, "the boot was read inside a transaction"
         asked.append(kid)
-        return True
+        return SINCE
 
-    result = _pass(db, age=AFTER + 1, declared=declared)
+    result = _pass(db, age=DUE + 1, since=since)
 
     assert result.released == 2 and asked == [BOOT]
     assert _money(db) == (0, 0, 0, 0)
 
 
-def test_log_mode_reports_the_row_and_writes_nothing() -> None:
+def test_log_mode_reports_the_row_and_opens_no_read_write_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Log mode reads on read-only snapshots: no read-write transaction, so
+    no lock a concurrent settle or heartbeat could wait on, and nothing
+    written."""
     db, _authorization_row = _seed()
     _counters(db)
     before = _state(db)
     updates = db.transaction_execute_update_calls
+    commits = db.commits
+    transaction_reads = db.transaction_execute_sql_calls
+    snapshots = len(db.snapshot_calls)
 
-    result = _pass(db, age=AFTER + 1, log_only=True)
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("log mode opened a read-write transaction")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "run_in_transaction", forbidden)
+        result = _pass(db, age=DUE + 1, log_only=True)
+        assert result.would_release == 1
+        # The same row is found again the next pass.
+        assert _pass(db, age=DUE + 301, log_only=True).would_release == 1
+    assert (db.commits, db.transaction_execute_sql_calls) == (commits, transaction_reads)
+    # Each pass reads its one candidate on one multi-use, read-only snapshot.
+    assert sum(bool(call.get("multi_use")) for call in db.snapshot_calls[snapshots:]) == 2
 
     assert (result.scanned, result.would_release, result.would_release_hold_micro) == (1, 1, HOLD)
     assert (result.released, result.released_hold_micro, result.leased) == (0, 0, ())
     assert _state(db) == before
     assert db.transaction_execute_update_calls == updates
-    # The same row is found again the next pass, and then by the reaper.
-    assert _pass(db, age=AFTER + 301, log_only=True).would_release == 1
+    # And then it is the reaper's.
     assert reap_expired_reservations_result(db, _ParamTypes, now=CREATED + TTL + timedelta(seconds=1)).count == 1
 
 
@@ -440,12 +584,12 @@ def test_a_first_heartbeat_before_the_release_keeps_the_hold(monkeypatch: pytest
     real_finalize = authorize_mod._finalize_reaped_reservation_atomic
 
     def heartbeat_then_finalize(*args: Any, **kwargs: Any) -> Any:
-        assert _heartbeat(db, at=CREATED + timedelta(seconds=AFTER)).accepted
+        assert _heartbeat(db, at=CREATED + timedelta(seconds=DUE)).accepted
         return real_finalize(*args, **kwargs)
 
     monkeypatch.setattr(authorize_mod, "_finalize_reaped_reservation_atomic", heartbeat_then_finalize)
 
-    result = _pass(db, age=AFTER + 1)
+    result = _pass(db, age=DUE + 1)
 
     assert result.released == 0 and result.skipped == ((rule.STARTED, 1),)
     assert _money(db) == (HOLD, 0, HOLD, 0)
@@ -460,10 +604,10 @@ def test_a_first_heartbeat_after_the_release_is_refused() -> None:
     sends no settle. Nothing of the heartbeat is written."""
     db, authorization = _seed()
     _counters(db)
-    assert _pass(db, age=AFTER + 1).released == 1
+    assert _pass(db, age=DUE + 1).released == 1
     after_release = _state(db)
 
-    refused = _heartbeat(db, at=CREATED + timedelta(seconds=AFTER + 2))
+    refused = _heartbeat(db, at=CREATED + timedelta(seconds=DUE + 2))
 
     assert refused.accepted is False and refused.reason == "already_terminal"
     assert _state(db) == after_release
@@ -473,7 +617,7 @@ def test_a_first_heartbeat_after_the_release_is_refused() -> None:
 def test_a_settle_after_the_release_books_nothing_and_releases_nothing_twice() -> None:
     db, authorization = _seed()
     _counters(db)
-    assert _pass(db, age=AFTER + 1).released == 1
+    assert _pass(db, age=DUE + 1).released == 1
     after_release = _state(db)
 
     settle_row = replace(authorization)
@@ -488,7 +632,7 @@ def test_a_settle_after_the_release_books_nothing_and_releases_nothing_twice() -
         success=True,
         actual_micro=120,
         settled_usage_type="Credits",
-        now=CREATED + timedelta(seconds=AFTER + 5),
+        now=CREATED + timedelta(seconds=DUE + 5),
         outbox_available=True,
         authorization=settle_row,
         auth_body_settled=json_body(settle_row),
@@ -516,7 +660,7 @@ def test_a_terminal_before_the_release_wins_and_the_release_does_nothing(success
         success=success,
         actual_micro=120 if success else 0,
         settled_usage_type="Credits",
-        now=CREATED + timedelta(seconds=AFTER),
+        now=CREATED + timedelta(seconds=DUE),
         outbox_available=True,
         authorization=terminal_row,
         auth_body_settled=json_body(terminal_row),
@@ -526,17 +670,17 @@ def test_a_terminal_before_the_release_wins_and_the_release_does_nothing(success
 
     # The scan no longer returns a settled reservation; a pass that had
     # scanned it a moment before reads it again under its transaction.
-    assert _pass(db, age=AFTER + 1).scanned == 0
+    assert _pass(db, age=DUE + 1).scanned == 0
     stale = authorize_mod._finalize_reaped_reservation_atomic(
         db,
         _ParamTypes,
         reservation_id="reservation",
-        reap_now=CREATED + timedelta(seconds=AFTER + 1),
+        reap_now=CREATED + timedelta(seconds=DUE + 1),
         guard_outbox=True,
         snapshot_booking_enabled=False,
         operational_analytics_outbox=None,
-        expiry_horizon=CREATED + timedelta(seconds=AFTER + 1) + TTL,
-        unstarted=UnstartedRelease(after_seconds=AFTER, log_only=False, heartbeat_declared=_declared),
+        expiry_horizon=CREATED + timedelta(seconds=DUE + 1) + TTL,
+        unstarted=UnstartedRelease(after_seconds=AFTER, log_only=False, declared_since=_since),
     )
 
     assert stale.outcome == SettleOutcome.NOT_ELIGIBLE
@@ -555,17 +699,17 @@ def test_a_pending_settle_intent_freezes_the_hold(status: str) -> None:
     }
     before = _state(db)
 
-    assert _pass(db, age=AFTER + 1).scanned == 0
+    assert _pass(db, age=DUE + 1).scanned == 0
     guarded = authorize_mod._finalize_reaped_reservation_atomic(
         db,
         _ParamTypes,
         reservation_id="reservation",
-        reap_now=CREATED + timedelta(seconds=AFTER + 1),
+        reap_now=CREATED + timedelta(seconds=DUE + 1),
         guard_outbox=True,
         snapshot_booking_enabled=False,
         operational_analytics_outbox=None,
-        expiry_horizon=CREATED + timedelta(seconds=AFTER + 1) + TTL,
-        unstarted=UnstartedRelease(after_seconds=AFTER, log_only=False, heartbeat_declared=_declared),
+        expiry_horizon=CREATED + timedelta(seconds=DUE + 1) + TTL,
+        unstarted=UnstartedRelease(after_seconds=AFTER, log_only=False, declared_since=_since),
     )
 
     assert guarded.outcome == SettleOutcome.OUTBOX_GUARDED
@@ -579,7 +723,7 @@ def test_without_the_settle_outbox_the_pass_does_nothing(monkeypatch: pytest.Mon
     monkeypatch.setattr(authorize_mod, "_outbox_table_available", lambda _database, _types: False)
     reads = db.snapshot_execute_sql_calls
 
-    result = _pass(db, age=AFTER + 1)
+    result = _pass(db, age=DUE + 1)
 
     assert result.unguarded is True and (result.scanned, result.released) == (0, 0)
     assert _state(db) == before and db.snapshot_execute_sql_calls == reads
@@ -611,7 +755,7 @@ def test_one_rows_failure_is_its_own_and_the_pass_goes_on(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(authorize_mod, "_finalize_reaped_reservation_atomic", fail_the_first)
 
-    result = _pass(db, age=AFTER + 1)
+    result = _pass(db, age=DUE + 1)
 
     assert (result.scanned, result.released, result.errors) == (2, 1, 1)
     assert _money(db) == (HOLD, 0, HOLD, 0)
@@ -625,10 +769,10 @@ def test_a_leased_streams_row_is_released_and_named_for_the_leases_refund() -> N
     db, authorization = _seed(hold=0, fastpath_envelope="sealed-envelope")
     _counters(db, reserved=0)
 
-    logged = _pass(db, age=AFTER + 1, log_only=True)
+    logged = _pass(db, age=DUE + 1, log_only=True)
     assert (logged.would_release, logged.would_release_leased, logged.leased) == (1, 1, ())
 
-    result = _pass(db, age=AFTER + 1)
+    result = _pass(db, age=DUE + 1)
 
     assert (result.released, result.released_hold_micro, result.leased) == (1, 0, (authorization.id,))
     assert _money(db) == (0, 0, 0, 0)
@@ -699,7 +843,7 @@ def test_the_store_reads_the_declaration_from_the_boots_own_record(declared: boo
     store, db, _authorization_row = _store(declared=declared)
 
     result = store.release_unstarted_holds_result(
-        now=CREATED + timedelta(seconds=AFTER + 1), after_seconds=AFTER, log_only=False,
+        now=CREATED + timedelta(seconds=DUE + 1), after_seconds=AFTER, log_only=False,
     )
 
     assert result.released == int(declared)
@@ -715,7 +859,7 @@ def test_a_boot_record_that_is_gone_or_unreadable_keeps_the_hold(monkeypatch: py
     db.gateway_authorizations[authorization.id]["payload"] = json.dumps(payload)
 
     gone = store.release_unstarted_holds_result(
-        now=CREATED + timedelta(seconds=AFTER + 1), after_seconds=AFTER, log_only=False,
+        now=CREATED + timedelta(seconds=DUE + 1), after_seconds=AFTER, log_only=False,
     )
     assert gone.released == 0 and gone.skipped == ((rule.BOOT_UNDECLARED, 1),)
 
@@ -724,7 +868,7 @@ def test_a_boot_record_that_is_gone_or_unreadable_keeps_the_hold(monkeypatch: py
 
     monkeypatch.setattr(type(store), "get_gateway_boot", unreadable)
     unread = store.release_unstarted_holds_result(
-        now=CREATED + timedelta(seconds=AFTER + 1), after_seconds=AFTER, log_only=False,
+        now=CREATED + timedelta(seconds=DUE + 1), after_seconds=AFTER, log_only=False,
     )
     assert unread.released == 0 and unread.skipped == ((rule.BOOT_UNDECLARED, 1),)
     assert _money(db) == (HOLD, 0, HOLD, 0)
@@ -733,7 +877,7 @@ def test_a_boot_record_that_is_gone_or_unreadable_keeps_the_hold(monkeypatch: py
 def test_the_pass_in_on_mode_releases_counts_and_reports(drain_lines: _Lines) -> None:
     _store_, db, _authorization_row = _store()
 
-    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=AFTER + 1), mode="on", after_seconds=AFTER)
+    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="on", after_seconds=AFTER)
 
     assert result is not None and result.released == 1
     assert _money(db) == (0, 0, 0, 0)
@@ -741,7 +885,7 @@ def test_the_pass_in_on_mode_releases_counts_and_reports(drain_lines: _Lines) ->
     assert messages == [
         "gateway.unstarted_release mode=on rule=unstarted_stream after_seconds=900 scanned=1 "
         "released=1 released_hold_micro=300 would_release=0 would_release_hold_micro=0 "
-        "would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false skipped=none "
+        "would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false truncated=false skipped=none "
         "lease_refunds=0 lease_refund_failures=0",
         "metric=gateway_hold_released_unstarted_stream_total value=1",
     ]
@@ -754,14 +898,14 @@ def test_the_pass_in_log_mode_releases_nothing_and_counts_no_release(drain_lines
     _store_, db, _authorization_row = _store()
     before = _state(db)
 
-    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=AFTER + 1), mode="log", after_seconds=AFTER)
+    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="log", after_seconds=AFTER)
 
     assert result is not None and (result.released, result.would_release) == (0, 1)
     assert _state(db) == before
     assert drain_lines.messages() == [
         "gateway.unstarted_release mode=log rule=unstarted_stream after_seconds=900 scanned=1 "
         "released=0 released_hold_micro=0 would_release=1 would_release_hold_micro=300 "
-        "would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false skipped=none "
+        "would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false truncated=false skipped=none "
         "lease_refunds=0 lease_refund_failures=0",
     ]
 
@@ -793,9 +937,9 @@ def test_a_failing_pass_is_logged_and_never_raised(drain_lines: _Lines, monkeypa
 
     monkeypatch.setattr(type(store), "release_unstarted_holds_result", broken)
 
-    assert drain.release_unstarted_holds(CREATED + timedelta(seconds=AFTER + 1), mode="on", after_seconds=AFTER) is None
+    assert drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="on", after_seconds=AFTER) is None
     assert _state(db) == before
-    assert drain_lines.messages() == ["gateway.unstarted_release failed mode=on"]
+    assert drain_lines.messages() == ["gateway.unstarted_release failed mode=on error_class=RuntimeError"]
 
 
 def test_a_store_without_the_capability_is_left_alone(drain_lines: _Lines) -> None:
@@ -835,7 +979,7 @@ def test_a_released_leased_row_sends_the_lease_the_refund_the_gateway_never_did(
     client = _FrontDoor()
     _front_door(monkeypatch, client)
 
-    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=AFTER + 1), mode="on", after_seconds=AFTER)
+    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="on", after_seconds=AFTER)
 
     assert result is not None and result.leased == (authorization.id,)
     # After the row is terminal, with the refund's own money: no charge.
@@ -850,7 +994,7 @@ def test_log_mode_sends_a_lease_nothing(drain_lines: _Lines, monkeypatch: pytest
     _front_door(monkeypatch, client)
     before = _state(db)
 
-    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=AFTER + 1), mode="log", after_seconds=AFTER)
+    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="log", after_seconds=AFTER)
 
     assert result is not None and (result.would_release, result.would_release_leased) == (1, 1)
     assert client.refunds == [] and _state(db) == before
@@ -876,27 +1020,27 @@ def test_a_lease_refund_that_does_not_land_is_counted_and_the_row_stays_released
     _store_, db, authorization = _store(hold=0, fastpath_envelope="sealed-envelope")
     _front_door(monkeypatch, client)
 
-    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=AFTER + 1), mode="on", after_seconds=AFTER)
+    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="on", after_seconds=AFTER)
 
     assert result is not None and result.released == 1
     assert db.gateway_authorizations[authorization.id]["finalization_outcome"] == "refunded"
     summary = next(line for line in drain_lines.messages() if line.startswith("gateway.unstarted_release mode=on"))
     assert "lease_refunds=0 lease_refund_failures=1" in summary
-    refused = _heartbeat(db, at=CREATED + timedelta(seconds=AFTER + 2))
+    refused = _heartbeat(db, at=CREATED + timedelta(seconds=DUE + 2))
     assert refused.accepted is False and refused.reason == "already_terminal"
 
 
-def test_a_full_scan_is_told(drain_lines: _Lines) -> None:
-    _store_, db, _authorization_row = _store(stage_d_reason="not_streaming", pricing_snapshot=None)
-    _seed(db, suffix="-2", stage_d_reason="not_streaming", pricing_snapshot=None)
+def test_a_pass_that_stops_at_its_page_budget_says_so(drain_lines: _Lines) -> None:
+    _store_, db, _authorization_row = _store(stage_d_boot_kid="boot-never-registered")
+    pages = authorize_mod._UNSTARTED_SCAN_PAGES
+    for index in range(2 * pages):
+        _seed(db, suffix=f"-{index}", stage_d_boot_kid="boot-never-registered")
 
-    result = drain.release_unstarted_holds(
-        CREATED + timedelta(seconds=AFTER + 1), mode="on", after_seconds=AFTER, limit=2,
-    )
+    result = drain.release_unstarted_holds(CREATED + timedelta(seconds=DUE + 1), mode="on", after_seconds=AFTER, limit=2)
 
-    assert result is not None and (result.scanned, result.released) == (2, 0)
-    assert drain_lines.messages()[-1] == "gateway.unstarted_release scan full scanned=2 limit=2"
-    assert "skipped=other_class:2" in drain_lines.messages()[0]
+    assert result is not None and (result.scanned, result.released, result.truncated) == (2 * pages, 0, True)
+    assert drain_lines.messages()[-1] == f"gateway.unstarted_release scan truncated scanned={2 * pages} limit=2"
+    assert f"truncated=true skipped=boot_undeclared:{2 * pages}" in drain_lines.messages()[0]
 
 
 def test_each_hold_the_reaper_releases_is_counted_under_its_own_rule(drain_lines: _Lines) -> None:
@@ -907,3 +1051,138 @@ def test_each_hold_the_reaper_releases_is_counted_under_its_own_rule(drain_lines
     assert drain_lines.messages() == ["metric=gateway_hold_released_expired_total value=1"] * 3
     assert {record.levelno for record in drain_lines.records} == {logging.WARNING}
     assert {record.metric for record in drain_lines.records} == {"gateway_hold_released_expired_total"}  # type: ignore[attr-defined]
+
+
+# -- membership is frozen at authorize time, and the scan makes progress --------
+
+
+def test_a_boot_that_declares_heartbeats_only_later_does_not_bring_an_older_row_into_the_class() -> None:
+    """The interleaving the rule must refuse: a boot registers without the
+    declaration; a stream is authorized Stage D ok (enforcement is off) and
+    runs with no heartbeat; the same key registers again, declaring. The
+    declaration began after the row was made, so the row is not of the
+    class, however long the pass waits and however the boot reads now."""
+    store, db = make_fake_store(request_record_write_mode="typed")
+    db.now = CREATED
+    configure_store(store)
+    store.observe_gateway_boot(_registration(declares=False, at="2026-11-21T09:00:00Z"))
+    _seed(db)
+    _counters(db)
+    before = _state(db)
+    store.observe_gateway_boot(_registration(declares=True, at="2026-11-21T12:05:00Z"))
+    boot = store.get_gateway_boot(BOOT)
+    assert boot is not None and boot.declares_usage_heartbeat
+    assert boot.usage_heartbeat_declared_since == "2026-11-21T12:05:00Z"
+
+    for age in (DUE + 1, 3600, GATEWAY_RESERVATION_TTL_SECONDS - 120):
+        for log_only in (True, False):
+            result = store.release_unstarted_holds_result(
+                now=CREATED + timedelta(seconds=age), after_seconds=AFTER, log_only=log_only,
+            )
+            assert (result.scanned, result.released, result.would_release) == (1, 0, 0)
+            assert result.skipped == ((rule.BOOT_UNDECLARED, 1),)
+    assert _state(db) == before
+
+    # A row made after the declaration began (and the allowance) is of the class.
+    later = "2026-11-21T12:06:00Z"
+    _seed(db, suffix="-later", created_at=later)
+    released = store.release_unstarted_holds_result(
+        now=datetime(2026, 11, 21, 12, 6, tzinfo=UTC) + timedelta(seconds=DUE + 1), after_seconds=AFTER, log_only=False,
+    )
+    assert released.released == 1
+    assert db.reservations["reservation-later"]["settled"] is True
+    assert db.reservations["reservation"]["settled"] is False
+
+
+def test_a_boot_that_withdraws_the_declaration_takes_its_rows_out_of_the_class() -> None:
+    store, db, _authorization_row = _store()
+    store.observe_gateway_boot(_registration(declares=False, at="2026-11-21T12:20:00Z"))
+    assert store.get_gateway_boot(BOOT).usage_heartbeat_declared_since is None
+
+    result = store.release_unstarted_holds_result(
+        now=CREATED + timedelta(seconds=DUE + 1), after_seconds=AFTER, log_only=False,
+    )
+
+    assert result.released == 0 and result.skipped == ((rule.BOOT_UNDECLARED, 1),)
+    assert _money(db) == (HOLD, 0, HOLD, 0)
+
+
+def test_requests_of_other_classes_past_the_deadline_never_hide_a_releasable_row() -> None:
+    """A scan that stops at its limit must still find the row it can act
+    on: three pages' worth of unsettled requests of other classes, all past
+    the deadline and all expiring before it, and the releasable row is
+    released in the first pass."""
+    db, _excluded = _seed(suffix="-x0", stage_d_reason="not_streaming", pricing_snapshot=None, heartbeat_seq=None,
+                          created_at="2026-11-21T11:00:00Z")
+    for index in range(1, 30):
+        _seed(db, suffix=f"-x{index}", stage_d_reason="not_streaming", pricing_snapshot=None, heartbeat_seq=None,
+              created_at="2026-11-21T11:00:00Z")
+    _seed(db)
+    _counters(db)
+
+    for log_only, expected in ((True, (1, 0, 1)), (False, (1, 1, 0)), (False, (0, 0, 0))):
+        result = _pass(db, age=DUE + 1, log_only=log_only, limit=10)
+        assert (result.scanned, result.released, result.would_release) == expected
+        assert result.truncated is False
+    assert db.reservations["reservation"]["settled"] is True
+    assert sum(row["settled"] for row in db.reservations.values()) == 1
+
+
+def test_rows_of_the_class_the_transaction_leaves_do_not_hide_the_ones_behind_them() -> None:
+    """Pages follow a cursor in expiry order: rows of the class that every
+    pass reads and leaves (their boot has no declaration to show) fill the
+    first pages, and the releasable row behind them is still reached."""
+    limit = 4
+    db, _first = _seed(suffix="-u0", stage_d_boot_kid="boot-undeclared", created_at="2026-11-21T11:00:00Z")
+    for index in range(1, 2 * limit + 1):
+        _seed(db, suffix=f"-u{index}", stage_d_boot_kid="boot-undeclared", created_at="2026-11-21T11:00:00Z")
+    _seed(db)
+    _counters(db)
+
+    def since(kid: str) -> str | None:
+        return SINCE if kid == BOOT else None
+
+    result = _pass(db, age=DUE + 1, since=since, limit=limit)
+
+    assert (result.scanned, result.released, result.truncated) == (2 * limit + 2, 1, False)
+    assert result.skipped == ((rule.BOOT_UNDECLARED, 2 * limit + 1),)
+    assert db.reservations["reservation"]["settled"] is True
+    # Passes repeat without ever taking a row they may not.
+    again = _pass(db, age=DUE + 301, since=since, limit=limit)
+    assert (again.scanned, again.released) == (2 * limit + 1, 0)
+
+
+def test_the_scan_names_its_index_and_bounds_its_read() -> None:
+    sql = authorize_mod._UNSTARTED_SCAN_SQL
+    assert "FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry} AS r " in sql
+    assert "WHERE r.settled=false AND r.expires_at < @now " in sql
+    assert "ON a.authorization_id = r.authorization_id" in sql  # one primary-key read a candidate
+    assert sql.endswith("ORDER BY r.expires_at, r.reservation_id LIMIT @limit")
+    assert authorize_mod._UNSTARTED_SCAN_PAGES == 5
+
+
+@pytest.mark.parametrize("log_only", [True, False], ids=["log", "on"])
+def test_a_settle_intent_made_durable_after_the_scan_still_freezes_the_hold(
+    log_only: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scan leaves out a row with a pending intent, but it is advisory:
+    an intent that lands after it is found by the row's own read, in log
+    mode's snapshot as in the release's transaction."""
+    db, authorization = _seed()
+    _counters(db)
+    name = "_observe_unstarted_candidate" if log_only else "_finalize_reaped_reservation_atomic"
+    real = getattr(authorize_mod, name)
+
+    def intent_then_read(*args: Any, **kwargs: Any) -> Any:
+        db.settle_outbox[(authorization.id, "settle")] = {
+            "authorization_id": authorization.id, "intent_kind": "settle", "status": "pending",
+        }
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(authorize_mod, name, intent_then_read)
+
+    result = _pass(db, age=DUE + 1, log_only=log_only)
+
+    assert (result.scanned, result.guarded, result.released, result.would_release) == (1, 1, 0, 0)
+    assert _money(db) == (HOLD, 0, HOLD, 0)
+    assert db.reservations["reservation"]["settled"] is False

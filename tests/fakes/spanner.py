@@ -3887,6 +3887,61 @@ def _execute_sql(
                 )
             ]
         ]
+    # The early rule's scan (storage_gcp_authorize._UNSTARTED_SCAN_SQL): the
+    # reservations past its horizon whose authorization is, by its columns
+    # and its Stage D reason, a heartbeated stream no heartbeat has reached,
+    # in expiry order after a cursor. Every predicate the pass's progress or
+    # its class rests on must be in the SQL, or the scan fails here.
+    if "FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry} AS r JOIN tr_gateway_authorization AS a" in sql:
+        for needle in (
+            "SELECT r.reservation_id, r.authorization_id, r.credit_reserved_micro, r.key_reserved_micro, r.expires_at ",
+            "ON a.authorization_id = r.authorization_id",
+            "WHERE r.settled=false AND r.expires_at < @now",
+            "(r.expires_at > @after_expiry OR (r.expires_at = @after_expiry AND r.reservation_id > @after_id))",
+            "a.settled=false",
+            "a.heartbeat_seq=0",
+            "a.started_at IS NULL",
+            "a.heartbeat_at IS NULL",
+            "a.delivered_usage IS NULL",
+            "a.pricing_snapshot IS NOT NULL",
+            "a.stage_d_boot_kid IS NOT NULL",
+            "JSON_VALUE(a.payload, '$.stage_d_reason') = 'ok'",
+            "NOT EXISTS (SELECT 1 FROM tr_settle_outbox o WHERE o.authorization_id = r.authorization_id",
+            f"o.status IN ({_GUARD_STATUS_SQL})",
+            "ORDER BY r.expires_at, r.reservation_id LIMIT @limit",
+        ):
+            _require_pred(sql, needle, "unstarted-scan")
+        horizon = _utc_datetime(params["now"])
+        cursor = (_utc_datetime(params["after_expiry"]), str(params["after_id"]))
+        found: list[tuple[dt.datetime, str, dict]] = []
+        for rid, rec in db.reservations.items():
+            exp = rec.get("expires_at")
+            if rec.get("settled") or exp is None:
+                continue
+            expires = _utc_datetime(exp)
+            if expires >= horizon or (expires, str(rid)) <= cursor:
+                continue
+            aid = rec.get("authorization_id")
+            auth = db.gateway_authorizations.get(aid)
+            if auth is None or auth.get("settled") or auth.get("heartbeat_seq") != 0:
+                continue
+            if any(auth.get(name) is not None for name in ("started_at", "heartbeat_at", "delivered_usage")):
+                continue
+            if auth.get("pricing_snapshot") is None or auth.get("stage_d_boot_kid") is None:
+                continue
+            if json.loads(auth["payload"]).get("stage_d_reason") != "ok":
+                continue
+            if any(
+                row.get("authorization_id") == aid and row.get("status") in GUARD_STATUSES
+                for row in db.settle_outbox.values()
+            ):
+                continue
+            found.append((expires, str(rid), rec))
+        found.sort(key=lambda item: (item[0], item[1]))
+        return [
+            [rid, rec.get("authorization_id"), rec.get("credit_reserved_micro"), rec.get("key_reserved_micro"), expires]
+            for expires, rid, rec in found[: int(params["limit"])]
+        ]
     # Reaper scan: expired unsettled reservations. This must precede the generic
     # tr_settle_outbox dispatcher because the guarded scan names both tables; match
     # the more specific query first.
