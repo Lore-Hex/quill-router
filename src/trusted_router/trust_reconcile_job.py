@@ -22,6 +22,7 @@ from trusted_router.trust_reconciliation import (
     reconcile_canonical_mappings,
     reconciliation_tail_start,
 )
+from trusted_router.trust_tiers import adverse_event_latches
 
 log = logging.getLogger(__name__)
 
@@ -331,7 +332,8 @@ def plan_historical_backfill(
     ``stripe_event`` marker exists, or derivable evidence) and the action the
     apply run would take. Per refund/dispute: the transition, the recovery
     debit the writer would take (derived target minus what is already
-    recovered) and whether the workspace latch is implied. Nothing is written.
+    recovered) and whether the workspace latch is implied (an applied
+    transition that ``adverse_event_latches`` calls fraud). Nothing is written.
     """
 
     local_events = repository.list_provider_events(provider)
@@ -426,7 +428,7 @@ def plan_historical_backfill(
                 action=action,
                 recovery_target_micro=target,
                 recovery_debit_micro=debit,
-                latch_implied=action == "apply",
+                latch_implied=action == "apply" and adverse_event_latches(adverse),
             )
         )
     return BackfillPlan(

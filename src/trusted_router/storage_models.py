@@ -795,6 +795,12 @@ class AdverseTrustEvent:
     occurred_at: dt.datetime
     provider_ordering_watermark: str
     payload: str
+    # Stripe Refund.reason ("fraudulent", "duplicate", "requested_by_customer",
+    # "expired_uncaptured_charge"); empty when the refund gave none, for a
+    # dispute, and for providers whose refunds carry no reason. It decides
+    # only whether the refund latches (trust_tiers.adverse_event_latches) and
+    # is not stored on tr_trust_event.
+    refund_reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)

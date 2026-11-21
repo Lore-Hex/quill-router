@@ -92,14 +92,48 @@ def adverse_event_payload(event: AdverseTrustEvent) -> str:
             "occurred_at": event.occurred_at.isoformat(),
             "provider_ordering_watermark": event.provider_ordering_watermark,
             "payload": event.payload,
+            "refund_reason": event.refund_reason,
         },
         separators=(",", ":"),
         sort_keys=True,
     )
 
 
+def _stripe_refund_reason_from_raw_event(raw_event: str, adverse_ref: str) -> str:
+    """The Refund.reason inside a raw Stripe Event, for inbox rows from before
+    the observation carried ``refund_reason``.
+
+    The live webhook stored the whole Event as ``payload``. Its refund is
+    ``data.object`` (``refund.*``, ``charge.refund.updated``) or one of
+    ``data.object.refunds.data[]`` (``charge.refunded``); match it by id.
+    """
+
+    try:
+        event = json.loads(raw_event) if raw_event else None
+    except ValueError:
+        return ""
+    data = event.get("data") if isinstance(event, dict) else None
+    obj = data.get("object") if isinstance(data, dict) else None
+    if not isinstance(obj, dict):
+        return ""
+    refunds = obj.get("refunds")
+    listed = refunds.get("data") if isinstance(refunds, dict) else None
+    for candidate in [obj, *(listed if isinstance(listed, list) else ())]:
+        if isinstance(candidate, dict) and str(candidate.get("id") or "") == adverse_ref:
+            return str(candidate.get("reason") or "")
+    return ""
+
+
 def adverse_event_from_payload(payload: str) -> AdverseTrustEvent:
     body = json.loads(payload)
+    if "refund_reason" in body:
+        refund_reason = str(body["refund_reason"] or "")
+    elif body.get("kind") == "refund" and body.get("provider") in {"stripe", "x402"}:
+        refund_reason = _stripe_refund_reason_from_raw_event(
+            str(body.get("payload") or ""), str(body["adverse_ref"])
+        )
+    else:
+        refund_reason = ""
     event = AdverseTrustEvent(
         event_id=str(body["event_id"]),
         provider=str(body["provider"]),
@@ -112,9 +146,58 @@ def adverse_event_from_payload(payload: str) -> AdverseTrustEvent:
         occurred_at=datetime.fromisoformat(str(body["occurred_at"])),
         provider_ordering_watermark=str(body["provider_ordering_watermark"]),
         payload=str(body.get("payload") or ""),
+        refund_reason=refund_reason,
     )
     validate_adverse_event(event)
     return event
+
+
+#: The Stripe Refund.reason an operator gives when refunding a charge as fraud.
+FRAUD_REFUND_REASON = "fraudulent"
+#: Dispute states in which the provider has taken the funds back: an active
+#: chargeback, or one already decided either way.
+CHARGEBACK_STATUSES = frozenset({"succeeded", "won", "lost"})
+#: Adyen files these as disputes so that they claim principal, but each is a
+#: merchant or processing reversal, not a cardholder chargeback or fraud report.
+_ADYEN_NON_FRAUD_DISPUTE_SUBTYPES = frozenset(
+    {"cancellation", "capture_failure", "refund_reversal"}
+)
+
+
+def adverse_event_latches(event: AdverseTrustEvent) -> bool:
+    """Whether an applied adverse observation sets the write-once trust latch.
+
+    Only evidence of fraud latches. Every backend asks this one question at
+    the same point (an ``applied`` lifecycle transition), so a fact that first
+    arrives in a non-latching stage latches when a later transition makes it
+    evidence, and nothing here ever clears a latch.
+
+    * A refund latches when its reason is ``fraudulent``, at whatever status
+      it is applied (pending, succeeded, failed, cancelled, reversed): the
+      operator's fraud call is the evidence whether or not the money moved,
+      and a refund to a stolen card often fails. A refund with another reason
+      or none (a courtesy refund) never latches.
+    * A dispute latches once it is a chargeback: the funds were withdrawn
+      (``succeeded``) or the chargeback was decided (``won`` or ``lost``).
+      ``won`` latches too, so the result does not depend on whether the
+      chargeback stage itself was ever delivered; the history backfill sees
+      only a dispute's current status. A Stripe inquiry (``pending``, or
+      ``closed`` from ``warning_closed``), an Adyen notification of chargeback
+      (``pending``) and a horizon terminalization do not latch.
+    * Adyen's notification of fraud is an issuer fraud report and latches.
+      Adyen's cancellations, failed captures and reversed refunds do not.
+    """
+
+    if event.kind == "refund":
+        return event.refund_reason.strip().lower() == FRAUD_REFUND_REASON
+    if event.kind != "dispute":
+        return False
+    if event.provider == "adyen":
+        if event.provider_subtype == "fraud":
+            return True
+        if event.provider_subtype in _ADYEN_NON_FRAUD_DISPUTE_SUBTYPES:
+            return False
+    return event.lifecycle_status in CHARGEBACK_STATUSES
 
 
 def adverse_transition_outcome(

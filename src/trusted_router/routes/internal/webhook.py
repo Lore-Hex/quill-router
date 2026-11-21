@@ -556,6 +556,7 @@ def _stripe_adverse_events(
                     occurred_at=occurred_at,
                     provider_ordering_watermark=watermark,
                     payload=raw_payload,
+                    refund_reason=str(refund.get("reason") or ""),
                 )
             )
         return tuple(parsed)

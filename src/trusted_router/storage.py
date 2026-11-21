@@ -141,6 +141,7 @@ from trusted_router.trust_reconciliation import (
 )
 from trusted_router.trust_tiers import (
     adverse_event_from_payload,
+    adverse_event_latches,
     adverse_event_payload,
     adverse_restamp_wins,
     adverse_transition_outcome,
@@ -2398,6 +2399,11 @@ class InMemoryStore:
             existing.provider_subtype = event.provider_subtype
             existing.lifecycle_status = event.lifecycle_status
             existing.provider_ordering_watermark = event.provider_ordering_watermark
+        if adverse_event_latches(event):
+            # The same write-once latch the Spanner and Postgres writers set.
+            for shard in range(self.credits[payment.workspace_id].shard_count):
+                row = self.credit_trust_shards[(payment.workspace_id, shard)]
+                row["trust_latched_at"] = row["trust_latched_at"] or now
         adverse = [
             row
             for row in self.trust_events.values()
