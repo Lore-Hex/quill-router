@@ -771,7 +771,15 @@ ENV_VARS=(
   "TR_FASTPATH_PILOT_STREAMS=true"
   # "off" until every fast-path node runs a release that reads the members;
   # then "shadow" until the shadow shows agreement; then "on".
-  "TR_FASTPATH_EDGE_HOSTED_DECIDE=off"
+  # 2026-11-20 (Joseph): "shadow". Both nodes run 5e3ebc8b7 since 23:40Z
+  # (pinned by #2810), which reads the members. The policy now carries
+  # async_settle.decide_route, so a node composes a hosted decide
+  # authorize, async-v1 shape included, for the shadow to compare, and
+  # still passes it to Python (hosted_decide.off).
+  # A chat model on route decide that asks for async-v1 is answered with
+  # the additions Python gives, where the edge answered false-only.
+  # Way back: "off".
+  "TR_FASTPATH_EDGE_HOSTED_DECIDE=shadow"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
   # section 12.4, PR 4): a stream whose reservation is below its estimate is
