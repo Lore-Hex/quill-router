@@ -2139,7 +2139,7 @@ body.auth.auth-shell {
   color: var(--gold);
 }
 
-/* Three short label definitions, one per line, terms in a fixed column. */
+/* Three label definitions, one per line, terms in their own column; the note lines up with the definitions. */
 .catalog-privacy-legend {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -2150,7 +2150,8 @@ body.auth.auth-shell {
   line-height: 1.5;
 }
 
-.catalog-privacy-legend > div {
+.catalog-privacy-legend dl,
+.catalog-privacy-legend dl > div {
   display: contents;
 }
 
@@ -2158,13 +2159,21 @@ body.auth.auth-shell {
   font-weight: 600;
 }
 
-.catalog-privacy-legend dd {
+.catalog-privacy-legend dd,
+.catalog-privacy-legend p {
   margin: 0;
 }
 
-.catalog-privacy-legend .catalog-privacy-legend-link dd {
+.catalog-privacy-legend p {
   grid-column: 2;
   margin-top: 4px;
+}
+
+/* Narrow phones: each term sits above its definition so the text keeps the full width. */
+@media (max-width: 360px) {
+  .catalog-privacy-legend { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .catalog-privacy-legend dd { margin-bottom: 8px; }
+  .catalog-privacy-legend p { grid-column: 1; }
 }
 
 .provider-chip.catalog-provider-chip {
