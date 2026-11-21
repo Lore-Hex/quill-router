@@ -264,6 +264,67 @@ No prompt or response content is exposed.
 `GET /v1/generation?id=...` returns the same tag and attribution fields. The
 existing `/generation/content` behavior remains `404 content_not_stored`.
 
+### 6.5 In the console
+
+The Observability page (`/console/activity`) shows tags in three places:
+
+- Request list: each request's tags as `key: value` chips. Clicking a chip
+  filters by that tag.
+- Tags panel, filter: a key and a value picked from the keys seen in the
+  selected range and that key's most used values. The filter narrows the
+  request list and the breakdown. It does not narrow the usage chart.
+- Tags panel, breakdown: for one key and the selected range, one row per value
+  with requests, credit cost, tokens and median latency, ordered by cost. The
+  50 most expensive values keep a row, the rest are summed into `other`, and
+  requests without the key are shown as `untagged`.
+
+A workspace with no tags in the range sees a short explanation and a link to
+`/docs/tagging` instead of an empty table.
+
+The page reads two endpoints, both session-authorized exactly like the page's
+other JSON endpoints and both scoped to the session's workspace:
+
+- `POST /console/activity/tags.json` with `{range, group_by, tag_key,
+  tag_value}` returns the keys, the breakdown and the filter key's values.
+- `POST /console/activity/requests.json` with `{range, tag_key, tag_value}`
+  returns the newest 50 matching requests in the range.
+
+Reads are computed in ClickHouse from `activity_generations FINAL` over every
+row of the tenant since the start of the range, so they are totals and not a
+sample: one pass for the keys, one for a key's values, and two for a breakdown
+(rank the values, then total them). They need no schema change, rollup or
+grant. The in-memory store computes the same answers in Python, and
+`tests/test_activity_tags.py` holds the two to what ClickHouse returned for
+the same rows. The median is `quantileExactWeighted(0.5)`, which is exact and
+whose memory grows with the number of distinct latencies, not with the number
+of requests.
+
+A breakdown has to rank every value of the key before it can keep 50, so a
+key with millions of distinct values in the range can exceed the reader's
+memory limit. The panel then reports that it could not load; no partial totals
+are shown.
+
+Only completed generations are counted. A request that fails before it
+produces a generation has no row, so the page cannot show errors by tag.
+
+Section 10 applies to these reads:
+
+- Tag keys and values reach the control plane in a JSON request body, never in
+  a URL. A query string is written to the load balancer's request log and
+  copied into Sentry's request context; a body is not.
+- Console input is held to the limits of section 3.1 by the same validator as
+  the inference path. Its error messages name the rule and never the text.
+- ClickHouse receives bound values as URL parameters of an internal request.
+  Sentry's HTTP client integration would record that query string in a span
+  and a breadcrumb, and an HTTP status error would carry the URL in its
+  message. The tag reads therefore run under a Sentry scope with no
+  integrations and re-raise a status error without its URL
+  (`bound_values_stay_private`). The `GET /v1/activity` tag filter predates
+  this: it takes `tag_key` and `tag_value` as query parameters and its read
+  is not wrapped. Bringing it in line is a follow-up.
+- The page writes tag text with `textContent` and template escaping only,
+  never as markup or as an attribute.
+
 ## 7. Broadcast mapping
 
 PostHog `$ai_generation` properties:
