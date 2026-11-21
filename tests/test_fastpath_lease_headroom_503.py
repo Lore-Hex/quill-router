@@ -143,7 +143,12 @@ def _seed_leases(database: Any, workspace: str, leases: tuple[Lease, ...], *, pr
             })
 
 
-def _authorize(store: Any, key: Any, estimate: int, *, on: bool) -> tuple[str, Any]:
+def _authorize(
+    store: Any, key: Any, estimate: int, *, on: bool, floor: int = 0, idempotency_key: str | None = None,
+) -> tuple[str, Any]:
+    """`floor` is the nodes' floor the 503 is held to
+    (tests/test_fastpath_lease_headroom_floor.py); 0, as everywhere in this
+    file, compares nothing."""
     return store.authorize_gateway_typed(
         workspace_id=WS,
         key_hash=key.hash,
@@ -157,9 +162,10 @@ def _authorize(store: Any, key: Any, estimate: int, *, on: bool) -> tuple[str, A
         region="us",
         endpoint_id="endpoint",
         candidate_endpoint_ids=["endpoint"],
-        idempotency_key=None,
-        idempotency_fingerprint=None,
+        idempotency_key=idempotency_key,
+        idempotency_fingerprint=None if idempotency_key is None else f"fingerprint-{idempotency_key}",
         lease_headroom_503=on,
+        lease_headroom_floor=floor,
     )
 
 
@@ -187,7 +193,9 @@ def _count_transactions(database: Any) -> list[int]:
     return counter
 
 
-def _run(case: Case, *, on: bool, with_leases: bool = True, remembered: bool = False) -> Answer:
+def _run(
+    case: Case, *, on: bool, with_leases: bool = True, remembered: bool = False, floor: int = 0,
+) -> Answer:
     """Two authorizes of the same hold, the second through whatever the first
     left in the process's memory, and what they left behind."""
     store, database, key = _seed(case, with_leases=with_leases)
@@ -198,7 +206,7 @@ def _run(case: Case, *, on: bool, with_leases: bool = True, remembered: bool = F
     for _ in range(2):
         before = counter[0]
         try:
-            outcome, _authorization = _authorize(store, key, case.estimate, on=on)
+            outcome, _authorization = _authorize(store, key, case.estimate, on=on, floor=floor)
             outcomes.append(str(outcome))
         except StoreUnavailable:
             outcomes.append("store_unavailable")
@@ -575,9 +583,12 @@ def test_the_lease_read_after_a_refusal_keeps_the_strict_budget() -> None:
     case = Case((1_000,), (0,), (0,), (("open", ((0, 900, 0),)),), 450)
     store, _database, _key = _seed(case)
     # Positive control: with no budget, and within one, it is lease-held.
-    assert store._lease_held_after_refusal(WS, 450, None)
-    assert store._lease_held_after_refusal(WS, 450, time.monotonic() + 30)
-    assert not store._lease_held_after_refusal(WS, 450, time.monotonic() - 1)
+    assert store._lease_verdict_after_refusal(WS, 450, None) == billing.LEASE_HELD
+    assert store._lease_verdict_after_refusal(WS, 450, time.monotonic() + 30) == billing.LEASE_HELD
+    # Past it nothing is read: the verdict that keeps the 402, and no amounts.
+    spent = store._lease_verdict_after_refusal(WS, 450, time.monotonic() - 1)
+    assert spent == billing.DEFER
+    assert getattr(spent, "lease_under_floor", None) is None
 
 
 def _track_lease_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -676,14 +687,14 @@ def _route_store(*, lease_held: int) -> tuple[Any, Any, Any]:
     return store, database, key
 
 
-def _route_body(key: Any) -> Any:
-    body = _lookup_body(key, idempotency_key=None)
+def _route_body(key: Any, *, idempotency_key: str | None = None) -> Any:
+    body = _lookup_body(key, idempotency_key=idempotency_key)
     body.estimated_input_tokens = 42_000
     body.max_output_tokens = 8192
     return body
 
 
-def _authorize_route(key: Any, *, on: bool, trace_context: str | None = None) -> HTTPException:
+def _route_request(trace_context: str | None = None) -> Request:
     request = _request()
     if trace_context is not None:
         request = Request({
@@ -691,9 +702,22 @@ def _authorize_route(key: Any, *, on: bool, trace_context: str | None = None) ->
             "headers": [(b"x-cloud-trace-context", trace_context.encode())],
         })
     request.state.request_id = "request-lease-503"
-    settings = Settings(environment="test", fastpath_lease_headroom_503=on)
+    return request
+
+
+def _authorize_route(
+    key: Any, *, on: bool, trace_context: str | None = None, floor: int = 0,
+    idempotency_key: str | None = None,
+) -> HTTPException:
+    """`floor` is the nodes' floor the 503 is held to
+    (tests/test_fastpath_lease_headroom_floor.py); 0 is the setting's default."""
+    settings = Settings(
+        environment="test", fastpath_lease_headroom_503=on, fastpath_lease_headroom_503_floor_micro=floor,
+    )
     with pytest.raises(HTTPException) as raised:
-        gateway._authorize_gateway_sync(request, _route_body(key), settings)
+        gateway._authorize_gateway_sync(
+            _route_request(trace_context), _route_body(key, idempotency_key=idempotency_key), settings,
+        )
     return raised.value
 
 
