@@ -675,3 +675,46 @@ def test_unserved_evidence_never_overwrites_an_existing_canary_hold(tmp_path: Pa
     notes = holds.apply_unserved_route_holds({("phala", "z-ai/glm-5.1")}, manifest_dir=tmp_path, now=NOW)
     assert path.read_bytes() == before
     assert any("z-ai/glm-5.1 is not a routable manifest row; not held" in note for note in notes)
+
+
+def test_a_quarantined_providers_manifest_is_left_exactly_as_published(tmp_path: Path) -> None:
+    # A quarantine keeps the provider's committed manifest byte for byte
+    # (scripts/pricing/quarantine.py): no lift of an expired hold, no new hold.
+    held = _row("z-ai/glm-5.1", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+                **{holds.HELD_AT_FIELD: "2026-11-10T17:00:00Z"})
+    phala = _manifest(tmp_path, "phala", [held, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+    before = phala.read_bytes()
+    evidence = holds.parse_evidence(_payload([("phala", "z-ai/glm-5.2")]), now=NOW)
+
+    notes = holds.apply_unserved_route_holds(evidence, manifest_dir=tmp_path, now=NOW,
+                                             frozen=frozenset({"phala"}))
+
+    assert phala.read_bytes() == before
+    assert "phala: quarantined; manifest left as published" in notes
+
+
+def test_quarantined_manifests_come_from_the_runs_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.pricing import quarantine
+
+    state = tmp_path / "q.json"
+    until = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
+    quarantine.dump_state(state, [quarantine.Entry("phala", "r", until), quarantine.Entry("no_such_module", "r", until)])
+    monkeypatch.setenv("TR_PRICE_QUARANTINE", str(state))
+    assert holds.quarantined_manifests() == frozenset({"phala", "no_such_module"})
+    monkeypatch.delenv("TR_PRICE_QUARANTINE")
+    assert holds.quarantined_manifests() == frozenset()
+
+
+def test_a_quarantined_manifests_holds_still_count_against_the_route_cap(tmp_path: Path) -> None:
+    held = [_row(f"m/{i}", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+                 **{holds.HELD_AT_FIELD: "2026-11-11T06:00:00Z"}) for i in range(holds.MAX_ROUTES)]
+    _manifest(tmp_path, "phala", held)
+    other = _manifest(tmp_path, "makora", [_row(f"x/{i}") for i in range(10)])
+    before = other.read_bytes()
+    evidence = holds.parse_evidence(_payload([("makora", "x/1")]), now=NOW)
+    notes = holds.apply_unserved_route_holds(evidence, manifest_dir=tmp_path, now=NOW,
+                                             frozen=frozenset({"phala"}))
+    assert other.read_bytes() == before
+    assert any("route cap; holding nothing new" in note for note in notes)

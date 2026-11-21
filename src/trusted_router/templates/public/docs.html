@@ -4,13 +4,16 @@
 <link rel="stylesheet" href="/static/docs-hub.css?v={{ static_version|default('local') }}">
 {% endblock %}
 {% block body %}
-{% include "public/_sdk_choice.html" %}
-<div class="docs-main-reader" data-content-toc>
+{% set docs_index_topics = true %}
+{% from "public/_docs_topic.html" import topic with context %}
+<div class="docs-main-reader has-content-toc" data-content-toc>
+{% include "public/_docs_contents.html" %}
 <div class="content-document">
+{% include "public/_sdk_choice.html" %}
 
 <section class="marketing-split" aria-label="Quickstart">
   <div class="marketing-copy">
-    <h2>Quickstart: one base_url change.</h2>
+    <h2 id="quickstart-one-base-url-change">{{ topic("quickstart-one-base-url-change", "Quickstart: one base_url change.") }}</h2>
     <p><a href="/docs/simple-start">Call one model, nothing else</a>: pin one provider with curl or the OpenAI Python SDK and disable fallback.</p>
     <ul class="check-list">
       <li>OpenAI-compatible — point any OpenAI/Anthropic SDK at TrustedRouter</li>
@@ -45,10 +48,10 @@ const r = await client.chat.completions.create({
 {% include "public/_api_hosts.html" %}
 
 <section style="margin-top:48px" id="privacy-filters">
-  <h2 class="section-center">Fail-closed privacy filters</h2>
+  <h2 class="section-center" id="fail-closed-privacy-filters">{{ topic("privacy-filters", "Fail-closed privacy filters") }}</h2>
   <div class="marketing-grid two">
     <div class="marketing-card">
-      <h3>Require zero retention</h3>
+      <h3 id="require-zero-retention">{{ topic("require-zero-retention", "Require zero retention") }}</h3>
       <pre><code>{
   "model": "your/model",
   "provider": {"min_privacy": "zdr"}
@@ -56,7 +59,7 @@ const r = await client.chat.completions.create({
       <p>This is a hard minimum. If no endpoint for the selected model and provider filters has a tracked ZDR guarantee, the request fails before inference.</p>
     </div>
     <div class="marketing-card">
-      <h3>Require Confidential: verified compute + E2EE + ZDR</h3>
+      <h3 id="require-confidential-verified-compute-e2ee-zdr">{{ topic("require-confidential-verified-compute-e2ee-zdr", "Require Confidential: verified compute + E2EE + ZDR") }}</h3>
       <pre><code>{
   "model": "your/model",
   "provider": {"min_privacy": "confidential"}
@@ -69,8 +72,8 @@ const r = await client.chat.completions.create({
 </section>
 
 <section style="margin-top:48px" id="trusted-tier">
-  <h2>Trusted: selected operators, confidential inference</h2>
-  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a>. TrustedRouter selects these operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
+  <h2 id="trusted-selected-operators-confidential-inference">{{ topic("trusted-tier", "Trusted: selected operators, confidential inference") }}</h2>
+  <p><a href="/models/trustedrouter/trusted"><code>trustedrouter/trusted</code></a> and <code>nyte/trusted</code> route only through eligible Confidential endpoints from <a href="/providers/tinfoil">Tinfoil</a>, <a href="/providers/privatemode">Privatemode</a>, and <a href="/providers/maple">Maple</a>. For Maple, only the managed <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">DeepSeek V4.1 Flash Uncensored</a> route qualifies. Other Maple models and customer keys do not. TrustedRouter selects these operators for their physical-security posture and history of reliability. This is our operator assessment, separate from hardware attestation or an independent certification.</p>
   <p>Every eligible endpoint must also meet the Confidential requirements: verified confidential compute, provider-side E2EE and explicit ZDR. Every fallback keeps those requirements and the same two-provider restriction. When no qualifying route remains, the request fails before inference.</p>
   <pre><code>{
   "model": "trustedrouter/trusted",
@@ -82,7 +85,7 @@ const r = await client.chat.completions.create({
 </section>
 
 <section style="margin-top:48px" id="confidential-api">
-  <h2>Confidential-only API hostname</h2>
+  <h2 id="confidential-only-api-hostname">{{ topic("confidential-api", "Confidential-only API hostname") }}</h2>
   <p>Use <code>https://api.confidential.trustedrouter.com/v1</code> and explicitly include <code>"provider": {"min_privacy": "confidential"}</code> in every inference request. The hostname is an additional guard, not an implicit default: missing, weaker, or alias values such as <code>e2e</code> return <code>400 confidential_privacy_required</code> before inference.</p>
   <pre><code>from openai import OpenAI
 import os
@@ -102,8 +105,9 @@ response = client.chat.completions.create(
 </section>
 
 <section style="margin-top:48px">
-  <h2 class="section-center">Guides</h2>
+  <h2 class="section-center" id="guides">{{ topic("guides", "Guides") }}</h2>
   <div class="marketing-grid three">
+    <a class="marketing-card card-as-link" href="#deidentification"><h3>Deidentify</h3><p>Mask detected personal information before a provider receives your request.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/for-developers"><h3>60-second quickstart</h3><p>Make one request, inspect the catalog, and verify the live prompt path.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/agent-setup"><h3>Agent setup</h3><p>Point Codex, Claude Code, Hermes, Cursor, or any OpenAI-compatible client at TrustedRouter.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/mcp"><h3>MCP server</h3><p>Let agents inspect live models, pricing, provider posture, credits, docs, and quick test messages.</p><span class="card-link">Open →</span></a>
@@ -138,7 +142,7 @@ response = client.chat.completions.create(
 </section>
 
 <section style="margin-top:48px">
-  <h2 class="section-center" id="sdks">SDKs</h2>
+  <h2 class="section-center" id="sdks">{{ topic("sdks", "SDKs") }}</h2>
   <div class="repo-grid">
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
@@ -151,7 +155,7 @@ response = client.chat.completions.create(
     <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Open-source router</span></a>
   </div>
   <div class="public-proof-strip" style="margin-top:18px">
-    <div><strong>PyPI</strong><span><a href="https://pypi.org/project/trusted-router-py/">trusted-router-py</a></span></div>
+    <div><strong>PyPI</strong><span><a href="https://pypi.org/project/trustedrouter/">trustedrouter</a></span></div>
     <div><strong>npm</strong><span><a href="https://www.npmjs.com/package/@lore-hex%2Ftrusted-router">@lore-hex/trusted-router</a></span></div>
     <div><strong>Source</strong><span><a href="https://github.com/Lore-Hex/quill-router">quill-router</a></span></div>
     <div><strong>Trust</strong><span><a href="https://trust.trustedrouter.com">attestation record</a></span></div>
@@ -159,7 +163,7 @@ response = client.chat.completions.create(
 </section>
 
 <section id="model-changes" style="margin-top:48px">
-  <h2 class="section-center">Model route changes</h2>
+  <h2 class="section-center" id="model-route-changes">{{ topic("model-changes", "Model route changes") }}</h2>
   <p>Poll <a href="https://trustedrouter.com/v1/models/changes"><code>GET https://trustedrouter.com/v1/models/changes</code></a> or subscribe to the <a href="https://trustedrouter.com/v1/models/changes.atom">Atom feed</a>. Both are public and need no API key. They report model and provider-route additions and removals, route metadata changes, confidential route gains and losses, best privacy tier changes, and upcoming provider retirements.</p>
   <pre><code>GET /v1/models/changes?model=deepseek/deepseek-v4-flash&amp;since=2026-09-01T00:00:00Z
 GET /v1/models/changes.atom?type=confidential_route_lost
@@ -170,7 +174,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
 </section>
 
 <section id="deidentification" style="margin-top:48px">
-  <h2 class="section-center">Optional de-identification</h2>
+  <h2 class="section-center" id="optional-de-identification">{{ topic("deidentification", "Optional de-identification") }}</h2>
   <p>Send <code>"deidentify": true</code> to replace detected personal information with placeholders before a provider receives it. TrustedRouter runs <a href="https://huggingface.co/nationaldesignstudio/rampart" rel="nofollow">National Design Studio's Rampart</a> locally inside the confidential gateway, then restores the original values for you in JSON and streaming replies. The mapping stays inside the gateway for that request. The flag works with text and function tools on Chat Completions, Responses, and native Anthropic Messages.</p>
   <pre><code>response = client.chat.completions.create(
     model="anthropic/claude-opus-5.5",
@@ -182,7 +186,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
 </section>
 
 <section id="model-capabilities" style="margin-top:48px">
-  <h2 class="section-center">Model request capabilities</h2>
+  <h2 class="section-center" id="model-request-capabilities">{{ topic("model-capabilities", "Model request capabilities") }}</h2>
   <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
   <pre><code>"capabilities": {
   "reasoning_effort": ["none", "low", "medium", "high", "xhigh"],
@@ -199,10 +203,10 @@ GET /v1/models/changes?upcoming=true</code></pre>
 </section>
 
 <section style="margin-top:48px">
-  <h2 class="section-center">API reference</h2>
+  <h2 class="section-center" id="api-reference">{{ topic("api-reference", "API reference") }}</h2>
   <div class="marketing-grid two">
-    <div class="marketing-card">
-      <h3>OpenAI-compatible endpoints</h3>
+    <div class="marketing-card" id="authentication">
+      <h3 id="openai-compatible-endpoints">{{ topic("openai-compatible-endpoints", "OpenAI-compatible endpoints") }}</h3>
       <p>Base URL <code>{{ api_base_url }}</code>. Authenticate inference calls with a <code>Bearer sk-tr-…</code> key.</p>
       <ul class="check-list">
         <li><code>POST /v1/chat/completions</code></li>
@@ -217,7 +221,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
       <p style="margin-top:14px"><a class="card-link" href="/api/reference">Interactive API reference →</a></p>
     </div>
     <div class="marketing-card">
-      <h3>Agent-readable docs</h3>
+      <h3 id="agent-readable-docs">{{ topic("agent-readable-docs", "Agent-readable docs") }}</h3>
       <p>Point your coding agent at the machine-readable docs for the full surface:</p>
       <ul class="check-list">
         <li><a href="/docs/llms.txt">/docs/llms.txt</a> — concise index</li>
@@ -243,15 +247,15 @@ GET /v1/models/changes?upcoming=true</code></pre>
 </section>
 
 <section style="margin-top:48px" id="key-management">
-  <h2>Manage keys at scale</h2>
+  <h2 id="manage-keys-at-scale">{{ topic("key-management", "Manage keys at scale") }}</h2>
   <p>Key management runs on the control plane, <code>{{ control_plane_api_base_url }}</code>, with a management key. Every operation is limited to the caller's workspace. Keep management keys on your server.</p>
   <p>To create or replace a management key, sign in and open <a href="/console/api-keys#management-keys">API Keys &rarr; Management keys</a>. Workspace owners and admins can create a new key after acknowledging its administrative permissions; the old key is not required. The original <strong>Signup key</strong> is also a management key. Secrets are shown only once and cannot be retrieved later. Creating a replacement does not revoke old keys: update your integrations, then disable the old key. Never put management keys in client-side code, public repositories, or agent chats.</p>
   <p>For balance alerts alone, use an ordinary API key with <code>GET {{ control_plane_api_base_url }}/credits/summary</code>; explicitly scoped keys need <code>balance:read</code>. It returns the workspace's spendable balance as <code>remaining</code> (a USD decimal string) and <code>remaining_microdollars</code> (an integer). Individual key budgets are not separate account balances.</p>
-  <h3>List and page through keys</h3>
+  <h3 id="list-and-page-through-keys">{{ topic("list-and-page-through-keys", "List and page through keys") }}</h3>
   <p><code>GET /v1/keys?limit=100&amp;offset=0</code> returns <code>{"data": [...], "next_offset": 100}</code>. Pass <code>next_offset</code> as the next request's <code>offset</code> with the same <code>limit</code> and filter. A <code>null</code> <code>next_offset</code> marks the last page. <code>limit</code> accepts 1–1000 and <code>offset</code> accepts any non-negative integer. Other values return HTTP 400 with <code>error.type: "bad_request"</code>.</p>
   <p>Keys sort newest first, with ascending hash as the tie-breaker. Disabled keys are included unless you pass <code>include_disabled=false</code>, which filters before paging. Without <code>limit</code>, the response keeps its original <code>{"data": [...]}</code> shape and lists every key after the offset. <code>offset</code> and <code>include_disabled</code> match OpenRouter's parameters; <code>limit</code> and <code>next_offset</code> are TrustedRouter additions.</p>
   <p>Each page reads keys and their usage together in one database query. Creating or deleting keys between requests shifts later offsets. To delete every key, collect the hashes first, or keep reading page zero while you delete.</p>
-  <h3>Delete many keys in one request</h3>
+  <h3 id="delete-many-keys-in-one-request">{{ topic("delete-many-keys-in-one-request", "Delete many keys in one request") }}</h3>
   <pre><code>POST /v1/keys/bulk-delete
 Authorization: Bearer $TR_MANAGEMENT_KEY
 Content-Type: application/json
@@ -262,7 +266,7 @@ HTTP 200
 {"data": [{"hash": "key_first", "status": "deleted"},
           {"hash": "key_second", "status": "not_found"}]}</code></pre>
   <p>Send 1–1000 hashes per request. Results follow the input order, and a repeated hash repeats its first result. Missing keys and keys in another workspace both report <code>not_found</code>. Each group of up to 100 distinct hashes is deleted atomically, together with its lookup indexes. Groups commit independently, so after a failure you can retry the whole request; keys already deleted then report <code>not_found</code>. <code>DELETE /v1/keys/{hash}</code> also deletes atomically and returns <code>{"data": {"deleted": true, "hash": "..."}}</code>, or 404 when the key does not exist.</p>
-  <h3 id="management-rate-limits">Request rate limits and retries</h3>
+  <h3 id="management-rate-limits">{{ topic("management-rate-limits", "Request rate limits and retries") }}</h3>
   <p>The control plane limits each source IP address, across every credential behind it:</p>
   <ul>
     <li><strong>300 state-changing requests per 60 seconds</strong>: <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, and <code>DELETE</code>. Each <code>DELETE /v1/keys/{hash}</code> counts once.</li>
@@ -270,23 +274,23 @@ HTTP 200
   </ul>
   <p>A request over either limit gets HTTP 429 from the edge, before it reaches the API. That response may be HTML or plain text and need not carry <code>Retry-After</code>. Management calls have no separate per-key request quota. A bulk delete counts as one write, so revoking 1,000 keys takes one request instead of more than three minutes of single deletes.</p>
   <p>Back off on every 429. Honor <code>Retry-After</code> when present; otherwise use capped exponential backoff with jitter. Database contention returns 503 with <code>error.type: "service_unavailable"</code> and <code>Retry-After: 1</code>; retry it the same way. Inference spend-window limits use the separate <code>RateLimit-*</code> headers below.</p>
-  <h3 id="key-usage-freshness">Usage freshness</h3>
+  <h3 id="key-usage-freshness">{{ topic("key-usage-freshness", "Usage freshness") }}</h3>
   <p>Key usage counters advance when a request settles. <code>GET /v1/key</code> reads them from a snapshot up to five seconds old. <code>GET /v1/keys</code> reads them with a strong read.</p>
   <p>Activity comes from a separate analytics pipeline. It can show a request before <code>GET /v1/key</code> does, or after it, and it trails further when the pipeline has a backlog. <code>data.analytics.drain_lag_seconds</code> in <a href="/status.json">status.json</a> reports that backlog. A key's <code>updated_at</code> changes with its settings, not with usage.</p>
 </section>
 
 <section style="margin-top:48px" id="billing-usage">
-  <h2>Billing and usage</h2>
+  <h2 id="billing-and-usage">{{ topic("billing-usage", "Billing and usage") }}</h2>
   <p>Token counts and token list prices are the starting point for billing. Review the rounding rules below, then inspect credits and activity at <code>{{ control_plane_api_base_url }}</code> to reconcile charges.</p>
   {% include "public/_minimum_charges.html" %}
 </section>
 
 <section style="margin-top:48px" id="rate-limit-headers">
-  <h2 class="section-center">Spend-window rate limits</h2>
+  <h2 class="section-center" id="spend-window-rate-limits">{{ topic("rate-limit-headers", "Spend-window rate limits") }}</h2>
   <p>A key with a hard daily, weekly, or monthly spend limit gets the governing window on every response. Values are integer microdollars, the same unit used by the key-limit API. Keys without a hard spend window do not get fabricated rate-limit headers.</p>
   <div class="marketing-grid two">
     <div class="marketing-card">
-      <h3>Response headers</h3>
+      <h3 id="response-headers">{{ topic("response-headers", "Response headers") }}</h3>
       <ul class="check-list">
         <li><code>RateLimit-Limit</code> — configured spend limit for the governing window</li>
         <li><code>RateLimit-Remaining</code> — settled spend headroom observed by this request</li>
@@ -294,7 +298,7 @@ HTTP 200
         <li><code>Retry-After</code> — also present on <code>429</code>; the reset delay rounded up, with a minimum of one second</li>
       </ul>
       <p>By default, window checks are approximate: in-flight holds are not included. Use <code>RateLimit-Remaining</code> to slow down before rejection, and treat <code>Retry-After</code> as authoritative after a <code>429</code>.</p>
-      <h3 id="strict-budgets">Strict budget admission</h3>
+      <h3 id="strict-budgets">{{ topic("strict-budgets", "Strict budget admission") }}</h3>
       <p><a href="/docs/spend-controls">Full spend-controls guide</a>: key creation, mode selection, and retry handling. Strict mode is off by default.</p>
       <p>Set <code>budget_strict: true</code> when creating an API key to count outstanding reservations against daily, weekly, and monthly limits atomically. This mode is fixed at creation; create a new key to switch. It can be much slower because authorization uses a shared database counter instead of approximate snapshots or local spend leases.</p>
       <pre><code>{"name":"Strict project budget","limit_daily":5,"limit_monthly":100,"budget_strict":true}</code></pre>
@@ -333,7 +337,7 @@ with httpx.Client() as client:
 </section>
 
 <section class="marketing-section" id="web-fetch">
-  <h2>Web Fetch</h2>
+  <h2 id="web-fetch-2">{{ topic("web-fetch", "Web Fetch") }}</h2>
   <p><code>POST https://api.trustedrouter.com/v1/tools/fetch</code> forwards an explicitly submitted public URL to DeepSeek and returns <code>{"title":"...","content":"..."}</code>, with Markdown content.</p>
   <pre><code>curl https://api.trustedrouter.com/v1/tools/fetch \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
@@ -345,7 +349,7 @@ with httpx.Client() as client:
 </section>
 
 <section class="marketing-section" id="text-to-speech">
-  <h2>Text to speech</h2>
+  <h2 id="text-to-speech-2">{{ topic("text-to-speech", "Text to speech") }}</h2>
   <p><code>POST https://api.trustedrouter.com/v1/audio/speech</code> accepts the OpenRouter speech format and returns raw audio. Use your existing TrustedRouter key and credits. Discover models, voices, formats, billing units, and prices at <a href="/v1/models?output_modalities=speech"><code>/v1/models?output_modalities=speech</code></a>.</p>
   <pre><code>curl --fail-with-body https://api.trustedrouter.com/v1/audio/speech \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
@@ -357,7 +361,7 @@ with httpx.Client() as client:
   <p><a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/text-to-speech.md">Speech models, parameters, SDK examples, privacy, and billing</a></p>
 </section>
 <section class="marketing-section" id="transcription">
-  <h2>Audio transcription</h2>
+  <h2 id="audio-transcription">{{ topic("transcription", "Audio transcription") }}</h2>
   <p>Upload PCM WAV or MP3 to <code>POST https://api.trustedrouter.com/v1/audio/transcriptions</code>. Use multipart with the OpenAI SDK, or JSON with base64 <code>input_audio</code>. Audio and transcripts stay out of the control plane and durable router logs.</p>
   <pre><code>curl --fail-with-body https://api.trustedrouter.com/v1/audio/transcriptions \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
@@ -369,7 +373,7 @@ with httpx.Client() as client:
 </section>
 
 <section class="marketing-section" id="usage-cost">
-  <h2>Cost in response usage</h2>
+  <h2 id="cost-in-response-usage">{{ topic("usage-cost", "Cost in response usage") }}</h2>
   <p>Single-endpoint Chat Completions, Responses, and Anthropic Messages requests return <code>usage.cost_microdollars</code> and <code>usage.total_cost_microdollars</code> when the request's charge is known. Both are integer microdollars: 1,000,000 equals $1. A known free request reports 0; an unknown cost is omitted.</p>
   <p>For streaming chat, request <code>stream_options.include_usage: true</code> to receive the terminal usage chunk. Responses includes cost in <code>response.completed.response.usage</code>; Messages includes it in <code>message_delta.usage</code>. Answer deltas continue streaming while the terminal event waits briefly for settlement.</p>
   <p>Eligible standard routes are billed at the prices in effect when the request was authorized. Their streamed usage carries <code>cost_microdollars</code> and <code>total_cost_microdollars</code>, even if settlement is delayed.</p>

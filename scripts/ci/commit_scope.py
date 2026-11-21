@@ -228,6 +228,9 @@ DATA_ONLY_CONDITION = "needs.scope.outputs.data_only != 'true'"
 # Jobs whose `if` in ci.yml starts with PUSH_SKIP_CONDITION: they skip on a
 # push to main, and summarize() accepts that skip on a push only.
 SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover"})
+# ci.yml's base-ci job: waits for the base's own push run to conclude success
+# when the scope job took the data-only skips before it had (base_pending).
+BASE_CI_JOB = "base-ci"
 PUSH_SKIP_CONDITION = "github.event_name != 'push'"
 
 # Jobs whose `if` in ci.yml carries path_condition(flag): they run when the
@@ -1356,6 +1359,10 @@ def summarize(needs: dict[str, dict[str, object]], data_only: str, event_name: s
         if result == "skipped" and job in PATH_SCOPED_JOBS and flags.get(PATH_SCOPED_JOBS[job]) == "false":
             continue
         if result == "skipped" and job in SKIPPED_ON_PUSH and event_name == "push":
+            continue
+        # base-ci runs only when the data-only skips rest on a base whose push
+        # run had not yet concluded; it may skip only when they do not.
+        if result == "skipped" and job == BASE_CI_JOB and flags.get("base_pending") != "true":
             continue
         failures.append(f"{job}: {result}")
     return failures

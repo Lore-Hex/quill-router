@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-11-20T15:28:38Z",
+  "generated_at": "2026-11-21T05:28:17Z",
   "price_scale": "microdollars_per_million",
   "model_count": 42,
   "models": [
@@ -44,10 +44,12 @@
       "upstream_id": "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
-      "routable": true,
+      "routable": false,
       "context_length": 80000,
       "input_token_price_per_m": 497000,
-      "output_token_price_per_m": 4881000
+      "output_token_price_per_m": 4881000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/google/gemma-2b-it-lora",
@@ -68,8 +70,9 @@
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
       "routable": false,
-      "routable_reason": "awaiting-price",
-      "context_length": 8192
+      "routable_reason": "delisted-upstream",
+      "context_length": 8192,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/google/gemma-4-26b-a4b-it",
@@ -112,8 +115,9 @@
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
       "routable": false,
-      "routable_reason": "awaiting-price",
-      "context_length": 3500
+      "routable_reason": "delisted-upstream",
+      "context_length": 3500,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/ibm-granite/granite-4.0-h-micro",
@@ -154,8 +158,9 @@
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
       "routable": false,
-      "routable_reason": "awaiting-price",
-      "context_length": 8192
+      "routable_reason": "delisted-upstream",
+      "context_length": 8192,
+      "missing_since": "2026-11-21"
     },
     {
       "display_name": "@cf/meta/llama-3.1-8b-instruct-fp8",
@@ -175,10 +180,12 @@
       "upstream_id": "@cf/meta/llama-3.1-8b-instruct-fp8",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
-      "routable": true,
+      "routable": false,
       "context_length": 32000,
       "input_token_price_per_m": 152000,
-      "output_token_price_per_m": 287000
+      "output_token_price_per_m": 287000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/meta/llama-3.2-11b-vision-instruct",
@@ -219,10 +226,12 @@
       "upstream_id": "@cf/meta/llama-3.2-1b-instruct",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
-      "routable": true,
+      "routable": false,
       "context_length": 60000,
       "input_token_price_per_m": 27000,
-      "output_token_price_per_m": 201000
+      "output_token_price_per_m": 201000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/meta/llama-3.2-3b-instruct",
@@ -242,10 +251,12 @@
       "upstream_id": "@cf/meta/llama-3.2-3b-instruct",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "google/gemma-4-26b-a4b-it",
-      "routable": true,
+      "routable": false,
       "context_length": 80000,
       "input_token_price_per_m": 50900,
-      "output_token_price_per_m": 335000
+      "output_token_price_per_m": 335000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
@@ -369,11 +380,13 @@
       "upstream_id": "@cf/moonshotai/kimi-k2.6",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
-      "routable": true,
+      "routable": false,
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 160000
+      "cached_input_token_price_per_m": 160000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/moonshotai/kimi-k2.7-code",
@@ -393,11 +406,13 @@
       "upstream_id": "@cf/moonshotai/kimi-k2.7-code",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
-      "routable": true,
+      "routable": false,
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 190000
+      "cached_input_token_price_per_m": 190000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K3",
@@ -446,10 +461,12 @@
       "upstream_id": "@cf/nvidia/nemotron-3-120b-a12b",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
-      "routable": true,
+      "routable": false,
       "context_length": 256000,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/openai/gpt-oss-120b",
@@ -532,10 +549,12 @@
       "upstream_id": "@cf/qwen/qwen3-30b-a3b-fp8",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
-      "routable": true,
+      "routable": false,
       "context_length": 32768,
       "input_token_price_per_m": 50900,
-      "output_token_price_per_m": 335000
+      "output_token_price_per_m": 335000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/qwen/qwq-32b",
@@ -555,10 +574,12 @@
       "upstream_id": "@cf/qwen/qwq-32b",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.8-27b",
-      "routable": true,
+      "routable": false,
       "context_length": 24000,
       "input_token_price_per_m": 660000,
-      "output_token_price_per_m": 1000000
+      "output_token_price_per_m": 1000000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/zai-org/glm-4.7-flash",
@@ -599,11 +620,13 @@
       "upstream_id": "@cf/zai-org/glm-5.2",
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
-      "routable": true,
+      "routable": false,
       "context_length": 262144,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/deepseek-ai/deepseek-v4-flash-0731",
@@ -624,10 +647,12 @@
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 440000,
       "output_token_price_per_m": 1320000,
-      "cached_input_token_price_per_m": 14000
+      "cached_input_token_price_per_m": 14000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/deepseek-ai/deepseek-v4-pro-0813",
@@ -648,10 +673,12 @@
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 44000
+      "cached_input_token_price_per_m": 44000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/qwen/qwen3.8-27b",
@@ -694,10 +721,12 @@
       "retirement_at": "2026-11-20T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-11-21",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "@cf/zai-org/glm-5.3",

@@ -266,6 +266,7 @@ class Store(Protocol):
         deleted: bool | None = ...,
         billing_paused: bool | None = ...,
         billing_pause_reason: str | None = ...,
+        origin_policy: str | None = ...,
     ) -> Workspace | None: ...
     def transfer_workspace_ownership(
         self, workspace_id: str, new_owner_user_id: str
@@ -1073,6 +1074,13 @@ class Store(Protocol):
         limit: int = ...,
     ) -> list[ProviderBenchmarkSample]: ...
     def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]: ...
+    def provider_account_refusal_samples(
         self,
         *,
         cutoff: str,

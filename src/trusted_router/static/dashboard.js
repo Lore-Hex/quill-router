@@ -66,7 +66,7 @@ const SIGNIN_MODES = {
     signup: {
         kicker: "Create your account",
         title: "Get your API key",
-        sub: "No card required. Start with 1 million free tokens.",
+        sub: "No card required. Start with up to 1 million free tokens.",
         ask: "Already have an account?",
         action: "Sign in",
         to: "signin",
@@ -303,7 +303,7 @@ function applyAuthAwareChrome() {
         const homepageCta = el.hasAttribute("data-homepage-cta");
         replacement.textContent = homepageCta
             ? "Get my API key"
-            : el.textContent && el.textContent.trim().toLowerCase().includes("api key")
+            : el.getAttribute("data-signin-mode") === "signup" || (el.textContent || "").trim().toLowerCase().includes("api key")
                 ? "Open console"
                 : "Console";
         if (homepageCta)
@@ -314,7 +314,7 @@ function applyAuthAwareChrome() {
     // visitors. Hide them for signed-in people, keeping their space so the
     // page does not shift.
     const signupNote = /no card required|free tokens|starter credit/i;
-    document.querySelectorAll(".cta-note, .md-no-card, .compare-cta-note, .microcopy, [data-signup-note]").forEach((note) => {
+    document.querySelectorAll(".cta-note, .md-no-card, .compare-cta-note, .hero-free-note, .microcopy, [data-signup-note]").forEach((note) => {
         if (note.matches(".cta-note, [data-signup-note]") || signupNote.test(note.textContent || "")) {
             note.style.visibility = "hidden";
         }

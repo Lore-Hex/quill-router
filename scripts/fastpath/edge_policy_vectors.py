@@ -88,6 +88,7 @@ OUTPUT_TICKETS = ROOT / "fastpath" / "testdata" / "edge_policy_tickets_v1.json"
 OUTPUT_ADMISSION = ROOT / "fastpath" / "testdata" / "edge_policy_admission_v1.json"
 OUTPUT_ALL_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.body.json"
 OUTPUT_ALL_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.manifest.json"
+OUTPUT_HOSTED = ROOT / "fastpath/testdata/edge_policy_hosted_decide_v1.json"
 OUTPUT_STREAM_CEILING = ROOT / "fastpath" / "testdata" / "edge_policy_stream_ceiling_v1.json"
 GENERATOR = "scripts/fastpath/edge_policy_vectors.py"
 
@@ -246,6 +247,26 @@ def stream_ceiling_cases() -> list[dict[str, object]]:
 
 def render_stream_ceiling() -> str:
     return json.dumps({"generator": GENERATOR, "cases": stream_ceiling_cases()}, indent=1, sort_keys=True) + "\n"
+
+
+def render_hosted() -> str:
+    cases = []
+    for edge in ("off", "shadow", "on"):
+        for decide in (False, True):
+            settings = fixture_settings().model_copy(update={
+                "fastpath_edge_hosted_decide": edge, "async_settle_decide_route": decide})
+            body = canonical_edge_policy_bytes(policy(settings)).decode("ascii")
+            if edge == "off" and body != render_body().decode("ascii"):
+                raise AssertionError("the dormant policy changed")
+            cases.append({"name": f"publisher:{edge}:{decide}", "body": body, "accept": True,
+                          "mode": edge, "python_decide": decide,
+                          "hosted": edge == "on", "decide": edge != "off" and decide})
+    enabled = cases[-1]["body"]
+    for member in ("fastpath_edge_hosted_decide", "decide_route"):
+        for name, spelling in STREAMS_REFUSED:
+            cases.append({"name": f"refused:{member}:{name}", "accept": False,
+                          "body": enabled.replace(f'"{member}":true', f'"{member}":{spelling}')})
+    return json.dumps({"generator": GENERATOR, "cases": cases}, indent=1, sort_keys=True) + "\n"
 
 
 # Async admission per workspace (docs/design/fast-admission-e2-g15-async.md
@@ -538,6 +559,7 @@ def _manifest(body: bytes) -> str:
 
 
 if __name__ == "__main__":
+    OUTPUT_HOSTED.write_text(render_hosted())
     OUTPUT_BODY.write_bytes(render_body())
     OUTPUT_MANIFEST.write_text(render_manifest())
     OUTPUT_STREAMS.write_text(render_streams())

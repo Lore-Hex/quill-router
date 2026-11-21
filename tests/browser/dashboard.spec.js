@@ -8,7 +8,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.locator("#top .hero .sub")).toHaveText(
     "Access 600+ models confidentially through a single OpenAI-compatible API.",
   );
-  await expect(page.locator("#top .hero .button-primary")).toHaveText("Create my API key");
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Start building");
   await expect(page.locator("#top .cta-note")).toContainText("No card required");
   await expect(page.locator("body")).toHaveCSS("font-size", "16px");
 
@@ -69,7 +69,7 @@ test("paid search quickstart copies runnable code and opens key creation", async
   expect(copied).toContain("import os");
   expect(copied).toContain('model="trustedrouter/cheap"');
 
-  await page.getByRole("button", { name: "Create my API key" }).first().click();
+  await page.getByRole("button", { name: "Start building" }).first().click();
   await expect(page.locator("#signinModal")).toBeVisible();
 });
 
@@ -390,7 +390,7 @@ test("model picker applies privacy to exact provider routes", async ({ page }) =
   const trustedRouteLabels = await picker.locator(".provider-route").allTextContents();
   expect(trustedRouteLabels.length).toBeGreaterThan(0);
   expect(trustedRouteLabels.every((label) =>
-    /^(Tinfoil|Privatemode) · .* · Trusted$/.test(label),
+    /^(Tinfoil|Privatemode|Maple) · .* · Trusted$/.test(label),
   )).toBe(true);
 
   await picker.locator("#privacy").selectOption("2");

@@ -92,7 +92,7 @@ FACT_ORDER = (
     "key_disabled", "key_expired", "key_scope", "key_federated", "key_tags", "key_app",
     "key_limit", "key_window_limit", "key_window_alert", "key_budget_strict",
 )
-WORKSPACE_ORDER = ("workspace_unavailable", "workspace_paused", "workspace_federated")
+WORKSPACE_ORDER = ("workspace_unavailable", "workspace_paused", "workspace_federated", "workspace_origin")
 
 # Every read of the key or the workspace that gateway._authorize_gateway_sync_impl
 # makes from the key read to its _fastpath_admission call: an attribute read
@@ -122,6 +122,7 @@ ROUTE_READS: dict[str, str] = {
     ),
     "api_key.hash": "returned (the authorization's key_hash)",
     "workspace.federated_home": "workspace_federated",
+    "_workspace_origin_candidates": "workspace_origin: restricted workspaces need authoritative route filtering",
     "_openai_response_fields": (
         "response only: compare creator_user_id and workspace owner_user_id for local keys; "
         "federated keys are delegated to Python before composition"
@@ -290,6 +291,8 @@ def workspace_facts(body: str | None) -> dict[str, Any]:
     except Exception as exc:
         return {**failure, "error": type(exc).__name__}
     reason = "workspace_paused" if paused else "workspace_federated" if federated else None
+    if reason is None and workspace.origin_policy != "unrestricted":
+        reason = "workspace_origin"
     return {"error": None, "reason": reason, "pause_causes": causes,
             "billed_workspace_id": billed if isinstance(billed, str) else None,
             "owner_user_id": workspace.owner_user_id if reason is None else None}
@@ -583,6 +586,11 @@ def workspace_cases() -> list[dict[str, Any]]:
         ("paused_flag_and_causes", _workspace_raw(billing_paused=True, billing_pause_causes=["abuse"]), True),
         ("not_paused_flag_false", _workspace_raw(billing_paused=False, billing_pause_causes=[]), True),
         ("federated", _workspace(federated_home="aws"), True),
+        ("origin_us", _workspace(origin_policy="us"), True),
+        ("origin_western", _workspace(origin_policy="western"), True),
+        ("origin_unknown", _workspace_raw(origin_policy="unknown"), True),
+        ("origin_null", _workspace_raw(origin_policy=None), True),
+        ("origin_legacy", _workspace_raw(drop=("origin_policy",)), True),
         ("federated_and_paused", _workspace(federated_home="aws", billing_pause_causes=["federation"]), True),
         ("content_storage_irrelevant", _workspace(content_storage_enabled=True), True),
         ("unknown_fields_ignored", _workspace_raw(future={"x": 1}), True),

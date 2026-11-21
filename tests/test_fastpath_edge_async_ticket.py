@@ -91,10 +91,11 @@ def metric(caplog, facts, outcome, reason, eligible):
 
 
 @pytest.mark.parametrize("admitted", [True, False])
-@pytest.mark.parametrize("route_type,streamed", [("chat.completions", False), ("responses", True)])
+@pytest.mark.parametrize("route_type,streamed", [("chat.completions", False), ("responses", True), ("decide", False)])
 def test_issued_matches_projection_claim_by_claim(facts, caplog, admitted, route_type, streamed):
     caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
     facts.body = facts.body.model_copy(update={"route_type": route_type, "streamed": streamed})
+    facts.settings.async_settle_decide_route = route_type == "decide"
     if not admitted:
         facts.runtime.admission = None
     result = call(facts)

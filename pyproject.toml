@@ -30,7 +30,7 @@ dependencies = [
   # (x-tr-client header + /v1/client-events beacon). It lives in the main
   # dependencies because the Cloud Run jobs share the control-plane image,
   # which installs with `uv sync --no-dev` and no extras (Dockerfile).
-  "trusted-router-py>=0.6.0",
+  "trustedrouter>=0.10.1",
   "uvicorn[standard]>=0.32.0",
 ]
 

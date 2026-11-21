@@ -308,6 +308,50 @@ FORMAT JSON
         )
         return [_benchmark_sample(row) for row in rows]
 
+    def account_refusal_samples(
+        self, *, cutoff: str, per_route_limit: int, limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        """Recent Credits samples of every route a provider refused.
+
+        A route qualifies with one HTTP 401/403 since the cutoff; its newest
+        organic and probe Credits samples then come back whatever their
+        outcome, so a success after the refusals ends the streak. Capped per
+        route, so one busy refused route cannot crowd out a quiet one.
+        """
+        rows = self._query(
+            """
+SELECT
+  id, model, provider, provider_name, status, usage_type, streamed,
+  input_tokens, output_tokens, total_cost_microdollars,
+  speed_tokens_per_second, elapsed_milliseconds,
+  first_token_milliseconds, ttfb_milliseconds, finish_reason,
+  error_type, error_status, error_message, region, source, app, created_at
+FROM
+(
+  SELECT *, row_number() OVER (
+    PARTITION BY provider, model ORDER BY created_at DESC, id DESC
+  ) AS route_rank
+  FROM provider_benchmark_samples FINAL
+  WHERE source IN ('organic', 'synthetic')
+    AND usage_type = 'Credits'
+    AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+    AND (provider, model) IN (
+      SELECT provider, model FROM provider_benchmark_samples FINAL
+      WHERE source IN ('organic', 'synthetic')
+        AND usage_type = 'Credits'
+        AND error_status IN (401, 403)
+        AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+    )
+)
+WHERE route_rank <= {per_route_limit:UInt32}
+ORDER BY created_at DESC, id DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params={"cutoff": cutoff, "per_route_limit": max(1, per_route_limit), "limit": max(1, limit)},
+        )
+        return [_benchmark_sample(row) for row in rows]
+
     def route_workspaces(
         self, *, provider: str, model: str, start_at: str, end_at: str,
     ) -> list[str]:

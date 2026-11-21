@@ -97,6 +97,10 @@ async def reserved_quota(
     and refund automatically if the body raises or doesn't settle.
     """
     assert principal.api_key is not None
+    if principal.workspace.origin_policy != "unrestricted" or principal.workspace.federated_home:
+        # Local/test dispatch does not carry the production enclave's authorized
+        # endpoint list. Never let it act as a permissive alternate dispatcher.
+        raise api_error(403, "Origin-restricted inference requires the gateway", ErrorType.FORBIDDEN)
     usage_type = usage_type_override or UsageType.for_model(model)
     try:
         key_limit_reservation = STORE.reserve_key_limit(

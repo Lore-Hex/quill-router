@@ -60,6 +60,7 @@ from scripts.pricing.base import (
     safe_exception_message,
     safe_exception_summary,
 )
+from scripts.pricing.quarantine import quarantined_providers
 
 # Reuse the existing OR-ingest code so the cross-check runs against
 # exactly the same snapshot format that catalog.py reads.
@@ -1654,6 +1655,25 @@ def main(argv: list[str] | None = None) -> int:
             _restore_all_published_files(baseline)
 
 
+def _apply_quarantine(
+    results: dict[str, ProviderPricingResult], failures: list[tuple[str, str]],
+) -> None:
+    """Treat each quarantined provider as a provider whose refresh failed.
+
+    scripts/pricing/quarantine.py quarantines a provider whose fresh data
+    failed a snapshot's exact-SHA CI. Its fetched result is discarded, so the
+    failed-provider path below keeps its committed manifest, parser and
+    snapshot endpoints exactly and lists it under HELD_FOR_REVIEW_HEADING.
+    """
+    for slug, reason in sorted(quarantined_providers().items()):
+        if slug not in PROVIDER_SLUGS:
+            continue
+        log.warning("pricing.provider_quarantined slug=%s reason=%s", slug, reason)
+        results.pop(slug, None)
+        failures[:] = [(name, error) for name, error in failures if name != slug]
+        failures.append((slug, f"quarantined: {reason}"))
+
+
 def _refresh(*, summary_only: bool, baseline: Path) -> int:
     log.info("pricing.refresh.openrouter_ingest")
     or_snapshot = build_openrouter_snapshot()
@@ -1669,6 +1689,7 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
 
     log.info("pricing.refresh.start providers=%d", len(PROVIDER_SLUGS))
     results, failures = _fetch_all_providers()
+    _apply_quarantine(results, failures)
 
     unrecovered_failures = _apply_stale_fallbacks(
         results,

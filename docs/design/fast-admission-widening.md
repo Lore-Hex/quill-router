@@ -5,7 +5,9 @@ Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
 since WS3, the required tier lowered to 1 with the lower tiers' allowances
 since 2026-11-13 ((b), amended), `max_rank` 100 and the $30 join balance
-since 2026-11-13. This is
+since 2026-11-13, and since 2026-11-20 the nodes' floor at $2, then the
+join balance at $3 and the leave balance at $2 with `max_rank` raised past
+the workspaces that could be eligible ((b), amended). This is
 the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
@@ -136,8 +138,8 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
 | Floor | 2,000,000 microdollars ($2) since 2026-11-20 (20,000,000, $20, from WS0 until then) | `-floor` (new) |
-| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
-| Enabler's balance to disable | unspent credit under $5 since 2026-11-13 ($40 until then) | enabler setting |
+| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $3 since 2026-11-20 ($30 from 2026-11-13, $100 until then) | enabler setting |
+| Enabler's balance to disable | unspent credit under $2 since 2026-11-20 ($5 from 2026-11-13, $40 until then) | enabler setting |
 
 **Why.**
 
@@ -321,7 +323,31 @@ reconciler rather than at workspaces, the enabler raises
     leave balance no lower than it. Both hold at $30 and $5 over a $2
     floor, so the floor lands first, and neither would hold if the
     balances came down before it. $2 is still under the least auto-refill
-    threshold. Until that change the lines stay $30 and $5.
+    threshold. That change followed once both nodes ran the $2 floor: $3
+    and $2 in `scripts/deploy/fastpath_enabler_job.sh`. It raised
+    `max_rank` with them, past the workspaces that could then be eligible
+    (the enabler's report counted 39 eligible and 159 out for their
+    balance alone): the rank is by lifetime usage, so at 100 the smaller
+    of the newly eligible would have stayed out and, past the margin,
+    workspaces already on would have left for their rank. A workspace
+    that spends its credit down and buys more now leaves and joins once
+    a cycle. Every eligible workspace joins in the first run after the
+    deploy, since a run enables up to 500 (`MAX_ENABLES`); a dry run that
+    day counted 114. The enabler cannot take that run back, since its
+    guarded disables are capped (§5.3): the way back for that step is the
+    pause and then `fastpathctl disable` for each workspace on the run's
+    `fastpath_enabler.list enable=` log line (`fastpath-deploy.md`,
+    "Lowering the floor"). The way back for the lines is the pause, then
+    both lines up again, the leave line in steps small enough for the
+    mass-disable guard, and only then the floor.
+    A band of refusals remains just above the floor: a workspace at
+    exactly the leave balance stays on and cannot fund the least ask;
+    reservations lower the headroom a grant reads but not the unspent
+    credit the enabler reads; and the floor plus the whole amount asked
+    must fit. While such a workspace has traffic its owner asks again at
+    most once a second for each admission shard (one by default), each
+    ask reading all of the workspace's credit rows and writing nothing
+    when refused.
 
 ### (c) The exclusion set
 
@@ -339,7 +365,8 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
-| Unspent credit under $5 (under $30 to join; $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
+| Credit rows that break the debt rules (`fast-admission-and-batched-settlement.md` §4.7): a shard negative with none marked, marks that differ, or a mark over a signed sum that is not negative | enabler; counted in the report as `debt_rules` | the rule the fleet audit's `identity` check ends with (`store.CheckIdentity`), read the same way from each shard's credit less its usage and reservations. The grant does not refuse such a workspace (it reads the mark and the signed sum), so before this exclusion the enabler enabled it and the audit raised `fleet_audit_fault` on it every pass. Every writer since the debt rules (2026-10-07) keeps them; a shard a synchronous settle overran before them stays negative until money comes into its workspace, a later settle squares its rows, or `scripts/settle_negative_shards.py` covers it. Rows with any mark are counted `in_debt` first |
+| Unspent credit under $2 (under $3 to join; $5 and $30 until 2026-11-20, $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
 | Deleted workspaces | enabler (the entity's deletion); edge `workspace.deleted` | |
 | BYOK candidates | request (`funding`; `candidates.byok`) | per request: the same workspace's credit requests stay in |
 | Non-credit funding: partner billing, custom or user-provided models, priced extras | request (`pricing`; `body.priced_extra`, `body.custom_model`) | |
@@ -518,12 +545,18 @@ needs no analytics read; the largest spenders carry most of the traffic
   it is disabled as latched; a mass latch never reaches the guard below
   and never raises `fastpath_enabler_mass_disable`. The guard and the pace
   count only workspaces whose every cause is capped. For any other cause
-  that came from a change of facts (tier below the required tier, balance under the leave threshold, a
+  that came from a change of facts (tier below the required tier, balance under the leave threshold,
+  credit rows that break the debt rules, a
   federated home, a deletion, a probe, a bypass), the cap is a guard: when
   a run would disable more than 10% of the enabled set or 20 workspaces,
   whichever is larger, for those causes, it disables none of them that run
   and raises `fastpath_enabler_mass_disable`, since a sudden mass change
-  of facts is more likely a reading defect than a fact. A rank past the
+  of facts is more likely a reading defect than a fact. Rows that break
+  the debt rules ((c)) are in this group, not the uncapped one, because the
+  grant does not refuse them: unlike a latch, a pause or a mark, their
+  disable is a real change, and the audit's `fleet_audit_fault` already
+  names each one to an operator. A few leave at the next run; a mass of
+  them at once is a writer or a reading gone wrong. A rank past the
   margin of §5.2 is not guarded but paced: each run disables at most the
   same number, lowest rank first, and raises nothing, since a large rank
   change comes from the operator lowering `max_rank` and a small one from
@@ -541,6 +574,16 @@ would enable and would disable by reason, excluded by each reason of (c),
 held, frozen, capped, `bypass`, enabled rows outside the include list, and
 in apply mode the commit times. The lists of workspaces to enable and
 disable go in the job's own log, which only operators read.
+
+A workspace is counted in `excluded` under its first cause alone, in the
+order uncapped, whole, guarded (`PRECEDENCE`). `excluded.debt_rules` leads
+the tier and the balance, so it counts every workspace whose rows break
+the debt rules and that no cause before it (a latch, a pause, a mark, a
+hold, an exclude entry, incomplete rows) already keeps out, whatever its
+tier or balance: workspaces `scripts/settle_negative_shards.py` has yet
+to settle. In apply mode an
+enable whose own transaction finds such rows is counted under `writes` as
+`ineligible:debt_rules`.
 
 The report also counts `unheld_disabled`: every `enabled = false` row of
 `tr_fastpath_workspace` with no hold of its own, fleet-wide, whatever its
@@ -962,7 +1005,9 @@ counts from before it do not count.
    counted and each explained by a fact the enabler had not yet seen. (The
    owner does not count refused grants yet, so this is read from the
    enabler's reports and the edge's `owner.busy`; with the $30 join a
-   workspace spending below its last top-up can still meet the floor.)
+   workspace spending below its last top-up can still meet the floor, and
+   with the $3 join over the $2 floor, since 2026-11-20, one whose last
+   minute's spend is more than its credit above the floor does.)
 6. W3's ceilings: Spanner CPU, every subscription's backlog, pending work
    overdue, none crossed.
 7. The enabler: no `fastpath_enabler_mass_disable` or

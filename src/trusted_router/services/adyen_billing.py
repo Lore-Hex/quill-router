@@ -328,11 +328,10 @@ def apply_adyen_notification(
     prepared: PreparedAdyenNotification,
 ) -> AdyenCreditResult:
     """Apply a fully validated notification to the typed credit ledger."""
-    from trusted_router.services.trust_recovery import alert_unrecovered_principal
-
     for event in prepared.adverse_events:
-        adverse_result = STORE.record_adverse_trust_event(event)
-        alert_unrecovered_principal(adverse_result)
+        # record_adverse_trust_event raises the unrecovered-principal alert
+        # itself once the transaction commits; alerting here again doubled it.
+        STORE.record_adverse_trust_event(event)
     result = prepared.result
     if result.manual_review:
         log.warning(

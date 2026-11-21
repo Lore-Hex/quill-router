@@ -504,6 +504,8 @@ ENV_VARS=(
   'TR_SPECULATION_SHADOW_IMAGES=[]'
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
+  "TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED=true"
+  "TR_WORKSPACE_ORIGIN_CONTROLS_ENABLED=true"
   "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
   "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
   # The legacy backend does not yet receive a trusted, edge-overwritten client
@@ -769,6 +771,24 @@ ENV_VARS=(
   # on the decide shadow, all agree_full), both nodes on b2d12a046
   # (increments 5 and 6, #2242).
   "TR_FASTPATH_PILOT_STREAMS=true"
+  # "off" until every fast-path node runs a release that reads the members;
+  # then "shadow" until the shadow shows agreement; then "on".
+  # 2026-11-20 (Joseph): "shadow". Both nodes run 5e3ebc8b7 since 23:40Z
+  # (pinned by #2810), which reads the members. The policy now carries
+  # async_settle.decide_route, so a node composes a hosted decide
+  # authorize, async-v1 shape included, for the shadow to compare, and
+  # still passes it to Python (hosted_decide.off).
+  # A chat model on route decide that asks for async-v1 is answered with
+  # the additions Python gives, where the edge answered false-only.
+  # Way back: "off".
+  # 2026-11-21 (Joseph): "on". The policy also carries
+  # fastpath_edge_hosted_decide, so a node answers a hosted decide
+  # authorize itself, with Python's rows, hold and answer, and with the
+  # async-v1 additions when the call asks for them. Every other gate at the
+  # edge still applies, and anything outside the exact hosted shape (another
+  # spelling of the model, another route, a models list) still passes to
+  # Python. Way back: "shadow" (compose and pass) or "off".
+  "TR_FASTPATH_EDGE_HOSTED_DECIDE=on"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
   # section 12.4, PR 4): a stream whose reservation is below its estimate is

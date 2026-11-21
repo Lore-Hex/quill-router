@@ -6,7 +6,7 @@
     {% if saved %}<p class="notice ok">Workspace name saved.</p>{% endif %}
     {% if error == 'name' %}<p class="notice bad">Enter a workspace name.</p>
     {% elif error == 'too_long' %}<p class="notice bad">Workspace name is too long (120 characters max).</p>
-    {% elif error == 'forbidden' %}<p class="notice bad">Only workspace owners and admins can rename a workspace.</p>
+    {% elif error == 'forbidden' %}<p class="notice bad">Only workspace owners and admins can change these settings.</p>
     {% elif error == 'missing' %}<p class="notice bad">That workspace no longer exists.</p>
     {% elif error == 'workspace' %}<p class="notice bad">Select a workspace first.</p>{% endif %}
     <form class="form" method="post" action="/console/settings">
@@ -16,6 +16,26 @@
     {% if not can_manage %}<p class="muted">Only workspace owners and admins can rename a workspace.</p>{% endif %}
   </div>
 </section>
+{% if origin_enabled %}
+<section class="panel" id="model-origin">
+  <div class="panel-head"><h2>Model and provider origin</h2></div>
+  <div class="panel-body">
+    {% if origin_saved %}<p class="notice ok">Routing policy saved. Allow one minute for new requests to use it. Requests already admitted can finish.</p>{% endif %}
+    {% if error == 'origin' %}<p class="notice bad">Choose one of the available policies.</p>{% endif %}
+    <p>Apply to every API key in this workspace, including new keys. Both the model developer and the company serving the request must qualify, including on fallback. Routes with unknown origins are blocked when a restriction is on.</p>
+    <form class="form" method="post" action="/console/settings">
+      <input type="hidden" name="origin_workspace" value="{{ workspace.id }}">
+      <label>Allowed origins<select name="origin_policy" {{ '' if can_manage else 'disabled' }}>
+        {% for value, label in [('unrestricted','Unrestricted'),('us','U.S. only'),('western','Western countries')] %}
+        <option value="{{ value }}" {{ 'selected' if workspace.origin_policy == value else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select></label>
+      {% if can_manage %}<button class="btn primary" type="submit">Save routing policy</button>{% endif %}
+    </form>
+    <p class="muted">Western countries: United States, Canada, EU/EEA, United Kingdom, Switzerland, Australia and New Zealand. This controls company origin, not datacenter location.</p>
+  </div>
+</section>
+{% endif %}
 <section class="panel" id="phone">
   <div class="panel-head">
     <h2>Notifications</h2>

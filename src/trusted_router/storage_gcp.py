@@ -1239,9 +1239,10 @@ class SpannerStore(OperationalAnalyticsReads):
         deleted: bool | None = None,
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         return self._run_in_transaction(lambda transaction: self._update_workspace_tx(
-            transaction, workspace_id, name=name, deleted=deleted,
+            transaction, workspace_id, name=name, deleted=deleted, origin_policy=origin_policy,
             billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
         ))
 
@@ -1249,6 +1250,7 @@ class SpannerStore(OperationalAnalyticsReads):
         self, transaction: Any, workspace_id: str, *, name: str | None = None,
         deleted: bool | None = None, billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
         if workspace is None:
@@ -1320,6 +1322,8 @@ class SpannerStore(OperationalAnalyticsReads):
                 )
         if name is not None:
             workspace.name = name
+        if origin_policy is not None:
+            workspace.origin_policy = origin_policy
         if deleted is not None:
             workspace.deleted = deleted
         if billing_paused is not None:
@@ -6828,6 +6832,17 @@ class SpannerStore(OperationalAnalyticsReads):
             cutoff=cutoff,
             per_route_limit=per_route_limit,
             limit=limit,
+        )
+
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self._require_operational_analytics().account_refusal_samples(
+            cutoff=cutoff, per_route_limit=per_route_limit, limit=limit,
         )
 
     def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:

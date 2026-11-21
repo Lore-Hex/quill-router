@@ -45,6 +45,31 @@ def test_post_is_routable_at_all(console: tuple[TestClient, str]) -> None:
     assert response.status_code != 405, "the Save button posts here; it must be handled"
 
 
+def test_origin_control_rollout_and_permissions(console, monkeypatch):
+    client, ws = console
+    path = "/console/settings"
+    data = {"origin_policy": "western", "origin_workspace": ws}
+    headers = {"origin": str(client.base_url).rstrip("/")}
+    assert 'name="origin_policy"' not in client.get(path).text
+    client.post(path, data=data, headers=headers)
+    assert STORE.get_workspace(ws).origin_policy == "unrestricted"
+    monkeypatch.setattr(client.app.state.settings, "workspace_origin_controls_enabled", True)
+    assert client.post(path, data=data, headers={"origin": "https://example.org"}).status_code == 403
+    for policy in ("us", "western", "unrestricted"):
+        result = client.post(path, data={**data, "origin_policy": policy}, headers=headers)
+        assert "Routing policy saved" in result.text
+        assert f'value="{policy}" selected' in result.text
+        assert STORE.get_workspace(ws).origin_policy == policy
+    assert "Choose one of the available policies" in client.post(
+        path, data={**data, "origin_policy": "typo"}, headers=headers,
+    ).text
+    client.post(path, data={**data, "origin_workspace": "other-workspace"}, headers=headers)
+    assert STORE.get_workspace(ws).origin_policy == "unrestricted"
+    monkeypatch.setattr(InMemoryStore, "user_can_manage", lambda *_: False)
+    client.post(path, data=data, headers=headers)
+    assert STORE.get_workspace(ws).origin_policy == "unrestricted"
+
+
 def test_rename_persists_and_redirects(console: tuple[TestClient, str]) -> None:
     client, workspace_id = console
 

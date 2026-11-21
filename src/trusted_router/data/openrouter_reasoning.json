@@ -585,12 +585,6 @@
       ],
       "default_effort": "high"
     },
-    "dots-studio/dots-3-note-preview:free": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "elorian/glimpse": {
       "mandatory": false,
       "default_enabled": false,
@@ -1067,12 +1061,6 @@
     "liquid/lfm-3-1.7b:free": {
       "mandatory": true,
       "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "meituan/longcat-2.0": {
-      "mandatory": false,
-      "default_enabled": true,
       "supported_efforts": [],
       "default_effort": null
     },
@@ -2693,6 +2681,17 @@
       ],
       "default_effort": "high"
     },
+    "radixark/daisyrose-27b": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "medium",
+        "low",
+        "none"
+      ],
+      "default_effort": "xhigh"
+    },
     "recursive/flint-v1.0:free": {
       "mandatory": true,
       "default_enabled": false,
@@ -2798,16 +2797,6 @@
       ],
       "default_effort": "high"
     },
-    "tencent/hy3-preview": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "high",
-        "low",
-        "none"
-      ],
-      "default_effort": "high"
-    },
     "tencent/hy4": {
       "mandatory": false,
       "default_enabled": true,
@@ -2835,6 +2824,19 @@
       "default_effort": "high"
     },
     "thinkingmachines/inkling": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "high"
+    },
+    "thinkingmachines/inkling-2-mini": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [

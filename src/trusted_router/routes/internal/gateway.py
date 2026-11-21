@@ -288,6 +288,7 @@ from trusted_router.web_fetch import (
     FETCH_ROUTE_TYPE,
     FETCH_UPSTREAM_COST_MICRODOLLARS,
 )
+from trusted_router.workspace_origin_policy import POLICIES, eligible_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -1380,6 +1381,7 @@ def _authorize_gateway_sync_impl(
                 else effective_route_preferences.input_modalities
             ),
         )
+        _workspace_origin_candidates(workspace, api_key, settings, existing_candidates, replay=True)
         byok_configs = _byok_configs_for_candidates(
             existing_candidates, workspace.id, folded_rows=folded_byok,
         )
@@ -1513,7 +1515,9 @@ def _authorize_gateway_sync_impl(
         output_tokens=body.output_estimate,
     )
     effective_route_preferences = resolved_candidates.effective_preferences
-    endpoint_candidates = resolved_candidates.candidates
+    endpoint_candidates = _workspace_origin_candidates(
+        workspace, api_key, settings, resolved_candidates.candidates,
+    )
     byok_configs = _byok_configs_for_candidates(
         endpoint_candidates, workspace.id,
         folded_rows=folded_byok,
@@ -2367,6 +2371,45 @@ def _authorize_gateway_sync_impl(
         async_federated=bool(workspace.federated_home or api_key.federated_home),
         async_effective_at=pricing_effective_at,
     )
+
+
+def _workspace_origin_candidates(
+    workspace: Workspace, api_key: ApiKey, settings: Settings,
+    candidates: list[tuple[Model, ModelEndpoint]], *, replay: bool = False,
+) -> list[tuple[Model, ModelEndpoint]]:
+    policy = workspace.origin_policy
+    peer_checks = settings.workspace_origin_peer_checks_enabled or policy != "unrestricted"
+    if peer_checks and (workspace.federated_home or api_key.federated_home) and candidates:
+        # A shadow can be older than a settings change. All-US routes satisfy
+        # both restrictions; for other routes consult the authoritative plane.
+        us_only = eligible_candidates("us", candidates)
+        if len(us_only) != len(candidates) and isinstance(policy, str) and policy in POLICIES:
+            home, token = settings.federation_home_base_url, settings.federation_home_token
+            if home and token:
+                try:
+                    record = _federation_client(home, token).resolve(api_key.lookup_hash)
+                except FederationUnavailable:
+                    record = {}
+                if record is None or (record and (
+                    record.get("workspace_id") != workspace.id
+                    or record.get("lookup_hash") != api_key.lookup_hash
+                    or record.get("disabled") or record.get("workspace_billing_paused")
+                )):
+                    raise api_error(403, "Workspace authorization is unavailable", ErrorType.FORBIDDEN)
+                # An unreachable or older home cannot prove a permissive policy.
+                value = record.get("workspace_origin_policy", "us")
+                policy = value if isinstance(value, str) else ""
+            else:
+                policy = "us"
+    if policy == "unrestricted":
+        return candidates
+    allowed = eligible_candidates(policy, candidates)
+    if not allowed or (replay and len(allowed) != len(candidates)):
+        raise api_error(
+            403, "Workspace origin policy requires a permitted model developer and serving company",
+            ErrorType.FORBIDDEN,
+        )
+    return allowed
 
 
 def _gateway_validate_sync(
@@ -3321,9 +3364,13 @@ def _deferred_expires_at(settings: Settings) -> str:
 
 
 #: The lease-headroom 503's message and wait (fastpath_lease_headroom_503).
-#: A lease's unused allocation goes back as its owner's holds settle, so the
-#: headroom comes back within the lease's horizon; the enclave's authorize
-#: retry reads Retry-After as the least wait between its attempts.
+#: A lease gives its unused allocation back only once it stops admitting
+#: (idle for ten minutes, an hour old, or its workspace turned off: the
+#: owner's TopUps, fastpath/internal/owner/shard.go), not as its holds
+#: settle. Before that the headroom comes back as the workspace's own
+#: synchronous holds settle or credit is added, so a retry may meet the
+#: same answer. The enclave's authorize retry reads Retry-After as the
+#: least wait between its attempts.
 LEASE_HEADROOM_MESSAGE = (
     "This workspace's credits are held by requests in flight; retry shortly."
 )

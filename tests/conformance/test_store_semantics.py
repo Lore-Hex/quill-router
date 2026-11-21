@@ -1192,6 +1192,17 @@ def test_consent_binding_mismatch_does_not_consume(
 # --------------------------------------------------------------------------
 
 
+def test_origin_policy_persists_independently_of_workspace_rename(store: Store, workspace_id: str) -> None:
+    original = store.get_workspace(workspace_id)
+    assert original is not None and original.origin_policy == "unrestricted"
+    for policy in ("us", "western", "unrestricted"):
+        updated = store.update_workspace(workspace_id, origin_policy=policy)
+        assert updated is not None and updated.origin_policy == policy
+        store.update_workspace(workspace_id, name="Renamed")
+        read = store.get_workspace(workspace_id)
+        assert read is not None and read.origin_policy == policy
+
+
 def test_workspace_is_readable_immediately_after_creation(store: Store, workspace_id: str) -> None:
     """No backend may require a settling delay for its own write.
 

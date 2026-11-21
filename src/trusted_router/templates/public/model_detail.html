@@ -3,12 +3,12 @@
 {% from "public/_decide_example.html" import decide_curl %}
 {% from "public/_quickstart_box.html" import quickstart_box, chip_row %}
 {% set name = page.short_name %}
-{% set no_card_line %}No card required. Start with 1&nbsp;million free&nbsp;tokens.{% endset %}
+{% from "_free_tokens.html" import free_tokens_line %}{% set no_card_line = free_tokens_line() %}
 {% block head_extra %}<link rel="stylesheet" href="/static/model-detail.css?v={{ static_version|default('local') }}"><link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
 {% block body_attributes %}class="model-detail-page"{% endblock %}
 
 {% macro signup_button(extra_class="", catalog_cta=false) -%}
-<button class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Create my API key</button>
+<button class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Start building</button>
 {%- endmacro %}
 
 {% macro positive_badges(row) -%}
@@ -39,7 +39,7 @@
   <p class="md-note"><strong>Uncensored DeepSeek for cyberdefense.</strong> <a href="/abliterated-deepseek">Read the abliterated DeepSeek guide for SOC triage, incident response and evaluation prompts</a>. The guide's Maple example uses its own model ID and qualified Confidential route. Check this page's providers and capabilities before choosing a route; similar names do not establish identical weights or privacy guarantees.</p>
   {% endif %}
   {% if model.id == 'trustedrouter/trusted' %}
-  <p class="md-note"><strong>Trusted.</strong> Confidential inference through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a> only, selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
+  <p class="md-note"><strong>Trusted.</strong> Confidential inference only through operators selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
   {% endif %}
   <div class="md-stats">
     {% if page.lowest_input %}

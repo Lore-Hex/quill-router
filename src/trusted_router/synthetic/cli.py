@@ -8,6 +8,7 @@ import os
 import random
 import sys
 import time
+import urllib.parse
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -538,8 +539,19 @@ async def _post_route_health_if_due(
     # re-emission (~24/day/route) keeps the signal fresh without burning quota.
     every_pass = os.environ.get("TR_SYNTHETIC_ROUTE_HEALTH_EVERY_PASS") == "1"
     if not every_pass and (now or dt.datetime.now(dt.UTC)).minute >= 2:
+        # Between full sweeps, run only the account-refusal rule: a provider
+        # refusing TR's account should page within minutes, not at the hour.
+        await _post_route_health(
+            client, url=_with_query(url, scope="account_refusals"), internal_token=internal_token,
+        )
         return
     await _post_route_health(client, url=url, internal_token=internal_token)
+
+
+def _with_query(url: str, **params: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parts.query) + list(params.items())
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
 async def _post_remediator(

@@ -60,9 +60,9 @@
         <span>Create a key and call any model in the catalog through one API.</span>
       </div>
       <div class="cta-band-actions">
-        <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
+        <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
       </div>
-      <span class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</span>
+      {% from "_free_tokens.html" import free_tokens_line %}<span class="cta-note hero-free-note">{{ free_tokens_line() }}</span>
     </section>
     <div class="blog-foot-links">
       <a class="pill" href="/blog">More posts</a>

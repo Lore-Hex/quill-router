@@ -84,6 +84,35 @@ class InMemoryGenerations:
         rows.sort(key=lambda sample: sample.created_at, reverse=True)
         return rows[:limit]
 
+    def account_refusal_samples(
+        self, *, cutoff: str, per_route_limit: int, limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        with self._lock:
+            organic = [
+                sample
+                for sample in self.provider_benchmarks
+                if sample.source in {"organic", "synthetic"}
+                and sample.usage_type == "Credits"
+                and sample.created_at >= cutoff
+            ]
+        refused = {
+            (sample.provider, sample.model)
+            for sample in organic
+            if sample.error_status in {401, 403}
+        }
+        organic.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
+        counts: dict[tuple[str, str], int] = {}
+        selected: list[ProviderBenchmarkSample] = []
+        for sample in organic:
+            route = (sample.provider, sample.model)
+            if route not in refused or counts.get(route, 0) >= max(1, per_route_limit):
+                continue
+            counts[route] = counts.get(route, 0) + 1
+            selected.append(sample)
+            if len(selected) >= max(1, limit):
+                break
+        return selected
+
     def route_benchmark_samples(
         self,
         *,

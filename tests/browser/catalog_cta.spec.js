@@ -4,12 +4,12 @@ const { expect, test } = require("@playwright/test");
 // call to action in the hero. It must be the first thing a phone shows below
 // the header, and it must open the shared dialog in sign-up mode.
 const PAGES = [
-  { family: "model section", path: "/models/moonshotai/kimi-k3/pricing", label: "Free to start", pitch: /^Try Kimi K3 on us\. Starter credit/ },
-  { family: "comparison", path: "/compare/models/moonshotai/kimi-k3/vs/z-ai/glm-5.3", hero: ".compare-hero", lead: ".compare-lead", label: null, pitch: /One API key runs both\.$/, ctaText: "Create my API key" },
-  { family: "provider", path: "/providers/tinfoil", label: "Free to start", pitch: /^Try Tinfoil on us\. Starter credit/ },
+  { family: "model section", path: "/models/moonshotai/kimi-k3/pricing", label: null, pitch: /^Try Kimi K3 on us\. One key/ },
+  { family: "comparison", path: "/compare/models/moonshotai/kimi-k3/vs/z-ai/glm-5.3", hero: ".compare-hero", lead: ".compare-lead", label: null, pitch: /One API key runs both\.$/ },
+  { family: "provider", path: "/providers/tinfoil", hero: ".pd-hero", lead: ".pd-lead", label: null, pitch: /^Try Tinfoil on us\. One key/ },
 ];
 
-for (const { family, path, label, pitch, hero: heroSelector = ".catalog-hero", lead = ".lead", ctaText = "Create key" } of PAGES) {
+for (const { family, path, label, pitch, hero: heroSelector = ".catalog-hero", lead = ".lead", ctaText = "Start building" } of PAGES) {
   for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 1440, height: 900 }]) {
     test(`${family} page CTA is above the fold and opens sign-up at ${viewport.width}px`, async ({ page }) => {
       await page.setViewportSize(viewport);
@@ -55,7 +55,7 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
     await expect(hero.locator("h1")).toHaveText("Kimi K3");
     const cta = hero.locator("[data-catalog-cta]");
     await expect(cta).toHaveCount(1);
-    await expect(cta).toHaveText("Create my API key");
+    await expect(cta).toHaveText("Start building");
     const box = await cta.boundingBox();
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
     await expect(hero.locator(".md-no-card")).toContainText("No card required.");
@@ -121,6 +121,18 @@ test("a model with no Credits route makes no credit claim", async ({ page }) => 
   await expect(hero.locator(".md-lead")).toContainText("Bring your own provider key");
   await expect(hero.locator(".md-no-card")).toHaveCount(0);
   await expect(page.locator(".md-no-card")).toHaveCount(0);
+  await expect(hero.locator("[data-catalog-cta]")).toHaveText("Start building");
   await hero.locator("[data-catalog-cta]").click();
   await expect(page.locator("#signinModal")).toHaveAttribute("data-mode", "signup");
+});
+
+// The provider hero and the homepage hero carry the same button label, and
+// the provider hero names the free tokens under it.
+test("provider and homepage heroes read Start building", async ({ page }) => {
+  await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
+  await page.goto("/providers/tinfoil");
+  await expect(page.locator(".pd-hero [data-catalog-cta]")).toHaveText("Start building");
+  await expect(page.locator(".pd-hero .hero-free-note")).toHaveText("Up to 1 million free tokens. No card required.");
+  await page.goto("/");
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Start building");
 });

@@ -375,6 +375,7 @@ fi
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=internal"
+  "TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED=true"
   "TR_RELEASE=$(legacy_env_required TR_RELEASE)"
   "TR_TRUSTED_DOMAIN=$(legacy_env_required TR_TRUSTED_DOMAIN)"
   "TR_TRUSTED_DOMAIN_ALIASES=$(legacy_env_required TR_TRUSTED_DOMAIN_ALIASES)"

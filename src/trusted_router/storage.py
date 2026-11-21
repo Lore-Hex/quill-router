@@ -865,6 +865,7 @@ class InMemoryStore:
         deleted: bool | None = None,
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         with self._lock:
             workspace = self.workspaces.get(workspace_id)
@@ -872,6 +873,8 @@ class InMemoryStore:
                 return None
             if name is not None:
                 workspace.name = name
+            if origin_policy is not None:
+                workspace.origin_policy = origin_policy
             if deleted is not None:
                 inventory_key = (workspace.owner_user_id, workspace.id)
                 if workspace.deleted and not deleted:
@@ -3596,6 +3599,17 @@ class InMemoryStore:
             cutoff=cutoff,
             per_route_limit=per_route_limit,
             limit=limit,
+        )
+
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self.generation_store.account_refusal_samples(
+            cutoff=cutoff, per_route_limit=per_route_limit, limit=limit,
         )
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:

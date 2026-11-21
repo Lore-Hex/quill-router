@@ -153,7 +153,7 @@ func TestTheKeyFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 // Python is not.
 func TestTheWorkspaceFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 	v := readVectors(t)
-	want := []string{ReasonWorkspaceGone, ReasonWorkspacePaused, ReasonWorkspaceFederal}
+	want := []string{ReasonWorkspaceGone, ReasonWorkspacePaused, ReasonWorkspaceFederal, ReasonWorkspaceOrigin}
 	if !slices.Equal(v.WorkspaceOrder, want) {
 		t.Fatalf("the vectors' workspace order %q is not the facts' %q", v.WorkspaceOrder, want)
 	}

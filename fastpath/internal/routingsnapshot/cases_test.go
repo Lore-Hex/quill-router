@@ -146,6 +146,11 @@ func (c routingCase) request(t *testing.T) Request {
 // status, type and message. A case outside it must be passed to Python for
 // its listed reason.
 func TestTheEvaluatorReproducesEveryRoutingCase(t *testing.T) {
+	checkEveryRoutingCase(t, false)
+}
+
+func checkEveryRoutingCase(t *testing.T, hostedDecide bool) {
+	t.Helper()
 	s := goldenSnapshot(t)
 	file := loadCases(t)
 	if string(file.Rerank) != "null" || file.Settings.PrimaryRegion != s.Settings.PrimaryRegion ||
@@ -167,7 +172,9 @@ func TestTheEvaluatorReproducesEveryRoutingCase(t *testing.T) {
 			t.Fatalf("duplicate case name %q", c.Name)
 		}
 		names[c.Name] = true
-		got := s.Evaluate(c.request(t))
+		request := c.request(t)
+		request.HostedDecide = hostedDecide
+		got := s.Evaluate(request)
 		if want, outside := outsideTheCohort[c.Name]; outside {
 			if got.Outcome != PassToPython || got.Reason != want {
 				t.Errorf("%s: must pass to Python (%s), got %+v", c.Name, want, got)

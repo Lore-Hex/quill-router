@@ -70,7 +70,7 @@ func ticketRequestOf(d *Decision) (ticketRequest, bool) {
 	}
 	return ticketRequest{V: 1, AuthorizationID: in.AuthorizationID, WorkspaceID: in.WorkspaceID,
 		KeyHash: in.KeyHash, ReservationID: in.ReservationID, InvocationNonce: nonce,
-		RouteType: *in.Async.Request.RouteType, Streamed: in.Async.Request.Streamed, Region: in.Region,
+		RouteType: *in.Async.Request.RouteType, Streamed: in.Async.Request.Streamed && *in.Async.Request.RouteType != "decide", Region: in.Region,
 		CandidateEndpointIDs: a.EndpointIDs, PricedAt: a.PricedAt, BillingSnapshotHash: a.SnapshotHash}, true
 }
 

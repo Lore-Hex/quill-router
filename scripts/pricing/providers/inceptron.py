@@ -10,7 +10,7 @@ from scripts.pricing.providers._direct_openai import (
 SLUG = "inceptron"
 URL = "https://api.inceptron.io/v1/models"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/inceptron.json"
-EXPECTED_MODELS = ["z-ai/glm-5.2", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.7-code"]
+EXPECTED_MODELS = ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2.7-code"]
 _NATIVE_TO_MODEL_ID = {
     "MiniMaxAI/MiniMax-M2.5": "minimax/minimax-m2.5",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",

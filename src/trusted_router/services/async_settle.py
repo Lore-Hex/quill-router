@@ -416,6 +416,9 @@ def edge_ticket(*, body: EdgeTicketRequest, settings: Settings, runtime: Runtime
     reason, outcome, eligible_label = "error", "refused", "na"
     refused: dict[str, Any] = {"async_eligible": False}
     try:
+        if body.route_type == "decide" and not settings.async_settle_decide_route:
+            reason = "decide_route_off"
+            return refused
         if not settings.fastpath_edge_async_ticket_allows(body.workspace_id):
             reason = "workspace"
             return refused

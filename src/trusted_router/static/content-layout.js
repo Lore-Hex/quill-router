@@ -365,11 +365,7 @@
 // Opt-in section navigation shared by long-form content pages.
 (() => {
   "use strict";
-  document.querySelectorAll("[data-content-toc]").forEach((layout) => {
-    const content = layout.querySelector(".content-document");
-    if (!content || layout.querySelector(".content-toc")) return;
-    const headings = [...content.querySelectorAll("h2")];
-    if (headings.length < 2) return;
+  function buildContents(layout, content, headings) {
     const nav = document.createElement("nav");
     nav.className = "content-toc";
     nav.setAttribute("aria-label", "On this page");
@@ -426,6 +422,32 @@
     nav.append(title, disclosure);
     layout.prepend(nav);
     layout.classList.add("has-content-toc");
+    return { disclosure, entries };
+  }
+
+  function readContents(nav, content) {
+    const links = new Map([...nav.querySelectorAll('a[href^="#"]')].map(link => [link.hash, link]));
+    // The menu is grouped by task; scroll tracking follows document order.
+    const entries = [...content.querySelectorAll("a.docs-topic-link")].flatMap(topic => {
+      const link = links.get(topic.hash);
+      const target = document.getElementById(topic.hash.slice(1));
+      const heading = topic.parentElement;
+      if (!link || !target) return [];
+      heading.tabIndex = -1;
+      return [{ heading, target, link }];
+    });
+    return { disclosure: nav.querySelector("details"), entries };
+  }
+
+  document.querySelectorAll("[data-content-toc]").forEach((layout) => {
+    const content = layout.querySelector(".content-document");
+    if (!content) return;
+    const nav = layout.querySelector(".content-toc");
+    if (nav && !nav.hasAttribute("data-docs-contents")) return;
+    const headings = [...content.querySelectorAll("h2")];
+    if (headings.length < 2) return;
+    const { disclosure, entries } = nav ? readContents(nav, content) : buildContents(layout, content, headings);
+    if (!entries.length) return;
 
     const desktop = window.matchMedia("(min-width: 1400px)");
     const syncDisclosure = () => { disclosure.open = desktop.matches; };
