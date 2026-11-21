@@ -7,7 +7,7 @@ import random
 import re
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
@@ -29,7 +29,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.storage_rate_limits import InMemoryRateLimits
-from trusted_router.synthetic.alerts import alert_on_failure_streak
+from trusted_router.synthetic.alerts import alert_on_failure_streak, alerts_once
 from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.client_watch import evaluate_client_watch, report_client_watch
 from trusted_router.synthetic.components import OPS_PROBE_TYPES, sample_slo_class_ids
@@ -594,10 +594,16 @@ def register(router: APIRouter) -> None:
                     log_analytics_unavailable(log, "synthetic_account_refusals", exc)
                     return {"data": {"flagged": [], "evaluated": False,
                                      "reason": "analytics_unavailable"}}
-                await run_in_threadpool(report_route_health, unreported_account_refusals(refusals))
+                await run_in_threadpool(
+                    _report_once, report_route_health, unreported_account_refusals(refusals),
+                )
                 return {"data": {"flagged": [asdict(flag) for flag in refusals],
                                  "evaluated": True, "scope": "account_refusals"}}
-            await run_in_threadpool(report_catalog_freshness)
+            # Two regional monitors post every full sweep, each to its own
+            # regional instance, and both evaluate. Every alert either raises
+            # is claimed per fingerprint and hour in this deployment's store,
+            # so each is emitted once per sweep by whichever reaches it first.
+            await run_in_threadpool(_report_once, report_catalog_freshness)
             try:
                 flags = await run_in_threadpool(evaluate_route_health, STORE)
             except Exception as exc:
@@ -606,7 +612,7 @@ def register(router: APIRouter) -> None:
                 # Blind, not healthy: no route was evaluated. Say so in the
                 # body and raise one grouped alert instead of a 500 per pass.
                 log_analytics_unavailable(log, "synthetic_route_health", exc)
-                await run_in_threadpool(report_route_health_unevaluable, exc)
+                await run_in_threadpool(_report_once, report_route_health_unevaluable, exc)
                 return {
                     "data": {
                         "flagged": [],
@@ -616,9 +622,9 @@ def register(router: APIRouter) -> None:
                 }
             held = await run_in_threadpool(_pending_route_holds)
             paging, holding = split_held_flags(flags, held)
-            await run_in_threadpool(report_route_health, paging)
+            await run_in_threadpool(_report_once, report_route_health, paging)
             if holding:
-                await run_in_threadpool(report_route_holds, holding)
+                await run_in_threadpool(_report_once, report_route_holds, holding)
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -675,6 +681,21 @@ def register(router: APIRouter) -> None:
             response.status_code = 202
             return {"data": {"scheduled": True}}
         return await _run_with_deadline(settings, body, slot)
+
+
+def _sweep_hour(now: dt.datetime | None = None) -> str:
+    return (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).strftime("%Y-%m-%dT%H")
+
+
+def _claim_alert(fingerprint: list[str]) -> bool:
+    """True for the first instance to emit this fingerprint this hour."""
+    key = f"{'|'.join(fingerprint)}@{_sweep_hour()}"
+    return STORE.record_webhook_event_once("route-health-alert", key)
+
+
+def _report_once(report: Callable[..., Any], *args: Any) -> Any:
+    with alerts_once(_claim_alert):
+        return report(*args)
 
 
 def _pending_route_holds() -> frozenset[tuple[str, str]]:
