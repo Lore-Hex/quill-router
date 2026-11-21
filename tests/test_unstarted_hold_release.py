@@ -19,7 +19,7 @@ from typing import Any, cast, get_args
 
 import pytest
 
-from tests.fakes.spanner import FakeSpannerDatabase, _ParamTypes, make_fake_store
+from tests.fakes.spanner import FakeSpannerDatabase, _FakeSnapshot, _ParamTypes, make_fake_store
 from trusted_router import storage_gcp_authorize as authorize_mod
 from trusted_router import unstarted_release as rule
 from trusted_router.config import Settings
@@ -1186,3 +1186,30 @@ def test_a_settle_intent_made_durable_after_the_scan_still_freezes_the_hold(
     assert (result.scanned, result.guarded, result.released, result.would_release) == (1, 1, 0, 0)
     assert _money(db) == (HOLD, 0, HOLD, 0)
     assert db.reservations["reservation"]["settled"] is False
+
+
+def test_the_scans_cursor_starts_at_the_epoch_and_moves_with_each_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first page's cursor is a timestamp every platform writes in full
+    (a year under 1000 is not zero-padded by every strftime), and each later
+    page starts after the last row of the one before."""
+    db, _first = _seed(suffix="-a", stage_d_boot_kid="boot-undeclared", created_at="2026-11-21T11:00:00Z")
+    _seed(db, suffix="-b", stage_d_boot_kid="boot-undeclared", created_at="2026-11-21T11:00:01Z")
+    _seed(db, suffix="-c", stage_d_boot_kid="boot-undeclared", created_at="2026-11-21T11:00:02Z")
+    pages: list[dict[str, Any]] = []
+    real = _FakeSnapshot.execute_sql
+
+    def record(self: Any, sql: str, *args: Any, **kwargs: Any) -> Any:
+        if sql == authorize_mod._UNSTARTED_SCAN_SQL:
+            pages.append(dict(kwargs["params"]))
+        return real(self, sql, *args, **kwargs)
+
+    monkeypatch.setattr(_FakeSnapshot, "execute_sql", record)
+
+    result = _pass(db, age=DUE + 1, limit=2, log_only=True)
+
+    assert result.scanned == 3 and len(pages) == 2
+    assert pages[0]["after_expiry"] == datetime(1970, 1, 1, tzinfo=UTC) and pages[0]["after_id"] == ""
+    assert pages[0]["after_expiry"].strftime("%Y") == "1970"
+    assert pages[1]["after_expiry"] == datetime(2026, 11, 21, 11, 0, 1, tzinfo=UTC) + TTL
+    assert pages[1]["after_id"] == "reservation-b"
+    assert {page["limit"] for page in pages} == {2} and len({page["now"] for page in pages}) == 1

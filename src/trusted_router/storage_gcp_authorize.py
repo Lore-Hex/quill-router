@@ -1843,7 +1843,10 @@ def release_unstarted_holds_result(
             unstarted=transaction_rule,
         )
 
-    after_expiry: Any = datetime.min.replace(tzinfo=UTC)
+    # The cursor starts before any expiry authorize can write. The epoch,
+    # not the calendar's first year: a year under 1000 is not zero-padded by
+    # every platform's strftime, which the timestamp's wire form needs.
+    after_expiry: Any = datetime(1970, 1, 1, tzinfo=UTC)
     after_id = ""
     for page in range(_UNSTARTED_SCAN_PAGES):
         with database.snapshot() as snapshot:
