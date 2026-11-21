@@ -22,7 +22,7 @@ import dataclasses
 import itertools
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
@@ -689,7 +689,9 @@ def _route_store(*, lease_held: int) -> tuple[Any, Any, Any]:
 
 
 def _route_body(key: Any, *, idempotency_key: str | None = None) -> Any:
-    body = _lookup_body(key) if idempotency_key is None else _lookup_body(key, idempotency_key=idempotency_key)
+    # None is deliberate and is what this helper always sent: a request with no
+    # idempotency key, which the fixture's signature (str) does not spell.
+    body = _lookup_body(key, idempotency_key=cast(Any, idempotency_key))
     body.estimated_input_tokens = 42_000
     body.max_output_tokens = 8192
     return body
