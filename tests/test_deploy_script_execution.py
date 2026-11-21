@@ -4620,7 +4620,7 @@ def test_rollout_pins_dormant_drain_knobs_without_inheritance(
 
 
 def test_rollout_negotiation_regions_are_literal_and_configured(tmp_path, monkeypatch):
-    hostile = {'TR_ASYNC_SETTLE_NEGOTIATION_REGIONS': 'us-central1'}
+    hostile = {'TR_ASYNC_SETTLE_NEGOTIATION_REGIONS': 'southamerica-east1'}
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
     run = isolated.run('scripts/deploy/rollout.sh', extra_env=hostile)
     assert run.returncode == 0, summarise(run)

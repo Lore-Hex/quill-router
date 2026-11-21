@@ -109,14 +109,24 @@ writer's caps they fall back to synchronous settles. A region whose own
 router is not in the accept list would settle synchronously there.
 
 europe-west4 is such a region, and it has negotiated since 2026-11-21: its
-enclaves' handoffs are accepted in us-central1 through this route. Rolling
-the route back therefore takes europe-west4 out of
-`TR_ASYNC_SETTLE_NEGOTIATION_REGIONS` in the same change. Left in, each
-Europe settle would first be answered `sync_required` by the europe-west4
-router and then settle through the snapshot-sync retry: correct, but one
-round trip slower than the synchronous settle it replaced. For the route's
-current state, `tests/test_async_settle_negotiation_regions.py` fails if a
-negotiated region's settles would land on a router outside the accept list.
+enclaves' handoffs are accepted in us-central1 through this route. A
+rollback of the route therefore starts with the pin, in this order:
+
+1. Take europe-west4 out of `TR_ASYNC_SETTLE_NEGOTIATION_REGIONS` and let
+   that deploy finish in every region.
+2. Wait out the tickets already issued (a ticket lives 300 s).
+3. Only then turn the route off.
+
+With the route off and Europe still holding tickets, each Europe settle is
+first answered `sync_required` by the europe-west4 router and then settles
+through the snapshot-sync retry. The money is correct, but that retry does
+its Spanner work from Europe under the async route's 2 s budget and answers
+503 past it, where the plain synchronous settle has no such limit. A 503 on
+`/internal/gateway/settle` from a candidate revision fails that region's
+deploy (`scripts/deploy/assert_no_billing_5xx.sh`). The cost of that path
+from Europe has not been measured. For the route's current state,
+`tests/test_async_settle_negotiation_regions.py` fails if a negotiated
+region's settles would land on a router outside the accept list.
 
 If the handoff also goes back to `outbox`, revisit the negotiation pin in the
 same change. The 2026-10-31 measurements that kept us-east4 and Europe out

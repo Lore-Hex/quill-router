@@ -971,11 +971,13 @@ ENV_VARS=(
   # enclave's handoff is one round trip to us-central1 in place of the
   # synchronous settle it makes there today. europe-west4's own router is
   # not in TR_ASYNC_SETTLE_ACCEPT_REGIONS above, so this value holds only
-  # while the terminal route sends every settle to us-central1: turning that
-  # route off takes europe-west4 out of this list in the same change
-  # (tests/test_async_settle_negotiation_regions.py fails otherwise). The way
-  # back is this one pin without europe-west4: tickets already issued keep
-  # settling, and new Europe authorizations get the synchronous answer.
+  # while the terminal route sends every settle to us-central1: before that
+  # route is turned off, europe-west4 leaves this list and its tickets run
+  # out (docs/runbooks/control-terminals-us-central1.md gives the order;
+  # tests/test_async_settle_negotiation_regions.py fails with the route off
+  # and europe-west4 still here). The way back is this one pin without
+  # europe-west4: tickets already issued keep settling, and new Europe
+  # authorizations get the synchronous answer.
   # E2 routing snapshot publication: the literals of the key block above.
   "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
