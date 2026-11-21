@@ -508,6 +508,10 @@ def _account_refusal_flag(
     cutoff: dt.datetime,
 ) -> RouteHealthFlag | None:
     """A fresh streak of the provider refusing TR's managed account."""
+    # The rule's own window, whatever the caller's: the organic read covers
+    # only this long, so older probe evidence must not bridge an organic
+    # recovery the read never returned.
+    cutoff = max(cutoff, now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN)
     recent = sorted(
         (
             (created, sample) for sample in samples

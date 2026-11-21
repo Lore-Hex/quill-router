@@ -4728,6 +4728,28 @@ def test_fast_refusal_reports_once_per_cooldown(monkeypatch: pytest.MonkeyPatch)
     assert route_health.unreported_account_refusals([flag], now=t0 + dt.timedelta(minutes=61)) == [flag]
 
 
+def test_hourly_sweep_does_not_bridge_an_organic_recovery_with_old_probes() -> None:
+    # Third Codex review: probe refusals 4h and 3h ago, an organic success 2h
+    # ago (outside the organic read), one refusal now. Not three in a row.
+    def probe_refusal(i: int, hours: float) -> ProviderBenchmarkSample:
+        return dataclasses.replace(
+            _refusal_sample(i, hours * 60, source="synthetic", error_type="provider_auth_config"),
+        )
+    samples = [
+        _refusal_sample(1, 1),
+        dataclasses.replace(
+            _route_health_sample("ok", provider="maple", model="m", status="success", source="organic"),
+            created_at=(dt.datetime.now(dt.UTC) - dt.timedelta(hours=2)).isoformat(),
+        ),
+        probe_refusal(2, 3),
+        probe_refusal(3, 4),
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    )
+    assert not any(flag.account_refusal for flag in flags)
+
+
 def test_account_refusal_streak_breaks_on_success() -> None:
     samples = [_refusal_sample(i, m) for i, m in enumerate((6, 12, 18))]
     samples.insert(0, _route_health_sample("ok", provider="maple", model="m", status="success"))
