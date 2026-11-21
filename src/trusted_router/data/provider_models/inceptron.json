@@ -185,7 +185,9 @@
       "input_token_price_per_m": 443300,
       "output_token_price_per_m": 2741700,
       "cached_input_token_price_per_m": 191000,
-      "missing_since": "2026-11-21"
+      "missing_since": "2026-11-21",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4 Flash 0731",
@@ -367,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-21T03:11:31Z",
+  "generated_at": "2026-11-21T03:44:30Z",
   "model_count": 8
 }
