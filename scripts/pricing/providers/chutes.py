@@ -67,6 +67,11 @@ _OPERATOR_HOLD_REASONS = {
     "qwen/qwen3-235b-a22b-thinking-2507": "attestation-evidence-unavailable",
     # Repeated runtime 502s and absence from the authenticated TEE catalog.
     "mistralai/mistral-nemo": "provider-route-unavailable",
+    # Listed (Qwen3.5-*-TEE) but every probe answers HTTP 502: the 397B on all
+    # but one day from 2026-11-11 to 11-21, the 27B on every day since 11-18.
+    # Both stay served elsewhere (15 and 8 providers).
+    "qwen/qwen3.5-397b-a17b": "provider-route-unavailable",
+    "qwen/qwen3.5-27b": "provider-route-unavailable",
 }
 
 

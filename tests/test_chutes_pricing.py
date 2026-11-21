@@ -462,3 +462,13 @@ def test_committed_chutes_catalog_excludes_holds_for_credits_and_byok() -> None:
         assert row.get("routable") is not False
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.model_id not in chutes._OPERATOR_HOLD_REASONS
+
+
+@pytest.mark.parametrize("model_id", ["qwen/qwen3.5-397b-a17b", "qwen/qwen3.5-27b"])
+def test_qwen35_tee_routes_are_held_for_runtime_502s(model_id: str) -> None:
+    # Listed upstream as Qwen3.5-*-TEE, but every probe answered HTTP 502
+    # (the 397B since 2026-11-11, the 27B since 11-18); other providers serve both.
+    assert chutes._OPERATOR_HOLD_REASONS[model_id] == "provider-route-unavailable"
+    committed = _manifest_rows(chutes.MANIFEST_PATH)[model_id]
+    assert committed["routable"] is False
+    assert committed["routable_reason"] == "provider-route-unavailable"
