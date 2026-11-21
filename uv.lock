@@ -5013,7 +5013,7 @@ dependencies = [
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sigstore" },
     { name = "stripe" },
-    { name = "trusted-router-py" },
+    { name = "trustedrouter" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -5057,7 +5057,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.20.0" },
     { name = "sigstore", specifier = "==4.5.1" },
     { name = "stripe", specifier = ">=11.0.0" },
-    { name = "trusted-router-py", specifier = ">=0.6.0" },
+    { name = "trustedrouter", specifier = ">=0.10.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
 
@@ -5080,16 +5080,16 @@ dev = [
 ]
 
 [[package]]
-name = "trusted-router-py"
-version = "0.9.0"
+name = "trustedrouter"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/3e/df9f934997a6a1c504133e8367f5ea9792d8f167ba394c7da7d89945b2ec/trusted_router_py-0.9.0.tar.gz", hash = "sha256:9e956788a4e33505f668383fda52f4e36559618056c3ab17fd448e2f8d6cd9b9", size = 100106, upload-time = "2026-10-15T20:55:46.654Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/fc/64661343c32fbad666340aa1d17bb3ed51e496aa364d482457169acd9262/trustedrouter-0.10.1.tar.gz", hash = "sha256:b099dce684260b5fbce05e824978279a7ebfee255a21def5789a44a4770b4712", size = 110831, upload-time = "2026-11-21T02:38:26.754Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/c7/27010998d59af0f22007080aa70ede3e9555e37979d96f36729423c20a46/trusted_router_py-0.9.0-py3-none-any.whl", hash = "sha256:92d3593f542a5972c05921e73ac7fce78f72a98ed9000de3c14e3163892502c2", size = 111195, upload-time = "2026-10-15T20:55:45.304Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/a2/d649cff06ded765bed8e10c7d371d60e66038ac47f33fad9d2c9095ecf79/trustedrouter-0.10.1-py3-none-any.whl", hash = "sha256:1398115d13e1c31042c649e92a8af481b546471b264940380e48a7ef50920aa7", size = 115356, upload-time = "2026-11-21T02:38:25.484Z" },
 ]
 
 [[package]]

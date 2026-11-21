@@ -584,11 +584,11 @@ def test_glm_52_is_still_in_the_public_catalog(client: TestClient) -> None:
 
 def test_llms_indexes_link_official_cli_distributions(client: TestClient) -> None:
     expected = (
-        "https://pypi.org/project/trusted-router-py/",
+        "https://pypi.org/project/trustedrouter/",
         "https://www.npmjs.com/package/@lore-hex/trusted-router",
         "https://github.com/Lore-Hex/trusted-router-py",
         "https://github.com/Lore-Hex/trusted-router-js",
-        "pipx install trusted-router-py",
+        "pipx install trustedrouter",
         "npm install --global @lore-hex/trusted-router",
         "npx --yes @lore-hex/trusted-router models --json",
         "trustedrouter models --json",
