@@ -110,16 +110,45 @@ USAGE_BUCKET_EXPRESSIONS: dict[str, str] = {
 }
 
 
-# The elapsed-time histogram of ``activity_elapsed_summary``. Slots are 1,024
-# ms wide and the last one is open-ended, so one read holds at most 65,536
-# slots and 2,048 distinct values however many rows or distinct values the
-# range has. The SQL carries the same three numbers as literals.
-_ELAPSED_SLOT_MS = 1024
-_ELAPSED_LAST_SLOT = 65_535
-_ELAPSED_CEILING_MS = _ELAPSED_LAST_SLOT * _ELAPSED_SLOT_MS
+# The bounded elapsed-time histogram behind every exact median here (see
+# ``elapsed_histogram_columns`` and ``settle_elapsed_median``). Slots are
+# 1,024 ms wide and the last one is open-ended, so one group of rows holds at
+# most 65,536 slots, plus 1,024 distinct values for each slot it opens,
+# however many rows or distinct values the range has.
+ELAPSED_SLOT_MS = 1024
+ELAPSED_LAST_SLOT = 65_535
+ELAPSED_CEILING_MS = ELAPSED_LAST_SLOT * ELAPSED_SLOT_MS
 # The coarse read, the read of the middle slots, and two more for a range
 # whose middle moved between them.
 _ELAPSED_READS = 4
+
+
+def elapsed_histogram_columns(column: str, opened: str) -> str:
+    """The two SELECT expressions of the bounded elapsed-time histogram.
+
+    ``column`` is the latency expression, nullable milliseconds. ``opened`` is
+    a condition that is true for a row whose slot should be opened, which for
+    one group of rows is ``intDiv(<column>, 1024) IN (<its middle slots>)``.
+    Both are SQL text fixed in the caller's code, never request input.
+
+    The query that selects these must also select ``count() AS
+    generations_at_value`` and group by ``slot, elapsed_value`` (after any
+    key of its own, such as a tag). ``slot`` is NULL for an untimed row.
+    ``elapsed_value`` is the row's value inside an opened slot and NULL
+    elsewhere. ``settle_elapsed_median`` reads one group's rows.
+    """
+    return (
+        "  CASE\n"
+        f"    WHEN {column} IS NULL THEN NULL\n"
+        f"    WHEN {column} >= {ELAPSED_CEILING_MS} THEN {ELAPSED_LAST_SLOT}\n"
+        f"    ELSE intDiv({column}, {ELAPSED_SLOT_MS})\n"
+        "  END AS slot,\n"
+        "  CASE\n"
+        f"    WHEN {column} < {ELAPSED_CEILING_MS}\n"
+        f"      AND {opened}\n"
+        f"    THEN {column}\n"
+        "  END AS elapsed_value"
+    )
 
 
 def usage_buckets_query(*, granularity: str, by_model: bool, key_filtered: bool) -> str:
@@ -563,21 +592,16 @@ FORMAT JSON
         The last slot is open-ended (about 18.6 hours and up) and is never
         opened: a median that long is reported as absent, not approximated.
         """
-        slots = (_ELAPSED_LAST_SLOT, _ELAPSED_LAST_SLOT)  # the first read opens no slot
+        slots = (ELAPSED_LAST_SLOT, ELAPSED_LAST_SLOT)  # the first read opens no slot
         for _ in range(_ELAPSED_READS):
             rows = self._query(
-                """
-SELECT
-  CASE
-    WHEN elapsed_milliseconds IS NULL THEN NULL
-    WHEN elapsed_milliseconds >= 67107840 THEN 65535
-    ELSE intDiv(elapsed_milliseconds, 1024)
-  END AS slot,
-  CASE
-    WHEN elapsed_milliseconds < 67107840
-      AND intDiv(elapsed_milliseconds, 1024) IN ({slot_low:UInt64}, {slot_high:UInt64})
-    THEN elapsed_milliseconds
-  END AS elapsed_value,
+                "\nSELECT\n"
+                + elapsed_histogram_columns(
+                    "elapsed_milliseconds",
+                    "intDiv(elapsed_milliseconds, 1024)"
+                    " IN ({slot_low:UInt64}, {slot_high:UInt64})",
+                )
+                + """,
   count() AS generations_at_value
 FROM activity_generations FINAL
 WHERE tenant_id = {tenant_id:String}
@@ -592,7 +616,7 @@ FORMAT JSON
                     "slot_high": slots[1],
                 },
             )
-            settled = _settle_elapsed_median(rows)
+            settled = settle_elapsed_median(rows)
             if isinstance(settled, dict):
                 return settled
             slots = settled
@@ -923,15 +947,24 @@ def _usage_bucket_rows(rows: list[dict[str, Any]], *, by_model: bool) -> list[di
     return list(merged.values())
 
 
-def _settle_elapsed_median(
+def settle_elapsed_median(
     rows: list[dict[str, Any]],
 ) -> dict[str, int | None] | tuple[int, int]:
-    """Read the median off one elapsed-time histogram, or say which slots to open.
+    """Read the median off one group's elapsed-time histogram, or say which slots to open.
 
-    Each row is a count of generations: untimed ones (no slot), a whole slot
-    (no value), or one distinct value inside an opened slot. Returns the
-    summary when both middle values are known or cannot be, otherwise the
-    two slots the middle values are in.
+    ``rows`` are the ``slot``, ``elapsed_value`` and ``generations_at_value``
+    of ``elapsed_histogram_columns`` for one group, in any order. Each is a
+    count of generations: untimed ones (no slot), a whole slot (no value), or
+    one distinct value inside an opened slot.
+
+    Returns ``{"generations", "samples", "median_ms"}`` when the median is
+    settled, otherwise the two slots the middle values are in, to open in the
+    next read. The median is the one a sorted list gives: the middle value
+    for an odd count of timed rows, the floor of the mean of the two middle
+    values for an even count, ``None`` when no row is timed. It is also
+    ``None`` when a middle value is in the open-ended last slot (about 18.6
+    hours and up): that slot is never opened, so such a median is reported as
+    absent rather than approximated.
     """
     untimed = 0
     groups: list[tuple[int, int, int | None]] = []
@@ -962,7 +995,7 @@ def _settle_elapsed_median(
             through += groups[position][1]
         middle.append((groups[position][0], groups[position][2]))
     (low_slot, low), (high_slot, high) = middle
-    if high_slot >= _ELAPSED_LAST_SLOT:
+    if high_slot >= ELAPSED_LAST_SLOT:
         # Beyond the histogram: report no median rather than a wrong one.
         return summary
     if low is None or high is None:

@@ -390,6 +390,19 @@
     });
   }
 
+  // Other parts of the page follow the usage range. They hear of every
+  // change, by any path (a radio, the "Show ..." control, the remembered
+  // range on load) and once on load, before the request starts and whether
+  // or not it succeeds. The panel's data-usage-range holds the current
+  // value for a listener that attaches after the first event.
+  function publishRange(range) {
+    if (panel.dataset.usageRange === range) {
+      return;
+    }
+    panel.dataset.usageRange = range;
+    document.dispatchEvent(new CustomEvent("activity:range-change", { detail: { range } }));
+  }
+
   async function loadUsage() {
     const state = currentState();
     const token = ++requestId;
@@ -397,6 +410,7 @@
       range: state.range,
       by_model: "1"
     });
+    publishRange(state.range);
     // A newer choice replaces the request in flight. Cancel that one so
     // nothing waits on an answer that will not be shown.
     if (inFlight) {

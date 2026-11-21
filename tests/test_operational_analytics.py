@@ -35,6 +35,8 @@ from trusted_router import operational_analytics as analytics_module
 from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
+    elapsed_histogram_columns,
+    settle_elapsed_median,
     usage_buckets_query,
 )
 from trusted_router.storage_activity import (
@@ -1393,10 +1395,10 @@ def test_activity_elapsed_summary_is_a_whole_range_median_in_sql() -> None:
     assert "LIMIT" not in query
     assert tenant_id not in query
     # The SQL's literals are the module's histogram constants.
-    assert f"WHEN elapsed_milliseconds >= {analytics_module._ELAPSED_CEILING_MS} " in query
-    assert f"THEN {analytics_module._ELAPSED_LAST_SLOT}\n" in query
-    assert f"WHEN elapsed_milliseconds < {analytics_module._ELAPSED_CEILING_MS}\n" in query
-    assert query.count(f"intDiv(elapsed_milliseconds, {analytics_module._ELAPSED_SLOT_MS})") == 2
+    assert f"WHEN elapsed_milliseconds >= {analytics_module.ELAPSED_CEILING_MS} " in query
+    assert f"THEN {analytics_module.ELAPSED_LAST_SLOT}\n" in query
+    assert f"WHEN elapsed_milliseconds < {analytics_module.ELAPSED_CEILING_MS}\n" in query
+    assert query.count(f"intDiv(elapsed_milliseconds, {analytics_module.ELAPSED_SLOT_MS})") == 2
     # The first read opens no slot; the second opens the slot of the middle values.
     assert database.params[:2] == [
         {
@@ -1659,6 +1661,96 @@ def test_activity_elapsed_summary_does_not_depend_on_the_order_rows_come_back_in
 
         assert client.activity_elapsed_summary(tenant_id="tenant", start_at="2026-07-31") == expected
         assert asked == [("65535", "65535"), ("3", "3")]
+
+
+def test_elapsed_histogram_columns_take_the_latency_expression_and_the_open_condition() -> None:
+    columns = elapsed_histogram_columns(
+        "first_token_milliseconds", "intDiv(first_token_milliseconds, 1024) = {slot:UInt64}"
+    )
+
+    assert columns == (
+        "  CASE\n"
+        "    WHEN first_token_milliseconds IS NULL THEN NULL\n"
+        "    WHEN first_token_milliseconds >= 67107840 THEN 65535\n"
+        "    ELSE intDiv(first_token_milliseconds, 1024)\n"
+        "  END AS slot,\n"
+        "  CASE\n"
+        "    WHEN first_token_milliseconds < 67107840\n"
+        "      AND intDiv(first_token_milliseconds, 1024) = {slot:UInt64}\n"
+        "    THEN first_token_milliseconds\n"
+        "  END AS elapsed_value"
+    )
+    # The numbers in the SQL are the module's histogram constants.
+    assert analytics_module.ELAPSED_SLOT_MS == 1024
+    assert analytics_module.ELAPSED_LAST_SLOT == 65_535
+    assert analytics_module.ELAPSED_CEILING_MS == 67_107_840
+
+
+def test_elapsed_histogram_serves_a_median_per_group() -> None:
+    """The same two pieces give an exact median for each value of another key.
+
+    The grouped query adds its key in front of ``slot, elapsed_value``; each
+    group's rows settle on their own, and each group has its own slots to open.
+    """
+    database = ActivityClickHouse()
+    base = _generation()
+    elapsed_by_model: dict[str, list[int | None]] = {
+        "model-fast": [100, 120, 130, 150, None],
+        "model-slow": [9_000, 9_500, 40_000, 41_000, 41_500, 90_000],
+        "model-untimed": [None, None],
+    }
+    for model, values in elapsed_by_model.items():
+        for index, elapsed in enumerate(values):
+            database.add(
+                dataclasses.replace(
+                    base, id=f"gen-{model}-{index}", model=model, elapsed_milliseconds=elapsed
+                )
+            )
+    client = database.client()
+    sql = (
+        "\nSELECT\n  model,\n"
+        + elapsed_histogram_columns(
+            "elapsed_milliseconds",
+            "model = {model:String}"
+            " AND intDiv(elapsed_milliseconds, 1024) IN ({slot_low:UInt64}, {slot_high:UInt64})",
+        )
+        + ",\n  count() AS generations_at_value\n"
+        "FROM activity_generations FINAL\n"
+        "WHERE tenant_id = {tenant_id:String}\n"
+        "GROUP BY model, slot, elapsed_value\n"
+        "FORMAT JSON\n"
+    )
+    tenant_id = analytics_surrogate("workspace", base.workspace_id)
+
+    def read(model: str, slots: tuple[int, int]) -> dict[str, list[dict[str, Any]]]:
+        rows = client._query(
+            sql,
+            params={
+                "tenant_id": tenant_id,
+                "model": model,
+                "slot_low": slots[0],
+                "slot_high": slots[1],
+            },
+        )
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            groups.setdefault(str(row["model"]), []).append(row)
+        return groups
+
+    last = analytics_module.ELAPSED_LAST_SLOT
+    medians: dict[str, int | None] = {}
+    for model, rows in read("", (last, last)).items():
+        settled = settle_elapsed_median(rows)
+        if not isinstance(settled, dict):
+            settled = settle_elapsed_median(read(model, settled)[model])
+        assert isinstance(settled, dict)
+        medians[model] = settled["median_ms"]
+
+    assert medians == {
+        model: _row_by_row_median([value for value in values if value is not None])
+        for model, values in elapsed_by_model.items()
+    }
+    assert medians == {"model-fast": 125, "model-slow": 40_500, "model-untimed": None}
 
 
 def test_activity_elapsed_summary_counts_a_replayed_generation_once() -> None:

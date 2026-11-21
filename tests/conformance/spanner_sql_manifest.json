@@ -5317,7 +5317,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_elapsed_summary:1": {
-      "fingerprint": "a95a06181ebc8876102958eba689180f13c4aa9ef99ec9afa88d90f5b60d650c",
+      "fingerprint": "6e1d5c0c93391d8428e7e762f01f5019c9ff9f921fdc8a693aff2b8a511e941d",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:routing_traffic:1": {

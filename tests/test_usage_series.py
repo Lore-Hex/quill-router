@@ -692,6 +692,9 @@ def test_console_activity_page_remembers_range_cancels_and_offers_retry() -> Non
     assert "window.localStorage.getItem(RANGE_STORAGE_KEY)" in page
     assert "window.localStorage.setItem(RANGE_STORAGE_KEY, range)" in page
     assert page.index("restoreRange();\n    loadUsage();") > 0
+    # The range is published to the rest of the page before the request starts.
+    assert 'new CustomEvent("activity:range-change", { detail: { range } })' in page
+    assert page.index("publishRange(state.range);") < page.index("inFlight.abort();")
     # A superseded request is cancelled.
     assert "inFlight.abort();" in page
     assert "signal: inFlight ? inFlight.signal : undefined" in page

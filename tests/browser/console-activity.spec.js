@@ -275,3 +275,85 @@ test('keeps the client telemetry and says so when the server median could not be
   await expect(panel.locator('[data-client-server]')).toHaveText('\u2014');
   await expect(panel.locator('[data-client-server-sub]')).toHaveText('server p50 is unavailable right now');
 });
+
+// Other parts of the page follow the usage range through this event:
+// `activity:range-change` on document, detail { range }.
+async function listen(page) {
+  await page.addInitScript(() => {
+    window.rangeEvents = [];
+    document.addEventListener('activity:range-change', event => window.rangeEvents.push(event.detail));
+  });
+}
+const published = (page) => page.evaluate(() => window.rangeEvents);
+const current = (page) => page.locator('[data-usage-panel]').getAttribute('data-usage-range');
+
+test('publishes the range on load and on a radio change, before the answer arrives', async ({ page }) => {
+  await listen(page);
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await open(page, async (route, range) => { await held; return route.fulfill({ json: usage(range) }).catch(() => {}); });
+  const { loading, total, choose } = parts(page);
+
+  await expect(loading).toBeVisible();
+  expect(await published(page)).toEqual([{ range: '30d' }]);
+  expect(await current(page)).toBe('30d');
+
+  await choose('7d');
+  expect(await published(page)).toEqual([{ range: '30d' }, { range: '7d' }]);
+  expect(await current(page)).toBe('7d');
+
+  release();
+  await expect(total).toHaveText('$7.00');
+  expect(await published(page)).toEqual([{ range: '30d' }, { range: '7d' }]);
+});
+
+test('publishes the remembered range once on load', async ({ page }) => {
+  await listen(page);
+  await page.addInitScript(() => window.localStorage.setItem('tr.console.activity.usage-range', '7d'));
+  await open(page, ok);
+  const { total } = parts(page);
+
+  await expect(total).toHaveText('$7.00');
+  // The restored range only, not the default and then the restored one.
+  expect(await published(page)).toEqual([{ range: '7d' }]);
+  expect(await current(page)).toBe('7d');
+});
+
+test('publishes the range the "Show 90 days" control selects, even when that request fails', async ({ page }) => {
+  await listen(page);
+  const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+  const requested = await open(page, (route, range) => (
+    range === '90d'
+      ? route.fulfill({ status: 500, json: { error: { message: 'failed' } } })
+      : route.fulfill({ json: { ...usage(range), buckets: [], by_model: {}, latest_activity_at: fortyDaysAgo } })
+  ));
+  const { panel, failure, range } = parts(page);
+  const expand = panel.locator('[data-usage-expand-range]');
+
+  await expect(expand).toHaveText('Show 90 days');
+  expect(await published(page)).toEqual([{ range: '30d' }]);
+
+  await expand.click();
+  await expect(failure).toBeVisible();
+  await expect(range('90d')).toBeChecked();
+  expect(requested).toEqual(['30d', '90d']);
+  // No change event fired and the request failed: the range was still published.
+  expect(await published(page)).toEqual([{ range: '30d' }, { range: '90d' }]);
+  expect(await current(page)).toBe('90d');
+});
+
+test('publishes the range when usage.json fails on load, and not again on Retry', async ({ page }) => {
+  await listen(page);
+  await open(page, (route, range, attempt) => (
+    attempt === 1 ? route.fulfill({ status: 500, json: { error: { message: 'failed' } } }) : ok(route, range)
+  ));
+  const { failure, total } = parts(page);
+
+  await expect(failure).toBeVisible();
+  expect(await published(page)).toEqual([{ range: '30d' }]);
+
+  await failure.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(total).toHaveText('$30.00');
+  // The same range again is not a change.
+  expect(await published(page)).toEqual([{ range: '30d' }]);
+});
