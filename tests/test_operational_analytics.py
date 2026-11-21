@@ -1688,7 +1688,8 @@ def test_account_refusal_samples_read_filters_in_clickhouse() -> None:
         cutoff="2026-11-20T16:00:00Z", per_route_limit=20, limit=4000,
     ) == []
     [query] = seen
-    for clause in ("source = 'organic'", "usage_type = 'Credits'", "error_status IN (401, 403)",
+    for clause in ("source IN ('organic', 'synthetic')", "usage_type = 'Credits'",
+                   "error_status IN (401, 403)",
                    "route_rank <= {per_route_limit:UInt32}", "LIMIT {limit:UInt32}",
                    "(provider, model) IN ("):
         assert clause in query
@@ -1723,7 +1724,7 @@ def test_memory_account_refusal_read_filters_and_orders() -> None:
         ("new", "2026-11-20T16:40:00Z", {}),
         ("older", "2026-11-20T16:30:00Z", {"error_status": 401}),
         ("byok", "2026-11-20T16:45:00Z", {"usage_type": "BYOK"}),
-        ("probe", "2026-11-20T16:45:00Z", {"source": "synthetic"}),
+        ("probe", "2026-11-20T16:45:00Z", {"source": "synthetic_throughput"}),
         ("gone", "2026-11-20T10:00:00Z", {}),
         ("recovered", "2026-11-20T16:50:00Z", {"status": "success", "error_status": None}),
         ("other-route-ok", "2026-11-20T16:50:00Z",

@@ -91,7 +91,7 @@ class InMemoryGenerations:
             organic = [
                 sample
                 for sample in self.provider_benchmarks
-                if sample.source == "organic"
+                if sample.source in {"organic", "synthetic"}
                 and sample.usage_type == "Credits"
                 and sample.created_at >= cutoff
             ]

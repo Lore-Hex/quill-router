@@ -4682,6 +4682,52 @@ def test_mixed_configuration_streaks_keep_the_generic_wording(
     assert "6 consecutive configured-route probes" in captured[0]
 
 
+def test_fast_refusal_pass_honours_a_successful_probe() -> None:
+    probe_ok = dataclasses.replace(
+        _route_health_sample("probe-ok", provider="maple", model="m", status="success"),
+        created_at=(dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)).isoformat(),
+    )
+    samples = [probe_ok] + [_refusal_sample(i, m) for i, m in enumerate((6, 12, 18))]
+    assert evaluate_account_refusals(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    ) == []
+
+
+def test_two_hundred_busy_refused_routes_do_not_hide_a_quiet_one() -> None:
+    busy = [
+        dataclasses.replace(_refusal_sample(r * 100 + i, i * 0.01), provider="busy", model=f"b{r}")
+        for r in range(200) for i in range(25)
+    ]
+    quiet = [_refusal_sample(90_000 + i, m) for i, m in enumerate((1, 6, 12))]
+    routes = [("busy", f"b{r}") for r in range(200)] + [("maple", "m")]
+    flags = evaluate_account_refusals(  # type: ignore[arg-type]
+        _RouteHealthStore(busy + quiet), routes=routes,
+    )
+    assert ("maple", "m") in {(flag.provider, flag.model) for flag in flags}
+
+
+def test_fast_refusal_read_errors_propagate_but_the_hourly_sweep_survives() -> None:
+    class Broken(_RouteHealthStore):
+        def provider_account_refusal_samples(self, **_kwargs: object) -> list[ProviderBenchmarkSample]:
+            raise TimeoutError("clickhouse connect timeout")
+
+    with pytest.raises(TimeoutError):
+        evaluate_account_refusals(Broken([]), routes=[("maple", "m")])  # type: ignore[arg-type]
+    assert evaluate_route_health(Broken([]), routes=[("maple", "m")]) == []  # type: ignore[arg-type]
+
+
+def test_fast_refusal_reports_once_per_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.synthetic import route_health
+
+    monkeypatch.setattr(route_health, "_FAST_REFUSAL_REPORTED", {})
+    flag = RouteHealthFlag("maple", "m", 3, 3, 1.0, "provider_auth_config", None,
+                           kind="configuration", account_refusal=True)
+    t0 = dt.datetime(2026, 11, 21, 2, 0, tzinfo=dt.UTC)
+    assert route_health.unreported_account_refusals([flag], now=t0) == [flag]
+    assert route_health.unreported_account_refusals([flag], now=t0 + dt.timedelta(minutes=3)) == []
+    assert route_health.unreported_account_refusals([flag], now=t0 + dt.timedelta(minutes=61)) == [flag]
+
+
 def test_account_refusal_streak_breaks_on_success() -> None:
     samples = [_refusal_sample(i, m) for i, m in enumerate((6, 12, 18))]
     samples.insert(0, _route_health_sample("ok", provider="maple", model="m", status="success"))
@@ -5218,21 +5264,54 @@ def test_internal_route_health_account_refusal_scope_skips_the_full_sweep(
     def no_full_sweep(_store: object) -> list[RouteHealthFlag]:
         raise AssertionError("the account-refusal scope must not run the full sweep")
 
+    from trusted_router.synthetic import route_health
+
+    monkeypatch.setattr(route_health, "_FAST_REFUSAL_REPORTED", {})
     monkeypatch.setattr(synthetic_routes, "evaluate_route_health", no_full_sweep)
     monkeypatch.setattr(synthetic_routes, "evaluate_account_refusals", lambda _store: [flag])
     monkeypatch.setattr(synthetic_routes, "report_route_health", reported.extend)
     client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
 
+    # The hourly sweep's slot being held must not block the fast scope (and
+    # the fast scope never takes the sweep's slot).
+    sweep_slot = synthetic_routes._OPERATION_SLOTS["route_health"]  # noqa: SLF001
+    assert sweep_slot.acquire(blocking=False)
+    try:
+        responses = [client.post(
+            "/v1/internal/synthetic/route-health?scope=account_refusals",
+            headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+        ) for _ in range(2)]
+    finally:
+        sweep_slot.release()
+
+    for response in responses:
+        assert response.status_code == 200
+        assert response.json() == {"data": {
+            "flagged": [asdict(flag)], "evaluated": True, "scope": "account_refusals",
+        }}
+    # Two passes, one alert: the fast scope reports a route once per cooldown.
+    assert reported == [flag]
+
+
+def test_internal_route_health_account_refusal_scope_reports_blind_not_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx as _httpx
+
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    def unreachable(_store: object) -> list[RouteHealthFlag]:
+        raise _httpx.ConnectTimeout("clickhouse")
+
+    monkeypatch.setattr(synthetic_routes, "evaluate_account_refusals", unreachable)
+    monkeypatch.setattr(synthetic_routes, "is_analytics_unavailable", lambda exc: True)
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
     response = client.post(
         "/v1/internal/synthetic/route-health?scope=account_refusals",
         headers={"x-trustedrouter-internal-token": "test-observer-secret"},
     )
-
     assert response.status_code == 200
-    assert response.json() == {"data": {
-        "flagged": [asdict(flag)], "evaluated": True, "scope": "account_refusals",
-    }}
-    assert reported == [flag]
+    assert response.json()["data"]["evaluated"] is False
 
 
 def test_internal_route_health_is_unevaluated_not_500_when_clickhouse_is_unreachable(

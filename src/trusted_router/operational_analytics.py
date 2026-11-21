@@ -311,12 +311,12 @@ FORMAT JSON
     def account_refusal_samples(
         self, *, cutoff: str, per_route_limit: int, limit: int,
     ) -> list[ProviderBenchmarkSample]:
-        """Recent organic Credits samples of every route a provider refused.
+        """Recent Credits samples of every route a provider refused.
 
         A route qualifies with one HTTP 401/403 since the cutoff; its newest
-        organic Credits samples then come back whatever their outcome, so a
-        success after the refusals ends the streak. Capped per route, so one
-        busy refused route cannot crowd out a quiet one.
+        organic and probe Credits samples then come back whatever their
+        outcome, so a success after the refusals ends the streak. Capped per
+        route, so one busy refused route cannot crowd out a quiet one.
         """
         rows = self._query(
             """
@@ -332,12 +332,12 @@ FROM
     PARTITION BY provider, model ORDER BY created_at DESC, id DESC
   ) AS route_rank
   FROM provider_benchmark_samples FINAL
-  WHERE source = 'organic'
+  WHERE source IN ('organic', 'synthetic')
     AND usage_type = 'Credits'
     AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
     AND (provider, model) IN (
       SELECT provider, model FROM provider_benchmark_samples FINAL
-      WHERE source = 'organic'
+      WHERE source IN ('organic', 'synthetic')
         AND usage_type = 'Credits'
         AND error_status IN (401, 403)
         AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -50,7 +51,13 @@ ACCOUNT_REFUSAL_MIN_SAMPLES = 3
 ACCOUNT_REFUSAL_MIN_SPAN = dt.timedelta(minutes=10)
 ACCOUNT_REFUSAL_SATURATED = 20
 ACCOUNT_REFUSAL_MAX_AGE = dt.timedelta(hours=1)
-ACCOUNT_REFUSAL_READ_LIMIT = 4000
+# Total rows: one full per-route window for every candidate route, bounded.
+ACCOUNT_REFUSAL_READ_LIMIT_MAX = 50_000
+# The fast pass reports a refused route once per hour per process; the hourly
+# sweep keeps re-reporting on its own cadence while the refusal lasts.
+ACCOUNT_REFUSAL_FAST_COOLDOWN = dt.timedelta(hours=1)
+_FAST_REFUSAL_REPORTED: dict[tuple[str, str], dt.datetime] = {}
+_FAST_REFUSAL_LOCK = threading.Lock()
 # Same bound the sample write paths apply (probes._rotation_error_sample and
 # the internal benchmark ingest), re-applied here so an alert never carries
 # more than a stored sample could.
@@ -149,7 +156,8 @@ def evaluate_route_health(
         route_samples = samples_by_route[(provider, model)]
         refusal = _account_refusal_flag(
             provider, model,
-            route_samples + refusals_by_route.get((provider, model), []), now, cutoff,
+            _unique_samples(route_samples + refusals_by_route.get((provider, model), [])),
+            now, cutoff,
         )
         if refusal is not None:
             flags.append(refusal)
@@ -418,7 +426,7 @@ def evaluate_account_refusals(
             for model in models
         ]
     route_set = set(routes)
-    by_route = _account_refusals_by_route(store, route_set, now)
+    by_route = _account_refusals_by_route(store, route_set, now, strict=True)
     cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
     flags = []
     for provider, model in sorted(by_route):
@@ -428,22 +436,49 @@ def evaluate_account_refusals(
     return flags
 
 
-def _account_refusals_by_route(
-    store: Store, routes: set[tuple[str, str]], now: dt.datetime,
-) -> dict[tuple[str, str], list[ProviderBenchmarkSample]]:
-    """Newest organic Credits samples of each route refused in the last hour.
+def unreported_account_refusals(
+    flags: list[RouteHealthFlag], *, now: dt.datetime | None = None,
+) -> list[RouteHealthFlag]:
+    """The fast pass's flags not already reported within the cooldown.
 
-    Best effort: a failed read only loses the fast path; the synthetic
-    configured-route rule still alerts on its own evidence.
+    Without this every pass (about every three minutes) re-emitted the same
+    refusal. A route that recovers and is refused again after the cooldown
+    alerts again.
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    fresh = []
+    with _FAST_REFUSAL_LOCK:
+        for flag in flags:
+            route = (flag.provider, flag.model)
+            last = _FAST_REFUSAL_REPORTED.get(route)
+            if last is not None and now - last < ACCOUNT_REFUSAL_FAST_COOLDOWN:
+                continue
+            _FAST_REFUSAL_REPORTED[route] = now
+            fresh.append(flag)
+    return fresh
+
+
+def _account_refusals_by_route(
+    store: Store, routes: set[tuple[str, str]], now: dt.datetime, *, strict: bool = False,
+) -> dict[tuple[str, str], list[ProviderBenchmarkSample]]:
+    """Newest Credits samples (organic and probe) of each recently refused route.
+
+    In the hourly sweep a failed read only loses the fast path; the synthetic
+    configured-route rule still alerts on its own evidence. The every-pass
+    scope has no other evidence, so there (strict) the error propagates and
+    the endpoint reports the pass as not evaluated.
     """
     cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
     try:
         samples = store.provider_account_refusal_samples(
             cutoff=cutoff.isoformat().replace("+00:00", "Z"),
             per_route_limit=ACCOUNT_REFUSAL_SATURATED,
-            limit=ACCOUNT_REFUSAL_READ_LIMIT,
+            limit=min(ACCOUNT_REFUSAL_READ_LIMIT_MAX,
+                      ACCOUNT_REFUSAL_SATURATED * max(1, len(routes))),
         )
-    except Exception:  # noqa: BLE001 - monitoring must not fail the sweep
+    except Exception:
+        if strict:
+            raise
         logger.warning("route_health.account_refusal_read_failed", exc_info=True)
         return {}
     by_route: dict[tuple[str, str], list[ProviderBenchmarkSample]] = {}
@@ -452,6 +487,17 @@ def _account_refusals_by_route(
         if route in routes:
             by_route.setdefault(route, []).append(sample)
     return by_route
+
+
+def _unique_samples(samples: list[ProviderBenchmarkSample]) -> list[ProviderBenchmarkSample]:
+    # The refusal read and the synthetic window both carry probe samples.
+    seen: set[str] = set()
+    unique = []
+    for sample in samples:
+        if sample.id not in seen:
+            seen.add(sample.id)
+            unique.append(sample)
+    return unique
 
 
 def _account_refusal_flag(
