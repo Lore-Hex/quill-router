@@ -37,6 +37,32 @@ def test_api_failure_alert_excludes_retry_status_case_variants() -> None:
         assert f'metric.labels.status != "{status}"' in policy
 
 
+def test_api_failure_alert_outlasts_a_rollout_burst_not_an_incident() -> None:
+    """A revision rollout's failure burst (three minutes on 2026-11-10) keeps
+    the 300-second rate above threshold for at most seven minutes; the
+    2026-11-11 incident kept it there for about fifteen. Ten minutes pages on
+    the second only, at the unchanged one-per-minute threshold."""
+    policy = yaml.safe_load(
+        (DEPLOY / "spanner-alerts" / "api-failures.yaml").read_text(encoding="utf-8")
+    )
+    (condition,) = policy["conditions"]
+    threshold = condition["conditionThreshold"]
+
+    assert condition["displayName"] == (
+        "Unexpected API failures exceed one per minute for 10 minutes"
+    )
+    assert threshold["aggregations"] == [
+        {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+        }
+    ]
+    assert threshold["comparison"] == "COMPARISON_GT"
+    assert threshold["thresholdValue"] == 0.016666667
+    assert threshold["duration"] == "600s"
+
+
 def test_high_priority_cpu_alert_keeps_short_spikes_visible() -> None:
     policy = (DEPLOY / "spanner-alerts" / "high-priority-cpu.yaml").read_text(
         encoding="utf-8"
