@@ -263,6 +263,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/compare/models",
     *(comparison.href for comparison in COMPETITOR_COMPARISONS),
     # SEO landing pages — each targets a high-intent buyer query.
+    "/openrouter",
     "/openrouter-alternative",
     "/private-llm-api",
     "/hipaa-llm-api",
