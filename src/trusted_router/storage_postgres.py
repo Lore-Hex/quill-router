@@ -7786,16 +7786,20 @@ class PostgresStore(OperationalAnalyticsReads):
         def list_refusals(conn: Any) -> list[ProviderBenchmarkSample]:
             # Same bounded window as provider_route_benchmark_samples: kind plus
             # a range on indexed_at, the leading columns of tr_entities_recent.
-            # A route with one 401/403 in the window returns its newest organic
-            # and probe Credits samples whatever their outcome, so a recovery ends the
-            # streak; the per-route cap keeps a busy route from crowding out
-            # a quiet one.
+            # Probe samples only here. This backend records a successful organic
+            # request as a generation row, not a provider_benchmark row, so its
+            # organic recoveries are invisible to this read; counting organic
+            # refusals without them would alert on a provider that already
+            # recovered. Probes carry both outcomes. A route with one 401/403
+            # in the window returns its newest probe Credits samples whatever
+            # their outcome; the per-route cap keeps a busy route from
+            # crowding out a quiet one.
             rows = conn.execute(
                 "WITH organic AS ("
                 "SELECT body, id, indexed_at FROM tr_entities "
                 "WHERE kind = 'provider_benchmark' "
                 "AND indexed_at >= %s::timestamptz "
-                "AND body ->> 'source' IN ('organic', 'synthetic') "
+                "AND body ->> 'source' = 'synthetic' "
                 "AND body ->> 'usage_type' = 'Credits'"
                 "), refused AS ("
                 "SELECT DISTINCT body ->> 'provider' AS provider, body ->> 'model' AS model "

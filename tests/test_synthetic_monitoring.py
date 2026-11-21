@@ -4750,6 +4750,24 @@ def test_hourly_sweep_does_not_bridge_an_organic_recovery_with_old_probes() -> N
     assert not any(flag.account_refusal for flag in flags)
 
 
+def test_hourly_sweep_skips_the_refusal_rule_when_its_read_fails() -> None:
+    # Fourth Codex review: probe 403s at 40, 20 and 5 minutes and an organic
+    # success a minute ago; with the refusal read down, no refusal alert.
+    class Broken(_RouteHealthStore):
+        def provider_account_refusal_samples(self, **_kwargs: object) -> list[ProviderBenchmarkSample]:
+            raise TimeoutError("clickhouse connect timeout")
+
+    probes = [
+        _refusal_sample(i, m, source="synthetic", error_type="provider_auth_config")
+        for i, m in enumerate((5, 20, 40))
+    ]
+    flags = evaluate_route_health(Broken(probes), routes=[("maple", "m")])  # type: ignore[arg-type]
+    assert not any(flag.account_refusal for flag in flags)
+    assert any(flag.account_refusal for flag in evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(probes), routes=[("maple", "m")],
+    ))
+
+
 def test_account_refusal_streak_breaks_on_success() -> None:
     samples = [_refusal_sample(i, m) for i, m in enumerate((6, 12, 18))]
     samples.insert(0, _route_health_sample("ok", provider="maple", model="m", status="success"))

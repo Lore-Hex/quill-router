@@ -154,7 +154,7 @@ def evaluate_route_health(
     flags: list[RouteHealthFlag] = []
     for provider, model in routes:
         route_samples = samples_by_route[(provider, model)]
-        refusal = _account_refusal_flag(
+        refusal = None if refusals_by_route is None else _account_refusal_flag(
             provider, model,
             _unique_samples(route_samples + refusals_by_route.get((provider, model), [])),
             now, cutoff,
@@ -427,6 +427,7 @@ def evaluate_account_refusals(
         ]
     route_set = set(routes)
     by_route = _account_refusals_by_route(store, route_set, now, strict=True)
+    assert by_route is not None  # strict re-raises instead
     cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
     flags = []
     for provider, model in sorted(by_route):
@@ -460,7 +461,7 @@ def unreported_account_refusals(
 
 def _account_refusals_by_route(
     store: Store, routes: set[tuple[str, str]], now: dt.datetime, *, strict: bool = False,
-) -> dict[tuple[str, str], list[ProviderBenchmarkSample]]:
+) -> dict[tuple[str, str], list[ProviderBenchmarkSample]] | None:
     """Newest Credits samples (organic and probe) of each recently refused route.
 
     In the hourly sweep a failed read only loses the fast path; the synthetic
@@ -480,7 +481,9 @@ def _account_refusals_by_route(
         if strict:
             raise
         logger.warning("route_health.account_refusal_read_failed", exc_info=True)
-        return {}
+        # None, not {}: without this read the rule has no recovery evidence,
+        # so the sweep skips it rather than judge refusals from probes alone.
+        return None
     by_route: dict[tuple[str, str], list[ProviderBenchmarkSample]] = {}
     for sample in samples:
         route = (sample.provider, sample.model)

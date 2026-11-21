@@ -310,8 +310,10 @@ def test_account_refusal_samples_are_recent_organic_credits_401_403(pg_store: An
         )
         return [row.id for row in rows]
 
-    # A refused route's organic and probe Credits samples, whatever the
-    # outcome, newest first; BYOK, other sources, old rows and never-refused
-    # routes stay out.
-    assert window(20) == ["recovered", "probe-ok", "r403", "outage", "r401"]
-    assert window(2) == ["recovered", "probe-ok"]
+    # Probe samples only: this backend records organic successes as
+    # generation rows, so organic refusals alone would never see a recovery.
+    # Here the organic rows stay out, as do BYOK, other sources and old rows.
+    assert window(20) == []
+    record("probe-403", 9, source="synthetic", error_type="provider_auth_config")
+    assert window(20) == ["probe-ok", "probe-403"]
+    assert window(1) == ["probe-ok"]
