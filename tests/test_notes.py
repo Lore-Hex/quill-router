@@ -25,3 +25,13 @@ def test_notes_served_from_published_output(client: TestClient, monkeypatch, pat
 
 def test_sitemap_index_lists_notes(client: TestClient):
     assert "<loc>https://trustedrouter.com/sitemap-notes.xml</loc>" in client.get("/sitemap.xml").text
+
+
+def test_notice_landing_page_and_original_ad_url(client: TestClient):
+    response = client.get("/notes/openrouter-minimax-prompt-notice?gclid=test", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["location"] == "/openrouter?gclid=test"
+    page = client.get(response.headers["location"])
+    assert page.status_code == 200
+    assert '<link rel="canonical" href="https://trustedrouter.com/openrouter">' in page.text
+    assert 'id="switch"' in page.text

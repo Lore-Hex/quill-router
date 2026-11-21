@@ -263,6 +263,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/compare/models",
     *(comparison.href for comparison in COMPETITOR_COMPARISONS),
     # SEO landing pages — each targets a high-intent buyer query.
+    "/openrouter",
     "/openrouter-alternative",
     "/private-llm-api",
     "/hipaa-llm-api",
@@ -3249,6 +3250,10 @@ def _green_tokens_context() -> dict[str, Any]:
         for endpoint in endpoints_for_model(candidate.id)
         if endpoint.usage_type == "Credits" and endpoint.provider in renewable_provider_slugs()
     ]}
+
+
+def public_openrouter_notice_html() -> str:
+    return _env().get_template("public/openrouter_notice.html").render()
 
 
 def public_openrouter_experiment_html(settings: Settings, variant_slug: str) -> str:
