@@ -348,7 +348,7 @@ _PARITY_ROWS: list[tuple[str, str, str, str]] = [
     ("2026-09-30T23:59:59.999Z", "b", "model-b", "BYOK"),  # month boundary
     ("2026-10-01T00:00:00.000Z", "a", "model-b", "Credits"),
     ("2026-10-02T23:59:59.999Z", "a", "model-a", "Credits"),  # last ms before 30d
-    ("2026-10-03T00:00:00.000Z", "b", "model-a", "BYOK"),  # first ms of 30d
+    ("2026-10-03T00:00:00.000Z", "b", "model-a", "\tBYOK\t"),  # first ms of 30d, tabs stored
     ("2026-10-25T23:59:59.999Z", "a", "model-b", "Credits"),  # last ms before 7d
     ("2026-10-26T00:00:00.000Z", "a", "model-a", "Credits"),  # first ms of 7d
     ("2026-10-31T00:07:29.999Z", "b", "model-a", "Credits"),  # just outside 24h
@@ -416,7 +416,7 @@ def _parity_fixture() -> tuple[InMemoryStore, ActivityClickHouse, str, dict[str,
         )
         store.add_generation(generation)
         # A Generation normalizes its usage type. The column gets the value
-        # as written here, so the SQL does the normalizing for " Byok ".
+        # as written here, so the reader has " Byok " and tabs to normalize.
         stored = {"usage_type": usage_type}
         if index % 5 == 0:
             # A first delivery with other numbers, then the settled row: the

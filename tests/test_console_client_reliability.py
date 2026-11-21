@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import logging
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,6 +17,7 @@ from trusted_router.routes.console import activity as activity_routes
 from trusted_router.storage import STORE
 from trusted_router.storage_models import Generation
 from trusted_router.storage_operational_analytics import analytics_surrogate
+from trusted_router.types import UsageType
 
 
 def _signed_in_client(
@@ -201,7 +204,7 @@ def test_client_reliability_server_median_covers_the_whole_range(
         tokens_prompt=1,
         tokens_completion=1,
         total_cost_microdollars=1,
-        usage_type="Credits",
+        usage_type=UsageType.CREDITS,
         speed_tokens_per_second=1.0,
         finish_reason="stop",
         status="success",
@@ -250,9 +253,12 @@ def test_client_reliability_server_median_covers_the_whole_range(
         "freshness_seconds": 0,
     }
     assert fake.activity_tenants == [analytics_surrogate("workspace", workspace_id)]
-    [query] = database.queries
-    assert "FROM activity_generations FINAL" in query
-    assert "LIMIT" not in query
+    # A coarse histogram (one slot holds both speeds), then that slot's two
+    # distinct values: three result rows for 10,002 generations.
+    assert len(database.queries) == 2
+    assert all("FROM activity_generations FINAL" in query for query in database.queries)
+    assert all("LIMIT" not in query for query in database.queries)
+    assert database.returned == [1, 2]
 
 
 def test_client_reliability_has_no_server_median_without_timed_generations(
@@ -270,6 +276,109 @@ def test_client_reliability_has_no_server_median_without_timed_generations(
     assert payload["data"]["server_p50_elapsed_ms"] is None
     assert payload["meta"]["scanned"] == 1
     assert payload["meta"]["truncated"] is False
+
+
+class _FailingMedianAnalytics(_FakeAnalytics):
+    """Client telemetry reads work; the server-elapsed read fails until told otherwise."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error: Exception | None = error
+
+    def activity_elapsed_summary(
+        self,
+        *,
+        tenant_id: str,
+        start_at: str,
+    ) -> dict[str, int | None]:
+        self.activity_tenants.append(tenant_id)
+        if self.error is not None:
+            raise self.error
+        return {"generations": 3, "samples": 3, "median_ms": 20}
+
+
+def _memory_limit_exceeded() -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://clickhouse.test:8123")
+    response = httpx.Response(500, text="Code: 241. MEMORY_LIMIT_EXCEEDED", request=request)
+    return httpx.HTTPStatusError("memory limit exceeded", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    ("error", "logged_as"),
+    [
+        (_memory_limit_exceeded(), logging.ERROR),
+        (httpx.ConnectTimeout("ClickHouse did not answer"), logging.WARNING),
+    ],
+    ids=["query-failed", "unreachable"],
+)
+def test_client_reliability_keeps_client_telemetry_when_the_server_median_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    logged_as: int,
+) -> None:
+    activity_routes._CLIENT_RELIABILITY_CACHE.clear()
+    client, _workspace_id = _signed_in_client(email=f"client-partial-{logged_as}@example.com")
+    fake = _FailingMedianAnalytics(error)
+    monkeypatch.setattr(activity_routes, "_operational_analytics_client", lambda _settings: fake)
+
+    with caplog.at_level(logging.WARNING, logger=activity_routes.__name__):
+        response = client.get("/console/activity/client-reliability.json?range=24h")
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Everything the other two reads returned is still there.
+    assert payload["data"]["summary"]["requests"] == 200
+    assert payload["data"]["summary"]["availability_percent"] == 99.0
+    assert payload["data"]["top_errors"] == [
+        {"error_class": "connect_timeout", "http_status": None, "count": 1}
+    ]
+    assert len(payload["data"]["recent_failures"]) == 1
+    # The median is absent, and marked as not read rather than as "no timed requests".
+    assert payload["data"]["server_p50_elapsed_ms"] is None
+    assert payload["meta"] == {
+        "scanned": 1,
+        "truncated": False,
+        "freshness_seconds": 0,
+        "server_elapsed": "unavailable",
+    }
+    # A query that failed is an error to look at; an unreachable cluster is the
+    # one stable warning every degraded read logs.
+    assert [
+        record.levelno for record in caplog.records if record.name == activity_routes.__name__
+    ] == [logged_as]
+
+    # Not cached: the next request reads again, and shows the median once it can be read.
+    fake.error = None
+    recovered = client.get("/console/activity/client-reliability.json?range=24h").json()
+    assert recovered["data"]["server_p50_elapsed_ms"] == 20
+    assert "server_elapsed" not in recovered["meta"]
+    assert len(fake.summary_tenants) == 2
+    # The complete answer is cached as before.
+    client.get("/console/activity/client-reliability.json?range=24h")
+    assert len(fake.summary_tenants) == 2
+
+
+def test_client_reliability_whole_read_failure_is_still_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchanged: without the client telemetry itself there is nothing to show."""
+    activity_routes._CLIENT_RELIABILITY_CACHE.clear()
+    client, _workspace_id = _signed_in_client(email="client-total-failure@example.com")
+
+    class _Down(_FakeAnalytics):
+        def client_reliability_summary(self, tenant_id: str, *, window_minutes: int) -> dict[str, Any]:
+            self.summary_tenants.append(tenant_id)
+            raise httpx.ConnectTimeout("ClickHouse did not answer")
+
+    fake = _Down()
+    monkeypatch.setattr(activity_routes, "_operational_analytics_client", lambda _settings: fake)
+
+    response = client.get("/console/activity/client-reliability.json?range=24h")
+
+    assert response.status_code == 200
+    assert response.json() == {"data": None, "meta": {"reason": "unavailable"}}
+    assert fake.activity_tenants == []
 
 
 def test_client_reliability_cache_expires_after_sixty_seconds(

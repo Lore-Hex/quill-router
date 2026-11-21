@@ -11,8 +11,7 @@ differently is rewritten:
   key ``(tenant_id, created_at, generation_id)``, the row with the highest
   ``ingest_version``: what a ReplacingMergeTree returns under FINAL. The same
   text without FINAL reads the raw table, replayed deliveries included.
-* ``quantileExactLow(0.5)(x)`` and ``quantileExactHigh(0.5)(x)`` become plain
-  aggregates, and ``tags[key]`` a function call.
+* ``tags[key]`` becomes a function call.
 
 The ClickHouse functions those queries call are registered with ClickHouse's
 meaning, including the trap that ``%M`` in ``formatDateTime`` is the month
@@ -28,7 +27,6 @@ import datetime as dt
 import json
 import re
 import sqlite3
-import statistics
 from typing import Any
 
 import httpx
@@ -36,6 +34,7 @@ import httpx
 from trusted_router.operational_analytics import OperationalAnalyticsClient
 from trusted_router.storage_models import Generation
 from trusted_router.storage_operational_analytics import activity_payload
+from trusted_router.types import UsageType
 
 _TEMPLATE = Generation(
     id="template",
@@ -48,7 +47,7 @@ _TEMPLATE = Generation(
     tokens_prompt=0,
     tokens_completion=0,
     total_cost_microdollars=0,
-    usage_type="Credits",
+    usage_type=UsageType.CREDITS,
     speed_tokens_per_second=0.0,
     finish_reason="stop",
     status="success",
@@ -99,33 +98,13 @@ def _start_of_five_minutes(text: str) -> str:
     return _stored(moment.replace(minute=moment.minute // 5 * 5, second=0, microsecond=0))
 
 
-class _Median:
-    """``quantileExactLow(0.5)`` / ``quantileExactHigh(0.5)``: NULLs are skipped."""
-
-    pick = staticmethod(statistics.median_low)
-
-    def __init__(self) -> None:
-        self.values: list[int] = []
-
-    def step(self, value: int | None) -> None:
-        if value is not None:
-            self.values.append(value)
-
-    def finalize(self) -> Any:
-        # None, not zero, when no row carried a value (SQL NULL).
-        return self.pick(self.values) if self.values else None
-
-
-class _MedianHigh(_Median):
-    pick = staticmethod(statistics.median_high)
-
-
 class ActivityClickHouse:
     """An in-memory ``activity_generations`` table behind the real reader client."""
 
     def __init__(self) -> None:
         self.queries: list[str] = []
         self.params: list[dict[str, str]] = []
+        self.returned: list[int] = []  # rows each query sent back
         self._versions = 0
         self.connection = sqlite3.connect(":memory:", check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
@@ -159,8 +138,7 @@ WHERE NOT EXISTS (
         create("toDate", 1, lambda text: _stored(_moment(text))[:10])
         create("mapContains", 2, lambda tags, key: int(key in json.loads(tags)))
         create("mapValue", 2, lambda tags, key: json.loads(tags).get(key, ""))
-        self.connection.create_aggregate("median_low", 1, _Median)
-        self.connection.create_aggregate("median_high", 1, _MedianHigh)
+        create("intDiv", 2, lambda left, right: None if left is None else left // right)
 
     def add(self, generation: Generation, **columns: Any) -> None:
         """Deliver one generation. Call again for the same one to replay it.
@@ -203,8 +181,6 @@ WHERE NOT EXISTS (
             bound[name] = int(raw[name]) if "Int" in kind else raw[name]
         sql = _PLACEHOLDER.sub(r":\1", sql)
         sql = sql.replace("FROM activity_generations FINAL", "FROM activity_generations_final")
-        sql = re.sub(r"quantileExactLow\(0\.5\)\(", "median_low(", sql)
-        sql = re.sub(r"quantileExactHigh\(0\.5\)\(", "median_high(", sql)
         sql = re.sub(r"\btags\[(:\w+)\]", r"mapValue(tags, \1)", sql)
         sql = re.sub(r"\s*FORMAT JSON\s*$", "", sql)
         rows = [dict(row) for row in self.connection.execute(sql, bound)]
@@ -212,4 +188,5 @@ WHERE NOT EXISTS (
             for column in _JSON_COLUMNS:
                 if column in row:
                     row[column] = json.loads(row[column])
+        self.returned.append(len(rows))
         return httpx.Response(200, json={"data": rows})

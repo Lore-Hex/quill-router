@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import inspect
 import json
+import random
 import re
 import sqlite3
 import textwrap
@@ -30,12 +31,17 @@ from clickhouse.rollup_synthetic import (
     monthly_from_daily,
 )
 from tests.fakes.clickhouse_activity import ActivityClickHouse
+from trusted_router import operational_analytics as analytics_module
 from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
     usage_buckets_query,
 )
-from trusted_router.storage_activity import generation_events, usage_bucket_key
+from trusted_router.storage_activity import (
+    generation_events,
+    generation_metrics,
+    usage_bucket_key,
+)
 from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
@@ -1058,8 +1064,8 @@ def test_usage_buckets_query_labels_each_granularity_in_utc(
     # %M is the month name in ClickHouse. A minute label must never use it.
     assert "%M" not in sql
     assert "FROM activity_generations FINAL" in sql
-    assert "GROUP BY bucket\n" in sql
-    assert "ORDER BY bucket\n" in sql
+    assert "GROUP BY bucket, usage_type\n" in sql
+    assert "ORDER BY bucket, usage_type\n" in sql
     # Grouped, so the result is small and nothing is cut off.
     assert "LIMIT" not in sql
     assert sql.rstrip().endswith("FORMAT JSON")
@@ -1076,8 +1082,8 @@ def test_usage_buckets_query_groups_by_model_only_when_asked() -> None:
 
     assert "model" not in plain.split("FROM", 1)[0]
     assert "\n  model,\n" in by_model.split("FROM", 1)[0]
-    assert "GROUP BY bucket, model\n" in by_model
-    assert "ORDER BY bucket, model\n" in by_model
+    assert "GROUP BY bucket, model, usage_type\n" in by_model
+    assert "ORDER BY bucket, model, usage_type\n" in by_model
 
 
 def test_usage_buckets_query_filters_are_bound_parameters() -> None:
@@ -1099,12 +1105,15 @@ def test_usage_buckets_query_filters_are_bound_parameters() -> None:
     }
 
 
-def test_usage_buckets_query_splits_spend_by_usage_type_without_alias_cycles() -> None:
+def test_usage_buckets_query_groups_the_stored_usage_type_without_alias_cycles() -> None:
     sql = usage_buckets_query(granularity="day", by_model=False, key_filtered=False)
 
-    byok = "lower(trim(usage_type)) = 'byok'"
-    assert f"sum(CASE WHEN {byok} THEN 0 ELSE total_cost_microdollars END) AS cost_micro" in sql
-    assert f"sum(CASE WHEN {byok} THEN total_cost_microdollars ELSE 0 END) AS byok_micro" in sql
+    # The stored value is a grouping key. Credits or BYOK is decided by the
+    # caller with UsageType.coerce, never by a string comparison in SQL, which
+    # would trim and fold case differently from Python.
+    assert "\n  usage_type,\n" in sql.split("FROM", 1)[0]
+    assert "sum(total_cost_microdollars) AS cost_total" in sql
+    assert "byok" not in sql.lower()
     # ClickHouse resolves a name inside an aggregate to a same-named alias,
     # so an alias must not repeat the column it sums.
     aliases = re.findall(r"\bAS (\w+)", sql)
@@ -1123,10 +1132,69 @@ def test_usage_buckets_query_splits_spend_by_usage_type_without_alias_cycles() -
         "prompt_tokens",
         "completion_tokens",
         "reasoning_token_total",
-        "cost_micro",
-        "byok_micro",
+        "cost_total",
     ]
     assert columns.isdisjoint(aliases)
+
+
+# Stored values as the column could hold them, canonical or not, with the
+# whitespace and case forms Python's strip() and lower() accept.
+_STORED_USAGE_TYPES = [
+    "BYOK",
+    "Credits",
+    "byok",
+    " Byok ",
+    "\tBYOK\t",
+    "byok\n",
+    "\u2003BYOK\u00a0",  # Unicode spaces, which strip() removes too
+    "BYO\u212a",  # KELVIN SIGN lower-cases to "k"
+    "credits",
+    "",
+    "byok-ish",
+    "b yok",
+]
+
+
+@pytest.mark.parametrize("stored", _STORED_USAGE_TYPES)
+def test_clickhouse_usage_reader_decides_byok_exactly_as_generation_metrics(stored: str) -> None:
+    """Whatever the column holds, the split is the one the row-by-row path made."""
+    # The row-by-row path: the reader coerced the stored value into the
+    # generation, and generation_metrics split the cost on it.
+    generation = dataclasses.replace(
+        _generation(), usage_type=UsageType.coerce(stored), total_cost_microdollars=7
+    )
+    expected = generation_metrics(generation)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "bucket": "2026-07-31",
+                        "usage_type": stored,
+                        "requests": 1,
+                        "prompt_tokens": generation.tokens_prompt,
+                        "completion_tokens": generation.tokens_completion,
+                        "reasoning_token_total": generation.reasoning_tokens,
+                        "cost_total": 7,
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+    [row] = client.activity_usage_buckets(
+        tenant_id="tenant", granularity="day", start_at="2026-07-31", end_at="2026-08-01"
+    )
+
+    assert {metric: row[metric] for metric in expected} == expected
+    assert {row["cost_micro"], row["byok_micro"]} == {0, 7}
 
 
 @pytest.mark.parametrize("key_filtered", [False, True])
@@ -1144,16 +1212,27 @@ def test_clickhouse_usage_reader_binds_filters_and_never_sends_raw_ids(
             200,
             json={
                 "data": [
+                    # One bucket and model, two stored usage types: one row out.
                     {
                         "bucket": "2026-07-31T12",
                         "model": "anthropic/claude-haiku-4.5",
-                        "requests": "3",
-                        "prompt_tokens": "36",
-                        "completion_tokens": 9,
-                        "reasoning_token_total": "3",
-                        "cost_micro": "18",
-                        "byok_micro": 9,
-                    }
+                        "usage_type": "BYOK",
+                        "requests": 1,
+                        "prompt_tokens": "12",
+                        "completion_tokens": 3,
+                        "reasoning_token_total": "1",
+                        "cost_total": 9,
+                    },
+                    {
+                        "bucket": "2026-07-31T12",
+                        "model": "anthropic/claude-haiku-4.5",
+                        "usage_type": "Credits",
+                        "requests": "2",
+                        "prompt_tokens": "24",
+                        "completion_tokens": 6,
+                        "reasoning_token_total": "2",
+                        "cost_total": "18",
+                    },
                 ]
             },
         )
@@ -1221,11 +1300,23 @@ def test_clickhouse_usage_reader_runs_the_shipped_sql_on_fixture_rows() -> None:
         database.add(generation)
     # A replayed delivery of the same generation counts once under FINAL.
     database.add(credits)
+    # The same day's BYOK spend under a spelling SQL trimming would miss.
+    database.add(
+        dataclasses.replace(byok, id="gen-byok-tabbed", total_cost_microdollars=2),
+        usage_type="\tBYOK\t",
+    )
     client = database.client()
     tenant_id = analytics_surrogate("workspace", credits.workspace_id)
-    window = {"tenant_id": tenant_id, "start_at": "2026-07-31", "end_at": "2026-08-02"}
 
-    assert client.activity_usage_buckets(granularity="day", **window) == [
+    def buckets(granularity: str) -> list[dict[str, Any]]:
+        return client.activity_usage_buckets(
+            tenant_id=tenant_id,
+            granularity=granularity,
+            start_at="2026-07-31",
+            end_at="2026-08-02",
+        )
+
+    assert buckets("day") == [
         {
             "bucket": "2026-07-31",
             "requests": 1,
@@ -1237,16 +1328,16 @@ def test_clickhouse_usage_reader_runs_the_shipped_sql_on_fixture_rows() -> None:
         },
         {
             "bucket": "2026-08-01",
-            "requests": 1,
-            "prompt_tokens": 12,
-            "completion_tokens": 3,
-            "reasoning_tokens": 1,
+            "requests": 2,
+            "prompt_tokens": 24,
+            "completion_tokens": 6,
+            "reasoning_tokens": 2,
             "cost_micro": 0,
-            "byok_micro": 40,
+            "byok_micro": 42,
         },
     ]
     for granularity in ("minute", "5min", "hour", "day"):
-        rows = client.activity_usage_buckets(granularity=granularity, **window)
+        rows = buckets(granularity)
         assert [row["bucket"] for row in rows] == [
             usage_bucket_key(credits.created_at, granularity),
             usage_bucket_key(byok.created_at, granularity),
@@ -1295,11 +1386,296 @@ def test_activity_elapsed_summary_is_a_whole_range_median_in_sql() -> None:
     ) == {"generations": 0, "samples": 0, "median_ms": None}
     [query] = set(database.queries)
     assert "FROM activity_generations FINAL" in query
-    assert "quantileExactLow(0.5)(elapsed_milliseconds)" in query
-    assert "quantileExactHigh(0.5)(elapsed_milliseconds)" in query
+    # Rows are counted per slot and, inside the middle slots, per value. An
+    # exact quantile function would keep every row's value in memory.
+    assert "GROUP BY slot, elapsed_value" in query
+    assert "quantile" not in query
     assert "LIMIT" not in query
     assert tenant_id not in query
-    assert database.params[0] == {"tenant_id": tenant_id, "start_at": "2026-07-31T12:00:00Z"}
+    # The SQL's literals are the module's histogram constants.
+    assert f"WHEN elapsed_milliseconds >= {analytics_module._ELAPSED_CEILING_MS} " in query
+    assert f"THEN {analytics_module._ELAPSED_LAST_SLOT}\n" in query
+    assert f"WHEN elapsed_milliseconds < {analytics_module._ELAPSED_CEILING_MS}\n" in query
+    assert query.count(f"intDiv(elapsed_milliseconds, {analytics_module._ELAPSED_SLOT_MS})") == 2
+    # The first read opens no slot; the second opens the slot of the middle values.
+    assert database.params[:2] == [
+        {
+            "tenant_id": tenant_id,
+            "start_at": "2026-07-31T12:00:00Z",
+            "slot_low": "65535",
+            "slot_high": "65535",
+        },
+        {
+            "tenant_id": tenant_id,
+            "start_at": "2026-07-31T12:00:00Z",
+            "slot_low": "0",
+            "slot_high": "0",
+        },
+    ]
+    # Nothing timed in the range: one read is enough.
+    assert len(database.queries) == 5
+
+
+def _row_by_row_median(values: list[int]) -> int | None:
+    """The median the page computed itself, before the SQL did."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
+
+
+def test_activity_elapsed_summary_equals_the_row_by_row_median() -> None:
+    """Odd and even counts, repeated values, untimed rows, one row, none."""
+    database = ActivityClickHouse()
+    base = _generation()
+    randomness = random.Random(20261121)  # noqa: S311 - fixture data, not a secret
+    cases: list[list[int | None]] = [
+        [],
+        [None],
+        [7],
+        [7, None],
+        [1, 2],
+        [2, 1, 2, 2],
+        [5, 5, 5, 9],
+        [3, 4, 4, 4, 9, 9],
+        # The two middle values in different slots, adjacent and far apart.
+        [1_023, 1_024],
+        [10, 2_000_000],
+        [1_023, 1_023, 1_024, 5_000],
+        # The last value before the open-ended slot, and an outlier inside it.
+        [67_107_839, 67_107_839],
+        [5, 6, 1_000_000_000_000],
+    ]
+    for _ in range(40):
+        size = randomness.randint(1, 60)
+        spread = randomness.choice([2, 5, 1_000, 3_000, 200_000])
+        cases.append(
+            [
+                None if randomness.random() < 0.2 else randomness.randrange(spread)
+                for _ in range(size)
+            ]
+        )
+    for number, values in enumerate(cases):
+        workspace = f"ws-median-{number}"
+        for index, elapsed in enumerate(values):
+            database.add(
+                dataclasses.replace(
+                    base,
+                    id=f"gen-{number}-{index}",
+                    workspace_id=workspace,
+                    elapsed_milliseconds=elapsed,
+                    created_at=f"2026-07-31T12:{index:02d}:00.000Z",
+                )
+            )
+    client = database.client()
+
+    for number, values in enumerate(cases):
+        timed = [value for value in values if value is not None]
+        assert client.activity_elapsed_summary(
+            tenant_id=analytics_surrogate("workspace", f"ws-median-{number}"),
+            start_at="2026-07-31T00:00:00Z",
+        ) == {
+            "generations": len(values),
+            "samples": len(timed),
+            "median_ms": _row_by_row_median(timed),
+        }, values
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [67_107_840],  # the first value of the open-ended slot
+        [1_000_000_000_000, 1_000_000_000_001],
+        [5, 67_107_840],  # an even count whose upper middle is out of range
+        [5, 67_107_840, 67_107_841],
+    ],
+)
+def test_activity_elapsed_summary_reports_no_median_beyond_the_histogram(
+    values: list[int],
+) -> None:
+    """A median of about 18.6 hours or more is absent, never approximated."""
+    database = ActivityClickHouse()
+    base = _generation()
+    for index, elapsed in enumerate(values):
+        database.add(
+            dataclasses.replace(base, id=f"gen-far-{index}", elapsed_milliseconds=elapsed)
+        )
+
+    assert database.client().activity_elapsed_summary(
+        tenant_id=analytics_surrogate("workspace", base.workspace_id),
+        start_at="2026-07-31T00:00:00Z",
+    ) == {"generations": len(values), "samples": len(values), "median_ms": None}
+    # The open-ended slot is never opened: one read, one row per slot.
+    assert len(database.queries) == 1
+    assert database.returned == [len({min(value // 1024, 65_535) for value in values})]
+
+
+def test_activity_elapsed_summary_reads_a_bounded_histogram_not_the_rows() -> None:
+    """9,000 rows over 9,000 distinct values: what comes back is slots, then one slot's values."""
+    database = ActivityClickHouse()
+    base = _generation()
+    values = [value * 7 for value in range(9_000)]  # 0 .. 62,993 ms: 62 slots
+    for index, elapsed in enumerate(values):
+        database.add(
+            dataclasses.replace(base, id=f"gen-wide-{index}", elapsed_milliseconds=elapsed)
+        )
+
+    summary = database.client().activity_elapsed_summary(
+        tenant_id=analytics_surrogate("workspace", base.workspace_id),
+        start_at="2026-07-31T00:00:00Z",
+    )
+
+    assert summary == {
+        "generations": 9_000,
+        "samples": 9_000,
+        "median_ms": _row_by_row_median(values),
+    }
+    slots = len({value // 1024 for value in values})
+    in_middle_slot = len([value for value in values if value // 1024 == 31_496 // 1024])
+    assert slots == 62 and in_middle_slot < 1_024
+    # First the slots alone, then the slots with the middle one opened.
+    assert database.returned == [slots, slots - 1 + in_middle_slot]
+
+
+def _histogram_client(
+    answers: list[list[dict[str, Any]]], asked: list[tuple[str, str]]
+) -> OperationalAnalyticsClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(
+            (request.url.params["param_slot_low"], request.url.params["param_slot_high"])
+        )
+        return httpx.Response(200, json={"data": answers[len(asked) - 1]})
+
+    return OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def _slot(slot: int | None, count: int, value: int | None = None) -> dict[str, Any]:
+    # 64-bit integers arrive quoted or bare, depending on a server setting.
+    return {
+        "slot": None if slot is None else str(slot),
+        "elapsed_value": value,
+        "generations_at_value": str(count),
+    }
+
+
+def test_activity_elapsed_summary_follows_a_middle_that_moved_between_reads() -> None:
+    """Rows that arrive between two reads can move the middle to another slot.
+
+    Each read carries its own totals, so a read that opened the wrong slot
+    shows it, and the next read opens the right one. The answer is never
+    assembled from two different snapshots.
+    """
+    asked: list[tuple[str, str]] = []
+    client = _histogram_client(
+        [
+            # 4 timed rows, all in slot 2: both middle values are there.
+            [_slot(2, 4), _slot(None, 1)],
+            # By the second read 7 slower rows have arrived: 11 timed rows,
+            # and the middle (rank 6) is now in slot 9, which is not open.
+            [
+                _slot(2, 1, 2_050),
+                _slot(2, 3, 2_060),
+                _slot(9, 7),
+                _slot(None, 1),
+            ],
+            # The third read opens slot 9 and settles on its own counts.
+            [_slot(2, 4), _slot(9, 3, 9_300), _slot(9, 4, 9_400), _slot(None, 1)],
+        ],
+        asked,
+    )
+
+    assert client.activity_elapsed_summary(tenant_id="tenant", start_at="2026-07-31") == {
+        "generations": 12,
+        "samples": 11,
+        "median_ms": 9_300,
+    }
+    assert asked == [("65535", "65535"), ("2", "2"), ("9", "9")]
+
+
+def test_activity_elapsed_summary_fails_rather_than_guess_when_reads_never_agree() -> None:
+    asked: list[tuple[str, str]] = []
+    # Every read finds the middle in a slot the read before it did not open.
+    answers = [[_slot(read + 1, 3)] for read in range(10)]
+    client = _histogram_client(answers, asked)
+
+    with pytest.raises(RuntimeError, match="did not settle"):
+        client.activity_elapsed_summary(tenant_id="tenant", start_at="2026-07-31")
+    assert asked == [("65535", "65535"), ("1", "1"), ("2", "2"), ("3", "3")]
+
+
+def test_activity_elapsed_summary_opens_two_slots_for_an_even_count() -> None:
+    asked: list[tuple[str, str]] = []
+    client = _histogram_client(
+        [
+            [_slot(0, 3), _slot(7, 3)],
+            [
+                _slot(0, 1, 10),
+                _slot(0, 2, 1_000),
+                _slot(7, 1, 7_200),
+                _slot(7, 2, 8_000),
+            ],
+        ],
+        asked,
+    )
+
+    # Six timed rows: the third (1,000) and the fourth (7,200).
+    assert client.activity_elapsed_summary(tenant_id="tenant", start_at="2026-07-31") == {
+        "generations": 6,
+        "samples": 6,
+        "median_ms": 4_100,
+    }
+    assert asked == [("65535", "65535"), ("0", "7")]
+
+
+def test_activity_elapsed_summary_does_not_depend_on_the_order_rows_come_back_in() -> None:
+    """ClickHouse returns grouped rows in no particular order."""
+    coarse = [_slot(0, 2), _slot(3, 4), _slot(5, 1), _slot(None, 2), _slot(8, 3)]
+    opened = [
+        _slot(0, 2),
+        _slot(3, 1, 3_500),
+        _slot(3, 1, 3_100),
+        _slot(3, 2, 3_300),
+        _slot(5, 1, 5_200),
+        _slot(None, 2),
+        _slot(8, 3),
+    ]
+    # Ten timed rows: 0, 0, 3100, 3300, 3300, 3500, 5200, then three in slot 8.
+    expected = {"generations": 12, "samples": 10, "median_ms": (3_300 + 3_500) // 2}
+    randomness = random.Random(7)  # noqa: S311 - fixture order, not a secret
+    for _ in range(20):
+        asked: list[tuple[str, str]] = []
+        first, second = list(coarse), list(opened)
+        randomness.shuffle(first)
+        randomness.shuffle(second)
+        client = _histogram_client([first, second], asked)
+
+        assert client.activity_elapsed_summary(tenant_id="tenant", start_at="2026-07-31") == expected
+        assert asked == [("65535", "65535"), ("3", "3")]
+
+
+def test_activity_elapsed_summary_counts_a_replayed_generation_once() -> None:
+    database = ActivityClickHouse()
+    base = _generation()
+    for index, elapsed in enumerate([10, 20, 900]):
+        database.add(
+            dataclasses.replace(base, id=f"gen-replay-{index}", elapsed_milliseconds=elapsed)
+        )
+    # Replays of the slow row would drag the median to 900 if they counted.
+    for _ in range(3):
+        database.add(dataclasses.replace(base, id="gen-replay-2", elapsed_milliseconds=900))
+
+    assert database.client().activity_elapsed_summary(
+        tenant_id=analytics_surrogate("workspace", base.workspace_id),
+        start_at="2026-07-31T00:00:00Z",
+    ) == {"generations": 3, "samples": 3, "median_ms": 20}
 
 
 def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None:

@@ -147,10 +147,20 @@ def _client_reliability_data(
     # The median is computed in ClickHouse over every generation of the range.
     # The newest 5,000 rows, which this used to read, are under an hour of a
     # busy workspace's 24 hours.
-    elapsed = client.activity_elapsed_summary(
-        tenant_id=tenant_id,
-        start_at=since.isoformat().replace("+00:00", "Z"),
-    )
+    elapsed: dict[str, int | None] | None
+    try:
+        elapsed = client.activity_elapsed_summary(
+            tenant_id=tenant_id,
+            start_at=since.isoformat().replace("+00:00", "Z"),
+        )
+    except Exception as exc:
+        # The client telemetry read above is still the answer. The panel
+        # shows it and says the server figure is unavailable.
+        if is_analytics_unavailable(exc):
+            log_analytics_unavailable(log, "console_client_reliability_server_elapsed", exc)
+        else:
+            log.exception("console_client_reliability_server_elapsed_failed")
+        elapsed = None
     requests = int(summary.get("requests") or 0)
     successes = int(summary.get("successes") or 0)
     tr_fault = int(summary.get("tr_fault") or 0)
@@ -171,20 +181,25 @@ def _client_reliability_data(
             ),
         }
     )
+    meta: dict[str, Any] = {
+        "scanned": int((elapsed or {}).get("generations") or 0) + len(failures),
+        # Kept for readers of the shape. Always false: the whole range is read.
+        "truncated": False,
+        "freshness_seconds": 0,
+    }
+    if elapsed is None:
+        # Present only when the read failed: an absent median then means
+        # "could not be read", not "no timed requests".
+        meta["server_elapsed"] = "unavailable"
     return {
         "data": {
             "range": range_,
             "summary": rendered_summary,
-            "server_p50_elapsed_ms": elapsed["median_ms"],
+            "server_p50_elapsed_ms": elapsed["median_ms"] if elapsed else None,
             "top_errors": _top_errors(failures),
             "recent_failures": failures,
         },
-        "meta": {
-            "scanned": int(elapsed["generations"] or 0) + len(failures),
-            # Kept for readers of the shape. Always false: the whole range is read.
-            "truncated": False,
-            "freshness_seconds": 0,
-        },
+        "meta": meta,
     }
 
 
@@ -292,6 +307,7 @@ def register(app: FastAPI) -> None:
         if cached is not None:
             return cached
         client = _operational_analytics_client(settings)
+        result: dict[str, Any]
         if client is None:
             result = {"data": None, "meta": {"reason": "unavailable"}}
         else:
@@ -305,9 +321,13 @@ def register(app: FastAPI) -> None:
             except Exception:
                 log.exception("console_client_reliability_read_failed")
                 result = {"data": None, "meta": {"reason": "unavailable"}}
-        _CLIENT_RELIABILITY_CACHE.put(
-            cache_key,
-            result,
-            expires_at=now + _CLIENT_RELIABILITY_CACHE_TTL_SECONDS,
-        )
+        # A result without its server median answers this request only.
+        # Cached, it would keep showing the gap for a minute after the read
+        # recovers.
+        if result["meta"].get("server_elapsed") != "unavailable":
+            _CLIENT_RELIABILITY_CACHE.put(
+                cache_key,
+                result,
+                expires_at=now + _CLIENT_RELIABILITY_CACHE_TTL_SECONDS,
+            )
         return result

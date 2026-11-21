@@ -34,12 +34,13 @@ function usage(range) {
 }
 
 // `respond(route, range, attempt)` answers each usage request. Returns the ranges requested, in order.
-async function open(page, respond) {
+// `reliability` is the client-reliability answer; by default the panel has no telemetry backend.
+async function open(page, respond, reliability = { data: null, meta: { reason: 'unavailable' } }) {
   const requested = [];
   await page.route('http://console.test/**', route => {
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/static/')) return route.fulfill({ path: path.join(root, 'src/trusted_router', url.pathname) });
-    if (url.pathname === '/console/activity/client-reliability.json') return route.fulfill({ json: { data: null, meta: { reason: 'unavailable' } } });
+    if (url.pathname === '/console/activity/client-reliability.json') return route.fulfill({ json: reliability });
     if (url.pathname === '/console/activity/usage.json') {
       requested.push(url.searchParams.get('range'));
       return respond(route, url.searchParams.get('range'), requested.length);
@@ -248,4 +249,29 @@ test('ignores a remembered value that is not a range', async ({ page }) => {
   await expect(total).toHaveText('$30.00');
   await expect(range('30d')).toBeChecked();
   expect(requested).toEqual(['30d']);
+});
+
+// The client panel: what the SDKs saw, next to the server's median for the same window.
+function reliability(serverMedian, meta = {}) {
+  const summary = { requests: 200, successes: 198, tr_fault: 2, availability_percent: 99.0, retried_percent: 10.0, failover_percent: 5.0, p50_total_ms: 200, p95_total_ms: 800, p50_ttft_ms: 100 };
+  return { data: { range: '24h', summary, server_p50_elapsed_ms: serverMedian, top_errors: [], recent_failures: [] }, meta: { scanned: 3, truncated: false, freshness_seconds: 0, ...meta } };
+}
+
+test('shows the server median next to the client telemetry', async ({ page }) => {
+  await open(page, ok, reliability(20));
+  const panel = page.locator('[data-client-panel]');
+
+  await expect(panel.locator('[data-client-requests]')).toHaveText('200');
+  await expect(panel.locator('[data-client-server]')).toHaveText('20 ms');
+  await expect(panel.locator('[data-client-server-sub]')).toHaveText('server p50 elapsed for the same window');
+});
+
+test('keeps the client telemetry and says so when the server median could not be read', async ({ page }) => {
+  await open(page, ok, reliability(null, { server_elapsed: 'unavailable' }));
+  const panel = page.locator('[data-client-panel]');
+
+  await expect(panel.locator('[data-client-requests]')).toHaveText('200');
+  await expect(panel.locator('[data-client-availability]')).toHaveText('99.0000%');
+  await expect(panel.locator('[data-client-server]')).toHaveText('\u2014');
+  await expect(panel.locator('[data-client-server-sub]')).toHaveText('server p50 is unavailable right now');
 });

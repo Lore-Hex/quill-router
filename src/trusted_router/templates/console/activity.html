@@ -661,7 +661,13 @@
       "client total p50 / p95"
     );
     setMetric("ttft", formatMilliseconds(summary.p50_ttft_ms), "client p50 time to first token");
-    setMetric("server", formatMilliseconds(data.server_p50_elapsed_ms), "server p50 elapsed for the same window");
+    setMetric(
+      "server",
+      formatMilliseconds(data.server_p50_elapsed_ms),
+      meta.server_elapsed === "unavailable"
+        ? "server p50 is unavailable right now"
+        : "server p50 elapsed for the same window"
+    );
     renderTopErrors(Array.isArray(data.top_errors) ? data.top_errors : []);
     renderFailures(failures);
   }

@@ -5313,11 +5313,11 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:usage_buckets_query:1": {
-      "fingerprint": "343076df81fefd74837aec248d9e11075d35285e9f49028e1e08502c0dbb1f84",
+      "fingerprint": "6bd18a89666019480ccf861c4e7509d53f6c6c9a42781748597cbf304262b2ab",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_elapsed_summary:1": {
-      "fingerprint": "45753ff1b7cd10282d9b0dbcf809620135bd5e89772c6ceb155f403bc901e806",
+      "fingerprint": "a95a06181ebc8876102958eba689180f13c4aa9ef99ec9afa88d90f5b60d650c",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:routing_traffic:1": {
