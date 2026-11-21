@@ -5313,6 +5313,14 @@
       "fingerprint": "4508099392c3e46d092285baed3b402730b8a8ba63cdf44be64735aed0f451bf",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
+    "operational_analytics:usage_buckets_query:1": {
+      "fingerprint": "6bd18a89666019480ccf861c4e7509d53f6c6c9a42781748597cbf304262b2ab",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_elapsed_summary:1": {
+      "fingerprint": "6e1d5c0c93391d8428e7e762f01f5019c9ff9f921fdc8a693aff2b8a511e941d",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
     "operational_analytics:routing_traffic:1": {
       "fingerprint": "24143e3a3eefcc7a3bf9a0af91a2fc5f5b20ad2ce93d995901b204a795e78db5",
       "reason": "Bounded read-only ClickHouse route aggregates, sent to the HTTP analytics client"

@@ -93,7 +93,7 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
             assert routes.count(docs_route) == int(byok_docs)
             if byok_docs:
                 routes.remove(docs_route)
-    for path, handler in (("/notes", "notes_archive"), ("/notes/{slug}", "note"),
+    for path, handler in (("/openrouter", "openrouter_notice"), ("/notes", "notes_archive"), ("/notes/{slug}", "note"),
                           ("/sitemap-notes.xml", "notes_sitemap")):
         note_route = [path, ["GET", "HEAD"], f"register_notes.<locals>.{handler}"]
         assert routes.count(note_route) == int(notes)

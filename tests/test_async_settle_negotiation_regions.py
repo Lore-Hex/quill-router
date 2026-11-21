@@ -137,7 +137,8 @@ def test_the_deployed_negotiation_regions_name_enclave_regions():
     # The exact value is pinned by test_deploy_script_execution.py
     # (test_rollout_negotiation_regions_are_literal_and_configured). This test
     # checks two other things. A region no enclave runs in would never
-    # negotiate. An empty value would negotiate everywhere, Europe included.
+    # negotiate. An empty value would negotiate everywhere, a region added to
+    # the inventory later included.
     named = deployed_negotiation_regions()
     assert named
     assert named <= set(ENCLAVE_REGIONS)

@@ -76,7 +76,8 @@ def test_geography_separates_offices_dynamic_placement_and_optional_pinning():
 def test_model_table_exposes_sources_location_and_real_timing_only(monkeypatch, test_settings):
     monkeypatch.setitem(MODELS, MODEL_ID, Model(id=MODEL_ID, name="DeepSeek 1017", provider="deepseek", context_length=1_048_576))
     for provider, upstream in [("sail-research", "deepseek-ai/DeepSeek-V4.1-Flash-1017"),
-                               ("novita", MODEL_ID), ("engy", "deepseek-v4.1-flash-1017")]:
+                               ("novita", MODEL_ID), ("engy", "deepseek-v4.1-flash-1017"),
+                               ("deepinfra", "deepseek-ai/DeepSeek-V4.1-Flash-1017")]:
         endpoint = route(provider, upstream)
         monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
     bypass_catalog_caches(monkeypatch)
@@ -95,7 +96,10 @@ def test_model_table_exposes_sources_location_and_real_timing_only(monkeypatch, 
     assert "TTFT: 1.23 s" in novita.get_text()
     assert "97.2 tokens/s" in novita.get_text()
     assert novita.select_one("time")["datetime"] == "2026-10-28T18:00:00Z"
-    assert "Operator country: US" in novita.get_text()
+    # Novita's country is unverified since its 2026-11-21 incident notice.
+    assert "Operator country: Not verified" in novita.get_text()
+    assert "Operator country: US" not in novita.get_text()
+    assert "Operator country: US" in soup.select_one("#provider-deepinfra-details").get_text()
     assert "processing countries unconfirmed, no fixed-region commitment" in novita.get_text()
     assert novita.select_one('a[href="https://novita.ai/legal/privacy-policy"]')
     assert soup.select_one("#provider-novita button.md-toggle")["aria-controls"] == "provider-novita-details"
