@@ -38,11 +38,19 @@ _CONFIGURATION_ERROR_TYPES = frozenset({
 # and probes both count here; BYOK samples never do, because a 403 there is
 # the customer's own key.
 ACCOUNT_REFUSAL_STATUSES = frozenset({401, 403})
-ACCOUNT_REFUSAL_ERROR_TYPES = frozenset({"provider_auth_config", "provider_error"})
+# provider_auth_config: probes; provider_auth_error: inline inference
+# (services/inference_errors.py); provider_error: other organic writers.
+ACCOUNT_REFUSAL_ERROR_TYPES = frozenset({
+    "provider_auth_config", "provider_auth_error", "provider_error",
+})
 ACCOUNT_REFUSAL_MIN_SAMPLES = 3
+# A streak qualifies when it spans this long, or when every one of a route's
+# newest ACCOUNT_REFUSAL_SATURATED samples is a refusal (a busy route refused
+# 20 times in a row is no burst, whatever the span).
 ACCOUNT_REFUSAL_MIN_SPAN = dt.timedelta(minutes=10)
+ACCOUNT_REFUSAL_SATURATED = 20
 ACCOUNT_REFUSAL_MAX_AGE = dt.timedelta(hours=1)
-ACCOUNT_REFUSAL_READ_LIMIT = 2000
+ACCOUNT_REFUSAL_READ_LIMIT = 4000
 # Same bound the sample write paths apply (probes._rotation_error_sample and
 # the internal benchmark ingest), re-applied here so an alert never carries
 # more than a stored sample could.
@@ -96,6 +104,9 @@ class RouteHealthFlag:
     # HTTP status of the newest failure, when the probe recorded one. Sustained
     # availability alerts carry this and the error class, never provider text.
     newest_error_status: int | None = None
+    # A configuration flag raised by the account-refusal rule: every sample in
+    # its streak was an HTTP 401/403 refusal of TR's managed account.
+    account_refusal: bool = False
 
 
 def evaluate_route_health(
@@ -387,10 +398,40 @@ def _configuration_flag(
     )
 
 
+def evaluate_account_refusals(
+    store: Store,
+    *,
+    routes: list[tuple[str, str]] | None = None,
+    now: dt.datetime | None = None,
+) -> list[RouteHealthFlag]:
+    """The account-refusal rule alone, from its own small read.
+
+    The synthetic worker runs this on every pass between the hourly full
+    sweeps, so a provider refusing TR's account alerts within minutes. Only
+    organic evidence is read here; the hourly sweep adds the probes.
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    if routes is None:
+        routes = [
+            (provider, model)
+            for provider, models in rotation_candidates().items()
+            for model in models
+        ]
+    route_set = set(routes)
+    by_route = _account_refusals_by_route(store, route_set, now)
+    cutoff = now - ACCOUNT_REFUSAL_MAX_AGE - ACCOUNT_REFUSAL_MIN_SPAN
+    flags = []
+    for provider, model in sorted(by_route):
+        flag = _account_refusal_flag(provider, model, by_route[(provider, model)], now, cutoff)
+        if flag is not None:
+            flags.append(flag)
+    return flags
+
+
 def _account_refusals_by_route(
     store: Store, routes: set[tuple[str, str]], now: dt.datetime,
 ) -> dict[tuple[str, str], list[ProviderBenchmarkSample]]:
-    """Organic Credits 401/403 samples from the last hour, by route.
+    """Newest organic Credits samples of each route refused in the last hour.
 
     Best effort: a failed read only loses the fast path; the synthetic
     configured-route rule still alerts on its own evidence.
@@ -399,6 +440,7 @@ def _account_refusals_by_route(
     try:
         samples = store.provider_account_refusal_samples(
             cutoff=cutoff.isoformat().replace("+00:00", "Z"),
+            per_route_limit=ACCOUNT_REFUSAL_SATURATED,
             limit=ACCOUNT_REFUSAL_READ_LIMIT,
         )
     except Exception:  # noqa: BLE001 - monitoring must not fail the sweep
@@ -442,14 +484,17 @@ def _account_refusal_flag(
     if (
         len(streak) < ACCOUNT_REFUSAL_MIN_SAMPLES
         or now - streak[0][0] > ACCOUNT_REFUSAL_MAX_AGE
-        or streak[0][0] - streak[-1][0] < ACCOUNT_REFUSAL_MIN_SPAN
+        or (
+            streak[0][0] - streak[-1][0] < ACCOUNT_REFUSAL_MIN_SPAN
+            and len(streak) < ACCOUNT_REFUSAL_SATURATED
+        )
     ):
         return None
     return RouteHealthFlag(
         provider=provider, model=model, samples=len(streak), failures=len(streak),
         failure_rate=1.0, newest_error_type="provider_auth_config",
         newest_error_message=_alert_error_message(streak[0][1].error_message),
-        kind="configuration",
+        kind="configuration", account_refusal=True,
     )
 
 
@@ -595,7 +640,7 @@ def report_route_health(
             from trusted_router.synthetic.alerts import ops_alert
 
             latest = _alert_error_message(flag.newest_error_message)
-            if flag.newest_error_type == "provider_auth_config":
+            if flag.account_refusal:
                 # Name the account, not our configuration: the provider refused
                 # TR's own key, and the fix is on the provider's side.
                 summary = (

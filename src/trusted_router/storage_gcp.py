@@ -6849,10 +6849,11 @@ class SpannerStore(OperationalAnalyticsReads):
         self,
         *,
         cutoff: str,
+        per_route_limit: int,
         limit: int,
     ) -> list[ProviderBenchmarkSample]:
         return self._require_operational_analytics().account_refusal_samples(
-            cutoff=cutoff, limit=limit,
+            cutoff=cutoff, per_route_limit=per_route_limit, limit=limit,
         )
 
     def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:

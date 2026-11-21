@@ -42,6 +42,7 @@ from trusted_router.synthetic.probes import (
 )
 from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
+    evaluate_account_refusals,
     evaluate_route_health,
     report_catalog_freshness,
     report_image_generation_failures,
@@ -570,6 +571,22 @@ def register(router: APIRouter) -> None:
         require_internal_gateway(request, settings)
         slot = _admit_operation("route_health")
         try:
+            if request.query_params.get("scope") == "account_refusals":
+                # Between hourly sweeps: only the account-refusal rule, from
+                # its own small read, so a refused provider account alerts
+                # within minutes. Analytics trouble is the full sweep's to
+                # report; here it only means no fast evidence this pass.
+                try:
+                    refusals = await run_in_threadpool(evaluate_account_refusals, STORE)
+                except Exception as exc:
+                    if not is_analytics_unavailable(exc):
+                        raise
+                    log_analytics_unavailable(log, "synthetic_account_refusals", exc)
+                    return {"data": {"flagged": [], "evaluated": False,
+                                     "reason": "analytics_unavailable"}}
+                await run_in_threadpool(report_route_health, refusals)
+                return {"data": {"flagged": [asdict(flag) for flag in refusals],
+                                 "evaluated": True, "scope": "account_refusals"}}
             await run_in_threadpool(report_catalog_freshness)
             try:
                 flags = await run_in_threadpool(evaluate_route_health, STORE)

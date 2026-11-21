@@ -296,12 +296,19 @@ def test_account_refusal_samples_are_recent_organic_credits_401_403(pg_store: An
     record("old", 200)
     record("byok", 5, usage_type="BYOK")
     record("synthetic", 5, source="synthetic")
-    record("outage", 5, error_status=502)
+    record("outage", 7, error_status=502)
+    record("recovered", 1, status="success", error_status=None, error_type=None)
+    record("never-refused", 1, model="other/m", status="success", error_status=None,
+           error_type=None)
 
-    rows = pg_store.provider_account_refusal_samples(
-        cutoff=_iso(now - dt.timedelta(minutes=70)), limit=100,
-    )
-    assert [row.id for row in rows] == ["r403", "r401"]
-    assert [row.id for row in pg_store.provider_account_refusal_samples(
-        cutoff=_iso(now - dt.timedelta(minutes=70)), limit=1,
-    )] == ["r403"]
+    def window(per_route_limit: int) -> list[str]:
+        rows = pg_store.provider_account_refusal_samples(
+            cutoff=_iso(now - dt.timedelta(minutes=70)), per_route_limit=per_route_limit,
+            limit=100,
+        )
+        return [row.id for row in rows]
+
+    # A refused route's organic Credits samples, whatever the outcome, newest
+    # first; BYOK, probes, old rows and never-refused routes stay out.
+    assert window(20) == ["recovered", "r403", "outage", "r401"]
+    assert window(2) == ["recovered", "r403"]

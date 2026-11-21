@@ -5301,7 +5301,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:account_refusal_samples:1": {
-      "fingerprint": "057b671e2cbd3b4d5371d53639c95b39425088767cce57917e3bbc46c0d868c1",
+      "fingerprint": "0f2304fcd10c8a0840b5e9f1813f813c24920ffb030e07bd7056c01713a287cd",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:route_benchmark_samples:1": {

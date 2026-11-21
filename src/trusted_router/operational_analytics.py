@@ -309,13 +309,14 @@ FORMAT JSON
         return [_benchmark_sample(row) for row in rows]
 
     def account_refusal_samples(
-        self, *, cutoff: str, limit: int,
+        self, *, cutoff: str, per_route_limit: int, limit: int,
     ) -> list[ProviderBenchmarkSample]:
-        """Recent organic Credits samples a provider refused with HTTP 401/403.
+        """Recent organic Credits samples of every route a provider refused.
 
-        Route health's account-refusal alert reads these beside the synthetic
-        window: real traffic shows a refused provider account within minutes,
-        while configured-route probes reach one route only a few times a day.
+        A route qualifies with one HTTP 401/403 since the cutoff; its newest
+        organic Credits samples then come back whatever their outcome, so a
+        success after the refusals ends the streak. Capped per route, so one
+        busy refused route cannot crowd out a quiet one.
         """
         rows = self._query(
             """
@@ -325,16 +326,29 @@ SELECT
   speed_tokens_per_second, elapsed_milliseconds,
   first_token_milliseconds, ttfb_milliseconds, finish_reason,
   error_type, error_status, error_message, region, source, app, created_at
-FROM provider_benchmark_samples FINAL
-WHERE source = 'organic'
-  AND usage_type = 'Credits'
-  AND error_status IN (401, 403)
-  AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+FROM
+(
+  SELECT *, row_number() OVER (
+    PARTITION BY provider, model ORDER BY created_at DESC, id DESC
+  ) AS route_rank
+  FROM provider_benchmark_samples FINAL
+  WHERE source = 'organic'
+    AND usage_type = 'Credits'
+    AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+    AND (provider, model) IN (
+      SELECT provider, model FROM provider_benchmark_samples FINAL
+      WHERE source = 'organic'
+        AND usage_type = 'Credits'
+        AND error_status IN (401, 403)
+        AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+    )
+)
+WHERE route_rank <= {per_route_limit:UInt32}
 ORDER BY created_at DESC, id DESC
 LIMIT {limit:UInt32}
 FORMAT JSON
 """,
-            params={"cutoff": cutoff, "limit": max(1, limit)},
+            params={"cutoff": cutoff, "per_route_limit": max(1, per_route_limit), "limit": max(1, limit)},
         )
         return [_benchmark_sample(row) for row in rows]
 

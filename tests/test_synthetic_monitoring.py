@@ -80,6 +80,7 @@ from trusted_router.synthetic.rollups import (
 )
 from trusted_router.synthetic.route_health import (
     RouteHealthFlag,
+    evaluate_account_refusals,
     evaluate_route_health,
     report_image_generation_failures,
     report_route_health,
@@ -2870,13 +2871,10 @@ async def test_route_health_caller_obeys_hourly_gate_and_override(
             now=now,
         )
 
-    expected = [
-        (
-            "https://trustedrouter.com/v1/internal/synthetic/route-health",
-            "internal",
-        )
-    ]
-    assert posted == (expected if should_post else [])
+    base = "https://trustedrouter.com/v1/internal/synthetic/route-health"
+    # Off the hour the worker still posts, but only the account-refusal scope.
+    expected = [(base if should_post else base + "?scope=account_refusals", "internal")]
+    assert posted == expected
 
 
 @pytest.mark.asyncio
@@ -4348,15 +4346,17 @@ class _RouteHealthStore:
         return samples[:limit]
 
     def provider_account_refusal_samples(
-        self, *, cutoff: str, limit: int,
+        self, *, cutoff: str, per_route_limit: int, limit: int,
     ) -> list[ProviderBenchmarkSample]:
-        rows = [
-            sample for sample in self.samples
-            if sample.source == "organic" and sample.usage_type == "Credits"
-            and sample.error_status in {401, 403} and sample.created_at >= cutoff
-        ]
-        rows.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
-        return rows[:limit]
+        import threading
+
+        from trusted_router.storage_generations import InMemoryGenerations
+
+        memory = InMemoryGenerations(lock=threading.RLock(), add_usage_to_key=lambda *a, **k: None)
+        memory.provider_benchmarks = list(self.samples)
+        return memory.account_refusal_samples(
+            cutoff=cutoff, per_route_limit=per_route_limit, limit=limit,
+        )
 
     def provider_route_benchmark_samples(
         self,
@@ -4548,7 +4548,7 @@ def test_configuration_alert_is_fingerprinted_and_carries_sanitized_message(
     report_route_health([
         RouteHealthFlag(
             "lightning", "m", 6, 6, 1.0, "provider_auth_config",
-            f"invalid api key {secret}", kind="configuration",
+            f"invalid api key {secret}", kind="configuration", account_refusal=True,
         ),
         RouteHealthFlag(
             "lightning", "n", 6, 6, 1.0, "provider_auth_config", None,
@@ -4590,6 +4590,7 @@ def test_account_refusal_alerts_within_minutes_on_real_credits_traffic() -> None
     assert flags[0].kind == "configuration"
     assert flags[0].newest_error_type == "provider_auth_config"
     assert flags[0].failures == 3
+    assert flags[0].account_refusal
 
 
 @pytest.mark.parametrize("samples", [
@@ -4612,6 +4613,73 @@ def test_account_refusal_requires_fresh_credits_streak(
     assert evaluate_route_health(  # type: ignore[arg-type]
         _RouteHealthStore(samples), routes=[("maple", "m")],
     ) == []
+
+
+def test_account_refusal_streak_breaks_on_organic_recovery() -> None:
+    # Codex review: the read must return a refused route's successes too.
+    recovered = dataclasses.replace(
+        _route_health_sample("ok", provider="maple", model="m", status="success", source="organic"),
+        created_at=(dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)).isoformat(),
+    )
+    samples = [recovered] + [_refusal_sample(i, m) for i, m in enumerate((6, 12, 18))]
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    ) == []
+
+
+def test_account_refusal_counts_inline_provider_auth_errors() -> None:
+    samples = [
+        _refusal_sample(i, m, error_type="provider_auth_error") for i, m in enumerate((1, 6, 12))
+    ]
+    [flag] = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    )
+    assert flag.account_refusal
+
+
+def test_a_saturated_route_alerts_inside_ten_minutes() -> None:
+    # 20 refusals in two minutes: the per-route window never spans ten minutes
+    # on a busy route, and twenty consecutive refusals are no burst.
+    samples = [_refusal_sample(i, i * 0.1) for i in range(25)]
+    [flag] = evaluate_account_refusals(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("maple", "m")],
+    )
+    assert flag.failures == 20
+
+
+def test_a_busy_refused_route_cannot_crowd_out_a_quiet_one() -> None:
+    busy = [
+        dataclasses.replace(_refusal_sample(i, i * 0.01), provider="busy", model="b")
+        for i in range(500)
+    ]
+    quiet = [_refusal_sample(1000 + i, m) for i, m in enumerate((1, 6, 12))]
+    flags = evaluate_account_refusals(  # type: ignore[arg-type]
+        _RouteHealthStore(busy + quiet), routes=[("busy", "b"), ("maple", "m")],
+    )
+    assert sorted(flag.provider for flag in flags) == ["busy", "maple"]
+
+
+def test_mixed_configuration_streaks_keep_the_generic_wording(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import alerts
+
+    captured: list[str] = []
+    monkeypatch.setattr(alerts, "ops_alert", lambda message, **kwargs: captured.append(message))
+    samples = [
+        _route_health_sample(
+            f"mixed-{i}", provider="lightning", model="m", status="unsupported", age_hours=i,
+            error_type="provider_auth_config" if i == 0 else "probe_config_error",
+            error_status=403 if i == 0 else 400,
+        ) for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("lightning", "m")],
+    )
+    assert [flag.account_refusal for flag in flags] == [False]
+    report_route_health(flags)
+    assert "refused TR's account" not in captured[0]
+    assert "6 consecutive configured-route probes" in captured[0]
 
 
 def test_account_refusal_streak_breaks_on_success() -> None:
@@ -5133,6 +5201,37 @@ def test_internal_route_health_reports_flags_and_requires_token(
     assert unauthorized.status_code in (401, 403)
     assert response.status_code == 200
     assert response.json() == {"data": {"flagged": [asdict(flag)], "evaluated": True}}
+    assert reported == [flag]
+
+
+def test_internal_route_health_account_refusal_scope_skips_the_full_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    flag = RouteHealthFlag(
+        "maple", "m", 3, 3, 1.0, "provider_auth_config", None,
+        kind="configuration", account_refusal=True,
+    )
+    reported: list[RouteHealthFlag] = []
+
+    def no_full_sweep(_store: object) -> list[RouteHealthFlag]:
+        raise AssertionError("the account-refusal scope must not run the full sweep")
+
+    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", no_full_sweep)
+    monkeypatch.setattr(synthetic_routes, "evaluate_account_refusals", lambda _store: [flag])
+    monkeypatch.setattr(synthetic_routes, "report_route_health", reported.extend)
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+
+    response = client.post(
+        "/v1/internal/synthetic/route-health?scope=account_refusals",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"data": {
+        "flagged": [asdict(flag)], "evaluated": True, "scope": "account_refusals",
+    }}
     assert reported == [flag]
 
 

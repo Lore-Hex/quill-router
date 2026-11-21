@@ -7780,20 +7780,36 @@ class PostgresStore(OperationalAnalyticsReads):
         self,
         *,
         cutoff: str,
+        per_route_limit: int,
         limit: int,
     ) -> list[ProviderBenchmarkSample]:
         def list_refusals(conn: Any) -> list[ProviderBenchmarkSample]:
             # Same bounded window as provider_route_benchmark_samples: kind plus
             # a range on indexed_at, the leading columns of tr_entities_recent.
+            # A route with one 401/403 in the window returns its newest organic
+            # Credits samples whatever their outcome, so a recovery ends the
+            # streak; the per-route cap keeps a busy route from crowding out
+            # a quiet one.
             rows = conn.execute(
-                "SELECT body FROM tr_entities "
+                "WITH organic AS ("
+                "SELECT body, id, indexed_at FROM tr_entities "
                 "WHERE kind = 'provider_benchmark' "
                 "AND indexed_at >= %s::timestamptz "
                 "AND body ->> 'source' = 'organic' "
-                "AND body ->> 'usage_type' = 'Credits' "
-                "AND body ->> 'error_status' IN ('401', '403') "
+                "AND body ->> 'usage_type' = 'Credits'"
+                "), refused AS ("
+                "SELECT DISTINCT body ->> 'provider' AS provider, body ->> 'model' AS model "
+                "FROM organic WHERE body ->> 'error_status' IN ('401', '403')"
+                "), ranked AS ("
+                "SELECT organic.body, organic.id, organic.indexed_at, ROW_NUMBER() OVER ("
+                "PARTITION BY organic.body ->> 'provider', organic.body ->> 'model' "
+                "ORDER BY organic.indexed_at DESC, organic.id DESC) AS route_rank "
+                "FROM organic JOIN refused "
+                "ON refused.provider = organic.body ->> 'provider' "
+                "AND refused.model = organic.body ->> 'model'"
+                ") SELECT body FROM ranked WHERE route_rank <= %s "
                 "ORDER BY indexed_at DESC, id DESC LIMIT %s",
-                (cutoff, max(1, limit)),
+                (cutoff, max(1, per_route_limit), max(1, limit)),
             ).fetchall()
             known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
             samples: list[ProviderBenchmarkSample] = []
