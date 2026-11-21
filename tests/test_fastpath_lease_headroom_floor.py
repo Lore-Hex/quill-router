@@ -253,7 +253,8 @@ def test_lease_aware_precheck_at_a_floor(
     under: tuple[int, int] | None,
 ) -> None:
     store, database = _precheck_store(credits, usage, reserved, leases)
-    made = billing.credit_exhaustion_precheck(
+    # Any: the verdict is annotated str and also carries what the read found.
+    made: Any = billing.credit_exhaustion_precheck(
         database, store._param_types, workspace_id=WS, estimate=estimate, lease_aware=True, lease_floor=floor,
     )
     assert made == verdict
@@ -270,7 +271,7 @@ def test_lease_aware_precheck_at_a_floor(
         # Only a lease-held verdict is changed, and to the rows' own
         # verdict, read and all: what they get when no lease is read.
         assert without == billing.LEASE_HELD
-        plain = billing.credit_exhaustion_precheck(
+        plain: Any = billing.credit_exhaustion_precheck(
             database, store._param_types, workspace_id=WS, estimate=estimate,
         )
         assert plain == billing.EXHAUSTED
