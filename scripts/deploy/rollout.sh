@@ -779,7 +779,14 @@ ENV_VARS=(
   # A chat model on route decide that asks for async-v1 is answered with
   # the additions Python gives, where the edge answered false-only.
   # Way back: "off".
-  "TR_FASTPATH_EDGE_HOSTED_DECIDE=shadow"
+  # 2026-11-21 (Joseph): "on". The policy also carries
+  # fastpath_edge_hosted_decide, so a node answers a hosted decide
+  # authorize itself, with Python's rows, hold and answer, and with the
+  # async-v1 additions when the call asks for them. Every other gate at the
+  # edge still applies, and anything outside the exact hosted shape (another
+  # spelling of the model, another route, a models list) still passes to
+  # Python. Way back: "shadow" (compose and pass) or "off".
+  "TR_FASTPATH_EDGE_HOSTED_DECIDE=on"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
   # section 12.4, PR 4): a stream whose reservation is below its estimate is
