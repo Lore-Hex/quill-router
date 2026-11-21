@@ -83,13 +83,13 @@ def media_discovery(
         }
     if model_id in SPEECH_MODELS:
         voice = SPEECH_MODELS[model_id]
-        fmt = "wav" if voice.provider == "tinfoil" else "pcm"
+        fmt = voice.default_response_format
         return {
             "endpoint": "/v1/audio/speech", "parameters": {
                 "input": {"type": "string", "required": True, "max_characters": voice.max_characters},
                 "voice": {"values": list(voice.voices), "required": True},
                 "response_format": {"values": list(voice.formats),
-                                    **({"default": fmt} if fmt in voice.formats else {"required": True})},
+                                    **({"default": fmt} if fmt is not None else {"required": True})},
                 "speed": {"min": voice.min_speed, "max": voice.max_speed, "default": 1},
             }, "pricing": {"currency": "USD", "rates": prices},
         }

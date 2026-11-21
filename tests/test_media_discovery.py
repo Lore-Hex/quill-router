@@ -59,3 +59,7 @@ def test_image_and_audio_controls_and_units(client: TestClient) -> None:
     assert Decimal(whisper["pricing"]["rates"]["input_audio_minute"]) > 0
     mistral = rows["mistralai/voxtral-mini-2602"]["trustedrouter"]["media"]["parameters"]
     assert "temperature" not in mistral and "diarize" in mistral
+    tts = rows["mistralai/voxtral-mini-tts-2603"]["trustedrouter"]
+    assert tts["speech"]["default_response_format"] is None
+    assert tts["speech"]["example_response_format"] == "mp3"
+    assert tts["media"]["parameters"]["response_format"] == {"values": ["mp3"], "required": True}
