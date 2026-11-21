@@ -11,6 +11,7 @@ only the first to claim the hour's sweep reports.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -35,6 +36,17 @@ def _flags() -> list[RouteHealthFlag]:
                         kind="degradation", newest_error_status=500),
         RouteHealthFlag("gmi", "c/d", 6, 6, 1.0, "provider_error", "model unavailable"),
     ]
+
+
+@pytest.fixture(autouse=True)
+def _reset_operation_limits() -> Iterator[None]:
+    # These tests post several sweeps; leave the shared per-minute allowance
+    # as they found it for the next test module.
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    synthetic_routes._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
+    yield
+    synthetic_routes._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
 
 
 @pytest.fixture
