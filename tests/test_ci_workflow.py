@@ -187,6 +187,18 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
         assert upload["with"]["retention-days"] == 7
 
 
+def test_default_oracle_uses_its_own_weights() -> None:
+    from scripts.ci.commit_scope import ORACLE_INPUTS
+
+    job = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]["proof-oracle"]
+    steps = job["steps"]
+    index = next(i for i, step in enumerate(steps) if "uv run pytest" in step.get("run", ""))
+    path = "durations-${{ matrix.shard }}.json"
+    assert steps[index - 1]["run"] == f"cp .test_durations-oracle {path}"
+    assert ".test_durations-oracle" in ORACLE_INPUTS
+    assert f"--durations-path={path}" in steps[index]["run"]
+
+
 def test_the_heavy_lane_and_the_shards_partition_the_suite() -> None:
     # Every test of the default suite runs once at the default clock: the
     # eight shards ignore exactly the files the heavy lane runs, both lists
@@ -469,12 +481,12 @@ def test_proof_oracle_ci_split(request, tmp_path):
     assert command == ['uv', 'run', 'pytest', '-q', '-n', '4', '--dist', 'loadgroup',
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
                        'tests/test_async_settle_shadow_v2_gate_window.py',
-                       '--splits', '6', '--group', '${{', 'matrix.shard', '}}',
+                       '--splits', '8', '--group', '${{', 'matrix.shard', '}}',
                        '--splitting-algorithm', 'least_duration', '--store-durations',
                        '--durations-path=durations-${{', 'matrix.shard', '}}.json', '--clean-durations']
     assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
-    assert job['strategy']['matrix'] == {'clock': ORACLE_CLOCKS, 'shard': [1, 2, 3, 4, 5, 6]}
+    assert job['strategy']['matrix'] == {'clock': ORACLE_CLOCKS, 'shard': [1, 2, 3, 4, 5, 6, 7, 8]}
     # The test files on its command are the roots commit_scope.py reads the
     # oracle's imports from.
     from scripts.ci.commit_scope import ORACLE_TESTS

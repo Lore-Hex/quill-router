@@ -281,7 +281,7 @@ ORACLE_TESTS: tuple[str, ...] = (
     "tests/test_async_settle_shadow_v2_gate_window.py",
 )
 TEST_HARNESS: tuple[str, ...] = ("tests/conftest.py",)
-ORACLE_INPUTS: tuple[str, ...] = ("src/**", ".test_durations")
+ORACLE_INPUTS: tuple[str, ...] = ("src/**", ".test_durations", ".test_durations-oracle")
 
 POST_CUTOVER_INPUTS: tuple[str, ...] = (
     "src/**",

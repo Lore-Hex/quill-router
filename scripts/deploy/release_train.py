@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock
@@ -292,15 +292,30 @@ def read_deliveries(api: GitHub, history: list[dict], head: str) -> tuple[list[s
     delivered: list[str] = []
     public_deliveries: list[Release] = []
     started = time.monotonic()
+    receipts: list[str | Release | None] = [None] * len(history)
     with ThreadPoolExecutor(max_workers=HISTORY_WORKERS) as pool:
-        # Bound outstanding work even on failure. map preserves listing order,
-        # including the order in which public no-downgrade floors are applied.
-        for i in range(0, len(history), HISTORY_WORKERS):
-            for receipt in pool.map(read, history[i:i + HISTORY_WORKERS]):
-                if isinstance(receipt, Release):
-                    public_deliveries.append(receipt)
-                elif receipt is not None:
-                    delivered.append(receipt)
+        # Bound outstanding reads without waiting for the slowest in a batch.
+        # Check every completed future before submitting any replacements.
+        todo = iter(enumerate(history))
+        pending = {}
+        while True:
+            while len(pending) < HISTORY_WORKERS:
+                item = next(todo, None)
+                if item is None:
+                    break
+                i, listed = item
+                pending[pool.submit(read, listed)] = i
+            if not pending:
+                break
+            finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in finished:
+                receipts[pending.pop(future)] = future.result()
+    # Public no-downgrade floors must retain the listing order, not finish order.
+    for receipt in receipts:
+        if isinstance(receipt, Release):
+            public_deliveries.append(receipt)
+        elif receipt is not None:
+            delivered.append(receipt)
     print(f"release history: checked={len(history)} api={len(delivered)} public={len(public_deliveries)} "
           f"elapsed_seconds={time.monotonic() - started:.1f}")
     return delivered, public_deliveries

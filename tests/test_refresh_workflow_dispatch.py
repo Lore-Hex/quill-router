@@ -1062,7 +1062,7 @@ def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     assert job["needs"] == "scope"
     assert "continue-on-error" not in job
     matrix = job["strategy"]["matrix"]
-    assert matrix == {"clock": ["default"], "shard": [1, 2, 3, 4, 5, 6]}
+    assert matrix == {"clock": ["default"], "shard": [1, 2, 3, 4, 5, 6, 7, 8]}
     proof_steps = [step for step in job["steps"] if "-m proof_oracle" in step.get("run", "")]
     assert len(proof_steps) == 1
     assert "if" not in proof_steps[0]
