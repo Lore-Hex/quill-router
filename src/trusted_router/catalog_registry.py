@@ -1970,10 +1970,10 @@ _fortanix_public_model = replace(
     documentation=ModelDocumentation(
         description=(
             "GLM 5.3 Flash hosted by Fortanix in Santa Clara, California "
-            "(operator-declared location). Managed-route ZDR. Introductory pricing: "
+            "(operator-declared location). Managed-route ZDR. "
+            f"Introductory pricing through {fortanix_launch.OFFER_END_LABEL}: "
             "$0.01 per million input tokens and $0.01 per million output tokens. "
-            "The standard $0.000001 minimum per billed request and rounding apply. "
-            "Limited-time offer; no end date announced. Pricing may change."
+            "The standard $0.000001 minimum per billed request and rounding apply."
         ),
         input_format="OpenAI-compatible chat completions with text messages; JSON or streaming.",
         output_format="Chat completion or server-sent events with token usage.",
