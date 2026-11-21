@@ -54,6 +54,11 @@ from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HOLD_REASON,
     provider_manifest_row_price_is_valid,
 )
+from trusted_router.unserved_route_hold_plan import (
+    MAX_PROVIDER_FRACTION,
+    MAX_ROUTES,
+    plan_unserved_route_holds,
+)
 
 SOURCE = "https://trustedrouter.com/route-health/unserved.json"
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "src/trusted_router/data/provider_models"
@@ -62,8 +67,7 @@ HOLD_HOURS = 24
 MAX_EVIDENCE_AGE = timedelta(hours=2)
 # The server stamps generated_at when it builds; tolerate runner/server skew.
 MAX_CLOCK_SKEW = timedelta(minutes=5)
-MAX_ROUTES = 25
-MAX_PROVIDER_FRACTION = 0.5
+__all__ = ["MAX_PROVIDER_FRACTION", "MAX_ROUTES", "apply_unserved_route_holds", "parse_evidence"]
 
 Route = tuple[str, str]
 
@@ -108,10 +112,6 @@ def fetch_evidence(source: str) -> set[Route]:
     # Judge freshness after the response: a cache miss builds the evidence
     # while the request is in flight.
     return parse_evidence(response.json(), now=datetime.now(UTC))
-
-
-def _routable(row: dict[str, Any]) -> bool:
-    return row.get("routable") is not False
 
 
 def _lift_expired(rows: Iterable[Any], *, now: datetime) -> list[str]:
@@ -168,17 +168,7 @@ def apply_unserved_route_holds(
     """
     now = now or datetime.now(UTC)
     notes: list[str] = []
-    by_provider: dict[str, set[str]] = {}
-    if evidence is None:
-        notes.append("unserved-route evidence unavailable; holding nothing")
-    elif len(evidence) > MAX_ROUTES:
-        notes.append(f"{len(evidence)} unserved routes exceed the {MAX_ROUTES}-route cap; holding nothing")
-    else:
-        for provider, model in evidence:
-            by_provider.setdefault(provider, set()).add(model)
-        for provider in sorted(set(by_provider) - {path.stem for path in manifest_dir.glob("*.json")}):
-            notes.append(f"{provider}: no provider manifest; not held")
-
+    manifest_stems = [path.stem for path in manifest_dir.glob("*.json")]
     manifests: list[tuple[Path, dict[str, Any], bool]] = []
     frozen_held = 0
     for path in sorted(manifest_dir.glob("*.json")):
@@ -198,54 +188,13 @@ def apply_unserved_route_holds(
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")
         manifests.append((path, raw, bool(lifted)))
 
-    planned: list[tuple[int, dict[str, Any]]] = []
-    for index, (path, raw, _) in enumerate(manifests):
-        wanted = by_provider.get(path.stem, set())
-        if not wanted:
-            continue
-        rows = raw["models"]
-        routable_rows = {
-            row["id"]: row for row in rows
-            if isinstance(row, dict) and isinstance(row.get("id"), str) and _routable(row)
-        }
-        targets = sorted(wanted & set(routable_rows))
-        already_held = {
-            row.get("id") for row in rows
-            if isinstance(row, dict) and isinstance(row.get("id"), str)
-            and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
-        }
-        for model in sorted(wanted - set(routable_rows) - already_held):
-            notes.append(f"{path.stem}: {model} is not a routable manifest row; not held")
-        # Rows this step already holds count on both sides, so the cap
-        # cannot ratchet a provider down one partial run at a time.
-        unserved = len(targets) + len(already_held)
-        candidates = len(routable_rows) + len(already_held)
-        if targets and (
-            unserved > MAX_PROVIDER_FRACTION * candidates
-            or len(targets) >= len(routable_rows)
-        ):
-            notes.append(
-                f"{path.stem}: {unserved} of {candidates} rows unserved; "
-                "provider-wide problem, holding none"
-            )
-            targets = []
-        planned.extend((index, routable_rows[model]) for model in targets)
-
-    # Held routes stop being probed and drop out of the evidence, so the
-    # route cap must count the holds already in place: otherwise it bounds
-    # only each hourly run and a rolling problem accumulates without limit.
-    held_total = frozen_held + sum(
-        1
-        for _, raw, _ in manifests
-        for row in raw["models"]
-        if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+    planned, plan_notes = plan_unserved_route_holds(
+        evidence,
+        [(path.stem, raw["models"]) for path, raw, _ in manifests],
+        manifest_stems=manifest_stems,
+        extra_held=frozen_held,
     )
-    if planned and held_total + len(planned) > MAX_ROUTES:
-        notes.append(
-            f"{held_total} held + {len(planned)} new unserved routes exceed the "
-            f"{MAX_ROUTES}-route cap; holding nothing new"
-        )
-        planned = []
+    notes.extend(plan_notes)
 
     changed = {index for index, (_, _, lifted) in enumerate(manifests) if lifted}
     for index, row in planned:

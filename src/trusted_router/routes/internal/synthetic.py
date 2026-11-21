@@ -55,6 +55,7 @@ from trusted_router.synthetic.route_health import (
     unreported_account_refusals,
 )
 from trusted_router.types import ErrorType
+from trusted_router.unserved_route_hold_plan import pending_unserved_route_holds
 
 log = logging.getLogger(__name__)
 
@@ -677,12 +678,15 @@ def register(router: APIRouter) -> None:
 
 
 def _pending_route_holds() -> frozenset[tuple[str, str]]:
-    """Routes the next price refresh will hold (the /route-health/unserved.json
-    evidence). Unreadable evidence holds nothing, so every flag keeps paging."""
+    """Routes the next price refresh will hold: the /route-health/unserved.json
+    evidence, less any route the refresh's provider and route caps would
+    refuse on the deployed manifests. Unreadable evidence holds nothing, so
+    every flag keeps paging."""
     try:
-        return frozenset(
+        evidence = {
             (route.provider, route.model) for route in evaluate_unserved_routes(STORE)
-        )
+        }
+        return frozenset(pending_unserved_route_holds(evidence))
     except Exception:  # noqa: BLE001 - no evidence means page as before, never "held"
         log.warning("synthetic_route_health.hold_evidence_unavailable", exc_info=True)
         return frozenset()

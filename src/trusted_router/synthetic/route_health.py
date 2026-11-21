@@ -285,6 +285,10 @@ def _breaks_outage_streak(sample: ProviderBenchmarkSample) -> bool:
     from trusted_router.synthetic.components import is_router_origin_error
 
     error_type = sample.error_type
+    if sample.status == "unsupported":
+        # A model-not-served answer is a provider refusal; an outage that
+        # alternates it with 5xx is still an outage of this route.
+        return error_type not in _UNSERVED_ERROR_TYPES
     return (
         sample.status != "error"
         or error_type == "probe_config_error"
@@ -395,7 +399,12 @@ def evaluate_unserved_routes(
 
         if qualifies(streak, UNSERVED_MIN_SPAN):
             evidence, kind = streak, "unserved"
-        elif qualifies(outage, UNAVAILABLE_MIN_SPAN):
+        elif qualifies(outage, UNAVAILABLE_MIN_SPAN) and (
+            # Refusal answers may sit inside an outage, but a streak that is
+            # mostly refusals is judged by the model-not-served rule above
+            # (where a transient head deliberately restarts it).
+            sum(sample.status == "error" for _, sample in outage) >= UNSERVED_MIN_SAMPLES
+        ):
             evidence, kind = outage, "unavailable"
         else:
             continue

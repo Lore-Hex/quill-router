@@ -230,13 +230,33 @@ def test_configuration_and_degradation_flags_are_never_superseded() -> None:
     assert paging == flags and holding == []
 
 
-def _route_health_client(monkeypatch, samples: list[ProviderBenchmarkSample]) -> TestClient:
+def _write_chutes_manifest(directory: Path, models: list[str]) -> None:
+    rows = [
+        {"id": model, "upstream_id": model, "input_token_price_per_m": 1, "output_token_price_per_m": 1}
+        for model in models
+    ]
+    (directory / "chutes.json").write_text(json.dumps({"provider": "chutes", "models": rows}), encoding="utf-8")
+
+
+def _route_health_client(
+    monkeypatch,
+    samples: list[ProviderBenchmarkSample],
+    manifest_dir: Path,
+    flags: list[RouteHealthFlag] | None = None,
+    manifest_models: list[str] | None = None,
+) -> TestClient:
     from tests.test_synthetic_monitoring import _benchmark_ingest_settings
+    from trusted_router import unserved_route_hold_plan
     from trusted_router.main import create_app
     from trusted_router.routes.internal import synthetic as synthetic_routes
     from trusted_router.storage import InMemoryStore
 
-    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", lambda _store: [_availability_flag()])
+    _write_chutes_manifest(
+        manifest_dir, manifest_models or [ROUTE[1], SIBLING[1], "other/a", "other/b"],
+    )
+    monkeypatch.setattr(unserved_route_hold_plan, "PACKAGED_MANIFEST_DIR", manifest_dir)
+    reported = flags if flags is not None else [_availability_flag()]
+    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", lambda _store: reported)
     monkeypatch.setattr(route_health, "rotation_candidates", lambda: {"chutes": [ROUTE[1], SIBLING[1]]})
     monkeypatch.setattr(
         InMemoryStore, "provider_route_benchmark_samples",
@@ -259,13 +279,13 @@ def _shift_to_now(samples: list[ProviderBenchmarkSample]) -> list[ProviderBenchm
     ]
 
 
-def test_route_health_pass_pages_a_hold_instead_of_route_availability(monkeypatch) -> None:
+def test_route_health_pass_pages_a_hold_instead_of_route_availability(monkeypatch, tmp_path: Path) -> None:
     events: list[list[str]] = []
     monkeypatch.setattr(
         "trusted_router.synthetic.alerts.ops_alert",
         lambda message, *, fingerprint, tags=None: events.append(fingerprint) or True,
     )
-    client = _route_health_client(monkeypatch, _shift_to_now(_outage() + [_sibling_success()]))
+    client = _route_health_client(monkeypatch, _shift_to_now(_outage() + [_sibling_success()]), tmp_path)
     response = client.post(
         "/v1/internal/synthetic/route-health",
         headers={"x-trustedrouter-internal-token": "test-observer-secret"},
@@ -275,17 +295,62 @@ def test_route_health_pass_pages_a_hold_instead_of_route_availability(monkeypatc
     assert [fp for fp in events if fp[0].startswith("route-")] == [["route-hold", *ROUTE]]
 
 
-def test_route_health_pass_still_pages_when_hold_evidence_is_short(monkeypatch) -> None:
+def test_route_health_pass_still_pages_when_hold_evidence_is_short(monkeypatch, tmp_path: Path) -> None:
     events: list[list[str]] = []
     monkeypatch.setattr(
         "trusted_router.synthetic.alerts.ops_alert",
         lambda message, *, fingerprint, tags=None: events.append(fingerprint) or True,
     )
     short = _outage(hours=2, every=20) + [_sibling_success()]
-    client = _route_health_client(monkeypatch, _shift_to_now(short))
+    client = _route_health_client(monkeypatch, _shift_to_now(short), tmp_path)
     response = client.post(
         "/v1/internal/synthetic/route-health",
         headers={"x-trustedrouter-internal-token": "test-observer-secret"},
     )
     assert response.status_code == 200, response.text
     assert [fp for fp in events if fp[0].startswith("route-")] == [["route-availability", *ROUTE]]
+
+
+def test_route_health_pass_keeps_paging_when_the_refresh_caps_refuse_the_hold(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    # Two of chutes' three rows are down: the refresh's provider-fraction cap
+    # holds neither, so neither page may be replaced by a hold promise.
+    second = ("chutes", "other/a")
+    events: list[list[str]] = []
+    monkeypatch.setattr(
+        "trusted_router.synthetic.alerts.ops_alert",
+        lambda message, *, fingerprint, tags=None: events.append(fingerprint) or True,
+    )
+    second_outage = [
+        _sample(second, minutes_ago=sample_minutes)
+        for sample_minutes in range(1, 13 * 60 + 1, 60)
+    ]
+    samples = _shift_to_now(_outage() + second_outage + [_sibling_success()])
+    client = _route_health_client(
+        monkeypatch, samples, tmp_path,
+        flags=[_availability_flag(), _availability_flag(second)],
+        manifest_models=[ROUTE[1], second[1], SIBLING[1]],
+    )
+    # After the helper's two-route default: probe all three chutes routes.
+    monkeypatch.setattr(route_health, "rotation_candidates",
+                        lambda: {"chutes": [ROUTE[1], second[1], SIBLING[1]]})
+    response = client.post(
+        "/v1/internal/synthetic/route-health",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+    assert response.status_code == 200, response.text
+    assert sorted(fp for fp in events if fp[0].startswith("route-")) == [
+        ["route-availability", *second], ["route-availability", *ROUTE],
+    ]
+
+
+def test_a_502_outage_mixed_with_model_not_served_answers_counts() -> None:
+    samples = [
+        _sample(ROUTE, minutes_ago=1 + 60 * i)
+        if i % 2 == 0
+        else _sample(ROUTE, minutes_ago=1 + 60 * i, status="unsupported",
+                     error_type="unsupported_route", error_status=404)
+        for i in range(14)
+    ] + [_sibling_success()]
+    assert [route.kind for route in _evaluate(samples)] == ["unavailable"]
