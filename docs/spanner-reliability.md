@@ -309,8 +309,9 @@ inside Spanner at a time: the reserve, the one-commit settle or refund, the
 two-commit finalize and the snapshot settle's frozen apply. The rest wait in
 the process.
 
-- It changes when a transaction starts and nothing about it. A caller without
-  a slot runs the same transaction at once.
+- It changes when a transaction starts, and so how much of its deadline is
+  left when it does; nothing else about it. A caller without a slot runs the
+  same transaction at once. The money cannot depend on it.
 - A waiting settle, refund or finalize goes before a waiting reserve, and
   within each group the order is arrival order. One row cannot serve a
   burst's reserves and its settles at once. A settle completes a request
@@ -318,27 +319,63 @@ the process.
   snapshot settle, which answers 503 past it); a reserve is new work with
   twenty. So the reserves are the ones that wait, and a client that sends
   requests as fast as they finish is slowed at its reserves.
-- A caller waits at most a quarter of the Spanner budget it has left, inside
-  that budget, and never more than `TR_WORKSPACE_BILLING_GATE_WAIT_MS`
-  (5000): five seconds of a reserve's twenty, a second and a quarter of a
-  one-commit settle's five, half a second of the snapshot settle's two. So
-  no request takes longer than it could before. Then it starts ungated.
-- At most `TR_WORKSPACE_BILLING_GATE_MAX_WAITERS` callers of one workspace
-  wait in a process and at most 12 across workspaces (of an instance's 16
-  request slots). One more starts ungated at once.
-- It does not apply to a workspace the process knows to be sharded, to a
-  caller with no Spanner deadline to wait inside (the settle-outbox drain,
-  whose applies already take turns per workspace), or to a strict-budget
-  key's authorize, which already takes turns on its key's own slot
-  ("Strict budget busy" below). That key's settles are gated like any other.
+- One wait is at most a quarter of the Spanner budget the caller has left,
+  inside that budget: five seconds of a reserve's twenty, a second and a
+  quarter of a one-commit settle's five, half a second of the snapshot
+  settle's two. All of one request's waits together are at most
+  `TR_WORKSPACE_BILLING_GATE_WAIT_MS` (5000), however many of its
+  transactions meet the gate. Then the caller starts ungated.
+- At most `TR_WORKSPACE_BILLING_GATE_MAX_WAITERS` (8) callers of one
+  workspace wait in a process and at most 12 across workspaces. One more
+  starts ungated at once.
+- It applies only to a transaction that writes the credit row, of a workspace
+  the process knows to have exactly one credit shard. Not to a BYOK-only
+  reserve or its settle (no credit is held); not to a sharded workspace; not
+  to a workspace whose shard count the process has not loaded, since a guess
+  would make a sharded workspace's settles on different rows take turns (the
+  next reserve of that workspace on the instance loads it); not to a caller
+  with no Spanner deadline to wait inside (the settle-outbox drain, whose
+  applies already take turns per workspace); and not to a strict-budget
+  key's authorize, which already takes turns on its key's own slot ("Strict
+  budget busy" below). That key's settles are gated like any other.
 
-It is per process. The row still sees up to that many transactions from each
-instance, and releases from different instances can still abort each other,
-so it bounds the pile-up; it does not remove the lock upgrade. `0` turns it
+What it costs. The wait comes out of the transaction's own deadline, so that
+no request takes longer than it could before. A request behind a slow or
+stalled transaction of its own workspace on the same instance therefore
+starts with up to a quarter less time (at most five seconds less, over the
+whole request), and a transaction that needed more than what is left fails
+on its deadline where, ungated, it would have finished: a reserve answers
+the storage 503 the gateway retries, a one-commit settle defers to the
+drain, the snapshot settle answers its 503. During a burst the reserves of
+that workspace are slower by design: in the model that ships with the gate
+(`tests/test_workspace_billing_gate_storm_model.py`), fifty clients on one
+row have their reserve's median go from about two seconds to about four and
+its 99th percentile from about two to five, while no snapshot settle misses
+its two seconds where more than a hundred did, and the workspace's requests
+complete about half again as fast. The gateway waits 25 seconds for the
+response and retries a reserve only on a 5xx, so a reserve that waited is a
+slow 200, not a retry. That exchange is the point of the gate: the settle's
+503 pages and rolls deploys back; a few seconds on the bursting workspace's
+own reserves does neither.
+
+What it is not. It is per process: the row still sees up to that many
+transactions from each instance, callers that reached a bound or are not
+gated run beside them, and releases from different instances can still
+abort each other. So it bounds the pile-up; it is not a hard limit on the
+row's concurrency and it does not remove the lock upgrade. The waiter caps
+bound the queue, not the instance: a waiting request holds the request slot
+it would otherwise have held while waiting inside Spanner, and one
+workspace's holder, waiters and ungated requests can together fill an
+instance's sixteen slots, as they can without the gate. The per-key
+in-flight limits in front of the routes are what keep room for others. A
+slot held for more than 60 seconds stops counting, so a leaked slot heals; a
+transaction that really runs that long shares its turn. `0` turns the gate
 off, and is the way back.
 
-Each caller that waited or went around writes one line, with no workspace,
-key or request identifier; a caller that found the slot free writes nothing:
+Each caller that waited or went around writes one INFO line, with no
+workspace, key or request identifier; a caller that found the slot free
+writes nothing (about two lines for each request during a burst, none
+otherwise; a failure to write one never stops the transaction):
 
 ```
 metric=workspace_billing_gate outcome=waited kind=settle_one_commit wait_ms=41.3 queued=2
@@ -346,13 +383,14 @@ metric=workspace_billing_gate outcome=waited kind=settle_one_commit wait_ms=41.3
 
 `outcome` is `waited` (got the slot after waiting), `timeout` (reached its
 bound and started ungated), `waiters_full` (the workspace's or the process's
-waiters were full), `no_budget` (no Spanner budget left to wait in) or
-`subjects_full`. `kind` is `authorize`, `settle_one_commit`, `finalize` or
-`frozen_finalize`. `queued` is how many callers of the workspace were already
-waiting. During a burst from one workspace, read these beside the statistics
-above: mostly `waited`, with fewer aborts than commits for
-`tr_settle_one_commit` and few `commit_path=deferred` settles, means the gate
-is absorbing the burst; mostly `timeout` or `waiters_full` means the burst is
+waiters were full), `allowance_spent` (the request had already used its
+waits), `no_budget` (no Spanner budget left to wait in) or `subjects_full`.
+`kind` is `authorize`, `settle_one_commit`, `finalize` or `frozen_finalize`.
+`queued` is how many callers of the workspace were ahead of it. During a
+burst from one workspace, read these beside the statistics above: mostly
+`waited`, with fewer aborts than commits for `tr_settle_one_commit`, few
+`commit_path=deferred` settles and no settle 503, means the gate is
+absorbing the burst; mostly `timeout` or `waiters_full` means the burst is
 larger than one process's queue, and the excess is running as it did before
 the gate.
 

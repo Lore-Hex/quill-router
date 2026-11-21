@@ -21,7 +21,8 @@ credit-row transactions:
   unless ``MODEL_HINTED_SETTLE=1`` makes it exclusive at once;
 * about 10 ms a statement and 21 ms a commit, which gives the reserve and the
   settle their measured uncontended times (about 41 ms and 55 ms);
-* ``MODEL_PROCESSES`` processes, each with its own gate, and
+* ``MODEL_PROCESSES`` processes, each with its own gate (and
+  ``MODEL_MAX_WAITERS`` waiters per workspace in each), and
   ``MODEL_CLIENTS`` clients that send the next request as soon as the last
   one finishes: authorize, a provider call of ``MODEL_UPSTREAM`` seconds,
   then the settle, retried twice more when it misses its 2 s (each miss is a
@@ -68,6 +69,7 @@ CLIENTS = int(os.environ.get("MODEL_CLIENTS", "50"))
 SECONDS = float(os.environ.get("MODEL_SECONDS", "15"))
 UPSTREAM = float(os.environ.get("MODEL_UPSTREAM", "0.3"))
 HINTED_SETTLE = os.environ.get("MODEL_HINTED_SETTLE", "0") == "1"
+MAX_WAITERS = int(os.environ.get("MODEL_MAX_WAITERS", "8"))
 SNAPSHOT_SETTLE_BUDGET = 2.0
 STATEMENT = 0.010
 UPGRADE_GAP = 0.002
@@ -271,6 +273,7 @@ def test_one_workspaces_burst_on_one_row(
     store.trust_settings = Settings(
         environment="test", service_surface="internal",
         workspace_billing_gate_width=1 if gate_on else 0,
+        workspace_billing_gate_max_waiters=MAX_WAITERS,
     )
     authorize_ms: list[float] = []
     settle_ms: list[float] = []
@@ -280,6 +283,8 @@ def test_one_workspaces_burst_on_one_row(
     stop_at = time.monotonic() + SECONDS + 1
 
     def settle_once(authorization_id: str) -> bool:
+        # Each settle attempt, like each authorize, is a request of its own.
+        workspace_billing_gate.forget_request_waits()
         began = time.monotonic()
         try:
             with storage_gcp_io.spanner_rpc_deadline(began + SNAPSHOT_SETTLE_BUDGET):
@@ -300,6 +305,7 @@ def test_one_workspaces_burst_on_one_row(
         request = 0
         while time.monotonic() < stop_at:
             request += 1
+            workspace_billing_gate.forget_request_waits()
             began = time.monotonic()
             try:
                 authorized = _authorize_route(key, f"storm-{gate_on}-{index}-{request}")

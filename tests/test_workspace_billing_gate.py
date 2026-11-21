@@ -20,6 +20,7 @@ import pytest
 from trusted_router import workspace_billing_gate as gate_module
 from trusted_router.config import Settings
 from trusted_router.workspace_billing_gate import (
+    ALLOWANCE_SPENT,
     FREE,
     NO_BUDGET,
     OFF,
@@ -29,6 +30,7 @@ from trusted_router.workspace_billing_gate import (
     WAITED,
     WAITERS_FULL,
     FifoKeyedGate,
+    forget_request_waits,
     ungated,
     wait_bound,
     workspace_billing_gate,
@@ -36,6 +38,12 @@ from trusted_router.workspace_billing_gate import (
 
 WS = "ws-gate"
 LONG = 10.0
+
+
+@pytest.fixture(autouse=True)
+def a_new_request() -> None:
+    """Each test starts with a request's full allowance of waits."""
+    forget_request_waits()
 
 
 def _until(predicate: Any, *, seconds: float = 5.0) -> None:
@@ -482,37 +490,94 @@ def test_only_callers_that_waited_or_went_around_are_logged_and_never_by_id(
     assert WS not in repr(record.__dict__)
 
 
-def test_a_failure_to_write_the_line_still_gives_the_slot_back(
+def test_a_failure_to_write_the_line_never_stops_the_transaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate = FifoKeyedGate()
     first, _ = _acquire(gate)
     assert first is not None
-    entered = threading.Event()
-    failures: list[BaseException] = []
+    ran: list[tuple[str, bool]] = []
 
     def broken_log(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("log sink failed")
 
-    def waiter() -> None:
-        entered.set()
-        try:
-            with _gated(gate):
-                raise AssertionError("the body must not run when the line fails")
-        except RuntimeError as exc:
-            failures.append(exc)
+    def waiter(**overrides: Any) -> None:
+        with _gated(gate, **overrides) as passed:
+            # The billing transaction: it runs whatever happened to the line.
+            ran.append((passed.outcome, passed.held))
 
     monkeypatch.setattr(gate_module.logger, "info", broken_log)
-    thread = threading.Thread(target=waiter)
-    thread.start()
-    assert entered.wait(10)
+    # A caller that reaches its bound and goes around.
+    bypass = threading.Thread(target=waiter, kwargs={"wait_seconds": 0.05})
+    bypass.start()
+    bypass.join(timeout=10)
+    assert ran == [(TIMEOUT, False)]
+    # A caller that is handed the slot after waiting.
+    granted = threading.Thread(target=waiter)
+    granted.start()
     _until(lambda: gate.waiting(WS) == 1)
-    # The waiter is handed the slot, then fails writing its "waited" line.
     gate.release(WS, first, width=1)
-    thread.join(timeout=10)
-    assert [str(exc) for exc in failures] == ["log sink failed"]
-    # It did not keep the slot it had been given.
+    granted.join(timeout=10)
+    assert ran == [(TIMEOUT, False), (WAITED, True)]
+    # And it gave the slot back afterwards.
     assert (gate.holders(WS), gate.waiting(WS), gate.subjects()) == (0, 0, 0)
+
+
+def test_one_requests_waits_add_up_to_at_most_the_configured_bound() -> None:
+    gate = FifoKeyedGate()
+    holder, _ = _acquire(gate)
+    assert holder is not None
+    began = time.monotonic()
+    # First transaction of the request: its budget allows 50 ms (a quarter).
+    with _gated(gate, wait_seconds=0.2, budget_seconds=0.2) as one:
+        assert one.outcome == TIMEOUT and 0.04 <= one.wait_seconds < 0.15
+    # Second: a large budget, but the request has 150 ms of waits left.
+    with _gated(gate, wait_seconds=0.2) as two:
+        assert two.outcome == TIMEOUT and 0.1 <= two.wait_seconds < 0.19
+    # Third and later: nothing left, so no wait at all, however large the budget.
+    for _ in range(3):
+        started = time.monotonic()
+        with _gated(gate, wait_seconds=0.2) as more:
+            assert (more.outcome, more.held, more.wait_seconds) == (ALLOWANCE_SPENT, False, 0.0)
+        assert time.monotonic() - started < 0.05
+    assert one.wait_seconds + two.wait_seconds <= 0.2 + 0.03
+    assert time.monotonic() - began < 0.6
+    # A free slot is still taken at once: the allowance limits waiting only.
+    gate.release(WS, holder, width=1)
+    with _gated(gate, wait_seconds=0.2) as free:
+        assert (free.outcome, free.held) == (FREE, True)
+
+
+def test_another_request_has_its_own_allowance_and_a_reused_context_starts_afresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = FifoKeyedGate()
+    holder, _ = _acquire(gate)
+    assert holder is not None
+    with _gated(gate, wait_seconds=0.05) as spent:
+        assert spent.outcome == TIMEOUT
+    with _gated(gate, wait_seconds=0.05) as none_left:
+        assert none_left.outcome == ALLOWANCE_SPENT
+    # Another request (its own context, as every route call has): a full allowance.
+    outcomes: list[str] = []
+
+    def other_request() -> None:
+        with _gated(gate, wait_seconds=0.05) as passed:
+            outcomes.append(passed.outcome)
+
+    thread = threading.Thread(target=other_request)
+    thread.start()
+    thread.join(timeout=10)
+    assert outcomes == [TIMEOUT]
+    # The same context, played again as a new request.
+    forget_request_waits()
+    with _gated(gate, wait_seconds=0.05) as again:
+        assert again.outcome == TIMEOUT
+    # Or simply reused long after the request it served can have ended.
+    monkeypatch.setattr(gate_module, "REQUEST_WINDOW_SECONDS", 0.0)
+    with _gated(gate, wait_seconds=0.05) as later:
+        assert later.outcome == TIMEOUT
+    gate.release(WS, holder, width=1)
 
 
 def test_the_gate_that_does_not_apply_runs_the_body_at_once() -> None:
@@ -531,15 +596,17 @@ def test_the_setting_is_off_by_default_bounded_and_on_as_a_literal_in_rollout() 
     assert settings.workspace_billing_gate_wait_ms == 5000
     assert settings.workspace_billing_gate_max_waiters == 8
     # The per-workspace cap stays below the per-process cap, which stays
-    # below an instance's 16 request slots.
+    # below an instance's 16 request slots; the wait bound is at most a
+    # quarter of the longest billing budget (twenty seconds).
     assert 8 < gate_module.MAX_TOTAL_WAITERS < 16
+    assert Settings(environment="test", workspace_billing_gate_wait_ms=5000)
     for bad in (
         {"workspace_billing_gate_width": -1},
         {"workspace_billing_gate_width": 5},
         {"workspace_billing_gate_wait_ms": 0},
         {"workspace_billing_gate_wait_ms": 5001},
         {"workspace_billing_gate_max_waiters": 0},
-        {"workspace_billing_gate_max_waiters": 13},
+        {"workspace_billing_gate_max_waiters": 9},
     ):
         with pytest.raises(ValueError):
             Settings(environment="test", **bad)  # type: ignore[arg-type]

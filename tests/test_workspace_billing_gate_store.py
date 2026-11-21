@@ -21,8 +21,15 @@ What they pin:
 * a waiting settle goes before a waiting reserve;
 * every request-path transaction that writes the credit row takes the gate,
   by name, inside the deadline it already had; nothing takes it when the
-  setting is off, the workspace is sharded, the caller has no deadline (the
-  drain) or the authorize is a strict-budget key's.
+  setting is off, the transaction writes no credit row (BYOK only), the
+  workspace is sharded or its shard count is not known to this process, the
+  caller has no deadline (the drain) or the authorize is a strict-budget
+  key's;
+* what the wait costs: a near-deadline caller behind a slow holder waits at
+  most a quarter of its budget at each of the four call sites, all of one
+  request's waits add up to at most the configured bound, and a transaction
+  that needed more than what the wait left it fails on its deadline in the
+  way that call site already fails on one.
 
 The fake holds no locks, so it cannot show Spanner's lock queue, and the
 Spanner emulator runs one read-write transaction at a time, so neither can
@@ -33,6 +40,7 @@ what was and was not measured.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from collections import Counter
@@ -43,8 +51,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from fastapi import BackgroundTasks
-from google.api_core.exceptions import Aborted
+from fastapi import BackgroundTasks, HTTPException
+from google.api_core.exceptions import Aborted, DeadlineExceeded
 
 from tests.fakes.spanner import FakeSpannerDatabase
 from tests.test_settle_one_commit import (  # noqa: F401  (fixtures)
@@ -57,11 +65,17 @@ from tests.test_settle_one_commit import (  # noqa: F401  (fixtures)
     fixed_catalog,
     prod_store,
 )
-from trusted_router import storage_gcp, storage_gcp_io, workspace_billing_gate
+from trusted_router import (
+    storage_gcp,
+    storage_gcp_authorize,
+    storage_gcp_io,
+    workspace_billing_gate,
+)
 from trusted_router.config import Settings
 from trusted_router.services import settle_outbox_drain as drain_mod
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
 from trusted_router.workspace_billing_gate import (
+    ALLOWANCE_SPENT,
     FREE,
     OFF,
     TIMEOUT,
@@ -93,9 +107,11 @@ def _gate_settings(**overrides: Any) -> Settings:
 
 @pytest.fixture(autouse=True)
 def fresh_gate(monkeypatch: pytest.MonkeyPatch) -> FifoKeyedGate:
-    """Each test gets its own gate, so a failure cannot leave a slot behind."""
+    """Each test gets its own gate, so a failure cannot leave a slot behind,
+    and starts as a new request with its full allowance of waits."""
     gate = FifoKeyedGate()
     monkeypatch.setattr(workspace_billing_gate, "WORKSPACE_GATE", gate)
+    workspace_billing_gate.forget_request_waits()
     return gate
 
 
@@ -467,19 +483,20 @@ def test_a_refund_takes_the_gate(prod_store: tuple[Any, FakeSpannerDatabase, Any
     assert _money(db, WORKSPACE, key.hash) == (0, 0, 0, 0)
 
 
-def test_nothing_takes_the_gate_when_it_is_off_or_the_workspace_is_sharded(
+def test_nothing_takes_the_gate_unless_it_is_known_to_write_the_one_credit_row(
     prod_store: tuple[Any, FakeSpannerDatabase, Any],
 ) -> None:
     store, _db, key = prod_store
     seen: list[tuple[str, str, float]] = []
 
     @storage_gcp_io.spanner_rpc_budget(20.0)
-    def in_a_request(workspace_id: str | None, kind: str) -> str:
-        with store._credit_row_gate(workspace_id, kind) as turn:
+    def in_a_request(workspace_id: str | None, kind: str, *, writes: bool = True) -> str:
+        with store._credit_row_gate(workspace_id, kind, writes_credit_row=writes) as turn:
             assert turn.wait_seconds == 0.0
             return turn.outcome
 
     with pytest.MonkeyPatch.context() as patch, _recorded_gate(patch, seen):
+        store._credit_shard_counts._put(WORKSPACE, 1)
         # No settings at all (a store built without them) and the default
         # setting both leave the gate out.
         for settings in (None, Settings(environment="test", service_surface="internal")):
@@ -492,22 +509,125 @@ def test_nothing_takes_the_gate_when_it_is_off_or_the_workspace_is_sharded(
         store.trust_settings = _gate_settings()
         # No workspace to key on (a finalize without its authorization).
         assert in_a_request(None, "frozen_finalize") == OFF
+        # A transaction that writes no credit row has no row to take turns on.
+        assert in_a_request(WORKSPACE, "authorize", writes=False) == OFF
         # A workspace this process knows to be sharded spreads its
         # transactions over rows by design: it is left alone.
         store._credit_shard_counts._put(WORKSPACE, 4)
         assert in_a_request(WORKSPACE, "authorize") == OFF
+        # A count this process has not loaded (or whose cache entry expired)
+        # is not guessed: the workspace may be sharded. The peek never loads.
+        store._credit_shard_counts.invalidate(WORKSPACE)
+        assert in_a_request(WORKSPACE, "finalize") == OFF
+        assert store._credit_shard_counts.peek(WORKSPACE) is None
         # A caller with no Spanner deadline has nothing to wait inside.
         store._credit_shard_counts._put(WORKSPACE, 1)
-        with store._credit_row_gate(WORKSPACE, "frozen_finalize") as turn:
+        with store._credit_row_gate(WORKSPACE, "frozen_finalize", writes_credit_row=True) as turn:
             assert turn.outcome == OFF
         assert seen == []
-        # One shard, or a count this process has not loaded (every workspace
-        # starts with one): gated. The peek never loads the count.
+        # Known to have exactly one credit shard, writing it, inside a
+        # deadline: gated.
         assert in_a_request(WORKSPACE, "authorize") == FREE
-        store._credit_shard_counts.invalidate(WORKSPACE)
         assert in_a_request(WORKSPACE, "finalize") == FREE
-        assert store._credit_shard_counts.peek(WORKSPACE) is None
         assert [kind for _ws, kind, _budget in seen] == ["authorize", "finalize"]
+
+
+def test_a_settle_is_never_gated_on_a_guess_about_the_shard_count(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    fresh_gate: FifoKeyedGate,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An instance that has not loaded the workspace's shard count (it only
+    sees its settles, or the cache entry expired) must not make two settles
+    of a sharded workspace, on different rows, take turns: the one behind
+    would lose part of its budget for nothing. Unknown means not gated."""
+    store, db, key = prod_store
+    store.trust_settings = _gate_settings()
+    caplog.set_level(logging.INFO, logger=workspace_billing_gate.__name__)
+    authorized = [_authorize_route(key, f"gate-unknown-{index}") for index in range(3)]
+    # Another settle of the workspace holds the slot for the whole test, as a
+    # slow settle on another shard would.
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
+    assert holder is not None
+    caplog.clear()
+
+    def settle(index: int) -> float:
+        began = time.monotonic()
+        data, tasks = _settle_route(authorized[index])
+        elapsed = time.monotonic() - began
+        _run_background(tasks)
+        assert data["disposition"] == "finalized"
+        return elapsed
+
+    # The cache entry has expired on this instance: not gated, no wait.
+    store._credit_shard_counts.invalidate(WORKSPACE)
+    assert settle(0) < 1.0
+    # Known to be sharded: not gated either.
+    store._credit_shard_counts._put(WORKSPACE, 4)
+    assert settle(1) < 1.0
+    assert not _gate_lines(caplog)
+    # Only once the process knows there is one credit row does the settle
+    # wait for the holder (here: its quarter of the attempt's five seconds).
+    store._credit_shard_counts._put(WORKSPACE, 1)
+    assert 1.0 <= settle(2) < 3.0
+    assert _gate_lines(caplog) == Counter({(TIMEOUT, "settle_one_commit"): 1})
+    assert _money(db, WORKSPACE, key.hash) == (3 * COST, 0, 3 * COST, 0)
+    fresh_gate.release(WORKSPACE, holder, width=1)
+
+
+def test_a_byok_only_request_writes_no_credit_row_and_is_never_gated(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    fresh_gate: FifoKeyedGate,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import datetime as dt
+
+    store, _db, key = prod_store
+    store.trust_settings = _gate_settings()
+    store._credit_shard_counts._put(WORKSPACE, 1)
+    caplog.set_level(logging.INFO, logger=workspace_billing_gate.__name__)
+    # Another of the workspace's transactions holds the slot throughout.
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
+    assert holder is not None
+
+    @storage_gcp_io.spanner_rpc_budget(20.0)
+    def request(*, credit: bool) -> tuple[float, Any]:
+        began = time.monotonic()
+        usage = "Credits" if credit else "BYOK"
+        outcome, authorization = store.authorize_gateway_typed(
+            workspace_id=WORKSPACE, key_hash=key.hash, estimate=10,
+            has_credit_candidate=credit, reservation_usage_type=usage,
+            model_id="anthropic/claude-opus-4.7", provider="anthropic",
+            requested_model_id="anthropic/claude-opus-4.7",
+            candidate_model_ids=["anthropic/claude-opus-4.7"], region="us",
+            endpoint_id="anthropic/claude-opus-4.7@anthropic/byok",
+            candidate_endpoint_ids=["anthropic/claude-opus-4.7@anthropic/byok"],
+            idempotency_key=None, idempotency_fingerprint=None,
+            expires_at=dt.datetime(2099, 1, 1, tzinfo=dt.UTC),
+        )
+        assert authorization is not None, outcome
+        result = store.typed_finalize_gateway_authorization_result(
+            authorization.id, success=True, actual_microdollars=0 if not credit else 5,
+            selected_usage_type=usage,
+        )
+        assert result.finalized is True
+        return time.monotonic() - began, authorization
+
+    # A BYOK-only reserve and its settle: no credit held, nothing waits,
+    # nothing is written about the gate, although the slot is taken.
+    elapsed, authorization = request(credit=False)
+    assert str(authorization.usage_type) == "BYOK"
+    assert elapsed < 1.0
+    assert not _gate_lines(caplog)
+    # The same request on credit does wait for the holder, at both its
+    # transactions (a quarter of the budget each, here capped by the wait).
+    store.trust_settings = _gate_settings(workspace_billing_gate_wait_ms=60)
+    workspace_billing_gate.forget_request_waits()
+    request(credit=True)
+    lines = _gate_lines(caplog)
+    assert lines[(TIMEOUT, "authorize")] == 1
+    assert set(lines) <= {(TIMEOUT, "authorize"), (ALLOWANCE_SPENT, "finalize"), (TIMEOUT, "finalize")}
+    fresh_gate.release(WORKSPACE, holder, width=1)
 
 
 def test_the_wait_never_exceeds_a_quarter_of_the_budget_the_transaction_has_left(
@@ -516,13 +636,14 @@ def test_the_wait_never_exceeds_a_quarter_of_the_budget_the_transaction_has_left
 ) -> None:
     store, _db, _key = prod_store
     store.trust_settings = _gate_settings()
+    store._credit_shard_counts._put(WORKSPACE, 1)
     holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
     assert holder is not None
 
     @storage_gcp_io.spanner_rpc_budget(0.4)
     def transaction_with_400_ms_left() -> tuple[GatePass, float, float]:
         began = time.monotonic()
-        with store._credit_row_gate(WORKSPACE, "frozen_finalize") as turn:
+        with store._credit_row_gate(WORKSPACE, "frozen_finalize", writes_credit_row=True) as turn:
             waited = time.monotonic() - began
             remaining = storage_gcp_io.shared_rpc_budget_remaining()
             assert remaining is not None
@@ -536,6 +657,226 @@ def test_the_wait_never_exceeds_a_quarter_of_the_budget_the_transaction_has_left
     assert 0.1 < remaining <= 0.32
     fresh_gate.release(WORKSPACE, holder, width=1)
     assert fresh_gate.subjects() == 0
+
+
+class _SlowStore:
+    """Makes each credit-row transaction take ``work`` seconds and fail on
+    its deadline as a Spanner RPC does, and records the budget it started
+    with. The fake itself is instantaneous and has no deadlines."""
+
+    def __init__(self, patch: pytest.MonkeyPatch, *, work: float = 0.0) -> None:
+        self.started_with: list[float] = []
+        original = FakeSpannerDatabase.run_in_transaction
+        slow = self
+
+        def run(database: Any, fn: Any, **kwargs: Any) -> Any:
+            if kwargs.get("transaction_tag") in CREDIT_ROW_TAGS:
+                remaining = storage_gcp_io.shared_rpc_budget_remaining()
+                assert remaining is not None
+                slow.started_with.append(remaining)
+                time.sleep(work)
+                left = storage_gcp_io.shared_rpc_budget_remaining()
+                if left is not None and left <= 0:
+                    raise DeadlineExceeded("deadline exceeded in the credit-row transaction")
+            return original(database, fn, **kwargs)
+
+        patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+
+
+def _near_deadline_call(
+    kind: str, store: Any, key: Any, patch: pytest.MonkeyPatch, budget: float,
+) -> Any:
+    """Run one call site with ``budget`` seconds left for its credit-row
+    transaction, and return what its caller gets."""
+    if kind == "authorize":
+        @storage_gcp_io.spanner_rpc_budget(budget)
+        def reserve() -> Any:
+            try:
+                return _authorize_route(key, f"near-deadline-{time.monotonic_ns()}")
+            except (DeadlineExceeded, HTTPException):
+                return "storage_unavailable"
+
+        return reserve()
+    authorized = _authorize_route(key, f"near-deadline-{kind}-{time.monotonic_ns()}")
+    workspace_billing_gate.forget_request_waits()  # the settle is its own request
+    if kind == "settle_one_commit":
+        # The attempt's own budget (five seconds in production), shortened.
+        patch.setattr(storage_gcp_authorize, "ONE_COMMIT_SETTLE_BUDGET_SECONDS", budget)
+        data, _tasks = _settle_route(authorized)
+        return data["disposition"]
+    if kind == "finalize":
+        @storage_gcp_io.spanner_rpc_budget(budget)
+        def finalize() -> Any:
+            try:
+                return store.typed_finalize_gateway_authorization_result(
+                    authorized["authorization_id"], success=True, actual_microdollars=COST,
+                    selected_usage_type="Credits",
+                ).finalized
+            except DeadlineExceeded:
+                return "deadline_exceeded"
+
+        return finalize()
+    assert kind == "frozen_finalize"
+    # A deferred settle leaves the frozen intent the snapshot settle applies.
+    with pytest.MonkeyPatch.context() as contended:
+        _contend_one_commit(contended, Aborted("wounded on the credit row"))
+        data, _tasks = _settle_route(authorized)
+    assert data["disposition"] == "intent_durable"
+    row = drain_mod.spanner_settle_outbox().get(authorized["authorization_id"], "settle")
+    assert row is not None
+    workspace_billing_gate.forget_request_waits()
+    with storage_gcp_io.spanner_rpc_deadline(time.monotonic() + budget):
+        return apply_frozen_settle(row)
+
+
+_SUCCESS = {
+    "authorize": dict, "settle_one_commit": "finalized", "finalize": True,
+    "frozen_finalize": ApplyOutcome.SETTLED_NOW,
+}
+# What each call site's caller gets when its transaction runs out of time,
+# with or without the gate: the reserve's storage error (the app answers it
+# 503 "storage unavailable", and the gateway retries that), the deferral to
+# the drain, the error the inline finalize raises, and the park that the
+# snapshot settle answers 503 for.
+_ON_DEADLINE = {
+    "authorize": "storage_unavailable", "settle_one_commit": "intent_durable",
+    "finalize": "deadline_exceeded", "frozen_finalize": ApplyOutcome.PARK_TYPED_UNAVAILABLE,
+}
+_KINDS = ["authorize", "settle_one_commit", "finalize", "frozen_finalize"]
+
+
+@pytest.mark.parametrize("kind", _KINDS)
+def test_a_near_deadline_caller_behind_a_slow_holder_waits_a_quarter_and_then_runs(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    fresh_gate: FifoKeyedGate,
+    caplog: pytest.LogCaptureFixture,
+    kind: str,
+) -> None:
+    store, _db, key = prod_store
+    store.trust_settings = _gate_settings()
+    budget = 0.6
+    caplog.set_level(logging.INFO, logger=workspace_billing_gate.__name__)
+    _authorize_route(key, "warm-the-shard-count")
+    # A slow transaction of the workspace holds the slot throughout.
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
+    assert holder is not None
+    with pytest.MonkeyPatch.context() as patch:
+        slow = _SlowStore(patch)
+        caplog.clear()
+        result = _near_deadline_call(kind, store, key, patch, budget)
+    expected = _SUCCESS[kind]
+    assert isinstance(result, dict) if expected is dict else result == expected
+    # It waited once, for about a quarter of what it had, and went around.
+    waits = [
+        record.value for record in caplog.records  # type: ignore[attr-defined]
+        if getattr(record, "metric", None) == "workspace_billing_gate"
+        and record.kind == kind  # type: ignore[attr-defined]
+    ]
+    assert len(waits) == 1 and 0.6 * budget * 250 <= waits[0] <= budget * 250 + 80
+    # And its transaction started with about three quarters of the budget.
+    assert slow.started_with[-1] >= 0.55 * budget
+    fresh_gate.release(WORKSPACE, holder, width=1)
+
+
+@pytest.mark.parametrize("kind", _KINDS)
+@pytest.mark.parametrize("gate_on", [False, True], ids=["gate_off", "gate_on"])
+def test_a_transaction_that_needs_more_than_the_wait_left_fails_as_on_any_deadline(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    fresh_gate: FifoKeyedGate,
+    kind: str,
+    gate_on: bool,
+) -> None:
+    """The gate's cost, stated as a test. A transaction that needs 85% of its
+    budget finishes with the gate off. Behind a slow holder with the gate on,
+    it waits a quarter, has 75% left, and runs out of time: its caller gets
+    what that call site already answers on a deadline, nothing new."""
+    store, _db, key = prod_store
+    store.trust_settings = _gate_settings(workspace_billing_gate_width=1 if gate_on else 0)
+    budget = 0.6
+    _authorize_route(key, "warm-the-shard-count")
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
+    assert holder is not None
+    with pytest.MonkeyPatch.context() as patch:
+        setup = _SlowStore(patch)  # instantaneous while the request is set up
+        del setup
+        original = FakeSpannerDatabase.run_in_transaction
+        armed = [False]
+
+        def run(database: Any, fn: Any, **kwargs: Any) -> Any:
+            if armed[0] and kwargs.get("transaction_tag") in CREDIT_ROW_TAGS:
+                armed[0] = False  # the transaction under test, once
+                time.sleep(0.85 * budget)
+                left = storage_gcp_io.shared_rpc_budget_remaining()
+                if left is not None and left <= 0:
+                    raise DeadlineExceeded("deadline exceeded in the credit-row transaction")
+            return original(database, fn, **kwargs)
+
+        if kind == "authorize":
+            armed[0] = True
+            patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+            result = _near_deadline_call(kind, store, key, patch, budget)
+        else:
+            # Arm after the request's own reserve: only its settle is slow.
+            reserve = _authorize_route
+
+            def reserve_then_arm(*args: Any, **kwargs: Any) -> Any:
+                authorized = reserve(*args, **kwargs)
+                armed[0] = kind != "frozen_finalize"
+                return authorized
+
+            patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+            patch.setattr(sys.modules[__name__], "_authorize_route", reserve_then_arm)
+            if kind == "frozen_finalize":
+                frozen = apply_frozen_settle
+
+                def arm_then_apply(row: Any) -> Any:
+                    armed[0] = True
+                    return frozen(row)
+
+                patch.setattr(sys.modules[__name__], "apply_frozen_settle", arm_then_apply)
+            result = _near_deadline_call(kind, store, key, patch, budget)
+    if gate_on:
+        assert result == _ON_DEADLINE[kind]
+    else:
+        expected = _SUCCESS[kind]
+        assert isinstance(result, dict) if expected is dict else result == expected
+    fresh_gate.release(WORKSPACE, holder, width=1)
+
+
+def test_one_requests_two_gated_transactions_share_one_allowance(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    fresh_gate: FifoKeyedGate,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A settle whose one-commit attempt loses to the store and then
+    finalizes inline meets the gate twice. Its waits are counted together:
+    the second transaction does not wait again once the request's bound is
+    spent."""
+    store, db, key = prod_store
+    store.trust_settings = _gate_settings(workspace_billing_gate_wait_ms=150)
+    caplog.set_level(logging.INFO, logger=workspace_billing_gate.__name__)
+    authorized = _authorize_route(key, "gate-allowance")
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=8, wait_seconds=1)
+    assert holder is not None
+    workspace_billing_gate.forget_request_waits()
+    caplog.clear()
+    inline = INTERNAL.model_copy(update={"settle_contention_defers_to_drain": False})
+    with pytest.MonkeyPatch.context() as contended:
+        _contend_one_commit(contended, Aborted("wounded on the credit row"))
+        data, tasks = _settle_route(authorized, settings=inline)
+        _run_background(tasks)
+    assert data["disposition"] == "finalized"
+    # 150 ms at the one-commit attempt, none at the inline finalize.
+    assert _gate_lines(caplog) == Counter({
+        (TIMEOUT, "settle_one_commit"): 1, (ALLOWANCE_SPENT, "finalize"): 1,
+    })
+    waited_ms = sum(
+        record.value for record in caplog.records  # type: ignore[attr-defined]
+        if getattr(record, "metric", None) == "workspace_billing_gate"
+    )
+    assert 140 <= waited_ms <= 230
+    assert _money(db, WORKSPACE, key.hash) == (COST, 0, COST, 0)
+    fresh_gate.release(WORKSPACE, holder, width=1)
 
 
 def test_a_strict_budget_authorize_keeps_its_own_slot_and_never_waits_at_the_gate(

@@ -2027,18 +2027,30 @@ class SpannerStore(OperationalAnalyticsReads):
         return randomized_credit_shards(count)
 
     def _credit_row_gate(
-        self, workspace_id: str | None, kind: str,
+        self, workspace_id: str | None, kind: str, *, writes_credit_row: bool,
     ) -> contextlib.AbstractContextManager[GatePass]:
         """The workspace's process-local turn for one credit-row transaction.
 
-        Applies when the gate is on (``workspace_billing_gate_width``), the
-        caller has a Spanner deadline to wait inside (every request path; not
-        the settle-outbox drain, whose applies already take turns), and this
-        process does not know the workspace to be sharded: every workspace
-        starts with one credit shard, and a sharded one spreads its
-        transactions over rows by design. The count is only peeked; a miss
-        never loads it. The caller's transaction is the body of the ``with``
-        and runs the same with or without a slot (workspace_billing_gate.py).
+        Applies only when all of these hold; otherwise the body runs at once:
+
+        * the gate is on (``workspace_billing_gate_width``);
+        * the transaction writes the workspace's credit row. A BYOK-only
+          reserve holds no credit and neither does its settle, so two of
+          them have no row to take turns on;
+        * this process knows the workspace to have exactly one credit shard,
+          so the row is the one every such transaction writes. The count is
+          only peeked, never loaded. A sharded workspace spreads its
+          transactions over rows by design, and a count this process has
+          not loaded is not guessed: its settles would otherwise take turns
+          across rows and spend each other's budget. The settle does not
+          know its shard before it reads the reservation, so the count is
+          what there is to go on; the workspace's next reserve loads it;
+        * the caller has a Spanner deadline to wait inside (every request
+          path; not the settle-outbox drain, whose applies already take
+          turns).
+
+        The caller's transaction is the body of the ``with`` and runs the
+        same with or without a slot (workspace_billing_gate.py).
         """
         settings = self.trust_settings
         width = getattr(settings, "workspace_billing_gate_width", 0)
@@ -2046,12 +2058,13 @@ class SpannerStore(OperationalAnalyticsReads):
         max_waiters = getattr(settings, "workspace_billing_gate_max_waiters", 0)
         if (
             not workspace_id
+            or not writes_credit_row
             or type(width) is not int or width <= 0
             or type(wait_ms) is not int or wait_ms <= 0
             or type(max_waiters) is not int or max_waiters <= 0
         ):
             return ungated()
-        if self._credit_shard_counts.peek(workspace_id) not in (None, 1):
+        if self._credit_shard_counts.peek(workspace_id) != 1:
             return ungated()
         from trusted_router.storage_gcp_io import shared_rpc_budget_remaining
 
@@ -2070,6 +2083,13 @@ class SpannerStore(OperationalAnalyticsReads):
             # waiting reserve, which is new work.
             first=kind != "authorize",
         )
+
+    @staticmethod
+    def _holds_credit(authorization: Any) -> bool:
+        """Whether this authorization's settle writes the credit row: its
+        hold is on credit (any credit candidate), not BYOK-only."""
+        usage_type = getattr(authorization, "usage_type", None)
+        return usage_type is not None and UsageType.coerce(usage_type) == UsageType.CREDITS
 
     def _heal_stale_debt_mark(
         self,
@@ -5139,8 +5159,10 @@ class SpannerStore(OperationalAnalyticsReads):
         )
         if getattr(self.trust_settings, "async_settle_protection", False):
             kwargs.setdefault("async_fence", True)
+        frozen = kwargs.get("authorization")
         with self._credit_row_gate(
-            getattr(kwargs.get("authorization"), "workspace_id", None), "frozen_finalize",
+            getattr(frozen, "workspace_id", None), "frozen_finalize",
+            writes_credit_row=self._holds_credit(frozen),
         ):
             return typed_finalize_atomic(self._database, self._param_types, **kwargs)
 
@@ -5228,7 +5250,10 @@ class SpannerStore(OperationalAnalyticsReads):
             {"async_fence": True} if getattr(self.trust_settings, "async_settle_protection", False) else {}
         )
         # The gate's wait is before the clock: spanner_ms stays time in Spanner.
-        with self._credit_row_gate(authorization.workspace_id, "finalize"):
+        with self._credit_row_gate(
+            authorization.workspace_id, "finalize",
+            writes_credit_row=self._holds_credit(authorization),
+        ):
             spanner_start = time.perf_counter()
             result = typed_finalize_atomic(
                 self._database,
@@ -5757,6 +5782,7 @@ class SpannerStore(OperationalAnalyticsReads):
             # never more than a quarter of it; the commit is the same either way.
             with self._credit_row_gate(
                 authorization.workspace_id, "settle_one_commit",
+                writes_credit_row=self._holds_credit(authorization),
             ) as turn:
                 gate_wait_seconds = turn.wait_seconds
                 return cast(dict[str, Any], typed_finalize_atomic(
@@ -6129,10 +6155,14 @@ class SpannerStore(OperationalAnalyticsReads):
 
         def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
             def invoke() -> dict[str, Any]:
-                # The workspace's turn for its credit row. A strict-budget
-                # authorize already takes turns on its key's own slot and
-                # holds it here; it is not made to wait a second time.
-                with self._credit_row_gate(None if strict_budget else workspace_id, "authorize"):
+                # The workspace's turn for its credit row. A BYOK-only
+                # reserve writes no credit row. A strict-budget authorize
+                # already takes turns on its key's own slot and holds it
+                # here; it is not made to wait a second time.
+                with self._credit_row_gate(
+                    workspace_id, "authorize",
+                    writes_credit_row=has_credit_candidate and not strict_budget,
+                ):
                     return authorize_atomic(
                         self._database,
                         self._param_types,

@@ -753,14 +753,14 @@ class Settings(BaseSettings):
     # without it. It changes when a transaction starts and nothing about it
     # (workspace_billing_gate.py). 0 is off.
     workspace_billing_gate_width: int = Field(default=0, ge=0, le=4)
-    # A caller waits at most a quarter of the Spanner budget it has left, and
-    # never longer than this: five seconds of a reserve's twenty, a second
-    # and a quarter of a one-commit settle's five, half a second of the
-    # snapshot settle's two.
+    # One wait is at most a quarter of the Spanner budget the caller has
+    # left (five seconds of a reserve's twenty, a second and a quarter of a
+    # one-commit settle's five, half a second of the snapshot settle's two),
+    # and all of one request's waits together are at most this.
     workspace_billing_gate_wait_ms: int = Field(default=5000, ge=1, le=5000)
     # Callers of one workspace parked at the gate in one process; one more
-    # starts at once. Half of an instance's 16 request slots.
-    workspace_billing_gate_max_waiters: int = Field(default=8, ge=1, le=12)
+    # starts at once. It bounds the queue, not the instance's request slots.
+    workspace_billing_gate_max_waiters: int = Field(default=8, ge=1, le=8)
     # Only front doors that overwrite X-TrustedRouter-Client-IP may opt into
     # edge_header. Public origins that cannot perform that overwrite must stay
     # on the safe default and aggregate into the untrusted_lb bucket.

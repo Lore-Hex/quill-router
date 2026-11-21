@@ -28,35 +28,61 @@ that reaches its bound starts ungated.
 
 What it changes and what it does not:
 
-* It changes only WHEN a transaction starts. The transaction's function,
-  arguments, statements, tag, retries and outcome handling are the caller's,
-  untouched. A request that gets no slot (bound reached, waiters full, gate
-  off) runs the same code at once.
+* It changes WHEN a transaction starts, and therefore how much of its
+  deadline is left when it does. The transaction's function, arguments,
+  statements, tag, retries and outcome handling are the caller's, untouched,
+  so the money cannot depend on the gate. A request that gets no slot (bound
+  reached, waiters full, gate off) runs the same code at once.
 * The wait is spent inside the caller's existing Spanner deadline, never in
-  addition to it, and is capped at ``BUDGET_SHARE`` of what remains, so no
-  request can take longer than it could before, and a transaction always
-  keeps at least three quarters of the budget it arrived with: a reserve
-  waits at most five of its twenty seconds, a one-commit settle a second
-  and a quarter of its five, the snapshot settle half a second of its two.
-  A caller with no such deadline (the settle-outbox drain) is not gated:
-  its wait would be extra time, and its applies already take turns.
+  addition to it, so no request can take longer than it could before. That
+  is also its cost: a caller that waited starts with less time, and a
+  transaction that needed more than what is left fails on its deadline
+  where, ungated, it would have finished. The loss is bounded twice. One
+  wait is at most ``BUDGET_SHARE`` of the budget left: five seconds of a
+  reserve's twenty, a second and a quarter of a one-commit settle's five,
+  half a second of the snapshot settle's two. And all of one request's waits
+  together are at most the configured bound (five seconds), however many of
+  its transactions meet the gate (a one-commit attempt and then an inline
+  finalize; a reserve re-entered after a replay or a repair).
+* A caller with no such deadline (the settle-outbox drain) is not gated: its
+  wait would be extra time, and its applies already take turns.
+* It applies only where it is known to help: a transaction that writes the
+  credit row (not a BYOK-only reserve or the settle of one), of a workspace
+  this process knows to have exactly one credit shard. A workspace whose
+  shard count the process has not loaded is not gated: gating on a guess
+  would make a sharded workspace's settles on different rows take turns and
+  spend each other's budget for nothing, while not gating leaves today's
+  behaviour. A process learns the count on the workspace's next reserve.
 * It is a harm limiter, not a mutex. Correctness still comes from the
-  conditional updates. Other processes hold their own gates, so the row sees
-  up to ``width`` transactions per process instead of every in-flight one.
+  conditional updates. Other processes hold their own gates, and callers
+  that reached a bound or are not gated run beside the holder, so ``width``
+  bounds the pile-up on the row; it is not a hard limit on it.
 
 Bounds: a workspace has at most ``max_waiters`` callers parked here and the
-process at most ``MAX_TOTAL_WAITERS`` (of an instance's 16 request slots), so
-one workspace cannot park every worker. Entries exist only while a slot is
-held or awaited. A slot held past ``ABANDONED_HOLD_SECONDS`` (longer than any
-billing transaction's budget) is treated as leaked and stops counting.
+process at most ``MAX_TOTAL_WAITERS``; one more starts ungated at once.
+These bound the queue, not the instance: a waiting caller holds the request
+slot it would otherwise have held while waiting inside Spanner, and nothing
+here reserves slots for other workspaces (the per-key in-flight limits in
+front of the routes do that). Entries exist only while a slot is held or
+awaited. A slot held past ``ABANDONED_HOLD_SECONDS`` (three times the
+longest billing budget) stops counting, so a leaked slot heals; a
+transaction that really runs that long loses its turn's exclusivity, which
+only weakens the limit.
 
-Locks: a caller holding a slot here only runs its transaction, and takes no
-other in-process lock while it waits or holds. A strict-budget key's
-authorize is not gated: it already takes turns on its own per-key slot
+Locks: the gate is taken before the transaction and released after it, and
+is never requested while holding another lock. The transaction it surrounds
+takes short locks of its own (the outbox probe's cache, the shard-count
+cache, the session pool), always after the gate and never across a wait for
+it, so there is no cycle. A strict-budget key's authorize is not gated: it
+already takes turns on its own per-key slot
 (strict_budget.strict_budget_slot), and waiting here while holding that slot
 would turn the key's next authorize into a strict-budget-busy 503. So the
 two are never nested. The gate's own mutex guards bookkeeping and is never
 held while waiting.
+
+Telemetry: one INFO line for each caller that waited or went around (about
+two per request pair during a burst, none otherwise), written best-effort:
+a failure to write it never stops the transaction.
 """
 
 from __future__ import annotations
@@ -67,6 +93,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -95,7 +122,12 @@ WAITERS_FULL = "waiters_full"
 SUBJECTS_FULL = "subjects_full"
 REENTRANT = "reentrant"
 NO_BUDGET = "no_budget"
+ALLOWANCE_SPENT = "allowance_spent"
 OFF = "off"
+# A request's waits are counted together for this long after its first one.
+# No billing request lives longer (the gateway stops waiting at 25 seconds),
+# so a context that outlives it (a worker thread, a test) starts afresh.
+REQUEST_WINDOW_SECONDS = 30.0
 
 
 @dataclass
@@ -316,6 +348,59 @@ def wait_bound(wait_seconds: float, budget_seconds: float) -> float:
     return max(0.0, min(wait_seconds, budget_seconds * BUDGET_SHARE))
 
 
+@dataclass
+class _RequestWaits:
+    """What one request has already spent waiting at the gate."""
+
+    since: float
+    waited: float = 0.0
+
+
+# Request-scoped by construction: every route runs its storage work in its
+# own copy of the context (a threadpool call or the request's task), so a
+# value set here is seen by that request's later transactions and by no
+# other request. REQUEST_WINDOW_SECONDS covers a context that is reused.
+_REQUEST_WAITS: ContextVar[_RequestWaits | None] = ContextVar(
+    "trusted_router_workspace_gate_waits", default=None,
+)
+
+
+def _request_waits() -> _RequestWaits:
+    now = time.monotonic()
+    waits = _REQUEST_WAITS.get()
+    if waits is None or now - waits.since >= REQUEST_WINDOW_SECONDS:
+        waits = _RequestWaits(since=now)
+        _REQUEST_WAITS.set(waits)
+    return waits
+
+
+def forget_request_waits() -> None:
+    """Start a new request's allowance in this context.
+
+    Routes never need it (each request has its own context). A loop that
+    plays many requests on one thread, as a model or a test does, calls it
+    between them.
+    """
+    _REQUEST_WAITS.set(None)
+
+
+def _write_line(passed: GatePass, kind: str) -> None:
+    """One line per caller that waited or went around. Best-effort: the
+    transaction must run whether or not the line could be written."""
+    try:
+        logger.info(
+            "metric=workspace_billing_gate outcome=%s kind=%s wait_ms=%.1f queued=%d",
+            passed.outcome, kind, passed.wait_seconds * 1000, passed.queued,
+            extra={
+                "metric": "workspace_billing_gate", "outcome": passed.outcome,
+                "kind": kind, "value": passed.wait_seconds * 1000,
+                "queued": passed.queued,
+            },
+        )
+    except Exception:  # noqa: BLE001, S110 - telemetry never stops billing
+        pass
+
+
 @contextmanager
 def workspace_billing_gate(
     workspace_id: str,
@@ -332,11 +417,14 @@ def workspace_billing_gate(
 
     Always yields, with or without a slot: a caller that could not get one
     runs ungated, as it would with the gate off. ``budget_seconds`` is what
-    is left of the caller's Spanner deadline; the wait is spent inside it.
-    ``first`` puts the caller ahead of the waiters that are not (the store
-    passes it for every kind but a reserve). ``kind`` names the code path
-    (authorize, settle_one_commit, finalize, frozen_finalize) for the log
-    line, which carries no workspace, key or request identifier.
+    is left of the caller's Spanner deadline; the wait is spent inside it,
+    at most ``BUDGET_SHARE`` of it, and at most what is left of the
+    request's allowance: all of one request's waits together never exceed
+    ``wait_seconds``. ``first`` puts the caller ahead of the waiters that
+    are not (the store passes it for every kind but a reserve). ``kind``
+    names the code path (authorize, settle_one_commit, finalize,
+    frozen_finalize) for the log line, which carries no workspace, key or
+    request identifier.
     """
     active = WORKSPACE_GATE if gate is None else gate
     held: set[str] | None = getattr(_HELD, "subjects", None)
@@ -347,27 +435,21 @@ def workspace_billing_gate(
         # transaction. Waiting for itself would only spend its bound.
         yield GatePass(REENTRANT, held=False)
         return
+    waits = _request_waits()
+    allowance = max(0.0, wait_seconds - waits.waited)
     token, passed = active.acquire(
         workspace_id, width=width, max_waiters=max_waiters,
-        wait_seconds=wait_bound(wait_seconds, budget_seconds), first=first,
+        wait_seconds=min(wait_bound(wait_seconds, budget_seconds), allowance), first=first,
     )
+    waits.waited += passed.wait_seconds
+    if passed.outcome == NO_BUDGET and allowance <= 0 < budget_seconds:
+        # The slot was taken and this request has used its waits already.
+        passed = GatePass(ALLOWANCE_SPENT, held=False, queued=passed.queued)
     if token is not None:
         held.add(workspace_id)
-    # Everything after the slot is taken is inside the try: a failure to
-    # write the line below must give the slot back like any other exit.
     try:
         if passed.outcome != FREE:
-            # One line per caller that waited or went around; the
-            # uncontended path logs nothing.
-            logger.info(
-                "metric=workspace_billing_gate outcome=%s kind=%s wait_ms=%.1f queued=%d",
-                passed.outcome, kind, passed.wait_seconds * 1000, passed.queued,
-                extra={
-                    "metric": "workspace_billing_gate", "outcome": passed.outcome,
-                    "kind": kind, "value": passed.wait_seconds * 1000,
-                    "queued": passed.queued,
-                },
-            )
+            _write_line(passed, kind)
         yield passed
     finally:
         if token is not None:
