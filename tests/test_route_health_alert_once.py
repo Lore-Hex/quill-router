@@ -127,14 +127,28 @@ def test_the_next_sweep_reports_again(
     monkeypatch: pytest.MonkeyPatch, alerts: list[list[str]],
 ) -> None:
     from trusted_router.routes.internal import synthetic as synthetic_routes
+    from trusted_router.storage import InMemoryStore
 
-    hours = iter(["2026-11-21T08", "2026-11-21T09"])
-    monkeypatch.setattr(synthetic_routes, "_sweep_hour", lambda now=None: next(hours))
+    claims: list[str] = []
+    real_claim = InMemoryStore.record_webhook_event_once
+
+    def recording_claim(self: Any, source: str, event_id: str) -> bool:
+        claims.append(event_id)
+        return real_claim(self, source, event_id)
+
+    monkeypatch.setattr(InMemoryStore, "record_webhook_event_once", recording_claim)
+    hour = {"value": "2026-11-21T08"}
+    monkeypatch.setattr(synthetic_routes, "_sweep_hour", lambda now=None: hour["value"])
     client = _client(monkeypatch)
     client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
     per_sweep = len(alerts)
     client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
-    assert per_sweep > 0 and len(alerts) == 2 * per_sweep
+    assert len(alerts) == per_sweep > 0
+    hour["value"] = "2026-11-21T09"
+    client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
+    assert len(alerts) == 2 * per_sweep
+    # Every emission went through a real claim, none through the fail-open path.
+    assert {claim.rsplit("@", 1)[1] for claim in claims} == {"2026-11-21T08", "2026-11-21T09"}
 
 
 def test_a_failed_claim_still_reports(
@@ -200,3 +214,20 @@ def test_a_flag_only_the_second_caller_sees_still_alerts(
     client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
     client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
     assert alerts == [["route-configuration", "maple", "x/y"]]
+
+
+def test_a_digest_listing_a_newly_flaky_route_is_still_sent(
+    monkeypatch: pytest.MonkeyPatch, alerts: list[list[str]],
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    monkeypatch.setattr(synthetic_routes, "_sweep_hour", lambda now=None: "2026-11-21T14")
+    degraded = [flag for flag in _flags() if flag.kind == "degradation"]
+    another = RouteHealthFlag("novita", "e/f", 12, 4, 0.33, "provider_error", None,
+                              kind="degradation", newest_error_status=503)
+    client = _client(monkeypatch, [degraded, [*degraded, another], [*degraded, another]])
+    for _caller in range(3):
+        client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
+    digests = [fp for fp in alerts if fp[0] == "route-degradation-digest"]
+    # One digest per distinct contents: A, then A+B; the repeat of A+B is folded.
+    assert len(digests) == 2

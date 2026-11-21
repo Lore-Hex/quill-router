@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 import re
 import threading
@@ -762,6 +763,10 @@ def report_degradation_digest(
         f"{'' if len(degraded) == 1 else 's'} failed at least 25% of probes within the last "
         f"{_DEGRADATION_WINDOW_HOURS} hours: {lines}",
         fingerprint=["route-degradation-digest", day],
+        # A peer that sees a different set of flaky routes sends its own digest.
+        claim_detail=hashlib.sha256(
+            "\n".join(f"{flag.provider}/{flag.model}" for flag in degraded).encode()
+        ).hexdigest()[:16],
         tags={"degraded_routes": str(len(degraded))},
     )
     return True

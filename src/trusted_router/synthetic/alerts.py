@@ -125,6 +125,7 @@ def ops_alert(
     *,
     fingerprint: list[str],
     tags: dict[str, str] | None = None,
+    claim_detail: str | None = None,
 ) -> bool:
     """A page-worthy operational alarm: logged AND captured as a Sentry issue.
 
@@ -139,8 +140,15 @@ def ops_alert(
     issue that re-opens, and exception-swallowed so alerting can never break
     the money path it is reporting on. Returns True when the capture reached
     the Sentry SDK.
+
+    ``claim_detail`` distinguishes alerts that share a fingerprint but not
+    their contents (a digest listing different routes) inside alerts_once.
+    The claim precedes the capture; capture_message queues to an async
+    transport and does not raise on delivery failure, so a capture that is
+    lost after its claim is lost the same way without one.
     """
-    if not alert_claimed(fingerprint):
+    claim_key = fingerprint if claim_detail is None else [*fingerprint, claim_detail]
+    if not alert_claimed(claim_key):
         logger.info("alert already emitted by a peer: %s", message)
         return False
     logger.error(message)
