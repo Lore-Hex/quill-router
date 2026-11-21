@@ -6538,6 +6538,52 @@ class SpannerStore(OperationalAnalyticsReads):
             ),
         )
 
+    def release_unstarted_holds_result(
+        self,
+        *,
+        now: Any,
+        limit: int = 100,
+        after_seconds: int,
+        log_only: bool,
+    ) -> Any:
+        """One pass of the early rule over this store's reservations
+        (storage_gcp_authorize.release_unstarted_holds_result). The pass
+        reads a boot's heartbeat declaration once per key id, between its
+        transactions; a read that fails counts as undeclared, which keeps
+        the hold."""
+        from trusted_router.storage_gcp_authorize import (
+            UnstartedRelease,
+        )
+        from trusted_router.storage_gcp_authorize import (
+            release_unstarted_holds_result as _release,
+        )
+
+        def heartbeat_declared(kid: str) -> bool:
+            try:
+                boot = self.get_gateway_boot(kid)
+            except Exception:  # noqa: BLE001 - an unread boot keeps the hold
+                log.warning("gateway early release boot read failed", exc_info=True)
+                return False
+            return bool(boot is not None and boot.declares_usage_heartbeat)
+
+        return _release(
+            self._database,
+            self._param_types,
+            now=now,
+            limit=limit,
+            rule=UnstartedRelease(
+                after_seconds=int(after_seconds),
+                log_only=bool(log_only),
+                heartbeat_declared=heartbeat_declared,
+            ),
+            async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)),
+            operational_analytics_outbox=getattr(
+                self,
+                "_operational_analytics_outbox",
+                None,
+            ),
+        )
+
     def typed_key_usage(
         self,
         key_hash: str,

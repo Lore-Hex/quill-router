@@ -1437,6 +1437,116 @@ Find the previous pinned revision with `gcloud run revisions list`. Pending
 and dead rows left behind keep their holds frozen; they are safe and resolve on
 the next flip or via `release_approved`.
 
+### <a id="holds-released-without-a-terminal"></a>Holds released without a terminal
+
+Every gateway request ends in a settle or a refund. A hold with neither is
+given back by the control plane, and each such release is nearly always a
+gateway exit that authorized and then sent no terminal. Until the hold is
+given back the customer's credit is locked: a small balance can be held whole
+by a handful of stranded requests, and its later requests are refused.
+
+Two rules give a hold back, and the drain writes one WARNING line for each
+hold, naming the rule's counter and nothing else:
+
+| Rule | When | Line (`textPayload`) |
+|---|---|---|
+| `expired` | the reaper, at the reservation's expiry, two hours after the authorization | `WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_expired_total ` |
+| `unstarted_stream` | the early rule, 15 minutes after the authorization, for a stream the gateway heartbeats that never sent its first heartbeat | `WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_unstarted_stream_total ` |
+
+**Alert `TR Holds: released at expiry`** and **Alert `TR Holds: released
+early, stream never started`** (`infra/hold_release_alerts.tf`) notify at
+most once an hour while lines keep coming. The count of holds is the
+log-based metric `gateway_hold_release_expired` or
+`gateway_hold_release_unstarted_stream`. Money is correct after either: the
+exact recorded hold is given back and nothing is booked.
+
+What to do: find the gateway exit. The lines name no customer on purpose, so
+start from the class of the released rows, an aggregate over the last hour by
+the reservation's terminal index (never a table read):
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy --priority=low \
+  --sql="SELECT IFNULL(JSON_VALUE(a.payload,'\$.stage_d_reason'),'null') reason,
+         a.started_at IS NOT NULL started, COUNT(*) n
+         FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_terminal} r
+         JOIN tr_gateway_authorization a ON a.authorization_id = r.authorization_id
+         WHERE r.settled=true AND r.actual_micro=0
+           AND r.terminal_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+           AND a.finalization_outcome='refunded'
+           AND TIMESTAMP_DIFF(r.terminal_at, r.created_at, SECOND) >= 600
+         GROUP BY 1,2"
+```
+
+`reason=ok` with `started=false` is a stream that died between its authorize
+and its provider's first byte (2026-11: a request rejected while it was being
+translated, after its authorize, with no refund). Any other reason is a
+request with no heartbeat, which only the two-hour rule ever releases. Then
+read the gateway's logs for requests that answered an error after
+`authorize` with no `refund` line, and fix the exit in quill-cloud-proxy. A
+burst of 20 or more in one pass also raises `ALERT gateway reaper burst`.
+
+### <a id="early-release-of-unstarted-holds"></a>Early release of unstarted holds
+
+`TR_UNSTARTED_HOLD_RELEASE_MODE` in `scripts/deploy/rollout.sh` (design:
+`docs/design/fast-admission-streams.md` section 13). `off` is the code as it
+was. `log` runs the pass after the reaper's and releases nothing. `on`
+releases. The rule only ever takes a stream the gateway heartbeats (Stage D
+reason `ok`, a boot that declared `usage_heartbeat`) with no heartbeat on its
+row, `TR_UNSTARTED_HOLD_RELEASE_SECONDS` after its authorization. Such a
+request has delivered nothing, and once its row is terminal its first
+heartbeat is refused, so it never will: the gateway answers its client 503
+and sends no settle.
+
+Each pass writes one INFO line:
+
+```
+gateway.unstarted_release mode=log rule=unstarted_stream after_seconds=900 scanned=3 released=0 released_hold_micro=0 would_release=1 would_release_hold_micro=1200 would_release_leased=0 guarded=0 guard_lost=0 errors=0 unguarded=false skipped=other_class:2 lease_refunds=0 lease_refund_failures=0
+```
+
+`would_release` counts the rows past the deadline in that pass, so one
+stranded row is counted in every pass until the reaper takes it.
+`skipped` gives the rows the rule left and why: `other_class` (no heartbeat
+class), `started`, `young`, `boot_undeclared`, `terminal`, `binding`,
+`not_typed`, `reservation`.
+
+**Alert `TR Holds: early release contradicted`**: an ERROR line
+`unstarted_release.contradiction kind=... age_seconds=... mode=...` from
+logger `trusted_router.unstarted_release`, written by the heartbeat and
+settle routes in `log` and `on`:
+
+- `kind=late_first_heartbeat`: a first heartbeat arrived after the deadline
+  for a row the rule covers. In `log` it was accepted and the stream ran; in
+  `on` it was refused and the request ended with nothing delivered. The
+  deadline is too short for that request: raise
+  `TR_UNSTARTED_HOLD_RELEASE_SECONDS`, or find why the gateway waited that
+  long before its first heartbeat.
+- `kind=charge_without_heartbeat`: a charging settle arrived for a stream of
+  the heartbeated class with no heartbeat on its row. The rule rests on this
+  never happening. Set the mode to `off`, and find the gateway path that
+  delivers a Stage D stream without the first heartbeat.
+
+The gate for `on`, read from Cloud Logging over at least seven days in `log`:
+
+```bash
+# Passes that found something to release: more than none.
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"gateway.unstarted_release mode=log" AND NOT textPayload:" would_release=0 "' \
+  --project=quill-cloud-proxy --freshness=7d --limit=1000 --format='value(timestamp)' | wc -l
+# Contradictions: none.
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"ERROR trusted_router.unstarted_release unstarted_release.contradiction "' \
+  --project=quill-cloud-proxy --freshness=7d --limit=10 --format='value(timestamp,textPayload)'
+# Passes that failed, or ran without the outbox guard: none.
+gcloud logging read 'resource.type="cloud_run_revision" AND (textPayload:"gateway.unstarted_release failed" OR (textPayload:"gateway.unstarted_release mode=log" AND textPayload:" unguarded=true "))' \
+  --project=quill-cloud-proxy --freshness=7d --limit=10 --format='value(timestamp)'
+```
+
+Then change the literal to `"TR_UNSTARTED_HOLD_RELEASE_MODE=on"` and merge.
+After the flip, `released` and the `unstarted_stream` counter move, a leased
+row also reports `lease_refunds`, and the same contradiction alert is the
+stop. A `lease_refund_failures` count is a lease's hold that stays until its
+end of life, as every such hold did before the rule; it is not a money
+error. The way back is `off`.
+
 ---
 
 ## <a id="credit-ledger"></a>Credit ledger operations (single typed book)

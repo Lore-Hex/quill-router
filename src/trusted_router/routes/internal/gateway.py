@@ -39,6 +39,7 @@ from trusted_router import openai_service_tiers as _openai_service_tiers
 from trusted_router import provider_contracts as _provider_contracts
 from trusted_router import routing as _routing
 from trusted_router import stage_d as _stage_d
+from trusted_router import unstarted_release
 from trusted_router.acquisition import (
     record_free_credit_exhausted_safely,
     record_successful_api_call_safely,
@@ -754,6 +755,17 @@ def _heartbeat_gateway_sync(
         stream=body.stream,
         grace_seconds=settings.heartbeat_grace_seconds,
     )
+    if settings.unstarted_hold_release_mode != "off":
+        # Evidence for the early release of a never-started stream's hold:
+        # a first heartbeat arriving after the rule's deadline.
+        unstarted_release.observe_first_heartbeat(
+            authorization,
+            seq=body.seq,
+            accepted=bool(result.accepted),
+            mode=settings.unstarted_hold_release_mode,
+            after_seconds=settings.unstarted_hold_release_seconds,
+            heartbeat_declared=_boot_declares_usage_heartbeat,
+        )
     if not result.accepted:
         raise _heartbeat_rejection(str(result.reason))
     expires_at_ms = int(result.expires_at_ms)
@@ -782,6 +794,14 @@ def _heartbeat_gateway_sync(
         "cap_micro": int(result.cap_micro),
         "running_micro": int(result.running_micro),
     }
+
+
+def _boot_declares_usage_heartbeat(kid: str) -> bool:
+    """Whether the boot with this key id declared that it heartbeats every
+    Stage D stream. Read only by the early-release evidence lines, and only
+    for a request that already looks like a contradiction."""
+    boot = STORE.get_gateway_boot(kid)
+    return bool(boot is not None and boot.declares_usage_heartbeat)
 
 
 def _forward_leased_heartbeat(
@@ -2613,11 +2633,20 @@ def register(router: APIRouter) -> None:
         limit: int = 100,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
+        drain_options: dict[str, Any] = (
+            {"settings": settings} if settings.settle_outbox_fast_drain_enabled else {}
+        )
+        if settings.unstarted_hold_release_mode != "off":
+            # The early release of a never-started stream's hold
+            # (trusted_router.unstarted_release): passed only when it is not
+            # off, so off is the call as it was.
+            drain_options["unstarted_release_mode"] = settings.unstarted_hold_release_mode
+            drain_options["unstarted_release_seconds"] = settings.unstarted_hold_release_seconds
         result = await run_in_threadpool(
             drain_settle_outbox,
             limit,
             reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled,
-            **({"settings": settings} if settings.settle_outbox_fast_drain_enabled else {}),
+            **drain_options,
         )
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.
@@ -4234,6 +4263,15 @@ def _settle_gateway_authorization(
             capture_authorization(authorization)
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
+    if success and settings.unstarted_hold_release_mode != "off":
+        # Evidence for the early release of a never-started stream's hold:
+        # a charging settle for a heartbeated stream with no heartbeat on it.
+        unstarted_release.observe_settle(
+            authorization,
+            success=True,
+            mode=settings.unstarted_hold_release_mode,
+            heartbeat_declared=_boot_declares_usage_heartbeat,
+        )
     if authorization.settled:
         try:
             _v2_capture_hook(settings, authorization, body, None, None, replay=True)

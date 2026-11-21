@@ -666,6 +666,21 @@ ENV_VARS=(
   # regions: live as of 2026-09-09 21:35Z (proxy #317 + #325), heartbeat_seq = 1
   # proven in us-central1, europe-west4 and us-east4. Rollback: edit true to false.
   "TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"
+  # The early release of a hold whose stream never started
+  # (docs/design/fast-admission-streams.md section 13): off, log, on. A
+  # gateway that authorizes a stream and then exits with no settle and no
+  # refund leaves the hold until the reaper, two hours on. For a stream the
+  # gateway heartbeats, the rule gives the hold back this many seconds after
+  # the authorization when no heartbeat has reached the row. "log" runs the
+  # pass and writes what it would release, releasing nothing; it is here so
+  # the evidence the rule is judged by gathers in production first. Move it
+  # to "on" only after the runbook's gate (docs/runbook.md, Early release of
+  # unstarted holds): passes that report rows under would_release, and not
+  # one unstarted_release.contradiction line, over at least seven days.
+  # Literals, so no revision inherits either; "off" is the way back, and it
+  # is the code as it was before the rule.
+  "TR_UNSTARTED_HOLD_RELEASE_MODE=log"
+  "TR_UNSTARTED_HOLD_RELEASE_SECONDS=900"
   # Provider benchmark events use their own best-effort durable queue. Tenant
   # activity is different: its operational outbox insert is part of the typed
   # settlement transaction, so a charge and its delivery intent cannot split.
