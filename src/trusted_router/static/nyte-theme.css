@@ -2109,6 +2109,250 @@
   color: var(--nyte-link);
 }
 
+/* Short page header: inner pages on the shared marketing hero
+   (templates/public/_base.html). As tall as its text and well under half a
+   screen, so the page's own content starts on the first screen. A brand-kit
+   icon sits beside the title, the two hero buttons share one width, and the
+   top two rows of the Band close the header.
+
+   The title steps down in size by its length (data-title-size, set in
+   page_headers.py): one line on desktop, two at most on phones. */
+:root[data-brand="nyte"] main > .public-hero.page-header {
+  --page-title-size: 48px;
+  --page-icon-size: 48px;
+
+  display: block;
+  min-height: 0;
+  margin-top: -8px;
+  padding: 0 0 72px;
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header[data-title-size="xl"] {
+  --page-title-size: 40px;
+  --page-icon-size: 40px;
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header::after {
+  height: 48px;
+  background-size: 100% 120px;
+}
+
+.page-header-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+/* The icon lines up with the first line of the title. */
+.page-header-icon {
+  flex: none;
+  width: var(--page-icon-size, 48px);
+  height: var(--page-icon-size, 48px);
+  margin-top: calc((var(--page-title-size, 48px) * 1.1 - var(--page-icon-size, 48px)) / 2);
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header h1 {
+  max-width: none;
+  margin: 0;
+  font-size: var(--page-title-size);
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header .lead {
+  max-width: 1040px;
+  margin: 12px 0 0;
+  color: var(--tr-color-text-primary);
+  font-size: 19px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.page-header .lead-short {
+  display: none;
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header .hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header .hero-actions .btn {
+  justify-content: center;
+  min-width: 150px;
+}
+
+:root[data-brand="nyte"] main > .public-hero.page-header .hero-free-note {
+  margin-top: 10px;
+}
+
+/* Short laptop screens: one size down and tighter, so the header stays
+   near a third of the screen. */
+@media (min-width: 761px) and (max-height: 800px) {
+  :root[data-brand="nyte"] main > .public-hero.page-header {
+    --page-title-size: 36px;
+    --page-icon-size: 32px;
+
+    margin-top: -16px;
+    padding-bottom: 64px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-title-size="xl"] {
+    --page-title-size: 32px;
+    --page-icon-size: 32px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .lead {
+    font-size: 18px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-actions {
+    margin-top: 16px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root[data-brand="nyte"] main > .public-hero.page-header {
+    --page-title-size: 36px;
+    --page-icon-size: 32px;
+
+    margin-top: -12px;
+    padding: 0 0 56px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-phone-title-size="m"] {
+    --page-title-size: 30px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-phone-title-size="l"] {
+    --page-title-size: 26px;
+    --page-icon-size: 24px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-phone-title-size="xl"] {
+    --page-title-size: min(22px, 5.4vw);
+    --page-icon-size: 24px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header::after {
+    height: 32px;
+    background-size: 100% 80px;
+  }
+
+  .page-header-title {
+    gap: 12px;
+  }
+
+  /* Phones show the short title; the full one stays in the h1 for screen
+     readers and search engines. */
+  .page-header h1[data-short] .title-full {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .page-header h1[data-short]::before {
+    content: attr(data-short);
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .lead {
+    margin-top: 12px;
+    font-size: 17px;
+    line-height: 1.45;
+  }
+
+  .page-header .lead:has(.lead-short) .lead-full {
+    display: none;
+  }
+
+  .page-header .lead-short {
+    display: inline;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    margin-top: 18px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-free-note {
+    display: block;
+    margin: 10px 0 0;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+/* Short phones: one row of the Band and tighter spacing. */
+@media (max-width: 760px) and (max-height: 700px) {
+  :root[data-brand="nyte"] main > .public-hero.page-header {
+    --page-title-size: 32px;
+    --page-icon-size: 24px;
+
+    margin-top: -20px;
+    padding-bottom: 30px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-phone-title-size="m"] {
+    --page-title-size: 26px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-phone-title-size="l"] {
+    --page-title-size: 23px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header[data-phone-title-size="xl"] {
+    --page-title-size: min(20px, 5.4vw);
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header::after {
+    height: 16px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .lead {
+    margin-top: 8px;
+    font-size: 16px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-actions {
+    margin-top: 12px;
+  }
+
+  /* The line wraps to two rows here and would push the header past 40% of
+     the screen; the sign-up button stays. */
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-free-note {
+    display: none;
+  }
+}
+
+/* Wider screens: the free-tokens line sits beside the buttons, so it adds
+   no height. */
+@media (min-width: 761px) {
+  :root[data-brand="nyte"] main > .public-hero.page-header .lead {
+    margin-bottom: 20px;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-actions {
+    display: inline-flex;
+    margin: 0;
+    vertical-align: middle;
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .hero-free-note {
+    display: inline-block;
+    margin: 0 0 0 18px;
+    vertical-align: middle;
+  }
+}
+
 /* /pricing: the shared price bars (_price_bars.html) beside the copy, then
    one reading column with plain rules instead of cards and numbers.
    The billing rules (_minimum_charges.html) open on request here only. */

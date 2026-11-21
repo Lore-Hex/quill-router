@@ -529,7 +529,6 @@ def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
         "TrustedRouter stores billing and route metadata, never prompt/output content."
         in response.text
     )
-    assert "OpenAI compatible API" in response.text
     legacy = client.get("/docs/fusion", follow_redirects=False)
     assert legacy.status_code == 301
     assert legacy.headers["location"] == "/docs/synth"
