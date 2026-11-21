@@ -5,6 +5,7 @@
   "use strict";
 
   const ENDPOINT = "/console/activity/usage.json";
+  const RANGE_STORAGE_KEY = "tr.console.activity.usage-range";
   const SVG_NS = "http://www.w3.org/2000/svg";
   const numberFormat = new Intl.NumberFormat("en-US");
   const compactFormat = new Intl.NumberFormat("en-US", {
@@ -76,6 +77,8 @@
   let emptyMessage = null;
   let expandRange = null;
   let layout = null;
+  let loading = null;
+  let failure = null;
   let message = null;
   let status = null;
   let totalValue = null;
@@ -83,6 +86,7 @@
   let rangeLabel = null;
   let lastData = null;
   let requestId = 0;
+  let inFlight = null;
 
   function svgNode(name, attrs, text) {
     const node = document.createElementNS(SVG_NS, name);
@@ -359,6 +363,33 @@
     renderBreakdown(data.by_model || {});
   }
 
+  // The chosen range is remembered per browser so the page opens on it.
+  // Storage can be missing or blocked; the page then opens on the default.
+  function rememberedRange() {
+    try {
+      return window.localStorage.getItem(RANGE_STORAGE_KEY);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function rememberRange(range) {
+    try {
+      window.localStorage.setItem(RANGE_STORAGE_KEY, range);
+    } catch (error) {
+      // Not remembered. Nothing else depends on it.
+    }
+  }
+
+  function restoreRange() {
+    const remembered = rememberedRange();
+    panel.querySelectorAll('input[name="usage-range"]').forEach((input) => {
+      if (input.value === remembered) {
+        input.checked = true;
+      }
+    });
+  }
+
   async function loadUsage() {
     const state = currentState();
     const token = ++requestId;
@@ -366,11 +397,27 @@
       range: state.range,
       by_model: "1"
     });
+    // A newer choice replaces the request in flight. Cancel that one so
+    // nothing waits on an answer that will not be shown.
+    if (inFlight) {
+      inFlight.abort();
+    }
+    inFlight = "AbortController" in window ? new AbortController() : null;
+    rememberRange(state.range);
     setStatus("loading", "");
     showMessage("", "");
+    panel.setAttribute("aria-busy", "true");
+    // Nothing on screen belongs to the range being loaded. Say it is loading
+    // instead of leaving another range's chart up.
+    lastData = null;
+    layout.hidden = true;
+    empty.hidden = true;
+    failure.hidden = true;
+    loading.hidden = false;
     try {
       const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
-        headers: { Accept: "application/json" }
+        headers: { Accept: "application/json" },
+        signal: inFlight ? inFlight.signal : undefined
       });
       if (!response.ok) {
         throw new Error(`usage endpoint returned ${response.status}`);
@@ -380,17 +427,32 @@
         return;
       }
       lastData = data;
+      loading.hidden = true;
+      panel.removeAttribute("aria-busy");
       renderUsage(data);
     } catch (error) {
       if (token !== requestId) {
         return;
       }
+      // An error state with a way to retry, never an empty chart.
+      lastData = null;
+      panel.removeAttribute("aria-busy");
       setStatus("couldn't load", "warn");
-      showMessage("Couldn't load usage right now.", "error");
-      if (!lastData) {
-        layout.hidden = true;
-        empty.hidden = true;
-      }
+      layout.hidden = true;
+      empty.hidden = true;
+      loading.hidden = true;
+      failure.hidden = false;
+    }
+  }
+
+  // The loaded range already holds every metric: draw the chosen one from
+  // it. No request, so nothing that can fail and take the chart away.
+  function showMetric() {
+    if (lastData) {
+      renderUsage(lastData);
+    } else if (!panel.hasAttribute("aria-busy")) {
+      // Nothing loaded and nothing on its way (the error state): load.
+      loadUsage();
     }
   }
 
@@ -411,14 +473,19 @@
     emptyMessage = panel.querySelector("[data-usage-empty-message]");
     expandRange = panel.querySelector("[data-usage-expand-range]");
     layout = panel.querySelector("[data-usage-layout]");
+    loading = panel.querySelector("[data-usage-loading]");
+    failure = panel.querySelector("[data-usage-error]");
     message = panel.querySelector("[data-usage-message]");
     status = panel.querySelector("[data-usage-status]");
     totalValue = panel.querySelector("[data-usage-total]");
     averageValue = panel.querySelector("[data-usage-average]");
     rangeLabel = panel.querySelector("[data-usage-range-label]");
 
-    panel.querySelectorAll('input[name="usage-range"], input[name="usage-metric"]').forEach((input) => {
+    panel.querySelectorAll('input[name="usage-range"]').forEach((input) => {
       input.addEventListener("change", loadUsage);
+    });
+    panel.querySelectorAll('input[name="usage-metric"]').forEach((input) => {
+      input.addEventListener("change", showMetric);
     });
     expandRange.addEventListener("click", () => {
       const range = expandRange.dataset.range;
@@ -426,11 +493,15 @@
         showRange(range);
       }
     });
+    panel.querySelector("[data-usage-retry]").addEventListener("click", loadUsage);
     if ("ResizeObserver" in window) {
       new ResizeObserver(rerenderOnResize).observe(chart);
     } else {
       window.addEventListener("resize", rerenderOnResize);
     }
+    // Open on the remembered range: one request, not the default and then
+    // the choice.
+    restoreRange();
     loadUsage();
   }
 
@@ -700,6 +771,13 @@
       </fieldset>
     </div>
     <p class="usage-message" data-usage-message role="status" hidden></p>
+    <div class="empty usage-empty-state" data-usage-loading role="status" aria-live="polite">
+      <p>Loading usage…</p>
+    </div>
+    <div class="empty usage-empty-state" data-usage-error role="alert" hidden>
+      <p>Couldn't load usage right now.</p>
+      <button class="btn" type="button" data-usage-retry>Retry</button>
+    </div>
     <div class="usage-layout" data-usage-layout hidden>
       <div class="usage-chart-card">
         <div class="usage-chart-summary">

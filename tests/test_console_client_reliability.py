@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from types import SimpleNamespace
 from typing import Any
@@ -7,10 +8,12 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fakes.clickhouse_activity import ActivityClickHouse
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.console import activity as activity_routes
 from trusted_router.storage import STORE
+from trusted_router.storage_models import Generation
 from trusted_router.storage_operational_analytics import analytics_surrogate
 
 
@@ -88,21 +91,32 @@ class _FakeAnalytics:
             }
         ]
 
-    def activity_generations(
+    def activity_elapsed_summary(
         self,
         *,
         tenant_id: str,
         start_at: str,
-        limit: int,
-    ) -> list[Any]:
+    ) -> dict[str, int | None]:
         self.activity_tenants.append(tenant_id)
         assert start_at.endswith("Z")
-        assert limit == 5001
-        return [
-            SimpleNamespace(elapsed_milliseconds=10),
-            SimpleNamespace(elapsed_milliseconds=20),
-            SimpleNamespace(elapsed_milliseconds=30),
-        ]
+        return {"generations": 3, "samples": 3, "median_ms": 20}
+
+
+class _WholeRangeAnalytics(_FakeAnalytics):
+    """The fake's client telemetry, with the real elapsed-time SQL on fixture rows."""
+
+    def __init__(self, database: ActivityClickHouse) -> None:
+        super().__init__()
+        self._client = database.client()
+
+    def activity_elapsed_summary(
+        self,
+        *,
+        tenant_id: str,
+        start_at: str,
+    ) -> dict[str, int | None]:
+        self.activity_tenants.append(tenant_id)
+        return self._client.activity_elapsed_summary(tenant_id=tenant_id, start_at=start_at)
 
 
 def test_client_reliability_unavailable_is_a_200() -> None:
@@ -162,6 +176,100 @@ def test_client_reliability_envelope_and_workspace_isolation(
         *fake.event_tenants,
         *fake.activity_tenants,
     }
+
+
+def test_client_reliability_server_median_covers_the_whole_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy hour: the newest 5,000 rows are fast, the 5,002 before them slow.
+
+    The median of the range is the slow value. A median over the newest 5,000
+    rows only, which the page used to show, is the fast one.
+    """
+    activity_routes._CLIENT_RELIABILITY_CACHE.clear()
+    client, workspace_id = _signed_in_client(email="client-median@example.com")
+    database = ActivityClickHouse()
+    now = dt.datetime.now(dt.UTC)
+    template = Generation(
+        id="template",
+        request_id="req-median",
+        workspace_id=workspace_id,
+        key_hash="key-median",
+        model="test/model",
+        provider_name="Test Provider",
+        app="test",
+        tokens_prompt=1,
+        tokens_completion=1,
+        total_cost_microdollars=1,
+        usage_type="Credits",
+        speed_tokens_per_second=1.0,
+        finish_reason="stop",
+        status="success",
+        streamed=False,
+    )
+    for index in range(10_002):
+        created = now - dt.timedelta(minutes=1, milliseconds=index * 300)
+        database.add(
+            dataclasses.replace(
+                template,
+                id=f"gen-median-{index}",
+                elapsed_milliseconds=100 if index < 5_000 else 900,
+                created_at=created.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            )
+        )
+    # Outside the hour, and another workspace's: neither moves the median.
+    database.add(
+        dataclasses.replace(
+            template,
+            id="gen-median-old",
+            elapsed_milliseconds=5,
+            created_at=(now - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+        )
+    )
+    database.add(
+        dataclasses.replace(
+            template,
+            id="gen-median-other",
+            workspace_id="ws-someone-else",
+            elapsed_milliseconds=5,
+            created_at=(now - dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        )
+    )
+    fake = _WholeRangeAnalytics(database)
+    monkeypatch.setattr(activity_routes, "_operational_analytics_client", lambda _settings: fake)
+
+    response = client.get("/console/activity/client-reliability.json?range=1h")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["server_p50_elapsed_ms"] == 900
+    # Every generation of the range and the one sampled failure: nothing cut off.
+    assert payload["meta"] == {
+        "scanned": 10_003,
+        "truncated": False,
+        "freshness_seconds": 0,
+    }
+    assert fake.activity_tenants == [analytics_surrogate("workspace", workspace_id)]
+    [query] = database.queries
+    assert "FROM activity_generations FINAL" in query
+    assert "LIMIT" not in query
+
+
+def test_client_reliability_has_no_server_median_without_timed_generations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    activity_routes._CLIENT_RELIABILITY_CACHE.clear()
+    client, _workspace_id = _signed_in_client(email="client-no-median@example.com")
+    fake = _WholeRangeAnalytics(ActivityClickHouse())
+    monkeypatch.setattr(activity_routes, "_operational_analytics_client", lambda _settings: fake)
+
+    response = client.get("/console/activity/client-reliability.json?range=24h")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["server_p50_elapsed_ms"] is None
+    assert payload["meta"]["scanned"] == 1
+    assert payload["meta"]["truncated"] is False
 
 
 def test_client_reliability_cache_expires_after_sixty_seconds(

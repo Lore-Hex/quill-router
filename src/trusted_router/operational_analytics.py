@@ -98,6 +98,63 @@ def _identifier(value: str, *, label: str) -> str:
     return value
 
 
+# The bucket label of a usage series, per granularity. Each expression yields
+# exactly the string ``storage_activity.usage_bucket_key`` cuts from an ISO
+# timestamp, always in UTC, so the SQL aggregate and the in-memory store name
+# the same buckets. Fixed constants: nothing from a request reaches the SQL.
+USAGE_BUCKET_EXPRESSIONS: dict[str, str] = {
+    "minute": "formatDateTime(created_at, '%Y-%m-%dT%H:%i', 'UTC')",
+    "5min": "formatDateTime(toStartOfFiveMinutes(created_at), '%Y-%m-%dT%H:%i', 'UTC')",
+    "hour": "formatDateTime(created_at, '%Y-%m-%dT%H', 'UTC')",
+    "day": "formatDateTime(created_at, '%Y-%m-%d', 'UTC')",
+}
+# ``UsageType.coerce`` in SQL: BYOK when the trimmed, lower-cased value is
+# "byok", Credits for everything else. ClickHouse trims spaces where Python
+# trims all whitespace; the writer stores only "Credits" and "BYOK", so the
+# two agree on every value the table holds.
+_USAGE_IS_BYOK = "lower(trim(usage_type)) = 'byok'"
+
+
+def usage_buckets_query(*, granularity: str, by_model: bool, key_filtered: bool) -> str:
+    """The usage-series aggregate: one row per time bucket, or per bucket and model.
+
+    ClickHouse groups the rows instead of sending them to the caller, so the
+    result is small whatever the tenant's volume, and nothing is cut off.
+    FINAL stays: it is what counts a redelivered generation once. Every value
+    is a bound parameter; the only variable text is the bucket expression,
+    chosen from a fixed table by granularity.
+    """
+    bucket = USAGE_BUCKET_EXPRESSIONS.get(granularity)
+    if bucket is None:
+        raise ValueError(f"unknown granularity: {granularity}")
+    group = "bucket, model" if by_model else "bucket"
+    # No alias repeats a column name: ClickHouse resolves a name inside an
+    # aggregate to the alias first, which would nest the aggregate in itself.
+    select = [f"{bucket} AS bucket"]
+    if by_model:
+        select.append("model")
+    select += [
+        "count() AS requests",
+        "sum(tokens_prompt) AS prompt_tokens",
+        "sum(tokens_completion) AS completion_tokens",
+        "sum(reasoning_tokens) AS reasoning_token_total",
+        f"sum(CASE WHEN {_USAGE_IS_BYOK} THEN 0 ELSE total_cost_microdollars END) AS cost_micro",
+        f"sum(CASE WHEN {_USAGE_IS_BYOK} THEN total_cost_microdollars ELSE 0 END) AS byok_micro",
+    ]
+    clauses = ["tenant_id = {tenant_id:String}"]
+    if key_filtered:
+        clauses.append("key_id = {key_id:String}")
+    clauses.append("created_at >= parseDateTime64BestEffort({start_at:String}, 3)")
+    clauses.append("created_at < parseDateTime64BestEffort({end_at:String}, 3)")
+    return (
+        "\nSELECT\n  "
+        + ",\n  ".join(select)
+        + "\nFROM activity_generations FINAL\nWHERE "
+        + "\n  AND ".join(clauses)
+        + f"\nGROUP BY {group}\nORDER BY {group}\nFORMAT JSON\n"
+    )
+
+
 def _iso(value: Any) -> str:
     text = str(value)
     if text.endswith("Z") or "+" in text[10:]:
@@ -433,6 +490,74 @@ FORMAT JSON
         )
         return [_generation(row, tenant_id=tenant_id) for row in rows]
 
+    def activity_usage_buckets(
+        self,
+        *,
+        tenant_id: str,
+        granularity: str,
+        start_at: str,
+        end_at: str,
+        key_id: str | None = None,
+        by_model: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Usage totals of ``[start_at, end_at)`` per bucket, or per bucket and model.
+
+        Each row carries ``bucket`` (and ``model`` when asked) and the six
+        integers of ``storage_activity.generation_metrics``, summed.
+        """
+        params: dict[str, str | int] = {
+            "tenant_id": tenant_id,
+            "start_at": start_at,
+            "end_at": end_at,
+        }
+        if key_id is not None:
+            params["key_id"] = key_id
+        rows = self._query(
+            usage_buckets_query(
+                granularity=granularity,
+                by_model=by_model,
+                key_filtered=key_id is not None,
+            ),
+            params=params,
+        )
+        return [_usage_bucket_row(row, by_model=by_model) for row in rows]
+
+    def activity_elapsed_summary(
+        self,
+        *,
+        tenant_id: str,
+        start_at: str,
+    ) -> dict[str, int | None]:
+        """Server-side elapsed time over every generation since ``start_at``.
+
+        ``median_ms`` is the median of the rows that carry an elapsed time,
+        over the whole range rather than a newest-rows sample. For an even
+        count it is the floor of the mean of the two middle values, which is
+        what the page showed when it computed the median itself.
+        """
+        rows = self._query(
+            """
+SELECT
+  count() AS generations,
+  count(elapsed_milliseconds) AS samples,
+  quantileExactLow(0.5)(elapsed_milliseconds) AS median_low,
+  quantileExactHigh(0.5)(elapsed_milliseconds) AS median_high
+FROM activity_generations FINAL
+WHERE tenant_id = {tenant_id:String}
+  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+FORMAT JSON
+""",
+            params={"tenant_id": tenant_id, "start_at": start_at},
+        )
+        row = rows[0] if rows else {}
+        low = _optional_int(row.get("median_low"))
+        high = _optional_int(row.get("median_high"))
+        return {
+            "generations": int(row.get("generations") or 0),
+            "samples": int(row.get("samples") or 0),
+            "median_ms": (low + high) // 2 if low is not None and high is not None else None,
+        }
+
     def routing_traffic(
         self, *, start_at: dt.datetime, end_at: dt.datetime,
     ) -> list[dict[str, Any]]:
@@ -722,6 +847,23 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         tags={str(key): str(value) for key, value in (row.get("tags") or {}).items()},
         created_at=_iso(row["created_at"]),
     )
+
+
+def _usage_bucket_row(row: dict[str, Any], *, by_model: bool) -> dict[str, Any]:
+    # Keys follow the usage bucket the stores return. ClickHouse may quote
+    # 64-bit integers in JSON, so every count goes through int().
+    bucket: dict[str, Any] = {"bucket": str(row["bucket"])}
+    if by_model:
+        bucket["model"] = str(row["model"])
+    bucket.update(
+        requests=int(row["requests"]),
+        prompt_tokens=int(row["prompt_tokens"]),
+        completion_tokens=int(row["completion_tokens"]),
+        reasoning_tokens=int(row["reasoning_token_total"]),
+        cost_micro=int(row["cost_micro"]),
+        byok_micro=int(row["byok_micro"]),
+    )
+    return bucket
 
 
 def _client_event(row: dict[str, Any]) -> dict[str, Any]:

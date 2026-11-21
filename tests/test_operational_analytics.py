@@ -29,11 +29,13 @@ from clickhouse.rollup_synthetic import (
     complete_window_rollups,
     monthly_from_daily,
 )
+from tests.fakes.clickhouse_activity import ActivityClickHouse
 from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
+    usage_buckets_query,
 )
-from trusted_router.storage_activity import generation_events
+from trusted_router.storage_activity import generation_events, usage_bucket_key
 from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
@@ -1033,6 +1035,271 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
         assert public[field] == event[field] == int(app_fields.get(field) or 0)
     assert "operator_cost_microdollars" not in public
     assert "operator_cost_microdollars" not in event
+
+
+@pytest.mark.parametrize(
+    ("granularity", "expression"),
+    [
+        ("minute", "formatDateTime(created_at, '%Y-%m-%dT%H:%i', 'UTC') AS bucket"),
+        (
+            "5min",
+            "formatDateTime(toStartOfFiveMinutes(created_at), '%Y-%m-%dT%H:%i', 'UTC') AS bucket",
+        ),
+        ("hour", "formatDateTime(created_at, '%Y-%m-%dT%H', 'UTC') AS bucket"),
+        ("day", "formatDateTime(created_at, '%Y-%m-%d', 'UTC') AS bucket"),
+    ],
+)
+def test_usage_buckets_query_labels_each_granularity_in_utc(
+    granularity: str, expression: str
+) -> None:
+    sql = usage_buckets_query(granularity=granularity, by_model=False, key_filtered=False)
+
+    assert expression in sql
+    # %M is the month name in ClickHouse. A minute label must never use it.
+    assert "%M" not in sql
+    assert "FROM activity_generations FINAL" in sql
+    assert "GROUP BY bucket\n" in sql
+    assert "ORDER BY bucket\n" in sql
+    # Grouped, so the result is small and nothing is cut off.
+    assert "LIMIT" not in sql
+    assert sql.rstrip().endswith("FORMAT JSON")
+
+
+def test_usage_buckets_query_rejects_an_unknown_granularity() -> None:
+    with pytest.raises(ValueError, match="unknown granularity: week"):
+        usage_buckets_query(granularity="week", by_model=False, key_filtered=False)
+
+
+def test_usage_buckets_query_groups_by_model_only_when_asked() -> None:
+    plain = usage_buckets_query(granularity="day", by_model=False, key_filtered=False)
+    by_model = usage_buckets_query(granularity="day", by_model=True, key_filtered=False)
+
+    assert "model" not in plain.split("FROM", 1)[0]
+    assert "\n  model,\n" in by_model.split("FROM", 1)[0]
+    assert "GROUP BY bucket, model\n" in by_model
+    assert "ORDER BY bucket, model\n" in by_model
+
+
+def test_usage_buckets_query_filters_are_bound_parameters() -> None:
+    unfiltered = usage_buckets_query(granularity="hour", by_model=True, key_filtered=False)
+    filtered = usage_buckets_query(granularity="hour", by_model=True, key_filtered=True)
+
+    assert "key_id" not in unfiltered
+    assert "AND key_id = {key_id:String}" in filtered
+    for sql in (unfiltered, filtered):
+        assert "WHERE tenant_id = {tenant_id:String}" in sql
+        assert "AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)" in sql
+        assert "AND created_at < parseDateTime64BestEffort({end_at:String}, 3)" in sql
+    # The text depends on three fixed choices only, never on a request value.
+    assert set(re.findall(r"\{(\w+):String\}", filtered)) == {
+        "tenant_id",
+        "key_id",
+        "start_at",
+        "end_at",
+    }
+
+
+def test_usage_buckets_query_splits_spend_by_usage_type_without_alias_cycles() -> None:
+    sql = usage_buckets_query(granularity="day", by_model=False, key_filtered=False)
+
+    byok = "lower(trim(usage_type)) = 'byok'"
+    assert f"sum(CASE WHEN {byok} THEN 0 ELSE total_cost_microdollars END) AS cost_micro" in sql
+    assert f"sum(CASE WHEN {byok} THEN total_cost_microdollars ELSE 0 END) AS byok_micro" in sql
+    # ClickHouse resolves a name inside an aggregate to a same-named alias,
+    # so an alias must not repeat the column it sums.
+    aliases = re.findall(r"\bAS (\w+)", sql)
+    columns = {
+        "tokens_prompt",
+        "tokens_completion",
+        "reasoning_tokens",
+        "total_cost_microdollars",
+        "usage_type",
+        "created_at",
+        "model",
+    }
+    assert aliases == [
+        "bucket",
+        "requests",
+        "prompt_tokens",
+        "completion_tokens",
+        "reasoning_token_total",
+        "cost_micro",
+        "byok_micro",
+    ]
+    assert columns.isdisjoint(aliases)
+
+
+@pytest.mark.parametrize("key_filtered", [False, True])
+def test_clickhouse_usage_reader_binds_filters_and_never_sends_raw_ids(
+    key_filtered: bool,
+) -> None:
+    tenant_id = analytics_surrogate("workspace", "ws-private-123")
+    key_id = analytics_surrogate("api-key", "key-hash")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        # 64-bit integers arrive quoted or bare, depending on a server setting.
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "bucket": "2026-07-31T12",
+                        "model": "anthropic/claude-haiku-4.5",
+                        "requests": "3",
+                        "prompt_tokens": "36",
+                        "completion_tokens": 9,
+                        "reasoning_token_total": "3",
+                        "cost_micro": "18",
+                        "byok_micro": 9,
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+    rows = client.activity_usage_buckets(
+        tenant_id=tenant_id,
+        key_id=key_id if key_filtered else None,
+        granularity="hour",
+        start_at="2026-07-31T00:00:00",
+        end_at="2026-08-01",
+        by_model=True,
+    )
+
+    assert rows == [
+        {
+            "bucket": "2026-07-31T12",
+            "model": "anthropic/claude-haiku-4.5",
+            "requests": 3,
+            "prompt_tokens": 36,
+            "completion_tokens": 9,
+            "reasoning_tokens": 3,
+            "cost_micro": 18,
+            "byok_micro": 9,
+        }
+    ]
+    [request] = requests
+    params = {
+        key: value for key, value in request.url.params.items() if key.startswith("param_")
+    }
+    expected = {
+        "param_tenant_id": tenant_id,
+        "param_start_at": "2026-07-31T00:00:00",
+        "param_end_at": "2026-08-01",
+    }
+    if key_filtered:
+        expected["param_key_id"] = key_id
+    assert params == expected
+    body = request.content.decode()
+    assert body == usage_buckets_query(granularity="hour", by_model=True, key_filtered=key_filtered)
+    for value in (tenant_id, key_id, "2026-07-31", "ws-private-123", "key-hash"):
+        assert value not in body
+
+
+def test_clickhouse_usage_reader_runs_the_shipped_sql_on_fixture_rows() -> None:
+    """Bucket labels, the usage-type split and FINAL, executed rather than read."""
+    database = ActivityClickHouse()
+    credits = dataclasses.replace(
+        _generation(), id="gen-credits", created_at="2026-07-31T23:59:59.999Z"
+    )
+    byok = dataclasses.replace(
+        _generation(),
+        id="gen-byok",
+        usage_type=UsageType.BYOK,
+        total_cost_microdollars=40,
+        created_at="2026-08-01T00:00:00.000Z",
+    )
+    other_tenant = dataclasses.replace(_generation(), id="gen-other", workspace_id="ws-other")
+    for generation in (credits, byok, other_tenant):
+        database.add(generation)
+    # A replayed delivery of the same generation counts once under FINAL.
+    database.add(credits)
+    client = database.client()
+    tenant_id = analytics_surrogate("workspace", credits.workspace_id)
+    window = {"tenant_id": tenant_id, "start_at": "2026-07-31", "end_at": "2026-08-02"}
+
+    assert client.activity_usage_buckets(granularity="day", **window) == [
+        {
+            "bucket": "2026-07-31",
+            "requests": 1,
+            "prompt_tokens": 12,
+            "completion_tokens": 3,
+            "reasoning_tokens": 1,
+            "cost_micro": 9,
+            "byok_micro": 0,
+        },
+        {
+            "bucket": "2026-08-01",
+            "requests": 1,
+            "prompt_tokens": 12,
+            "completion_tokens": 3,
+            "reasoning_tokens": 1,
+            "cost_micro": 0,
+            "byok_micro": 40,
+        },
+    ]
+    for granularity in ("minute", "5min", "hour", "day"):
+        rows = client.activity_usage_buckets(granularity=granularity, **window)
+        assert [row["bucket"] for row in rows] == [
+            usage_bucket_key(credits.created_at, granularity),
+            usage_bucket_key(byok.created_at, granularity),
+        ]
+    # The half-open window: the end bound excludes the row that sits on it.
+    assert [
+        row["bucket"]
+        for row in client.activity_usage_buckets(
+            granularity="day",
+            tenant_id=tenant_id,
+            start_at="2026-07-31T23:59:59.999Z",
+            end_at="2026-08-01T00:00:00.000Z",
+        )
+    ] == ["2026-07-31"]
+    assert all("FROM activity_generations FINAL" in query for query in database.queries)
+
+
+def test_activity_elapsed_summary_is_a_whole_range_median_in_sql() -> None:
+    database = ActivityClickHouse()
+    base = _generation()
+    tenant_id = analytics_surrogate("workspace", base.workspace_id)
+    for index, elapsed in enumerate([40, None, 10, 31, 20]):
+        database.add(
+            dataclasses.replace(
+                base,
+                id=f"gen-elapsed-{index}",
+                elapsed_milliseconds=elapsed,
+                created_at=f"2026-07-31T12:00:0{index}.000Z",
+            )
+        )
+    database.add(dataclasses.replace(base, id="gen-before", created_at="2026-07-31T11:59:59.999Z"))
+    database.add(dataclasses.replace(base, id="gen-other-tenant", workspace_id="ws-other"))
+    client = database.client()
+
+    # Four timed rows: the floor of the mean of the two middle values.
+    assert client.activity_elapsed_summary(
+        tenant_id=tenant_id, start_at="2026-07-31T12:00:00Z"
+    ) == {"generations": 5, "samples": 4, "median_ms": 25}
+    # An odd count is the middle value.
+    assert client.activity_elapsed_summary(
+        tenant_id=tenant_id, start_at="2026-07-31T12:00:02Z"
+    ) == {"generations": 3, "samples": 3, "median_ms": 20}
+    # No timed rows: no median, not zero.
+    assert client.activity_elapsed_summary(
+        tenant_id=tenant_id, start_at="2026-08-01T00:00:00Z"
+    ) == {"generations": 0, "samples": 0, "median_ms": None}
+    [query] = set(database.queries)
+    assert "FROM activity_generations FINAL" in query
+    assert "quantileExactLow(0.5)(elapsed_milliseconds)" in query
+    assert "quantileExactHigh(0.5)(elapsed_milliseconds)" in query
+    assert "LIMIT" not in query
+    assert tenant_id not in query
+    assert database.params[0] == {"tenant_id": tenant_id, "start_at": "2026-07-31T12:00:00Z"}
 
 
 def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None:
