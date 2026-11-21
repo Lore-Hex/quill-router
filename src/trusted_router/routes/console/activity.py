@@ -116,16 +116,6 @@ def _percent(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator * 100, 2) if denominator else None
 
 
-def _median(values: list[int]) -> int | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    middle = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) // 2
-
-
 def _top_errors(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str | None, int | None], int] = {}
     for row in rows:
@@ -154,18 +144,23 @@ def _client_reliability_data(
         window_minutes=window_minutes,
     )
     failures = client.client_events_recent(tenant_id, since=since, limit=50)
-    generations = client.activity_generations(
-        tenant_id=tenant_id,
-        start_at=since.isoformat().replace("+00:00", "Z"),
-        limit=5001,
-    )
-    truncated = len(generations) > 5000
-    generations = generations[:5000]
-    elapsed = [
-        generation.elapsed_milliseconds
-        for generation in generations
-        if generation.elapsed_milliseconds is not None
-    ]
+    # The median is computed in ClickHouse over every generation of the range.
+    # The newest 5,000 rows, which this used to read, are under an hour of a
+    # busy workspace's 24 hours.
+    elapsed: dict[str, int | None] | None
+    try:
+        elapsed = client.activity_elapsed_summary(
+            tenant_id=tenant_id,
+            start_at=since.isoformat().replace("+00:00", "Z"),
+        )
+    except Exception as exc:
+        # The client telemetry read above is still the answer. The panel
+        # shows it and says the server figure is unavailable.
+        if is_analytics_unavailable(exc):
+            log_analytics_unavailable(log, "console_client_reliability_server_elapsed", exc)
+        else:
+            log.exception("console_client_reliability_server_elapsed_failed")
+        elapsed = None
     requests = int(summary.get("requests") or 0)
     successes = int(summary.get("successes") or 0)
     tr_fault = int(summary.get("tr_fault") or 0)
@@ -186,19 +181,25 @@ def _client_reliability_data(
             ),
         }
     )
+    meta: dict[str, Any] = {
+        "scanned": int((elapsed or {}).get("generations") or 0) + len(failures),
+        # Kept for readers of the shape. Always false: the whole range is read.
+        "truncated": False,
+        "freshness_seconds": 0,
+    }
+    if elapsed is None:
+        # Present only when the read failed: an absent median then means
+        # "could not be read", not "no timed requests".
+        meta["server_elapsed"] = "unavailable"
     return {
         "data": {
             "range": range_,
             "summary": rendered_summary,
-            "server_p50_elapsed_ms": _median(elapsed),
+            "server_p50_elapsed_ms": elapsed["median_ms"] if elapsed else None,
             "top_errors": _top_errors(failures),
             "recent_failures": failures,
         },
-        "meta": {
-            "scanned": len(generations) + len(failures),
-            "truncated": truncated,
-            "freshness_seconds": 0,
-        },
+        "meta": meta,
     }
 
 
@@ -257,10 +258,17 @@ def register(app: FastAPI) -> None:
                 api_key_hash=api_key_hash,
                 by_model=by_model,
             )
-            latest = STORE.activity_events(
-                ctx.workspace.id,
-                api_key_hash=api_key_hash,
-                limit=1,
+            # Only the empty state shows the most recent request ("No usage
+            # in the last hour. Most recent request: ..."), so a range with
+            # usage in it skips the lookup.
+            latest = (
+                []
+                if result.get("buckets")
+                else STORE.activity_events(
+                    ctx.workspace.id,
+                    api_key_hash=api_key_hash,
+                    limit=1,
+                )
             )
         except Exception as exc:
             if not is_analytics_unavailable(exc):
@@ -299,6 +307,7 @@ def register(app: FastAPI) -> None:
         if cached is not None:
             return cached
         client = _operational_analytics_client(settings)
+        result: dict[str, Any]
         if client is None:
             result = {"data": None, "meta": {"reason": "unavailable"}}
         else:
@@ -312,9 +321,13 @@ def register(app: FastAPI) -> None:
             except Exception:
                 log.exception("console_client_reliability_read_failed")
                 result = {"data": None, "meta": {"reason": "unavailable"}}
-        _CLIENT_RELIABILITY_CACHE.put(
-            cache_key,
-            result,
-            expires_at=now + _CLIENT_RELIABILITY_CACHE_TTL_SECONDS,
-        )
+        # A result without its server median answers this request only.
+        # Cached, it would keep showing the gap for a minute after the read
+        # recovers.
+        if result["meta"].get("server_elapsed") != "unavailable":
+            _CLIENT_RELIABILITY_CACHE.put(
+                cache_key,
+                result,
+                expires_at=now + _CLIENT_RELIABILITY_CACHE_TTL_SECONDS,
+            )
         return result

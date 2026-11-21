@@ -4,8 +4,10 @@ from __future__ import annotations
 import re
 
 import httpx
-from fastapi import FastAPI
-from starlette.responses import Response
+from fastapi import FastAPI, Request
+from starlette.responses import HTMLResponse, RedirectResponse, Response
+
+from trusted_router.dashboard import public_openrouter_notice_html
 
 _ORIGIN = "https://raw.githubusercontent.com/Lore-Hex/quill-router/published-notes"
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -27,6 +29,10 @@ def _document(filename: str, media_type: str) -> Response:
 
 
 def register_notes(app: FastAPI) -> None:
+    @app.api_route("/openrouter", methods=["GET", "HEAD"], include_in_schema=False)
+    def openrouter_notice() -> Response:
+        return HTMLResponse(public_openrouter_notice_html())
+
     @app.api_route("/notes", methods=["GET", "HEAD"], include_in_schema=False)
     def notes_archive() -> Response:
         return _document("index.html", "text/html")
@@ -36,7 +42,10 @@ def register_notes(app: FastAPI) -> None:
         return _document("sitemap.xml", "application/xml")
 
     @app.api_route("/notes/{slug}", methods=["GET", "HEAD"], include_in_schema=False)
-    def note(slug: str) -> Response:
+    def note(slug: str, request: Request) -> Response:
+        if slug == "openrouter-minimax-prompt-notice":
+            query = request.url.query
+            return RedirectResponse("/openrouter" + (f"?{query}" if query else ""), status_code=308)
         if len(slug) > 160 or not _SLUG.fullmatch(slug):
             return Response(status_code=404)
         return _document(f"{slug}/index.html", "text/html")
