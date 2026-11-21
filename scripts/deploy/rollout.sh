@@ -505,6 +505,7 @@ ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
   "TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED=true"
+  "TR_WORKSPACE_ORIGIN_CONTROLS_ENABLED=true"
   "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
   "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
   # The legacy backend does not yet receive a trusted, edge-overwritten client

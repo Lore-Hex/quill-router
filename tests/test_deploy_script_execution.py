@@ -4331,6 +4331,7 @@ def test_rollout_pins_serving_region_per_target_without_inheritance(
         assert rendered["TR_SERVING_REGION"] == deploy[deploy.index("--region") + 1]
         assert rendered["TR_PRIMARY_REGION"] == "us-central1"
         assert rendered["TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED"] == "true"
+        assert rendered["TR_WORKSPACE_ORIGIN_CONTROLS_ENABLED"] == "true"
         assert deploy[deploy.index("--set-env-vars") + 1].count("TR_SERVING_REGION=") == 1
 
 
