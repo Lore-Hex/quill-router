@@ -246,6 +246,14 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "mailing address and New York governing law, but do not identify the "
         "API operator's legal entity or incorporation country."
     ),
+    "novita": (
+        "Checked Novita's terms (Delaware law, no operating entity named) and, on "
+        "2026-11-21, Novita's own incident notice: from 2026-05-28 to 2026-11-11 a "
+        "routing configuration issue forwarded MiniMax requests to MiniMax's "
+        "official API instead of Novita-hosted infrastructure. Where Novita "
+        "processes a request is therefore not trusted as US; jurisdiction "
+        "filters conservatively exclude this route."
+    ),
     "typesafe": (
         "Checked docs.typesafe.ai/legal, the privacy policy and the data "
         "processing addendum (2026-09-19). All three name TypeSafe AI, Inc. as "
@@ -824,13 +832,18 @@ PROVIDERS: dict[str, Provider] = {
             "processing is governed by customer agreements."
         ),
         provider_policy_url="https://novita.ai/legal/privacy-policy",
-        # United States. Novita's terms select Delaware law with exclusive
-        # jurisdiction in Wilmington and publish no operating entity, so this is
-        # not read from a public document: it is recorded from TrustedRouter's
-        # own account relationship with the provider (operator knowledge,
-        # 2026-08-17). Kept distinct in the comment from the entries that cite a
-        # published policy, so the basis is never overstated.
-        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+        # No country recorded, so jurisdiction filters conservatively exclude
+        # this route (see PROVIDER_JURISDICTION_UNVERIFIED). Until 2026-11-21
+        # this was US from TrustedRouter's account relationship (operator
+        # knowledge, 2026-08-17; Novita's terms only select Delaware law). On
+        # 2026-11-21 Novita disclosed that, from 2026-05-28 to 2026-11-11, a
+        # routing configuration issue forwarded MiniMax requests sent through
+        # Novita to MiniMax's official API instead of Novita-hosted
+        # infrastructure, and that MiniMax may have accessed or retained the
+        # contents. Novita suspended the affected endpoints. Its processing
+        # location therefore cannot be trusted as US, and Novita is kept out of
+        # US-only routing, the US presets, Liberty and every US badge.
+        provider_headquarters_country=None,
     ),
     # Phala publishes Intel TDX / NVIDIA Confidential Compute evidence and
     # signed request receipts. TrustedRouter does not yet verify that evidence

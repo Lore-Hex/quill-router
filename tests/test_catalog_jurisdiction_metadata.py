@@ -14,8 +14,11 @@ import re
 from collections import Counter
 
 import pytest
+from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from tests.provider_holds import vendor_prefixes_on_reviewed_hold
+from trusted_router import routing
 from trusted_router.catalog import MODELS, PROVIDERS, model_to_openrouter_shape
 from trusted_router.catalog_data import (
     EU_FOCUSED_PROVIDER_ORDER,
@@ -118,13 +121,15 @@ def test_named_provider_jurisdictions_match_their_researched_values() -> None:
         "ltx": "IL",
         "cohere": "CA",
         # Recorded from TrustedRouter's own account relationship with each
-        # provider rather than a published page: novita publishes no entity
-        # (its terms only select Delaware law), kling's policy pages answer
+        # provider rather than a published page: kling's policy pages answer
         # HTTP 446, and Alibaba's membership agreement picks the contracting
         # entity by billing address. The comments in catalog_data say so, so
         # the basis is never mistaken for a citation.
-        "novita": PROVIDER_JURISDICTION_US,
         "kling": PROVIDER_JURISDICTION_CN,
+        # Novita was recorded the same way as US until its 2026-11-21 incident
+        # notice showed requests leaving Novita-hosted infrastructure; with no
+        # trustworthy country it is unverified, so US-only routing excludes it.
+        "novita": None,
     }
 
     actual = {slug: PROVIDERS[slug].provider_headquarters_country for slug in sorted(expected)}
@@ -288,3 +293,35 @@ def test_liberty_4_is_pinned_to_us_providers(model_id: str) -> None:
 def cast_dict(value: object) -> dict[str, object]:
     assert isinstance(value, dict)
     return value
+
+
+def test_novita_is_excluded_from_us_only_routing(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    # 2026-11-21: Novita disclosed that its MiniMax routes had forwarded requests
+    # to MiniMax's own API (2026-05-28 to 2026-11-11). Its processing location is
+    # therefore not trusted as US, so no US-only route may select it.
+    novita = PROVIDERS["novita"]
+    assert novita.provider_headquarters_country != PROVIDER_JURISDICTION_US
+    assert "2026-11-21" in PROVIDER_JURISDICTION_UNVERIFIED["novita"]
+    assert not routing._provider_matches_jurisdiction(novita, PROVIDER_JURISDICTION_US)
+
+    # US-only combos and Liberty never count a Novita route as US.
+    for model_id in US_PROVIDER_ONLY_MODEL_IDS:
+        shape = model_to_openrouter_shape(MODELS[model_id])
+        assert cast_dict(shape["trustedrouter"])["required_provider_jurisdiction"] == (
+            PROVIDER_JURISDICTION_US
+        )
+
+    # The public jurisdiction filter drops Novita and keeps a US host.
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    for host in ("deepinfra", "novita"):
+        serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", host, author="zai")
+    everything = client.get("/v1/models/z-ai/glm-5.2/endpoints")
+    assert {row["provider"] for row in everything.json()["data"]} == {"deepinfra", "novita"}
+    novita_row = next(r for r in everything.json()["data"] if r["provider"] == "novita")
+    assert novita_row["trustedrouter"]["provider_us_based"] is False
+    us_only = client.get(
+        "/v1/models/z-ai/glm-5.2/endpoints", params={"provider[jurisdiction]": "us"}
+    )
+    assert {row["provider"] for row in us_only.json()["data"]} == {"deepinfra"}
