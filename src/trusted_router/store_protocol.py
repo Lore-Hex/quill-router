@@ -1292,6 +1292,7 @@ class TypedBillingStore(Protocol):
         fastpath_envelope: str | None = ...,
         fastpath_end_of_life: str | None = ...,
         lease_headroom_503: bool = ...,
+        lease_headroom_floor: int = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

@@ -1195,6 +1195,21 @@ class Settings(BaseSettings):
     # the request let through once headroom is back. Off, no lease is read and
     # every authorize answer is today's. Activation (PR 8) turns it on before WS6.
     fastpath_lease_headroom_503: bool = False
+    # The fast path nodes' floor, in microdollars (infra/fastpath.tf
+    # fastpath_floor, the node's -floor), for the 503 above: it is answered
+    # only for a workspace whose headroom, counting what its live leases
+    # hold, is at least this. Under it no lease can be topped up (a node
+    # refuses one unless the headroom outside leases is at least the floor
+    # plus the amount asked), what the leases hold comes back only when they
+    # close, and the workspace can spend the rest before that, so a retry
+    # cannot help: the answer is the insufficient_credits 402, as with the
+    # 503 off (2026-11-21: after the floor went from $20 to $2, a workspace
+    # within cents of empty was answered the 503 until it bought credit).
+    # It changes which refusal is returned, never whether a request is
+    # refused. 0, the default, compares nothing: every answer is as before
+    # this setting. Not read with the 503 off. rollout.sh carries the value;
+    # tests/test_fastpath_lease_headroom_floor.py holds it to the nodes'.
+    fastpath_lease_headroom_503_floor_micro: int = Field(default=0, ge=0)
     # The enabler (docs/design/fast-admission-widening.md section 5): a
     # Cloud Run job, trusted_router.fastpath_enabler, which turns the
     # switch (tr_fastpath_workspace) on for eligible workspaces and off for

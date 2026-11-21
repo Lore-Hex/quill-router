@@ -753,6 +753,22 @@ ENV_VARS=(
   # (section 8.2: Joseph's $30 join balance), so a hold that meets a lease
   # holding the rest is retried, never refused.
   "TR_FASTPATH_LEASE_HEADROOM_503=true"
+  # The fast path nodes' floor, in microdollars, for the 503 above: the
+  # value of fastpath_floor in infra/fastpath.tf, and
+  # tests/test_fastpath_lease_headroom_floor.py holds the two equal, so a
+  # change of the nodes' floor changes this line with it. The 503 is
+  # answered only for a workspace whose headroom, counting what its leases
+  # hold, is at least this. Under it a node tops no lease up, a lease gives
+  # back what it holds only when it closes, and the workspace can spend the
+  # rest first, so a retry cannot help: the answer is the
+  # insufficient-credits 402, as before the 503 existed. On 2026-11-21,
+  # the day after the floor went from $20 to $2, a workspace within cents
+  # of empty was answered the 503 for three minutes, until it bought
+  # credit. Only which refusal is returned changes, never whether a
+  # request is refused, so a node still on another floor is safe. A
+  # literal, so no revision inherits it; 0 is the way back (every such
+  # refusal the 503 again).
+  "TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO=2000000"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md
   # section 5): off, alert, enforce. Off until Go reads the policy member and
