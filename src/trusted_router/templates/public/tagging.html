@@ -121,6 +121,24 @@ GET /v1/activity?group_by=tag:team</code></pre>
   </div>
 </section>
 
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">In the console</span>
+    <h2>See tags on the Observability page.</h2>
+    <p>The <a href="/console/activity">Observability</a> page shows each request's tags as chips in the request list. Click a chip, or pick a key and a value under Tags, to filter the list to that tag.</p>
+    <p>The Tags panel breaks requests, cost, tokens, and median latency down by the values of one key. It counts every request in the selected range, not a sample. The 50 most expensive values each get a row, the rest are combined into Other, and requests without the key are shown as Untagged. A request that fails before it produces a generation has nothing to tag, so the panel counts completed generations only.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Tags panel</span><span>example</span></div>
+    <pre><code>Break down by: team        Range: 7d
+
+Value      Requests     Cost   Median latency
+search        1,204   $18.40           820 ms
+ads             311    $4.12           640 ms
+Untagged         87    $0.95           910 ms</code></pre>
+  </div>
+</section>
+
 <section class="quote-feature" style="margin-top:48px">
   <div>
     <span class="eyebrow">Trust boundary</span>

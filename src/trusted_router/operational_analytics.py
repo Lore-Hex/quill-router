@@ -11,7 +11,9 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from functools import lru_cache
 from typing import Any, TypeVar
 
 import httpx
@@ -103,6 +105,62 @@ def _iso(value: Any) -> str:
     if text.endswith("Z") or "+" in text[10:]:
         return text
     return text.replace(" ", "T") + "Z"
+
+
+@contextmanager
+def bound_values_stay_private() -> Iterator[None]:
+    """Run a read whose bound values must not leave in telemetry or errors.
+
+    ClickHouse takes bound values as URL parameters. Sentry's httpx
+    integration copies an outgoing request's query string into a span and a
+    breadcrumb, and httpx names the whole URL in an ``HTTPStatusError``. Tag
+    keys and values are customer text that must never reach a log or Sentry
+    (docs/design/request-tagging.md, section 10). So a tag read runs under a
+    scope whose client has no integrations and no transport, and a status
+    error is raised again without its URL. The price is that these requests
+    are absent from traces.
+    """
+    with _private_sentry_scope():
+        try:
+            yield
+        except httpx.HTTPStatusError as exc:
+            raise httpx.HTTPStatusError(
+                f"ClickHouse answered HTTP {exc.response.status_code} "
+                "to a read with private bound values",
+                request=exc.request,
+                response=exc.response,
+            ) from None
+
+
+@contextmanager
+def _private_sentry_scope() -> Iterator[None]:
+    try:
+        import sentry_sdk
+    except ImportError:
+        # The ClickHouse node scripts import this module without the SDK, and
+        # without the SDK there is no integration to keep the values from.
+        yield
+        return
+    with sentry_sdk.new_scope() as scope:
+        scope.set_client(_private_sentry_client())
+        scope.span = None
+        yield
+
+
+@lru_cache(maxsize=1)
+def _private_sentry_client() -> Any:
+    import sentry_sdk
+
+    # Same construction as services/resale.py: the explicitly empty DSN stops
+    # the SENTRY_DSN environment fallback, and with no integrations there is
+    # no outbound-request span, breadcrumb or SDK log to carry a query string.
+    return sentry_sdk.Client(
+        dsn="",
+        default_integrations=False,
+        auto_enabling_integrations=False,
+        enable_logs=False,
+        traces_sample_rate=0.0,
+    )
 
 
 class OperationalAnalyticsClient:
@@ -627,6 +685,140 @@ FORMAT JSON
             ]
         return rollups
 
+    # Request tags for the console ------------------------------------------
+    # Each read covers every generation of one tenant since ``start_at``, not
+    # a sample, and returns a bounded number of groups. Tag keys and values
+    # are always bound; ``bound_values_stay_private`` keeps them out of Sentry
+    # and out of error text.
+
+    def activity_tag_keys(
+        self, *, tenant_id: str, start_at: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """Tag keys by the number of generations carrying them."""
+        with bound_values_stay_private():
+            rows = self._query(
+                """
+SELECT tag_key, count() AS requests
+FROM
+(
+  SELECT arrayJoin(mapKeys(tags)) AS tag_key
+  FROM activity_generations FINAL
+  WHERE tenant_id = {tenant_id:String}
+    AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+)
+GROUP BY tag_key
+ORDER BY requests DESC, tag_key ASC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+                params={"tenant_id": tenant_id, "start_at": start_at, "limit": max(1, limit)},
+            )
+        return [{"key": str(row["tag_key"]), "requests": int(row["requests"])} for row in rows]
+
+    def activity_tag_values(
+        self, *, tenant_id: str, tag_key: str, start_at: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """One key's values by the number of generations carrying them."""
+        with bound_values_stay_private():
+            rows = self._query(
+                """
+SELECT tags[{tag_key:String}] AS tag_value, count() AS requests
+FROM activity_generations FINAL
+WHERE tenant_id = {tenant_id:String}
+  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  AND mapContains(tags, {tag_key:String})
+GROUP BY tag_value
+ORDER BY requests DESC, tag_value ASC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+                params={
+                    "tenant_id": tenant_id,
+                    "tag_key": tag_key,
+                    "start_at": start_at,
+                    "limit": max(1, limit),
+                },
+            )
+        return [{"value": str(row["tag_value"]), "requests": int(row["requests"])} for row in rows]
+
+    def activity_tag_breakdown(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        limit: int,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Totals per value of ``group_by``, at most ``limit`` + 2 rows.
+
+        The ``limit`` values with the highest credit cost keep a row each, the
+        rest are summed into ``other`` and generations without the key into
+        ``untagged``. The ranking is an uncorrelated subquery, so ClickHouse
+        runs it once. ``tag_key``/``tag_value`` narrow both passes to one tag.
+        The median is exact: ``quantileExactWeighted`` keeps one counter per
+        distinct latency, where ``quantileExact`` would keep every row's.
+        """
+        clauses = [
+            "tenant_id = {tenant_id:String}",
+            "created_at >= parseDateTime64BestEffort({start_at:String}, 3)",
+        ]
+        params: dict[str, str | int] = {
+            "tenant_id": tenant_id,
+            "group_by": group_by,
+            "start_at": start_at,
+            "limit": max(1, limit),
+        }
+        if tag_key is not None:
+            clauses.append("mapContains(tags, {tag_key:String})")
+            params["tag_key"] = tag_key
+            if tag_value is not None:
+                clauses.append("tags[{tag_key:String}] = {tag_value:String}")
+                params["tag_value"] = tag_value
+        where = " AND ".join(clauses)
+        with bound_values_stay_private():
+            rows = self._query(
+                """
+SELECT
+  multiIf(
+    NOT mapContains(tags, {group_by:String}), 'untagged',
+    tags[{group_by:String}] IN
+    (
+      SELECT tags[{group_by:String}] AS top_value
+      FROM activity_generations FINAL
+      WHERE """
+                + where
+                + """
+        AND mapContains(tags, {group_by:String})
+      GROUP BY top_value
+      ORDER BY
+        sumIf(total_cost_microdollars, lower(trimBoth(usage_type)) != 'byok') DESC,
+        count() DESC,
+        top_value ASC
+      LIMIT {limit:UInt32}
+    ), 'value',
+    'other'
+  ) AS kind,
+  if(kind = 'value', tags[{group_by:String}], '') AS group_value,
+  uniqExactIf(tags[{group_by:String}], mapContains(tags, {group_by:String})) AS value_count,
+  count() AS requests,
+  sumIf(total_cost_microdollars, lower(trimBoth(usage_type)) != 'byok') AS cost_microdollars,
+  sumIf(total_cost_microdollars, lower(trimBoth(usage_type)) = 'byok') AS byok_microdollars,
+  sum(tokens_prompt) AS prompt_tokens,
+  sum(tokens_completion) AS completion_tokens,
+  quantileExactWeighted(0.5)(elapsed_milliseconds, 1) AS median_elapsed_ms
+FROM activity_generations FINAL
+WHERE """
+                + where
+                + """
+GROUP BY kind, group_value
+FORMAT JSON
+""",
+                params=params,
+            )
+        return [_tag_breakdown_row(row) for row in rows]
+
     def public_snapshot(self, name: str) -> dict[str, Any] | None:
         if name not in {
             "leaderboard",
@@ -722,6 +914,23 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         tags={str(key): str(value) for key, value in (row.get("tags") or {}).items()},
         created_at=_iso(row["created_at"]),
     )
+
+
+def _tag_breakdown_row(row: dict[str, Any]) -> dict[str, Any]:
+    kind = str(row["kind"])
+    if kind not in {"value", "other", "untagged"}:
+        raise RuntimeError("ClickHouse tag breakdown returned an unknown row kind")
+    return {
+        "kind": kind,
+        "value": str(row["group_value"]) if kind == "value" else None,
+        "values": int(row["value_count"]),
+        "requests": int(row["requests"]),
+        "cost_microdollars": int(row["cost_microdollars"]),
+        "byok_microdollars": int(row["byok_microdollars"]),
+        "prompt_tokens": int(row["prompt_tokens"]),
+        "completion_tokens": int(row["completion_tokens"]),
+        "median_elapsed_ms": _optional_int(row.get("median_elapsed_ms")),
+    }
 
 
 def _client_event(row: dict[str, Any]) -> dict[str, Any]:

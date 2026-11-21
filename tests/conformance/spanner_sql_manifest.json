@@ -5460,6 +5460,18 @@
       "fingerprint": "8755cf00b1bd694bd8de72537255dbf48da72a80d07f4e524372be0a34cbbadf",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
+    "operational_analytics:activity_tag_keys:1": {
+      "fingerprint": "ba139ecaf1234900728023c3853c5e4a59953e0025ca141457abe6fe0cadd803",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_values:1": {
+      "fingerprint": "aa00ca7e243a203ae380ca412919f75aaf8f0f1e2bd2da04a568b4aad3b32f61",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_breakdown:1": {
+      "fingerprint": "c446bf8fb9c38e8e3f4a7965756e1f8c805688cf916bab363de1de1dd05bc800",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
     "storage_legacy_trust:recover_released_postgres:7": {
       "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
