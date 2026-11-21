@@ -188,6 +188,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
 <section id="model-capabilities" style="margin-top:48px">
   <h2 class="section-center" id="model-request-capabilities">{{ topic("model-capabilities", "Model request capabilities") }}</h2>
   <h3 id="media-discovery">Media options and prices</h3>
+  <p>To budget a video, match the provider, resolution, audio and input mode. Multiply <code>usd_per_second</code> by a duration in <code>priced_durations</code>, or look up the exact total in <code>usd_by_duration</code> where rounding or a minimum applies. Do not extrapolate a single job example to other settings.</p>
   <p>Use <code>GET /v1/videos/models</code> to build a video picker. Each row lists durations in seconds, resolutions and aspect ratios. Read <code>trustedrouter.media.parameters</code> for defaults and combination rules: for example, Veo 3.1 requires an 8-second duration at 1080p. The same media details are on <code>GET /v1/models</code> for video, image generation, speech and transcription.</p>
   <pre><code>curl -fsS '{{ api_base_url }}/models?output_modalities=video' |
   jq '.data[] | select(.id == "lightricks/ltx-2.3-fast") |

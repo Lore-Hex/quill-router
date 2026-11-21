@@ -34,7 +34,9 @@ def test_job_token_live_and_unavailable_prices_are_distinct(client: TestClient) 
     rows = {r["id"]: r for r in client.get("/v1/videos/models").json()["data"]}
     ltx = rows["lightricks/ltx-2.3-fast"]["trustedrouter"]["media"]["pricing"]["routes"]
     assert any(ex["duration"] == 6 and ex["resolution"] == "1080p"
-               and Decimal(ex["cost_usd"]) == Decimal("0.432") for ex in ltx["ltx"]["examples"])
+               and Decimal(ex["cost_usd"]) == Decimal("0.432")
+               and Decimal(ex["usd_per_second"]) == Decimal("0.072")
+               and 8 in ex["priced_durations"] for ex in ltx["ltx"]["examples"])
     assert ltx["venice"] == {"status": "live_quote", "unit": "job"}
     seed = rows["bytedance/seedance-2.0-fast"]
     token = seed["trustedrouter"]["media"]["pricing"]["routes"]["byteplus"]

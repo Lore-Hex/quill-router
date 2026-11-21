@@ -20,6 +20,37 @@ func (noNetwork) RoundTrip(*http.Request) (*http.Response, error) {
 	panic("catalog export attempted HTTP")
 }
 
+func usd(micro int) string { return fmt.Sprintf("%d.%06d", micro/1000000, micro%1000000) }
+
+func durationPrices(row fields, req video.CreateRequest, p video.Provider, cost int) {
+	rate := cost / req.Duration
+	linear := true
+	var durations []int
+	totals := map[int]string{}
+	// Probe the complete controller-admitted range, not just two points
+	// that might happen to agree despite an upstream minimum or rounding.
+	for seconds := 1; seconds <= 60; seconds++ {
+		req.Duration = seconds
+		resolved, err := video.ResolveRequest(&req)
+		if err != nil || !p.Supports(resolved) {
+			continue
+		}
+		n, err := p.QuoteResolved(context.Background(), resolved)
+		if err != nil || n <= 0 {
+			continue
+		}
+		durations = append(durations, seconds)
+		totals[seconds] = usd(n)
+		linear = linear && n == rate*seconds
+	}
+	if linear && len(durations) > 1 {
+		row["usd_per_second"] = usd(rate)
+		row["priced_durations"] = durations
+	} else if len(totals) > 1 {
+		row["usd_by_duration"] = totals
+	}
+}
+
 func main() {
 	const k = "offline"
 	reg := video.NewRegistry(video.ProviderKeys{BytePlus: k, Venice: k, FAL: k, Google: k, MiniMax: k,
@@ -125,9 +156,11 @@ func main() {
 					if err != nil || cost <= 0 {
 						continue
 					}
-					prices[p.ID()] = append(prices[p.ID()], fields{"resolution": rr.Resolution,
+					example := fields{"resolution": rr.Resolution,
 						"duration": rr.DurationSeconds, "aspect_ratio": rr.AspectRatio, "input_mode": rr.InputMode,
-						"generate_audio": rr.GenerateAudio, "cost_usd": fmt.Sprintf("%d.%06d", cost/1000000, cost%1000000)})
+						"generate_audio": rr.GenerateAudio, "cost_usd": usd(cost)}
+					durationPrices(example, req, p, cost)
+					prices[p.ID()] = append(prices[p.ID()], example)
 				}
 			}
 		}
