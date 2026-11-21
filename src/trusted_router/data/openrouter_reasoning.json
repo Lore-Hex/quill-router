@@ -2848,6 +2848,19 @@
       ],
       "default_effort": "high"
     },
+    "thinkingmachines/inkling-2-mini": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "thinkingmachines/inkling-2-small": {
       "mandatory": true,
       "default_enabled": true,
