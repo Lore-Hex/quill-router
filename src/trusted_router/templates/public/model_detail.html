@@ -65,7 +65,7 @@
     {% endif %}
   </div>
   {% if offer %}
-  <p class="md-offer-compare" data-launch-offer-compare>{% if offer.others_input %}Other {{ offer.model_name }} routes start at {{ offer.others_input }} in &middot; {{ offer.others_output }} out. {% endif %}Intro price; it may change.</p>
+  <p class="md-offer-compare" data-launch-offer-compare>Offer ends {{ offer.end_label }}.{% if offer.others_input %} Other {{ offer.model_name }} routes start at {{ offer.others_input }} in &middot; {{ offer.others_output }} out.{% endif %}</p>
   {% endif %}
   <div class="md-actions">
     {{ signup_button(catalog_cta=true) }}

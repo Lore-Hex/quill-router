@@ -8,13 +8,20 @@ delete phone.defaultBrowserType;
 
 const scenarios = () => {
 
-  test("offer banner is visible, fits and opens the GLM offer page", async ({ page }, testInfo) => {
+  test("homepage banner fits and links to the active promotion", async ({ page }, testInfo) => {
     await page.goto("/?utm_source=homepage-browser-test");
-    const banner = page.locator('[data-glm-offer-banner]');
+    const expired = Date.now() >= Date.parse("2026-11-28T00:00:00-08:00");
+    const banner = page.locator(expired ? '[data-token-exchange-banner]' : '[data-glm-offer-banner]');
     await expect(banner).toBeVisible();
     expect(await banner.boundingBox()).toMatchObject({x:0});
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({path:testInfo.outputPath('offer-banner.png')});
+    if (expired) {
+      await expect(banner).toHaveAttribute("href", /^https:\/\/nytokenexchange\.com\//);
+      await expect(page.locator('[data-glm-offer-banner]')).toHaveCount(0);
+      return;
+    }
+    await expect(banner).toContainText("Ends Nov 27, 2026");
     await banner.click();
     await expect(page).toHaveURL(/\/models\/fortanix\/glm-5\.3-flash$/);
   });

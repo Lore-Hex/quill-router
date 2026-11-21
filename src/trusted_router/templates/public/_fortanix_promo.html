@@ -1,7 +1,7 @@
 {% set promo_offer = launch_offer_facts() %}{% if promo_offer %}
 <aside class="model-promo" data-fortanix-promo aria-label="Fortanix introductory offer">
   <a class="model-promo-inner" href="{{ promo_offer.path }}">
-    <span class="model-promo-copy"><strong>{{ promo_offer.model_name }} is basically free</strong> <span>{{ promo_offer.price_label }}</span></span>
+    <span class="model-promo-copy"><strong>{{ promo_offer.model_name }} is basically free</strong> <span>{{ promo_offer.price_label }} &middot; Ends {{ promo_offer.end_label }}</span></span>
     <span class="model-promo-action"><span class="model-promo-arrow" aria-hidden="true">&rarr;</span></span>
   </a>
 </aside>
