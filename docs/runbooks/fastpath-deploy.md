@@ -776,6 +776,14 @@ In this order, each step done before the next:
    tokens at the highest credit rate, about $1.30 on 2026-11-20) fits under
    it once. The infrastructure apply changes the instances' metadata only:
    no node restarts, and each keeps the arguments its unit started with.
+   The same change writes the value to
+   `TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO` in
+   `scripts/deploy/rollout.sh`, which holds the authorize 503 for headroom
+   in leases to the floor (below);
+   `tests/test_fastpath_lease_headroom_floor.py` fails until the two are
+   equal. The control plane takes it at its next deploy, and either one
+   running ahead of the other is safe: it decides only which refusal a
+   request already refused is answered.
 2. **Each node, one at a time, the other serving**, as the money settings'
    step 5 says: mark it leaving, wait for its leases and the balancer, stop
    the unit, run `sudo google_metadata_script_runner startup`, and read
@@ -834,6 +842,26 @@ a grant left, while leases hold the rest, is answered that 503 with
 stops admitting (ten minutes idle, an hour old, or its workspace off), so
 the 503 can outlast the enclave's authorize retries and reach the client,
 which may retry it.
+
+The floor is also what gives a stale lease time to close before a balance
+runs out, and with a $2 floor a fast spender can reach the bottom first
+(2026-11-21: 13 requests of one workspace answered the 503 over three
+minutes, until it bought credit). So the 503 is answered only while the
+workspace's headroom, counting what its leases hold, is at least the floor
+(`TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO` in `rollout.sh`). Under it no
+lease is topped up, a retry cannot help, and the answer is the
+insufficient-credits 402, as with the 503 off. Each such 402 has a line
+beside its `billing.insufficient_credits` one, which counts them and
+carries the amounts read together (the headroom outside leases, what the
+leases hold, and the floor their sum is under):
+
+```
+INFO trusted_router.routes.internal.gateway billing.lease_under_floor_402 workspace_id=WS key_id=K request_id=R reserved_microdollars=N estimated_microdollars=N available_microdollars=N lease_held_microdollars=N floor_microdollars=2000000
+```
+
+A workspace answered the 503 for minutes with its balance under the floor
+means that setting is 0 or the control plane predates it. Setting it to 0
+answers every such refusal the 503 again.
 
 To take the first run's enables back, the enabler is no help: for a
 changed fact it disables at most the larger of 20 and a tenth of the

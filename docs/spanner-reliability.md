@@ -67,7 +67,10 @@ policy:
   retryable, carry `Retry-After: 1` and are retried by the enclave:
   - lease headroom, `billing.lease_headroom_unavailable`
     (`trustedrouter_gateway_lease_headroom_503`): the workspace's shortfall
-    is held in fast-path leases (`TR_FASTPATH_LEASE_HEADROOM_503`);
+    is held in fast-path leases (`TR_FASTPATH_LEASE_HEADROOM_503`), and its
+    headroom with them is at least the nodes' floor
+    (`TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO`; under it the answer is
+    the insufficient-credits 402);
   - rebalance busy, `billing.credit_rebalance_busy`
     (`trustedrouter_gateway_rebalance_busy_503`): the workspace's credit
     covers the hold but is spread across credit shards, and the per-process

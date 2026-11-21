@@ -87,7 +87,11 @@ from trusted_router.catalog import (
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings, in_v2_cohort
-from trusted_router.credit_refusal_read import CreditRefusalRead, credit_refusal_read_headers
+from trusted_router.credit_refusal_read import (
+    CreditRefusalRead,
+    LeaseUnderFloor,
+    credit_refusal_read_headers,
+)
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
     USER_MODEL_OWNER_SETTLE_FIELD,
@@ -1876,6 +1880,7 @@ def _authorize_gateway_sync_impl(
                         else None
                     ),
                     lease_headroom_503=settings.fastpath_lease_headroom_503,
+                    lease_headroom_floor=settings.fastpath_lease_headroom_503_floor_micro,
                 )
         except LeasedOutcomeUnknown as exc:
             # The leased insert's outcome is unknown and could not be read
@@ -2003,7 +2008,10 @@ def _authorize_gateway_sync_impl(
             # headroom it needs (fastpath_lease_headroom_503, design section
             # 4.4). Retryable, so a 503 with Retry-After: not the
             # insufficient_credits 402 the enclave remembers for the
-            # credential, and no free-credit exhaustion is recorded.
+            # credential, and no free-credit exhaustion is recorded. Only
+            # for a workspace at or above the fast path nodes' floor
+            # (fastpath_lease_headroom_503_floor_micro): under it the store
+            # answers insufficient_credits below.
             release_after_error()
             raise _lease_headroom_error(
                 workspace, reservation=reservation, estimate=estimate, key_id=api_key.hash,
@@ -2012,6 +2020,16 @@ def _authorize_gateway_sync_impl(
             )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             record_free_credit_exhausted_safely(workspace.id)
+            lease_under_floor = getattr(outcome, "lease_under_floor", None)
+            if lease_under_floor is not None:
+                # Live leases hold the shortfall, but the workspace is under
+                # the nodes' floor, so this is the 402 and not the
+                # lease-headroom 503. The answer below is the 402's own,
+                # unchanged; this line is what counts these.
+                _log_lease_under_floor(
+                    workspace, lease_under_floor, reservation=reservation, estimate=estimate,
+                    key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+                )
             # With the read of the credit rows the refusal stands on, this
             # internal route only: the edge's decide shadow tells a hold
             # released since Python's read from a refusal to investigate
@@ -3367,7 +3385,11 @@ def _deferred_expires_at(settings: Settings) -> str:
 #: settle. Before that the headroom comes back as the workspace's own
 #: synchronous holds settle or credit is added, so a retry may meet the
 #: same answer. The enclave's authorize retry reads Retry-After as the
-#: least wait between its attempts.
+#: least wait between its attempts. Under the fast path nodes' floor no
+#: lease is topped up either, so a workspace there can spend the rest of
+#: its credit before a lease closes: it is answered the insufficient_credits
+#: 402 instead (fastpath_lease_headroom_503_floor_micro,
+#: _log_lease_under_floor).
 LEASE_HEADROOM_MESSAGE = (
     "This workspace's credits are held by requests in flight; retry shortly."
 )
@@ -3434,6 +3456,35 @@ def _lease_headroom_error(
         LEASE_HEADROOM_MESSAGE,
         ErrorType.SERVICE_UNAVAILABLE,
         headers={"Retry-After": LEASE_HEADROOM_RETRY_AFTER},
+    )
+
+
+def _log_lease_under_floor(
+    workspace: Any, read: LeaseUnderFloor, *, reservation: int, estimate: int, key_id: str,
+    request_id: str | None,
+) -> None:
+    """The mark of an insufficient_credits 402 that live leases would have
+    made the lease-headroom 503, answered 402 because the workspace's
+    headroom, counting what its leases hold, is under the fast path nodes'
+    floor (fastpath_lease_headroom_503_floor_micro). There no lease is
+    topped up, what the leases hold comes back only when they close, and the
+    workspace can spend the rest first, so a retry cannot help and the
+    truthful answer is that credit is needed.
+
+    The response and its billing.insufficient_credits line are the 402's
+    own, unchanged; this line, written before it with the same request_id,
+    is the only difference, so an operator can count these and read the
+    amounts the decision stood on: the headroom outside leases
+    (available_microdollars, signed), what the leases hold
+    (lease_held_microdollars) and the floor, beside the request's hold
+    (reserved_microdollars) and estimate. It carries no model and no
+    content."""
+    logger.info(
+        "billing.lease_under_floor_402 workspace_id=%s key_id=%s request_id=%s "
+        "reserved_microdollars=%d estimated_microdollars=%d available_microdollars=%d "
+        "lease_held_microdollars=%d floor_microdollars=%d",
+        _log_value(workspace.id), _log_value(key_id), _log_value(request_id), reservation, estimate,
+        read.available, read.lease_held, read.floor,
     )
 
 
