@@ -106,10 +106,17 @@ If this route is rolled back, us-east4 settles land in the us-east4 router.
 That router is in `TR_ASYNC_SETTLE_ACCEPT_REGIONS` and runs the memory
 handoff too, so the settles stay async while its writer keeps up; past the
 writer's caps they fall back to synchronous settles. A region whose own
-router is not in the accept list would settle synchronously there;
-europe-west4 is such a region today. For the route's current state,
-`tests/test_async_settle_negotiation_regions.py` fails if a negotiated
-region's settles would land on a router outside the accept list.
+router is not in the accept list would settle synchronously there.
+
+europe-west4 is such a region, and it has negotiated since 2026-11-21: its
+enclaves' handoffs are accepted in us-central1 through this route. Rolling
+the route back therefore takes europe-west4 out of
+`TR_ASYNC_SETTLE_NEGOTIATION_REGIONS` in the same change. Left in, each
+Europe settle would first be answered `sync_required` by the europe-west4
+router and then settle through the snapshot-sync retry: correct, but one
+round trip slower than the synchronous settle it replaced. For the route's
+current state, `tests/test_async_settle_negotiation_regions.py` fails if a
+negotiated region's settles would land on a router outside the accept list.
 
 If the handoff also goes back to `outbox`, revisit the negotiation pin in the
 same change. The 2026-10-31 measurements that kept us-east4 and Europe out

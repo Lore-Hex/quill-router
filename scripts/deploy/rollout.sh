@@ -957,7 +957,7 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
-  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1,us-east4"
+  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1,us-east4,europe-west4"
   # Gate at authorize: 500 ms handoff budget; central p50/p99 64/103 ms,
   # east p50/p90/p99 257/308/487 ms. Europe: 139 unknown, 93 rejected,
   # 126 settle 503s tripping the deploy billing gate. West settles via central.
@@ -966,6 +966,16 @@ ENV_VARS=(
   # us-central1 (terminal route, #2293), and the memory handoff (#2296)
   # answers before any Spanner work (router p50/p99 7/11 ms). us-east4 joins
   # first; Europe follows after an hour of measured us-east4 handoffs.
+  # 2026-11-21 (Joseph): Europe joins. us-east4 has negotiated since
+  # 2026-11-04 with its settles accepted in us-central1. A europe-west4
+  # enclave's handoff is one round trip to us-central1 in place of the
+  # synchronous settle it makes there today. europe-west4's own router is
+  # not in TR_ASYNC_SETTLE_ACCEPT_REGIONS above, so this value holds only
+  # while the terminal route sends every settle to us-central1: turning that
+  # route off takes europe-west4 out of this list in the same change
+  # (tests/test_async_settle_negotiation_regions.py fails otherwise). The way
+  # back is this one pin without europe-west4: tickets already issued keep
+  # settling, and new Europe authorizations get the synchronous answer.
   # E2 routing snapshot publication: the literals of the key block above.
   "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
