@@ -74,7 +74,7 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
       },
       {
         # infra/aws_github_oidc_roles.tf manages the GitHub OIDC trust of the
-        # two quill-cloud-proxy roles. Read-only, so every plan can refresh
+        # quill-cloud-proxy roles. Read-only, so every plan can refresh
         # them; trust-policy changes themselves (iam:UpdateAssumeRolePolicy)
         # are applied by an operator, never by this role.
         Sid    = "ReadGitHubOidcRoles"
@@ -88,6 +88,8 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
         Resource = [
           "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-route53-sync",
           "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-trust-publisher",
+          # infra/aws_gateway_rollout_role.tf; created and changed by an owner.
+          "arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-gateway-rollout",
         ]
       },
       {
