@@ -551,6 +551,12 @@ def test_publication_rejects_unsuccessful_ci(publication_repo: PublicationRepo, 
     assert_snapshot_withheld(publication_repo, result)
     assert f"CI concluded '{conclusion}'" in result.stdout
     assert len(reruns(publication_repo)) == (1 if conclusion == "failure" else 0)
+    # A failed run (never a cancelled one) names itself for the quarantine
+    # step, which reads its failure records.
+    output = Path(publication_repo.env["GITHUB_OUTPUT"])
+    lines = output.read_text().splitlines() if output.exists() else []
+    expected = ["snapshot_ci_failed=1234"] if conclusion == "failure" else []
+    assert [line for line in lines if line.startswith("snapshot_ci_failed=")] == expected
 
 
 def reruns(repo: PublicationRepo) -> list[list[str]]:
