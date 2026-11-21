@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 
 from trusted_router.errors import error_response, not_supported
+from trusted_router.routes.catalog import public_video_models
 
 
 def register_compat_stub_routes(router: APIRouter) -> None:
@@ -110,6 +111,10 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
     @router.post("/videos")
     def videos() -> JSONResponse:
         return not_supported()
+
+    @router.get("/videos/models")
+    def video_models() -> JSONResponse:
+        return JSONResponse(public_video_models())
 
     @router.get("/videos/{jobId}")
     def video_status(jobId: str) -> JSONResponse:  # noqa: N803

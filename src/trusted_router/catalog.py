@@ -1128,8 +1128,6 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         supported_parameters = union_supported_parameters(supported_parameters, tuple(media["parameters"]))
         if media["endpoint"] == "/v1/videos":
             video_fields = video_list_fields(media)
-            if not completion_min and not prompt_min:
-                pricing = {}
     # Orchestrators can select/subcall different models and have no stable
     # endpoint contract. Do not manufacture capabilities from an empty pool.
     if not is_meta and not model.hidden_public_metadata:

@@ -482,6 +482,13 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
     }
 
 
+def public_video_models() -> dict[str, Any]:
+    return {"data": [
+        dedicated_video_row(row) for row in _current_catalog_payload().shapes
+        if "supported_durations" in row and not row["trustedrouter"].get("internal_only")
+    ]}
+
+
 def register_catalog_routes(router: APIRouter) -> None:
     register_model_change_routes(router)
     # Prewarm the projection. Scheduled retirements/prices can change without
@@ -504,13 +511,6 @@ def register_catalog_routes(router: APIRouter) -> None:
                 if model.id in IMAGE_MODEL_ID_SET and endpoints_for_model(model.id)
             ]
         }
-
-    @router.get("/videos/models")
-    def video_models() -> dict[str, Any]:
-        return {"data": [
-            dedicated_video_row(row) for row in _current_catalog_payload().shapes
-            if "supported_durations" in row
-        ]}
 
     @router.get("/images/models/{author}/{slug}/endpoints")
     def image_model_endpoints(

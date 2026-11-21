@@ -18,6 +18,8 @@ def test_two_catalogs_agree_on_every_video(client: TestClient) -> None:
     assert videos and videos.keys() == listed.keys()
     for key, row in videos.items():
         assert row["trustedrouter"]["media"] == listed[key]["trustedrouter"]["media"]
+        assert {"prompt", "completion"} <= listed[key]["pricing"].keys()
+        assert row["pricing"] == listed[key]["trustedrouter"]["media"]["pricing"]
         assert row["supported_durations"] and row["supported_resolutions"]
         media = row["trustedrouter"]["media"]
         assert set(media["parameters"]) <= set(row["supported_parameters"])
