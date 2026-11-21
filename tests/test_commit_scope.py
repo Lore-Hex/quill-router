@@ -184,6 +184,18 @@ def test_the_post_cutover_suite_reads_the_data_and_skips_only_on_its_flag() -> N
     assert summarize(needs({"run_post_cutover": "false"}, test_post_cutover="skipped"), "false") == []
 
 
+def test_base_ci_may_skip_only_when_the_skips_do_not_rest_on_a_running_base() -> None:
+    # base-ci waits for the base's own push run when the scope job took the
+    # data-only skips before it concluded (base_pending). Its skip is a
+    # failure then: the induction the skips rely on was never checked.
+    assert summarize(needs({"base_pending": "false"}, base_ci="skipped"), "true") == []
+    assert summarize(needs(base_ci="skipped"), "true") == []  # an older scope job sets no flag
+    assert summarize(needs({"base_pending": "true"}, base_ci="skipped"), "true") == ["base-ci: skipped"]
+    assert summarize(needs({"base_pending": "true"}, base_ci="success"), "true") == []
+    for result in ("failure", "cancelled", None):
+        assert summarize(needs({"base_pending": "true"}, base_ci=result), "true") == [f"base-ci: {result}"]
+
+
 @pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", None])
 def test_scope_must_succeed(result: str | None) -> None:
     assert summarize(needs(scope=result), "true") == [f"scope: {result}"]
