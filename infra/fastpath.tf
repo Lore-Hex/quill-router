@@ -243,7 +243,9 @@ locals {
   # leaves "off": a node on an older release refuses a policy that carries
   # a member it does not know. The other fastpath/ changes are tests and
   # test vectors (#2808 among them).
-  # Off switch: pin 65e856777 again. One node at a time.
+  # Off switch: first set TR_FASTPATH_EDGE_HOSTED_DECIDE to "off" and let
+  # that roll out (65e856777 refuses a policy that carries either hosted
+  # decide member), then pin 65e856777 again. One node at a time.
   fastpath_release        = "5e3ebc8b70cb1fbae57704d5cffca0ef3b9c5ca1"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
