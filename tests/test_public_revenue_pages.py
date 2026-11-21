@@ -947,7 +947,8 @@ def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -
     agent_setup = client.get("/docs/agent-setup")
 
     assert docs.status_code == providers.status_code == agent_setup.status_code == 200
-    assert "<title>API Docs: Quickstart and SDKs | TrustedRouter</title>" in docs.text
+    assert "<title>TrustedRouter API Docs: Quickstart and SDKs | TrustedRouter</title>" in docs.text
+    assert "<h1>TrustedRouter API Docs: Quickstart and SDKs</h1>" in docs.text
     assert '"min_privacy": "confidential"' in docs.text
     assert "<code>e2e</code> and <code>e2ee</code>" in docs.text
     assert "Confidential requires all three on the same route" in docs.text

@@ -2043,7 +2043,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "docs": PublicPage(
         template="public/docs.html",
         og_card="docs.png",
-        title="API Docs: Quickstart and SDKs",
+        title="TrustedRouter API Docs: Quickstart and SDKs",
         description=(
             "Use TrustedRouter with any OpenAI-compatible SDK after one base_url change. "
             "Get quickstarts, Python and TypeScript SDKs, privacy controls, and API reference."
