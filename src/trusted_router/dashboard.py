@@ -1452,6 +1452,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "model routing, streaming, provider controls, and live gateway verification."
         ),
     ),
+    "docs/migrate-from-openai": PublicPage(
+        template="public/migrate_from_openai.html",
+        title="Migrate from the OpenAI API",
+        description=(
+            "Change the OpenAI base URL and API key to call 600+ models through TrustedRouter. "
+            "Keep the OpenAI SDK, your model names, streaming and tool calls."
+        ),
+    ),
     "docs/tagging": PublicPage(
         template="public/tagging.html",
         title="Request Tagging And Cost Allocation",
@@ -5221,6 +5229,7 @@ def llms_txt(settings: Settings) -> str:
         f"- [Provider routing and pinning](https://{domain}/docs/provider-routing)",
         f"- [Blog](https://{domain}/blog)",
         f"- [Migration guide](https://{domain}/docs/migrate-from-openrouter)",
+        f"- [Migrate from the OpenAI API](https://{domain}/docs/migrate-from-openai)",
         "",
         "## API",
         "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",
@@ -5439,6 +5448,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Latency benchmarks: https://{domain}/llm-provider-latency-benchmarks",
             f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
+            f"- Migrate from the OpenAI API: https://{domain}/docs/migrate-from-openai",
             f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
             f"- Client reliability telemetry: https://{domain}/docs/telemetry",
             f"- Security: https://{domain}/security",
@@ -5569,6 +5579,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Video generation: https://{domain}/docs/video",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
+        f"- Migrate from the OpenAI API: https://{domain}/docs/migrate-from-openai",
         f"- EU routing: https://{domain}/eu",
         f"- Renewable inference: https://{domain}/green-tokens",
         f"- TrustedOS for AI clouds: https://{domain}/trustedos",

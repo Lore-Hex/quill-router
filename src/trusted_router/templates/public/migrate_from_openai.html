@@ -1,0 +1,164 @@
+{% extends "public/_base.html" %}
+{% block head_extra %}<link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block body_attributes %}class="router-guide-page migrate-openai-page"{% endblock %}
+{% block body %}
+<section class="guide-section" aria-labelledby="mig-change">
+  <h2 id="mig-change">Change two lines</h2>
+  <p class="guide-lead">Point the OpenAI SDK at TrustedRouter with a new base URL and key. Your model names, messages, streaming and tool calls stay the same.</p>
+  <div class="md-code mig-code" data-md-code data-md-first="python">
+    <div class="md-code-head tr-code-head">
+      <div class="md-tabs" role="tablist" aria-label="Language">
+        <button type="button" role="tab" id="mig-tab-python" aria-controls="mig-panel-python" aria-selected="true" data-md-tab="python">Python</button>
+        <button type="button" role="tab" id="mig-tab-typescript" aria-controls="mig-panel-typescript" aria-selected="false" tabindex="-1" data-md-tab="typescript">TypeScript</button>
+      </div>
+      <span class="tr-code-tools"><button class="md-copy tr-code-copy" type="button" aria-label="Copy the TrustedRouter code" title="Copy" data-md-copy hidden></button></span>
+    </div>
+    <div class="md-code-body">
+      <div class="md-code-panel mig-diff" role="tabpanel" id="mig-panel-python" aria-labelledby="mig-tab-python" data-md-panel="python">
+        <div class="mig-col">
+          <p class="mig-col-label">Before: OpenAI</p>
+          <div class="tr-code-body"><pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ[<span class="tr-code-s">"OPENAI_API_KEY"</span>],
+)
+
+response = client.chat.completions.create(
+    model=<span class="tr-code-s">"gpt-5.4-mini"</span>,
+    messages=[{<span class="tr-code-s">"role"</span>: <span class="tr-code-s">"user"</span>, <span class="tr-code-s">"content"</span>: <span class="tr-code-s">"Say hello"</span>}],
+)</code></pre></div>
+        </div>
+        <div class="mig-col" data-md-copy-source>
+          <p class="mig-col-label">After: TrustedRouter</p>
+          <div class="tr-code-body"><pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+<span class="mig-add">    base_url=<span class="tr-code-s">"{{ api_base_url }}"</span>,</span>
+<span class="mig-add">    api_key=os.environ[<span class="tr-code-s">"TRUSTEDROUTER_API_KEY"</span>],</span>
+)
+
+response = client.chat.completions.create(
+    model=<span class="tr-code-s">"gpt-5.4-mini"</span>,
+    messages=[{<span class="tr-code-s">"role"</span>: <span class="tr-code-s">"user"</span>, <span class="tr-code-s">"content"</span>: <span class="tr-code-s">"Say hello"</span>}],
+)</code></pre></div>
+        </div>
+      </div>
+      <div class="md-code-panel mig-diff" role="tabpanel" id="mig-panel-typescript" aria-labelledby="mig-tab-typescript" data-md-panel="typescript" data-md-inactive>
+        <div class="mig-col">
+          <p class="mig-col-label">Before: OpenAI</p>
+          <div class="tr-code-body"><pre><code>import OpenAI from <span class="tr-code-s">"openai"</span>;
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const response = await client.chat.completions.create({
+  model: <span class="tr-code-s">"gpt-5.4-mini"</span>,
+  messages: [{ role: <span class="tr-code-s">"user"</span>, content: <span class="tr-code-s">"Say hello"</span> }],
+});</code></pre></div>
+        </div>
+        <div class="mig-col" data-md-copy-source>
+          <p class="mig-col-label">After: TrustedRouter</p>
+          <div class="tr-code-body"><pre><code>import OpenAI from <span class="tr-code-s">"openai"</span>;
+
+const client = new OpenAI({
+<span class="mig-add">  baseURL: <span class="tr-code-s">"{{ api_base_url }}"</span>,</span>
+<span class="mig-add">  apiKey: process.env.TRUSTEDROUTER_API_KEY,</span>
+});
+
+const response = await client.chat.completions.create({
+  model: <span class="tr-code-s">"gpt-5.4-mini"</span>,
+  messages: [{ role: <span class="tr-code-s">"user"</span>, content: <span class="tr-code-s">"Say hello"</span> }],
+});</code></pre></div>
+        </div>
+      </div>
+    </div>
+    <span class="md-copy-status tr-code-status" data-md-copy-status role="status" aria-live="polite" aria-atomic="true"></span>
+  </div>
+  <p class="mig-note">Changed lines are marked +. Create a key in the console and store it as <code>TRUSTEDROUTER_API_KEY</code>.</p>
+</section>
+
+<section class="guide-section" aria-labelledby="mig-models">
+  <h2 id="mig-models">Model names keep working</h2>
+  <p class="guide-lead">Send the OpenAI names you use today, dated versions included. To try another lab, use its full name from the <a href="/models">models page</a>.</p>
+  <table class="guide-table mig-table">
+    <thead><tr><th scope="col">You send</th><th scope="col">TrustedRouter runs</th></tr></thead>
+    <tbody>
+      <tr><td><code>gpt-5.4-mini</code></td><td data-label="TrustedRouter runs"><code>openai/gpt-5.4-mini</code></td></tr>
+      <tr><td><code>gpt-4.1-2025-04-14</code></td><td data-label="TrustedRouter runs"><code>openai/gpt-4.1</code></td></tr>
+      <tr><td><code>anthropic/claude-sonnet-5.5</code></td><td data-label="TrustedRouter runs">Claude Sonnet 5.5</td></tr>
+      <tr><td><code>trustedrouter/auto</code></td><td data-label="TrustedRouter runs">A ranked list of models, with fallback</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="guide-section" aria-labelledby="mig-same">
+  <h2 id="mig-same">What works the same</h2>
+  <p class="guide-lead">OpenAI models behave as they do today. Other labs' models differ, so test each one you switch to.</p>
+  <table class="guide-table">
+    <thead><tr><th scope="col">Feature</th><th scope="col">Works the same?</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Chat Completions</th><td data-label="Works the same?">Yes</td></tr>
+      <tr><th scope="row">Streaming</th><td data-label="Works the same?">Yes</td></tr>
+      <tr><th scope="row">Tool calls</th><td data-label="Works the same?">Yes, on models that support them</td></tr>
+      <tr><th scope="row">JSON output</th><td data-label="Works the same?">Yes, on models that support it</td></tr>
+      <tr><th scope="row">Other labs' models</th><td data-label="Works the same?">Test each one; features differ by model</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="guide-section" aria-labelledby="mig-down">
+  <h2 id="mig-down">If OpenAI is down</h2>
+  <div class="guide-split">
+    <div>
+      <p>List a backup model. If the first one fails, TrustedRouter sends the request to the next. Or use <code>trustedrouter/auto</code> and let the router choose. More options are in <a href="/docs/provider-routing">provider routing</a>.</p>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>Python</span></div>
+      <pre><code>response = client.chat.completions.create(
+    model="gpt-5.4-mini",
+    messages=[{"role": "user", "content": "Say hello"}],
+    extra_body={"models": ["gpt-5.4-mini",
+                           "anthropic/claude-haiku-4.5"]},
+)</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="guide-section" aria-labelledby="mig-zdr">
+  <h2 id="mig-zdr">Zero data retention</h2>
+  <div class="guide-split">
+    <div>
+      <p>Send prompts only to providers that keep no data. If none qualifies, the request fails before any provider sees it. It never falls back to a weaker one.</p>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>Python</span></div>
+      <pre><code>extra_body={"provider": {"min_privacy": "zdr"}}</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="guide-section" aria-labelledby="mig-limits">
+  <h2 id="mig-limits">Rate limits</h2>
+  <div class="guide-split mig-single">
+    <p>You set your key's limits as spend caps in USD: daily, weekly or monthly. When a cap is reached or traffic is throttled, you get a 429 with Retry-After. Wait that long, then retry. See <a href="/docs/spend-controls">spend controls</a>.</p>
+  </div>
+</section>
+
+<section class="guide-section" aria-labelledby="mig-test">
+  <h2 id="mig-test">Test these before you switch</h2>
+  <ol class="mig-checklist">
+    <li>Tool calls</li>
+    <li>JSON output</li>
+    <li>Streaming</li>
+    <li>Rate limits and retries on 429</li>
+    <li>Zero data retention, if you handle customer data</li>
+    <li>The same real prompts on the old and new model: compare answers, speed and <a href="/pricing">price per request</a></li>
+    <li>Rollback: keep the old base URL in one setting</li>
+  </ol>
+  <p class="mig-next">Read next: <a href="/openai-compatible-llm-api">OpenAI compatible API</a>, <a href="/docs/provider-routing">provider routing</a>, <a href="/pricing">pricing</a>.</p>
+</section>
+{% endblock %}
+{% block body_scripts %}<script defer src="/static/quickstart.js?v={{ static_version|default('local') }}"></script>{% endblock %}
