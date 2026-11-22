@@ -30,6 +30,10 @@ def test_web_search_docs_publish_contract_and_privacy_boundary(client: TestClien
 
 
 def test_web_search_docs_are_discoverable(client: TestClient) -> None:
+    section = BeautifulSoup(client.get("/docs/web-search").text, "html.parser").select_one("#parallel")
+    assert section and section.get_text(strip=True) == "Choose Parallel Search"
+    for path in ("/docs", "/docs/llms.txt", "/docs/llms-full.txt"):
+        assert "/docs/web-search#parallel" in client.get(path).text
     assert 'href="/docs/web-search"' in client.get("/docs").text
     assert "/docs/web-search" in client.get("/docs/llms.txt").text
     assert "/docs/web-search" in client.get("/docs/llms-full.txt").text
