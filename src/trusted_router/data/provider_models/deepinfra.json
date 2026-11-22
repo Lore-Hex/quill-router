@@ -3381,6 +3381,8 @@
       "status": 1,
       "id": "tencent/hy4-preview",
       "upstream_id": "tencent/Hy4-preview",
+      "retirement_at": "2026-11-27T00:00:00Z",
+      "replacement_model_id": "tencent/hy4",
       "context_length": 1048576,
       "max_output_tokens": 1048576,
       "input_token_price_per_m": 834000,

@@ -97,6 +97,8 @@ DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 # Tencent TokenHub decommissions hy4-preview from 00:00:00 Beijing Time (UTC+8) on
 # 7 Dec 2026, i.e. 2026-12-06 16:00 UTC; the notice recommends migrating to hy4.
 TENCENT_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 12, 6, 16, 0, tzinfo=UTC)
+# DeepInfra deprecates tencent/Hy4-preview on 27 Nov 2026 (date only) and redirects it to Hy4.
+DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -1418,6 +1420,17 @@ _RETIREMENTS = (
         model_ids=frozenset({"tencent/hy4-preview"}),
         upstream_ids=frozenset({"hy4-preview"}),
         effective_at=TENCENT_HY4_PREVIEW_RETIREMENT_AT,
+        replacement_model_ids=("tencent/hy4",),
+    ),
+    # DeepInfra's November 22 notice: "Model tencent/Hy4-preview is being
+    # deprecated on 2026-11-27" (date only, so 00:00 UTC) and requests are then
+    # redirected to tencent/Hy4, a different model. Retire the identity rather
+    # than substitute; only DeepInfra's route, other hosts' hy4-preview stays.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"tencent/hy4-preview"}),
+        upstream_ids=frozenset({"tencent/Hy4-preview"}),
+        effective_at=DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT,
         replacement_model_ids=("tencent/hy4",),
     ),
     # Databricks' November 10 Foundation Model retirement notice: "The GLM 5.2
