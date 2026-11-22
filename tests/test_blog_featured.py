@@ -174,19 +174,8 @@ def test_combo_launch_opens_with_venturebeat_coverage(
     )
 
 
-def test_local_llm_guides_are_discoverable_and_self_canonical(client: TestClient) -> None:
-    from trusted_router.content.local_llm_guides import LOCAL_GUIDES
-
-    hub = client.get("/blog/local-llm-getting-started").text
-    sitemap = client.get("/sitemap-core.xml").text
-    assert len({guide.slug for guide in LOCAL_GUIDES}) == 30
-    for guide in LOCAL_GUIDES:
-        path = f"/blog/{guide.slug}"
-        response = client.get(path)
-        assert response.status_code == 200
-        assert f'<link rel="canonical" href="https://trustedrouter.com{path}">' in response.text
-        assert f"<loc>https://trustedrouter.com{path}</loc>" in sitemap
-        if guide != LOCAL_GUIDES[0]:
-            assert f'href="{path}"' in hub
-            assert 'href="/blog/local-llm-getting-started"' in response.text
-        assert 'href="/private-llm-api"' in response.text
+def test_local_llm_guides_belong_to_notes_only(client: TestClient) -> None:
+    assert not any(slug.startswith("local-llm-") for slug in BLOG_POSTS_BY_SLUG)
+    assert client.get("/blog/local-llm-getting-started", follow_redirects=False).status_code == 404
+    assert "/blog/local-llm-" not in client.get("/sitemap-core.xml").text
+    assert 'href="/notes/local-llm-getting-started"' in client.get("/resources").text
