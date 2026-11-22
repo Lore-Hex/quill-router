@@ -32,6 +32,10 @@ MODEL = "trustedrouter/fortanix-test"
 KEY = "sk-tr-internal-fortanix-fixture"
 
 
+# Live-route tests; see tests/fortanix_live.py for the 2026-11-27 suspension.
+pytestmark = pytest.mark.usefixtures("fortanix_route_live")
+
+
 def test_reference_tariff_native_id_and_conservative_privacy() -> None:
     model = MODELS[MODEL]
     assert model.internal_only and model.context_length == 131_072

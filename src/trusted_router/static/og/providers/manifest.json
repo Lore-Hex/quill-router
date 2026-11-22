@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 76,
+    "model_count": 77,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 151,
+    "route_count": 153,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 10,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

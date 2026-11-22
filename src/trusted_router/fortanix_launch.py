@@ -1,7 +1,10 @@
 """Exact operator-confirmed Fortanix introductory tariff, not a scraped quote."""
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
+from typing import ClassVar
+from zoneinfo import ZoneInfo
 
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.pricing import _customer_price, _flat_tier
@@ -11,14 +14,24 @@ NATIVE_ID = "GLM-5.3-Flash"
 # Fortanix /v1/models max_model_len; near-limit inference verified 2026-11-12.
 # See docs/providers/fortanix-launch-2026-11-10.md, Context Window.
 CONTEXT_LENGTH = 1_048_576
-# Joseph confirmed zero supplier charges, no campaign cap and no fixed end
-# date on 2026-11-10. Do not turn that into a permanent provider price claim.
+# The public promotion ends after the last calendar day in California.
+OFFER_END_DATE = date(2026, 11, 27)
+OFFER_END_LABEL = OFFER_END_DATE.strftime("%b %d, %Y")
+_OFFER_TZ = ZoneInfo("America/Los_Angeles")
+# Do not infer a replacement supplier tariff from the promotion's end date.
 SUPPLIER_COST_MICRO_PER_M = 0
 RETAIL_MICRO_PER_M = _customer_price(SUPPLIER_COST_MICRO_PER_M)
 TIERS = _flat_tier(RETAIL_MICRO_PER_M, RETAIL_MICRO_PER_M)
 
 
+def _offer_window_open(now: datetime | None = None) -> bool:
+    today = datetime.now(_OFFER_TZ) if now is None else now.astimezone(_OFFER_TZ)
+    return today.date() <= OFFER_END_DATE
+
+
 def fortanix_launch_offer() -> bool:
+    if not _offer_window_open():
+        return False
     # The registry imports this module's tariff while constructing the catalog.
     from trusted_router.catalog import (
         MODELS,
@@ -97,6 +110,7 @@ class LaunchOfferFacts:
     """
 
     model_id: str
+    end_label: ClassVar[str] = OFFER_END_LABEL
     model_name: str
     provider_name: str
     input_microdollars: int

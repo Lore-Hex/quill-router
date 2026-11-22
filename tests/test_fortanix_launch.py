@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from fastapi import HTTPException
 from PIL import Image
 
+from trusted_router import fortanix_launch
 from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     MODELS,
@@ -45,6 +46,32 @@ from trusted_router.provider_og import provider_og_facts
 from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 from trusted_router.routing import candidates_fitting_context, chat_route_endpoint_candidates
 from trusted_router.storage import STORE
+
+
+@pytest.fixture(autouse=True)
+def campaign_clock(monkeypatch):
+    within_window = fortanix_launch._offer_window_open
+    instant = datetime(2026, 11, 28, 7, 59, 59, tzinfo=UTC)
+    monkeypatch.setattr(fortanix_launch, "_offer_window_open", lambda: within_window(instant))
+    return within_window
+
+
+def test_deadline_removes_public_promotion_without_changing_route(client, monkeypatch, campaign_clock):
+    assert fortanix_launch_offer()  # 23:59:59 Pacific on the 27th
+    midnight = datetime(2026, 11, 28, 8, tzinfo=UTC)
+    monkeypatch.setattr(fortanix_launch, "_offer_window_open", lambda: campaign_clock(midnight))
+    assert launch_offer_facts() is None
+    assert "data-token-exchange-banner" in client.get("/").text
+    for path in ("/models", "/pricing"):
+        assert "data-fortanix-promo" not in client.get(path).text
+    assert "data-launch-offer" not in client.get(f"/models/{MODEL_ID}").text
+    llms, full = _llms_texts()
+    assert "Introductory offer" not in llms and "offer=introductory" not in full
+    assert launch_tariff_matches(MODELS[MODEL_ID], endpoints_for_model(MODEL_ID)[0])
+
+
+# Live-route tests; see tests/fortanix_live.py for the 2026-11-27 suspension.
+pytestmark = pytest.mark.usefixtures("fortanix_route_live")
 
 
 def test_public_route_is_exact_zero_supplier_cost_at_existing_customer_floor():
@@ -221,6 +248,7 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
     assert banner.select_one("a")["href"] == f"/models/{MODEL_ID}"
     assert "basically free" in banner.get_text()
     assert "1¢ per million tokens" in banner.get_text()
+    assert "Ends Nov 27, 2026" in banner.get_text()
     assert "trustedrouter/fortanix-test" not in response.text
 
 
@@ -266,8 +294,8 @@ def test_model_page_shows_launch_offer_lede_from_live_prices(client):
     low_out = min(route.completion_price_microdollars_per_million_tokens for route in others)
     compare = " ".join(hero.select_one("[data-launch-offer-compare]").get_text().split())
     assert compare == (
-        f"Other GLM 5.3 Flash routes start at {_short_dollars(low_in, digits=2)} in \u00b7 "
-        f"{_short_dollars(low_out, digits=2)} out. Intro price; it may change."
+        "Offer ends Nov 27, 2026. Other GLM 5.3 Flash routes start at "
+        f"{_short_dollars(low_in, digits=2)} in \u00b7 {_short_dollars(low_out, digits=2)} out."
     )
 
 
@@ -442,7 +470,7 @@ def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
     assert page["title"] == page["og_title"] == "GLM 5.3 Flash for 1¢ per million tokens (Fortanix)"
     assert page["description"] == page["og_description"] == (
         "GLM 5.3 Flash on Fortanix: 1¢ per million tokens in and out, the lowest GLM 5.3 "
-        "Flash price on TrustedRouter. Zero data retention. Intro price, may change."
+        "Flash price on TrustedRouter. Zero data retention. Ends Nov 27, 2026."
     )
     assert len(page["description"]) <= 155
 
@@ -453,20 +481,19 @@ def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
     cost = base["faq_json"]["How much does GLM 5.3 Flash cost through TrustedRouter?"]
     assert providers.endswith(
         "Fortanix also serves GLM 5.3 Flash under the separate model ID "
-        f"fortanix/glm-5.3-flash at an introductory 1¢ per million tokens: {url}"
+        f"fortanix/glm-5.3-flash at an introductory 1¢ per million tokens through Nov 27, 2026: {url}"
     )
     assert cost.endswith(
         "The separate Fortanix route, fortanix/glm-5.3-flash, costs 1¢ per million tokens "
-        "in and out, the lowest GLM 5.3 Flash price on TrustedRouter, as an introductory "
-        f"price that may change: {url}"
+        f"in and out, the lowest GLM 5.3 Flash price on TrustedRouter, through Nov 27, 2026: {url}"
     )
     llms, full = _llms_texts()
     assert (
         "- Introductory offer: fortanix/glm-5.3-flash (GLM 5.3 Flash on Fortanix, zero data "
-        "retention) costs 1¢ per million tokens in and out; pricing may change. "
+        "retention) costs 1¢ per million tokens in and out through Nov 27, 2026. "
         f"[Model page]({url})"
     ) in llms.splitlines()
-    assert f"url={url}; offer=introductory price, may change" in full
+    assert f"url={url}; offer=introductory price through Nov 27, 2026" in full
     for text in (providers, cost, page["description"], page["title"]):
         assert "free" not in text.casefold()
 
@@ -495,7 +522,7 @@ def test_offer_seo_drops_lowest_claim_when_another_glm_flash_route_is_cheaper(mo
     cost = _model_page_seo("z-ai/glm-5.3-flash")["faq_json"][
         "How much does GLM 5.3 Flash cost through TrustedRouter?"
     ]
-    assert "fortanix/glm-5.3-flash, costs 1¢ per million tokens in and out as an" in cost
+    assert "fortanix/glm-5.3-flash, costs 1¢ per million tokens in and out through Nov 27, 2026" in cost
     assert "lowest GLM 5.3 Flash price" not in cost
 
 

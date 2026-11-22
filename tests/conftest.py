@@ -48,6 +48,9 @@ from tests.fixture_routes import (
     record_the_session_catalog,
     start_from_the_session_catalog,
 )
+
+# Fortanix's 2026-11-27 suspension: live-route tests opt in by name.
+from tests.fortanix_live import fortanix_route_live  # noqa: F401 - shared fixture
 from trusted_router import catalog_data, catalog_registry, post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app

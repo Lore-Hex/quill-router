@@ -8152,6 +8152,44 @@ class PostgresStore(OperationalAnalyticsReads):
             limit=limit,
         )
 
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("activity_tag_summary")
+        return super().activity_tag_summary(
+            workspace_id,
+            start_at=start_at,
+            group_by=group_by,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        if self._record_read_backend != "clickhouse":
+            self._not_implemented("activity_tag_events")
+        return super().activity_tag_events(
+            workspace_id,
+            start_at=start_at,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            limit=limit,
+        )
+
     def usage_series(
         self,
         workspace_id: str,

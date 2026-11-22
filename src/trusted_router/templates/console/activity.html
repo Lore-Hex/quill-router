@@ -735,6 +735,561 @@
   }
 })();
 </script>
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  "use strict";
+
+  // Request tags. Tag keys and values are customer text. They travel in a
+  // JSON request body, never in a URL, and reach the page through
+  // textContent only.
+  const TAGS_ENDPOINT = "/console/activity/tags.json";
+  const REQUESTS_ENDPOINT = "/console/activity/requests.json";
+  const MAX_CHIPS = 8;
+  const LIST_COLUMNS = 8;
+  const BREAKDOWN_COLUMNS = 5;
+  const numberFormat = new Intl.NumberFormat("en-US");
+  const rangePhrases = {
+    "1h": "the last hour",
+    "6h": "the last 6 hours",
+    "24h": "the last 24 hours",
+    "7d": "the last 7 days",
+    "30d": "the last 30 days",
+    "90d": "the last 90 days"
+  };
+  // The viewer's choices outlive a range change: chosenGroupBy and the
+  // filter are sent with every load and only the viewer clears them.
+  const state = {
+    range: "30d",
+    chosenGroupBy: null,
+    filterKey: null,
+    filterValue: null,
+    groupKeys: [],
+    filterKeys: [],
+    filterValues: []
+  };
+
+  let panel = null;
+  let content = null;
+  let empty = null;
+  let emptyRange = null;
+  let message = null;
+  let groupSelect = null;
+  let keySelect = null;
+  let valueSelect = null;
+  let valueNote = null;
+  let valueNoteText = null;
+  let valueInput = null;
+  let valueError = null;
+  let breakdownRows = null;
+  let listBody = null;
+  let listNote = null;
+  let listNoteText = null;
+  let originalListRows = null;
+  let tagsToken = 0;
+  let listToken = 0;
+  let retriedAfterRejection = false;
+
+  // The usage panel publishes its current range on itself as
+  // data-usage-range before this panel starts. The checked radio is the same
+  // value, read only if the attribute is somehow absent.
+  function usageRange() {
+    const usage = document.querySelector("[data-usage-panel]");
+    const published = usage ? usage.getAttribute("data-usage-range") : null;
+    if (published && rangePhrases[published]) {
+      return published;
+    }
+    const input = document.querySelector('input[name="usage-range"]:checked');
+    return input && rangePhrases[input.value] ? input.value : "30d";
+  }
+
+  async function postJson(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok || response.redirected) {
+      const error = new Error(`tag endpoint returned ${response.status}`);
+      error.status = response.redirected ? 0 : response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  function formatCost(microdollars) {
+    const dollars = Number(microdollars || 0) / 1000000;
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: dollars !== 0 && Math.abs(dollars) < 1 ? 6 : 2
+    }).format(dollars);
+  }
+
+  function formatElapsed(value) {
+    return value === null || value === undefined ? "n/a" : `${numberFormat.format(value)} ms`;
+  }
+
+  function tagText(key, value) {
+    return value === null ? key : `${key}: ${value === "" ? "(empty)" : value}`;
+  }
+
+  function cell(text) {
+    const node = document.createElement("td");
+    node.textContent = text;
+    return node;
+  }
+
+  function note(text) {
+    const node = document.createElement("span");
+    node.className = "tag-row-note";
+    node.textContent = text;
+    return node;
+  }
+
+  function emptyRow(columns, text) {
+    const row = document.createElement("tr");
+    const item = cell(text);
+    item.className = "empty";
+    item.colSpan = columns;
+    row.appendChild(item);
+    return row;
+  }
+
+  function chip(key, value) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tag-chip";
+    button.title = "Filter requests by this tag";
+    button.setAttribute("data-tag-chip", "");
+    const keyNode = document.createElement("span");
+    keyNode.setAttribute("data-tag-chip-key", "");
+    keyNode.textContent = key;
+    const valueNode = document.createElement("span");
+    valueNode.setAttribute("data-tag-chip-value", "");
+    valueNode.textContent = value;
+    button.append(keyNode, document.createTextNode(": "), valueNode);
+    return button;
+  }
+
+  function chipList(tags) {
+    const list = document.createElement("div");
+    list.className = "tag-chip-list";
+    const keys = Object.keys(tags || {}).sort();
+    keys.slice(0, MAX_CHIPS).forEach((key) => {
+      list.appendChild(chip(key, String(tags[key])));
+    });
+    if (keys.length > MAX_CHIPS) {
+      const more = note(`+${keys.length - MAX_CHIPS} more`);
+      more.className = "tag-chip-more";
+      list.appendChild(more);
+    }
+    return list;
+  }
+
+  function fillSelect(select, labels, selectedIndex) {
+    select.replaceChildren();
+    labels.forEach((label) => {
+      const option = document.createElement("option");
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    select.selectedIndex = selectedIndex;
+  }
+
+  function showMessage(text, isError) {
+    message.textContent = text;
+    message.hidden = !text;
+    message.classList.toggle("error", Boolean(isError));
+  }
+
+  function renderBreakdown(data, groupBy) {
+    const items = Array.isArray(data.breakdown) ? data.breakdown : [];
+    breakdownRows.replaceChildren();
+    if (data.breakdown_too_many_values) {
+      const limit = numberFormat.format(data.distinct_limit || 0);
+      breakdownRows.appendChild(emptyRow(
+        BREAKDOWN_COLUMNS,
+        `This key has about ${limit} or more distinct values in ${rangePhrases[state.range]}, too many to break down. Choose another key or a shorter range.`
+      ));
+      return;
+    }
+    if (items.length === 0) {
+      breakdownRows.appendChild(emptyRow(BREAKDOWN_COLUMNS, "No requests match this filter in the range."));
+      return;
+    }
+    items.forEach((item) => {
+      const row = document.createElement("tr");
+      const first = document.createElement("td");
+      if (item.kind === "value") {
+        first.appendChild(chip(groupBy, String(item.value)));
+      } else if (item.kind === "other") {
+        // No count of the values folded here: values can arrive after any
+        // read that could have counted them.
+        const other = note("Other");
+        other.title = "Every value of this key that has no row of its own";
+        first.appendChild(other);
+      } else {
+        const untagged = note("Untagged");
+        untagged.title = "Requests without this tag";
+        first.appendChild(untagged);
+      }
+      const cost = cell(formatCost(item.cost_microdollars));
+      if (Number(item.byok_microdollars || 0) > 0) {
+        cost.append(" ", note(`+ ${formatCost(item.byok_microdollars)} BYOK`));
+      }
+      const tokens = Number(item.prompt_tokens || 0) + Number(item.completion_tokens || 0);
+      row.append(
+        first,
+        cell(numberFormat.format(item.requests || 0)),
+        cost,
+        cell(numberFormat.format(tokens)),
+        cell(formatElapsed(item.median_elapsed_ms))
+      );
+      breakdownRows.appendChild(row);
+    });
+  }
+
+  // The filter controls always show the viewer's filter, whether or not the
+  // range has a request that matches it.
+  function renderFilter(keys, filter) {
+    state.filterKeys = state.filterKey === null || keys.includes(state.filterKey)
+      ? keys
+      : [state.filterKey].concat(keys);
+    fillSelect(
+      keySelect,
+      ["No filter"].concat(state.filterKeys),
+      state.filterKey === null ? 0 : state.filterKeys.indexOf(state.filterKey) + 1
+    );
+    const values = (Array.isArray(filter.values) ? filter.values : []).map((item) => String(item.value));
+    state.filterValues = state.filterValue === null || values.includes(state.filterValue)
+      ? values
+      : [state.filterValue].concat(values);
+    fillSelect(
+      valueSelect,
+      ["Any value"].concat(state.filterValues.map((value) => (value === "" ? "(empty)" : value))),
+      state.filterValue === null ? 0 : state.filterValues.indexOf(state.filterValue) + 1
+    );
+    valueSelect.disabled = state.filterKey === null;
+    // The list holds at most the key's most used values. Say so when it is
+    // cut, say when even that is approximate, and take a typed value for the
+    // ones it leaves out.
+    const partial = state.filterKey !== null && Boolean(filter.values_truncated || filter.values_approximate);
+    valueNoteText.textContent = filter.values_approximate
+      ? "This key has more values than are counted exactly, so the list is approximately its most used ones."
+      : "The list holds this key's most used values.";
+    valueNote.hidden = !partial;
+    showValueError("");
+    panel.querySelectorAll("[data-tags-clear]").forEach((button) => {
+      button.hidden = state.filterKey === null;
+    });
+  }
+
+  function renderTags(data) {
+    const keys = (Array.isArray(data.keys) ? data.keys : []).map((item) => String(item.key));
+    const filtered = state.filterKey !== null;
+    if (keys.length === 0 && !filtered) {
+      // No request in the range carries a tag: explain tags, do not draw an
+      // empty table.
+      content.hidden = true;
+      emptyRange.textContent = rangePhrases[state.range];
+      empty.hidden = false;
+      showMessage("", false);
+      return;
+    }
+    empty.hidden = true;
+    content.hidden = false;
+    renderFilter(keys, data.filter || {});
+
+    if (keys.length === 0) {
+      // The range has no tags at all, but the viewer has a filter. Keep it in
+      // view with its Clear control: it applies again in a range that has it.
+      state.groupKeys = [];
+      fillSelect(groupSelect, ["No tag keys in this range"], 0);
+      groupSelect.disabled = true;
+      breakdownRows.replaceChildren(emptyRow(
+        BREAKDOWN_COLUMNS,
+        `No request in ${rangePhrases[state.range]} carries a tag.`
+      ));
+      showMessage(
+        `No request in ${rangePhrases[state.range]} is tagged ${tagText(state.filterKey, state.filterValue)}. The filter is kept for other ranges.`,
+        false
+      );
+      return;
+    }
+
+    const groupBy = data.group_by === null || data.group_by === undefined ? keys[0] : String(data.group_by);
+    state.groupKeys = keys.includes(groupBy) ? keys : [groupBy].concat(keys);
+    fillSelect(groupSelect, state.groupKeys, state.groupKeys.indexOf(groupBy));
+    groupSelect.disabled = false;
+    renderBreakdown(data, groupBy);
+
+    const parts = [`Every request in ${rangePhrases[state.range]} is counted.`];
+    if (filtered) {
+      parts.push(`Filtered to ${tagText(state.filterKey, state.filterValue)}.`);
+    }
+    if (data.breakdown_approximate) {
+      // Set exactly when there is an Other row.
+      parts.push("Values beyond the ones shown are grouped in Other. Which values are shown is approximate for a busy key.");
+    }
+    if (data.keys_approximate) {
+      parts.push("This workspace has more tag keys than are counted exactly: the most used are listed.");
+    } else if (data.keys_truncated) {
+      parts.push(`Showing the ${numberFormat.format(keys.length)} most used keys.`);
+    }
+    showMessage(parts.join(" "), false);
+  }
+
+  async function loadTags() {
+    const token = ++tagsToken;
+    showMessage("Loading tags…", false);
+    try {
+      const data = await postJson(TAGS_ENDPOINT, {
+        range: state.range,
+        group_by: state.chosenGroupBy,
+        tag_key: state.filterKey,
+        tag_value: state.filterValue
+      });
+      if (token !== tagsToken) {
+        return;
+      }
+      retriedAfterRejection = false;
+      renderTags(data);
+    } catch (error) {
+      if (token !== tagsToken) {
+        return;
+      }
+      if (error.status === 400 && !retriedAfterRejection) {
+        // The server holds keys and values to the limits tags are accepted
+        // under. Drop the selection it refused and load the defaults once.
+        retriedAfterRejection = true;
+        state.chosenGroupBy = null;
+        state.filterKey = null;
+        state.filterValue = null;
+        restoreList();
+        await loadTags();
+        // Say why the view changed, unless that load failed too or the
+        // viewer has already asked for something else.
+        if (tagsToken === token + 1 && !message.classList.contains("error")) {
+          showMessage("That tag cannot be used as a filter here.", true);
+        }
+        return;
+      }
+      content.hidden = true;
+      empty.hidden = true;
+      // Besides an outage, a read fails when the range holds more tag text
+      // than the reader may load at once. Nothing partial is shown.
+      showMessage("Couldn't load tags for this range right now. A shorter range may load.", true);
+    }
+  }
+
+  function restoreList() {
+    listToken += 1;
+    if (!listBody) {
+      return;
+    }
+    if (originalListRows !== null) {
+      listBody.replaceChildren(...originalListRows);
+      originalListRows = null;
+    }
+    listNote.hidden = true;
+  }
+
+  function renderRequests(data) {
+    const items = Array.isArray(data.data) ? data.data : [];
+    const tag = tagText(state.filterKey, state.filterValue);
+    listBody.replaceChildren();
+    if (items.length === 0) {
+      listBody.appendChild(emptyRow(LIST_COLUMNS, "No requests with this tag in the range."));
+    }
+    items.forEach((item) => {
+      const row = document.createElement("tr");
+      const tags = document.createElement("td");
+      tags.appendChild(chipList(item.tags));
+      row.append(
+        cell(String(item.created_at || "")),
+        cell(String(item.model || "")),
+        cell(String(item.provider_name || "")),
+        cell(String(item.input_tokens === null || item.input_tokens === undefined ? "" : item.input_tokens)),
+        cell(String(item.output_tokens === null || item.output_tokens === undefined ? "" : item.output_tokens)),
+        cell(String(item.cost_display || "")),
+        cell(String(item.finish_reason || "")),
+        tags
+      );
+      listBody.appendChild(row);
+    });
+    if (items.length === 0) {
+      listNoteText.textContent = `No requests tagged ${tag} in ${rangePhrases[state.range]}.`;
+    } else {
+      const shown = data.truncated ? `the newest ${numberFormat.format(items.length)} requests` : "requests";
+      listNoteText.textContent = `Showing ${shown} tagged ${tag} in ${rangePhrases[state.range]}.`;
+    }
+    listNote.hidden = false;
+  }
+
+  async function loadRequests() {
+    if (!listBody) {
+      return;
+    }
+    if (state.filterKey === null) {
+      restoreList();
+      return;
+    }
+    const token = ++listToken;
+    if (originalListRows === null) {
+      originalListRows = Array.from(listBody.children);
+    }
+    listNoteText.textContent = "Loading tagged requests…";
+    listNote.hidden = false;
+    try {
+      const data = await postJson(REQUESTS_ENDPOINT, {
+        range: state.range,
+        tag_key: state.filterKey,
+        tag_value: state.filterValue
+      });
+      if (token === listToken) {
+        renderRequests(data);
+      }
+    } catch (error) {
+      if (token !== listToken) {
+        return;
+      }
+      if (error.status === 400) {
+        // loadTags reports the refused tag and restores the list.
+        return;
+      }
+      listBody.replaceChildren(emptyRow(LIST_COLUMNS, "Couldn't load tagged requests right now."));
+      listNoteText.textContent = `Filtered to ${tagText(state.filterKey, state.filterValue)}.`;
+    }
+  }
+
+  function setFilter(key, value) {
+    state.filterKey = key;
+    state.filterValue = value;
+    valueInput.value = "";
+    showValueError("");
+    loadTags();
+    loadRequests();
+  }
+
+  function showValueError(text) {
+    valueError.textContent = text;
+    valueError.hidden = !text;
+  }
+
+  // A typed value is sent as typed or not at all. The server counts a
+  // value's characters as code points, so they are counted the same way
+  // here: the field has no maxlength, which counts UTF-16 units and would cut
+  // a value of characters outside the basic plane to half its allowed length.
+  function filterByTypedValue() {
+    if (state.filterKey === null) {
+      return;
+    }
+    const typed = valueInput.value;
+    const limit = Number(valueInput.getAttribute("data-max-characters"));
+    const length = Array.from(typed).length;
+    if (length === 0) {
+      showValueError("Type a value first. For requests whose value is empty, use the button for the empty value.");
+      return;
+    }
+    if (length > limit) {
+      showValueError(`A tag value has at most ${numberFormat.format(limit)} characters. This one has ${numberFormat.format(length)}.`);
+      return;
+    }
+    setFilter(state.filterKey, typed);
+  }
+
+  // The range belongs to the usage panel, which announces every change of
+  // it, by any path and whatever becomes of its own request. This panel
+  // follows that announcement, never what the chart managed to draw.
+  function applyRange(range) {
+    if (!rangePhrases[range] || range === state.range) {
+      return;
+    }
+    state.range = range;
+    loadTags();
+    loadRequests();
+  }
+
+  function initTagsPanel() {
+    panel = document.querySelector("[data-tags-panel]");
+    if (!panel) {
+      return;
+    }
+    content = panel.querySelector("[data-tags-content]");
+    empty = panel.querySelector("[data-tags-empty]");
+    emptyRange = panel.querySelector("[data-tags-empty-range]");
+    message = panel.querySelector("[data-tags-message]");
+    groupSelect = panel.querySelector("[data-tags-group]");
+    keySelect = panel.querySelector("[data-tags-filter-key]");
+    valueSelect = panel.querySelector("[data-tags-filter-value]");
+    valueNote = panel.querySelector("[data-tags-value-note]");
+    valueNoteText = panel.querySelector("[data-tags-value-note-text]");
+    valueInput = panel.querySelector("[data-tags-value-input]");
+    valueError = panel.querySelector("[data-tags-value-error]");
+    breakdownRows = panel.querySelector("[data-tags-rows]");
+    listBody = document.querySelector("[data-activity-rows]");
+    listNote = document.querySelector("[data-activity-filter-note]");
+    listNoteText = document.querySelector("[data-activity-filter-text]");
+
+    groupSelect.addEventListener("change", () => {
+      state.chosenGroupBy = state.groupKeys[groupSelect.selectedIndex] || null;
+      loadTags();
+    });
+    keySelect.addEventListener("change", () => {
+      const index = keySelect.selectedIndex;
+      setFilter(index > 0 ? state.filterKeys[index - 1] : null, null);
+    });
+    valueSelect.addEventListener("change", () => {
+      const index = valueSelect.selectedIndex;
+      setFilter(state.filterKey, index > 0 ? state.filterValues[index - 1] : null);
+    });
+    panel.querySelector("[data-tags-value-form]").addEventListener("submit", (event) => {
+      event.preventDefault();
+      filterByTypedValue();
+    });
+    // An empty string is a real tag value. An empty field cannot stand for
+    // it, so it has a control of its own.
+    panel.querySelector("[data-tags-value-empty]").addEventListener("click", () => {
+      if (state.filterKey !== null) {
+        setFilter(state.filterKey, "");
+      }
+    });
+    document.querySelectorAll("[data-tags-clear]").forEach((button) => {
+      button.addEventListener("click", () => setFilter(null, null));
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) {
+        return;
+      }
+      // A chip anywhere on the page filters by its tag. The key and the value
+      // are read back from the chip's own text nodes.
+      const tagChip = target.closest("[data-tag-chip]");
+      if (tagChip) {
+        const keyNode = tagChip.querySelector("[data-tag-chip-key]");
+        const valueNode = tagChip.querySelector("[data-tag-chip-value]");
+        if (keyNode && valueNode) {
+          setFilter(keyNode.textContent, valueNode.textContent);
+        }
+      }
+    });
+    document.addEventListener("activity:range-change", (event) => {
+      applyRange(String((event.detail || {}).range || ""));
+    });
+    state.range = usageRange();
+    loadTags();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTagsPanel);
+  } else {
+    initTagsPanel();
+  }
+})();
+</script>
 {% endblock %}
 {% block body %}
 <section class="panel usage-panel" data-usage-panel>
@@ -874,12 +1429,60 @@
   </div>
 </section>
 
+<section class="panel usage-panel" data-tags-panel>
+  <div class="panel-head usage-panel-head">
+    <div>
+      <h2>Tags</h2>
+      <p class="panel-kicker">Requests, cost, tokens and generation time by request tag, for the range selected under Usage.</p>
+    </div>
+    <span class="pill">metadata only</span>
+  </div>
+  <div class="panel-body">
+    <p class="usage-message" data-tags-message role="status">Loading tags…</p>
+    <div data-tags-content hidden>
+      <div class="usage-controls tags-controls" aria-label="Tag controls">
+        <label>Break down by
+          <select data-tags-group></select>
+        </label>
+        <label>Filter by key
+          <select data-tags-filter-key></select>
+        </label>
+        <label>Filter by value
+          <select data-tags-filter-value disabled></select>
+        </label>
+        <button class="btn" type="button" data-tags-clear hidden>Clear filter</button>
+      </div>
+      <form class="tag-value-note" data-tags-value-note data-tags-value-form hidden>
+        <label><span data-tags-value-note-text>The list holds this key's most used values.</span> To filter by another, type it (at most 256 characters):
+          <input type="text" data-tags-value-input data-max-characters="256" autocomplete="off" spellcheck="false">
+        </label>
+        <button class="btn" type="submit">Filter</button>
+        <button class="btn" type="button" data-tags-value-empty>Filter by the empty value</button>
+        <p class="tag-value-error" data-tags-value-error role="alert" hidden></p>
+      </form>
+      <div class="table-scroll">
+        <table class="tags-table">
+          <thead><tr><th>Value</th><th>Requests</th><th>Cost</th><th>Tokens</th><th title="Median time the server took to generate a response. This is not the client-observed latency in the reliability panel above, which your SDKs measure and which includes retries and the network.">Median generation time</th></tr></thead>
+          <tbody data-tags-rows></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="empty usage-empty-state" data-tags-empty role="status" aria-live="polite" hidden>
+      <p>No tagged requests in <span data-tags-empty-range>the last 30 days</span>. Tags label each request with your own keys and values, such as a team or an environment. Once requests carry them, this panel splits requests, cost, tokens and generation time by tag and filters the request list. Send <code>"tags": {"team": "search"}</code> in a request body, or set default tags on an API key. <a href="/docs/tagging">Read the tagging docs.</a></p>
+    </div>
+  </div>
+</section>
+
 <section class="panel">
   <div class="panel-head"><h2>Recent activity</h2><span class="pill">metadata only</span></div>
   <div class="panel-body">
+    <p class="tag-filter-note" data-activity-filter-note role="status" hidden><span data-activity-filter-text></span> <button class="btn" type="button" data-tags-clear>Clear filter</button></p>
+    {#- Eight columns do not fit a phone. The table scrolls inside the panel,
+        like the other tables on this page, instead of widening the page. -#}
+    <div class="table-scroll">
     <table>
-      <thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Cost</th><th>Finish</th></tr></thead>
-      <tbody>
+      <thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Cost</th><th>Finish</th><th>Tags</th></tr></thead>
+      <tbody data-activity-rows>
         {% for a in activity %}
         <tr>
           <td>{{ a.created_at }}</td>
@@ -889,15 +1492,23 @@
           <td>{{ a.output_tokens }}</td>
           <td>{{ a.cost_display }}</td>
           <td>{{ a.finish_reason or '' }}</td>
+          {#- Tag keys and values are customer text: text nodes only, escaped
+              by the template, never an attribute. Clicking a chip filters. -#}
+          {%- set tag_items = (a.tags or {})|dictsort(true) %}
+          <td>{% if tag_items %}<div class="tag-chip-list">
+            {%- for tag_key, tag_value in tag_items[:8] %}<button type="button" class="tag-chip" title="Filter requests by this tag" data-tag-chip><span data-tag-chip-key>{{ tag_key }}</span>: <span data-tag-chip-value>{{ tag_value }}</span></button>{% endfor %}
+            {%- if tag_items|length > 8 %}<span class="tag-chip-more">+{{ tag_items|length - 8 }} more</span>{% endif -%}
+          </div>{% endif %}</td>
         </tr>
         {% endfor %}
         {% if activity_unavailable %}
-        <tr><td class="empty" colspan="7" role="status" data-activity-unavailable>Activity is temporarily unavailable. Reload in a few minutes.</td></tr>
+        <tr><td class="empty" colspan="8" role="status" data-activity-unavailable>Activity is temporarily unavailable. Reload in a few minutes.</td></tr>
         {% elif not activity %}
-        <tr><td class="empty" colspan="7">No activity yet. Make a request with your API key to see it here.</td></tr>
+        <tr><td class="empty" colspan="8">No activity yet. Make a request with your API key to see it here.</td></tr>
         {% endif %}
       </tbody>
     </table>
+    </div>
   </div>
 </section>
 {% endblock %}

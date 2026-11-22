@@ -193,6 +193,7 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <li><strong>Verify the route before migrating.</strong> A retention policy describes what may be stored. Workload attestation provides evidence about the software running inside a measured environment. Check where that environment starts, what it covers, and which party handles plaintext before or after it.</li>
 </ol>
 <h2 id="switch">Switch a test request to confidential inference</h2>
+<p>For sensitive requests, we recommend Trusted, our highest provider trust tier. TrustedRouter reviews the teams operating these routes, their physical security and their track record for reliability. Each route also requires verified confidential compute, end-to-end encryption to the provider and zero data retention. With <code>nyte/trusted</code>, every fallback stays in this tier. If no eligible provider is available, the request stops before inference. <a href="/docs#trusted-tier">See how providers qualify for Trusted</a>.</p>
 <p>Use a TrustedRouter API key, the confidential hostname, and the explicit privacy requirement on every request. A change to the base URL alone is insufficient. Start with fictional data and an eligible model. <a href="/docs#confidential-api">Confidential API documentation</a></p>
 <pre><code class="language-python">import os
 from openai import OpenAI

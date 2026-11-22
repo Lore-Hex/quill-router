@@ -21,10 +21,13 @@ the pull request that introduces it instead of at midnight.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+import pytest
 
 from tests.lifecycle_freeze import OVERRIDE_WAS_EXPLICIT
 from trusted_router import catalog_registry
+from trusted_router.provider_lifecycle import LIFECYCLE_CLOCK_OVERRIDE_ENV, _utc_now
 
 # The clock the catalog was resolved with: not a fresh reading.
 CATALOG_CLOCK: datetime = catalog_registry.CATALOG_RESOLVED_AT
@@ -34,3 +37,16 @@ LIFECYCLE_CLOCK_OVERRIDDEN: bool = OVERRIDE_WAS_EXPLICIT
 def catalog_predates(cutover: datetime) -> bool:
     """True when the import-time catalog still carries `cutover`'s routes."""
     return CATALOG_CLOCK < cutover
+
+
+def pin_request_clock_before(monkeypatch: pytest.MonkeyPatch, cutover: datetime) -> None:
+    """Hold request-time lifecycle filters just before `cutover`, if needed.
+
+    Only for a route the catalog keeps registered across `cutover` and filters
+    at request time (`endpoints_for_model`), such as a temporary suspension: the
+    tests that cover the route's live behaviour keep running on the side of
+    the cutover where it is live. A clock already before `cutover` is left as is.
+    """
+    if _utc_now() >= cutover:
+        stamp = (cutover - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        monkeypatch.setenv(LIFECYCLE_CLOCK_OVERRIDE_ENV, stamp)

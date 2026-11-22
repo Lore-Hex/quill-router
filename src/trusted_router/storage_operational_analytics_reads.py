@@ -6,12 +6,20 @@ import dataclasses
 import datetime as dt
 from typing import Any
 
-from trusted_router.operational_analytics import OperationalAnalyticsClient
+from trusted_router.operational_analytics import (
+    OperationalAnalyticsClient,
+    bound_values_in_the_body,
+)
 from trusted_router.storage_activity import (
     ActivityResult,
     filter_generations,
     generation_events,
     summarize_activity_result,
+)
+from trusted_router.storage_activity_tags import (
+    TAG_EVENT_LIMIT,
+    clickhouse_breakdown,
+    tag_summary,
 )
 from trusted_router.storage_models import Generation
 from trusted_router.storage_operational_analytics import analytics_surrogate
@@ -141,6 +149,70 @@ class OperationalAnalyticsReads:
             limit=limit,
             tag_key=tag_key,
             tag_value=tag_value,
+        )
+
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        client = self._require_operational_analytics()
+        tenant_id = analytics_surrogate("workspace", workspace_id)
+        window: dict[str, Any] = {"tenant_id": tenant_id, "start_at": start_at}
+        tag: dict[str, Any] = {"tag_key": tag_key, "tag_value": tag_value}
+
+        def read_breakdown(key: str, limit: int) -> list[dict[str, Any]] | None:
+            return clickhouse_breakdown(
+                read_candidates=lambda count: client.activity_tag_candidates(
+                    group_by=key, candidates=count, **window, **tag
+                ),
+                read_candidate_totals=lambda candidates: client.activity_tag_candidate_totals(
+                    group_by=key, candidates=candidates, **window, **tag
+                ),
+                read_histogram=lambda top, opened: client.activity_tag_histogram(
+                    group_by=key, top=top, opened=opened, **window, **tag
+                ),
+                limit=limit,
+            )
+
+        return tag_summary(
+            read_keys=lambda: client.activity_tag_keys(**window),
+            read_values=lambda key: client.activity_tag_values(tag_key=key, **window),
+            read_breakdown=read_breakdown,
+            group_by=group_by,
+            tag_key=tag_key,
+        )
+
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = None,
+        limit: int = TAG_EVENT_LIMIT,
+    ) -> Any:
+        normalized_limit = max(1, min(limit, TAG_EVENT_LIMIT))
+        tenant_id = analytics_surrogate("workspace", workspace_id)
+        with bound_values_in_the_body():
+            rows = self._require_operational_analytics().activity_generations(
+                tenant_id=tenant_id,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                start_at=start_at,
+                limit=normalized_limit + 1,
+            )
+        truncated = len(rows) > normalized_limit
+        rows = filter_generations(rows[:normalized_limit], workspace_id=tenant_id)
+        return ActivityResult(
+            data=generation_events(rows, limit=normalized_limit),
+            truncated=truncated,
+            scanned=len(rows),
+            scan_limit=normalized_limit,
         )
 
     def usage_series(

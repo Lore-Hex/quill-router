@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from trusted_router.routes.console import (
     activity,
+    activity_tags,
     api_keys,
     authorized_apps,
     broadcast,
@@ -51,6 +52,7 @@ def register_console_routes(app: FastAPI) -> None:
     credit_transfers.register(app)
     earnings.register(app)
     activity.register(app)
+    activity_tags.register(app)
     broadcast.register(app)
     byok.register(app)
     routing_page.register(app)
