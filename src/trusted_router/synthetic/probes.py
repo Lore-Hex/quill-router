@@ -28,13 +28,17 @@ from trustedrouter import AsyncTrustedRouter
 from trusted_router.config import Settings, parse_gateway_region_targets
 from trusted_router.enclave_regions import ENCLAVE_REGIONS
 from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
+from trusted_router.provider_error_detail import (
+    ProviderErrorDetail,
+    detail_from_error,
+    format_error_message,
+)
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     SyntheticProbeSample,
-    scrub_provider_error_message,
 )
 from trusted_router.synthetic.components import is_router_origin_error
 from trusted_router.synthetic.inference_sdk import (
@@ -2210,6 +2214,32 @@ async def _observe_provider_stream(
     return observation
 
 
+def _response_error_object(response: httpx.Response) -> dict[str, Any] | None:
+    # Same lookup as _response_error. That function is mirrored byte for byte
+    # by the public provider-check contract, so detail parsing lives here.
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict) and isinstance(payload, dict):
+        detail = payload.get("detail")
+        error = detail.get("error") if isinstance(detail, dict) else None
+    return error if isinstance(error, dict) else None
+
+
+def _response_error_detail(response: httpx.Response) -> ProviderErrorDetail:
+    """The provider's machine-readable code/type/param plus the request ID.
+
+    The gateway forwards these on every upstream 4xx/5xx; keeping them is what
+    lets a route alert name the rejected field (Sentry QUILL-ROUTER-J1). A
+    response without a structured error still yields the request ID.
+    """
+    return detail_from_error(
+        _response_error_object(response), response.headers, status=response.status_code,
+    )
+
+
 def _response_error(response: httpx.Response) -> tuple[str, int | None, str | None]:
     try:
         payload = response.json()
@@ -2417,6 +2447,7 @@ async def provider_rotation_probe(
                         error_status=error_status,
                         error_type=error_type,
                         error_message=message,
+                        error_detail=_response_error_detail(response),
                     )
                 observation = await _observe_provider_stream(
                     response,
@@ -2433,6 +2464,7 @@ async def provider_rotation_probe(
                         error_status=status or 502,
                         error_type=error_type,
                         error_message=message,
+                        error_detail=detail_from_error(None, response.headers),
                     )
     except (TimeoutError, httpx.HTTPError, ValueError) as exc:
         return _rotation_error_sample(
@@ -2538,6 +2570,7 @@ async def provider_throughput_probe(
             ) as response:
                 served_provider = response.headers.get("x-trustedrouter-provider") or provider
                 served_model = response.headers.get("x-trustedrouter-served-model") or model
+                response_headers = response.headers
                 if response.status_code != 200:
                     await response.aread()
                     error_type, error_status, message = _response_error(response)
@@ -2549,6 +2582,7 @@ async def provider_throughput_probe(
                         error_status=error_status,
                         error_type=error_type,
                         error_message=message,
+                        error_detail=_response_error_detail(response),
                         source="synthetic_throughput",
                     )
                 observation = await _observe_provider_stream(
@@ -2578,6 +2612,7 @@ async def provider_throughput_probe(
             error_status=status or 502,
             error_type=error_type,
             error_message=message,
+            error_detail=detail_from_error(None, response_headers),
             source="synthetic_throughput",
         )
 
@@ -2748,12 +2783,15 @@ def _rotation_error_sample(
     error_status: int | None,
     error_type: str,
     error_message: str | None = None,
+    error_detail: ProviderErrorDetail | None = None,
     source: str = "synthetic",
 ) -> ProviderBenchmarkSample:
     status = "unsupported" if _rotation_error_excluded_from_uptime(error_type) else "error"
-    truncated_error_message = None
-    if error_message is not None:
-        truncated_error_message = scrub_provider_error_message(str(error_message))[:300]
+    # Scrubbed and bounded to 300 characters; the provider's code/type/param
+    # and the request ID lead, so truncation never drops them.
+    truncated_error_message = format_error_message(
+        None if error_message is None else str(error_message), error_detail,
+    )
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
         model=model,
