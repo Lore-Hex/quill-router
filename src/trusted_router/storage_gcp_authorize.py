@@ -1856,11 +1856,16 @@ def release_unstarted_holds_result(
         try:
             result = decide(str(reservation_id), created_at, read_at)
         except Exception as exc:  # noqa: BLE001 - one row's failure is its own
-            # The class only: no reservation, no exception text.
-            log.warning(
-                "gateway early release failed error_class=%s; continuing the pass",
-                type(exc).__name__,
-            )
+            # The class only: no reservation, no exception text. Best
+            # effort: rows before this one may already be released, and a
+            # handler that raises must not lose the pass's account of them.
+            try:
+                log.warning(
+                    "gateway early release failed error_class=%s; continuing the pass",
+                    type(exc).__name__,
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
             result = _ReapOneResult(SettleOutcome.ERROR)
         if result.outcome == SettleOutcome.NOT_ELIGIBLE:
             reason = result.skip_reason or "reservation"

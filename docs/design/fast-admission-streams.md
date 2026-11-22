@@ -1193,12 +1193,18 @@ pass's error, counted, and kept.
 the database's clock.** Stage D reason `ok` does not say the boot
 heartbeats: declaration enforcement
 (`stage_d_require_heartbeat_declaration`) is off, so a boot that does not
-declare still gets `ok`, streams with no heartbeat, and settles. And a
-boot's record is not fixed: the same key can register again with another
-declaration, so "this boot declares heartbeats now" says nothing about a
-row it authorized earlier. The rule therefore needs S, the moment the
-unbroken run of declaring registrations began, and needs S to be no earlier
-than the moment the registration that began the run took effect. A time a
+declare still gets `ok`, streams with no heartbeat, and settles. So the
+rule reads the boot's own declaration, and it assumes one thing of it: the
+declaration in effect when a row is made describes the gateway process that
+made the request. That holds because a key is one process, whose flag is
+fixed for its life: the enclave draws its receipt key from `crypto/rand` at
+start and never persists it (`qcp: enclave-go/cmd/enclave/receipt.go:96`).
+The rule does not assume the registry's record never changes. The registry
+lets the same key register again with another declaration, so "this boot
+declares heartbeats now" says nothing about a row it authorized earlier.
+The rule therefore needs S, the moment the unbroken run of declaring
+registrations began, and needs S to be no earlier than the moment the
+registration that began the run took effect. A time a
 caller stamps on its registration cannot be that: a registration prepared
 at one moment can commit much later, after a registration that withdrew the
 declaration and after rows authorized while nothing was declared.
@@ -1230,10 +1236,11 @@ Only Spanner keeps and resolves the time
 (`SpannerStore.gateway_boot_declaring_since`). The memory store and the
 Postgres planes run no early release: they keep the field well-formed (the
 marker while declaring, nothing otherwise) and never carry a start. A boot
-record that is gone, cannot be read, was written before the field existed,
-or carries no time keeps the hold; a boot registered before this change
-gets its start at its next registration, and its earlier rows stay out of
-the class.
+record that is gone, was written before the field existed, or carries no
+time keeps the hold (`boot_undeclared`); one that cannot be read keeps it
+too, as the pass's error, so the gate sees it. A boot registered before
+this change gets its start at its next registration, and its earlier rows
+stay out of the class.
 
 The fact is on the boot's record, not on the authorization's row. Putting
 it on the row was weighed and left for a follow-up: the row's payload is
@@ -1284,8 +1291,10 @@ to 600 s at least and 6,900 s at most.
 
 **Clocks: what is guaranteed and what is not.** Every comparison the rule
 decides by is on the database's clock. The age is the database's time when
-the scan ran (`CURRENT_TIMESTAMP()` in the scan's own statement) less the
-reservation's commit timestamp, both returned by that statement; the
+the scan ran (`CURRENT_TIMESTAMP()` in the scan's own statement, the
+server's clock, which Spanner keeps within milliseconds of its commit
+timestamps) less the reservation's commit timestamp, both returned by that
+statement; the
 release transaction reuses the pair, which is sound because the commit
 timestamp never changes and the age only grows. The boot's start is a
 commit timestamp too. So, whatever any application clock reads:
@@ -1310,9 +1319,10 @@ the drain runs every five minutes, the pass is not truncated and the
 clocks agree within five minutes; otherwise later, and at the reaper's two
 hours at the latest. The observers on the heartbeat and settle paths
 (§13.5) have no commit timestamp to hand and read a first heartbeat's age
-from application clocks; they call it late 60 s before the deadline
-(`CLOCK_SKEW_ALLOWANCE_SECONDS`), so they report one too many, not one too
-few.
+from two instances' clocks (the authorize's and their own); they call it
+late 60 s before the deadline (`CLOCK_SKEW_ALLOWANCE_SECONDS`), so while
+those clocks agree within 60 s they report one too many, not one too few.
+That allowance is the observers' only; the rule has none.
 
 **What the scan does, and its bound.** The scan (`_UNSTARTED_SCAN_SQL`) only
 says where to look: it reads the expiry index (`tr_reservation_by_expiry`)
@@ -1475,6 +1485,15 @@ run and writes nothing. (One line is new in every mode: the reaper's
 release counter, below.) `log` runs the pass on read-only snapshots, with
 no read-write transaction, and writes what it would release. `on`
 releases. Production starts in `log`.
+
+The pass runs where the reaper runs: in the legacy drain behind the
+scheduled drain route, after the reaper's pass. The dedicated fast drain
+(`TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED`, off in production) neither reaps
+nor runs this rule, and a legacy drain started without the rule's options
+(the drain worker's fallback) reaps without it. If the reaper is ever run
+from another call, the rule's options must go with it; where they are not
+passed the rule does not run, which is the two-hour behaviour, not a wrong
+release.
 
 The gate for `on` (the reads are in `docs/runbook.md`, "Early release of
 unstarted holds"), over at least seven days of `log`:

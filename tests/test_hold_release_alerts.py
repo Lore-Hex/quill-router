@@ -55,7 +55,9 @@ from tests.test_unstarted_hold_release import (
     PRICING,
     SINCE,
     _authorization,
+    _boot_store,
     _counters,
+    _FrontDoor,
     _money,
     _register,
     _registration,
@@ -303,6 +305,138 @@ def test_a_logging_failure_does_not_fail_the_pass(monkeypatch: pytest.MonkeyPatc
 
     assert handler.seen == 1
     assert answer["reaped"] == 1
+
+
+class _Refusing(logging.Handler):
+    """A handler that fails on every line of the early rule's, as a broken
+    log pipe does: the pass's lines, the rule's counters, the release's."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.seen: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if "unstarted" in message or "early release" in message:
+            self.seen.append(message)
+            raise OSError("the log pipe is gone")
+
+
+@pytest.fixture
+def refusing(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Every line the early rule writes, from the drain, the rule and the
+    pass, is refused, loudly."""
+    monkeypatch.setattr(logging, "raiseExceptions", True)
+    monkeypatch.setattr(logging.Handler, "handleError", lambda _self, _record: (_ for _ in ()).throw(OSError("handler failed")))
+    handler = _Refusing()
+    loggers = [logging.getLogger(name) for name in (DRAIN_LOGGER, RULE_LOGGER, storage_gcp_authorize.log.name)]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    try:
+        yield handler
+    finally:
+        for logger, level in zip(loggers, levels, strict=True):
+            logger.setLevel(level)
+            logger.removeHandler(handler)
+
+
+def test_a_logging_failure_does_not_fail_the_early_pass_or_lose_what_it_released(refusing: _Refusing) -> None:
+    """The early rule's pass has committed its releases by the time its
+    lines are written, as the reaper's has: a handler that raises on every
+    one of them leaves the pass's answer, and the hold given back."""
+    _store_, db, _authorization_row = _store()
+    db.now = CREATED + dt.timedelta(seconds=AFTER + 1)
+
+    result = drain.release_unstarted_holds(db.now, mode="on", after_seconds=AFTER)
+
+    assert result is not None and result.released == 1
+    assert _money(db) == (0, 0, 0, 0)
+    # Each line was tried: the summary, and the release's counter.
+    assert any(line.startswith("gateway.unstarted_release mode=on ") for line in refusing.seen)
+    assert "metric=gateway_hold_released_unstarted_stream_total value=1" in refusing.seen
+
+
+def test_a_logging_failure_does_not_fail_a_pass_that_reports_its_own_gaps(
+    refusing: _Refusing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lines that say a pass did not see everything are best effort
+    too: a truncated pass, a row the pass could not read, and a pass that
+    failed outright all end without raising, with what they did release."""
+    store, db, _authorization_row = _store()
+    _seed(db, suffix="-2", created=CREATED + dt.timedelta(seconds=1))
+    _counters(db, reserved=2 * HOLD)
+    db.now = CREATED + dt.timedelta(seconds=AFTER + 2)
+
+    truncated = drain.release_unstarted_holds(db.now, mode="log", after_seconds=AFTER, limit=1)
+    assert truncated is not None and truncated.truncated and truncated.would_release == 1
+    assert any("where=pass mode=log errors=0 truncated=true" in line for line in refusing.seen)
+
+    real = storage_gcp_authorize._observe_unstarted_candidate
+
+    def first_row_unreadable(*args: Any, **kwargs: Any) -> Any:
+        if kwargs["reservation_id"] == "reservation":
+            raise RuntimeError("storage unavailable for reservation and workspace")
+        return real(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage_gcp_authorize, "_observe_unstarted_candidate", first_row_unreadable)
+        partial = drain.release_unstarted_holds(db.now, mode="on", after_seconds=AFTER)
+    # The row after the unreadable one is released, and the pass says so.
+    assert partial is not None and (partial.released, partial.errors) == (1, 1)
+    assert db.reservations["reservation-2"]["settled"] is True and db.reservations["reservation"]["settled"] is False
+    assert "gateway early release failed error_class=RuntimeError; continuing the pass" in refusing.seen
+
+    def broken(_self: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("storage unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(store), "release_unstarted_holds_result", broken)
+        assert drain.release_unstarted_holds(db.now, mode="on", after_seconds=AFTER) is None
+    assert "gateway.unstarted_release failed mode=on error_class=RuntimeError" in refusing.seen
+
+
+def test_a_logging_failure_does_not_lose_a_released_leased_row(
+    refusing: _Refusing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A leased row's release, its lease's refund failing, and every line
+    about either refused: the pass still answers with the row released."""
+    _store_, db, authorization = _store(hold=0, fastpath_envelope="sealed-envelope")
+    client = _FrontDoor(error=RuntimeError("socket closed"))
+    monkeypatch.setattr(gateway, "_fastpath_front_door", lambda _settings: client)
+    db.now = CREATED + dt.timedelta(seconds=AFTER + 1)
+
+    result = drain.release_unstarted_holds(db.now, mode="on", after_seconds=AFTER)
+
+    assert result is not None and result.leased == (authorization.id,)
+    assert db.gateway_authorizations[authorization.id]["finalization_outcome"] == "refunded"
+    assert len(client.refunds) == 1
+    assert "gateway.unstarted_release lease refund failed error_class=RuntimeError" in refusing.seen
+    assert any(" lease_refund_failures=1" in line for line in refusing.seen)
+
+
+def test_a_logging_failure_in_the_early_pass_does_not_fail_the_drain(
+    refusing: _Refusing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drain as it runs, with the rule on and every line refused: its
+    answer is the reaper's and the outbox's, and the early rule's release
+    stands."""
+    store, db = _boot_store()
+    now = dt.datetime.now(dt.UTC)
+    created = now - dt.timedelta(seconds=AFTER + 60)
+    _register(store, db, declares=True, at=created - dt.timedelta(hours=1))
+    _seed(db, created=created)
+    db.now = None  # the database's clock is the wall clock, as the drain's is
+    _counters(db)
+    monkeypatch.setattr(drain, "spanner_settle_outbox", lambda: _EmptyOutbox())
+    monkeypatch.setattr(drain, "_reconcile_leased", lambda _result: {})
+
+    answer = drain.drain_settle_outbox(10, unstarted_release_mode="on", unstarted_release_seconds=AFTER)
+
+    assert answer["reaped"] == 0
+    assert db.reservations["reservation"]["settled"] is True and _money(db) == (0, 0, 0, 0)
+    assert "metric=gateway_hold_released_unstarted_stream_total value=1" in refusing.seen
 
 
 def test_the_metric_and_the_policy_read_one_filter_and_notify_hourly() -> None:

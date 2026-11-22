@@ -6657,21 +6657,17 @@ class SpannerStore(OperationalAnalyticsReads):
         (storage_gcp_authorize.release_unstarted_holds_result). The pass
         reads a boot's record once per key id, between its transactions,
         for the commit time at which the boot's unbroken run of declaring
-        registrations began; a boot that is gone, a read that fails and a
-        record with no such time all read as None, which keeps the hold."""
+        registrations began; a boot that is gone and a record with no such
+        time read as None, which keeps the hold. A read that fails is that
+        row's error: the hold is kept, and the pass counts it, so a pass
+        that could not read a boot is not taken for one that found nothing
+        to release."""
         from trusted_router.storage_gcp_authorize import (
             UnstartedRelease,
         )
         from trusted_router.storage_gcp_authorize import (
             release_unstarted_holds_result as _release,
         )
-
-        def declared_since(kid: str) -> Any:
-            try:
-                return self.gateway_boot_declaring_since(kid)
-            except Exception as exc:  # noqa: BLE001 - an unread boot keeps the hold
-                log.warning("gateway early release boot read failed error_class=%s", type(exc).__name__)
-                return None
 
         return _release(
             self._database,
@@ -6681,7 +6677,7 @@ class SpannerStore(OperationalAnalyticsReads):
             rule=UnstartedRelease(
                 after_seconds=int(after_seconds),
                 log_only=bool(log_only),
-                declared_since=declared_since,
+                declared_since=self.gateway_boot_declaring_since,
             ),
             async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)),
             operational_analytics_outbox=getattr(

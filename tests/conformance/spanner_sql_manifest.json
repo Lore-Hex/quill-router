@@ -5156,7 +5156,7 @@
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
-    "storage_gcp_authorize:release_unstarted_holds_result": "56db8f9f46c0e70c2bc09447a3a2256ae100d2fb6be6816138259199cb52d9e9",
+    "storage_gcp_authorize:release_unstarted_holds_result": "54a1c76b7551d7e3302ef42794c1e466912d57e998996f3393c1b6f628f9f2b2",
     "storage_gcp_authorize:_observe_unstarted_candidate": "d0264e83810807ed10f43a826768c22b12052719ea60cf3283d378c2dc5f74c9",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",

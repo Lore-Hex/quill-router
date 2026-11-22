@@ -558,6 +558,49 @@ def test_a_stored_row_the_decoder_would_have_repaired_keeps_its_hold(edit: Any, 
     assert reaped.count == 1 and db.gateway_authorizations[authorization.id]["settled"] is True
 
 
+_EMPTY_CANDIDATE = '{"v":1,"kind":"endpoint","candidates":[{}]}'
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda payload: payload.pop("settlement"),
+        lambda payload: payload.pop("native_batch_eligible"),
+        lambda payload: payload.update(usage_type=17),
+        lambda payload: payload.pop("stage_d_max_output_tokens"),
+        lambda payload: payload.update(pricing_snapshot=_EMPTY_CANDIDATE),
+    ],
+    ids=["no-settlement", "no-batch-flag", "usage-type-17", "no-output-bound", "empty-candidate"],
+)
+def test_the_release_transaction_judges_the_stored_row_on_its_own_read(
+    edit: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lock-free read is advisory, here too: a row that read found
+    releasable and that is not as authorize writes one by the time the
+    transaction reads it is left by the transaction, which judges the stored
+    row itself and not the decoder's repair of it."""
+    db, authorization = _seed()
+    _counters(db)
+    real = authorize_mod._finalize_reaped_reservation_atomic
+
+    def change_then_finalize(*args: Any, **kwargs: Any) -> Any:
+        _edit_payload(db, edit)
+        record = db.gateway_authorizations[authorization.id]
+        if json.loads(record["payload"]).get("pricing_snapshot") == _EMPTY_CANDIDATE:
+            record["pricing_snapshot"] = _EMPTY_CANDIDATE  # the typed column, which is read over the payload
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(authorize_mod, "_finalize_reaped_reservation_atomic", change_then_finalize)
+
+    result = _pass(db, age=AFTER + 1)
+
+    assert (result.scanned, result.released, result.errors) == (1, 0, 0)
+    assert result.skipped == ((rule.MALFORMED, 1),)
+    assert _money(db) == (HOLD, 0, HOLD, 0)
+    assert db.reservations["reservation"]["settled"] is False
+    assert db.gateway_authorizations[authorization.id]["settled"] is False
+
+
 def test_a_stored_row_bound_to_no_reservation_is_left_to_the_reapers_own_guard() -> None:
     db, _authorization_row = _seed()
     _counters(db)
@@ -1230,9 +1273,12 @@ def test_a_boot_record_that_is_gone_unreadable_or_unstamped_keeps_the_hold(monke
     def unreadable(_self: Any, _kid: str) -> Any:
         raise RuntimeError("storage unavailable")
 
+    # A read that fails keeps the hold too, as the row's error: the pass
+    # counts it, so it is not taken for a pass that found nothing to release.
     monkeypatch.setattr(type(store), "gateway_boot_declaring_since", unreadable)
-    unread = store.release_unstarted_holds_result(now=db.now, after_seconds=AFTER, log_only=False)
-    assert unread.released == 0 and unread.skipped == ((rule.BOOT_UNDECLARED, 1),)
+    for log_only in (True, False):
+        unread = store.release_unstarted_holds_result(now=db.now, after_seconds=AFTER, log_only=log_only)
+        assert (unread.released, unread.would_release, unread.errors, unread.skipped) == (0, 0, 1, ())
     assert _money(db) == (HOLD, 0, HOLD, 0)
 
 

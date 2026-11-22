@@ -239,6 +239,16 @@ def _released_at_expiry(reap_result: ReapPassResult) -> int:
     return max(0, int(reap_result.count) - int(reap_result.snapshot_bookings))
 
 
+def _line(level: int, message: str, *args: Any) -> None:
+    """A line about work that has already committed, best effort: a handler
+    that raises must not turn a finished pass into a failed one and lose
+    its answer and the scheduler's heartbeat."""
+    try:
+        logger.log(level, message, *args)
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _refund_released_leases(authorization_ids: tuple[str, ...]) -> tuple[int, int]:
     """The lease's hold of each leased row the early rule released, given
     back now by the refund the gateway never sent, best effort: (sent,
@@ -259,7 +269,7 @@ def _refund_released_leases(authorization_ids: tuple[str, ...]) -> tuple[int, in
     try:
         client = _fastpath_front_door(get_settings())
     except Exception as exc:  # noqa: BLE001 - the hold then ends with its lease, as before
-        logger.warning("gateway.unstarted_release front door unavailable error_class=%s", type(exc).__name__)
+        _line(logging.WARNING, "gateway.unstarted_release front door unavailable error_class=%s", type(exc).__name__)
         client = None
     for authorization_id in authorization_ids:
         try:
@@ -273,13 +283,13 @@ def _refund_released_leases(authorization_ids: tuple[str, ...]) -> tuple[int, in
                 money={"charge": 0, "estimate": int(authorization.estimated_microdollars)},
             )
         except Exception as exc:  # noqa: BLE001 - one lease's refund must not end the pass
-            logger.warning("gateway.unstarted_release lease refund failed error_class=%s", type(exc).__name__)
+            _line(logging.WARNING, "gateway.unstarted_release lease refund failed error_class=%s", type(exc).__name__)
             failed += 1
             continue
         if terminal.status in {fastpath_frontdoor.WON, fastpath_frontdoor.SETTLED, fastpath_frontdoor.RECORDED}:
             sent += 1
         else:
-            logger.warning("gateway.unstarted_release lease refund status=%s", terminal.status)
+            _line(logging.WARNING, "gateway.unstarted_release lease refund status=%s", terminal.status)
             failed += 1
     return sent, failed
 
@@ -289,8 +299,13 @@ def release_unstarted_holds(now: dt.datetime, *, mode: str, after_seconds: int, 
     fast-admission-streams.md section 13): in "on" it releases, in "log" it
     only reports, on read-only snapshots, and in "off", or on a store
     without the capability, it issues no statement and writes no line.
-    Whatever goes wrong in it is logged and ends this pass of the rule
-    alone: the drain and the reaper are not its to fail."""
+    Whatever goes wrong in it ends this pass of the rule alone: the drain
+    and the reaper are not its to fail.
+
+    Everything after the store's pass is best effort, step by step. The
+    pass has committed what it released by then, so neither a lease's
+    refund nor a line a handler refuses may lose the pass's answer, the
+    count of what it released, or the drain's own answer."""
     if mode not in {unstarted_release.MODE_LOG, unstarted_release.MODE_ON}:
         return None
     releaser = getattr(STORE, "release_unstarted_holds_result", None)
@@ -303,48 +318,66 @@ def release_unstarted_holds(now: dt.datetime, *, mode: str, after_seconds: int, 
             after_seconds=int(after_seconds),
             log_only=mode != unstarted_release.MODE_ON,
         )
-        lease_refunds, lease_refund_failures = _refund_released_leases(tuple(result.leased))
     except Exception as exc:  # noqa: BLE001 - the early rule must never fail the drain
         # The class only: an exception's text can carry a row's identifiers.
-        logger.error("gateway.unstarted_release failed mode=%s error_class=%s", mode, type(exc).__name__)
+        _line(logging.ERROR, "gateway.unstarted_release failed mode=%s error_class=%s", mode, type(exc).__name__)
         unstarted_release.observe_pass(mode=mode, errors=0, truncated=False, unguarded=False, failed=True)
         return None
-    logger.info(
-        "gateway.unstarted_release mode=%s rule=%s after_seconds=%s scanned=%s released=%s "
-        "released_hold_micro=%s would_release=%s would_release_hold_micro=%s "
-        "would_release_leased=%s guarded=%s guard_lost=%s errors=%s unguarded=%s truncated=%s "
-        "skipped=%s lease_refunds=%s lease_refund_failures=%s",
-        mode,
-        unstarted_release.RULE,
-        int(after_seconds),
-        result.scanned,
-        result.released,
-        result.released_hold_micro,
-        result.would_release,
-        result.would_release_hold_micro,
-        result.would_release_leased,
-        result.guarded,
-        result.guard_lost,
-        result.errors,
-        str(bool(result.unguarded)).lower(),
-        str(bool(result.truncated)).lower(),
-        ",".join(f"{reason}:{count}" for reason, count in result.skipped) or "none",
-        lease_refunds,
-        lease_refund_failures,
-    )
-    if result.truncated:
-        # The scan filled its limit: more unsettled reservations of any
-        # class were in its window than one pass examines. It read the
-        # oldest; the rest are read by a later pass once those have left
-        # the window, or, if as many keep crossing, are left to the reaper.
-        logger.warning("gateway.unstarted_release scan truncated scanned=%s limit=%s", result.scanned, limit)
+    lease_refunds = lease_refund_failures = 0
+    try:
+        lease_refunds, lease_refund_failures = _refund_released_leases(tuple(result.leased))
+    except Exception as exc:  # noqa: BLE001 - the rows are released; their leases' holds end with the leases
+        lease_refund_failures = len(result.leased)
+        _line(logging.WARNING, "gateway.unstarted_release lease refunds failed error_class=%s", type(exc).__name__)
+    try:
+        skipped = ",".join(f"{reason}:{count}" for reason, count in result.skipped) or "none"
+        _line(
+            logging.INFO,
+            "gateway.unstarted_release mode=%s rule=%s after_seconds=%s scanned=%s released=%s "
+            "released_hold_micro=%s would_release=%s would_release_hold_micro=%s "
+            "would_release_leased=%s guarded=%s guard_lost=%s errors=%s unguarded=%s truncated=%s "
+            "skipped=%s lease_refunds=%s lease_refund_failures=%s",
+            mode,
+            unstarted_release.RULE,
+            int(after_seconds),
+            result.scanned,
+            result.released,
+            result.released_hold_micro,
+            result.would_release,
+            result.would_release_hold_micro,
+            result.would_release_leased,
+            result.guarded,
+            result.guard_lost,
+            result.errors,
+            str(bool(result.unguarded)).lower(),
+            str(bool(result.truncated)).lower(),
+            skipped,
+            lease_refunds,
+            lease_refund_failures,
+        )
+        if result.truncated:
+            # The scan filled its limit: more unsettled reservations of any
+            # class were in its window than one pass examines. It read the
+            # oldest; the rest are read by a later pass once those have left
+            # the window, or, if as many keep crossing, are left to the reaper.
+            _line(logging.WARNING, "gateway.unstarted_release scan truncated scanned=%s limit=%s", result.scanned, limit)
+    except Exception:  # noqa: BLE001, S110 - a result that cannot be rendered is still the pass's result
+        pass
     # A pass that did not examine every row it was meant to is an
     # observation that did not complete: counted for the gate that turns
-    # the rule on (docs/runbook.md).
-    unstarted_release.observe_pass(
-        mode=mode, errors=result.errors, truncated=result.truncated, unguarded=result.unguarded,
-    )
-    _count_released_holds(_RELEASED_UNSTARTED_METRIC, result.released)
+    # the rule on (docs/runbook.md). Neither it nor the release counter
+    # raises.
+    try:
+        unstarted_release.observe_pass(
+            mode=mode, errors=result.errors, truncated=result.truncated, unguarded=result.unguarded,
+        )
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        released = int(result.released)
+    except Exception:  # noqa: BLE001
+        released = 0
+    _count_released_holds(_RELEASED_UNSTARTED_METRIC, released)
     return result
 
 
