@@ -173,16 +173,99 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How fast will a local model feel in chat?</h1><p>Separate time to first token from the speed of the remaining answer. Long prompts can make an otherwise fast generator feel unresponsive.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Time an empty-history question, then repeat after adding a representative document. Record first visible token, final token and output count. Label cold and warm results separately.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>For an initial chat test, try illustrative targets of first visible output within three seconds and a complete short answer within fifteen. Measure both separately so you can distinguish time spent reading your document from time spent generating the answer.</p>
+<h2>Divide the wait into stages</h2>
+<p>Start a timer when your application submits the request. Mark the first visible output and the last output. Then compare those observations with the runner's reported loading, prompt-processing and generation durations. The user's experience includes work outside the model, so do not substitute an internal timing for the whole wait.</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Question it answers</th>
+<th>Useful change to test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Queue and application work</td>
+<td>How long before inference can proceed?</td>
+<td>Fewer simultaneous requests; less application-side preparation</td>
+</tr>
+<tr>
+<td>Model loading</td>
+<td>Is the model already available?</td>
+<td>Separate first-use and already-loaded trials</td>
+</tr>
+<tr>
+<td>Prompt evaluation</td>
+<td>How long to process uncached input?</td>
+<td>Shorter relevant context</td>
+</tr>
+<tr>
+<td>Token generation</td>
+<td>How quickly does the answer grow?</td>
+<td>Smaller useful model or shorter output budget</td>
+</tr>
+</tbody>
+</table>
+<p>Define both acceptance targets before tuning. Adjust the opening targets according to what the user is doing while waiting, and record which target each configuration meets.</p>
+<p>Keep correctness in the timing sheet. The useful metric is how soon an acceptable answer arrives. A model that streams quickly but needs repeated correction can lose to a slower first response.</p>
+<h2>Read Ollama's verbose output correctly</h2>
+<p>With Ollama running and a model already downloaded, replace the name below and request timings:</p>
+<pre><code>ollama run YOUR_LOCAL_MODEL --verbose &quot;Explain in three sentences why the Moon has phases.&quot;
+</code></pre>
+<p>Ollama's CLI prints timing information after the response. In the November 2026 implementation, <code>prompt eval rate</code> uses uncached prompt tokens divided by prompt-evaluation seconds, while <code>eval rate</code> uses generated tokens divided by generation seconds. It also reports cached prompt tokens when available.</p>
+<p>Here is illustrative timing output:</p>
+<pre><code>prompt eval count:    2400 token(s)
+prompt eval duration: 6s
+prompt eval rate:     400.00 tokens/s
+eval count:          180 token(s)
+eval duration:       6s
+eval rate:           30.00 tokens/s
+</code></pre>
+<p>With no cached input, the arithmetic is 2,400 ÷ 6 = 400 prompt tokens per second and 180 ÷ 6 = 30 generated tokens per second. The two model stages total twelve seconds before other costs. The 400-token rate describes reading the prompt; use the 30-token generation rate to estimate how quickly the answer grows.</p>
+<p>If 2,000 of those prompt tokens were cached, only 400 would be newly evaluated. Use the uncached count when interpreting prompt-processing speed. Keep a repeated-prefix warm test separate from a fresh-document test, because they exercise different amounts of work.</p>
+<p>For a cold comparison, unload the model with <code>ollama stop YOUR_LOCAL_MODEL</code>, then run the same request. Repeat while it remains loaded for a warm comparison. “Warm” should say whether you mean loaded weights, reused prompt state or both.</p>
+<h2>Use structured timing fields for a repeatable record</h2>
+<p>The Ollama generation API returns <code>load_duration</code>, <code>prompt_eval_count</code>, <code>prompt_eval_duration</code>, <code>eval_count</code> and <code>eval_duration</code>. Durations are in nanoseconds. Save an unstreamed response for convenient inspection:</p>
+<pre><code>curl http://localhost:11434/api/generate -d '{
+  &quot;model&quot;: &quot;YOUR_LOCAL_MODEL&quot;,
+  &quot;prompt&quot;: &quot;Explain in three sentences why the Moon has phases.&quot;,
+  &quot;stream&quot;: false,
+  &quot;options&quot;: {&quot;num_ctx&quot;: 4096, &quot;num_predict&quot;: 256}
+}' &gt; timing.json
+</code></pre>
+<p>Compute generation rate as <code>eval_count × 1,000,000,000 ÷ eval_duration</code>. For example, 180 tokens and 6,000,000,000 nanoseconds give 30 tokens per second. When the response supplies <code>prompt_eval_cached_count</code>, subtract it from <code>prompt_eval_count</code> before dividing by the prompt duration. Keep older responses without that field labeled accordingly.</p>
+<p>Use this nonstreaming request for server timings and a streaming client or terminal run to observe first visible output. Record the model, runner version, context, output limit and whether thinking output is enabled or hidden when the model supports it.</p>
+<p>In llama.cpp, enable internal performance timings and inspect the end-of-run report for your prompt file:</p>
+<pre><code>./build/bin/llama-cli -m model.gguf -c 4096 -n 256 --perf --log-verbosity 3 --single-turn -f prompt.txt
+</code></pre>
+<p>The timing labels <code>prompt eval time</code> and <code>eval time</code> identify the same broad stages. Compare like stages across runners, using the same artifact and request shape. These terminal examples apply on macOS and Linux with the appropriate runner already installed.</p>
+<h2>Optimize the stage that consumes the budget</h2>
+<p>Suppose a fresh document has 8,000 tokens and your measured uncached prompt rate is 400 tokens per second. Prompt work alone takes 8,000 ÷ 400 = 20 seconds. Reducing relevant input to 2,000 tokens would take 2,000 ÷ 400 = five seconds, saving fifteen before generation.</p>
+<p>Now suppose generation is the issue: a 600-token answer at 30 tokens per second takes twenty seconds. An adequate 150-token answer takes five. Ask for a concise structure and enforce a suitable output ceiling, then verify that the necessary facts survive.</p>
+<p>For parallel agents, measure the group as well as the individual. On one local GPU, agents share its throughput, and requests beyond its active capacity wait in line. Record first output, completion time and correctness for every worker, including the last one to finish.</p>
+<h2>Try it on your workload</h2>
+<p>Use one empty-history question and one version containing a representative document. Start a fresh conversation for each. Time the first visible token, last token and output count. Label cold weights, loaded weights and repeated-prefix cases separately.</p>
+<p>Run each case three times with fixed settings. Then shorten only the supplied context and repeat. Restore the original context, shorten only the answer budget and repeat again. Your timing sheet will show which change addresses the actual delay.</p>
+<p>Finally repeat at your expected agent concurrency. Keep the same quality rule and desktop workload. Choose the setting that makes the slowest acceptable response usable across the group.</p>
 <h2>How to decide</h2>
-<p>Optimize the slower stage. Shortening retrieved context can help an expensive prompt, while a shorter answer budget can improve a long generation.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Shorten retrieved context when prompt evaluation dominates.</li>
+<li>Reduce the answer budget or compare a smaller useful model when generation dominates.</li>
+<li>Address loading or queues when internal generation is fast but the user still waits.</li>
+</ul>
+<h2>Run twenty document agents together for about two cents</h2>
+<p>Twenty document agents working at once on <code>google/gemma-3-27b-it</code> cost about two cents in tokens on TrustedRouter for this workload. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed $0.0844 per million input tokens and approximately $0.169 per million output tokens. With 10,000 input and 1,000 output tokens per agent, totals are 20 × 10,000 = 200,000 input and 20 × 1,000 = 20,000 output tokens. Cost = 0.2 × $0.0844 + 0.02 × $0.169 = $0.02026, about two cents.</p>
+<p>On one local GPU, those agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent requests can run at the same time for the same token bill as running them one after another. Record first output, completion and correctness for each agent using the same document tasks as your local trial.</p>
+<p>Prices change; check <a href="/models">current rates</a>, <a href="/docs/provider-routing">provider routing</a> and <a href="/docs/agent-setup">agent setup</a>, then review <a href="/private-llm-api">private API options</a> for approved off-device work. Local remains preferable when it meets your waiting target or the work must stay offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://github.com/ollama/ollama/blob/main/cmd/cmd.go">Ollama: verbose run option and stop command</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/api/types.go">Ollama: timing calculations and request options</a></li>
+<li><a href="https://docs.ollama.com/api/generate">Ollama: generation timing fields and nanosecond units</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/cli/README.md">llama.cpp: single-turn and prompt-file arguments</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/common/sampling.cpp">llama.cpp: prompt-evaluation and generation timing output</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

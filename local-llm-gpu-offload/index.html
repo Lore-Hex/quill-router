@@ -173,16 +173,81 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>What if the model only partly fits in VRAM?</h1><p>Some runtimes can place part of a model on the GPU and keep the rest in system memory. A hybrid load can make a larger model usable, with a throughput cost that depends on the machine.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>In Ollama, run <code>ollama ps</code> during generation and inspect the processor split. Time the same answer with a smaller fully GPU-resident model. Record answer quality as well as seconds. <a href="https://docs.ollama.com/faq">Ollama local runtime FAQ</a>.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>If the model only partly fits in GPU memory, use partial offload to keep some layers on the GPU and the rest on the CPU. Start with automatic placement, then compare it with a smaller model that fits fully on the GPU; the larger model earns its place only if better answers justify the extra wait.</p>
+<h2>Separate fitting from finishing</h2>
+<p>Partial offload is a capacity option. llama.cpp exposes the number of GPU layers through <code>-ngl</code>, also called <code>--n-gpu-layers</code>. The November 2026 CLI accepts an exact number, <code>auto</code> or <code>all</code>. Choosing an exact number requests that many GPU layers.</p>
+<p>A useful comparison has three configurations: the larger model with automatic placement, that same artifact with an explicit split, and a smaller fully GPU-resident candidate. The first two compare placement with the artifact held fixed. The third tests whether the larger model's quality gain is worth retaining at all.</p>
+<table>
+<thead>
+<tr>
+<th>Placement</th>
+<th>What it answers</th>
+<th>What to record</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU baseline</td>
+<td>Can the machine finish without GPU layers?</td>
+<td>Complete request time and system-memory use</td>
+</tr>
+<tr>
+<td>Partial GPU offload</td>
+<td>Can a larger useful model meet the deadline?</td>
+<td>Actual layer placement, prompt time and generation time</td>
+</tr>
+<tr>
+<td>Full GPU placement</td>
+<td>Does the chosen configuration fit on the accelerator?</td>
+<td>Remaining memory at the longest context</td>
+</tr>
+</tbody>
+</table>
+<p>For an illustrative decision, suppose the larger model takes 45 seconds and the smaller one takes 15 seconds. The larger model adds 30 seconds per request, or 50 × 30 = 1,500 seconds across fifty sequential requests. That is 25 extra minutes. If it prevents errors that otherwise take an hour to correct, it may be worthwhile. If both produce equally useful answers, prefer the shorter wait.</p>
+<h2>Control layers directly in llama.cpp</h2>
+<p>With a compatible llama.cpp build and a downloaded GGUF, run the same prompt using automatic placement and a fixed layer count. These examples reserve 4,096 context tokens and cap generation at 256 tokens:</p>
+<pre><code>./build/bin/llama-cli -m model.gguf -ngl auto -c 4096 -n 256 --temp 0 --single-turn -f prompt.txt
+./build/bin/llama-cli -m model.gguf -ngl 10 -c 4096 -n 256 --temp 0 --single-turn -f prompt.txt
+</code></pre>
+<p>Use ten layers as an initial experiment setting. Add <code>--log-verbosity 3</code> to both commands, then record the loaded layer count and allocated buffers from startup output. Increase the count in small steps only while your longest input still fits. Measure allocated bytes as well as layer counts, especially across different architectures.</p>
+<p>For a full-placement trial, use <code>-ngl all</code> only when the complete working set fits. For a CPU comparison, use <code>--device none -ngl 0</code>. Keep the context fixed across trials, so the experiment measures placement rather than a simultaneous reduction in the cache budget.</p>
+<p>On macOS, use a Metal-capable build; llama.cpp enables Metal by default in its documented Mac source build. On an NVIDIA Linux machine, its CUDA build uses <code>-DGGML_CUDA=ON</code>. The runtime must actually support your accelerator for these requests to be meaningful.</p>
+<h2>Use Ollama's num_gpu and inspect the result</h2>
+<p>Ollama's request options include <code>num_gpu</code>. In its llama.cpp runner implementation checked on 2026-11-22, a positive value becomes <code>-ngl</code>, zero requests CPU-only layers, and the default negative value leaves placement automatic. This describes that runner path; confirm behavior on the backend your selected model uses.</p>
+<p>With Ollama already running, replace the model name below with your local artifact. The option belongs inside the request's <code>options</code> object:</p>
+<pre><code>curl http://localhost:11434/api/generate -d '{
+  &quot;model&quot;: &quot;YOUR_LOCAL_MODEL&quot;,
+  &quot;prompt&quot;: &quot;Extract the quantity and exception: Order 12 boxes, but cancel 2 if delivery is after Friday.&quot;,
+  &quot;stream&quot;: false,
+  &quot;options&quot;: {&quot;num_ctx&quot;: 4096, &quot;num_gpu&quot;: 10}
+}'
+ollama ps
+</code></pre>
+<p>Run <code>ollama ps</code> in another terminal while inference is active. Its <code>PROCESSOR</code> column reports memory placement: <code>100% GPU</code>, <code>100% CPU</code> or a CPU/GPU split. Read the split as memory placement; measure GPU utilization and speed separately. Remove <code>num_gpu</code> to compare automatic selection.</p>
+<p>The HTTP example works in macOS and Linux terminals. It avoids changing a server-wide setting merely to test one request. Keep the runner version, model name and placement observation with the response so a future upgrade does not silently invalidate your comparison.</p>
+<h2>Try it on your workload</h2>
+<p>Choose five prompts, including your longest document and a case where the larger model has a clear quality advantage. Define the expected answer before timing anything. Run automatic placement, a conservative fixed split and the smaller fully resident candidate.</p>
+<p>Repeat each prompt three times after the model has loaded. Save prompt-processing time, generation time, generated token counts, total elapsed time, memory and accepted answers. The commands use <code>--temp 0</code> for greedy sampling; compare token counts so a shorter answer does not masquerade as faster placement. Label initial loading separately. Compare cold runs with cold runs and warm runs with warm runs.</p>
+<p>Then repeat at the concurrency your application needs. A configuration that barely fits one request may have insufficient room for the extra cache required by simultaneous work. Record whether workers execute together or wait. Record the whole task group's finish time alongside the fastest response.</p>
 <h2>How to decide</h2>
-<p>Use partial offload if the quality gain is worth the delay on your inputs. If users abandon the request, the larger model is a poor interactive choice even when it fits.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep partial offload when the larger model's accuracy advantage survives repeated tests and the waiting time is acceptable.</li>
+<li>Use the smaller resident model when it meets the same quality threshold with less delay.</li>
+<li>Reduce context or concurrency before increasing offload if your longest requests exhaust memory.</li>
+</ul>
+<h2>Run five larger-model agents for about 11 cents</h2>
+<p>Five extraction agents working at once on <code>meta-llama/llama-3.3-70b-instruct</code> cost about 11 cents in tokens on TrustedRouter for this workload. Use the larger hosted model on approved tasks where your partial-offload trial found a useful quality advantage.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.142 per million input tokens and $0.422 per million output tokens. Suppose each agent consumes 100,000 input and 20,000 output tokens across its requests. Input = 5 × 100,000 = 500,000; output = 5 × 20,000 = 100,000. Cost = 0.5 × $0.142 + 0.1 × $0.422 = $0.1132, about 11 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential work. Compare accepted answers with your local split and smaller-model baselines. Prices change; check <a href="/models">current prices</a>, <a href="/docs/provider-routing">provider routing</a> and <a href="/docs/agent-setup">agent setup</a>. For approved data, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Partial offload remains sensible for offline work or when the larger model's quality repays the local waiting time.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/cli/README.md">llama.cpp: GPU-layer and device arguments</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md">llama.cpp: Metal and CUDA backend builds</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/llm/llama_server.go">Ollama: mapping num_gpu to llama.cpp placement</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/api/types.go">Ollama: request options and dynamic GPU-layer default</a></li>
+<li><a href="https://docs.ollama.com/api/generate">Ollama: generation HTTP request</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: processor split and concurrent memory allocation</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

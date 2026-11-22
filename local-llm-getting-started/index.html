@@ -173,16 +173,125 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Should you run your first LLM locally?</h1><p>Start with a task you can recognize as correct. A useful first experiment is to turn a fictional meeting transcript into decisions, owners and deadlines.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Give the model five short transcripts, including one where nobody agreed to a deadline. Count invented commitments as errors. Save the model version and prompt so a second run means something.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Run your first LLM locally if you need offline use and can judge five representative answers yourself. Give the experiment one hour on hardware you already own; buy nothing until it passes your accuracy and waiting-time limits.</p>
+<h2>Spend the first hour on one small task</h2>
+<p>Start with fictional meeting notes and ask for decisions, owners and deadlines. Write the expected answer before opening a chat. A useful first result preserves an unknown deadline instead of inventing a plausible date. Set a personal time limit, such as 30 seconds per short transcript; use that acceptance target to decide whether the result is useful.</p>
+<p>Spend the first 15 minutes installing and downloading, the next 15 getting an answer, and the remaining 30 checking five examples. Downloads or driver setup may exceed that budget. Record the obstacle rather than treating a long installation as evidence about model quality.</p>
+<p>On macOS, open <code>ollama.dmg</code>, drag Ollama into Applications and launch it. Accept the CLI setup prompt if shown; it creates a link in <code>/usr/local/bin</code>. Then open Terminal and run the shared model commands below. This installation path is documented by Ollama as of 2026-11-22.</p>
+<p>On Linux, download the official installer, inspect it, then run it:</p>
+<pre><code>curl -fsSL https://ollama.com/install.sh -o ollama-install.sh
+less ollama-install.sh
+sh ollama-install.sh
+</code></pre>
+<p>On either macOS or Linux, continue with:</p>
+<pre><code>ollama -v
+ollama pull llama3.2:3b
+ollama ls
+ollama run llama3.2:3b
+</code></pre>
+<p>If the server is not running, start <code>ollama serve</code> in a separate terminal, then retry. The explicit <code>llama3.2:3b</code> tag identifies a small starting model: Ollama lists its download at 2.0 GB. Budget additional working memory for the cache and runtime. Keep the version printed by <code>ollama -v</code> and the chosen model tag beside your results.</p>
+<p>At the chat prompt, paste this fictional example. The triple quotes are Ollama's documented multiline-input syntax:</p>
+<pre><code>&quot;&quot;&quot;Extract only agreed decisions, owners and deadlines.
+Use unknown when an owner or deadline was not agreed.
+Transcript: Maya proposed shipping Friday. Luis said testing was incomplete.
+They agreed to postpone the release. Maya will send a revised plan.
+Nobody agreed to a date for the plan or the release.
+Return one line per agreed decision or task: decision or task, owner, deadline.&quot;&quot;&quot;
+</code></pre>
+<p>The reference answer postpones the release, assigns Maya the revised plan, and leaves both dates unknown. While the model is loaded, run <code>ollama ps</code> in another terminal. Its processor column distinguishes GPU, CPU and mixed placement. Record the loaded model ID and save the answer unchanged before editing your prompt.</p>
+<h2>Match hardware to an actual model artifact</h2>
+<p>Start with the same small model on your existing hardware, then check its placement with <code>ollama ps</code>. CPU inference uses system memory; GPU inference needs available accelerator memory. Ollama also supports Apple GPU acceleration through Metal. Check its hardware-support page for your exact device and driver before making a purchase.</p>
+<table>
+<thead>
+<tr>
+<th>Hardware class</th>
+<th>What to try</th>
+<th>Memory and setup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU-only computer with spare system memory</td>
+<td><code>llama3.2:3b</code></td>
+<td>Ollama supports CPU placement; this artifact is a 2.0 GB download. Measure its loaded footprint and your wait.</td>
+</tr>
+<tr>
+<td>Supported desktop GPU or Apple GPU</td>
+<td>The same <code>llama3.2:3b</code> baseline</td>
+<td>Ollama documents GPU support. Confirm actual placement with <code>ollama ps</code> instead of assuming acceleration.</td>
+</tr>
+<tr>
+<td>Machine with a 16 GB model-memory budget</td>
+<td><code>gpt-oss:20b</code> in Ollama</td>
+<td>OpenAI's model card says its MXFP4 version runs within 16 GB of memory. Check that your laptop has enough free memory after accounting for its other applications.</td>
+</tr>
+<tr>
+<td>Single 80 GB GPU</td>
+<td><code>gpt-oss-120b</code> with a compatible runtime</td>
+<td>The same model card documents this fit with MXFP4 weights. Consider this larger-capacity option after completing the first-hour experiment.</td>
+</tr>
+</tbody>
+</table>
+<p>Longer contexts and simultaneous requests need additional memory; Ollama's FAQ explains that parallel requests increase context allocation. Begin with short transcripts and one request. For example, four parallel requests with a 2,048-token context allocate 2,048 × 4 = 8,192 context tokens under that rule. Leave room for applications and check the longest input you actually expect. Agents on one local GPU share its throughput, and requests beyond its serving capacity wait in line.</p>
+<h2>Choose your next guide by the problem you hit</h2>
+<p>You do not need to read the series in order. Follow the bottleneck you measured, then return to the same five fixtures after changing one variable.</p>
+<table>
+<thead>
+<tr>
+<th>Your situation</th>
+<th>Read next</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The model will not fit</td>
+<td><a href="/notes/local-llm-memory-budget">Memory budgeting</a> and <a href="/notes/local-llm-quantization">choosing a quantization</a></td>
+</tr>
+<tr>
+<td>You are choosing a runner or a Mac</td>
+<td><a href="/notes/local-llm-ollama-or-llama-cpp">Ollama or llama.cpp</a> and <a href="/notes/local-llm-mac-unified-memory">Mac memory sizing</a></td>
+</tr>
+<tr>
+<td>Answers arrive too slowly</td>
+<td><a href="/notes/local-llm-latency">Chat latency</a> and <a href="/notes/local-llm-gpu-offload">partial GPU offload</a></td>
+</tr>
+<tr>
+<td>Documents must remain on the device</td>
+<td><a href="/notes/local-llm-offline">Offline verification</a> and <a href="/notes/local-llm-document-privacy">document privacy</a></td>
+</tr>
+<tr>
+<td>You need useful summaries or repository edits</td>
+<td><a href="/notes/local-llm-summarization">Meeting summaries</a> and <a href="/notes/local-llm-coding">coding evaluation</a></td>
+</tr>
+<tr>
+<td>Several people or agents need answers together</td>
+<td><a href="/notes/local-llm-throughput">Shared throughput</a> and <a href="/notes/local-llm-buy-or-rent">buying versus renting</a></td>
+</tr>
+</tbody>
+</table>
+<h2>Try it on your workload</h2>
+<p>Create five short fictional transcripts: an agreed task and date, an absent deadline, a rejected proposal, a reassigned owner, and two tasks with different dates. Write a reference list of commitments for each. Use the prompt above, substituting each transcript, and start a fresh chat for each case.</p>
+<p>Record the prompt, runner version, model ID, raw answer, elapsed seconds, missed commitments and invented commitments. Repeat all five with the same settings. Ten answers give you ten opportunities to check whether a missing date stays missing. Treat an invented commitment as an error even when the rest reads well.</p>
+<p>Then repeat with networking disconnected if offline use is your requirement. For an approved hosted comparison, send those same fictional fixtures and score them with the same reference answers. Compare review time as well as generation time.</p>
 <h2>How to decide</h2>
-<p>Choose local inference when offline use matters and your machine finishes at a comfortable speed. For occasional access to a larger model, compare the same five outputs before buying hardware.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep local inference when offline operation matters, the repeated answers meet your accuracy rule, and your machine finishes within your chosen time limit.</li>
+<li>If accuracy fails, compare another model on the same five inputs before buying hardware. More spending needs evidence from accepted answers.</li>
+<li>If you only occasionally need a larger model or several agents at once, price those bursts through an API and compare the outputs.</li>
+</ul>
+<h2>Run ten summary agents at once for about 2 cents</h2>
+<p>Ten summary agents working at once on <code>openai/gpt-oss-20b</code> cost about 2 cents in tokens on TrustedRouter for the workload below. After your five local fixtures pass, use the same acceptance rules to compare a larger set of approved meeting notes.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed rounded rates of $0.01 per million input tokens and $0.0475 per million output tokens. In this illustrative workload, each agent uses 100,000 input and 20,000 output tokens across its requests. Input = 10 × 100,000 = 1,000,000; output = 10 × 20,000 = 200,000. Cost = 1 × $0.01 + 0.2 × $0.0475 = $0.0195, about 2 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can work at the same time for the same token bill as running one after another. Prices change; check <a href="/models">current prices</a> and <a href="/docs/agent-setup">agent setup</a>. For approved off-device work, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider; check the eligible route's price. Local remains better when your data must stay offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/linux">Ollama: Linux installation and version check</a>; <a href="https://docs.ollama.com/macos">macOS installation and CLI setup</a></li>
+<li><a href="https://docs.ollama.com/cli">Ollama: CLI commands and multiline input</a></li>
+<li><a href="https://ollama.com/library/llama3.2:3b">Ollama: Llama 3.2 3B artifact and download size</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: memory placement and concurrent requests</a></li>
+<li><a href="https://docs.ollama.com/gpu">Ollama: supported hardware and Metal acceleration</a></li>
+<li><a href="https://huggingface.co/openai/gpt-oss-20b">OpenAI: gpt-oss model card, memory requirements and Ollama commands</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-memory-budget">How much memory does a local LLM need?</a></li>

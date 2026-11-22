@@ -173,16 +173,85 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How much would an encrypted API cost for your local workload?</h1><p>Estimate cost using the eligible route&#x27;s actual input and output prices. A cheap catalog route with a different privacy tier is a different purchase.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>For 10,000 calls averaging 800 input and 200 output tokens, multiply the quoted per-million input price by eight and the output price by two. Add retries and compare with the cost of running your machine for the same jobs.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>For 10,000 requests averaging 800 input and 200 output tokens, budget eight million input tokens and two million output tokens. The token estimate is <code>8 × input price per million + 2 × output price per million</code>, using the eligible encrypted route's prices rather than the cheapest catalog listing.</p>
+<h2>Count complete requests and distinguish route prices</h2>
+<p>Include system instructions, conversation history, retrieved passages and tool results in input usage. Count every step of an agent loop, including intermediate tool calls and responses. For a local baseline, Ollama reports <code>prompt_eval_count</code> and <code>eval_count</code>; use those as starting measurements, then compare the hosted route's own reported usage.</p>
+<p>The <code>pricing.prompt</code> and <code>pricing.completion</code> fields returned by <code>https://api.trustedrouter.com/v1/models</code> are dollars per token. Multiply by 1,000,000 for dollars per million. For example, $0.00000001 per token × 1,000,000 = $0.01 per million tokens. Keep input and output separate because their rates differ.</p>
+<p>These three open-weight models were in the catalog on 2026-11-22. Rates below are rounded for planning, and every calculation uses the displayed rates. For confidential inference, use the eligible endpoint rates in the next section.</p>
+<table>
+<thead>
+<tr>
+<th>Model ID</th>
+<th>Input / million</th>
+<th>Output / million</th>
+<th>10,000-call estimate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openai/gpt-oss-20b</code></td>
+<td>$0.01</td>
+<td>$0.0475</td>
+<td>8 × $0.01 + 2 × $0.0475 = $0.175, about 18 cents</td>
+</tr>
+<tr>
+<td><code>qwen/qwen3-coder-30b-a3b-instruct</code></td>
+<td>$0.132</td>
+<td>$0.475</td>
+<td>8 × $0.132 + 2 × $0.475 = $2.006, about $2.01</td>
+</tr>
+<tr>
+<td><code>deepseek/deepseek-v3.2</code></td>
+<td>$0.274</td>
+<td>$0.401</td>
+<td>8 × $0.274 + 2 × $0.401 = $2.994, about $2.99</td>
+</tr>
+</tbody>
+</table>
+<p>Prices change; check <a href="/models">current models and provider endpoints</a>. The cheapest token estimate is useful only after the model meets your quality and privacy requirements. A larger number of unusable answers can reverse the ranking.</p>
+<h2>Price the confidential route you will actually call</h2>
+<p>TrustedRouter's <a href="/docs/provider-routing">routing documentation</a> defines <code>provider.min_privacy: &quot;confidential&quot;</code> as a hard requirement for verified provider confidential compute, end-to-end encryption and zero data retention. Check endpoint eligibility and billing path together. Inspect the exact endpoint record, including its billing path.</p>
+<p>On 2026-11-22, the DeepSeek-V3.2 endpoint response listed <code>deepseek/deepseek-v3.2@chutes/prepaid</code> with privacy tier 3 and true values for confidential compute, provider E2EE and zero data retention. Its input and output prices each rounded to $1.06 per million. For the same eight million input and two million output tokens, the planning estimate becomes 8 × $1.06 + 2 × $1.06 = $10.60, about $11.</p>
+<p>Keep the privacy filter in the actual request. To reproduce the prepaid route comparison, pin Chutes, require confidential inference, set <code>provider.usage</code> to <code>credits</code>, and disable fallback. With the API key configured, run this example from a macOS or Linux terminal:</p>
+<pre><code>curl https://api.trustedrouter.com/v1/chat/completions \
+  -H &quot;Authorization: Bearer $TRUSTEDROUTER_API_KEY&quot; \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;model&quot;: &quot;deepseek/deepseek-v3.2&quot;,
+    &quot;messages&quot;: [{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Summarize this fictional note: Jo will draft a plan; no date was agreed.&quot;}],
+    &quot;provider&quot;: {
+      &quot;only&quot;: [&quot;chutes&quot;],
+      &quot;usage&quot;: &quot;credits&quot;,
+      &quot;min_privacy&quot;: &quot;confidential&quot;,
+      &quot;allow_fallbacks&quot;: false
+    }
+  }'
+</code></pre>
+<p>Do not lower the privacy setting to make a cheaper estimate work. If the route is unavailable, revise the schedule or choose another approved eligible route and price it separately.</p>
+<h2>Add retries, rounding and accepted-answer cost</h2>
+<p>In an illustrative retry scenario, suppose 5% of the 10,000 jobs require one additional call with the same token counts. That adds 500 calls: 500 × 800 = 400,000 input tokens and 500 × 200 = 100,000 output tokens. Using the rounded confidential rates, the revised estimate is 8.4 × $1.06 + 2.1 × $1.06 = $11.13, about $11.</p>
+<p>TrustedRouter's published retail rates already include the standard markup and price floor; do not add the markup again. Standard prepaid billing rounds each input, output and cache component separately to whole microdollars, half up, and applies a one-microdollar minimum to a billed request with positive chargeable usage or a positive fee. One microdollar is $0.000001. Route-specific fees and minimums also matter.</p>
+<p>For a tiny illustrative request at $0.01 per million in both directions, ten input and ten output tokens cost 0.1 + 0.1 = 0.2 microdollars before rounding. Both components round to zero, but the positive-usage request minimum makes the charge one microdollar. Compare aggregate estimates with the reported charges from a sample run.</p>
+<p>Keep cached and ordinary input separate when the selected route publishes a cache rate. Start with no cache savings unless you have measured applicable usage. If the $11.13 scenario yields 9,500 accepted answers, estimated inference cost per accepted answer is $11.13 ÷ 9,500 = about $0.00117, or 0.12 cents. Add review time and local operating cost as separate lines instead of hiding them inside token prices.</p>
+<h2>Try it on your workload</h2>
+<p>Take 100 representative fictional jobs and run a paid sample on the exact approved route. Save input tokens, output tokens, retries, accepted answers and the reported charge. The documented <code>usage.cost_microdollars</code> and <code>usage.total_cost_microdollars</code> fields express known charges as integer microdollars; treat an omitted cost as unknown.</p>
+<p>Scale the sample by job type, keeping short extraction calls separate from long agent sessions. For the original exercise, verify that 10,000 × 800 = 8,000,000 input and 10,000 × 200 = 2,000,000 output. Replace those averages with measured values before treating the estimate as a budget.</p>
+<p>On one local GPU, concurrent agents share its throughput, and requests beyond its parallel capacity wait in line. Compare with running the same accepted jobs locally: measured electricity, hardware allocation and operating time. Using existing hardware during otherwise idle hours has different economics from buying a dedicated machine. Keep the quality threshold and completion deadline identical.</p>
 <h2>How to decide</h2>
-<p>Run a small paid sample and compare usage receipts with your estimate. Savings depend on workload, route, utilization and the number of answers accepted.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Use the route-specific bill per accepted answer to compare options. Stay local when your machine meets the deadline and data rules favor it. Rent inference for approved bursts when additional hardware would sit idle between jobs. Investigate any sample bill that differs materially from the estimate before scaling the workload.</p>
+<h2>Run ten agents together for about 16 cents</h2>
+<p>Ten agents processing independent job batches on <code>qwen/qwen3-32b</code> cost about 16 cents in tokens on TrustedRouter. In this illustrative workload, each consumes 100,000 input and 20,000 output tokens. On 2026-11-22, catalog rates rounded to $0.100 per million input and $0.301 per million output tokens. Input = 10 × 100,000 = 1,000,000; output = 10 × 20,000 = 200,000. Cost = 1 × $0.100 + 0.2 × $0.301 = $0.1602, about 16 cents.</p>
+<p>On one local GPU, these agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run at the same time, with the same token bill as running them one after another. Divide the existing workload among workers and record usage for every loop. Doing ten times as much work or repeatedly sending duplicated context increases the token volume.</p>
+<p>Prices change; check <a href="/models">the model catalog</a> and <a href="/docs/agent-setup">agent setup</a>. Use <a href="/private-llm-api">confidential routing</a> for approved private work and substitute its eligible route prices. Local remains better when existing hardware meets your deadline and the work must stay on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: per-token prices for the three catalog models</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models/deepseek/deepseek-v3.2/endpoints">TrustedRouter: Chutes endpoint prices and confidential eligibility</a></li>
+<li><a href="https://trustedrouter.com/docs/provider-routing">TrustedRouter: privacy filters and provider pinning</a></li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-32B">Qwen: open-weight Qwen3-32B model card</a></li>
+<li><a href="https://trustedrouter.com/docs">TrustedRouter: usage costs, retail rates, rounding and minimums</a></li>
+<li><a href="https://docs.ollama.com/api/generate">Ollama: local prompt and output token counts</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

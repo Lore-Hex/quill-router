@@ -173,16 +173,86 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How large should chunks be for a local knowledge base?</h1><p>A useful chunk carries enough context to interpret a fact. Tiny chunks can separate a rule from its exception, while large chunks use prompt space on unrelated material.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Try heading-based chunks on a policy manual. Ask for a limit whose exception appears in the following paragraph. Compare retrieval with and without a small overlap, keeping the total token budget fixed.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Start a policy knowledge base with heading-aware chunks around 400 to 600 tokens and a small overlap, provided your embedding model accepts that input. Keep a rule and its exception together; for a model that truncates at 256 word pieces, use a smaller starting budget such as 200 tokens including the heading.</p>
+<h2>Preserve the unit of meaning before choosing a length</h2>
+<p>A useful chunk should let someone interpret the fact without guessing which product, policy version or section it belongs to. Begin at headings, paragraphs and list boundaries. Add the document title and section heading to each chunk so “the limit is 12” does not become an orphaned statement with no subject.</p>
+<p>Consider a fictional expense policy: “Meals are reimbursed up to $40 per day. For overnight travel in the designated high-cost cities, the limit is $65.” A split between those sentences invites an incomplete answer. Keep the pair together, or make retrieval expand a matched sentence to the full parent paragraph.</p>
+<p>Tables need their labels. A row containing “65, overnight, approved” is weak evidence without the column names and relevant note. Preserve the header, row identity and footnotes during extraction. If the parser loses those relationships, tuning vector dimensions will not restore them.</p>
+<table>
+<thead>
+<tr>
+<th>Document structure</th>
+<th>Starting segmentation</th>
+<th>Required metadata</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Policy manual</td>
+<td>Heading and coherent paragraphs</td>
+<td>Policy version, section and page</td>
+</tr>
+<tr>
+<td>FAQ</td>
+<td>Question plus its entire answer</td>
+<td>Question identifier and revision</td>
+</tr>
+<tr>
+<td>Product table</td>
+<td>Related rows with headers and notes</td>
+<td>Product identifier and table title</td>
+</tr>
+<tr>
+<td>Long procedure</td>
+<td>Step groups with prerequisites</td>
+<td>Procedure name and step numbers</td>
+</tr>
+</tbody>
+</table>
+<p>Use these as initial segmentation rules. A fixed token cap is still useful to prevent unexpectedly large sections, but split at a meaningful boundary near that cap rather than cutting a sentence wherever a character counter happens to stop.</p>
+<h2>Respect the embedding model's actual limit</h2>
+<p>The <code>sentence-transformers/all-MiniLM-L6-v2</code> model card documents 384-dimensional vectors and default truncation beyond 256 word pieces. <code>BAAI/bge-m3</code> documents 1,024 dimensions and an 8,192-token sequence length. <code>Qwen/Qwen3-Embedding-0.6B</code> supports up to 1,024 dimensions and a 32K-token context. These model-card limits were checked on 2026-11-22; choose chunk size within them using coherent source sections.</p>
+<p>A 500-token passage is unsuitable for the MiniLM default even though it is small compared with BGE-M3's limit. Silent truncation is especially damaging when the exception sits at the end. Count tokens after attaching titles, source labels and any required prompt prefix.</p>
+<p>With Transformers installed, this macOS or Linux Python example counts a proposed BGE-M3 input without truncating it. The first load downloads tokenizer files unless they are cached:</p>
+<pre><code>from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(&quot;BAAI/bge-m3&quot;)
+heading = &quot;Travel policy / Meals&quot;
+paragraph = &quot;Meals are reimbursed up to $40 per day. Overnight exception: $65.&quot;
+text = heading + &quot;\n&quot; + paragraph
+encoded = tokenizer(text, add_special_tokens=True, truncation=False)
+print(len(encoded[&quot;input_ids&quot;]))
+</code></pre>
+<p>Hugging Face's tokenizer API exposes both <code>add_special_tokens</code> and <code>truncation</code>. Count the complete input your embedding pipeline will use, then reject or split oversize chunks before indexing. Run a second budget check with the generation model's tokenizer when assembling retrieved evidence; the two tokenizers need not produce the same count.</p>
+<p>A longer input limit lets you preserve a longer coherent unit when the task needs it. Use smaller units for questions about individual facts, and test retrieval before representing an entire manual with one vector.</p>
+<h2>Spend overlap where boundaries lose evidence</h2>
+<p>Overlap repeats source text across neighboring chunks. With a 500-token window and 50-token overlap, the stride is 500 − 50 = 450 tokens. Each full new window adds 450 new tokens and repeats 50. The approximate large-document processing multiplier is 500 / 450 = 1.111, or about 11.1% extra token volume before headings.</p>
+<p>For a fictional 10,000-token document, 500-token windows without overlap produce 20 chunks. Stopping when the document is covered, 50-token overlap gives 1 + ceiling((10,000 − 500) / 450) = 23 chunks. At 1,024 float32 values per vector, raw vector storage rises from 20 × 1,024 × 4 = 81,920 bytes to 23 × 1,024 × 4 = 94,208 bytes. Text and index overhead are additional.</p>
+<p>Do not solve every retrieval miss by increasing overlap. Five nearly identical hits can crowd a different required passage out of the prompt. Deduplicate overlapping source spans before generation and consider expanding one strong hit to its parent section. Preserve the original offsets so you can merge adjacent evidence cleanly.</p>
+<p>Keep the generation evidence budget fixed during comparisons. If one setup retrieves five 200-token chunks and another retrieves five 1,000-token chunks, you changed both segmentation and the amount of evidence the model receives. Compare at a fixed budget such as 3,000 evidence tokens, including headings and citation labels.</p>
+<h2>Try it on your workload</h2>
+<p>Choose one policy manual and write ten questions whose answers you can locate. Include a limit whose exception follows in the next paragraph, a table footnote, a definition referenced later and a question about an obsolete version. Mark the complete required evidence for each question.</p>
+<p>Using the same embedding model, build three indexes: heading-based chunks without overlap, the same chunks with a 50-token overlap where feasible, and smaller chunks whose retrieval expands to their parent paragraph. For long-input models, start near 500 tokens; for MiniLM, keep the entire encoded input within its 256-token default.</p>
+<p>Retrieve under the same 3,000-token evidence budget. Record whether both rule and exception appear, how much duplicate text is included, whether the source can be opened and whether the final answer is correct. Inspect the chunks themselves before blaming generation.</p>
+<p>Keep the segmentation version in your index manifest. When a source changes, remove its old chunks and insert the new version as one controlled update. Retain original page or section references so a citation stays useful after the index is rebuilt.</p>
 <h2>How to decide</h2>
-<p>Keep the segmentation that returns both the rule and its exception with a traceable source. Record the original page or section alongside each chunk.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep the simplest segmentation that retrieves a rule and its conditions together.</li>
+<li>Reduce chunk size or change models when embedding input is truncated.</li>
+<li>Prefer source expansion or deduplication when overlap fills the prompt with repeated text.</li>
+</ul>
+<h2>Compare chunks with ten agents for about thirty cents</h2>
+<p>Ten evaluation agents working in parallel on 1,000 answers on <code>google/gemma-3-27b-it</code> cost about thirty cents in tokens on TrustedRouter at the smaller context budget. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.0844 per million input and $0.169 per million output tokens. Each agent handles 100 answers with 3,000 total input and 300 output tokens each: 10 × 100 × 3,000 = three million input and 10 × 100 × 300 = 300,000 output. Cost = 3 × $0.0844 + 0.3 × $0.169 = $0.3039, about thirty cents. Doubling input to 6,000 tokens per answer gives 6 × $0.0844 + 0.3 × $0.169 = $0.5571, about 56 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent questions can run at the same time for the same token bill as serial execution. Keep the generator fixed while comparing approved chunking variants, and spend extra context on useful exceptions.</p>
+<p>Prices change; check <a href="/models">current rates</a>, <a href="/docs/simple-start">API setup</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/private-llm-api">private API options</a>. Use local generation when source passages must remain on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">MiniLM model card: dimensions and default input truncation</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-m3">BGE-M3 model card: dimensions and sequence length</a></li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen3 Embedding model card: dimensions and context</a></li>
+<li><a href="https://huggingface.co/docs/transformers/main_classes/tokenizer">Transformers: token counting and truncation controls</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

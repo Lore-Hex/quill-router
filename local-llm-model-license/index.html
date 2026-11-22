@@ -173,16 +173,70 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>What should you check before using model weights commercially?</h1><p>Start with the exact artifact you plan to deploy. A base model, fine-tune and repackaged quantization can carry separate notices and usage conditions.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Build a release record with the upstream revision, fine-tune publisher, license files and intended use. Review distribution separately if you will put the weights on a customer's machine.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Before commercial use, identify the exact weights and read their license, incorporated use policy and redistribution conditions. Keep one release record covering the upstream revision, any fine-tune and any quantized repack, with links to the governing texts.</p>
+<h2>Review the artifact you will actually ship</h2>
+<p>Start with a concrete deployment description: internal assistant, public API, customer-installed application or downloadable model package. List who receives weights, who receives only answers and who can modify the system. Give that description to your licensing reviewer alongside the files, rather than asking whether an entire model family is “commercially safe.” This guide describes texts and review steps, not legal advice.</p>
+<p>Separate the model's terms from the runtime's license. An inference engine, tokenizer package, adapter and base checkpoint can have different notices. Build a record that identifies each component and the file that governs it. If a publisher's model-card badge disagrees with an included license, flag the discrepancy before deployment.</p>
+<p>A practical record has six fields: exact artifact, publisher, upstream revision, license-file location, incorporated policies and intended use. Add the review date and the person responsible for resolving questions. Keep a copy of the reviewed text so a later website change does not erase what your release review considered.</p>
+<h2>Compare the actual license families</h2>
+<table>
+<thead>
+<tr>
+<th>Text</th>
+<th>Concrete provisions to inspect</th>
+<th>Release question</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0</a></td>
+<td>Copyright and patent grants; license, modification and NOTICE requirements</td>
+<td>Are required notices included with the distributed artifact?</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/LICENSE">MIT in DeepSeek-V3.2</a></td>
+<td>Permission to use, modify and distribute, with copyright and permission notices</td>
+<td>Does your package retain those notices?</td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct/blob/main/LICENSE">Llama 3.3 Community License</a></td>
+<td>Attribution, acceptable-use incorporation and additional commercial terms</td>
+<td>Which obligations apply to your product and organization?</td>
+</tr>
+<tr>
+<td><a href="https://ai.google.dev/gemma/terms">Gemma Terms of Use</a></td>
+<td>Model-derivative, hosted-service and downstream restrictions</td>
+<td>Is your exact generation covered by this text?</td>
+</tr>
+</tbody>
+</table>
+<p>Apache-2.0 section 4 requires recipients to receive the license, modified files to carry change notices, and applicable attribution notices to be retained. When the work includes a NOTICE file, its applicable notices must accompany redistributed derivatives as specified. Section 3 contains an express patent grant and termination conditions. Check those conditions even for a license described as permissive.</p>
+<p>DeepSeek-V3.2's MIT file permits commercial activities including selling copies, subject to retaining its copyright and permission notice in copies or substantial portions. It also disclaims warranties. That is a much shorter text, but its notice requirement still belongs in a redistributed model package.</p>
+<p>Llama 3.3 section 1.b includes providing the agreement and displaying “Built with Llama” when distributing or making available covered materials, derivatives or products and services containing them. It also includes naming requirements for certain distributed models trained or improved with Llama materials or outputs, and incorporates the acceptable-use policy. Section 2 uses a threshold above 700 million monthly active users, assessed on the release date using the preceding calendar month, for requesting a separate license. Read the full conditions rather than treating that threshold as the only commercial restriction.</p>
+<h2>Check the model generation and the repack's lineage</h2>
+<p>Google's current Gemma terms page explicitly limits that text to the models listed in its appendix and directs Gemma 4 readers to <a href="https://gemma.ai/resources/apache-2/">its Apache-2.0 license</a>. A release checklist copied from an earlier Gemma project can therefore be wrong for a newer one. Record the exact generation instead of assigning one license to the family name.</p>
+<p>For models governed by the Gemma Terms of Use, the definition of distribution includes providing functionality through a hosted service. Section 3.1 requires passing along specified use restrictions and the agreement, and marking modified files. Its Notice-file requirement has an exception for hosted-service distribution. These are reasons to review hosting and shipping weights as separate deployment descriptions, even when the underlying model is identical.</p>
+<p>A quantized repack inherits applicable conditions from the weights it transforms, alongside any valid additional notices from its publisher. Apache's redistribution conditions and the Llama and Gemma derivative provisions make the upstream record relevant after modification. Trace the repack back to the original publisher and retain the governing license.</p>
+<p>If you cannot find that lineage, choose an artifact whose origin you can establish. Ask for the source checkpoint revision, conversion details, license files and any adapter provenance. A technically loadable file with missing provenance is a poor release dependency.</p>
+<h2>Try it on your workload</h2>
+<p>Create a release record for the exact candidate you intend to deploy. Copy the upstream license and incorporated-policy links into it, record the fine-tune publisher if present, and identify the quantization publisher. Write a one-paragraph intended-use description that names the audience and whether weights leave your organization.</p>
+<p>Now review a second scenario: putting the same weights on a customer's machine. List what files and notices would accompany that delivery. Compare it with operating an internal service. Mark every unanswered issue as a question for the licensing reviewer, with the relevant section number and deployment detail.</p>
+<p>Finally, inspect the actual release bundle rather than just its checklist. Confirm the recorded notices are present and the artifact matches the reviewed version. For an adapter, make sure the base model is identified. For a hosted trial, record the provider and service terms as well as the model identity.</p>
 <h2>How to decide</h2>
-<p>Send unresolved terms to your licensing reviewer before deployment. Buying hosted inference changes who operates the hardware, while the service and model terms still matter.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Proceed with the artifact whose terms and lineage your team has reviewed for the intended use. Resolve unclear distribution, naming or use restrictions before release. Revisit the record when you change the checkpoint, add an adapter, switch a repack publisher or move from internal use to customer delivery.</p>
+<h2>Run ten approved model trials for about 18 cents</h2>
+<p>Ten evaluation agents testing <code>deepseek/deepseek-v3.2</code> at once cost about 18 cents in tokens on TrustedRouter. This illustrative trial assigns each agent fictional cases totaling 50,000 input and 10,000 output tokens. On 2026-11-22, catalog prices rounded to $0.274 per million input and $0.401 per million output tokens. Input = 10 × 50,000 = 500,000; output = 10 × 10,000 = 100,000. Cost = 0.5 × $0.274 + 0.1 × $0.401 = $0.1771, about 18 cents.</p>
+<p>On one local GPU, those agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run at the same time, with the same token bill as running them one after another. This lets you evaluate an approved candidate before packaging its weights. Record its model ID and provider terms alongside the licensing review; budget that review separately from inference.</p>
+<p>Prices change; check <a href="/models">the current catalog</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/docs/simple-start">the API quickstart</a>. For approved private fixtures, review <a href="/private-llm-api">confidential inference</a> and eligible route prices. Local remains better for offline operation and approved customer installations that need control of the exact artifact.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache Software Foundation: Apache License 2.0 text</a></li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/LICENSE">DeepSeek-V3.2: MIT license text</a></li>
+<li><a href="https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct/blob/main/LICENSE">Meta: Llama 3.3 Community License text</a></li>
+<li><a href="https://ai.google.dev/gemma/terms">Google: Gemma terms, scope and redistribution</a></li>
+<li><a href="https://gemma.ai/resources/apache-2/">Google: Gemma 4 Apache-2.0 license</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: live model prices</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

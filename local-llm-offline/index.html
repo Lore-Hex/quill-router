@@ -173,16 +173,92 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How do you verify that a local LLM works offline?</h1><p>Offline operation depends on the whole application. A locally stored checkpoint can still be paired with a remote embedding service, tool, login requirement or telemetry integration.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Download the permitted artifacts, disconnect networking, restart the app and open a new document. Test retrieval, generation and reopening a saved conversation. Record which steps still need connectivity.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Verify offline operation by disconnecting external networking, restarting the complete app and processing a new document from scratch. A successful answer from an already open chat proves less than a cold-start test covering model loading, extraction, embeddings, retrieval and saved history.</p>
+<h2>Prepare the whole application before disconnecting</h2>
+<p>Make an inventory of every component the user action touches. Download the generation model, tokenizer, embedding model, document parser dependencies and any optional speech models while connected. Keep the exact application and runtime versions with your deployment notes. Reproduce the final installation layout rather than assuming a developer cache will also exist on the destination machine.</p>
+<p>Use a small acceptance fixture with an unmistakable fictional fact, such as a maintenance window beginning at 03:17 on Tuesday. Add that file only after networking is disconnected. Ask for the time with a source citation, close the application, reopen it and ask again. This tests ingestion and persistence in addition to cached chat behavior.</p>
+<p>LM Studio documents local chat, local document processing and its local server as usable offline after the necessary downloads. Its model discovery, model downloads, runtime downloads and update checks use networking. Install the runtime you need before traveling; confirm the engine loads the downloaded model.</p>
+<h2>Set offline controls at the process that uses them</h2>
+<p>These controls were checked against current documentation on 2026-11-22. Apply each control to its documented component and use network rules to enforce a computer-wide boundary.</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it disables</th>
+<th>What to prepare</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HF_HUB_OFFLINE=1</code></td>
+<td>Hugging Face Hub HTTP calls in the Hub library; missing cached files cause errors</td>
+<td>All required cached artifacts</td>
+</tr>
+<tr>
+<td><code>HF_HUB_DISABLE_TELEMETRY=1</code></td>
+<td>Telemetry using Hugging Face Hub's telemetry mechanism</td>
+<td>Separate settings for unrelated integrations</td>
+</tr>
+<tr>
+<td><code>HF_HUB_DISABLE_UPDATE_CHECK=1</code></td>
+<td>Documented Hugging Face CLI update checks</td>
+<td>Installed CLI and extensions</td>
+</tr>
+<tr>
+<td><code>OLLAMA_NO_CLOUD=1</code></td>
+<td>Ollama cloud features, including cloud models and web search</td>
+<td>A local model and local application configuration</td>
+</tr>
+<tr>
+<td><code>OFFLINE_MODE=true</code></td>
+<td>Open WebUI's selected downloads and update checks</td>
+<td>Local inference, embeddings and extraction</td>
+</tr>
+</tbody>
+</table>
+<p>For a Python program you launch from a macOS or Linux terminal, put the variables in its environment before starting it:</p>
+<pre><code>HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
+HF_HUB_DISABLE_UPDATE_CHECK=1 python3 your_local_app.py
+</code></pre>
+<p>Replace the script name with your own entry point. For a manually started Ollama server, stop any existing server first, then run:</p>
+<pre><code>OLLAMA_NO_CLOUD=1 ollama serve
+</code></pre>
+<p>For the macOS Ollama app, use <code>launchctl setenv OLLAMA_NO_CLOUD 1</code> and restart the app. On Linux with systemd, add <code>Environment=&quot;OLLAMA_NO_CLOUD=1&quot;</code> under <code>[Service]</code> in <code>systemctl edit ollama.service</code>, reload systemd and restart Ollama. Confirm the log reports <code>Ollama cloud disabled: true</code>.</p>
+<p>Open WebUI's current offline setting also sets Hugging Face offline mode, disables its version check and disables automatic embedding, reranking and Whisper model updates. Configure the embedding and extraction providers themselves as local. The interface can otherwise be local while a document-processing service remains remote.</p>
+<h2>Distinguish a working offline app from blocked outbound traffic</h2>
+<p>There are two tests. The availability test asks whether the required functions work without external services. The containment test asks whether the deployment can contact external destinations. Test both separately: an optional updater could attempt a request while local generation succeeds.</p>
+<p>For a single laptop, disconnect Wi-Fi, Ethernet, tethering and other external paths while leaving loopback available to local services. For an isolated multi-machine installation, keep only its permitted internal network. If you need evidence of blocked attempts while network interfaces stay active, use administrator-managed outbound rules and their logs. Use listening addresses to restrict incoming access and outbound rules to restrict outgoing requests.</p>
+<p>Remove remote tool connectors and hosted endpoints from the offline profile. Make missing local models fail clearly instead of falling back to a cloud route. Test authentication too: a local inference service is of little use if its interface cannot open without an unavailable external login.</p>
+<p>Keep offline and connected profiles distinct. A visible profile name helps operators recognize which boundary applies. Do not automatically re-enable a remote tool after a timeout; that changes where the document goes at exactly the moment the user expects local behavior.</p>
+<h2>Try it on your workload</h2>
+<ol>
+<li>While connected, install the selected versions and download every artifact. Record paths and confirm the exact workflow works once.</li>
+<li>Close all components, apply their offline settings and remove external network access. Restart the browser or desktop app and all local services.</li>
+<li>Import a fresh fictional document, retrieve its distinctive fact, generate an answer and verify its source. Use a new conversation.</li>
+<li>Save, close and reopen the conversation. Restart the machine if the deployment will need to recover from power loss.</li>
+<li>Try an unavailable model and a disabled web tool. Verify a clear failure rather than an attempted hosted fallback.</li>
+<li>Record blocked connection attempts when network controls provide logs, and repeat after each runtime or plugin upgrade.</li>
+</ol>
+<p>Keep a result sheet with one row per operation: startup, ingestion, retrieval, generation, persistence and recovery. Separate functional failures from optional network attempts. This makes a missing embedding cache easy to distinguish from a broken model runner.</p>
 <h2>How to decide</h2>
-<p>Use this test before taking a workstation to a disconnected site. For strictly offline work, keep hosted inference disabled.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Call the workflow offline-ready only when every required operation passes after a cold start.</li>
+<li>Use network controls for an enforced boundary; configure the application to avoid unnecessary requests and report missing local dependencies clearly.</li>
+<li>Keep hosted inference disabled for data whose execution policy requires staying offline.</li>
+</ul>
+<h2>Run ten connected evaluation agents for about a fifth of a cent</h2>
+<p>Ten connected evaluation agents working in parallel on 100 fictional examples on <code>openai/gpt-oss-20b</code> cost about 0.2 cents in tokens on TrustedRouter. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.01 per million input and $0.0475 per million output tokens. Each agent processes ten examples with 1,000 input and 200 output tokens each: 10 × 10 × 1,000 = 100,000 input and 10 × 10 × 200 = 20,000 output. Cost = 0.1 × $0.01 + 0.02 × $0.0475 = $0.00195, about 0.2 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent requests can run at the same time for the same token bill as sequential execution. Keep this connected profile separate and enable it deliberately for public or approved material.</p>
+<p>Prices change; check <a href="/models">current prices</a> and <a href="/docs/agent-setup">agent setup</a>. The <a href="/private-llm-api">confidential API guide</a> describes requiring encrypted provider inference and zero data retention, subject to model and provider availability. Local is the better choice when the workflow must operate without a network or keep data on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables">Hugging Face Hub: offline, telemetry and update variables</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: cloud-disable setting and service environments</a></li>
+<li><a href="https://docs.openwebui.com/reference/env-configuration/">Open WebUI: offline environment configuration</a></li>
+<li><a href="https://docs.openwebui.com/tutorials/maintenance/offline-mode/">Open WebUI: preparing caches and testing isolation</a></li>
+<li><a href="https://lmstudio.ai/docs/app/offline">LM Studio: offline functions and network-dependent operations</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

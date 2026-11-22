@@ -173,16 +173,92 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Should an overnight batch run on a local LLM?</h1><p>A batch has a deadline, an input count and a quality threshold. Those numbers are more useful than a peak generation benchmark.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>For 12,000 rows in eight hours, the pipeline must finish 25 rows per minute. Benchmark reading, preprocessing, inference, validation and output writes together. Include retries of malformed answers.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Run an overnight batch locally when the entire pipeline finishes before the deadline with time left for retries and review. For 12,000 rows in eight hours, you need 12,000 / 480 = 25 accepted rows per minute; reserving one hour raises the working target to 12,000 / 420 = 28.57.</p>
+<h2>Convert the deadline into an end-to-end throughput target</h2>
+<p>A generation benchmark excludes several things your batch must do: read records, extract text, assemble prompts, wait for inference, validate answers and save results. Benchmark that complete path. Count a row as finished only after its accepted result is durable. Include validation and durable writes in the morning deadline.</p>
+<table>
+<thead>
+<tr>
+<th>Illustrative accepted throughput</th>
+<th>Time for 12,000 rows</th>
+<th>Eight-hour outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>15 rows/minute</td>
+<td>12,000 / 15 = 800 minutes</td>
+<td>13 hours 20 minutes: misses</td>
+</tr>
+<tr>
+<td>25 rows/minute</td>
+<td>12,000 / 25 = 480 minutes</td>
+<td>Exactly eight hours: no reserve</td>
+</tr>
+<tr>
+<td>30 rows/minute</td>
+<td>12,000 / 30 = 400 minutes</td>
+<td>Six hours 40 minutes: 80 minutes left</td>
+</tr>
+</tbody>
+</table>
+<p>Use a realistic mix of short, long and difficult rows. If the last tenth contains all the longest documents, the first hour's average is a misleading forecast. Sort or bucket work by estimated size for scheduling, but retain original row IDs so outputs can be restored to their source order.</p>
+<p>Measure local concurrency separately. On one local GPU, workers share its throughput, and rows beyond its active capacity wait in line. Watch whether accepted rows per minute improve and whether memory pressure creates failures. Use the <a href="/notes/local-llm-throughput">shared-throughput guide</a> to tune the serving layer before scheduling an important night.</p>
+<h2>Make every row restartable before adding workers</h2>
+<p>Assign each input a stable ID and a content hash. Store the model artifact, prompt version and validation version in a run manifest. A row ID alone is insufficient if the row's text changes tomorrow. A practical result key combines the source ID, input hash and run configuration hash.</p>
+<p>Keep durable states such as pending, running, succeeded and failed. A running claim needs an expiry time so another worker can recover it after a crash. Commit the validated result and succeeded status together. If you later publish results into another system, use a separate durable delivery record and make that write idempotent.</p>
+<pre><code>CREATE TABLE results (
+    job_id TEXT PRIMARY KEY,
+    input_hash TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    answer_json TEXT NOT NULL,
+    accepted_at TEXT NOT NULL
+);
+</code></pre>
+<p>Pair this result table with the claim and recovery states described above. For a small single-machine coordinator, Python's <code>sqlite3</code> provides transactions. In Python 3.12 or later, use an explicit transaction policy, then commit a validated result with parameter binding:</p>
+<pre><code>import sqlite3
+
+connection = sqlite3.connect(&quot;batch.sqlite&quot;, autocommit=False)
+try:
+    with connection:
+        connection.execute(
+            &quot;INSERT INTO results VALUES (?, ?, ?, ?, ?)&quot;,
+            (job_id, input_hash, config_hash, answer_json, accepted_at),
+        )
+finally:
+    connection.close()
+</code></pre>
+<p>The variables come from your worker after validation, and the table must already exist. Reconcile a duplicate primary key with the stored hashes before deciding whether to reuse its result. Python's connection context manager commits on success and rolls back on an exception; closing is a separate operation. Keep inference outside the database transaction so a slow model does not hold a write transaction open.</p>
+<h2>Bound retries and retain useful timing evidence</h2>
+<p>Separate transport errors from bad answers. A temporary connection failure can be retried with a delay. Missing required facts may need review or a different prompt, and repeatedly sending the same impossible extraction wastes the night. Set an explicit attempt limit, such as three total attempts per row, and place exhausted rows in a review list.</p>
+<p>For a local Ollama baseline, replace the model value below with an installed model name. The generate endpoint supports <code>stream: false</code> for a complete response object:</p>
+<pre><code>curl -fsS http://localhost:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{&quot;model&quot;:&quot;YOUR_INSTALLED_MODEL&quot;,&quot;stream&quot;:false,
+       &quot;prompt&quot;:&quot;Classify this fictional request as billing or technical: I need a receipt.&quot;}'
+</code></pre>
+<p>Save application elapsed time beside Ollama's <code>total_duration</code>, <code>load_duration</code>, <code>prompt_eval_count</code>, <code>prompt_eval_duration</code>, <code>eval_count</code> and <code>eval_duration</code>. Durations are nanoseconds. Decode speed is <code>eval_count / eval_duration * 1000000000</code>; use application elapsed time for the complete pipeline and queue wait.</p>
+<p>Do not mark a row successful merely because HTTP succeeded. Validate allowed labels, required fields and source agreement. Preserve enough error detail to diagnose failures without duplicating entire sensitive documents into routine logs.</p>
+<h2>Try it on your workload</h2>
+<p>Start with 200 representative rows and known expected outputs. Run reading, preprocessing, inference, validation and durable writes together. Interrupt the coordinator after some results commit, then restart it. Confirm completed rows are skipped, expired claims recover, and no source row appears twice in the final export.</p>
+<p>Repeat at one, two and four workers. Record accepted rows per minute, retries, longest row duration and energy if ownership cost matters. Project the 12,000-row runtime using the slowest representative interval, not the fastest burst. On macOS or Linux, also verify that your overnight host stays awake under its configured power policy.</p>
+<p>For a local worker-pool capacity estimate, suppose a measured trial averages two seconds per row at ten active requests; its ideal capacity is 10 × 60 / 2 = 300 rows per minute and 12,000 / 300 = 40 minutes. Revise this planning calculation using measured errors and retry delays, then compare approved hosted work with the same bounded worker pool.</p>
 <h2>How to decide</h2>
-<p>Make each row restartable with a stable job ID. Rent extra capacity only for material your policy allows off-device and only if the batch will otherwise miss its deadline.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Use local overnight capacity when the complete run passes quality checks and leaves a recovery margin.</li>
+<li>Fix restartability before scaling: extra workers multiply mistakes as readily as useful output.</li>
+<li>Rent approved overflow when the remaining local work cannot meet the deadline.</li>
+</ul>
+<h2>Fan out 12,000 rows for about 89 cents</h2>
+<p>Twelve parallel workers processing 12,000 rows on <code>qwen/qwen3.6-35b-a3b</code> cost about 89 cents in tokens on TrustedRouter for one pass. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.0422 per million input and $0.317 per million output tokens. Assign 1,000 rows to each worker, with 1,000 input and 100 output tokens per row. Totals are 12 × 1,000 × 1,000 = 12 million input and 12 × 1,000 × 100 = 1.2 million output. Cost = 12 × $0.0422 + 1.2 × $0.317 = $0.8868, about 89 cents; budget retries separately.</p>
+<p>On one local GPU, those workers share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent rows can run at the same time for the same token bill as serial execution. Preserve stable IDs and validation rules across workers. This uses ordinary API calls at catalog rates.</p>
+<p>Prices change; check <a href="/models">the catalog</a>, <a href="/docs/simple-start">API setup</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/private-llm-api">private API options</a>. Local remains the right destination for rows that must stay offline, even when their deadline requires an earlier start.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/api/generate">Ollama generate API: response shape and timing fields</a></li>
+<li><a href="https://docs.python.org/3/library/sqlite3.html">Python sqlite3: transactions, parameter binding and connection handling</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

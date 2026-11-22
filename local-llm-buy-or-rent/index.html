@@ -173,16 +173,97 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>When is buying a GPU cheaper than API inference?</h1><p>Compare monthly fixed costs with the hosted bill for the same useful work. Count input and output tokens separately because their prices can differ.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Suppose ownership costs 90 dollars a month before energy and a hosted job costs 10 cents. At 900 jobs the hosted total reaches 90 dollars. Power, retries and support time move the actual break-even point.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Buy local hardware when its monthly ownership cost is below the hosted bill for the same accepted work and it can meet your busiest deadline. Calculate input and output tokens separately, then compare a quiet month as well as a busy one before committing cash.</p>
+<h2>Price the computer you would actually buy</h2>
+<p>On 2026-11-22, NVIDIA's own marketplace listed a GeForce RTX 5090 at $1,999 with 32 GB of GDDR7 memory; the page also showed it out of stock. Budget the card separately and get a current purchasable workstation quote.</p>
+<p>A Linux desktop budget also needs the rest of the computer. A Mac budget needs the exact memory and storage configuration you intend to purchase. Do not compare a bare GPU price with a complete Mac or assume equal memory capacity means equal model speed. First choose the local artifact that passes your task and show it fits alongside its working context.</p>
+<p>Use straight-line cost allocation for planning: purchase cost minus expected resale value, divided by months of use. For a conservative first estimate, use zero resale value and divide the purchase price by your expected months of use.</p>
+<table>
+<thead>
+<tr>
+<th>Cost basis</th>
+<th>Upfront amount</th>
+<th>36-month allocation, zero resale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVIDIA listed RTX 5090 card only</td>
+<td>$1,999 vendor listing</td>
+<td>$1,999 / 36 = about $55.53/month</td>
+</tr>
+<tr>
+<td>Illustrative complete workstation budget</td>
+<td>$3,240</td>
+<td>$3,240 / 36 = $90/month</td>
+</tr>
+<tr>
+<td>Illustrative larger complete system budget</td>
+<td>$5,400</td>
+<td>$5,400 / 36 = $150/month</td>
+</tr>
+</tbody>
+</table>
+<p>Add energy, repairs, administration and financing where they apply. If you already own a suitable computer, calculate incremental operating cost separately from a new purchase. The money already spent is a different decision from cash you would spend today.</p>
+<h2>Turn real token prices into a job price</h2>
+<p>Define a job as useful completed work, such as one reviewed repository investigation across several calls. Include repeated context, failed attempts and follow-up answers in its token count. A job's total input tokens do not have to fit in a single context window when they are spread across calls.</p>
+<pre><code>hosted_job_cost = input_tokens / 1000000 * input_price_per_million
+                + output_tokens / 1000000 * output_price_per_million
+break_even_jobs = monthly_fixed_cost / (hosted_job_cost - local_variable_cost)
+</code></pre>
+<p>For the following calculation, use the live catalog's <code>openai/gpt-oss-120b</code> rates fetched on 2026-11-22, rounded to $0.0317 per million input and $0.179 per million output tokens. A job totaling 100,000 input and 20,000 output tokens costs 0.1 × $0.0317 + 0.02 × $0.179 = $0.00675, about 0.68 cents. Check the selected confidential route separately when your data requires it.</p>
+<table>
+<thead>
+<tr>
+<th>Jobs per month</th>
+<th>Hosted calculation</th>
+<th>Workstation allocation from the example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1,000</td>
+<td>1,000 × $0.00675 = $6.75, about $7</td>
+<td>$90 before operating costs</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>10,000 × $0.00675 = $67.50, about $68</td>
+<td>$90 before operating costs</td>
+</tr>
+<tr>
+<td>20,000</td>
+<td>20,000 × $0.00675 = $135, about $135</td>
+<td>$90 before operating costs</td>
+</tr>
+</tbody>
+</table>
+<p>The simplified $90 / $0.00675 crossover is 13,333.33 jobs, so the first whole-job count above it is 13,334. Treat this as a spending crossover, then verify model fit, answer quality and monthly capacity independently for both local and hosted candidates.</p>
+<h2>Make utilization and deadlines part of break-even</h2>
+<p>Suppose local variable cost is an illustrative $0.001 per accepted job. The monthly crossover becomes $90 / ($0.00675 − $0.001) = about 15,652.17 jobs, or 15,653 whole jobs. If local variable cost equals or exceeds the hosted job price, there is no spending crossover under this formula.</p>
+<p>For energy budgeting, EIA's published US residential average for 2025 is $0.1723/kWh. An illustrative measured 100 kWh per month would cost 100 × $0.1723 = $17.23. Put that into either the monthly overhead or per-job variable cost according to how the machine is used; do not count it twice.</p>
+<p>Capacity can rule out an otherwise attractive crossover. Suppose your full pipeline measures two minutes per accepted job. In 160 available hours it can finish 160 × 60 / 2 = 4,800 serial jobs. A financial crossover at 15,653 jobs is irrelevant unless batching, more operating hours or more equipment supplies the missing capacity. Each option changes the budget.</p>
+<p>Agent bursts make this particularly visible. Ten agents arriving together share one local GPU's throughput, and requests beyond its active capacity wait in line. Buying enough capacity for the busiest ten minutes can leave it unused for the remainder of the day. Compare both waiting time and monthly spending.</p>
+<h2>Try it on your workload</h2>
+<p>Keep one week's job ledger with input tokens, output tokens, retries, accepted results and arrival times. Project a quiet month and a busy month from actual demand rather than multiplying your busiest hour by every hour in a year. Record work that cannot leave the device in a separate category.</p>
+<p>As a simple sanity check, an illustrative $90 monthly ownership cost and a hosted job costing about $0.10 reach equality at 900 jobs. Then replace that ten-cent assumption with your measured token mix and fetched prices. Compare the result with the local machine's demonstrated monthly capacity.</p>
+<p>Run the same approved examples locally and remotely, scoring answers without seeing their origin. Add review minutes to the ledger. Before buying, obtain an exact hardware quote and replace every assumed ownership figure, including the assumed 36-month lifespan.</p>
 <h2>How to decide</h2>
-<p>Model a quiet month as well as a busy one. A purchase that pays off only at peak demand may leave expensive capacity idle.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Buy for sustained accepted work that fits the machine and clears the full cost crossover.</li>
+<li>Rent for irregular demand, occasional larger models and bursts whose local queue is unacceptable.</li>
+<li>Choose local for a strict offline requirement even when a hosted price is lower.</li>
+</ul>
+<h2>Rent ten agents for about seven cents before buying more hardware</h2>
+<p>Ten repository agents working at once on <code>openai/gpt-oss-120b</code> cost about seven cents in tokens on TrustedRouter for the worked jobs. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">catalog</a> listed approximately $0.0317 per million input and $0.179 per million output tokens. Each agent consumes 100,000 input and 20,000 output tokens across its investigation, giving 10 × 100,000 = one million input and 10 × 20,000 = 200,000 output. Cost = 1 × $0.0317 + 0.2 × $0.179 = $0.0675, about seven cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent requests can run at the same time for the same token bill as running them one after another. Compare approved overflow with another fixed monthly hardware expense, using the same accepted-job ledger.</p>
+<p>Prices change; check <a href="/models">current prices</a> and <a href="/docs/provider-routing">provider routing</a>, configure <a href="/docs/agent-setup">your agents</a> and review <a href="/private-llm-api">private API options</a>. Keep local hardware for steady work it handles economically or data that must stay offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://marketplace.nvidia.com/en-us/consumer/graphics-cards/nvidia-geforce-rtx-5090/">NVIDIA marketplace: RTX 5090 listed price, memory and stock status</a></li>
+<li><a href="https://www.eia.gov/electricity/annual/table.php?t=epa_02_07.html">EIA: annual residential electricity price</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: live input and output token prices</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

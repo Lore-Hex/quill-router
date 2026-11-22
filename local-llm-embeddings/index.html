@@ -173,16 +173,90 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Which embedding model works for local document search?</h1><p>Choose embeddings by how often the right passage appears near the top for your users&#x27; language and terminology. Vector dimensions alone do not answer that question.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Create queries that use different words from the source, such as “leave allowance” for a policy titled “paid time off.” Compare the first five passages returned by each candidate using the same chunks.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Choose a local embedding model by whether the correct source passage appears in the first five results for your real questions. Start with a small baseline and one longer-context candidate, keeping chunks identical and testing how well each candidate retrieves your terminology.</p>
+<h2>Pick candidates with explicit input limits</h2>
+<p>Embeddings turn text into vectors that you compare during search. The embedding model is a separate choice from the model that writes the answer. Give retrieval its own acceptance test before changing the generator so you can assess source selection independently.</p>
+<table>
+<thead>
+<tr>
+<th>Open model</th>
+<th>Dense dimensions</th>
+<th>Documented input handling</th>
+<th>Starting use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sentence-transformers/all-MiniLM-L6-v2</code></td>
+<td>384</td>
+<td>Default truncation beyond 256 word pieces</td>
+<td>A compact baseline for short passages</td>
+</tr>
+<tr>
+<td><code>BAAI/bge-m3</code></td>
+<td>1,024</td>
+<td>8,192-token sequence length</td>
+<td>Compare on longer or multilingual material</td>
+</tr>
+<tr>
+<td><code>Qwen/Qwen3-Embedding-0.6B</code></td>
+<td>32 to 1,024 supported output dimensions</td>
+<td>32K-token context</td>
+<td>Compare instruction-aware retrieval</td>
+</tr>
+</tbody>
+</table>
+<p>These model-card facts were checked on 2026-11-22. Count input with each model's tokenizer. Measure the exact text after adding headings and any model-specific instruction. If your framework truncates input, a vector can be created successfully while the paragraph containing the answer is omitted.</p>
+<p>Start with MiniLM when a short-passage baseline is enough to expose the retrieval problem. Try BGE-M3 or Qwen when you need a broader comparison. Rank the candidates using your languages, document structure and queries.</p>
+<h2>Encode queries the way the model expects</h2>
+<p>Qwen's model card demonstrates a query instruction using <code>prompt_name=&quot;query&quot;</code>, while documents are encoded without that query prompt. BGE-M3's card says query instructions are not required. Applying one model's prefix convention to every candidate makes the comparison unfair.</p>
+<p>Here is a minimal Qwen retrieval experiment following the model-card API shape. This example requires Transformers 4.51.0 or later and Sentence Transformers 3.0.0 or later because it uses <code>model.similarity()</code>. Downloading the model requires connectivity on the first run.</p>
+<pre><code>from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer(&quot;Qwen/Qwen3-Embedding-0.6B&quot;, device=&quot;cpu&quot;)
+passages = [
+    &quot;Paid time off: full-time staff receive 20 days each year.&quot;,
+    &quot;Expenses: submit meal receipts within 30 days.&quot;,
+    &quot;Access: request a replacement building badge from reception.&quot;,
+]
+query = model.encode([&quot;What is the annual leave allowance?&quot;], prompt_name=&quot;query&quot;)
+documents = model.encode(passages)
+scores = model.similarity(query, documents)[0]
+for index in scores.argsort(descending=True).tolist():
+    print(float(scores[index]), passages[index])
+</code></pre>
+<p>The explicit CPU choice provides a simple correctness baseline on either macOS or Linux. Replace the three passages with your own fixed fixtures before timing anything. Keep raw scores for debugging, but do not treat a similarity score as the probability that the passage answers the question.</p>
+<p>For an exact identifier such as an invoice code, add a lexical-search baseline to the evaluation. Semantic matching is useful for paraphrases such as “leave allowance” and “paid time off”; an identifier differing by one character may need exact matching. Score both kinds of query separately.</p>
+<h2>Budget the index and version the vector space</h2>
+<p>For float32 dense vectors, raw storage is chunk count × dimensions × four bytes. At 100,000 chunks, MiniLM's 384-dimensional vectors take 100,000 × 384 × 4 = 153,600,000 bytes, or 153.6 MB in decimal units. At 1,024 dimensions the same calculation gives 409,600,000 bytes, or 409.6 MB.</p>
+<p>Those figures exclude search-index structures, stored text, identifiers and metadata. They also exclude embedding-model weights and runtime memory. A smaller vector can reduce index storage without making the embedding model itself proportionally smaller.</p>
+<p>Version the model revision, tokenizer, query instruction, document formatting, output dimensions, normalization and similarity metric together. Treat each model as a separate vector space even when both emit 1,024 values. Re-embed documents before sending queries from a new model into the replacement index.</p>
+<p>Build the new index alongside the old one. Run the evaluation queries against both, then switch the application to the winning version as a single configuration change. Keep the old version briefly for rollback. Mixing old document vectors with new query vectors can produce plausible-looking rankings that are meaningless for your intended comparison.</p>
+<p>Separate retrieval failures from permission failures. Filter documents to what the user is allowed to read before presenting results. A shared vector index needs the same source-access rules as the underlying document collection.</p>
+<h2>Try it on your workload</h2>
+<p>Write 20 queries with expected passage IDs: ten paraphrases, five exact identifiers and five questions in the languages your users actually write. Include “leave allowance” for a passage headed “paid time off.” Use the same document chunks and metadata for every candidate.</p>
+<p>For each query, retrieve five passages and mark whether the required source appears. If 16 of 20 queries find their single required passage, hit rate at five is 16 / 20 = 80%. For questions needing several passages, score evidence coverage separately so one retrieved paragraph does not count as a complete success.</p>
+<p>Record indexing time, query time, peak memory, vector storage and truncation count. Review the misses by category: vocabulary mismatch, missing exception, near-identical code or unsupported language. Inspect the actual tokenized input when a source's opening text ranks well but its later facts never appear.</p>
+<p>After choosing a candidate, rerun the questions on a held-out set of documents. Keep embedding settings fixed while testing <a href="/notes/local-llm-chunking">chunk sizes</a>; changing model and segmentation simultaneously makes improvements hard to explain.</p>
 <h2>How to decide</h2>
-<p>Version the embedding model with the index. When you change the embedding model, rebuild the document vectors before comparing query results.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep the smallest candidate that meets your retrieval and resource targets.</li>
+<li>Change input length or segmentation when required text is being truncated.</li>
+<li>Rebuild and version the index whenever the embedding space changes.</li>
+</ul>
+<h2>Evaluate retrieval with ten answer agents for about six cents</h2>
+<p>Ten answer agents working in parallel to evaluate 200 retrieval results on <code>google/gemma-4-31b-it</code> cost about six cents in tokens on TrustedRouter. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.106 per million input and $0.359 per million output tokens. Assign 20 answers to each agent, using 2,000 input and 300 output tokens per answer. Totals are 10 × 20 × 2,000 = 400,000 input and 10 × 20 × 300 = 60,000 output. Cost = 0.4 × $0.106 + 0.06 × $0.359 = $0.06394, about six cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent answers can run at the same time for the same token bill as sequential execution. Keep embeddings local and budget them separately; this calculation covers answer generation. Hold the generator fixed so the comparison reveals changes in retrieval quality.</p>
+<p>Prices change; check <a href="/models">current models</a>, <a href="/docs/simple-start">API setup</a> and <a href="/docs/agent-setup">agent setup</a>. Review <a href="/private-llm-api">private API options</a> and send only approved passages. Keep both embeddings and generation local when document policy requires all text to remain on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">MiniLM model card: dimensions and truncation</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-m3">BGE-M3 model card: dimensions, length and query handling</a></li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen3 Embedding model card: dimensions, context and query instructions</a></li>
+<li><a href="https://github.com/huggingface/sentence-transformers/releases/tag/v3.0.0">Sentence Transformers 3.0.0: introduction of similarity methods</a></li>
+<li><a href="https://www.sbert.net/docs/package_reference/sentence_transformer/model.html">Sentence Transformers: model loading, encoding and similarity APIs</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

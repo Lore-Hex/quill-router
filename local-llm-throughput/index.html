@@ -173,16 +173,71 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How many people can share a local LLM?</h1><p>Single-user tokens per second cannot predict queue delays when colleagues arrive together. Define acceptable wait time per user before sizing the server.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Replay the same mix at one, two and four simultaneous sessions. Track completed jobs per minute, the slowest requests and any memory failures. Keep a few long prompts in the mix.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Size a shared local LLM by completed jobs and waiting time at your busiest hour. Start with one, two and four simultaneous requests; keep the smallest configuration that meets your slowest acceptable response time.</p>
+<h2>Separate parallel requests from loaded models</h2>
+<p>A loaded model, an active request and a queued request consume different resources. Accepting more requests can improve hardware utilization, but active requests share the machine's memory bandwidth and compute. On one local GPU, agents share throughput and requests beyond active capacity wait in line.</p>
+<p>The Ollama FAQ, checked on 2026-11-22, documents these controls:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Purpose and current default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OLLAMA_NUM_PARALLEL</code></td>
+<td>Requests processed concurrently per model. Unset or zero lets MLX on Metal choose from memory and cache requirements; other backends default to 1.</td>
+</tr>
+<tr>
+<td><code>OLLAMA_MAX_LOADED_MODELS</code></td>
+<td>Concurrent resident models, subject to memory: normally 3 × GPU count, or 3 for CPU inference.</td>
+</tr>
+<tr>
+<td><code>OLLAMA_MAX_QUEUE</code></td>
+<td>Waiting requests before additional requests are rejected: default 512.</td>
+</tr>
+</tbody>
+</table>
+<p>Ollama multiplies context allocation by parallelism: four requests at 4,096 tokens require 4 × 4,096 = 16,384 context tokens. When another model cannot fit, requests wait for memory. Start a dedicated terminal server with explicit settings after stopping an existing server:</p>
+<pre><code>OLLAMA_NUM_PARALLEL=2 OLLAMA_MAX_LOADED_MODELS=1 \
+OLLAMA_MAX_QUEUE=16 OLLAMA_CONTEXT_LENGTH=4096 ollama serve
+</code></pre>
+<p>For the macOS app, set these variables with <code>launchctl setenv</code> and restart it. For a Linux systemd service, put <code>Environment=&quot;NAME=value&quot;</code> entries under <code>[Service]</code> using <code>systemctl edit ollama.service</code>, then reload systemd and restart the service. Apply environment changes to the process that starts the service.</p>
+<h2>Give llama.cpp slots an explicit context budget</h2>
+<p>The current llama.cpp server reference lists <code>--parallel</code> as the slot count, defaulting to <code>-1</code> for automatic selection. Continuous batching, controlled by <code>--cont-batching</code> and <code>--no-cont-batching</code>, is enabled by default as of November 2026. It lets the server schedule work from multiple requests together rather than reserving the entire decoding loop for one conversation.</p>
+<pre><code>llama-server --model /absolute/path/model.gguf \
+  --host 127.0.0.1 --port 8080 \
+  --parallel 4 --ctx-size 16384 --no-kv-unified --cont-batching
+</code></pre>
+<p>Use your downloaded model's real path and a model supporting at least 4,096 context tokens. With the separate sequence allocation selected here, the 16,384-token context is divided across four slots: 4,096 tokens per slot, including prompt and generation. Increasing slots without increasing the total context reduces that allowance. Check the startup allocation before sending long conversations.</p>
+<p>Unified KV allocation changes this picture: current builds also support <code>--kv-unified</code> and <code>--kv-unified-per-slot</code>. Do not carry the simple division rule into a shared-pool configuration without checking its per-request limit. Pin your server build and configuration alongside benchmark results so the next upgrade does not silently change the experiment.</p>
+<h2>Use concurrency to finish the whole workload</h2>
+<p>Suppose eight agents each need 600 output tokens, and your measured single-request decode rate is 30 tokens per second. Ignoring prompt processing for this illustrative calculation, one request takes 600 / 30 = 20 seconds. Serial completion times are 20, 40, 60, 80, 100, 120, 140 and 160 seconds. Mean completion time is 90 seconds; the last agent waits 140 seconds before its own decoding starts.</p>
+<p>If four concurrent slots still deliver only 30 output tokens per second in aggregate, each equal-length request receives roughly 7.5 tokens per second. Two waves finish around 80 and 160 seconds. The total decoding work still takes 160 seconds. If batching raises measured aggregate throughput to 60, the 4,800-token workload instead needs about 80 seconds. Add prompt-processing time to each scenario.</p>
+<p>For sustained many-user serving, evaluate vLLM. Its documented PagedAttention memory management, continuous batching, chunked prefill and distributed serving make it a relevant higher-concurrency option. Choose it when you can operate a serving stack and have enough recurring traffic to justify that effort. A runtime change still needs the same acceptance test as a GPU purchase.</p>
+<h2>Try it on your workload</h2>
+<p>Prepare 24 fixed prompts: 16 ordinary requests and eight long ones resembling your real workload. Keep model, quantization, output limit and prompt text fixed. Replay the set at one, two and four simultaneous sessions, warming the model once before each measured run. Record submission time, first output time, completion time, input and output token counts, errors and accepted answers.</p>
+<p>Report completed jobs per minute and the slowest request, plus the 95th percentile when your sample is large enough to make it useful. Count queued time inside user waiting time. Repeat with short requests arriving while long ones are active: a batch that finishes quickly can still make interactive users wait too long.</p>
+<p>Then replay an approved fictional set through a hosted endpoint with the same client concurrency. Increase concurrency gradually and keep retries bounded. Compare total completion time and accepted answers, not just a stream's fastest interval. Save the exact runner version and configuration with the result.</p>
 <h2>How to decide</h2>
-<p>Choose the smallest setup that meets your busy-period target. If traffic is concentrated in short bursts, compare overflow cost with idle capacity.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep one local machine when it meets busy-period waiting targets with memory headroom.</li>
+<li>Raise parallelism only while accepted jobs per minute improve without unacceptable individual waits.</li>
+<li>For short bursts, compare hosted overflow with the cost of equipment that sits idle between bursts.</li>
+</ul>
+<h2>Run eight coding agents together for less than a cent</h2>
+<p>Eight coding agents working at once on <code>qwen/qwen3-coder-30b-a3b-instruct</code> cost about 0.44 cents in tokens on TrustedRouter for the worked example. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.132 per million input and $0.475 per million output tokens. Eight requests with 2,000 input and 600 output tokens each use 16,000 input and 4,800 output tokens. Cost = 0.016 × $0.132 + 0.0048 × $0.475 = $0.004392, about 0.44 cents.</p>
+<p>On one local GPU, the agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent requests can run at the same time for the same token bill as running them sequentially. Assign separate repository tasks to each agent and retain the same acceptance checks. Dependencies between steps still determine which requests are ready to submit.</p>
+<p>Prices change; check <a href="/models">the model catalog</a>, follow <a href="/docs/agent-setup">agent setup</a> and review <a href="/private-llm-api">private API routing</a> for approved code. Keep local execution for offline data or steady work your existing hardware handles comfortably.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/faq">Ollama FAQ: parallelism, queues and service configuration</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md">llama.cpp server: slots, continuous batching and context flags</a></li>
+<li><a href="https://raw.githubusercontent.com/ggml-org/llama.cpp/master/src/llama-context.cpp">llama.cpp implementation: separate and unified context allocation</a></li>
+<li><a href="https://docs.vllm.ai/en/latest/">vLLM: serving and memory-management features</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

@@ -173,16 +173,75 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>What does a local LLM cost in electricity?</h1><p>Measure whole-system power over the actual job. A GPU&#x27;s advertised power limit is a poor estimate of energy consumed per completed answer.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>At an illustrative 300 watts for four hours, the system uses 1.2 kWh. At 25 cents per kWh that is 30 cents. Divide by accepted outputs and account separately for idle hours if the server stays on.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>A local LLM's electricity cost is wall power in kilowatts multiplied by running hours and your price per kilowatt-hour. An illustrative 300-watt computer running for four hours uses 1.2 kWh, costing about $0.21 at the US 2025 residential average of 17.23 cents per kWh.</p>
+<h2>Use GPU specifications to plan, then measure the socket</h2>
+<p>NVIDIA lists Total Graphics Power of 575 W for the GeForce RTX 5090 and 360 W for the RTX 5080 reference specifications. Use these graphics-card power specifications for planning, then measure the entire computer during your LLM workload. CPU work, memory, storage, fans and power-supply losses also contribute to the electricity meter reading.</p>
+<table>
+<thead>
+<tr>
+<th>Reference or scenario</th>
+<th>Power</th>
+<th>Four-hour energy calculation</th>
+<th>Cost at $0.1723/kWh</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RTX 5090 at its specified TGP, hypothetical constant draw</td>
+<td>575 W</td>
+<td>0.575 × 4 = 2.3 kWh</td>
+<td>2.3 × $0.1723 = about $0.40</td>
+</tr>
+<tr>
+<td>RTX 5080 at its specified TGP, hypothetical constant draw</td>
+<td>360 W</td>
+<td>0.360 × 4 = 1.44 kWh</td>
+<td>1.44 × $0.1723 = about $0.25</td>
+</tr>
+<tr>
+<td>Illustrative whole-computer draw from the opening example</td>
+<td>300 W</td>
+<td>0.300 × 4 = 1.2 kWh</td>
+<td>1.2 × $0.1723 = about $0.21</td>
+</tr>
+</tbody>
+</table>
+<p>Compare cards by the energy needed to complete the same accepted workload. A faster machine can consume more watts and fewer kilowatt-hours for a particular job.</p>
+<p>Use a plug-in energy meter for a desktop or a Mac's power adapter. Measure a complete run, including loading and saving results. For a laptop, begin and end with a comparable battery charge so battery discharge does not masquerade as lower electricity use. Decide whether your measurement includes the display and external drives, and keep that boundary consistent.</p>
+<h2>Apply your tariff to measured energy</h2>
+<p>The EIA Electric Power Annual, released October 21, 2026, gives 17.23 cents per kWh as the US residential average for 2025. That is a published historical baseline. Replace it with your bill's applicable energy charge when making a purchase decision, especially if overnight and daytime prices differ.</p>
+<pre><code>energy_kwh = watts / 1000 * hours
+cost_dollars = energy_kwh * dollars_per_kwh
+cost_per_accepted_answer = cost_dollars / accepted_answers
+</code></pre>
+<p>At an illustrative tariff of $0.25/kWh, the same 300 W × four-hour run costs 1.2 × $0.25 = $0.30. At the EIA baseline it costs 1.2 × $0.1723 = $0.20676, about $0.21. The runtime and power are identical; only the tariff changed. Keep both the tariff date and its units beside your result.</p>
+<p>For time-varying rates, calculate each interval separately. Suppose the job uses 0.6 kWh at an illustrative $0.20/kWh and another 0.6 kWh at $0.35/kWh. The bill is 0.6 × $0.20 + 0.6 × $0.35 = $0.33. Multiplying all energy by the cheapest overnight rate would understate this run's cost.</p>
+<h2>Allocate idle hours and failed answers honestly</h2>
+<p>Consider a dedicated server drawing an illustrative 60 W while idle for 20 hours and 300 W while busy for four. Daily energy is 0.060 × 20 + 0.300 × 4 = 2.4 kWh. At $0.1723/kWh, daily cost is 2.4 × $0.1723 = $0.41352, about $0.41; 30 identical days cost 30 × $0.41352 = $12.4056, about $12.41. Counting only inference would miss half the energy in this scenario.</p>
+<p>If your computer would already be running for other work, an incremental calculation can be useful. Subtract its comparable baseline from the measured workload draw: (300 − 60) W × four hours / 1,000 = 0.96 kWh, costing 0.96 × $0.1723 = $0.165408, about $0.17. Label this incremental energy clearly and use the full daily calculation for a dedicated server.</p>
+<p>Now divide by useful work. A run costing $0.20676 with 100 generated answers and 80 accepted answers costs $0.20676 / 80 = $0.0025845, about 0.26 cents per accepted answer. Charging the same energy against all 100 outputs gives an artificially attractive figure if 20 require replacement. Include retry energy in the next measurement rather than assuming it is free.</p>
+<p>For several local agents, count aggregate energy and elapsed time until every required result is accepted. Parallel requests may improve utilization or extend individual waits. The relevant comparison is the complete workload under the same quality rule, with daytime interactive work represented if it shares the machine.</p>
+<h2>Try it on your workload</h2>
+<p>Select 100 representative inputs and write the acceptance rule before starting. Record the meter's cumulative kWh, time, battery state where relevant, model artifact, context setting and concurrency. Run the entire pipeline: reading, inference, validation and writing. Record the final meter reading and subtract the starting reading.</p>
+<p>Repeat with the same prompts and a different concurrency setting. Keep a tally of accepted answers, retries, total elapsed minutes and human review minutes. Then measure an equally long idle interval with comparable background applications. This gives you both a whole-system bill and a defensible incremental estimate.</p>
+<p>Calculate a quiet month and a busy month separately. Add a column for hardware cost and support time instead of hiding them inside a watts estimate. If the annual electricity difference is only a few dollars, that alone is a weak reason to replace a working computer.</p>
 <h2>How to decide</h2>
-<p>Use your meter and tariff before extrapolating. Include hardware and maintenance in the purchase decision, even when the incremental electricity bill is small.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Use measured kWh per accepted job for operating comparisons.</li>
+<li>Count idle energy when the machine exists specifically to serve the model.</li>
+<li>Choose a purchase using total ownership cost, quality and deadlines as well as electricity.</li>
+</ul>
+<h2>Run ten workers for about seven cents in tokens</h2>
+<p>Ten workers processing independent records at once on <code>mistralai/mistral-small-24b-instruct-2501</code> cost about seven cents in tokens on TrustedRouter for this workload. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.0528 per million input and $0.0844 per million output tokens. Give each worker a total budget of 100,000 input and 20,000 output tokens across its records: ten workers use one million input and 200,000 output. Cost = 1 × $0.0528 + 0.2 × $0.0844 = $0.06968, about seven cents.</p>
+<p>On one local GPU, these workers share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent requests can run at the same time for the same token bill as sequential execution. Compare this bill with measured energy for equally useful results, score accuracy on both paths and include retries in each budget.</p>
+<p>Prices change; check <a href="/models">current prices</a>, use <a href="/docs/simple-start">the API quickstart</a> and <a href="/docs/agent-setup">agent setup</a>, and review <a href="/private-llm-api">private API options</a> for approved records. An existing local machine remains attractive for offline work and workloads it already completes economically.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/">NVIDIA RTX 5090 reference power specifications</a></li>
+<li><a href="https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/">NVIDIA RTX 5080 reference power specifications</a></li>
+<li><a href="https://www.eia.gov/electricity/annual/table.php?t=epa_02_07.html">EIA Electric Power Annual: 2025 electricity prices by sector</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>
