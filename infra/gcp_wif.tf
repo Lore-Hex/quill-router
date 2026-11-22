@@ -93,6 +93,11 @@ locals {
     # does to the same groups what a deploy already does with this identity
     # (resize, delete-instances, DNS drain), from the same repository's main.
     "${local.github_owner}/quill-cloud-proxy/.github/workflows/relieve-mig-stockout.yml@refs/heads/main",
+    # Operator-dispatched only. The Azure gateway fleet rollout holds the
+    # shared two-repository journal's azure lease, as the GCP rollout above
+    # holds gcp, and reconciles the Sydney origin's Cloud DNS record. Its
+    # Azure identity is quill-cloud-proxy tools/azure-gateway-rollout-identity.
+    "${local.github_owner}/quill-cloud-proxy/.github/workflows/rollout-azure-gateway.yml@refs/heads/main",
   ]
 
   # The admitted workflows of each repository: the union of its tier lists.
