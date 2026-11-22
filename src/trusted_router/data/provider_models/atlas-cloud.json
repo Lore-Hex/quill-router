@@ -1658,7 +1658,9 @@
       "input_token_price_per_m": 295000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-11-22"
+      "missing_since": "2026-11-22",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMax M2.7",
@@ -6397,6 +6399,6 @@
       "cached_input_token_price_per_m": 150000
     }
   ],
-  "generated_at": "2026-11-22T02:28:31Z",
+  "generated_at": "2026-11-22T04:27:58Z",
   "model_count": 204
 }

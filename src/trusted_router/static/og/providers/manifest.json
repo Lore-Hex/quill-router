@@ -73,10 +73,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 39,
+    "route_count": 38,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 77,
+    "model_count": 76,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 153,
+    "route_count": 151,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
