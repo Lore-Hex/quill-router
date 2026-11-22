@@ -85,11 +85,10 @@ CHARGE_WITHOUT_HEARTBEAT = "charge_without_heartbeat"
 #: for a first heartbeat, which the deadline has to stay clear of.
 SLOW_FIRST_HEARTBEAT_SHARE = 3
 
+#: What a field that is not on the row reads as: never a value the rule
+#: accepts. Every read below names its field outright; the modules a
+#: request imports use no reflection by a computed name.
 _MISSING = object()
-
-
-def _field(authorization: Any, name: str) -> Any:
-    return getattr(authorization, name, _MISSING)
 
 
 def class_reason(authorization: Any) -> str | None:
@@ -105,22 +104,22 @@ def class_reason(authorization: Any) -> str | None:
     heartbeat is checked against. Anything missing, of another type or of
     another value is malformed, and the hold is kept.
     """
-    if _field(authorization, "stage_d_reason") != "ok":
+    if getattr(authorization, "stage_d_reason", _MISSING) != "ok":
         return OTHER_CLASS
-    usage_type = _field(authorization, "usage_type")
-    boot_kid = _field(authorization, "stage_d_boot_kid")
-    snapshot = _field(authorization, "pricing_snapshot")
+    usage_type = getattr(authorization, "usage_type", _MISSING)
+    boot_kid = getattr(authorization, "stage_d_boot_kid", _MISSING)
+    snapshot = getattr(authorization, "pricing_snapshot", _MISSING)
     if (
-        _field(authorization, "settlement") != "local"
+        getattr(authorization, "settlement", _MISSING) != "local"
         or str(getattr(usage_type, "value", usage_type)) != "Credits"
-        or _field(authorization, "native_batch_eligible") is not False
-        or _field(authorization, "video_pricing_snapshot") is not None
+        or getattr(authorization, "native_batch_eligible", _MISSING) is not False
+        or getattr(authorization, "video_pricing_snapshot", _MISSING) is not None
         or not isinstance(boot_kid, str)
         or not boot_kid
         or not isinstance(snapshot, str)
-        or not _whole_number(_field(authorization, "stage_d_prompt_tokens"))
-        or not _whole_number(_field(authorization, "stage_d_max_output_tokens"))
-        or not _whole_number(_field(authorization, "estimated_microdollars"))
+        or not _whole_number(getattr(authorization, "stage_d_prompt_tokens", _MISSING))
+        or not _whole_number(getattr(authorization, "stage_d_max_output_tokens", _MISSING))
+        or not _whole_number(getattr(authorization, "estimated_microdollars", _MISSING))
     ):
         return MALFORMED
     try:
@@ -136,10 +135,13 @@ def start_reason(authorization: Any) -> str | None:
     nothing else a heartbeat writes is there. A sequence above zero, or any
     of those written, is a started stream; a sequence that is missing or not
     a whole number is malformed."""
-    seq = _field(authorization, "heartbeat_seq")
-    written = any(
-        _field(authorization, name) is not None
-        for name in ("started_at", "heartbeat_at", "heartbeat_hash", "delivered_usage", "selected_endpoint_id")
+    seq = getattr(authorization, "heartbeat_seq", _MISSING)
+    written = (
+        getattr(authorization, "started_at", _MISSING) is not None
+        or getattr(authorization, "heartbeat_at", _MISSING) is not None
+        or getattr(authorization, "heartbeat_hash", _MISSING) is not None
+        or getattr(authorization, "delivered_usage", _MISSING) is not None
+        or getattr(authorization, "selected_endpoint_id", _MISSING) is not None
     )
     if not _whole_number(seq):
         return STARTED if written else MALFORMED
@@ -158,7 +160,7 @@ def never_started(authorization: Any) -> bool:
 
 def age_seconds(authorization: Any, now: datetime) -> float | None:
     """Seconds since the row's creation, or None when it cannot be read."""
-    created = _instant(_field(authorization, "created_at"))
+    created = _instant(getattr(authorization, "created_at", _MISSING))
     if created is None:
         return None
     return (_utc(now) - created).total_seconds()
@@ -175,8 +177,8 @@ def declared_before(authorization: Any, declared_since: Callable[[str], Any]) ->
     does, and it can be read at any later moment: a registration that
     withdraws the declaration clears the time, and one that restores it
     starts from then, which is after the row."""
-    created = _instant(_field(authorization, "created_at"))
-    boot_kid = _field(authorization, "stage_d_boot_kid")
+    created = _instant(getattr(authorization, "created_at", _MISSING))
+    boot_kid = getattr(authorization, "stage_d_boot_kid", _MISSING)
     if created is None or not isinstance(boot_kid, str) or not boot_kid:
         return False
     since = _instant(declared_since(boot_kid))
@@ -203,9 +205,9 @@ def ineligibility(
     """
     if authorization is None:
         return NOT_TYPED
-    if _field(authorization, "settled") is not False:
+    if getattr(authorization, "settled", _MISSING) is not False:
         return TERMINAL
-    if _field(authorization, "credit_reservation_id") != reservation_id:
+    if getattr(authorization, "credit_reservation_id", _MISSING) != reservation_id:
         return BINDING
     reason = class_reason(authorization) or start_reason(authorization)
     if reason is not None:
