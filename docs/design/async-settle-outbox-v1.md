@@ -917,16 +917,38 @@ default, and the way back, is the original 2 s.
 - The gateway (quill-cloud-proxy, `enclave-go/internal/trustedrouter`): the
   sync call runs inside `Settle`'s 28 s settlement budget with no shorter
   per-attempt deadline, under an HTTP client allowing 25 s to the response
-  header. Three sync attempts of 5 s with their backoff take at most about
-  16 s, so even after three async attempts of 2 s the legacy fallback keeps
-  at least one full attempt inside the 28 s. The enclave's terminal paths
-  that wait for the settle before their final event bound the whole settle
-  by their own 2 s (`QUILL_SETTLE_BEFORE_TERMINAL_MS`); there this budget does
-  not lengthen the client's wait, and a settle the enclave stops waiting for
-  goes to its retry queue with the first retry held 23 s, which already
-  allows for the router finishing the abandoned request.
+  header. Nominally, three async attempts of 2 s, three sync attempts of 5 s
+  and their backoff take about 22.5 s, leaving about 5.5 s for the legacy
+  fallback. That is nominal timing, not a guaranteed maximum: an attempt
+  whose response headers are lost can wait up to 25 s and leave the
+  fallback only a few seconds, and a server worker can keep running past its
+  route deadline.
+- Overlap on the enclave's terminal paths: paths that wait for the settle
+  before their final event (streaming terminals, usage responses with a
+  promised price) bound the whole settle by their own 2 s
+  (`QUILL_SETTLE_BEFORE_TERMINAL_MS`), so there this budget does not lengthen
+  the client's wait. The enclave intends to hold its first retry of such an
+  abandoned settle 23 s, but today the sync client reports its own deadline
+  as a network error (`async_settlement.go`), which the hold does not
+  recognise, so the retry can start at once, on the legacy route, while the
+  router is still finishing the abandoned snapshot apply. This overlap
+  existed with the 2 s budget; the 5 s budget lengthens its window. It is
+  money-safe: both paths finalize the same authorization and reservation,
+  the reservation claim requires `settled=false` so a losing attempt books
+  no counters, and the outbox identity and payload-hash checks are
+  unchanged. The cost is duplicated work and contention on the same rows.
+  Recognising the deadline error in the gateway, so the 23 s hold applies, is
+  a gateway follow-up.
+- Capacity: a synchronous settle can now hold a Cloud Run request slot for up
+  to 5 s instead of 2 s. During a burst, one workspace's synchronous settles
+  can occupy more of an instance's 16 slots for longer; the workspace billing
+  gate bounds waiters, not active transactions, and reserves no slots for
+  other workspaces. Fewer failed attempts and fallbacks offset part of this;
+  that offset is not measured.
 - Unchanged: async-v1 acceptance completes within 2 s and its durable
-  handoff within 500 ms; no response claims acceptance or a final settlement
+  handoff within 500 ms (except in the existing memory handoff mode that
+  rollout selects, which acknowledges an in-memory entry and writes it in the
+  background; this change does not alter that mode); no response claims acceptance or a final settlement
   without a committed synchronous settle or a confirmed pending intent; the
   route, the handler and the frozen apply are the same code; D3 and the
   drain's health limit (p95 age at most 5 s) are untouched.
