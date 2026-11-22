@@ -307,24 +307,26 @@ two statements, so none of them relies on what an earlier one saw.
 | keys | a `topK` sketch with 10,000 counters |
 | one key's values | a `topK` sketch with 5,000 counters |
 | candidates | two `topK` sketches of 6,000 counters and one distinct-count sketch, with no `GROUP BY` |
-| totals | one group per candidate and stored usage type, for at most 4,000 candidates named in the statement |
+| totals | one group per candidate, for at most 4,000 candidates named in the statement |
 | histogram | at most 52 groups, each with the page's bounded elapsed-time histogram |
 
 A breakdown is the last three. The candidates read names, by a 64-bit hash,
 the 2,000 values with the most cost and the 2,000 with the most generations,
 and estimates how many distinct values the key has. The totals read returns
-the text, generations and cost of those candidates and of no other value. The
-50 that keep a row are chosen from them by credit cost, then generations, then
-text, which is the order the in-memory store uses. The histogram read then
-totals those 50, every other value as one row, and untagged generations as
-one row.
+the text, generations and credit cost of those candidates and of no other
+value. The 50 that keep a row are chosen from them by credit cost, then
+generations, then text, which is the order the in-memory store uses. The
+histogram read then totals those 50, every other value as one row, and
+untagged generations as one row.
 
-Credits and BYOK are told apart by the caller, with `UsageType.coerce`, from
-the stored usage type that the totals and histogram statements group by. No
-statement is handed a list of usage types that an earlier one saw, so a
-tenant's first BYOK generation arriving between two reads is counted as BYOK.
+Credits and BYOK are told apart inside each statement that sums cost, by one
+fixed expression that reproduces `UsageType.coerce` (`byok` in any case, with
+any whitespace `str.strip` removes around it; everything else is Credits). A
+statement therefore has two cost classes whatever spellings are stored, and
+none is handed a list of usage types that an earlier one saw, so a tenant's
+first BYOK generation arriving between two reads is counted as BYOK.
 
-The bounds have four visible consequences:
+The bounds have five visible consequences:
 
 - More keys or values than a sketch counts exactly. The list is then
   approximately the most frequent ones, with counts that can be too high, and
@@ -343,12 +345,19 @@ The bounds have four visible consequences:
   When the page did not ask for a key, the three most used keys are tried in
   turn, so a request id on every request does not make the first view a
   refusal.
-- Approximate ranking. A key with fewer than 2,000 distinct values is ranked
-  exactly, ties included, and both stores choose the same 50. With 2,000 or
-  more, ClickHouse ranks the heaviest values its sketches found: the totals of
-  every row are still exact, but a value that belongs among the 50 can be in
-  the Other row instead, and the panel says the rows are approximate. The
-  in-memory store always ranks every value.
+- Approximate ranking. The response says the ranking is approximate in two
+  cases. One is a key with 2,000 or more distinct values, where ClickHouse
+  ranks the heaviest values its sketches found and not every value. The other
+  is read off the final rows by both stores: the Other row holds more credit
+  cost (then generations) than the smallest named row. No single folded value
+  can outweigh the row that sums them, so while Other is no larger, no value
+  in it outweighs a named row; once it is larger, a value that grew or first
+  appeared after the 50 were chosen may belong among them. That rule is conservative:
+  an Other row made of many small values is reported the same way although
+  the ranking is right, and the page says so. Every row's totals are exact
+  either way, and the rows are ordered by the totals they show.
+- The Other row has no count of the values in it. By the time it is totalled,
+  values may have arrived that no earlier read counted.
 - Medians. The median is generation time as the server measured it
   (`elapsed_milliseconds`), not client-observed latency. It has the definition
   of the reliability panel's server median and is computed by the same code
@@ -366,9 +375,11 @@ Totals and medians of one breakdown come from one statement, so they describe
 one snapshot. Which values keep a row was decided by the two statements before
 it: a value that first appears after them is counted in the Other row.
 
-A value is identified by two independent 64-bit hashes of its text. Two values
-of one key that agreed in both would be shown as one row under the smaller
-text; with at most 4,000 candidates that takes a collision in 128 bits.
+A value is identified by two 64-bit hashes of its text. The candidates are
+named by the first alone. Two values that collide in it are both read by the
+totals statement, which splits them again by the second hash, so each is
+ranked on its own. Two values of one key that collided in both would have
+their requests and cost attributed to one row, under the smaller text.
 
 The in-memory store computes the same answers in Python.
 `tests/test_activity_tags.py` holds the two to what ClickHouse 26.8 returned
@@ -381,15 +392,15 @@ Measured on ClickHouse 26.8 with the control reader's limits (1 GiB of memory,
 30 seconds) and synthetic tenants of one to twelve million generations in 90
 days: a breakdown of 200 values, a key with 495,000 values, 50,000 values of
 256 bytes and 100,000 values of 1 KiB stay under 250 MiB a statement,
-generation times that fill every slot of every group under 450 MiB, and a key
+generation times that fill every slot of every group under 300 MiB, and a key
 with a million or with twelve million values is refused after two statements
-in about 100 MiB.
+in under 100 MiB.
 
 What these queries do not bound is the cost of reading the `tags` column under
 `FINAL`, which every tag read pays, the existing activity reads included. It
 grows with the tag text per request and with the number of unmerged parts in
 the range, not with the state above. With about 2 KiB of tags on every request
-(the limit is 4 KiB) a 90-day read peaked near 450 MiB on a merged table and
+(the limit is 4 KiB) a 90-day read peaked near 430 MiB on a merged table and
 ran out of the 1 GiB with merges stopped and some twenty parts in every
 month, where 1 and 7 days still loaded. A read that fails this way is an
 error, never partial totals: the panel says the range could not be loaded and
@@ -398,7 +409,19 @@ that a shorter one may.
 Only completed generations are counted. A request that fails before it
 produces a generation has no row, so the page cannot show errors by tag.
 
-Section 10 applies to these reads:
+Section 10 applies to these reads. What holds, and what does not:
+
+- Tag keys and values from the console do not appear in the browser URL or in
+  browser storage, in request logs, in application logs, or in Sentry.
+- They do appear in ClickHouse's own query log on the analytics servers.
+  ClickHouse records every statement with its parameters substituted, the
+  control reader's profile does not turn that off, and the log is kept for 30
+  days. It is readable only by administrators and lives on the servers that
+  store the `tags` column itself, so it is not a wider exposure than the data
+  at rest, but "never reaches a log" would be false. The same is true of the
+  existing `GET /v1/activity` tag filter.
+
+How the first holds:
 
 - Tag keys and values reach the control plane in a JSON request body, never in
   a URL. A query string is written to the load balancer's request log and
@@ -410,7 +433,7 @@ Section 10 applies to these reads:
   INFO, Sentry's HTTP client integration records its query string in a span
   and a breadcrumb, and an HTTP status error carries it in its message. The
   console's tag reads therefore send the statement and every bound value as
-  form fields in the request body (`bound_values_stay_private`), which the
+  form fields in the request body (`bound_values_in_the_body`), which the
   ClickHouse HTTP interface reads the same way, so the URL carries only the
   database name. A Sentry scope with no integrations and a status error
   re-raised without its URL remain as a second line. The `GET /v1/activity`
@@ -419,6 +442,11 @@ Section 10 applies to these reads:
   in line is a follow-up.
 - The page writes tag text with `textContent` and template escaping only,
   never as markup or as an attribute.
+
+Follow-up: mask or exclude tag literals in the ClickHouse query log, with
+server-side masking rules or a per-profile logging setting. That is node
+configuration across three clouds, and it applies equally to the existing
+`GET /v1/activity` tag filter.
 
 ## 7. Broadcast mapping
 
