@@ -623,9 +623,11 @@ _WINDOW_BUMP_SQL = (
 )
 
 # The common settle path has already-current window boundaries. Keep those
-# boundary columns out of its SET list so Spanner does not take exclusive cell
-# locks on values that did not change. The guarded UPDATE below falls back to
-# _WINDOW_BUMP_SQL whenever any boundary needs its lazy roll.
+# boundary columns out of its SET list so it writes only the cells that change.
+# (Until the releases carried EXCLUSIVE_SCAN_HINT this also kept exclusive cell
+# locks off them; the hinted scan now takes every cell it reads exclusively, the
+# boundary columns in its predicate included.) The guarded UPDATE below falls
+# back to _WINDOW_BUMP_SQL whenever any boundary needs its lazy roll.
 _CURRENT_WINDOW_BUMP_SQL = (
     ", day_usage = COALESCE(day_usage, 0) + @day_wamt"
     ", week_usage = COALESCE(week_usage, 0) + @week_wamt"

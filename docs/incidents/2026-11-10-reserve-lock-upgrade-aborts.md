@@ -187,34 +187,61 @@ frozen apply and the settle-outbox drain's apply also run), the reaper
 (`tr_reap_snapshot_finalize`), the legacy settle (`tr_settle`, `tr_refund`)
 and the leased settle's key release (`tr_settle_leased`).
 
-What is locked exclusively is the one `tr_credit_balance` row and the one
-`tr_key_limit` row the reservation recorded, each named by its full primary
-key. Neither table has a secondary index. The folded release's subquery
-still reads the workspace's payment events under a shared lock.
+In an ordinary release, what is locked exclusively is the one
+`tr_credit_balance` row and the one `tr_key_limit` row the reservation
+recorded, each named by its full primary key. Neither table has a secondary
+index. The hint takes every cell its statement scans exclusively, not only
+the cells it writes: the current-window key release also locks the three
+window-start columns its predicate reads, and a hinted statement that finds
+no row can take a point or gap lock on the key it looked up. Two cases lock
+more than those two rows:
+
+- Usage booked against a zero key hold whose recorded key shard has no row
+  (`_release_key_or_skip_deleted` in `storage_gcp_authorize.py`): the
+  release on the recorded shard matches nothing and keeps its lock on that
+  key until the transaction ends, and the usage is then booked on shard zero
+  of the same key, a second key row, with the same hinted statement.
+- A release that leaves its credit row negative, or frees money on a row
+  that is marked in debt or was negative, goes on to the workspace's other
+  credit rows to cover, mark or repay them (`storage_gcp_credit_debt.py`),
+  and money a release frees can go to the workspace's unrecovered payment
+  claims, which reads and writes its `tr_trust_event` rows. Those statements
+  are unchanged and unhinted.
+
+The folded release's subquery still reads the workspace's payment events
+under a shared lock.
 
 The money is as it was: the same predicates, the same values and the same
 row-count guards on every release. Only the lock mode of each transaction's
 first touch of the two rows changes.
 
-Lock order is unchanged and there is one: credit, then key. An authorize
-takes the credit row and then, for a capped key, the key row; every release
-takes the credit row and then the key row. This change adds no lock request
-and moves none. A release asks for the same rows in the same order as
-before; only its first request on each counter row is exclusive where it
-was shared. Whatever such a request waits behind, the same transaction
-waited behind before, later, at its upgrade and holding more. So it adds no
-wait in a new direction, and it removes the cycle that was the incident: two
-holders of the shared lock each waiting to upgrade. Against the other
-writers of these rows:
+Within an authorize and within a release the order is unchanged: credit,
+then key. An authorize takes the credit row and then, for a capped key, the
+key row; every release takes its credit row and then its key row (in the
+removed-shard case above, the recorded key shard and then shard zero), and
+the debt and claim steps above follow the credit release, as before. That is
+not one order for every billing transaction. Rebalances, payments and
+adverse trust events, credit transfers, credit and key shard administration
+and the Go fast path each take their rows in an order of their own, and
+wound-wait ends a cycle among them by aborting the younger transaction, as
+it did before. This change requests no new row and moves no request to
+another row. A release asks for the same rows in the same order as before;
+only its first request on each counter row is exclusive where it was shared
+(in the folded batch that first request is the lock statement, immediately
+before the release). Whatever such a request waits behind, the same
+transaction waited behind before, later, at its upgrade and holding more.
+So it adds no wait in a new direction, and it removes the cycle that was the
+incident: two holders of the shared lock each waiting to upgrade. Against
+the other writers of these rows:
 
 - Payments, grants, auto-refill and adverse trust events write the
   workspace's `tr_trust_event` rows and then its credit rows. The folded
   release takes the credit row and then reads the events. Those opposite
   orders existed before, with the same modes; wound-wait aborts the younger
   of the two and it retries.
-- A release on a workspace in debt reads the workspace's other credit rows
-  after its own; a rebalance takes the donor row and then the target. As
-  before.
+- A rebalance takes the donor row and then the target; credit transfers and
+  shard administration write several counter rows each. All of them are
+  unhinted and unchanged here.
 - The reaper issues the sequential release: credit, then key.
 - The Go fast path's lease grants and returns take their lease rows and then
   credit rows, unhinted. They never lock `tr_key_limit` (the edge reads it
@@ -239,7 +266,11 @@ What changes besides the aborts:
   exists holds that key's lock through the classification reads and the
   commit; it follows a key deletion or reshard and is rare.
 - The lock statement writes two cells back unchanged in the transaction
-  that then writes them again.
+  that then writes them again. Neither table has an `ON UPDATE` column
+  expression, so nothing else moves with it: the commit-timestamp columns
+  (`updated_at`, `source_updated_at`) change only when a statement sets
+  them, and this one does not; `reserved` and `total_usage` keep their
+  values.
 
 There is no flag, as on November 10. The way back is to revert the change.
 

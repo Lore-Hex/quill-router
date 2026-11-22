@@ -2168,8 +2168,12 @@ def typed_finalize_atomic(
                 shard=res["credit_shard"],
             ))
             # The key's release in both window forms: the current one, which
-            # leaves the boundary columns unlocked (#1083), and the rolling one
-            # for a key with a window to roll forward. Exactly one matches.
+            # leaves the boundary columns out of its SET list (#1083), and the
+            # rolling one for a key with a window to roll forward. Exactly one
+            # matches. Both are hinted, so each takes the cells it scans
+            # exclusively, the boundary columns its predicate reads included,
+            # and the form that matches nothing keeps its lock (on the row, or
+            # on its key if the row is missing) until the transaction ends.
             for windows in ("current", "stale"):
                 statements.append(release_key_statement(
                     pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
