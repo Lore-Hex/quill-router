@@ -41,6 +41,16 @@
   {% if model.id == 'trustedrouter/trusted' %}
   <p class="md-note"><strong>Trusted.</strong> Confidential inference only through operators selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
   {% endif %}
+  {% if model.id == 'deepseek/deepseek-v4-1-flash-uncensored' %}
+  <div id="first-request">
+    <p>Model ID <code>{{ model.id }}</code></p>
+    {% set first_curl %}curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"{{ model.id }}","messages":[{"role":"user","content":"Say hello."}]}'{% endset %}
+    {{ quickstart_box(curl=first_curl, id_prefix="first-request", foot_text="Set TRUSTEDROUTER_API_KEY before running this request.") }}
+  </div>
+  {% endif %}
   <div class="md-stats">
     {% if page.lowest_input %}
     <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ offer.input if offer else page.lowest_input }}</strong></div>

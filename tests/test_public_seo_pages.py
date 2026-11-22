@@ -1916,7 +1916,7 @@ def test_exact_intent_search_landings_are_message_matched(client: TestClient) ->
             "Start building",
         ),
         "/private-llm-api": (
-            'A private LLM API where "private" means cryptographically verified.',
+            "Make your first confidential API request",
             "Create key and test privately",
         ),
         "/llm-failover": (
@@ -2360,3 +2360,10 @@ def test_openrouter_catalog_omits_measurement_columns_without_changing_other_pag
     other = client.get("/litellm-alternative")
     assert other.status_code == 200
     assert "Measured route</th>" in other.text
+
+
+def test_legacy_routing_guide_preserves_search_query(client: TestClient) -> None:
+    response = client.get("/docs/routing?ref=article", follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == "/docs/provider-routing?ref=article"
+    assert client.get(response.headers["location"]).status_code == 200
