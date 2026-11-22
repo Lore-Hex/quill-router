@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from trusted_router.content.local_llm_guides import LOCAL_GUIDES, LocalGuide
-
 
 @dataclass(frozen=True)
 class BlogPost:
@@ -51,40 +49,7 @@ FEATURED_SLUGS: tuple[str, ...] = (
     "they-are-still-training-on-your-data",
 )
 
-def _local_guide_post(index: int, guide: LocalGuide) -> BlogPost:
-    hub = LOCAL_GUIDES[0]
-    destinations: tuple[LocalGuide, ...]
-    if guide == hub:
-        destinations = LOCAL_GUIDES[1:]
-    else:
-        destinations = (hub, LOCAL_GUIDES[index + 1] if index + 1 < len(LOCAL_GUIDES) else LOCAL_GUIDES[13])
-    links = "".join(f'<li><a href="/blog/{item.slug}">{item.title}</a></li>' for item in destinations)
-    return BlogPost(
-        slug=guide.slug,
-        title=guide.title,
-        description=guide.introduction,
-        published_date="2026-11-22",
-        source_label="TrustedRouter",
-        source_url=None,
-        body_html=f"""
-<p>{guide.introduction}</p>
-<h2>Try it on your workload</h2>
-<p>{guide.exercise}</p>
-<h2>How to decide</h2>
-<p>{guide.decision}</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
-<h2>Related local LLM decisions</h2><ul>{links}</ul>
-""",
-    )
-
-
 BLOG_POSTS: tuple[BlogPost, ...] = (
-    *(_local_guide_post(index, guide) for index, guide in enumerate(LOCAL_GUIDES)),
     BlogPost(
         slug='private-deepseek-api-evaluation-checklist',
         title='How to evaluate a private DeepSeek API',
