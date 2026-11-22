@@ -137,9 +137,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 722500,
+      "input_token_price_per_m": 610000,
       "output_token_price_per_m": 3550000,
-      "cached_input_token_price_per_m": 192500
+      "cached_input_token_price_per_m": 170000
     },
     {
       "display_name": "GLM 5.2",
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-22T08:19:18Z",
+  "generated_at": "2026-11-22T09:03:06Z",
   "model_count": 8
 }
