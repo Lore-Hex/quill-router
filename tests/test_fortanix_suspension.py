@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from tests.catalog_vehicles import registry_endpoints
 from tests.lifecycle_clock import catalog_predates
 from trusted_router import fortanix_launch
-from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog import MODEL_ENDPOINTS, endpoints_for_model
 from trusted_router.config import Settings
 from trusted_router.fortanix_launch import (
     COMPARISON_MODEL_ID,
@@ -119,3 +119,19 @@ def test_other_glm_53_flash_routes_are_unaffected(monkeypatch: pytest.MonkeyPatc
     after = {endpoint.id for endpoint in endpoints_for_model(COMPARISON_MODEL_ID)}
     assert before and before == after
     assert all(not endpoint_id.endswith("@fortanix/prepaid") for endpoint_id in after)
+
+
+@pytest.mark.parametrize("at, exempt", [(_BEFORE, False), (_AT, True)])
+def test_price_audit_accepts_a_missing_route_only_during_the_suspension(
+    monkeypatch: pytest.MonkeyPatch, at, exempt: bool
+) -> None:
+    from scripts.check_price_coverage import audit
+
+    endpoint_id = f"{MODEL_ID}@fortanix/prepaid"
+    if endpoint_id in MODEL_ENDPOINTS:
+        monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    _pin(monkeypatch, at)
+    _, info, failures = audit(max_age_days=14, now=at, check_model_discovery=False)
+    fortanix_failures = [failure for failure in failures if failure.startswith("fortanix:")]
+    assert (fortanix_failures == []) is exempt
+    assert any(line.startswith("fortanix: GLM-5.3-Flash suspended") for line in info) is exempt
