@@ -113,6 +113,7 @@ from trusted_router.storage_models import (
     WalletChallenge,
     Workspace,
     _is_expired,
+    boot_with_heartbeat_history,
     federated_api_key_from_record,
     federated_workspace_from_record,
     iso_now,
@@ -431,6 +432,8 @@ class InMemoryStore:
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
+            # This store keeps no commit time: a run's start is never carried.
+            record = boot_with_heartbeat_history(existing, record, existing_written_at=None)
             self.gateway_boots[record.kid] = record
             return record
 

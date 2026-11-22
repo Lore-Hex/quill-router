@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from itertools import chain
 from typing import Any, cast
 
+from trusted_router import unstarted_release
 from trusted_router.config import Settings
 from trusted_router.services.settle_outbox_apply import (
     _ACTIVITY_PARK_NOTE,
@@ -45,6 +46,10 @@ _REAP_BURST_ALERT_THRESHOLD = 20
 # infra/hold_release_alerts.tf reads this name, and a test holds the places
 # it is written equal.
 _RELEASED_EXPIRED_METRIC = "gateway_hold_released_expired_total"
+# The same for the early rule (trusted_router.unstarted_release): the holds
+# of heartbeated streams that never started, given back minutes after the
+# authorization.
+_RELEASED_UNSTARTED_METRIC = "gateway_hold_released_unstarted_stream_total"
 
 # Wall-clock budget for the row loop, below the 300s Cloud Run / Cloud
 # Scheduler request deadline so a slow batch returns a partial result instead
@@ -234,11 +239,155 @@ def _released_at_expiry(reap_result: ReapPassResult) -> int:
     return max(0, int(reap_result.count) - int(reap_result.snapshot_bookings))
 
 
+def _line(level: int, message: str, *args: Any) -> None:
+    """A line about work that has already committed, best effort: a handler
+    that raises must not turn a finished pass into a failed one and lose
+    its answer and the scheduler's heartbeat."""
+    try:
+        logger.log(level, message, *args)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _refund_released_leases(authorization_ids: tuple[str, ...]) -> tuple[int, int]:
+    """The lease's hold of each leased row the early rule released, given
+    back now by the refund the gateway never sent, best effort: (sent,
+    failed). The row is terminal already, so no heartbeat and no settle of
+    it is forwarded to the lease again, and a hold whose refund does not
+    land ends uncharged at its end of life, as every such hold did before
+    (docs/design/fast-admission-streams.md section 13.4). Nothing records
+    that a refund is still owed: if this process ends between the row's
+    release and the refund, the owner's end-of-life release is the
+    backstop, and the only one."""
+    if not authorization_ids:
+        return 0, 0
+    from trusted_router.config import get_settings
+    from trusted_router.routes.internal.gateway import _fastpath_front_door
+    from trusted_router.services import fastpath_frontdoor
+
+    sent = failed = 0
+    try:
+        client = _fastpath_front_door(get_settings())
+    except Exception as exc:  # noqa: BLE001 - the hold then ends with its lease, as before
+        _line(logging.WARNING, "gateway.unstarted_release front door unavailable error_class=%s", type(exc).__name__)
+        client = None
+    for authorization_id in authorization_ids:
+        try:
+            authorization = STORE.get_gateway_authorization(authorization_id)
+            envelope = getattr(authorization, "fastpath_envelope", None)
+            if client is None or authorization is None or not envelope:
+                failed += 1
+                continue
+            terminal = client.refund(
+                envelope=str(envelope),
+                money={"charge": 0, "estimate": int(authorization.estimated_microdollars)},
+            )
+        except Exception as exc:  # noqa: BLE001 - one lease's refund must not end the pass
+            _line(logging.WARNING, "gateway.unstarted_release lease refund failed error_class=%s", type(exc).__name__)
+            failed += 1
+            continue
+        if terminal.status in {fastpath_frontdoor.WON, fastpath_frontdoor.SETTLED, fastpath_frontdoor.RECORDED}:
+            sent += 1
+        else:
+            _line(logging.WARNING, "gateway.unstarted_release lease refund status=%s", terminal.status)
+            failed += 1
+    return sent, failed
+
+
+def release_unstarted_holds(now: dt.datetime, *, mode: str, after_seconds: int, limit: int = 200) -> Any | None:
+    """The early rule's pass, after the reaper's (docs/design/
+    fast-admission-streams.md section 13): in "on" it releases, in "log" it
+    only reports, on read-only snapshots, and in "off", or on a store
+    without the capability, it issues no statement and writes no line.
+    Whatever goes wrong in it ends this pass of the rule alone: the drain
+    and the reaper are not its to fail.
+
+    Everything after the store's pass is best effort, step by step. The
+    pass has committed what it released by then, so neither a lease's
+    refund nor a line a handler refuses may lose the pass's answer, the
+    count of what it released, or the drain's own answer."""
+    if mode not in {unstarted_release.MODE_LOG, unstarted_release.MODE_ON}:
+        return None
+    releaser = getattr(STORE, "release_unstarted_holds_result", None)
+    if not callable(releaser):
+        return None
+    try:
+        result = releaser(
+            now=now,
+            limit=limit,
+            after_seconds=int(after_seconds),
+            log_only=mode != unstarted_release.MODE_ON,
+        )
+    except Exception as exc:  # noqa: BLE001 - the early rule must never fail the drain
+        # The class only: an exception's text can carry a row's identifiers.
+        _line(logging.ERROR, "gateway.unstarted_release failed mode=%s error_class=%s", mode, type(exc).__name__)
+        unstarted_release.observe_pass(mode=mode, errors=0, truncated=False, unguarded=False, failed=True)
+        return None
+    lease_refunds = lease_refund_failures = 0
+    try:
+        lease_refunds, lease_refund_failures = _refund_released_leases(tuple(result.leased))
+    except Exception as exc:  # noqa: BLE001 - the rows are released; their leases' holds end with the leases
+        lease_refund_failures = len(result.leased)
+        _line(logging.WARNING, "gateway.unstarted_release lease refunds failed error_class=%s", type(exc).__name__)
+    try:
+        skipped = ",".join(f"{reason}:{count}" for reason, count in result.skipped) or "none"
+        _line(
+            logging.INFO,
+            "gateway.unstarted_release mode=%s rule=%s after_seconds=%s scanned=%s released=%s "
+            "released_hold_micro=%s would_release=%s would_release_hold_micro=%s "
+            "would_release_leased=%s guarded=%s guard_lost=%s errors=%s unguarded=%s truncated=%s "
+            "skipped=%s lease_refunds=%s lease_refund_failures=%s",
+            mode,
+            unstarted_release.RULE,
+            int(after_seconds),
+            result.scanned,
+            result.released,
+            result.released_hold_micro,
+            result.would_release,
+            result.would_release_hold_micro,
+            result.would_release_leased,
+            result.guarded,
+            result.guard_lost,
+            result.errors,
+            str(bool(result.unguarded)).lower(),
+            str(bool(result.truncated)).lower(),
+            skipped,
+            lease_refunds,
+            lease_refund_failures,
+        )
+        if result.truncated:
+            # The scan filled its limit: more unsettled reservations of any
+            # class were in its window than one pass examines. It read the
+            # oldest; the rest are read by a later pass once those have left
+            # the window, or, if as many keep crossing, are left to the reaper.
+            _line(logging.WARNING, "gateway.unstarted_release scan truncated scanned=%s limit=%s", result.scanned, limit)
+    except Exception:  # noqa: BLE001, S110 - a result that cannot be rendered is still the pass's result
+        pass
+    # A pass that did not examine every row it was meant to is an
+    # observation that did not complete: counted for the gate that turns
+    # the rule on (docs/runbook.md). Neither it nor the release counter
+    # raises.
+    try:
+        unstarted_release.observe_pass(
+            mode=mode, errors=result.errors, truncated=result.truncated, unguarded=result.unguarded,
+        )
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        released = int(result.released)
+    except Exception:  # noqa: BLE001
+        released = 0
+    _count_released_holds(_RELEASED_UNSTARTED_METRIC, released)
+    return result
+
+
 def drain_settle_outbox(
     limit: int,
     *,
     reap_snapshot_booking_enabled: bool = False,
     settings: Settings | None = None,
+    unstarted_release_mode: str = "off",
+    unstarted_release_seconds: int = unstarted_release.DEFAULT_AFTER_SECONDS,
 ) -> dict[str, Any]:
     if settings is not None and settings.settle_outbox_fast_drain_enabled:
         from trusted_router.services.settle_outbox_worker import drain_pass
@@ -348,6 +497,9 @@ def drain_settle_outbox(
     except Exception:  # noqa: BLE001
         released_at_expiry = 0
     _count_released_holds(_RELEASED_EXPIRED_METRIC, released_at_expiry)
+    # After the reaper, so a hold that has expired is the reaper's and is
+    # counted under its rule; the early rule sees what is left.
+    release_unstarted_holds(reap_now, mode=unstarted_release_mode, after_seconds=unstarted_release_seconds)
 
     if deferred:
         logger.warning(

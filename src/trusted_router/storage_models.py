@@ -2024,6 +2024,52 @@ class GatewayBoot:
     declares_stream_open_heartbeat: bool = False
     declares_idempotency_key_source: bool = False
     declares_settle_outbox: bool = False
+    # When the unbroken run of registrations that declare usage_heartbeat
+    # began, as the store's own commit time, never a caller's clock. Either
+    # BOOT_DECLARED_AT_ITS_WRITE: the run began with the write that produced
+    # this stored row, so its start is that row's commit timestamp; or an
+    # explicit time: an earlier row's commit timestamp, carried forward by a
+    # later declaring registration. None while the latest registration does
+    # not declare it, or for a record no store has stamped. The early
+    # release of an unstarted hold reads it to know the declaration held
+    # when an authorization was made (trusted_router.unstarted_release).
+    usage_heartbeat_declared_since: str | None = None
+
+
+#: GatewayBoot.usage_heartbeat_declared_since for a run that began with the
+#: stored row's own write.
+BOOT_DECLARED_AT_ITS_WRITE = "at-its-write"
+
+
+def boot_with_heartbeat_history(
+    existing: GatewayBoot | None, merged: GatewayBoot, *, existing_written_at: str | None
+) -> GatewayBoot:
+    """``merged`` (a store's result for one registration) with
+    ``usage_heartbeat_declared_since`` set for that registration. Every
+    store applies it in the transaction that writes the boot, on the
+    ``existing`` row it read there.
+
+    No caller's clock enters it. A registration that does not declare has
+    no start. One that declares after a row that did not (or after none)
+    starts the run with its own write: the marker, which a reader resolves
+    to the commit timestamp of the row it reads. One that declares after a
+    row that declared keeps that row's start: its explicit time, or, when
+    that row carried the marker, ``existing_written_at``, the commit
+    timestamp of that row as this transaction read it. A store that cannot
+    say when it wrote the existing row passes None, and the run starts
+    again: later, never earlier. So the start is never before the commit of
+    the registration that began the unbroken run."""
+    since: str | None = None
+    if merged.declares_usage_heartbeat:
+        carried = (
+            existing.usage_heartbeat_declared_since
+            if existing is not None and existing.declares_usage_heartbeat
+            else None
+        )
+        if carried == BOOT_DECLARED_AT_ITS_WRITE:
+            carried = existing_written_at
+        since = carried or BOOT_DECLARED_AT_ITS_WRITE
+    return dataclasses.replace(merged, usage_heartbeat_declared_since=since)
 
 
 @dataclass(frozen=True)

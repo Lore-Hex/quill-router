@@ -115,7 +115,10 @@ def test_the_worker_keeps_only_a_listed_counter_name() -> None:
     assert settle_drain_observability._COUNTED_METRICS == {
         "key_usage_unbooked_total", "key_usage_shard_fallback_total",
         # A hold released at its expiry with no terminal (tests/test_hold_release_alerts.py).
-        "gateway_hold_released_expired_total"}
+        "gateway_hold_released_expired_total",
+        # The early rule's release, and its two evidence counters (the same file).
+        "gateway_hold_released_unstarted_stream_total", "unstarted_release_contradiction_total",
+        "unstarted_release_observation_failed_total"}
     assert line("key_usage_unbooked_total") == f"metric=key_usage_unbooked_total {plain}"
     for other in ("private-metric", "key_usage_unbooked_total private-suffix",
                   "async_settle_accepted", None, 7, ("key_usage_unbooked_total",),

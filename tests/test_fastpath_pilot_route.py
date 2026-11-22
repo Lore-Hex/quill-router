@@ -6,6 +6,7 @@ records; everything else, and every answer but `admitted`, is today's path."""
 from __future__ import annotations
 
 import base64
+import dataclasses
 import datetime as dt
 import json
 from typing import Any
@@ -22,6 +23,7 @@ from trusted_router.services import fastpath_frontdoor as fd
 from trusted_router.storage import configure_store
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_models import CreditAccount, SettleOutboxRow, Workspace
+from trusted_router.types import UsageType
 
 WORKSPACE = "ws-pilot"
 MODEL = "anthropic/claude-haiku-4.5"
@@ -438,7 +440,11 @@ def test_a_reap_that_lands_before_the_intent_answers_the_refund_and_asks_no_fron
     """The settle read the leased authorization unsettled; the reaper then
     finalized it, expired and holding nothing, before the intent was
     enqueued. The settle answers the stored refund and forwards no charge
-    the records would never show; the drain marks its intent done."""
+    the records would never show. Its charge is lost (the lease's hold ends
+    uncharged), so the drain tells the intent as a lost charge, dead with
+    the alert, as it tells the same case on a synchronous row; it used to
+    mark it done with no signal. Only a row the control plane itself ended
+    is told so: the gateway's own refund is the test below."""
     import datetime as dt
 
     from trusted_router.services import settle_outbox_drain
@@ -472,9 +478,81 @@ def test_a_reap_that_lands_before_the_intent_answers_the_refund_and_asks_no_fron
     monkeypatch.undo()
     row = _pending_intents(database, authorization.id)[0]
     row["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    alerts: list[str] = []
+    monkeypatch.setattr(settle_outbox_drain, "ops_alert", lambda message, **_kwargs: alerts.append(message))
     settle_outbox_drain.drain_settle_outbox(10)
     assert len(door.seen) == doors_before
-    assert _pending_intents(database, authorization.id)[0]["status"] == "done"
+    lost = _pending_intents(database, authorization.id)[0]
+    assert lost["status"] == "dead" and lost["last_error"] == "already_released_free: settle charge was lost"
+    assert [alert.split(" authorization_id=", 1)[0] for alert in alerts] == ["ALERT settle outbox lost charge"]
+
+
+def test_a_settle_that_lost_to_the_gateways_own_refund_is_done_with_no_alert(
+    door: _Door, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ordinary sequence, as it was before the lost-charge line: the
+    settle read the leased authorization unsettled; the gateway's own
+    refund then ended it, through this route, before the settle's intent
+    was enqueued. The settle answers the stored refund; the drain marks its
+    intent done, with no dead letter and no alert, and asks no front door.
+    What tells this from a row the control plane ended is the refund intent
+    the route made durable before it applied the refund."""
+    from trusted_router.services import settle_outbox_apply, settle_outbox_drain
+
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    outbox = gateway.spanner_settle_outbox()
+    refunded: list[str] = []
+
+    class _RefundFirst:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(outbox, name)
+
+        def enqueue(self, row: SettleOutboxRow, **kwargs: Any) -> Any:
+            if row.intent_kind == "settle" and not refunded:
+                refunded.append("refund")
+                answer = gateway._settle_gateway_authorization(
+                    _settle_body(authorized, success=False), success=False, settings=_pilot(),
+                )["data"]
+                assert answer["finalization_outcome"] == "refunded"
+            return outbox.enqueue(row, **kwargs)
+
+    monkeypatch.setattr(gateway, "spanner_settle_outbox", lambda: _RefundFirst())
+    data = gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())["data"]
+    assert refunded == ["refund"], "the gateway's refund ended the leased authorization first"
+    assert [path for path, _sent in door.seen[1:]] == ["/v1/refund"], "the refund asked the door; the settle did not"
+    assert data["already_settled"] is True and data["finalization_outcome"] == "refunded"
+    monkeypatch.undo()
+    intents = {row["intent_kind"]: row for row in _pending_intents(database, authorized["authorization_id"])}
+    assert intents["refund"]["status"] == "done" and intents["settle"]["status"] == "pending"
+    assert int(intents["settle"]["actual_cost_micro"]) > 0
+    intents["settle"]["next_attempt_at"] = "2020-01-01T00:00:00Z"
+    alerts: list[str] = []
+    monkeypatch.setattr(settle_outbox_drain, "ops_alert", lambda message, **_kwargs: alerts.append(message))
+    doors_before = len(door.seen)
+    settle_outbox_drain.drain_settle_outbox(10)
+    assert len(door.seen) == doors_before and alerts == []
+    assert database.settle_outbox[(authorized["authorization_id"], "settle")]["status"] == "done"
+    authorization = store.get_gateway_authorization(authorized["authorization_id"])
+    assert authorization is not None and authorization.finalization_outcome == "refunded"
+    assert _credit(database)["reserved"] == 0 and _credit(database)["total_usage"] == 0
+
+    # The read that tells the two apart failing is the store away: the
+    # intent waits, and is never called a lost charge on a guess.
+    from google.api_core.exceptions import DeadlineExceeded
+
+    def away(_authorization_id: str) -> bool:
+        raise DeadlineExceeded("spanner")
+
+    recorded = outbox.get(authorized["authorization_id"], "refund")
+    assert recorded is not None
+    assert settle_outbox_apply._refund_intent_recorded(authorized["authorization_id"]) is True
+    assert settle_outbox_apply._refund_intent_recorded("gwa-another") is False
+    monkeypatch.setattr(settle_outbox_apply, "_refund_intent_recorded", away)
+    assert settle_outbox_apply._apply_leased(
+        dataclasses.replace(recorded, intent_kind="settle", actual_cost_micro=306), authorization, store,
+        success=True, usage_type=UsageType.CREDITS, generation=None,
+    ) == settle_outbox_apply.ApplyOutcome.PARK_TYPED_UNAVAILABLE
 
 
 def _expiry(row: dict[str, Any]) -> Any:

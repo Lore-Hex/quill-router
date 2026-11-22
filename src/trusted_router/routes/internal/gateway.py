@@ -39,6 +39,7 @@ from trusted_router import openai_service_tiers as _openai_service_tiers
 from trusted_router import provider_contracts as _provider_contracts
 from trusted_router import routing as _routing
 from trusted_router import stage_d as _stage_d
+from trusted_router import unstarted_release
 from trusted_router.acquisition import (
     record_free_credit_exhausted_safely,
     record_successful_api_call_safely,
@@ -754,6 +755,17 @@ def _heartbeat_gateway_sync(
         stream=body.stream,
         grace_seconds=settings.heartbeat_grace_seconds,
     )
+    if settings.unstarted_hold_release_mode != "off":
+        # Evidence for the early release of a never-started stream's hold:
+        # a first heartbeat arriving after the rule's deadline.
+        unstarted_release.observe_first_heartbeat(
+            authorization,
+            seq=body.seq,
+            accepted=bool(result.accepted),
+            mode=settings.unstarted_hold_release_mode,
+            after_seconds=settings.unstarted_hold_release_seconds,
+            declared_since=_boot_usage_heartbeat_declared_since,
+        )
     if not result.accepted:
         raise _heartbeat_rejection(str(result.reason))
     expires_at_ms = int(result.expires_at_ms)
@@ -782,6 +794,26 @@ def _heartbeat_gateway_sync(
         "cap_micro": int(result.cap_micro),
         "running_micro": int(result.running_micro),
     }
+
+
+def _boot_usage_heartbeat_declared_since(kid: str) -> Any:
+    """The commit time at which the boot with this key id began its unbroken
+    run of registrations declaring that it heartbeats every Stage D stream;
+    None when it has none, or on a store that keeps no such time. Read only
+    by the early-release evidence lines, and only for a request that already
+    looks like one of theirs."""
+    since = getattr(STORE, "gateway_boot_declaring_since", None)
+    return since(kid) if callable(since) else None
+
+
+def _settle_reports_usage(body: Any) -> bool:
+    """Whether a settle body reports any tokens. The settle route prices a
+    settle only after it has found the row open; for one that meets a
+    terminal row this is the nearest thing to its charge."""
+    try:
+        return int(body.input_count) + int(body.output_count) > 0
+    except Exception:  # noqa: BLE001 - a body that cannot be read reports none
+        return False
 
 
 def _forward_leased_heartbeat(
@@ -2613,11 +2645,20 @@ def register(router: APIRouter) -> None:
         limit: int = 100,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
+        drain_options: dict[str, Any] = (
+            {"settings": settings} if settings.settle_outbox_fast_drain_enabled else {}
+        )
+        if settings.unstarted_hold_release_mode != "off":
+            # The early release of a never-started stream's hold
+            # (trusted_router.unstarted_release): passed only when it is not
+            # off, so off is the call as it was.
+            drain_options["unstarted_release_mode"] = settings.unstarted_hold_release_mode
+            drain_options["unstarted_release_seconds"] = settings.unstarted_hold_release_seconds
         result = await run_in_threadpool(
             drain_settle_outbox,
             limit,
             reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled,
-            **({"settings": settings} if settings.settle_outbox_fast_drain_enabled else {}),
+            **drain_options,
         )
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.
@@ -4235,6 +4276,17 @@ def _settle_gateway_authorization(
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
     if authorization.settled:
+        if success and settings.unstarted_hold_release_mode != "off":
+            # Evidence for the early release of a never-started stream's
+            # hold: a settle that reports usage, for a heartbeated stream
+            # whose row is terminal with no heartbeat on it. Its charge is
+            # never priced on this path; a settle of no tokens is not one.
+            unstarted_release.observe_settle(
+                authorization,
+                charging=_settle_reports_usage(body),
+                mode=settings.unstarted_hold_release_mode,
+                declared_since=_boot_usage_heartbeat_declared_since,
+            )
         try:
             _v2_capture_hook(settings, authorization, body, None, None, replay=True)
         except Exception:  # noqa: S110 - observation entry cannot become a money failure
@@ -4849,6 +4901,16 @@ def _settle_gateway_authorization(
     # falls through to the durable two-commit settle below; the store method
     # documents why an unknown outcome is safe to follow with it. A transient
     # failure whose fallback enqueue inserts the intent goes to the drain.
+    if success and settings.unstarted_hold_release_mode != "off":
+        # Evidence for the early release of a never-started stream's hold:
+        # a settle with a charge above zero for a heartbeated stream with no
+        # heartbeat on its row. Here the charge is priced and final.
+        unstarted_release.observe_settle(
+            authorization,
+            charging=actual_cost > 0,
+            mode=settings.unstarted_hold_release_mode,
+            declared_since=_boot_usage_heartbeat_declared_since,
+        )
     if authorization.fastpath_envelope is not None and _typed_store is not None:
         # The fast path's pilot (docs/design/fast-admission-pilot.md): the
         # hold is a lease's, so the terminal goes to the front door and then

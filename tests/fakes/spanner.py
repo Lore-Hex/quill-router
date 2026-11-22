@@ -306,6 +306,12 @@ class FakeSpannerDatabase:
         # authorization_id. Kept separate from generic tr_entities so tests
         # catch accidental fallback writes after the typed cutover.
         self.gateway_authorizations: dict[str, dict] = {}
+        # Commit timestamps, as the fake's clock read them when the write was
+        # made: a reservation's creation (its created_at column) and an
+        # entity row's last write (its updated_at column). Kept beside the
+        # records, which carry no clock reading of the fake's own.
+        self.reservation_committed_at: dict[str, dt.datetime] = {}
+        self.entity_written_at: dict[tuple[str, str], dt.datetime] = {}
         self.gateway_authorization_versions: dict[str, int] = {}
         # Singleton-per-plane rollback watermark for the signed Stage D policy.
         self.stage_d_policy_watermarks: dict[str, dict] = {}
@@ -481,6 +487,7 @@ class FakeSpannerDatabase:
                 if op[0] == "upsert":
                     _, _table, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.entity_written_at[(kind, entity_id)] = self.current_timestamp()
                     self.entity_kind_versions[kind] = new_version
                 elif op[0] == "delete":
                     _, _table, kind, entity_id = op
@@ -507,6 +514,8 @@ class FakeSpannerDatabase:
                     _, record = op
                     rid = record["reservation_id"]
                     self.reservations[rid] = record
+                    # created_at is the commit's time, not the statement's.
+                    self.reservation_committed_at[str(rid)] = self.current_timestamp()
                     self.reservation_versions[rid] = new_version
                     self.reservation_auth_versions[record["authorization_id"]] = new_version
                     scope = record.get("idempotency_scope")
@@ -550,10 +559,12 @@ class FakeSpannerDatabase:
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.entity_written_at[(kind, entity_id)] = self.current_timestamp()
                     self.entity_kind_versions[kind] = new_version
                 elif op[0] == "update_entity_dml":  # DML UPDATE tr_entities body
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.entity_written_at[(kind, entity_id)] = self.current_timestamp()
                     self.entity_kind_versions[kind] = new_version
                 elif op[0] == "delete_entity_dml":  # DML DELETE from tr_entities
                     _, kind, entity_id = op
@@ -2524,6 +2535,7 @@ class _FakeBatch:
                 if op[0] == "upsert":
                     _, _table, kind, entity_id, body = op
                     self.db.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                    self.db.entity_written_at[(kind, entity_id)] = self.db.current_timestamp()
                     # A batch commit is as visible to a concurrent range scan as
                     # a transactional one, so it must move the per-kind version
                     # too — otherwise a scanning transaction misses it entirely.
@@ -3887,6 +3899,43 @@ def _execute_sql(
                 )
             ]
         ]
+    # The early rule's scan (storage_gcp_authorize._UNSTARTED_SCAN_SQL): the
+    # unsettled reservations whose expiry is in a window of the expiry
+    # index, oldest first, at most @limit, each with its creation's commit
+    # timestamp and the database's own time. Every part the pass's bound or
+    # its order rests on must be in the SQL, or the scan fails here.
+    if "FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry} WHERE settled=false AND expires_at >= @from_expiry" in sql:
+        for needle in (
+            "SELECT reservation_id, authorization_id, credit_reserved_micro, key_reserved_micro, "
+            "expires_at, created_at, CURRENT_TIMESTAMP() AS read_at ",
+            "WHERE settled=false AND expires_at >= @from_expiry AND expires_at < @now ",
+            "ORDER BY expires_at LIMIT @limit",
+        ):
+            _require_pred(sql, needle, "unstarted-scan")
+        lower, upper = _utc_datetime(params["from_expiry"]), _utc_datetime(params["now"])
+        window: list[tuple[dt.datetime, str, dict]] = []
+        for rid, rec in db.reservations.items():
+            exp = rec.get("expires_at")
+            if rec.get("settled") or exp is None:
+                continue
+            expires = _utc_datetime(exp)
+            if lower <= expires < upper:
+                window.append((expires, str(rid), rec))
+        window.sort(key=lambda item: (item[0], item[1]))
+        read_at = db.current_timestamp()
+        scanned: list[list[Any]] = [
+            [
+                rid,
+                rec.get("authorization_id"),
+                rec.get("credit_reserved_micro"),
+                rec.get("key_reserved_micro"),
+                expires,
+                db.reservation_committed_at.get(rid),
+                read_at,
+            ]
+            for expires, rid, rec in window[: int(params["limit"])]
+        ]
+        return scanned
     # Reaper scan: expired unsettled reservations. This must precede the generic
     # tr_settle_outbox dispatcher because the guarded scan names both tables; match
     # the more specific query first.
@@ -4522,6 +4571,19 @@ def _execute_sql(
     if "WHERE kind=@kind AND id=@kid AND kid IS NULL LIMIT 1" in sql:
         row = db.rows.get((kind, str(params["kid"])))
         return [] if row is None else [[row.body]]
+    if sql == "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id":
+        # An entity with its row's commit timestamp (the boot registry's
+        # declaration start): the committed row, and in a transaction a read
+        # of it like the body-only read's.
+        entity_id = params["id"]
+        written_row: _Row | None = db.rows.get((kind, entity_id))
+        if txn is not None:
+            txn.read_snapshots.setdefault((kind, entity_id), written_row.body if written_row is not None else None)
+            txn.read_versions.setdefault((kind, entity_id), written_row.version if written_row is not None else 0)
+        if written_row is None:
+            return []
+        written: list[list[Any]] = [[written_row.body, db.entity_written_at.get((kind, entity_id))]]
+        return written
     if "AND id=@id" in sql:
         entity_id = params["id"]
         if txn is not None:

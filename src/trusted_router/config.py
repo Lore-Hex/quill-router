@@ -1302,6 +1302,19 @@ class Settings(BaseSettings):
     # first; only an explicit rollout may book a crashed request's last durable
     # usage snapshot.
     reap_snapshot_booking_enabled: bool = False
+    # The early release of a hold whose stream never started
+    # (docs/design/fast-admission-streams.md section 13;
+    # trusted_router.unstarted_release). "off": the pass does not run, and
+    # the drain's statements and what it books are as they were. "log" runs
+    # the pass on read-only snapshots and writes what it would release,
+    # releasing nothing, and the heartbeat and settle paths write a
+    # contradiction line when a request the rule covers turns out to be
+    # alive. "on" releases. The deadline is counted from the commit of the
+    # request's reservation, on the database's clock; its bounds are that
+    # module's. A deploy literal: the settle apply primitive reads the mode
+    # once a process.
+    unstarted_hold_release_mode: Literal["off", "log", "on"] = "off"
+    unstarted_hold_release_seconds: int = 900
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -2258,6 +2271,10 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS entries must be sha256 digests"
                 )
+        if not 600 <= self.unstarted_hold_release_seconds <= 6900:
+            # trusted_router.unstarted_release MIN_AFTER_SECONDS and
+            # MAX_AFTER_SECONDS; a test holds the two pairs equal.
+            raise ValueError("TR_UNSTARTED_HOLD_RELEASE_SECONDS must be between 600 and 6900")
         if self.stage_d_policy_refresh_seconds <= 0:
             raise ValueError("TR_STAGE_D_POLICY_REFRESH_SECONDS must be positive")
         if not self.stage_d_policy_cert_identity.strip():

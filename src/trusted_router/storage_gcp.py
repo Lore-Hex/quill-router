@@ -216,6 +216,7 @@ from trusted_router.storage_key_usage import (
     is_users_chat_browser_key,
 )
 from trusted_router.storage_models import (
+    BOOT_DECLARED_AT_ITS_WRITE,
     EMAIL_ATTACH_ALREADY_VERIFIED,
     EMAIL_ATTACH_ATTACHED,
     EMAIL_ATTACH_MISSING_USER,
@@ -236,6 +237,7 @@ from trusted_router.storage_models import (
     TypedFinalizeResult,
     UserModelPayout,
     _is_expired,
+    boot_with_heartbeat_history,
     document_pause_causes,
     shard_pause_causes,
 )
@@ -443,6 +445,15 @@ def _iso_timestamp(value: dt.datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=dt.UTC)
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
+
+
+def _commit_time_text(value: Any) -> str | None:
+    """A commit timestamp as the ISO text a boot's declaration start is
+    kept in (UTC, microseconds); None when it is no timestamp."""
+    if not isinstance(value, dt.datetime):
+        return None
+    moment = value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
+    return moment.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
 class SpannerStore(OperationalAnalyticsReads):
@@ -6634,6 +6645,48 @@ class SpannerStore(OperationalAnalyticsReads):
             ),
         )
 
+    def release_unstarted_holds_result(
+        self,
+        *,
+        now: Any,
+        limit: int = 100,
+        after_seconds: int,
+        log_only: bool,
+    ) -> Any:
+        """One pass of the early rule over this store's reservations
+        (storage_gcp_authorize.release_unstarted_holds_result). The pass
+        reads a boot's record once per key id, between its transactions,
+        for the commit time at which the boot's unbroken run of declaring
+        registrations began; a boot that is gone and a record with no such
+        time read as None, which keeps the hold. A read that fails is that
+        row's error: the hold is kept, and the pass counts it, so a pass
+        that could not read a boot is not taken for one that found nothing
+        to release."""
+        from trusted_router.storage_gcp_authorize import (
+            UnstartedRelease,
+        )
+        from trusted_router.storage_gcp_authorize import (
+            release_unstarted_holds_result as _release,
+        )
+
+        return _release(
+            self._database,
+            self._param_types,
+            now=now,
+            limit=limit,
+            rule=UnstartedRelease(
+                after_seconds=int(after_seconds),
+                log_only=bool(log_only),
+                declared_since=self.gateway_boot_declaring_since,
+            ),
+            async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)),
+            operational_analytics_outbox=getattr(
+                self,
+                "_operational_analytics_outbox",
+                None,
+            ),
+        )
+
     def typed_key_usage(
         self,
         key_hash: str,
@@ -7659,6 +7712,19 @@ class SpannerStore(OperationalAnalyticsReads):
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
+            written_at: str | None = None
+            if (
+                existing is not None
+                and record.declares_usage_heartbeat
+                and existing.declares_usage_heartbeat
+                and existing.usage_heartbeat_declared_since == BOOT_DECLARED_AT_ITS_WRITE
+            ):
+                # The run began with the existing row's write: its start is
+                # that row's commit timestamp, read here, in the transaction
+                # that replaces the row (and again by each retry of it).
+                stored = self._read_boot_written(transaction, record.kid)
+                written_at = _commit_time_text(stored[1]) if stored is not None else None
+            merged = boot_with_heartbeat_history(existing, merged, existing_written_at=written_at)
             self._write_entity_tx(transaction, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 
@@ -7666,6 +7732,42 @@ class SpannerStore(OperationalAnalyticsReads):
 
     def get_gateway_boot(self, kid: str) -> GatewayBoot | None:
         return self._read_entity(GATEWAY_BOOT_KIND, kid, GatewayBoot)
+
+    def _read_boot_written(self, reader: Any, kid: str) -> tuple[GatewayBoot, Any] | None:
+        """A boot with its row's commit timestamp: one read by the entity
+        table's primary key."""
+        rows = list(
+            reader.execute_sql(
+                "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id",
+                params={"kind": GATEWAY_BOOT_KIND, "id": kid},
+                param_types={"kind": self._param_types.STRING, "id": self._param_types.STRING},
+            )
+        )
+        if not rows:
+            return None
+        return _auth_record(rows[0][0], GatewayBoot), rows[0][1]
+
+    def gateway_boot_declaring_since(self, kid: str) -> dt.datetime | None:
+        """The commit time at which this boot's unbroken run of
+        registrations declaring usage_heartbeat began, or None when its
+        latest registration does not declare it, no store stamped it, the
+        boot is gone, or the time cannot be read
+        (storage_models.boot_with_heartbeat_history)."""
+        with self._database.snapshot() as snapshot:
+            stored = self._read_boot_written(snapshot, kid)
+        if stored is None:
+            return None
+        boot, written_at = stored
+        since = boot.usage_heartbeat_declared_since
+        if not boot.declares_usage_heartbeat or not since:
+            return None
+        if since == BOOT_DECLARED_AT_ITS_WRITE:
+            return written_at if isinstance(written_at, dt.datetime) else None
+        try:
+            parsed = dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
 
     def advance_stage_d_policy_watermark(
         self,
