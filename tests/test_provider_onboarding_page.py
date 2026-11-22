@@ -68,6 +68,19 @@ def test_provider_application_collects_complete_integration_and_energy_profile(
     assert "not independently verified certification" in energy.get_text()
 
 
+def test_new_providers_can_find_confidential_qualification_and_setup_help(client: TestClient) -> None:
+    soup = BeautifulSoup(client.get("/providers/marketplace").text, "html.parser")
+    assert "Every new provider needs at least one model" in soup.select_one(".lead").get_text()
+    guide = soup.select_one("#confidential-onboarding")
+    assert guide is not None
+    assert guide.select_one('a[href="/support#support-inquiry"]')
+    assert guide.select_one('a[href*="trustedrouter-provider-check"]')
+    for term in ("H200", "Intel TDX", "B200", "HGX B300", "Vera Rubin NVL72", "wrong key", "corrupted weights"):
+        assert term in guide.get_text()
+    assert "NOT TESTED" in guide.select_one("details").get_text()
+    assert "Required qualifying model ID" in soup.select_one(".provider-application-template").get_text()
+
+
 def test_provider_onboarding_page_has_machine_readable_requirements(
     client: TestClient,
 ) -> None:
