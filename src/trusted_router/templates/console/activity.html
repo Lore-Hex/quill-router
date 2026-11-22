@@ -1031,10 +1031,8 @@
       parts.push(`Filtered to ${tagText(state.filterKey, state.filterValue)}.`);
     }
     if (data.breakdown_approximate) {
-      // Set whenever Other outweighs the smallest row shown, and for a key
-      // too wide to rank every value. The first is conservative, and the
-      // page says so.
-      parts.push("The ranking is approximate: a value counted in Other may belong among the rows shown. This is also reported when Other only holds many small values.");
+      // Set exactly when there is an Other row.
+      parts.push("Values beyond the ones shown are grouped in Other. Which values are shown is approximate for a busy key.");
     }
     if (data.keys_approximate) {
       parts.push("This workspace has more tag keys than are counted exactly: the most used are listed.");

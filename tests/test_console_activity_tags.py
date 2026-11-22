@@ -500,7 +500,7 @@ def test_summary_endpoint_shape() -> None:
     ]
     assert payload["group_by"] == "team" and payload["value_limit"] == 50
     assert (payload["keys_approximate"], payload["breakdown_too_many_values"]) == (False, False)
-    # No Other row here, so nothing in these rows puts the ranking in doubt.
+    # True exactly when there is an Other row, and there is none here.
     assert payload["breakdown_approximate"] is False
     assert all("values" not in row for row in payload["breakdown"])
     assert payload["distinct_limit"] == 500_000
@@ -581,8 +581,11 @@ def test_page_names_the_median_and_offers_a_typed_value() -> None:
     # approximate list or ranking is called approximate.
     assert "or more distinct values in" in script and "has more than" not in script
     assert "the list is approximately its most used ones" in script
-    assert "The ranking is approximate: a value counted in Other may belong among the rows shown." in script
-    assert "This is also reported when Other only holds many small values." in script
+    assert (
+        "Values beyond the ones shown are grouped in Other. "
+        "Which values are shown is approximate for a busy key." in script
+    )
+    assert "many small values" not in script
     # The Other row has a label and no count of the values in it.
     assert 'note("Other")' in script and "Other (" not in script
 

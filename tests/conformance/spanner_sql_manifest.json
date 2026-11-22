@@ -5477,7 +5477,7 @@
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_candidates:1": {
-      "fingerprint": "b40c09809cfba8f9bf94bd7ec41e82d6cbc23a11eb033d3205f002810410d969",
+      "fingerprint": "f36433b5c4f6e82ac7e439207193a14c6d804b9f026747e0b272ee226a6fc4ea",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_candidate_totals:1": {

@@ -427,10 +427,10 @@ test("a typed value is sent as typed: empty, long, and outside the basic plane",
 test("an approximate ranking and an approximate value list say so", async ({ page }) => {
   const seen = [];
   await page.setViewportSize({ width: 1280, height: 1100 });
-  // What a store answers for a key with more than 50 values whose Other row
-  // outweighs the smallest named one, and for a value list it could not
-  // count exactly. The fixture's workspaces have neither, so an Other row
-  // and the two flags are put on its answers here.
+  // What a store answers for a key with more than 50 values, and for a value
+  // list it could not count exactly. The fixture's workspaces have neither,
+  // so an Other row, the flag that goes with it, and the list's flag are put
+  // on its answers here.
   await open(page, fixture.tagged, seen, undefined, undefined, (name, body, answer) => {
     if (name !== "tags") return answer;
     const filter = answer.filter ? { ...answer.filter, values_approximate: true } : null;
@@ -450,7 +450,7 @@ test("an approximate ranking and an approximate value list say so", async ({ pag
   await expect(message).toHaveText("Every request in the last 30 days is counted.");
   await panel.locator("[data-tags-group]").selectOption({ label: "team" });
   await expect(message).toHaveText(
-    "Every request in the last 30 days is counted. The ranking is approximate: a value counted in Other may belong among the rows shown. This is also reported when Other only holds many small values."
+    "Every request in the last 30 days is counted. Values beyond the ones shown are grouped in Other. Which values are shown is approximate for a busy key."
   );
   // The Other row says what it adds up to and nothing about how many values
   // that is.

@@ -56,7 +56,6 @@ from trusted_router.operational_analytics import (
 from trusted_router.storage import InMemoryStore
 from trusted_router.storage_activity_tags import (
     TAG_HISTOGRAM_READS,
-    TagBreakdown,
     break_down_by_tag,
     clickhouse_breakdown,
     count_tag_keys,
@@ -184,8 +183,8 @@ def test_breakdown_folds_the_tail_into_other_and_keeps_untagged_apart() -> None:
     )
 
     found = break_down_by_tag(window, group_by="team", limit=2)
-    assert found is not None and found.approximate is False
-    rows = order_breakdown(found.rows)
+    assert found is not None
+    rows = order_breakdown(found)
 
     assert rows == [
         _row("value", "search", 4, 1350, 0, 190, 85, 400),
@@ -219,7 +218,7 @@ def test_the_values_that_keep_a_row_are_the_most_expensive(
 ) -> None:
     found = break_down_by_tag(_memory_window(), group_by="team", limit=limit)
     assert found is not None
-    rows = order_breakdown(found.rows)
+    rows = order_breakdown(found)
 
     assert [row["value"] for row in rows if row["kind"] == "value"] == kept
     assert [row["requests"] for row in rows if row["kind"] == "other"] == (
@@ -285,9 +284,9 @@ def test_summary_tries_further_default_keys_but_not_an_asked_one() -> None:
             for name, count in (("request", 9), ("session", 8), ("team", 7), ("tier", 6))]
     tried: list[str] = []
 
-    def read_breakdown(key: str, _limit: int) -> TagBreakdown | None:
+    def read_breakdown(key: str, _limit: int) -> list[dict[str, Any]] | None:
         tried.append(key)
-        return TagBreakdown([]) if key in {"team", "tier"} else None
+        return [] if key in {"team", "tier"} else None
 
     def summary(group_by: str | None) -> dict[str, Any]:
         tried.clear()
@@ -319,7 +318,7 @@ def test_summary_reports_cut_and_approximate_lists() -> None:
     summary = tag_summary(
         read_keys=lambda: list(reversed(keys)),
         read_values=lambda _key: list(reversed(values)),
-        read_breakdown=lambda _key, _limit: TagBreakdown([], approximate=True),
+        read_breakdown=lambda _key, _limit: [_row("other", None, 1, 1, 0, 1, 1, None)],
         group_by="key-140",
         tag_key="key-000",
     )
@@ -340,7 +339,7 @@ def test_summary_reports_cut_and_approximate_lists() -> None:
     approximate = tag_summary(
         read_keys=lambda: list(keys),
         read_values=lambda _key: [{"value": "search", "requests": 2, "overcount": 0}],
-        read_breakdown=lambda _key, _limit: TagBreakdown([]),
+        read_breakdown=lambda _key, _limit: [],
         group_by=None,
         tag_key="key-000",
     )
@@ -420,8 +419,8 @@ def _breakdown_of(snapshots: list[dict[Group, list[int | None]]]) -> tuple[Any, 
         read_histogram=read,
         limit=50,
     )
-    assert found is not None and found.approximate is False
-    return found.rows, [opened for _top, opened in asked]
+    assert found is not None
+    return found, [opened for _top, opened in asked]
 
 
 def _totals_row(digest: int, value: str, requests: int, credit: int) -> dict[str, Any]:
@@ -476,51 +475,38 @@ def test_breakdown_ranks_the_candidates_by_credit_cost_then_requests_then_text()
     # search, then alpha before beta on text; solo has fewer generations and
     # own-keys has no credit cost at all.
     assert [top for top, _opened in reads] == [[(10, 11), (30, 31), (20, 21)]] * 2
-    assert found == TagBreakdown(
-        [
-            _row("value", "search", 4, 12, 0, 20, 4, 400),
-            _row("value", "alpha", 2, 6, 0, 10, 2, 225),
-            _row("value", "beta", 2, 6, 0, 10, 2, 300),
-            _row("other", None, 10, 30, 0, 50, 10, 700),
-        ],
-        approximate=False,
-    )
+    assert found == [
+        _row("value", "search", 4, 12, 0, 20, 4, 400),
+        _row("value", "alpha", 2, 6, 0, 10, 2, 225),
+        _row("value", "beta", 2, 6, 0, 10, 2, 300),
+        _row("other", None, 10, 30, 0, 50, 10, 700),
+    ]
 
 
-def test_a_wide_key_is_ranked_from_what_the_sketches_found_and_says_so(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_activity_tags, "TAG_RANK_CANDIDATES", 2)
+def test_a_wide_key_is_ranked_from_what_both_sketches_found() -> None:
     groups: dict[Group, list[int | None]] = {("value", 10, 11): [100], ("other", 0, 0): [100] * 7}
-    listed = {"by_requests": [(10, 4, 0), (20, 2, 0)], "by_cost": [(10, 12, 0), (30, 6, 0)]}
-
+    read, _reads = _histogram_reads([groups])
     asked: list[list[int]] = []
 
-    def breakdown(facts: dict[str, Any]) -> TagBreakdown | None:
-        read, _reads = _histogram_reads([groups])
+    def totals(digests: list[int]) -> list[dict[str, Any]]:
+        asked.append(digests)
+        return [_totals_row(digest, f"value-{digest}", 1, 100 - digest) for digest in digests]
 
-        def totals(digests: list[int]) -> list[dict[str, Any]]:
-            asked.append(digests)
-            return [_totals_row(digest, f"value-{digest}", 1, 100 - digest) for digest in digests]
+    found = clickhouse_breakdown(
+        # Two lists of two, as for a key with more values than candidates.
+        read_candidates=lambda _count: {
+            "distinct_values": 40, "by_requests": [(10, 4, 0), (20, 2, 3)], "by_cost": [(10, 12, 0), (30, 6, 1)],
+        },
+        read_candidate_totals=totals,
+        read_histogram=read,
+        limit=1,
+    )
 
-        return clickhouse_breakdown(
-            read_candidates=lambda _count: facts, read_candidate_totals=totals, read_histogram=read, limit=1,
-        )
-
-    # A requests list as long as it was allowed to be may have left values
-    # out: the ranking is approximate.
-    full = breakdown({"distinct_values": 40, **listed})
-    assert full is not None and full.approximate is True
     # The candidates are the heaviest by generations and the heaviest by
     # cost, each once: a value heavy in cost alone is still ranked.
     assert asked == [[10, 20, 30]]
-    assert [(row["kind"], row["value"]) for row in full.rows] == [("value", "value-10"), ("other", None)]
-    # So may a list whose counts the sketch could not vouch for.
-    doubtful = breakdown({"distinct_values": 1, "by_requests": [(10, 4, 3)], "by_cost": []})
-    assert doubtful is not None and doubtful.approximate is True
-    # A shorter list with exact counts is every value the read saw.
-    exact = breakdown({"distinct_values": 1, "by_requests": [(10, 4, 0)], "by_cost": [(10, 12, 0)]})
-    assert exact is not None and exact.approximate is False
+    assert found is not None
+    assert [(row["kind"], row["value"]) for row in found] == [("value", "value-10"), ("other", None)]
 
 
 def test_values_that_arrive_after_the_candidates_are_folded_and_never_ranked() -> None:
@@ -551,14 +537,13 @@ def test_values_that_arrive_after_the_candidates_are_folded_and_never_ranked() -
     # about the one chosen value: neither grows with what arrived since.
     assert asked == [[10]]
     assert [top for top, _opened in reads] == [[(10, 11)]] * 2
-    assert found is not None
-    assert found.rows == [
+    assert found == [
         _row("value", "search", 1, 3, 0, 5, 1, 200),
         # Everything that arrived is in one row, which says what it adds up
         # to and makes no claim about how many values that is.
         _row("other", None, 3, arrived, 0, 15, 3, 300),
     ]
-    assert "values" not in found.rows[1]
+    assert "values" not in found[1]
 
 
 def test_the_split_between_credits_and_byok_is_the_last_reads_own() -> None:
@@ -580,8 +565,7 @@ def test_the_split_between_credits_and_byok_is_the_last_reads_own() -> None:
     )
 
     # What a fresh read gives: 100 of credits and 900 of BYOK, not 1,000 of credits.
-    assert found is not None
-    assert found.rows == [_row("value", "search", 2, 100, 900, 10, 2, 300)]
+    assert found == [_row("value", "search", 2, 100, 900, 10, 2, 300)]
 
 
 def test_a_candidate_gone_before_the_totals_or_the_histogram_keeps_no_row() -> None:
@@ -600,98 +584,161 @@ def test_a_candidate_gone_before_the_totals_or_the_histogram_keeps_no_row() -> N
 
     assert [top for top, _opened in reads] == [[(30, 31), (20, 21)]] * 2
     assert found is not None
-    assert [(row["kind"], row["value"]) for row in found.rows] == [("value", "ads"), ("untagged", None)]
+    assert [(row["kind"], row["value"]) for row in found] == [("value", "ads"), ("untagged", None)]
 
 
-# ------------------------------------------- what the final rows can vouch for
+# ----------------------------------- approximate exactly when there is an Other row
 
 
-def _summary_of(found: TagBreakdown) -> dict[str, Any]:
+def _summary_of(rows: list[dict[str, Any]] | None) -> dict[str, Any]:
     return tag_summary(
         read_keys=lambda: [{"key": "team", "requests": 1, "overcount": 0}],
         read_values=lambda _key: [],
-        read_breakdown=lambda _key, _limit: found,
+        read_breakdown=lambda _key, _limit: rows,
         group_by="team",
         tag_key=None,
     )
 
 
-def test_a_ranking_that_drifted_after_it_was_chosen_is_reported_approximate() -> None:
-    """The reviewer's reproduction: 51 values costing 10 each; after the
-    totals choose 50, another generation of the 51st, costing 1,000, arrives
-    before the histogram totals them."""
-    chosen = [(index, index + 1) for index in range(100, 150)]
-    groups: dict[Group, list[int | None]] = {("value", a, b): [100] for a, b in chosen}
-    groups["other", 0, 0] = [100, 100]
-    costs = {group: (10, 0) for group in groups}
-    costs["other", 0, 0] = (1_010, 0)
-    read, _reads = _histogram_reads([groups], costs=costs)
+def _interleaved(
+    candidates: list[int],
+    totals: dict[int, tuple[str, int]],
+    final: dict[Group, tuple[int, int]],
+    *,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """A summary whose last read sees ``final`` after earlier reads chose from ``totals``.
 
+    ``totals`` maps a candidate's hash to its text and credit cost when the
+    totals statement ran; ``final`` maps each group of the last statement to
+    its ``(credits, generations)``.
+    """
+    read, _reads = _histogram_reads(
+        [{group: [100] * generations for group, (_credits, generations) in final.items()}],
+        costs={group: (credits, 0) for group, (credits, _generations) in final.items()},
+    )
     found = clickhouse_breakdown(
         read_candidates=lambda _count: {
-            "distinct_values": 51, "by_requests": [(index, 1, 0) for index in range(100, 151)], "by_cost": [],
+            "distinct_values": len(candidates),
+            "by_requests": [(digest, 1, 0) for digest in candidates],
+            "by_cost": [],
         },
-        read_candidate_totals=lambda digests: [
-            _totals_row(digest, f"value-{digest}", 1, 10) for digest in digests
+        read_candidate_totals=lambda _digests: [
+            _totals_row(digest, value, 1, credit) for digest, (value, credit) in totals.items()
         ],
         read_histogram=read,
-        limit=50,
+        limit=limit,
     )
+    return _summary_of(found)
 
-    # Nothing the reads know says the candidates were incomplete.
-    assert found is not None and found.approximate is False
-    summary = _summary_of(found)
-    # The final rows do: Other holds 1,010 and the smallest named row 10, so
-    # a value inside Other may belong among the named ones.
-    assert [row["cost_microdollars"] for row in summary["breakdown"]] == [10] * 50 + [1_010]
+
+def test_a_value_that_arrives_and_ties_a_named_one_makes_the_choice_approximate() -> None:
+    """Fifty values z0000 to z0049, one generation of 10 each. After the
+    totals read, the value "a" arrives, also costing 10. A fresh read would
+    name "a" and not "z0049"; this one cannot know, and says so."""
+    chosen = {index: (f"z{index - 100:04d}", 10) for index in range(100, 150)}
+    final: dict[Group, tuple[int, int]] = {("value", a, a + 1): (10, 1) for a in chosen}
+    final["other", 0, 0] = (10, 1)
+
+    summary = _interleaved(list(chosen), chosen, final)
+
+    kinds = [row["kind"] for row in summary["breakdown"]]
+    assert kinds == ["value"] * 50 + ["other"]
+    assert summary["breakdown"][-1] == _row("other", None, 1, 10, 0, 5, 1, 100)
     assert summary["breakdown_approximate"] is True
 
 
+def test_a_value_that_arrives_while_there_is_room_for_it_makes_the_choice_approximate() -> None:
+    """Only z0000, costing 10. After the totals read, "a" arrives costing 1.
+    One named row with room for 49 more, and the newcomer in Other: a fresh
+    read would name both."""
+    summary = _interleaved([100], {100: ("z0000", 10)}, {("value", 100, 101): (10, 1), ("other", 0, 0): (1, 1)})
+
+    assert [(row["kind"], row["value"], row["cost_microdollars"]) for row in summary["breakdown"]] == [
+        ("value", "z0000", 10), ("other", None, 1),
+    ]
+    assert summary["breakdown_approximate"] is True
+
+
+def test_values_that_left_the_key_leave_no_other_row_and_nothing_approximate() -> None:
+    """The candidates see 2,000 values, as many as a sketch returns. Later
+    deliveries take the key off 1,999 of them. Every value the final read
+    saw is named, so there is no cut to get wrong."""
+    candidates = list(range(100, 2_100))
+    assert len(candidates) == storage_activity_tags.TAG_RANK_CANDIDATES
+    summary = _interleaved(
+        candidates, {100: ("z0000", 10)}, {("value", 100, 101): (10, 1), ("untagged", 0, 0): (19_990, 1_999)},
+    )
+
+    assert [row["kind"] for row in summary["breakdown"]] == ["value", "untagged"]
+    assert summary["breakdown_approximate"] is False
+
+
 @pytest.mark.parametrize(
-    ("other", "approximate"),
+    ("rows", "approximate"),
     [
-        # No single folded value can outweigh the sum of them all: while that
-        # sum is no larger than the smallest named row, the cut is right.
-        ((5, 9), False),
-        ((10, 2), False),
-        # Larger in credit cost, or equal in it with more generations.
-        ((11, 1), True),
-        ((10, 3), True),
-        # The conservative side of the rule: many small values add up too.
-        ((40, 40), True),
+        # An Other row is the whole rule: smaller than a named row, equal to
+        # it, larger, or alone.
+        ([_row("value", "search", 5, 90, 0, 1, 1, None), _row("other", None, 1, 1, 0, 1, 1, None)], True),
+        ([_row("value", "search", 5, 90, 0, 1, 1, None), _row("other", None, 5, 90, 0, 1, 1, None)], True),
+        ([_row("value", "search", 5, 90, 0, 1, 1, None), _row("other", None, 9, 900, 0, 1, 1, None)], True),
+        ([_row("other", None, 1, 1, 0, 1, 1, None)], True),
+        # No Other row: every value is named, whatever else there is.
+        ([_row("value", "search", 5, 90, 0, 1, 1, None), _row("untagged", None, 99, 9_999, 0, 1, 1, None)], False),
+        ([_row("untagged", None, 99, 9_999, 0, 1, 1, None)], False),
+        ([], False),
+        # A refused breakdown has no rows to be approximate about.
+        (None, False),
     ],
 )
-def test_the_ranking_is_vouched_for_while_other_is_no_larger_than_a_named_row(
-    other: tuple[int, int], approximate: bool
+def test_the_choice_is_approximate_exactly_when_there_is_an_other_row(
+    rows: list[dict[str, Any]] | None, approximate: bool
 ) -> None:
-    rows = [
-        _row("value", "search", 5, 90, 0, 1, 1, None),
-        _row("value", "ads", 2, 10, 500, 1, 1, None),
-        _row("other", None, other[1], other[0], 7_000, 1, 1, None),
-        _row("untagged", None, 99, 9_999, 0, 1, 1, None),
-    ]
-
-    assert storage_activity_tags.other_outweighs_a_named_row(rows) is approximate
-    # BYOK cost and the untagged row are not part of the ranking.
-    assert _summary_of(TagBreakdown(rows))["breakdown_approximate"] is approximate
-    # What the reads know still counts when the rows have nothing to say.
-    assert _summary_of(TagBreakdown(rows, approximate=True))["breakdown_approximate"] is True
+    assert _summary_of(rows)["breakdown_approximate"] is approximate
 
 
-def test_rows_are_ordered_by_the_totals_they_show_and_no_other_row_means_exact() -> None:
+def test_memory_reports_the_choice_by_the_same_rule() -> None:
+    store = _memory_store()
+
+    # Seven values of the key and room for fifty: every value is named.
+    everything = store.activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
+    assert not any(row["kind"] == "other" for row in everything["breakdown"])
+    assert everything["breakdown_approximate"] is False
+    # Room for two: the other five are grouped in Other.
+    with limits({"TAG_VALUE_LIMIT": 2}):
+        cut = store.activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
+    assert [row["kind"] for row in cut["breakdown"]] == ["value", "value", "other", "untagged"]
+    assert cut["breakdown_approximate"] is True
+
+
+def test_rows_are_ordered_by_the_totals_they_show() -> None:
     # Chosen in one order, totalled later in another.
-    drifted = TagBreakdown([
+    summary = _summary_of([
         _row("value", "first", 1, 10, 0, 1, 1, None),
         _row("value", "second", 1, 70, 0, 1, 1, None),
         _row("untagged", None, 5, 500, 0, 1, 1, None),
     ])
 
-    summary = _summary_of(drifted)
-
     assert [row["value"] for row in summary["breakdown"]] == ["second", "first", None]
-    assert summary["breakdown_approximate"] is False
-    # An other row with no named row beside it vouches for nothing.
-    assert storage_activity_tags.other_outweighs_a_named_row([_row("other", None, 1, 1, 0, 1, 1, None)]) is True
+
+
+def test_the_last_statement_puts_every_value_it_did_not_name_into_other() -> None:
+    """Why "no Other row" can be trusted: the statement the rows come from
+    classes every generation that has the key as a named value or as other,
+    and has no condition that could leave a value out."""
+    sql, _bound = reader_statements()["histogram"]
+
+    assert """    multiIf(
+      NOT mapContains(tags, {group_by:String}), 'untagged',
+      (cityHash64(tags[{group_by:String}]), sipHash64(tags[{group_by:String}])) IN {top:Array(Tuple(UInt64, UInt64))}, 'value',
+      'other'
+    ) AS kind,""" in sql
+    # The chosen values appear there and nowhere else: not in WHERE.
+    assert sql.count("{top:") == 1
+    where = sql[sql.index("  WHERE ") : sql.index("  GROUP BY kind, hash_a, hash_b, slot, elapsed_value")]
+    assert where.strip() == (
+        "WHERE tenant_id = {tenant_id:String} AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)"
+    )
 
 
 def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_known() -> None:
@@ -718,8 +765,7 @@ def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_kno
         limit=2,
     )
 
-    assert found is not None
-    assert found.rows == [
+    assert found == [
         _row("value", "search", 4, 12, 0, 20, 4, 400),
         _row("value", "ads", 2, 6, 0, 10, 2, 225),
         # Three values, two with a row: one folded. Six elapsed times: the
@@ -807,7 +853,7 @@ def test_a_group_whose_middle_moved_is_read_again_and_the_others_stay_settled() 
 def test_too_many_values_is_decided_by_the_candidates_read_itself() -> None:
     limit = storage_activity_tags.TAG_DISTINCT_LIMIT
 
-    def breakdown(estimate: int, **reads: Any) -> TagBreakdown | None:
+    def breakdown(estimate: int, **reads: Any) -> list[dict[str, Any]] | None:
         return clickhouse_breakdown(
             read_candidates=lambda _count: {
                 "distinct_values": estimate, "by_requests": [(10, 1, 0)], "by_cost": [],
@@ -825,7 +871,7 @@ def test_too_many_values_is_decided_by_the_candidates_read_itself() -> None:
     at_limit = breakdown(
         limit, totals=lambda _digests: [_totals_row(10, "search", 1, 5)], histogram=read,
     )
-    assert at_limit is not None and [row["value"] for row in at_limit.rows] == ["search"]
+    assert at_limit is not None and [row["value"] for row in at_limit] == ["search"]
 
 
 def test_breakdown_gives_up_on_a_median_that_keeps_moving() -> None:
@@ -1260,9 +1306,9 @@ def test_a_tie_at_the_cut_is_decided_by_text_in_both_stores() -> None:
     kept = [row["value"] for row in from_sql["breakdown"] if row["kind"] == "value"]
     assert kept == ["search", "billing", "ads", "", "zeta", "Search"]
     assert from_sql["breakdown"][6] == _row("other", None, 1, 10, 0, 4, 2, 4_194_303)
-    # Other is no larger than the smallest named row, so the rows themselves
-    # vouch for the cut.
-    assert from_sql == from_memory and from_sql["breakdown_approximate"] is False
+    # On rows that do not change between the reads, both stores keep the
+    # same six. There is an Other row, so both call the choice approximate.
+    assert from_sql == from_memory and from_sql["breakdown_approximate"] is True
 
 
 @pytest.mark.parametrize(
@@ -1272,14 +1318,13 @@ def test_a_tie_at_the_cut_is_decided_by_text_in_both_stores() -> None:
         # (search, ads, billing): four values keep a row and the other
         # three, with one generation each, are folded.
         (APPROXIMATE_CASES[0][1], APPROXIMATE_CASES[0][2], ["search", "billing", "ads", "zeta"], 3),
-        # A list as long as it was allowed to be is not known to be complete,
-        # even when, as here, it does hold every value.
+        # With as many candidates as values every value is found and named.
         (APPROXIMATE_CASES[1][1], APPROXIMATE_CASES[1][2],
          ["search", "billing", "ads", "", "zeta", "Search", "delta"], 0),
     ],
     ids=[case[0] for case in APPROXIMATE_CASES],
 )
-def test_a_key_with_more_values_than_candidates_is_ranked_approximately(
+def test_a_key_with_more_values_than_candidates_is_ranked_from_the_sketches(
     kwargs: dict[str, Any], overrides: dict[str, int], kept: list[str], folded: int
 ) -> None:
     with limits(overrides):
@@ -1288,7 +1333,10 @@ def test_a_key_with_more_values_than_candidates_is_ranked_approximately(
         )
         from_memory = _memory_store().activity_tag_summary(WORKSPACE, start_at=START_AT, **kwargs)
 
-    assert (from_sql["breakdown_approximate"], from_memory["breakdown_approximate"]) == (True, False)
+    # The in-memory store has room for all seven values. ClickHouse names
+    # only what its sketches returned, folds the rest into Other, and by
+    # having an Other row says its choice is approximate.
+    assert (from_sql["breakdown_approximate"], from_memory["breakdown_approximate"]) == (folded > 0, False)
     assert [row["value"] for row in from_sql["breakdown"] if row["kind"] == "value"] == kept
     assert [row["requests"] for row in from_sql["breakdown"] if row["kind"] == "other"] == (
         [folded] if folded else []

@@ -144,9 +144,8 @@ def register(app: FastAPI) -> None:
             # breakdown is given for; the rows are then empty and the page
             # says why. ClickHouse's count is an estimate.
             "breakdown_too_many_values": summary["breakdown_too_many_values"],
-            # True when the key has too many values to rank exactly: the
-            # value rows are then the heaviest values found, and a value
-            # that belongs among them may be in the Other row.
+            # True exactly when the rows include an Other row: the choice
+            # of which values are named is then a best effort.
             "breakdown_approximate": summary["breakdown_approximate"],
             # Read when the request is served, so the page states the limits
             # the store applied to this answer.

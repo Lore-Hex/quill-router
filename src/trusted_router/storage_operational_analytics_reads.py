@@ -18,7 +18,6 @@ from trusted_router.storage_activity import (
 )
 from trusted_router.storage_activity_tags import (
     TAG_EVENT_LIMIT,
-    TagBreakdown,
     clickhouse_breakdown,
     tag_summary,
 )
@@ -166,7 +165,7 @@ class OperationalAnalyticsReads:
         window: dict[str, Any] = {"tenant_id": tenant_id, "start_at": start_at}
         tag: dict[str, Any] = {"tag_key": tag_key, "tag_value": tag_value}
 
-        def read_breakdown(key: str, limit: int) -> TagBreakdown | None:
+        def read_breakdown(key: str, limit: int) -> list[dict[str, Any]] | None:
             return clickhouse_breakdown(
                 read_candidates=lambda count: client.activity_tag_candidates(
                     group_by=key, candidates=count, **window, **tag

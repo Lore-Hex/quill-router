@@ -1022,10 +1022,9 @@ FORMAT JSON
         ``activity_tag_candidate_totals``.
 
         Each list holds ``(hash, weight, error)``. With fewer distinct values
-        than ``candidates`` both lists hold every value with ``error`` 0, and
-        the caller's ranking is exact. With more, they hold the heaviest
-        values the sketches found, and the ranking is approximate. Cost here
-        is every usage type's: the totals read separates Credits from BYOK.
+        than ``candidates`` both lists hold every value this read saw. With
+        more, they hold the heaviest values the sketches found. Cost here is
+        every usage type's: the totals read separates Credits from BYOK.
         """
         where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
         with bound_values_in_the_body():
