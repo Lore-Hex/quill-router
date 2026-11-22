@@ -1259,11 +1259,6 @@ def _run_audit(
                 # Any public model/route removes this exemption and fails closed.
                 info.append(f"{slug}: internal-only test tariff; excluded from public price publication")
                 continue
-            if not any(endpoint.provider == slug for endpoint in MODEL_ENDPOINTS.values()):
-                # A retired provider kept only to settle archived routes
-                # publishes no price. Any routable route ends this exemption.
-                info.append(f"{slug}: retired; settlement-only archive with no routable routes")
-                continue
         if slug == "telluvian":
             from trusted_router.polyphemus import MODEL_ID, SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 
