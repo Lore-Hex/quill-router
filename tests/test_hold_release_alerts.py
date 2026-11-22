@@ -416,6 +416,29 @@ def test_a_logging_failure_does_not_lose_a_released_leased_row(
     assert any(" lease_refund_failures=1" in line for line in refusing.seen)
 
 
+def test_a_lease_refund_step_that_raises_does_not_lose_the_pass(
+    rendered: _Rendered, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refund step failing as a whole, after the rows are released: the
+    pass still answers, counts what it released, and says how many leases'
+    refunds it could not send."""
+    _store_, db, authorization = _store(hold=0, fastpath_envelope="sealed-envelope")
+
+    def broken(_authorization_ids: tuple[str, ...]) -> tuple[int, int]:
+        raise RuntimeError("front door client could not be built for a workspace")
+
+    monkeypatch.setattr(drain, "_refund_released_leases", broken)
+    db.now = CREATED + dt.timedelta(seconds=AFTER + 1)
+
+    result = drain.release_unstarted_holds(db.now, mode="on", after_seconds=AFTER)
+
+    assert result is not None and (result.released, result.leased) == (1, (authorization.id,))
+    lines = rendered.lines
+    assert f"WARNING {DRAIN_LOGGER} gateway.unstarted_release lease refunds failed error_class=RuntimeError" in lines
+    assert any(" released=1 " in line and line.endswith(" lease_refunds=0 lease_refund_failures=1") for line in lines)
+    assert _payloads()["unstarted_stream"] + "value=1" in lines
+
+
 def test_a_logging_failure_in_the_early_pass_does_not_fail_the_drain(
     refusing: _Refusing, monkeypatch: pytest.MonkeyPatch
 ) -> None:
