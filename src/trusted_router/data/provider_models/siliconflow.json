@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for SiliconFlow models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.siliconflow.com/v1/models on 2026-06-22.",
   "provider": "siliconflow",
   "source": "https://api.siliconflow.com/v1/models",
-  "generated_at": "2026-11-22T19:27:15Z",
+  "generated_at": "2026-11-22T21:28:03Z",
   "model_count": 85,
   "models": [
     {
