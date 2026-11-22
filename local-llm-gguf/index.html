@@ -173,16 +173,102 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How do you choose the right GGUF file?</h1><p>GGUF packages model tensors and metadata for compatible runtimes such as llama.cpp. A filename can combine a model revision, parameter size and quantization. Check each independently.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Before downloading, record the publisher, upstream checkpoint, license, file size and supported architecture. Verify any published checksum. Run one prompt from the model card to catch a wrong template or incompatible build.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Choose a GGUF by checking its upstream checkpoint, quantization, runtime support and exact file identity before downloading. Keep one record containing the publisher, revision, byte size and checksum; use that record to reproduce an evaluation.</p>
+<h2>Know what the file contains</h2>
+<p>GGUF stores model tensors and typed metadata for GGML-based inference tools. The specification includes architecture information and tokenizer metadata, including an optional chat template. Hugging Face's file viewer exposes GGUF metadata and tensor information, so you can inspect more than a filename before committing to a large download.</p>
+<p>Think of the format as packaging. The model checkpoint determines the learned weights, quantization determines their representation, and the runtime must understand the architecture and tensor types. After identifying the <code>.gguf</code> packaging, check all three properties before selecting the file.</p>
+<p>The GGUF naming convention separates a base name, size label, fine-tuning description, version, encoding and optional shard information. Publishers do not always follow the convention perfectly. Read the model card and file metadata together, and resolve any disagreement before using the file in a comparison.</p>
+<table>
+<thead>
+<tr>
+<th>Part to check</th>
+<th>Example meaning</th>
+<th>What to save</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Upstream checkpoint</td>
+<td>The original model and revision used for conversion</td>
+<td>Repository and immutable revision</td>
+</tr>
+<tr>
+<td>Variant</td>
+<td>Base model, instruction tuning or another adaptation</td>
+<td>Publisher's model-card description</td>
+</tr>
+<tr>
+<td>Encoding</td>
+<td>A quantization recipe such as Q4_K_M</td>
+<td>Exact filename and actual byte size</td>
+</tr>
+<tr>
+<td>Shard suffix</td>
+<td>00001-of-00002 identifies one part of two</td>
+<td>Every required part and its checksum</td>
+</tr>
+<tr>
+<td>Runtime</td>
+<td>The build that successfully loaded the architecture</td>
+<td>Version, settings and a smoke-test answer</td>
+</tr>
+</tbody>
+</table>
+<h2>Check provenance and size before the download</h2>
+<p>Follow the conversion publisher's link to the upstream model. Record both identities: the organization that trained or released the checkpoint and the organization that converted it. Read the applicable license files and intended-use notes instead of assuming that a downloadable artifact has the terms you need.</p>
+<p>Choose two plausible quantizations at most for the first experiment. For illustration, downloading a 5 GB file and a 6 GB file requires 5 + 6 = 11 GB of storage before any other artifacts. That storage budget is distinct from the memory needed to load either model and its conversation cache.</p>
+<p>Use the <a href="/notes/local-llm-quantization">quantization comparison</a> to decide which pair to try. Preserve the upstream checkpoint while changing precision. Hold the fine-tune fixed to identify what quantization changes.</p>
+<p>For split files, collect all the parts belonging to the same revision. Ollama's current import documentation requires the original split filenames and a wildcard matching every shard. You need the complete shard set to use the model.</p>
+<h2>Verify the bytes and inspect metadata</h2>
+<p>If the publisher supplies a SHA-256 checksum, compare it with the downloaded file. This Python snippet works on macOS and Linux with Python 3 installed and reads the file in chunks rather than all at once:</p>
+<pre><code>python3 - &lt;&lt;'PY'
+import hashlib
+from pathlib import Path
+path = Path(&quot;model.gguf&quot;)
+digest = hashlib.sha256()
+with path.open(&quot;rb&quot;) as source:
+    for chunk in iter(lambda: source.read(1024 * 1024), b&quot;&quot;):
+        digest.update(chunk)
+print(path.stat().st_size, digest.hexdigest(), path.name)
+PY
+</code></pre>
+<p>Replace the filename with your actual artifact. A matching checksum confirms that your bytes match the published digest. Evaluate model quality and publisher trust separately. If no digest is supplied, save your own as an identifier for the file you evaluated.</p>
+<p>The llama.cpp repository provides a GGUF metadata-dump tool. From an existing checkout, install its Python package in your chosen environment and inspect the artifact:</p>
+<pre><code>python3 -m pip install ./gguf-py
+python3 gguf-py/gguf/scripts/gguf_dump.py model.gguf
+</code></pre>
+<p>Look for <code>general.architecture</code>, the tokenizer fields and <code>tokenizer.chat_template</code> when present. Save the dump with the evaluation. Do not “fix” unexpected metadata by editing it until the file's origin and intended runtime behavior are understood. A metadata edit creates a different artifact that deserves a new checksum.</p>
+<h2>Run a smoke test before a benchmark</h2>
+<p>Use one prompt supplied by the model card, then one short task whose answer you already know. For example, ask it to extract the quantity from “We ordered seven boxes; two are replacements” and verify that it preserves the distinction. Check the formatting and stopping behavior as well as the content.</p>
+<p>To import a compatible single-file GGUF into Ollama, create a file named <code>Modelfile</code> with the following content, substituting your absolute path:</p>
+<pre><code>FROM /absolute/path/model.gguf
+</code></pre>
+<p>From that directory, run:</p>
+<pre><code>ollama create local-artifact
+ollama run local-artifact
+</code></pre>
+<p>Ollama imports GGUF weights in their existing quantization. Prepare the quantization beforehand. If the smoke test fails to load, capture the exact error and build version before trying unrelated prompt changes.</p>
+<h2>Try it on your workload</h2>
+<p>Build an artifact record containing the publisher, upstream checkpoint, revision, license link, filename, byte size, checksum and successful runner build. Include every shard when applicable. Have a colleague use that record to obtain and identify the same file.</p>
+<p>Run the model-card prompt and five representative tasks. Save the raw answers and settings. Repeat after restarting the runner. If you compare another file, change one property at a time and label the result with its own artifact record. Keep the original files until you have finished investigating any disagreement.</p>
 <h2>How to decide</h2>
-<p>Keep the artifact identifier beside your evaluation results. Two files bearing the same family name can have different weights, formats and behavior. <a href="https://github.com/ggml-org/llama.cpp">llama.cpp model formats</a>.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep the artifact when its provenance is clear, your runtime loads it correctly and it passes the task checks.</li>
+<li>Resolve a checksum mismatch, missing shard or unsupported architecture before judging answer quality.</li>
+<li>Preserve exact artifact identifiers beside results so a later download does not silently replace your baseline.</li>
+</ul>
+<h2>Evaluate with five coding agents for about 5 cents</h2>
+<p>Five coding-evaluation agents working at once on <code>qwen/qwen3-coder-30b-a3b-instruct</code> cost about 5 cents in tokens on TrustedRouter for this trial. Assign independent repository tasks from your evaluation set to compare accepted answers with your recorded local artifact.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.132 per million input tokens and $0.475 per million output tokens. Suppose each agent uses 40,000 input and 8,000 output tokens across its tasks. Input = 5 × 40,000 = 200,000; output = 5 × 8,000 = 40,000. Cost = 0.2 × $0.132 + 0.04 × $0.475 = $0.0454, about 5 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential work. Matching family names do not establish identical quantization or outputs. Save the hosted model ID and selected provider beside the local artifact record. Prices change; check <a href="/models">offerings</a>, <a href="/docs/provider-routing">provider routing</a> and <a href="/docs/agent-setup">agent setup</a>. For approved work, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Local is preferable for offline execution or control over an exact artifact.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://github.com/ggml-org/ggml/blob/master/docs/gguf.md">GGML: GGUF specification, naming and metadata keys</a></li>
+<li><a href="https://huggingface.co/docs/hub/gguf">Hugging Face: inspecting GGUF files on the Hub</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/README.md">llama.cpp: GGUF Python package and inspection tools</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/scripts/gguf_dump.py">llama.cpp: metadata-dump command implementation</a></li>
+<li><a href="https://docs.ollama.com/import">Ollama: single-file and split GGUF imports</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

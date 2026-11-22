@@ -173,16 +173,111 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Where can private documents go in a local LLM app?</h1><p>Trace a document through ingestion, embeddings, retrieval, generation and logging. Each stage can have a different storage location or service owner.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Put a unique fictional marker in a test document. Inspect the application's configured index, chat history, backups and permitted logs. Delete the document and check whether the marker remains retrievable.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>A private document can become an uploaded file, extracted text, search-index content, prompt context, chat history and a backup. Trace all six copies before calling an application private; selecting a local generation model settles only one stage of that path.</p>
+<h2>Draw the document's route before uploading it</h2>
+<p>Start with the original file on your laptop. Identify the process that receives the upload, the parser that extracts its text, the embedding service, the vector store and the generation endpoint. Then add the interface's saved conversations, operational logs and backup destination. Write the owner and configured address beside every service.</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Data to account for</th>
+<th>Concrete check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ingestion</td>
+<td>Original file and extracted text</td>
+<td>Locate the upload directory and parser endpoint</td>
+</tr>
+<tr>
+<td>Embedding</td>
+<td>Text sent to the embedding model and returned vectors</td>
+<td>Check the embedding provider independently of chat</td>
+</tr>
+<tr>
+<td>Retrieval</td>
+<td>Stored chunks, source metadata and search queries</td>
+<td>Inspect the index and its access rules</td>
+</tr>
+<tr>
+<td>Generation</td>
+<td>Question plus selected source passages</td>
+<td>Confirm the actual model endpoint</td>
+</tr>
+<tr>
+<td>History and operations</td>
+<td>Answers, citations, logs, exports and backups</td>
+<td>Record locations, readers and retention</td>
+</tr>
+</tbody>
+</table>
+<p>For each arrow, ask whether the receiver runs on the device, on an internal server or outside your organization. Check the backend's address even when the browser runs locally. A remote embedding call can transmit document text even when the final answer comes from a GPU under your desk.</p>
+<p>Use separate approved configurations for separate data classes. If a document must stay on one device, an internal network server is still outside that device. Make the requirement explicit enough that someone configuring the app can tell whether a destination qualifies.</p>
+<h2>Know what the common stacks actually store</h2>
+<p>Ollama's FAQ says locally run prompts and data are not sent to Ollama. Its documented model directories are <code>~/.ollama/models</code> on macOS and <code>/usr/share/ollama/.ollama/models</code> for the standard Linux installation, overridable with <code>OLLAMA_MODELS</code>. Those are model-storage paths. Inspect the client application's document and history storage separately.</p>
+<p>LM Studio's current chat documentation places conversations at <code>~/.lmstudio/conversations/</code> on macOS and Linux. They are JSON files; use the chat's Reveal in Finder or corresponding file-reveal action to locate the actual file. Do not write a deletion tool against an assumed internal JSON structure.</p>
+<p>LM Studio's privacy policy, updated October 19, 2026, says local models keep messages, histories and documents on the device and that the application does not include telemetry or user-specific tracking. It separately describes network use for search, downloads and updates, and optional cloud processing. Review optional cloud features separately from the local workflow.</p>
+<table>
+<thead>
+<tr>
+<th>Open WebUI default Docker data location</th>
+<th>Contents to inspect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/app/backend/data/uploads/</code></td>
+<td>Uploaded files</td>
+</tr>
+<tr>
+<td><code>/app/backend/data/vector_db/</code></td>
+<td>Local ChromaDB vector store</td>
+</tr>
+<tr>
+<td><code>/app/backend/data/webui.db</code></td>
+<td>SQLite application data</td>
+</tr>
+<tr>
+<td><code>/app/backend/data/cache/</code></td>
+<td>Cached data</td>
+</tr>
+</tbody>
+</table>
+<p>Open WebUI's backup guide documents these components. Map the container data directory to its persistent host volume and record the backup destination separately. If your deployment uses an external database, vector service or object store, inventory that configured service instead of relying on this default layout.</p>
+<h2>Review access, logs and deletion together</h2>
+<p>Open WebUI documents chat content as plain JSON in its database, uploads as unencrypted application files and document chunks as text in the vector store unless additional protection is configured. Use storage-layer encryption and protect backups separately. The running application still needs access to serve authorized users.</p>
+<p>Its <code>ENABLE_ADMIN_CHAT_ACCESS=false</code> and <code>ENABLE_ADMIN_EXPORT=false</code> controls hide interface capabilities; they do not exclude infrastructure operators from the data. Temporary Chat reduces saved history but still sends the active prompt to the selected model and permits enabled tools to run. Treat operators and tools as explicit parts of the boundary.</p>
+<pre><code>ENABLE_ADMIN_CHAT_ACCESS=false
+ENABLE_ADMIN_EXPORT=false
+AUDIT_LOG_LEVEL=METADATA
+</code></pre>
+<p>Review these Open WebUI deployment settings alongside storage encryption, access and backup controls. Its documentation distinguishes metadata audit logging from request and response body logging. Avoid putting document bodies into diagnostic output merely to troubleshoot a timeout.</p>
+<p>Write a deletion checklist before the first real upload: original upload, extracted representation, indexed chunks, conversations that quote the source, exports and backup retention. Removing a document from a sidebar is one action in that checklist. Treat vectors and their metadata as derived document data rather than an anonymous substitute for the source.</p>
+<p>Keep the backup policy practical. Record who can restore it, how long snapshots remain and how a restore avoids reviving records that were intentionally removed. A system can stop retrieving a document today while an older copy remains in its retention window.</p>
+<h2>Try it on your workload</h2>
+<p>Create a fictional document containing the unique marker <code>CEDAR-PRIVACY-7319</code> and a made-up delivery date. Upload it through the normal interface, retrieve the date, and make the assistant cite the passage. Keep the marker out of your question so finding it demonstrates access to the document.</p>
+<p>Inspect the configured upload store, index, chat export and permitted logs using their normal administrative tools. Record every location that contains the marker or a reference to its source. Inspect a test backup too, using a disposable restore environment rather than modifying the live database.</p>
+<p>Delete the document through the supported interface, then begin a fresh conversation and repeat retrieval. Check any old conversation that quoted the text separately. Record residual copies and their retention deadlines. Finally, repeat the workflow with external networking blocked to detect any extraction or embedding dependency you overlooked.</p>
 <h2>How to decide</h2>
-<p>Approve each stage for the data class it handles. An encrypted remote inference route is a separate choice when organizational policy permits remote processing.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Approve each processing and storage stage for the document's data class.</li>
+<li>Choose a device-only stack when no off-device processing is allowed.</li>
+<li>Accept a shared local service only when its operators, backups and access model also meet the requirement.</li>
+</ul>
+<h2>Review ten approved documents in parallel for about two cents</h2>
+<p>Ten document agents working at once on <code>meta-llama/llama-3.3-70b-instruct</code> cost about two cents in tokens on TrustedRouter for this fictional-document trial. On 2026-11-22, ordinary <a href="https://api.trustedrouter.com/v1/models">catalog</a> rates were approximately $0.142 per million input and $0.422 per million output tokens. Ten agents with 10,000 input and 1,000 output tokens each use 100,000 input and 10,000 output tokens. Cost = 0.1 × $0.142 + 0.01 × $0.422 = $0.01842, about two cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent document requests can run at the same time for the same token bill as serial execution. Keep the inventory of files, indexes and histories your application retains.</p>
+<p>For approved documents, <a href="/private-llm-api">confidential routing</a> can require encrypted provider inference and zero data retention; availability depends on model and provider. Check the selected route's price separately from this ordinary catalog example. Prices change; review <a href="/models">current prices</a>, <a href="/who-can-see-your-data">data visibility</a> and <a href="/docs/agent-setup">agent setup</a>. Choose local processing when documents must remain on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/faq">Ollama: local prompt privacy and model-storage paths</a></li>
+<li><a href="https://lmstudio.ai/docs/app/basics/chat">LM Studio: conversation files and their location</a></li>
+<li><a href="https://lmstudio.ai/app-privacy">LM Studio: local data handling, telemetry and cloud scope</a></li>
+<li><a href="https://docs.openwebui.com/tutorials/maintenance/backups/">Open WebUI: persistent data and backups</a></li>
+<li><a href="https://docs.openwebui.com/security/chat-data-privacy-and-encryption/">Open WebUI: chat storage, operators, logging and encryption</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

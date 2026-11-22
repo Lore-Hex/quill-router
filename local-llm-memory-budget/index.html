@@ -173,16 +173,99 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How much memory does a local LLM need?</h1><p>Estimate weight memory first. Multiply the parameter count by bits per weight and divide by eight. That gives a lower bound in bytes before caches, runtime buffers and quantization metadata.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>An 8-billion-parameter model at four bits has roughly 4 GB of raw weights. Load the actual artifact and measure free memory again after a long prompt. Repeat at the concurrency your application needs.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Budget memory for weights, the attention cache, runtime buffers and your other applications. For a first estimate, an 8-billion-parameter model at about 4.9 bits per weight needs 8 billion × 4.9 ÷ 8 = 4.9 GB for weights alone; start with at least 25% additional room after accounting for the cache.</p>
+<h2>Turn parameter counts into a download estimate</h2>
+<p>The arithmetic is weights in bytes = parameter count × bits per weight ÷ 8. Four bits gives an 8B model a theoretical 4 GB payload, but real quantization stores scales and mixes tensor precisions. Read Q4 as a nominal precision family; use the complete recipe to estimate storage.</p>
+<p>The llama.cpp quantization documentation reports 4.8944 bits per weight for its Llama 3.1 8B Q4_K_M example, 5.7036 for Q5_K_M and 8.5008 for Q8_0. The following planning table rounds these to 4.9, 5.7 and 8.5. Use these approximate file-size estimates for planning, then check the selected architecture and artifact. F16 uses 16 bits per weight.</p>
+<table>
+<thead>
+<tr>
+<th>Parameters</th>
+<th>Q4_K_M, about 4.9 bpw</th>
+<th>Q5_K_M, about 5.7 bpw</th>
+<th>Q8_0, about 8.5 bpw</th>
+<th>F16, 16 bpw</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3 billion</td>
+<td>1.84 GB</td>
+<td>2.14 GB</td>
+<td>3.19 GB</td>
+<td>6 GB</td>
+</tr>
+<tr>
+<td>8 billion</td>
+<td>4.90 GB</td>
+<td>5.70 GB</td>
+<td>8.50 GB</td>
+<td>16 GB</td>
+</tr>
+<tr>
+<td>14 billion</td>
+<td>8.58 GB</td>
+<td>9.98 GB</td>
+<td>14.88 GB</td>
+<td>28 GB</td>
+</tr>
+<tr>
+<td>32 billion</td>
+<td>19.60 GB</td>
+<td>22.80 GB</td>
+<td>34 GB</td>
+<td>64 GB</td>
+</tr>
+<tr>
+<td>70 billion</td>
+<td>42.88 GB</td>
+<td>49.88 GB</td>
+<td>74.38 GB</td>
+<td>140 GB</td>
+</tr>
+</tbody>
+</table>
+<p>For example, the 14B Q5 estimate is 14 × 5.7 ÷ 8 = 9.975 GB, rounded to 9.98 GB. GB here means one billion bytes. GiB means 1,073,741,824 bytes, so 4.9 GB ÷ 1.073741824 = about 4.56 GiB. Keep units consistent when comparing a download page with a memory monitor. Once you select an artifact, replace this estimate with its actual byte size.</p>
+<h2>Give the cache and the desktop their own lines</h2>
+<p>Use a worksheet with separate entries for the weights, the configured context cache, runtime buffers and normal applications. Give each item its own measured or calculated value. In Ollama, parallel requests enlarge context allocation: four requests with a 2,048-token context require capacity for 4 × 2,048 = 8,192 context tokens.</p>
+<p>Here is an illustrative budget. Suppose weights occupy 5 GiB, your chosen context and concurrency require 2 GiB of cache, and measured runtime buffers occupy 1 GiB. The inference subtotal is 5 + 2 + 1 = 8 GiB. Applying this guide's 25% planning margin gives 8 × 1.25 = 10 GiB. If your operating system and usual applications need another 4 GiB, plan around 14 GiB of total memory.</p>
+<p>Keep the planning margin after measuring the longest request, leaving room for workload variation before choosing a larger model. A configuration that consumes every available byte at startup gives you no practical room for a browser tab, a longer answer or another worker.</p>
+<p>For the architecture-specific calculation, use the <a href="/notes/local-llm-kv-cache">KV cache guide</a>. A shorter weight file and a shorter context solve different parts of the budget. If long chats are your failure case, changing only the quantization may leave the underlying problem intact.</p>
+<h2>Check which memory is doing the work</h2>
+<p>On a discrete GPU machine, make a GPU budget and a system-memory budget separately. Ollama reports placement through <code>ollama ps</code>: CPU, GPU or a split between them. Confirm that the accelerator holds the full model when full GPU placement is your goal.</p>
+<p>On a Mac with unified memory, start with the combined workload rather than adding advertised CPU and GPU memory as separate capacities. The <a href="/notes/local-llm-mac-unified-memory">Mac sizing guide</a> covers that case. In either layout, record the loaded configuration, including context and parallel requests, beside the memory reading. Test four document-processing agents together when that is the workload you need to support.</p>
+<p>Keep download storage in a separate column too. Your experiment may retain two quantizations and their outputs even though only one model is loaded. Deleting an unused download frees disk capacity; loading a smaller artifact reduces weight memory.</p>
+<h2>Try it on your workload</h2>
+<p>Choose a model you have already downloaded and substitute its exact local name below. This request explicitly reserves 4,096 context tokens and keeps the model available for inspection. The same HTTP command works from a macOS or Linux terminal with Ollama running.</p>
+<pre><code>curl http://localhost:11434/api/generate -d '{
+  &quot;model&quot;: &quot;YOUR_LOCAL_MODEL&quot;,
+  &quot;prompt&quot;: &quot;List the decisions in this fictional meeting: We agreed to delay shipping until testing finishes.&quot;,
+  &quot;stream&quot;: false,
+  &quot;keep_alive&quot;: &quot;10m&quot;,
+  &quot;options&quot;: {&quot;num_ctx&quot;: 4096}
+}'
+ollama ps
+</code></pre>
+<p>Record free memory before loading, after this response, and during your longest representative prompt. Repeat with the concurrency your application needs. Keep the same artifact and context setting, and note whether each request actually runs together or waits. Save answer quality and elapsed time alongside peak memory. A load that succeeds but causes unacceptable waiting has failed the experiment.</p>
+<p>Use three passes: a quiet machine, your normal desktop workload, and the busiest expected agent burst. Keep the worst observed memory requirement in your worksheet. The final pass determines whether your headroom rule survives real use.</p>
 <h2>How to decide</h2>
-<p>Choose a configuration that leaves room for the operating system and the largest expected request. A successful load alone tells you little about sustained use.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep the configuration when the longest request and normal applications fit with your reserved margin.</li>
+<li>Reduce context or simultaneous work when cache growth is the problem; compare smaller weight artifacts when the baseline load is too large.</li>
+<li>Buy more memory only after a useful model has passed your accuracy checks and the worksheet identifies a recurring capacity shortfall.</li>
+</ul>
+<h2>Give ten analysis agents room for about 7 cents</h2>
+<p>Ten analysis agents working at once on <code>openai/gpt-oss-120b</code> cost about 7 cents in tokens on TrustedRouter for this trial. Use them for approved document analysis that exceeds your everyday memory budget, while keeping the local configuration sized for routine work.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.0317 per million input tokens and $0.179 per million output tokens. Suppose each agent uses 100,000 input and 20,000 output tokens across its requests. Input = 10 × 100,000 = 1,000,000; output = 10 × 20,000 = 200,000. At those rounded rates, cost = 1 × $0.0317 + 0.2 × $0.179 = $0.0675, about 7 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential work. Compare accepted answers from each deployment against your references. Prices change; check <a href="/models">current prices</a>, <a href="/docs/simple-start">the API quickstart</a> and <a href="/docs/agent-setup">agent setup</a>. For approved off-device work, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Local remains preferable when the workload must stay on your device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/quantize/README.md">llama.cpp: measured quantization sizes and bits per weight</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/wiki/Tensor-Encoding-Schemes">llama.cpp: tensor encodings and floating-point widths</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: placement, context options and parallel allocation</a></li>
+<li><a href="https://ml-explore.github.io/mlx/build/html/usage/unified_memory.html">MLX: shared CPU and GPU memory on Apple silicon</a></li>
+<li><a href="https://docs.ollama.com/api/generate">Ollama: generation request and keep-alive fields</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

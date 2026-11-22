@@ -173,16 +173,80 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Which quantization should you download?</h1><p>Quantizing weights reduces their footprint. The decision turns on how much task accuracy you give up for the memory and speed you gain.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Download two quantizations of the same checkpoint. Ask both to extract dates, quantities and exceptions from twenty short records. Use the same prompt, context and decoding settings. Count changed digits separately from wording differences.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Start by comparing Q4_K_M and Q5_K_M from the same checkpoint, then keep the smaller file if both pass your task checks. In llama.cpp's published Llama 3.1 8B example, those variants occupy 4.58 GiB and 5.33 GiB, so the higher-precision comparison costs 0.75 GiB of extra weight storage.</p>
+<h2>Read the whole quantization name</h2>
+<p>Quantization represents weights with fewer bits. The useful question is how much memory it saves while preserving the answers you need. Check the extracted invoice totals, dates and exceptions even when the response reads fluently.</p>
+<p>In GGUF names, Q4 and Q5 identify nominal precision families, K identifies the K-quant scheme, and M names the medium mixed-precision recipe. The llama.cpp Q4_K_M recipe mixes tensor types with different precisions. Q8_0 is a separate eight-bit block encoding, with storage for scales as well as the quantized values.</p>
+<table>
+<thead>
+<tr>
+<th>Download label</th>
+<th>Measured bits per weight</th>
+<th>Published size</th>
+<th>Useful comparison role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Q4_K_M</td>
+<td>4.8944</td>
+<td>4.58 GiB</td>
+<td>Compact first candidate</td>
+</tr>
+<tr>
+<td>Q5_K_M</td>
+<td>5.7036</td>
+<td>5.33 GiB</td>
+<td>Next precision step</td>
+</tr>
+<tr>
+<td>Q8_0</td>
+<td>8.5008</td>
+<td>7.95 GiB</td>
+<td>Higher-precision comparison</td>
+</tr>
+</tbody>
+</table>
+<p>These whole-model figures come from the Llama 3.1 8B table in llama.cpp's quantization documentation. Whole-model averages vary across GGUF artifacts. At the individual tensor level, the project's encoding reference gives Q4_K as 4.5 bits per weight and Q5_K as 5.5. Mixing tensor types changes the whole-file average. Use the publisher's actual file size when deciding whether a download fits.</p>
+<p>The extra 0.75 GiB between the first two rows is 0.75 ÷ 4.58 × 100 = about 16.4% more weight storage. That is a concrete price for your accuracy experiment. Check whether that extra precision fixes the mistakes in your evaluation.</p>
+<h2>Understand what an imatrix variant changes</h2>
+<p>An importance matrix is calibration data used during quantization. llama.cpp's <code>llama-imatrix</code> collects information from a model processing a text dataset; <code>llama-quantize --imatrix</code> uses that information when producing the quantized weights. An imatrix variant can still be Q4_K_M. Record the calibration method as part of the artifact's provenance alongside its quantization recipe.</p>
+<p>If you create your own artifacts, the documented workflow has this shape, with a high-precision source model and your calibration text already present:</p>
+<pre><code>./build/bin/llama-imatrix -m source-f16.gguf -f calibration.txt -o imatrix.gguf
+./build/bin/llama-quantize --imatrix imatrix.gguf source-f16.gguf model-Q4_K_M.gguf Q4_K_M
+</code></pre>
+<p>You do not need to generate an importance matrix simply to use someone else's finished quantization. Ask the publisher which upstream revision and calibration set they used. Keep those details beside the filename. If the information is absent, evaluate the download on task outcomes and leave the cause of any improvement unresolved.</p>
+<p>Use separate records for calibration and evaluation. Otherwise you are testing how well your conversion preserved material it was already tuned around. Include the languages, number formats and document shapes your real work contains in the evaluation set.</p>
+<h2>Spend saved memory deliberately</h2>
+<p>A smaller weight artifact can make room for a longer conversation or additional requests. Decide which benefit you actually need before choosing the smallest available file. If your current task already fits comfortably, accepting more extraction errors for unused memory is a poor trade.</p>
+<p>Likewise, do not choose Q8_0 solely because it has the largest number. Your comparison should include the whole working configuration: weights, context, concurrency and desktop applications. The <a href="/notes/local-llm-memory-budget">memory worksheet</a> helps you make that allocation explicit.</p>
+<p>Separate two experiments. First compare quantizations with the checkpoint held fixed. Then, if neither meets your quality target, compare model families. Changing both at once leaves you unable to tell whether the result came from a better model or a less aggressive representation.</p>
+<p>Choose an acceptance rule before looking at answers. For an expense workflow, that might be zero changed totals and zero invented currencies across the test set. For a draft summary, you might accept harmless wording changes but reject a missing exception. Choose those acceptance rules from the consequences of errors in your product.</p>
+<h2>Try it on your workload</h2>
+<p>Download two quantizations of the same checkpoint and record their upstream revision, publisher and exact byte sizes. Build twenty short fictional records containing dates, quantities, units, negations and exceptions. Write the expected fields first. Save each complete prompt as <code>record-01.txt</code> through <code>record-20.txt</code>, including the extraction instruction, required output fields and fictional record; keep reference answers in separate files. Include a missing date and a statement that explicitly cancels an earlier quantity.</p>
+<p>Run both files with the same runner build, prompt template, context and decoding settings. In llama.cpp, these commands hold the context and output ceiling fixed; replace the filenames with your downloaded artifacts:</p>
+<pre><code>./build/bin/llama-cli -m model-Q4_K_M.gguf -c 4096 -n 256 --temp 0 --single-turn -f record-01.txt
+./build/bin/llama-cli -m model-Q5_K_M.gguf -c 4096 -n 256 --temp 0 --single-turn -f record-01.txt
+</code></pre>
+<p>Repeat for all twenty inputs, then rerun any disagreement. Count changed digits separately from omitted fields and stylistic differences. Record peak memory and elapsed time, but choose the winner from accepted answers. Reject shorter responses that silently drop an exception.</p>
 <h2>How to decide</h2>
-<p>Keep the smaller artifact if both pass the meaningful checks. When the smaller one drops a critical field, repeat with a higher precision before changing model families.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep Q4_K_M when both artifacts satisfy the same acceptance rule and its smaller footprint helps your workload.</li>
+<li>Move to Q5_K_M or Q8_0 when a repeatable, consequential error disappears at higher precision and the full working set still fits.</li>
+<li>Change checkpoints when the same important mistakes survive the precision comparison.</li>
+</ul>
+<h2>Run ten evaluation agents at once for less than a cent</h2>
+<p>Ten evaluation agents working at once on <code>mistralai/mistral-small-24b-instruct-2501</code> cost about 0.7 cents in tokens on TrustedRouter for this comparison. Split the twenty fictional records between the agents and score their extracted fields against the same reference answers used locally.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.0528 per million input tokens and $0.0844 per million output tokens. Suppose each agent's repeated evaluations use 10,000 input and 2,000 output tokens. Input = 10 × 10,000 = 100,000; output = 10 × 2,000 = 20,000. Cost = 0.1 × $0.0528 + 0.02 × $0.0844 = $0.006968, about 0.7 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential evaluation. This compares deployments, not GGUF quantization alone: the artifact and serving configuration differ. Prices change; check <a href="/models">the catalog</a>, <a href="/docs/simple-start">the request quickstart</a> and <a href="/docs/agent-setup">agent setup</a>. For approved data, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Local is better for offline operation or when the smaller artifact already meets your needs.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/quantize/README.md">llama.cpp: whole-model quantization comparison</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/wiki/Tensor-Encoding-Schemes">llama.cpp: tensor naming and bit widths</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/src/llama-model-loader.cpp">llama.cpp: medium quantization variant names</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/imatrix/README.md">llama.cpp: calibration and importance-matrix workflow</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/cli/README.md">llama.cpp: context, prompt-file and sampling arguments</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

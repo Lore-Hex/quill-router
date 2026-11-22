@@ -173,16 +173,106 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Why does local inference use more memory as chats grow?</h1><p>During autoregressive generation, the runtime can retain attention keys and values for prior tokens. This cache helps avoid recomputation and consumes memory alongside model weights.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Measure memory with one short chat, one long chat and four concurrent long chats. Keep the checkpoint and weight quantization fixed. Record whether your runtime preallocates the configured window.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Longer full-attention chats occupy more KV-cache storage. A dynamic cache allocates memory as the sequence grows; a static cache reserves capacity ahead of time, so process memory may stay flat during the chat. For a full-attention model with fixed cache precision, doubling stored tokens roughly doubles this cache payload; doubling independent concurrent conversations doubles it again.</p>
+<h2>Separate the weights from conversation state</h2>
+<p>Weights describe the model. The KV cache describes computations associated with tokens in a particular sequence. Hugging Face's caching documentation explains how retaining earlier keys and values avoids recomputing them when generating later tokens.</p>
+<p>This distinction explains a common surprise: a model loads successfully, answers a short question, then runs out of room during a document-heavy session. The same weight file now needs more room for conversation state. A smaller weight quantization frees space; adjust cache precision separately.</p>
+<p>Start your worksheet with two separate entries, weight memory and cache memory. Keep runtime buffers and normal applications in additional rows. That makes it possible to identify whether the fix should be a smaller model, a shorter window or fewer simultaneous sessions.</p>
+<h2>Calculate the cache payload</h2>
+<p>For ordinary full attention with matching key and value dimensions, use:</p>
+<pre><code>KV bytes = 2 × L × Hkv × D × B × T × S
+L = number of attention layers
+Hkv = number of key/value heads
+D = dimension of each head
+B = bytes per cached element
+T = cached tokens per sequence
+S = independent sequences
+</code></pre>
+<p>The leading two counts keys and values. Use the architecture's KV head count rather than substituting its query head count. The equation estimates payload, excluding allocator overhead and other runtime memory.</p>
+<p>Here is a worked example with an illustrative architecture: 32 layers, eight KV heads, head dimension 128 and an FP16 cache using two bytes per element. The per-token payload is 2 × 32 × 8 × 128 × 2 = 131,072 bytes, or 128 KiB. At 8,192 tokens, that becomes 131,072 × 8,192 = 1,073,741,824 bytes, exactly 1 GiB.</p>
+<table>
+<thead>
+<tr>
+<th>Tokens per sequence</th>
+<th>One sequence</th>
+<th>Four independent sequences</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4,096</td>
+<td>0.5 GiB</td>
+<td>2 GiB</td>
+</tr>
+<tr>
+<td>8,192</td>
+<td>1 GiB</td>
+<td>4 GiB</td>
+</tr>
+<tr>
+<td>16,384</td>
+<td>2 GiB</td>
+<td>8 GiB</td>
+</tr>
+<tr>
+<td>32,768</td>
+<td>4 GiB</td>
+<td>16 GiB</td>
+</tr>
+</tbody>
+</table>
+<p>Moving from one 8,192-token sequence to four 32,768-token sequences multiplies this payload by 4 × 4 = 16. That is why a model that behaves well in a short chat can struggle when several agents inspect large files together.</p>
+<p>The table assumes full attention, equal-length independent sequences and no prefix sharing. Sliding-window and other attention designs need architecture-specific accounting. Read the model configuration before treating this example as your model's requirement.</p>
+<h2>Distinguish reserved capacity from live tokens</h2>
+<p>Interpret the memory graph using the runner's cache allocation strategy. Hugging Face documents dynamic caches that grow with the sequence and static caches that reserve capacity in advance. Sliding-window layers can stop growing when their retained window fills.</p>
+<p>For your runner, record memory just after loading, after a short request and during a long one. If the footprint is already large at the first step, investigate configured capacity and preallocation. If it grows with the input, investigate the live cache and retained conversations. Compare the observed pattern with the configured cache strategy before investigating a leak.</p>
+<p>Ollama's November 2026 server code selects initial context defaults of 4,096, 32,768 or 262,144 tokens at effective VRAM thresholds below 23 GiB, 23 to below 47 GiB, and 47 GiB or more. Its user-facing documentation describes those as the below-24, 24-to-below-48 and 48-plus GiB hardware tiers. Use an explicit window for your experiment and check the loaded value with <code>ollama ps</code>.</p>
+<p>Inside a running Ollama chat, <code>/set parameter num_ctx 8192</code> sets the context. For a foreground server on macOS or Linux, after stopping an existing server using the port, set the baseline explicitly:</p>
+<pre><code>OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_NUM_PARALLEL=1 ollama serve
+</code></pre>
+<p>For the four-request comparison, restart with <code>OLLAMA_NUM_PARALLEL=4</code>. A macOS app needs these variables set through <code>launchctl setenv</code> followed by an app restart; a Linux systemd service needs them in its service environment. The <a href="/notes/local-llm-context-window">context guide</a> covers per-request overrides.</p>
+<h2>Change cache precision only after fixing the budget</h2>
+<p>Ollama's FAQ lists <code>f16</code> as the default KV cache type. It offers <code>q8_0</code> at approximately half the memory and <code>q4_0</code> at approximately a quarter, with a precision tradeoff. Its documented quantized-cache path requires Flash Attention.</p>
+<p>For a controlled foreground-server comparison, keep the model and context fixed and start with:</p>
+<pre><code>OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 \
+OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_NUM_PARALLEL=1 ollama serve
+</code></pre>
+<p>Those ratios are approximate, since quantized blocks carry overhead. For the example's 1 GiB FP16 payload, half is about 0.5 GiB; include block overhead and runtime allocations in the process budget. Test long-distance facts and exact numbers after changing precision, and record the backend actually used.</p>
+<p>First remove unnecessary context and excessive concurrent work. Then compare cache precision. Otherwise you can spend time tuning a huge cache for information the task never needed.</p>
+<h2>Try it on your workload</h2>
+<p>Run three cases with fixed weights: one short chat, one long chat and four concurrent long chats. Agents on one local GPU share its throughput, and requests beyond its serving capacity wait in line. For each, record configured context, input and output tokens, memory before loading, peak memory, actual overlap and complete response time.</p>
+<p>Save four request files named <code>request-1.json</code> through <code>request-4.json</code>, each with your model and a different document in this shape:</p>
+<pre><code>{&quot;model&quot;:&quot;YOUR_LOCAL_MODEL&quot;,&quot;prompt&quot;:&quot;YOUR_DOCUMENT_AND_QUESTION&quot;,&quot;stream&quot;:false,&quot;options&quot;:{&quot;num_ctx&quot;:8192}}
+</code></pre>
+<p>Run one file for the single-request cases. After configuring four parallel requests, submit the group from a macOS or Linux shell:</p>
+<pre><code>for i in 1 2 3 4; do
+  curl -sS http://localhost:11434/api/generate \
+    -H 'Content-Type: application/json' \
+    --data-binary &quot;@request-$i.json&quot; &gt; &quot;result-$i.json&quot; &amp;
+done
+wait
+</code></pre>
+<p>Use independent fictional documents so accidental reuse of the same prefix does not dominate the result. Include a fact near the beginning and an exception near the end, and score whether the answer preserves both. Save each request and answer.</p>
+<p>Repeat with the smaller window your task can tolerate, then with Q8 cache if supported. Change one variable per pass. Keep the configuration that meets the correctness rule and fits the actual concurrency, rather than choosing the lowest memory reading in isolation.</p>
 <h2>How to decide</h2>
-<p>Use these observations to cap context or concurrent sessions. Reducing weight size alone may leave the long-chat memory problem untouched.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Cap context when the extra history does not improve accepted answers.</li>
+<li>Cap simultaneous sessions when independent caches exhaust the remaining memory.</li>
+<li>Use cache quantization only when the long-context checks still pass; reducing weight size alone may leave the main issue untouched.</li>
+</ul>
+<h2>Run four document agents without reserving four local caches</h2>
+<p>Four document agents working at once on <code>qwen/qwen3-32b</code> cost about 13 cents in tokens on TrustedRouter across the requests below. This lets you handle an occasional agent burst without reserving its full cache capacity on your own machine.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.100 per million input tokens and $0.301 per million output tokens. Suppose each agent makes ten requests, each using 25,000 input and 2,500 output tokens. Per agent, that is 250,000 input and 25,000 output tokens. Combined input = 4 × 10 × 25,000 = 1,000,000; output = 4 × 10 × 2,500 = 100,000. Cost = 1 × $0.100 + 0.1 × $0.301 = $0.1301, about 13 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential work. Count repeated context in each request's input budget. Prices change; check <a href="/models">current prices</a> and <a href="/docs/agent-setup">agent setup</a>. For approved conversations, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Local remains better for steady single-user work or conversations that must stay offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/api/generate">Ollama: generation requests and runtime options</a></li>
+<li><a href="https://huggingface.co/blog/kv-cache-quantization">Hugging Face: cache-memory formula and precision</a></li>
+<li><a href="https://huggingface.co/docs/transformers/kv_cache">Hugging Face: dynamic, static and sliding-window caches</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: parallelism, cache types and server environment settings</a></li>
+<li><a href="https://docs.ollama.com/context-length">Ollama: documented context tiers and loaded context display</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/server/routes.go">Ollama: context-default selection in the server</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

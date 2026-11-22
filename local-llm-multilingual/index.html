@@ -173,16 +173,88 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How do you evaluate a multilingual local LLM?</h1><p>Evaluate documents written naturally in each target language. Translated English benchmarks can miss regional terms, names and differences in formality.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Have a fluent reviewer select ten representative messages per language. Include a local date format, a mixed-language sentence and a domain-specific abbreviation. Assess meaning and tone separately.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Evaluate a multilingual local LLM separately in every language you intend to support, starting with ten naturally written messages per language. Score meaning, tone and token use independently for each language.</p>
+<h2>Build a language-specific acceptance set</h2>
+<p>Ask a fluent reviewer to choose examples resembling real work: a support request, a scheduling change, a refusal, a technical explanation and a message mixing local language with product names. Include regional vocabulary and appropriate levels of formality. Keep personal data fictional so the same set can be used for an approved hosted comparison.</p>
+<p>Write an expected meaning rather than one exact reference sentence. Several phrasings can be correct, while a polished answer can still reverse a negation or turn a tentative request into an instruction. Have the reviewer mark errors in names, quantities, dates, intent and register separately. These categories make disagreements actionable.</p>
+<p>A model card's supported-language list is a useful starting filter. For example, Llama 3.3's card names English, German, French, Italian, Portuguese, Hindi, Spanish and Thai. Extend the evaluation with your audience's dialects, industry abbreviations and mixed-language conversations.</p>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>What to preserve</th>
+<th>What the reviewer checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A local date format</td>
+<td>Day, month and uncertainty</td>
+<td>No unsupported date conversion</td>
+</tr>
+<tr>
+<td>A mixed-language message</td>
+<td>Intent and product names</td>
+<td>No accidental translation of identifiers</td>
+</tr>
+<tr>
+<td>A polite refusal</td>
+<td>Refusal and suitable tone</td>
+<td>No agreement added to sound helpful</td>
+</tr>
+<tr>
+<td>A domain abbreviation</td>
+<td>Correct local meaning</td>
+<td>No guessed expansion</td>
+</tr>
+</tbody>
+</table>
+<h2>Tokenizers make equal meaning take unequal space</h2>
+<p>Tokens are model-specific units that can represent words, parts of words or other text sequences. The research paper “Language Model Tokenizers Introduce Unfairness Between Languages” documents that equivalent translated content can require different token counts, affecting cost and usable context. Recount the same text when you change tokenizers.</p>
+<p>Subword tokenizers represent frequent sequences with vocabulary entries and split other text into smaller units. The tokenizer's vocabulary and training data therefore matter alongside the writing system. Hugging Face's tokenizer documentation explains the encoding interface; use the actual tokenizer rather than an English words-to-tokens shortcut. Count Japanese, Arabic and Hindi requests separately from English requests.</p>
+<p>Consider an illustrative paired-message test. Suppose one language averages 400 input tokens and another averages 700 for the same task under the chosen tokenizer. The ratio is 700 ÷ 400 = 1.75. Across 1,000 requests, that is 400,000 versus 700,000 input tokens, a 300,000-token difference.</p>
+<p>The same difference consumes context. With 6,000 tokens available for evidence, 400-token passages allow 15 passages; 700-token passages allow eight complete passages. Keep instructions and answer space outside that allowance. A language can require a different chunking policy even when the model and application are otherwise identical.</p>
+<h2>Count your full prompt and preserve the output language</h2>
+<p>For an installed Transformers tokenizer, save your approved messages as UTF-8 files and run this Python sketch. Replace the directory with the exact tokenizer snapshot used by your local deployment. It loads local files and keeps the message text on your machine.</p>
+<pre><code>from pathlib import Path
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(
+    &quot;./approved-tokenizer&quot;, local_files_only=True
+)
+for path in sorted(Path(&quot;fixtures&quot;).glob(&quot;*.txt&quot;)):
+    text = path.read_text(encoding=&quot;utf-8&quot;)
+    content_tokens = tokenizer.encode(text, add_special_tokens=False)
+    chat_tokens = tokenizer.apply_chat_template(
+        [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: text}],
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=False,
+    )
+    print(path.name, len(content_tokens), len(chat_tokens))
+</code></pre>
+<p>The first count isolates message content. The second includes the tokenizer's chat formatting and the assistant-generation prefix. Add your real system message and tool definitions before using the count as a production budget. The installed tokenizer must include a compatible chat template.</p>
+<p>Ask the model to respond in the user's language and preserve names, identifiers and quoted source text. Then test that instruction with mixed-language inputs. Do not automatically translate everything into English to reduce tokens: translation is another transformation whose errors and cost belong in the comparison.</p>
+<p>Record generated tokens as well as input tokens. A model can answer correctly but switch languages, become unnecessarily verbose, or use an inappropriate level of formality. Those failures affect usability even when the input fits easily.</p>
+<h2>Try it on your workload</h2>
+<p>For each target language, select ten natural messages with a fluent reviewer. Include a local date, a mixed-language sentence and a domain-specific abbreviation. Add matched translations of three messages as a separate tokenization probe, keeping the natural messages as the main quality test.</p>
+<p>Run the same task instruction and output requirements for each candidate. Save model revision, tokenizer revision, input and output counts, elapsed seconds and the untouched answer. Have reviewers score meaning and tone without seeing which model produced the response. Record corrections they would need before sending the answer to a customer.</p>
+<p>Report results by language rather than pooling them. If nine of ten French answers pass and six of ten Hindi answers pass, the respective rates are 90% and 60%; an overall 75% conceals the difference that matters to users. These numbers illustrate the reporting format. Repeat failures with a corrected prompt to distinguish a fixable instruction problem from a persistent model weakness.</p>
 <h2>How to decide</h2>
-<p>Compare latency and token counts for each language too. A workload that fits comfortably in one language may use more of the context window in another.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Choose a model only for languages where it passes your factual and tone thresholds. Use per-language token budgets for context and cost planning. If one language remains weak, compare a different model for that language rather than increasing the context of a model that already received all the necessary information.</p>
+<h2>Evaluate ten languages at once for about 18 cents</h2>
+<p>Ten language-evaluation agents working at once on <code>meta-llama/llama-3.3-70b-instruct</code> cost about 18 cents in tokens on TrustedRouter. In this illustrative comparison, each agent uses 70,000 input and 20,000 output tokens across its fixtures. On 2026-11-22, catalog prices rounded to $0.142 per million input and $0.422 per million output tokens. Input = 10 × 70,000 = 700,000; output = 10 × 20,000 = 200,000. Cost = 0.7 × $0.142 + 0.2 × $0.422 = $0.1838, about 18 cents. With 40,000 input tokens per agent and unchanged output, cost = 0.4 × $0.142 + 0.2 × $0.422 = $0.1412, about 14 cents.</p>
+<p>On one local GPU, these agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run concurrently, with the same token bill as running them one after another. Assign approved fixtures by language and keep fluent reviewers scoring meaning and tone separately.</p>
+<p>Prices change; check <a href="/models">the catalog</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/docs/simple-start">API setup</a>. Review <a href="/who-can-see-your-data">data handling</a> and <a href="/private-llm-api">confidential inference</a>, including eligible route prices, before remote evaluation. Local remains preferable for messages that must stay offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.15425">Research: language differences in tokenizer cost and context</a></li>
+<li><a href="https://huggingface.co/docs/transformers/main_classes/tokenizer">Transformers: tokenizer loading and encoding APIs</a></li>
+<li><a href="https://huggingface.co/docs/transformers/tokenizer_summary">Transformers: subword tokenization and vocabulary construction</a></li>
+<li><a href="https://huggingface.co/docs/transformers/chat_templating">Transformers: tokenizing complete chat messages</a></li>
+<li><a href="https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct">Meta: Llama 3.3 supported languages</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: live catalog pricing</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

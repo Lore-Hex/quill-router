@@ -173,16 +173,78 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Does a local LLM need a GPU?</h1><p>A CPU can be enough for an overnight batch even when it feels slow in a chat window. Measure the time limit your work actually imposes.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>If 600 records must finish in ten hours, your budget is one minute per record, including reading and writing. Time twenty representative records, then repeat while your normal desktop applications are running.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Run a local LLM on the CPU when it finishes useful work before your deadline. For 600 records due in ten hours, your complete processing budget is 10 × 60 ÷ 600 = one minute per record, including input handling and saving the result.</p>
+<h2>Turn the hardware question into a time budget</h2>
+<p>A slow chat and a successful overnight job can use the same model. Decide whether you need an answer while someone waits, a report by morning, or several agents working together. Each creates a different acceptance test.</p>
+<p>For the 600-record example, reserve two of the ten hours for retries and review. That leaves 8 × 3,600 ÷ 600 = 48 seconds per record for the first pass. In this illustrative plan, if twenty representative records take twelve minutes end to end, the observed average is 720 ÷ 20 = 36 seconds. Extrapolated linearly, 600 × 36 = 21,600 seconds, or six hours. Verify that projection with a longer run before depending on it.</p>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Useful target</th>
+<th>First experiment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Overnight extraction</td>
+<td>Accepted records before the deadline</td>
+<td>CPU run on twenty representative records</td>
+</tr>
+<tr>
+<td>Interactive chat</td>
+<td>First response and completed answer within your waiting limit</td>
+<td>Short question and document-heavy question</td>
+</tr>
+<tr>
+<td>Several coding agents</td>
+<td>Completion time for the entire task set</td>
+<td>One worker, then the expected concurrent workers</td>
+</tr>
+<tr>
+<td>Occasional large analysis</td>
+<td>Useful result without a permanent capacity purchase</td>
+<td>Local baseline and approved hosted comparison</td>
+</tr>
+</tbody>
+</table>
+<p>Include human correction in the result. A configuration that saves ten minutes of generation but adds an hour of checking is a worse tool for the job. Establish the quality threshold before trying to improve speed.</p>
+<h2>Check the backend before blaming the hardware</h2>
+<p>llama.cpp documents CPU builds and GPU backends, including Metal and CUDA. On macOS, its source build enables Metal by default. On an NVIDIA Linux machine, a CUDA build uses <code>-DGGML_CUDA=ON</code>. A GPU comparison needs a build that supports the device, enough memory for the chosen configuration and confirmation that offload actually happened.</p>
+<p>For a controlled CPU run with an existing llama.cpp build, use the explicit device setting and zero GPU layers. Replace <code>model.gguf</code> and <code>record.txt</code> with your artifact and prompt:</p>
+<pre><code>./build/bin/llama-cli -m model.gguf --device none -ngl 0 -c 4096 -n 256 --single-turn -f record.txt
+</code></pre>
+<p>For a GPU trial, remove <code>--device none</code> and request automatic placement with <code>-ngl auto</code>. Add <code>--log-verbosity 3</code> to the CPU command and its GPU variant, then inspect the startup output. Confirm that the model layers actually loaded on the accelerator before recording full GPU placement. If some layers remain on the CPU, you are testing <a href="/notes/local-llm-gpu-offload">partial offload</a>.</p>
+<p>Ollama also supports Apple GPU acceleration through Metal. On Linux, its hardware page lists supported devices and driver requirements. Check that page for the exact card you own before planning an upgrade. Use <code>ollama ps</code> during the request to distinguish CPU, GPU and mixed placement.</p>
+<h2>Measure prompt processing separately from generation</h2>
+<p>Use llama.cpp's benchmark tool to establish a repeatable baseline. Its <code>pp</code> test measures prompt processing, while <code>tg</code> measures token generation. The following CPU benchmark processes a 512-token prompt and tests 128-token generation, repeating each test five times:</p>
+<pre><code>./build/bin/llama-bench -m model.gguf -dev none -ngl 0 -p 512 -n 128 -r 5
+</code></pre>
+<p>Save the output with the model filename and build information. Run the same test on a supported GPU configuration, keeping the artifact fixed. These tests help identify a bottleneck; your real records still decide whether the change is useful.</p>
+<p>For an illustrative calculation, suppose your measured prompt processing takes 12 seconds and generation takes 18 seconds. The model work totals 30 seconds. Halving generation would save nine seconds; halving prompt processing would save six. This explains why optimizing the slower stage is more useful than choosing hardware from one headline tokens-per-second figure.</p>
+<p>For multiple agents, record both aggregate completion time and the slowest agent's wait. Four agents on one local GPU share its throughput, and requests beyond its serving capacity wait in line. Batching may improve total utilization; check the wait for each interactive user as well.</p>
+<h2>Try it on your workload</h2>
+<p>Select twenty records spanning the shortest and longest expected inputs. Include at least two awkward cases, such as contradictory quantities or an absent deadline. Run the complete application, including reading each record and writing its result, first on the CPU and then with supported acceleration.</p>
+<p>Repeat with your editor, browser and normal desktop applications open. Record end-to-end seconds per record, first-response delay for interactive use, accepted outputs, memory and actual processor placement. Keep model, quantization, context and prompt fixed. When evaluating a laptop, use the same power setup for both runs.</p>
+<p>Finally submit the expected number of simultaneous agent tasks. Compare the finish time of the whole group with the sequential run. Use the 48-second first-pass budget from the opening example only if it matches your own deadline; otherwise recalculate it from available seconds divided by records.</p>
 <h2>How to decide</h2>
-<p>Buy acceleration when the measured runtime or interactive delay misses your target. For a batch that runs once a quarter, price the same job through an API first.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Stay with the CPU when accepted work finishes with a useful deadline margin and does not disrupt the desktop.</li>
+<li>Use acceleration when the same task misses its interactive or batch target and the GPU trial fixes that shortfall.</li>
+<li>For infrequent bursts, compare a hosted run before buying hardware that will spend most of its time idle.</li>
+</ul>
+<h2>Run ten batch workers together before buying a GPU</h2>
+<p>Ten record-processing agents working at once on <code>openai/gpt-oss-20b</code> cost about 2 cents in tokens on TrustedRouter for this batch. Divide the approved records into independent groups and apply the same correctness checks as in your CPU trial.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed $0.01 per million input tokens and approximately $0.0475 per million output tokens. Suppose each agent uses 100,000 input and 20,000 output tokens across its records. Input = 10 × 100,000 = 1,000,000; output = 10 × 20,000 = 200,000. At those rounded rates, cost = 1 × $0.01 + 0.2 × $0.0475 = $0.0195, about 2 cents.</p>
+<p>On one local GPU, those workers share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run at the same time for the same token bill as running sequentially. Price occasional daytime bursts separately from your recurring overnight work. Prices change; check <a href="/models">current rates</a> and <a href="/docs/agent-setup">agent setup</a>. For approved off-device data, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Keep CPU inference when it meets the deadline, particularly for work that must remain offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md">llama.cpp: CPU, Metal and CUDA builds</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/cli/README.md">llama.cpp: device selection and generation controls</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/llama-bench/README.md">llama.cpp: prompt-processing and generation benchmarks</a></li>
+<li><a href="https://docs.ollama.com/gpu">Ollama: supported acceleration backends</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: processor placement and concurrency</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

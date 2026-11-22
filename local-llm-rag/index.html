@@ -173,16 +173,102 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Should you use local RAG or a longer context window?</h1><p>Retrieval-augmented generation selects passages before the model answers. It is useful when the collection changes often or only a small fraction is relevant to each question.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Build ten questions with known source passages. First check whether retrieval returns the right passage. Then give the model the correct passage directly. This separates retrieval errors from answer errors.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Use local RAG when each question needs a small part of a large or frequently changing collection. Start with the whole document in context when it fits comfortably and the question needs relationships across many sections; compare both approaches on ten questions with known evidence.</p>
+<h2>Choose by the shape of the question</h2>
+<p>Retrieval-augmented generation has two separate jobs: select useful passages, then answer from them. A long-context approach skips that selection step by providing more of the source directly. Require supported conclusions and citations with either approach. Your reference answer should name both the required fact and the source that establishes it.</p>
+<table>
+<thead>
+<tr>
+<th>Workload</th>
+<th>Starting approach</th>
+<th>Failure to test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One short policy and a few questions</td>
+<td>Whole policy in context</td>
+<td>Ignoring an exception or revision date</td>
+</tr>
+<tr>
+<td>Thousands of changing support articles</td>
+<td>Retrieve a small evidence set</td>
+<td>Missing the right article or retrieving an obsolete one</td>
+</tr>
+<tr>
+<td>Comparison across many contract sections</td>
+<td>Long context or retrieval with section expansion</td>
+<td>Separating a definition from the clause that uses it</td>
+</tr>
+<tr>
+<td>Exact product codes and part numbers</td>
+<td>Test lexical lookup alongside embeddings</td>
+<td>Returning a semantically similar but different identifier</td>
+</tr>
+</tbody>
+</table>
+<p>A practical first implementation is deliberately simple: preserve document headings and version metadata, retrieve five candidate chunks, then build a prompt within a fixed evidence budget. If a chunk refers to a neighboring exception, expand that evidence before generation. Tune that initial five-chunk setting against your evaluation questions.</p>
+<p>The original Lost in the Middle research found position-dependent retrieval and answering performance in the models it studied. Test evidence positions on your chosen model and score answer accuracy separately from context capacity.</p>
+<h2>Budget evidence and embeddings separately</h2>
+<p>Suppose you allocate an 8,192-token generation context. Reserve 1,024 tokens for the answer and 1,024 for instructions, the question and conversation overhead. That leaves 8,192 − 1,024 − 1,024 = 6,144 tokens for evidence. Six 700-token passages use 4,200, leaving 1,944 for headings, source identifiers and additional context.</p>
+<p>Use the generation model's tokenizer for that final prompt budget. The embedding model has its own input limit and tokenizer. A passage that fits the embedding model can still overflow the generation prompt when combined with other passages.</p>
+<table>
+<thead>
+<tr>
+<th>Open embedding model</th>
+<th>Dense vector dimensions</th>
+<th>Model-card input limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BAAI/bge-m3</code></td>
+<td>1,024</td>
+<td>8,192 tokens</td>
+</tr>
+<tr>
+<td><code>Qwen/Qwen3-Embedding-0.6B</code></td>
+<td>Up to 1,024</td>
+<td>32K tokens</td>
+</tr>
+</tbody>
+</table>
+<p>Use these current model-card specifications to pick candidates for local retrieval. Begin with coherent sections of a few hundred tokens and test the exact language and terminology your users bring. Follow the chosen model's query formatting and keep it fixed during the comparison.</p>
+<p>Store document ID, version, heading and page or section alongside each vector. Return these identifiers with the text so the answer can cite something a reader can open. Apply the user's document permissions before selecting evidence so every retrieved passage is authorized.</p>
+<h2>Diagnose retrieval and answering independently</h2>
+<p>For each evaluation question, label the smallest sufficient source passage or set of passages. Check retrieval first: does the selected evidence contain every fact required for the answer? If it does not, a different generation model cannot reliably recover the missing document fact.</p>
+<p>Then bypass retrieval and give the generator the correct evidence manually. If it still produces the wrong answer, investigate instructions, model capability or conflicting wording. This direct-evidence test prevents you from spending days adjusting chunk sizes to compensate for an answering failure.</p>
+<pre><code>Question: What is the replacement deadline for a damaged shipment?
+Evidence [shipping-policy-v3, section 4]:
+Replacement requests must arrive within 14 days of delivery.
+For damage documented by the carrier, the deadline is 30 days.
+Instruction: Answer only from the evidence. Cite the section.
+If the evidence does not answer the question, say so.
+</code></pre>
+<p>The expected answer uses 30 days for documented carrier damage and identifies the condition. If retrieval returns only the first sentence, the failure is evidence selection. If both sentences arrive but the model answers 14 days unconditionally, the failure is downstream.</p>
+<p>Version updates need their own test. Replace the fictional 30-day exception with 21 days in a new version, rebuild the affected index entries and ask again in a fresh chat. Confirm citations identify the new document. Old chat history can otherwise make a correct new index appear stale.</p>
+<h2>Try it on your workload</h2>
+<p>Build ten questions: four single-passage facts, two rule-and-exception questions, two cross-section comparisons and two questions your collection cannot answer. Record expected sources and answers before running the model. Keep the same generator and output budget across all runs.</p>
+<p>Run three conditions: retrieved evidence, manually supplied correct evidence and the complete relevant document when it fits. Record evidence coverage, answer correctness, citation validity, input tokens and elapsed time. Count a confident unsupported answer as a failure, including on the two deliberately unanswerable questions.</p>
+<p>Move the key passage to the beginning, middle and end of the long-context input while keeping the content constant. For retrieval, inspect the top five passages and any duplicate chunks that waste the evidence budget. Save the raw selected passages with each result so you can explain a score later.</p>
+<p>Choose the smallest approach that solves your questions. A small stable handbook may need no vector index at all. A large collection with frequent updates benefits from explicit document versioning even when retrieval itself is straightforward.</p>
 <h2>How to decide</h2>
-<p>Improve retrieval when the evidence is missing. Try a longer window when the evidence arrives but spans sections that cannot fit together.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Improve retrieval when the required passage is absent from the prompt.</li>
+<li>Expand context when the necessary evidence is spread across sections that cannot fit together.</li>
+<li>Change the generator or instructions when direct correct evidence still yields an incorrect answer.</li>
+</ul>
+<h2>Run ten retrieval agents for about thirteen cents</h2>
+<p>Ten question-answering agents working in parallel on 100 answers on <code>deepseek/deepseek-v3.2</code> cost about thirteen cents in tokens on TrustedRouter using retrieved context. On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.274 per million input and $0.401 per million output tokens. Each agent handles ten questions with 4,000 total input and 500 output tokens each: 10 × 10 × 4,000 = 400,000 input and 10 × 10 × 500 = 50,000 output. Cost = 0.4 × $0.274 + 0.05 × $0.401 = $0.12965, about thirteen cents. Sending 40,000 input tokens per question gives 4 × $0.274 + 0.05 × $0.401 = $1.11605, about $1.12.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, independent questions can run at the same time for the same token bill as sequential execution. Keep the index local and send only approved passages, accounting separately for indexing costs.</p>
+<p>Prices change; check <a href="/models">current prices</a>, <a href="/private-llm-api">confidential routing</a> and <a href="/docs/agent-setup">agent setup</a>. Choose fully local retrieval and generation when source passages must remain offline.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://huggingface.co/BAAI/bge-m3">BAAI BGE-M3 model card: dimensions and input length</a></li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen3 Embedding model card: dimensions and context</a></li>
+<li><a href="https://arxiv.org/abs/2307.03172">Lost in the Middle: original long-context evaluation research</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

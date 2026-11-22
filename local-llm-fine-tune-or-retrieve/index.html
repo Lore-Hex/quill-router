@@ -173,16 +173,73 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Should you fine-tune a local LLM or add retrieval?</h1><p>Use retrieval when the answer depends on changing documents. Consider a fine-tune when the inputs contain enough information but the model repeatedly misses a stable format or behavior.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>For an internal support assistant, supply the correct manual passage directly. If the answer becomes accurate, test retrieval first. If formatting still fails on many examples, compare prompt changes before training.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Add retrieval when the model needs facts from changing documents; consider fine-tuning when the facts are already present but it repeatedly misses a stable behavior. Start with one diagnostic: paste the correct manual passage into the prompt and see whether the answer becomes accurate.</p>
+<h2>Identify whether information or behavior is missing</h2>
+<p>For an internal support assistant, ask a question whose answer depends on the current manual. First run it without evidence, then supply the exact relevant passage. If the second answer is correct, you have a strong reason to improve evidence delivery before training. If it still fails, inspect the prompt and compare a stronger base model before assuming an adapter will solve it.</p>
+<p>Separate factual correctness from format. A model might correctly explain a return policy but fail to produce your required fields. Conversely, it might return immaculate JSON containing an obsolete policy. Those are different failures and deserve different remedies.</p>
+<table>
+<thead>
+<tr>
+<th>Observed failure</th>
+<th>First intervention</th>
+<th>Success criterion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Correct passage fixes the answer</td>
+<td>Retrieval and document freshness</td>
+<td>Relevant passage reaches the prompt</td>
+</tr>
+<tr>
+<td>Facts are right, repeated output format is wrong</td>
+<td>Clear examples, schema-constrained output and validation before training</td>
+<td>Format passes on unseen cases</td>
+</tr>
+<tr>
+<td>Correct passage still yields wrong reasoning</td>
+<td>Prompt or base-model comparison</td>
+<td>Accurate answer with identical evidence</td>
+</tr>
+<tr>
+<td>Facts change every week</td>
+<td>Versioned retrieval source</td>
+<td>New rule replaces the old one promptly</td>
+</tr>
+</tbody>
+</table>
+<p>A tuned model can also use retrieval. Keep the evidence source and behavioral adaptation separately testable so a failure has somewhere specific to investigate.</p>
+<h2>Use retrieval for facts you need to inspect and replace</h2>
+<p>The original retrieval-augmented generation research combines a generator with an external document index. In a practical local assistant, retrieval selects passages for the question and supplies them as input. The document collection can be updated separately from the generator's weights.</p>
+<p>Budget for the evidence you actually pass. Suppose a question and instructions use 1,000 tokens, you retrieve four passages of 600 tokens each, and reserve 1,000 for the answer. Total allowance = 1,000 + 4 × 600 + 1,000 = 4,400 tokens. For this illustrative prompt budget, add any conversation history and template overhead separately.</p>
+<p>Keep document IDs and section names with each passage. Ask the answer to identify supporting sections, and reject citations that were not supplied. Test whether the right passage appears among retrieved results separately from whether the model uses it correctly. Ensure search returns the governing rule before judging the generated answer.</p>
+<p>For a changing manual, include a fixture where an old policy and its replacement both exist. Your ingestion and retrieval rules should make the current version identifiable. Do not train a fresh adapter every time a support phone number or refund period changes.</p>
+<h2>Understand what LoRA and QLoRA change</h2>
+<p>LoRA freezes pretrained weights and learns low-rank update matrices for selected layers. Instead of training every entry of a large matrix, it represents an update using two smaller matrices. The original LoRA paper describes this parameter-efficient adaptation method.</p>
+<p>For a concrete matrix example, a 4,096 × 4,096 weight matrix contains 16,777,216 entries. A rank-16 update uses matrices with 4,096 × 16 and 16 × 4,096 entries, totaling 131,072. The ratio is 16,777,216 ÷ 131,072 = 128, so this example trains 128 times fewer update entries than a full matrix. Repeat that calculation for each targeted matrix, then budget the rest of the training memory separately.</p>
+<p>QLoRA combines low-rank adapters with a frozen 4-bit quantized base model. Its paper describes NormalFloat 4-bit quantization, double quantization and paged optimizers as memory-saving techniques. Gradients train the adapters through the frozen quantized model. You still need memory for activations, adapter parameters and training state.</p>
+<p>Hugging Face PEFT documents preparing quantized models with <code>prepare_model_for_kbit_training</code> and configuring adapters with <code>LoraConfig</code>. Its quantization guide uses <code>target_modules=&quot;all-linear&quot;</code> for QLoRA-style targeting. Rank, target modules, sequence length and the chosen quantization backend belong in the training record. Budget training memory separately from inference memory.</p>
+<p>Keep the adapter paired with its exact base checkpoint and tokenizer. Evaluate the assembled model through the runtime you will deploy, including its output template. Use held-out application checks alongside training loss.</p>
+<h2>Try it on your workload</h2>
+<p>Create 30 fictional support questions from several manual sections. Reserve ten questions from different documents or customer scenarios as a held-out set before adjusting prompts or creating training examples. Keep near-duplicate questions together so a paraphrase of a training example does not become your evidence of generalization.</p>
+<p>Compare three initial conditions: the base model alone, the base model with the correct passage supplied directly, and the base model with passages selected by retrieval. For each answer, score factual accuracy, evidence support and output format. If direct evidence helps but retrieved evidence does not, improve search or chunking first.</p>
+<p>For JSON-format failures, try schema-constrained output and application validation before training. Ollama accepts a JSON Schema in <code>format</code>; validate field contents separately against the source. Consider a small adapter experiment using only the training portion when the remaining errors concern field selection or another stable behavior. Compare the tuned model with and without retrieval on the untouched held-out questions. Include an unanswerable question and a revised policy to check that training did not encourage confident answers when evidence is missing.</p>
+<p>Record preparation hours, training time, inference token counts and reviewer corrections. A modest accuracy gain can still be unattractive if maintaining examples and retraining consumes more effort than a simpler retrieval fix. Conversely, a stable high-volume task may justify that maintenance when the improvement holds on new cases.</p>
 <h2>How to decide</h2>
-<p>Keep a held-out set from different documents or customers. Judge improvements on that set before budgeting for training and long-term model maintenance.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Choose retrieval when direct evidence repairs factual answers and the knowledge changes. Choose an adapter experiment when repeated behavioral failures persist with sufficient evidence, good prompts and applicable schema constraints. Combine them only when each adds a measured benefit on held-out work. Keep a base-model fallback and a versioned document collection for diagnosis.</p>
+<h2>Compare three evidence strategies at once for about 5 cents</h2>
+<p>Three evaluation agents testing evidence strategies on <code>google/gemma-4-31b-it</code> cost about 5 cents in tokens on TrustedRouter. In this illustrative comparison, assign one agent each to no evidence, supplied passages and retrieved passages, using the same approved questions. Each condition consumes 100,000 input and 20,000 output tokens. On 2026-11-22, catalog prices rounded to $0.106 per million input and $0.359 per million output tokens. Input = 3 × 100,000 = 300,000; output = 3 × 20,000 = 60,000. Cost = 0.3 × $0.106 + 0.06 × $0.359 = $0.05334, about 5 cents.</p>
+<p>On one local GPU, these agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run concurrently, with the same token bill as running them one after another. Compare factual accuracy, evidence support and format against your local baseline before investing in a training pipeline. This budgets inference for the comparison; plan adapter training separately.</p>
+<p>Prices change; check the <a href="https://api.trustedrouter.com/v1/models">live catalog</a>, <a href="/models">current models</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/docs/simple-start">API setup</a>. For approved remote evaluation, use <a href="/private-llm-api">the confidential API guide</a> and eligible route prices. Local remains better when document or training-example rules require on-device handling.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2005.11401">RAG: retrieval-augmented generation research</a></li>
+<li><a href="https://arxiv.org/abs/2106.09685">LoRA: low-rank adaptation of language models</a></li>
+<li><a href="https://arxiv.org/abs/2305.14314">QLoRA: efficient fine-tuning of quantized models</a></li>
+<li><a href="https://huggingface.co/docs/peft/developer_guides/lora">PEFT: LoRA configuration</a></li>
+<li><a href="https://huggingface.co/docs/peft/developer_guides/quantization">PEFT: preparing quantized models for adapter training</a></li>
+<li><a href="https://docs.ollama.com/capabilities/structured-outputs">Ollama: schema-constrained output and application validation</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

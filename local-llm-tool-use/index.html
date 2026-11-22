@@ -173,16 +173,91 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How do you test tool calling with a local model?</h1><p>Tool calling has two parts: the model proposes an action and your application decides whether to execute it. Test the proposal before connecting real tools.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Give the model a read-only mock inventory with three product IDs. Ask about one item, then about an item that does not exist. Check the selected tool, argument types and whether the model invents an ID.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Test local tool calling with a read-only mock tool before giving the model any real authority. Require three separate passes: the right tool, valid arguments, and a final answer supported by the returned data.</p>
+<h2>Separate the proposal from execution</h2>
+<p>A tool call is a request from the model to your application. Your application decides whether to run it, supplies the result, and asks the model to continue. In Ollama's native chat API, you send function definitions in <code>tools</code> and inspect <code>message.tool_calls</code> in the response. Verify “I checked inventory” against the application record of the function call.</p>
+<p>Start with a dictionary containing three fictional products: A100 has seven units, B200 has zero, and C300 has twelve. Expose only <code>lookup_inventory</code>, taking a string named <code>product_id</code>. Keep the dictionary in the application rather than the prompt. That makes it possible to tell whether the final answer came from a tool result or a guess.</p>
+<p>Put an allowlist and argument checks between the response and execution. Reject unknown functions, unexpected keys, missing IDs and non-string IDs. An unknown product can return a normal “not found” result; it must not silently become the nearest known product. Limit each test conversation to three tool rounds so a repeated lookup cannot run forever. Set that three-round budget in your application.</p>
+<h2>Send a complete Ollama tool definition</h2>
+<p>With Ollama running and <code>qwen3:4b</code> downloaded, send this request from a macOS or Linux terminal. Ollama lists Qwen3 with tool support. Validate its arguments against the same fixtures as every other candidate.</p>
+<pre><code>curl http://localhost:11434/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;model&quot;: &quot;qwen3:4b&quot;,
+    &quot;stream&quot;: false,
+    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;How many A100 units are available?&quot;}],
+    &quot;tools&quot;: [{
+      &quot;type&quot;: &quot;function&quot;,
+      &quot;function&quot;: {
+        &quot;name&quot;: &quot;lookup_inventory&quot;,
+        &quot;description&quot;: &quot;Read inventory for one exact product ID.&quot;,
+        &quot;parameters&quot;: {
+          &quot;type&quot;: &quot;object&quot;,
+          &quot;properties&quot;: {&quot;product_id&quot;: {&quot;type&quot;: &quot;string&quot;}},
+          &quot;required&quot;: [&quot;product_id&quot;]
+        }
+      }
+    }]
+  }'
+</code></pre>
+<p>In this native API, function arguments are an object. Read the function name and arguments from each returned call, validate them, and execute the mock lookup. Preserve the assistant message containing its calls in the next request. Append the tool response as a message with <code>role: &quot;tool&quot;</code>, <code>tool_name: &quot;lookup_inventory&quot;</code>, and a string <code>content</code> containing your result. Send the accumulated messages and tool definitions again to obtain the answer.</p>
+<p>Use <code>stream: false</code> for this first test so you can inspect one complete response. Save the proposal, validation result and tool output separately. If the final answer says six units after the tool returned seven, the tool integration worked but the answer failed.</p>
+<h2>Match llama.cpp to its tool template</h2>
+<p>llama.cpp documents OpenAI-style function calling in <code>llama-server</code> with <code>--jinja</code>. Its native handlers include Llama 3.1/3.3, Qwen 2.5 and Qwen 2.5 Coder, Hermes, and GPT-OSS formats. A tools-enabled Jinja template is still required. Launch the server with Jinja enabled and an explicit Flash Attention setting:</p>
+<pre><code>llama-server --jinja --flash-attn on \
+  -hf bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M
+</code></pre>
+<p>Inspect the server's <code>/props</code> response for <code>chat_template</code> or <code>chat_template_tool_use</code>. If the embedded template is unsuitable, the documented override is <code>--chat-template-file</code>. An unrecognized template can use a generic handler; evaluate tool selection separately from parsing. Repeat the same mock tests after any template change.</p>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Check first</th>
+<th>Acceptance rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tool call appears as ordinary prose</td>
+<td>Template and server parsing</td>
+<td>Application receives a structured call</td>
+</tr>
+<tr>
+<td>Correct tool, wrong ID</td>
+<td>Argument extraction and ambiguity</td>
+<td>Exact ID or a clarification question</td>
+</tr>
+<tr>
+<td>Invented stock count</td>
+<td>Tool result handling</td>
+<td>Answer matches returned count</td>
+</tr>
+<tr>
+<td>Repeated identical lookup</td>
+<td>Conversation history and loop control</td>
+<td>Terminates within the test budget</td>
+</tr>
+</tbody>
+</table>
+<h2>Try it on your workload</h2>
+<p>Run six prompts: ask about A100, ask about B200, ask about unknown D400, omit the product ID, request two products, and ask the model to change inventory. The last request should not produce a write operation because no write tool exists. Record whether the model asks for clarification when needed and whether it preserves the distinction between zero stock and an unknown product.</p>
+<p>Repeat the six prompts five times, starting fresh each time: 6 × 5 = 30 conversations. Score tool selection, argument validity and final factual accuracy independently. Count unnecessary calls too. A model that always invokes a tool may pass a simple lookup test while wasting work on questions answerable without inventory access.</p>
+<p>Then replace one tool result with a simulated timeout. Decide in advance whether the acceptable answer is a retry or an explicit unavailable result. Do not accept an invented count as graceful recovery. Keep real purchasing, deletion and messaging tools disconnected throughout this experiment.</p>
 <h2>How to decide</h2>
-<p>Choose a tool-capable checkpoint and compatible chat template. Allowlist tool names and validate arguments separately from the model's explanation.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Choose a checkpoint and template together. Keep local execution when the repeated tests pass and response times suit your application. If structured calls fail, fix the protocol before comparing model size. If valid calls repeatedly contain wrong arguments, compare another checkpoint with the identical tool schema and fixtures.</p>
+<h2>Run twenty tool-test agents for about 1.4 cents</h2>
+<p>Twenty tool-test agents working at once on <code>openai/gpt-oss-120b</code> cost about 1.4 cents in tokens on TrustedRouter. In this illustrative evaluation, each consumes 10,000 input and 2,000 output tokens across its complete tool loops. On 2026-11-22, catalog prices rounded to $0.0317 per million input and $0.179 per million output tokens. Input = 20 × 10,000 = 200,000; output = 20 × 2,000 = 40,000. Cost = 0.2 × $0.0317 + 0.04 × $0.179 = $0.0135, about 1.4 cents.</p>
+<p>On one local GPU, these agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run concurrently, with the same token bill as running them one after another. Give each agent independent mock conversations, then compare tool selection, argument validity and final answers. Your application retains control of tool execution.</p>
+<p>Prices change; check <a href="/models">the model catalog</a> and <a href="/docs/agent-setup">agent setup</a>. For approved private fixtures, use <a href="/private-llm-api">confidential inference</a> and <a href="/docs/provider-routing">provider routing</a> to select and price an eligible route. Local remains preferable when tool results must stay on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/capabilities/tool-calling">Ollama: tool calls and returning tool results</a></li>
+<li><a href="https://docs.ollama.com/api/chat">Ollama: native chat request and response fields</a></li>
+<li><a href="https://ollama.com/library/qwen3">Ollama: Qwen3 sizes and tool support</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md">llama.cpp: Jinja templates, handlers and launch examples</a></li>
+<li><a href="https://raw.githubusercontent.com/ggml-org/llama.cpp/master/common/arg.cpp">llama.cpp: current Flash Attention argument parser</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: live model catalog and per-token prices</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

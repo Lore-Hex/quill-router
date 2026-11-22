@@ -173,16 +173,116 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How can a local LLM use encrypted cloud overflow?</h1><p>Define which requests can leave the machine before enabling overflow. Confidential inference can help with approved data, while a local-only category must stay local even during an outage.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Label three synthetic jobs: local only, approved for remote confidential compute, and public. Simulate a full queue and a failed remote call. Log the routing decision without logging prompt content.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Use local inference first and permit cloud overflow only for requests explicitly approved to leave the device. Enforce two gates: your application authorizes remote processing, and the hosted request requires <code>provider.min_privacy: &quot;confidential&quot;</code>; failure at either gate stops remote inference.</p>
+<h2>Classify the complete request before scheduling it</h2>
+<p>Define three categories: local only, approved for confidential remote inference, and public. Assign the category through trusted application policy before placing a job in the queue. Do not let the model or text inside a document decide whether it may be uploaded. An unknown category should be rejected rather than treated as public.</p>
+<p>Classify everything the request will contain: system instructions, conversation history, retrieved passages and tool results. A public question can become a private request after your application adds an internal document. Recheck approval when that content changes, especially in a tool loop that discovers new information after its first call.</p>
+<table>
+<thead>
+<tr>
+<th>Job category</th>
+<th>Local capacity available</th>
+<th>Local queue full</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local only</td>
+<td>Run locally</td>
+<td>Wait or return a local-capacity error</td>
+</tr>
+<tr>
+<td>Confidential remote approved</td>
+<td>Run locally</td>
+<td>Try an eligible confidential route</td>
+</tr>
+<tr>
+<td>Public</td>
+<td>Run locally</td>
+<td>Use the same confidential route in this design</td>
+</tr>
+<tr>
+<td>Unknown</td>
+<td>Reject classification</td>
+<td>Reject classification</td>
+</tr>
+</tbody>
+</table>
+<p>Use a deliberate queue threshold rather than interpreting every exception as permission to upload. For example, you might overflow approved jobs when two local slots are already occupied. Set that two-slot threshold in your application. On one local GPU, agents share its throughput, and requests beyond its parallel capacity wait in line when those slots are occupied. A malformed prompt, missing local model or authentication error should remain visible as an error.</p>
+<h2>Require the documented privacy floor</h2>
+<p>TrustedRouter's <a href="/docs/provider-routing">provider-routing guide</a> defines <code>min_privacy</code> as a hard filter. Its <code>confidential</code> value requires verified provider-side confidential compute, end-to-end encryption and explicit zero data retention on the same route. Unsupported combinations fail closed. Require all three properties on the selected route.</p>
+<p>The <code>provider.only</code> field restricts requests to an allowlist; <code>provider.order</code> is a preference while fallbacks are enabled. Set <code>provider.allow_fallbacks: false</code> to stop after the first candidate. If your approval names a particular operator, add its catalog slug to <code>only</code>. Do not substitute <code>data_collection: &quot;deny&quot;</code> for the hard privacy floor.</p>
+<p>The ordinary API base URL is <code>https://api.trustedrouter.com/v1</code>. The dedicated confidential hostname, <code>https://api.confidential.trustedrouter.com/v1</code>, adds another guard and still requires the explicit <code>confidential</code> value. The example below uses the ordinary endpoint with that hard filter. Review <a href="/who-can-see-your-data">gateway verification and data handling</a> before approving your deployment; an ordinary HTTPS client does not itself verify gateway attestation.</p>
+<h2>Keep the same chat shape on both branches</h2>
+<p>Ollama documents its local OpenAI-compatible base at <code>http://localhost:11434/v1</code>. Both branches below send <code>model</code> and <code>messages</code> to <code>/chat/completions</code> and read <code>choices[0].message.content</code>. The sketch uses Python's standard library and runs on macOS or Linux with a local Ollama model already installed.</p>
+<p>Set <code>LOCAL_MODEL</code> to an installed local-weight model, <code>TR_OVERFLOW_MODEL</code> to the hosted model approved in your route review, and <code>TRUSTEDROUTER_API_KEY</code> to your key. The scheduler supplies <code>local_busy</code> and the policy supplies <code>category</code>; neither comes from user-controlled prompt text.</p>
+<pre><code>import json
+import os
+import urllib.request
+
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError(&quot;Redirect refused&quot;)
+
+http = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), NoRedirects()
+)
+
+def post(base, payload, key=None):
+    headers = {&quot;Content-Type&quot;: &quot;application/json&quot;}
+    if key:
+        headers[&quot;Authorization&quot;] = &quot;Bearer &quot; + key
+    request = urllib.request.Request(
+        base + &quot;/chat/completions&quot;,
+        data=json.dumps(payload).encode(&quot;utf-8&quot;),
+        headers=headers,
+        method=&quot;POST&quot;,
+    )
+    with http.open(request, timeout=60) as response:
+        return json.load(response)[&quot;choices&quot;][0][&quot;message&quot;][&quot;content&quot;]
+
+def answer(messages, category, local_busy=False):
+    if category not in {&quot;local_only&quot;, &quot;confidential_approved&quot;, &quot;public&quot;}:
+        raise ValueError(&quot;Unknown data category&quot;)
+    if not local_busy:
+        return post(&quot;http://localhost:11434/v1&quot;, {
+            &quot;model&quot;: os.environ[&quot;LOCAL_MODEL&quot;],
+            &quot;messages&quot;: messages,
+            &quot;stream&quot;: False,
+        })
+    if category == &quot;local_only&quot;:
+        raise RuntimeError(&quot;Local capacity unavailable; keep queued&quot;)
+    return post(&quot;https://api.trustedrouter.com/v1&quot;, {
+        &quot;model&quot;: os.environ[&quot;TR_OVERFLOW_MODEL&quot;],
+        &quot;messages&quot;: messages,
+        &quot;stream&quot;: False,
+        &quot;provider&quot;: {
+            &quot;min_privacy&quot;: &quot;confidential&quot;,
+            &quot;allow_fallbacks&quot;: False,
+        },
+    }, os.environ[&quot;TRUSTEDROUTER_API_KEY&quot;])
+</code></pre>
+<p>This sketch refuses redirects, bypasses environment proxy settings and has no retry path that can choose another destination. Its 60-second socket timeout bounds individual blocking socket operations; manage the overall job deadline in your scheduler. HTTP errors propagate to the caller. In production, add bounded queues, cancellation, admission limits and metadata-only routing logs around this function.</p>
+<p>Select an Ollama model that runs locally: the local server can also access Ollama cloud models. Verify your local-only branch with networking disconnected. Hosted and local model identifiers can differ even when they refer to the same upstream family.</p>
+<h2>Try it on your workload</h2>
+<p>Create three fictional jobs, one per category, with unique identifiers and no sensitive content. Run all three with local capacity available. Then simulate a full queue. Confirm that the local-only job produces no remote request, while approved and public jobs send the hard confidential filter.</p>
+<p>Simulate a remote rejection because no route qualifies, an unavailable provider, a redirect and an unknown category. Each should stop without an ordinary-provider retry. In a test harness, replace <code>post</code> with a recorder that stores destination and routing fields, not message content. Then perform one approved live smoke test and inspect its result.</p>
+<p>Record job ID, policy version, destination, model, status and elapsed time. Keep prompt bodies out of routing logs. If you replace this HTTP helper with an SDK, inspect its retry configuration and rerun the failure tests.</p>
 <h2>How to decide</h2>
-<p>Allow the remote branch only for approved jobs and fail closed when no qualifying endpoint exists. Verify that SDK retries cannot select a less restrictive endpoint.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Enable overflow only when policy classification is reliable, the eligible route meets your requirements and the failure tests pass. Keep local-only jobs queued during outages. When confidential capacity is unavailable, return a clear unavailable result rather than widening the provider set or lowering the privacy floor.</p>
+<h2>Budget twelve overflow agents at about 6 cents</h2>
+<p>Twelve overflow agents working on <code>qwen/qwen3.6-35b-a3b</code> cost about 6 cents in tokens at TrustedRouter's catalog rates. For this illustrative workload, each uses 50,000 input and 10,000 output tokens. On 2026-11-22, catalog prices rounded to $0.0422 per million input and $0.317 per million output tokens. Input = 12 × 50,000 = 600,000; output = 12 × 10,000 = 120,000. Cost = 0.6 × $0.0422 + 0.12 × $0.317 = $0.06336, about 6 cents.</p>
+<p>On one local GPU, those agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run at the same time, with the same token bill as running them one after another. Dispatch only approved jobs, retain the confidential filter and keep local-only jobs queued. The catalog calculation does not establish confidential eligibility or the selected route's price.</p>
+<p>Prices change; check <a href="/models">current model endpoints</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/private-llm-api">confidential API requirements</a>. Substitute the approved endpoint's rates before budgeting production overflow. Local remains better for steady work that already meets your needs and for requests whose data must stay on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/api/openai-compatibility">Ollama: local OpenAI-compatible endpoint and cloud distinction</a></li>
+<li><a href="https://trustedrouter.com/docs/provider-routing">TrustedRouter: hard filters, provider controls and failures</a></li>
+<li><a href="https://trustedrouter.com/docs">TrustedRouter: confidential-route requirements and API hosts</a></li>
+<li><a href="https://trustedrouter.com/docs/simple-start">TrustedRouter: chat request shape and gateway verification boundary</a></li>
+<li><a href="https://docs.python.org/3/library/urllib.request.html">Python: HTTP requests, handlers and socket timeouts</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: live catalog models and pricing</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

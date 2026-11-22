@@ -173,16 +173,84 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How do you upgrade a local LLM without breaking an app?</h1><p>A new checkpoint can change tokenization, formatting and tool behavior even when its public name looks familiar. Keep the previous artifact available during evaluation.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Replay stored fictional fixtures against both revisions. Compare JSON validity, answer accuracy, response length and latency. Run one rollback rehearsal with the old prompt template and tokenizer.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Upgrade a local LLM by promoting a tested artifact with an explicit release identity. Keep the previous model and configuration available, compare both on the same fixtures, and rehearse one rollback before switching traffic.</p>
+<h2>Record a release identity wider than the model name</h2>
+<p>Your release record should include the weight artifact, tokenizer, chat template, runtime build, application prompt and generation settings. Pair the artifact digest with the complete application configuration. An unchanged checkpoint can behave differently if the template or context settings change around it.</p>
+<p>Make the old and new configurations separately selectable. Use names such as <code>app-previous</code> and <code>app-candidate</code> in your test harness, and keep production on its approved configuration during evaluation. Do not let a scheduled download update the serving alias while you are collecting baseline results.</p>
+<table>
+<thead>
+<tr>
+<th>Release component</th>
+<th>Record</th>
+<th>Regression to check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Weights and quantization</td>
+<td>Digest or pinned repository revision</td>
+<td>Accuracy and memory fit</td>
+</tr>
+<tr>
+<td>Tokenizer and template</td>
+<td>Files from the approved snapshot</td>
+<td>Prompt length, role handling and tool syntax</td>
+</tr>
+<tr>
+<td>Runtime</td>
+<td>Installed build or version</td>
+<td>API response and loading behavior</td>
+</tr>
+<tr>
+<td>Application prompt</td>
+<td>Version and output requirements</td>
+<td>Missing fields and invented answers</td>
+</tr>
+</tbody>
+</table>
+<h2>Preserve an Ollama model and verify its digest</h2>
+<p>Ollama's <code>GET /api/tags</code> response includes a full <code>digest</code> for each local model. Its copy endpoint creates another model name from an existing model. For an installed <code>qwen3:4b</code>, these commands save the listing, create a retained name, and capture its configuration on macOS or Linux:</p>
+<pre><code>curl --fail http://localhost:11434/api/tags -o before-models.json
+curl --fail http://localhost:11434/api/copy \
+  -H 'Content-Type: application/json' \
+  -d '{&quot;source&quot;:&quot;qwen3:4b&quot;,&quot;destination&quot;:&quot;app-previous&quot;}'
+curl --fail http://localhost:11434/api/tags -o retained-models.json
+curl --fail http://localhost:11434/api/show \
+  -H 'Content-Type: application/json' \
+  -d '{&quot;model&quot;:&quot;app-previous&quot;}' -o previous-config.json
+</code></pre>
+<p>Compare the source digest in the first listing with the retained model's digest in the second before proceeding. The show response includes the template, parameters and model details. Retain both the underlying model installation and these JSON records so rollback can restore the weights and configuration together.</p>
+<p>For digest-based release pinning, store the approved full digest in your release configuration and check the serving name against it before accepting requests. Treat a mismatch as a deployment failure. A copied alias is useful for rollback, but it remains a name you could overwrite. The digest check makes that accidental replacement detectable.</p>
+<p>Use the documented listing and copy interfaces for this workflow rather than Docker-style <code>model@sha256:...</code> pull syntax. If you need a separate artifact archive, preserve the exact model files and their configuration under your backup procedure, then prove that procedure works on a test installation.</p>
+<h2>Pin Hugging Face downloads to a full revision hash</h2>
+<p>Hugging Face Hub downloads accept a <code>revision</code> that can name a branch, tag or commit. Use the full commit hash for a release record. A branch name can move; the download guide explicitly calls for the full hash rather than an abbreviated commit identifier.</p>
+<p>With the Hugging Face CLI installed, copy the reviewed full commit hash from the repository's history into this command. Replace <code>FULL_REVIEWED_COMMIT_HASH</code> with that hash:</p>
+<pre><code>hf download Qwen/Qwen3-Coder-30B-A3B-Instruct \
+  --revision FULL_REVIEWED_COMMIT_HASH \
+  --local-dir ./candidate-snapshot
+</code></pre>
+<p>Downloading the repository snapshot keeps weights, tokenizer and configuration tied to the same revision. If you select individual files to save space, document the complete required set. For a quantization published in a different repository, pin that repository's revision too and retain its stated upstream provenance.</p>
+<p>The equivalent Python API is <code>snapshot_download(repo_id=..., revision=...)</code>. Keep the old snapshot in a different directory until the new release is accepted. Point the runtime at the approved local directory rather than resolving a moving remote branch each time it starts.</p>
+<h2>Try it on your workload</h2>
+<p>Replay stored fictional fixtures against both revisions with identical prompts and context settings. Include a normal answer, missing information, a long input near your configured limit, structured output, and a mock tool call. Compare JSON validity, factual accuracy, answer length and elapsed time. Preserve raw outputs so a reviewer can distinguish a genuine regression from a changed scoring rule.</p>
+<p>Use a concrete gate before you look at results. For example, require all ten mandatory schema cases to pass, no invented commitments in ten factual cases, and a response time within your application's existing target. Set those acceptance criteria before running the candidate. Record the candidate's token counts because a more verbose answer can change both waiting time and hosted cost.</p>
+<p>Switch the test application to the candidate, run the fixtures, then restore the old model, prompt and tokenizer together. Run the fixtures again. Confirm that the old artifact still loads and the digest or revision matches your record. Measure rollback time from the operator action to a successful response, including model loading.</p>
+<p>Test a deliberate digest mismatch as well. Your release check should stop the application from serving the unexpected artifact. This exercise is more useful than recording a hash that nobody ever compares.</p>
 <h2>How to decide</h2>
-<p>Promote the revision only after the application passes its acceptance tests. Record the model digest, runtime build and prompt version together.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Promote only after the candidate passes the application's acceptance tests and the rollback rehearsal succeeds. Keep the old release for an explicit recovery period. If a change fails, isolate weights, template, runtime and prompt one at a time rather than changing several together and losing the explanation.</p>
+<h2>Run ten upgrade-check agents for under half a cent</h2>
+<p>Ten upgrade-check agents comparing fixtures on <code>openai/gpt-oss-20b</code> cost about 0.44 cents in tokens on TrustedRouter. In this illustrative evaluation, each agent handles ten of 100 fixtures, each using 2,000 input and 500 output tokens. On 2026-11-22, catalog prices rounded to $0.01 per million input and $0.0475 per million output tokens. Input = 10 × 10 × 2,000 = 200,000; output = 10 × 10 × 500 = 50,000. Cost = 0.2 × $0.01 + 0.05 × $0.0475 = $0.004375, about 0.44 cents.</p>
+<p>On one local GPU, those agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run concurrently, with the same token bill as running them one after another. Use hosted answers as a behavioral reference while evaluating local revisions. Keep local digest and quantization records as the authority for the artifact you deploy, and score every candidate with the same acceptance rules.</p>
+<p>Prices change; check <a href="/models">current models</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/docs/simple-start">API setup</a>. For approved remote fixtures, review <a href="/private-llm-api">confidential inference</a> and eligible route prices. Local remains better when evaluation fixtures cannot leave the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/api/tags">Ollama: local model listing and full digest field</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/docs/api.md">Ollama: copy and show API contracts</a></li>
+<li><a href="https://docs.ollama.com/modelfile">Ollama: template and runtime parameter configuration</a></li>
+<li><a href="https://huggingface.co/docs/huggingface_hub/guides/download">Hugging Face: full revision hashes and snapshot downloads</a></li>
+<li><a href="https://huggingface.co/docs/huggingface_hub/guides/cli">Hugging Face: download CLI revision and local-directory options</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: current catalog pricing</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

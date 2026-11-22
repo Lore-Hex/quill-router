@@ -173,16 +173,79 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Which local LLM should summarize meeting notes?</h1><p>Score the facts a reader will act on: who owns a task, what was decided and whether a deadline was actually agreed. Fluency can hide missing or invented decisions.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Write a reference list from a fictional transcript with a proposal that gets rejected halfway through. Ask for decisions and unresolved questions separately. Mark each unsupported assignment or date.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Choose the smallest local instruction model that preserves decisions, owners and deadlines on your meeting fixtures. Start with a zero-invented-commitments rule, and split a transcript when its tokens plus instructions and answer allowance exceed your configured context.</p>
+<h2>Score commitments before prose quality</h2>
+<p>A useful meeting summary distinguishes a proposal, an accepted decision, an assigned action and an unresolved question. Write those categories into the prompt. If the transcript says “perhaps Friday” and nobody agrees, the deadline is unknown. If a later speaker rejects a proposal, the summary should preserve the rejection rather than select the more confident earlier sentence.</p>
+<p>Use a compact evidence record for each item: topic, status, owner, deadline and source timestamp. Ask for exact names and explicit unknowns. This makes review faster because a reader can return to the relevant exchange rather than replay an entire meeting. Keep timestamps from the transcript; do not ask the model to invent them from unmarked text.</p>
+<table>
+<thead>
+<tr>
+<th>Transcript event</th>
+<th>Expected summary treatment</th>
+<th>Failure to count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A date is suggested but not agreed</td>
+<td>Deadline unknown</td>
+<td>Suggested date presented as final</td>
+</tr>
+<tr>
+<td>An owner is reassigned</td>
+<td>Final owner with evidence</td>
+<td>Earlier owner retained</td>
+</tr>
+<tr>
+<td>A proposal is rejected later</td>
+<td>Rejected or superseded</td>
+<td>Proposal listed as a decision</td>
+</tr>
+<tr>
+<td>A question remains open</td>
+<td>Unresolved question</td>
+<td>Invented answer</td>
+</tr>
+</tbody>
+</table>
+<p>For an initial comparison, include a model you already run and one larger candidate. Mistral's published Small 24B Instruct 2501 card describes a 32K context and Apache-2.0 weights. Compare it with your installed model on the same transcripts to see whether its additional capacity preserves more meeting-specific facts.</p>
+<h2>Fit the whole request, including the answer</h2>
+<p>Budget context from transcript tokens. A dense technical discussion and a meeting with long pauses can have the same duration but very different text lengths. Count the transcript with the chosen model's tokenizer and include the formatting added by your application.</p>
+<p>For an illustrative 8,192-token configuration, reserve 700 tokens for instructions and metadata, 1,000 for the answer and 492 as margin. Transcript allowance = 8,192 − 700 − 1,000 − 492 = 6,000 tokens. Adjust those allowances to your prompt and summary format. An input larger than that needs smaller chunks or a larger configured context.</p>
+<p>Ollama documents <code>num_ctx</code> as the context setting and <code>num_predict</code> as the generation limit. Its generation endpoint accepts runtime settings in <code>options</code>. With a local model already installed, replace the model placeholder below and run this request on macOS or Linux:</p>
+<pre><code>curl http://localhost:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;model&quot;: &quot;your-installed-model&quot;,
+    &quot;stream&quot;: false,
+    &quot;prompt&quot;: &quot;List decisions and unresolved questions separately. Use unknown for missing owners or dates. [00:10] Jo proposed shipping Friday. [00:30] Sam rejected Friday. [00:45] They agreed Jo would draft a new schedule; no deadline was set.&quot;,
+    &quot;options&quot;: {&quot;num_ctx&quot;: 8192, &quot;num_predict&quot;: 1000}
+  }'
+</code></pre>
+<p>Record <code>prompt_eval_count</code> and <code>eval_count</code> from the response. They give the processed prompt and generated token counts. Preserve the full answer too: a short output is only useful if it retains the required facts.</p>
+<h2>Map long transcripts, then reconcile the summaries</h2>
+<p>Use a map-reduce workflow when a transcript does not fit. In the map stage, summarize each bounded segment independently. In the reduce stage, combine those records into one meeting-level account. On one local GPU, simultaneous summary jobs share throughput, and requests beyond its parallel capacity wait in line when capacity is occupied. The SummN research demonstrates a related multi-stage split-and-summarize approach for long dialogue and documents; the practical recipe below emphasizes auditable commitments.</p>
+<p>Suppose your transcript contains 30,000 tokens. Divide it into six approximately 5,000-token segments at speaker or topic boundaries. Ask each segment for up to 500 tokens of evidence records. The reduce input then contains at most 6 × 500 = 3,000 tokens of records, plus its instructions. Budget boundary overlap separately if you repeat surrounding turns between segments.</p>
+<p>Carry the topic and original timestamps into every intermediate record. Tell the reduce pass to reconcile later corrections, preserve conflicting statements as unresolved, and merge duplicates without losing evidence. Keep intermediate summaries so you can inspect where an omission first appeared. Return to the original segment to recover any record dropped during mapping.</p>
+<p>For a high-impact decision, review the final claim against the original transcript excerpt. This extra check is particularly useful when the proposal and its rejection fall in different segments. Allow the reviewer to flag an incomplete summary instead of forcing every topic into a final decision.</p>
+<h2>Try it on your workload</h2>
+<p>Write a fictional transcript containing ten reference items: accepted decisions, open questions, unassigned tasks and missing dates. Include one proposal rejected halfway through and one owner reassigned near the end. Keep the reference list separate from the prompt. Run the short transcript directly, then repeat with the critical exchanges separated by neutral discussion across chunk boundaries.</p>
+<p>Score missed reference items and unsupported claims separately. For example, preserving nine of ten items gives 9 ÷ 10 = 90% coverage, but an invented deadline still violates the zero-invented-commitments rule. Record model artifact, context, prompt, token counts, elapsed time and review time for each run.</p>
+<p>Compare direct summarization and map-reduce wherever both fit. Run each three times and inspect the worst result as well as the average. Keep the smallest model and simplest workflow that satisfy your acceptance criteria.</p>
 <h2>How to decide</h2>
-<p>Choose the smallest model that preserves those distinctions. For long meetings, carry source timestamps through chunk summaries so reviewers can check the evidence.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Use a single pass for transcripts that fit with answer space and pass the factual checks. Use chunked summarization for longer meetings, retaining source timestamps throughout. Increase model capacity when the evidence is present but the model repeatedly confuses proposals with decisions. Keep human review for commitments people will act on.</p>
+<h2>Summarize ten meetings in parallel for about 2.4 cents</h2>
+<p>Ten summary agents working on separate meetings with <code>mistralai/mistral-small-24b-instruct-2501</code> cost about 2.4 cents in tokens on TrustedRouter. In this illustrative batch, each complete chunk-and-reduce run uses 40,000 input and 4,000 output tokens, including repeated instructions. On 2026-11-22, catalog prices rounded to $0.0528 per million input and $0.0844 per million output tokens. Per meeting: 0.04 × $0.0528 + 0.004 × $0.0844 = $0.0024496, about a quarter cent. For ten meetings, input = 400,000 and output = 40,000; cost = 0.4 × $0.0528 + 0.04 × $0.0844 = $0.024496, about 2.4 cents.</p>
+<p>On one local GPU, those agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run at the same time, with the same token bill as running them one after another. Within each meeting, independent map jobs can run concurrently; the reduce pass waits for their records. Keep timestamps and factual checks throughout.</p>
+<p>Prices change; check <a href="/models">current prices</a> and <a href="/docs/agent-setup">agent setup</a>. For approved private meetings, follow <a href="/private-llm-api">the confidential API guide</a> and price the eligible provider. Local remains better when meeting content cannot leave the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2110.10150">SummN: multi-stage summarization of long dialogue and documents</a></li>
+<li><a href="https://docs.ollama.com/api/generate">Ollama: generation requests and token counts</a></li>
+<li><a href="https://docs.ollama.com/modelfile">Ollama: context and generation parameters</a></li>
+<li><a href="https://huggingface.co/mistralai/Mistral-Small-24B-Instruct-2501">Mistral: Small 24B Instruct model card</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: live catalog prices</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

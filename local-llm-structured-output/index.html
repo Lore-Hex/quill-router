@@ -173,16 +173,121 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Can a local LLM reliably return JSON?</h1><p>Treat machine readability and factual correctness as separate checks. A syntactically valid object may still contain a fabricated field or an amount in the wrong unit.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Start with fictional invoices and a schema for currency, amount and date. Include one missing date and one invoice with two amounts. Validate the schema, then compare each field with your reference answer.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>A local LLM can return schema-constrained JSON; validate its structure and facts separately. Use three checks before accepting an extraction: parse the JSON, validate its schema, then compare amounts, dates and other fields with the source.</p>
+<h2>Define what missing and ambiguous values mean</h2>
+<p>Begin with a fictional invoice and a small contract: currency, total amount in cents and invoice date. For a USD-only exercise, use integer cents so $24.50 is represented as 2450. Allow null for a date that is missing or ambiguous. Do not make the model invent a value merely to satisfy a required field.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Reject this example</th>
+<th>What can still pass incorrectly</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON parsing</td>
+<td>Trailing commentary or an unfinished object</td>
+<td>A well-formed object with invented facts</td>
+</tr>
+<tr>
+<td>Schema validation</td>
+<td>An amount string where an integer is required</td>
+<td>A valid integer copied from the subtotal</td>
+</tr>
+<tr>
+<td>Source validation</td>
+<td>2450 cents when the source total is $29.50</td>
+<td>Requires explicit reference answers or review</td>
+</tr>
+</tbody>
+</table>
+<p>JSON Schema distinguishes a missing property from a property whose value is null. Put fields that must always appear into <code>required</code>, and permit null explicitly where your contract needs it. Set <code>additionalProperties: false</code> when downstream code should reject unexpected fields.</p>
+<p>Keep a short description of each field in the prompt as well as its type in the schema. “Amount” is ambiguous when an invoice contains subtotal, tax, previous balance and amount due. Specify which one you want and what the model should do when the source is unclear.</p>
+<h2>Send a schema in Ollama's format field</h2>
+<p>Ollama's local chat API accepts a JSON Schema object in <code>format</code>. The string <code>&quot;json&quot;</code> requests JSON, while the schema object describes your required structure. The structured-output guide also recommends including the schema in the prompt and using a low temperature for consistent extraction.</p>
+<p>Replace <code>YOUR_INSTALLED_MODEL</code> with a local model you have already downloaded. This request works from a macOS or Linux terminal against a running local server and saves the response envelope:</p>
+<pre><code>curl -fsS http://localhost:11434/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;model&quot;: &quot;YOUR_INSTALLED_MODEL&quot;,
+    &quot;stream&quot;: false,
+    &quot;options&quot;: {&quot;temperature&quot;: 0},
+    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Extract currency, total_cents and invoice_date. Use null for an absent date. Currency must be USD. Total means amount due, in cents. Fictional invoice: subtotal USD 20.00; tax USD 4.50; amount due USD 24.50. No date is printed.&quot;}],
+    &quot;format&quot;: {
+      &quot;type&quot;: &quot;object&quot;,
+      &quot;properties&quot;: {
+        &quot;currency&quot;: {&quot;type&quot;: &quot;string&quot;, &quot;enum&quot;: [&quot;USD&quot;]},
+        &quot;total_cents&quot;: {&quot;type&quot;: &quot;integer&quot;},
+        &quot;invoice_date&quot;: {&quot;type&quot;: [&quot;string&quot;, &quot;null&quot;]}
+      },
+      &quot;required&quot;: [&quot;currency&quot;, &quot;total_cents&quot;, &quot;invoice_date&quot;],
+      &quot;additionalProperties&quot;: false
+    }
+  }' -o invoice-response.json
+</code></pre>
+<p>The expected content is an object with USD, 2450 and null. Extract the model's JSON string from <code>message.content</code>; parsing the outer HTTP response alone only validates the envelope. This exercise intentionally leaves date-format rules to application validation. Add a format checker and real calendar checks before depending on non-null dates.</p>
+<h2>Use llama.cpp grammars or JSON-schema support</h2>
+<p>llama.cpp supports GBNF grammars to constrain generated text. A tiny grammar for a classification exercise can be saved as <code>label.gbnf</code>:</p>
+<pre><code>root ::= &quot;\&quot;accepted\&quot;&quot; | &quot;\&quot;review\&quot;&quot;
+</code></pre>
+<p>It allows either JSON string, including quotes. Check the selected label against the invoice. For a server using a locally downloaded model, apply it with the documented grammar-file flag:</p>
+<pre><code>llama-server --model /absolute/path/model.gguf \
+  --host 127.0.0.1 --port 8080 --grammar-file label.gbnf
+</code></pre>
+<p>Use that server only for the label experiment. For invoice extraction, restart without the label grammar and send the invoice schema through the chat endpoint's documented <code>response_format</code> wrapper:</p>
+<pre><code>{
+  &quot;type&quot;: &quot;json_schema&quot;,
+  &quot;json_schema&quot;: {
+    &quot;name&quot;: &quot;invoice&quot;,
+    &quot;schema&quot;: {
+      &quot;type&quot;: &quot;object&quot;,
+      &quot;properties&quot;: {&quot;total_cents&quot;: {&quot;type&quot;: &quot;integer&quot;}},
+      &quot;required&quot;: [&quot;total_cents&quot;],
+      &quot;additionalProperties&quot;: false
+    }
+  }
+}
+</code></pre>
+<p>This is the value of <code>response_format</code> inside a request to <code>/v1/chat/completions</code>, alongside your model and messages. The server also documents <code>--json-schema</code> and <code>--json-schema-file</code>. Its schema-to-grammar conversion supports a subset of JSON Schema, and the grammar guide warns that unsupported features can be skipped. Describe the expected fields in the prompt so the model has their meaning as well as their structure.</p>
+<h2>Validate outside the decoder</h2>
+<p>Save the same schema sent to the model as <code>invoice-schema.json</code>. With the Python <code>jsonschema</code> package installed, parse the response and validate it independently:</p>
+<pre><code>import json
+from pathlib import Path
+from jsonschema import validate
+
+response = json.loads(Path(&quot;invoice-response.json&quot;).read_text())
+answer = json.loads(response[&quot;message&quot;][&quot;content&quot;])
+schema = json.loads(Path(&quot;invoice-schema.json&quot;).read_text())
+validate(instance=answer, schema=schema)
+expected = {&quot;currency&quot;: &quot;USD&quot;, &quot;total_cents&quot;: 2450, &quot;invoice_date&quot;: None}
+assert answer == expected
+</code></pre>
+<p>The equality assertion is the fixture's factual check. In production, use source-specific checks and review rules. Use the schema to reject extra keys and the source check to distinguish the amount beside “subtotal” from the amount beside “total.”</p>
+<p>Treat interrupted streams and output-limit stops as incomplete results. Never append a closing brace and assume the missing value was harmless. Set a bounded retry policy and retain the original source, raw answer and validation failure under the same job ID.</p>
+<h2>Try it on your workload</h2>
+<p>Create ten fictional invoices, including one missing date, one with both subtotal and total, one credit note and one ambiguous currency. Write reference objects first. Either expand the schema to represent those cases or mark them for review; do not force every invoice into the USD-only example.</p>
+<p>Run prompt-only JSON, Ollama schema output and the corresponding llama.cpp schema configuration on the same fixtures. Record parse failures, schema failures, wrong fields, retries and accepted outputs per minute separately. Repeat after changing the runner or model version.</p>
+<p>Add one source that contains an instruction to ignore the extraction task. Treat that instruction as invoice text and keep application control with your validation code. Confirm that a structurally valid result still faces the same factual checks and cannot trigger an external action before validation.</p>
 <h2>How to decide</h2>
-<p>Specify how missing values should appear. If constrained decoding is available, test it with the same examples and keep application-side validation.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Use constrained decoding when available and supported by your schema.</li>
+<li>Keep missing-value rules explicit and validation outside the model.</li>
+<li>Escalate ambiguous facts for review instead of retrying until a plausible object appears.</li>
+</ul>
+<h2>Extract a thousand invoices in parallel for about 20 cents</h2>
+<p>Ten extraction agents sharing 1,000 invoices on <code>qwen/qwen3-32b</code> cost about 20 cents in tokens on TrustedRouter. In this illustrative batch, each agent handles 100 invoices, each using 1,500 input and 150 output tokens. On 2026-11-22, catalog rates rounded to $0.100 per million input and $0.301 per million output tokens. Input = 10 × 100 × 1,500 = 1,500,000; output = 10 × 100 × 150 = 150,000. Cost = 1.5 × $0.100 + 0.15 × $0.301 = $0.19515, about 20 cents. One identical-size retry for 100 invoices adds 0.15 × $0.100 + 0.015 × $0.301 = $0.019515, about 2 cents.</p>
+<p>On one local GPU, these agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run at the same time, with the same token bill as running them one after another. Keep parsing, schema validation and source checks identical, and verify the route supports your schema.</p>
+<p>Prices change; check <a href="/models">current prices</a>, <a href="/docs/agent-setup">agent setup</a> and <a href="/docs/provider-routing">route configuration</a>. For approved remote documents, review <a href="/private-llm-api">confidential inference</a> and its eligible route prices. Local remains better when invoices must stay on the device.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/capabilities/structured-outputs">Ollama: JSON-schema format and local structured outputs</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md">llama.cpp: GBNF and JSON Schema conversion limitations</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md">llama.cpp server: grammar flags and response_format</a></li>
+<li><a href="https://json-schema.org/understanding-json-schema/reference/object">JSON Schema: required properties, nulls and additional fields</a></li>
+<li><a href="https://python-jsonschema.readthedocs.io/en/stable/validate/">Python jsonschema: independent schema validation</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter live model catalog</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

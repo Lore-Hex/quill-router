@@ -173,16 +173,98 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How much context should a local model reserve?</h1><p>Budget for system instructions, conversation history, retrieved text and the answer. A model&#x27;s advertised maximum is only one limit. Memory and prompt-processing time can impose a smaller practical budget.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>For a 16,384-token runtime window, an 11,000-token document plus 2,000 tokens of instructions and history leaves 3,384 tokens before template overhead. Reserve the answer before filling the rest with source text.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Reserve context for the entire request: instructions, conversation history, source text, formatting and the answer. In a 16,384-token window, an 11,000-token document plus 2,000 tokens of instructions and history leaves 16,384 − 11,000 − 2,000 = 3,384 tokens for the answer and remaining overhead.</p>
+<h2>Reserve the answer before adding source text</h2>
+<p>A practical context budget starts with the output your task needs. If the answer requires up to 2,048 tokens, reserve them before inserting documents. Then leave an explicit allowance for template formatting and any tool descriptions your application sends.</p>
+<table>
+<thead>
+<tr>
+<th>Budget item</th>
+<th>Illustrative token allocation</th>
+<th>Running total</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source document</td>
+<td>11,000</td>
+<td>11,000</td>
+</tr>
+<tr>
+<td>Instructions and history</td>
+<td>2,000</td>
+<td>13,000</td>
+</tr>
+<tr>
+<td>Answer reserve</td>
+<td>2,048</td>
+<td>15,048</td>
+</tr>
+<tr>
+<td>Template and other overhead allowance</td>
+<td>512</td>
+<td>15,560</td>
+</tr>
+<tr>
+<td>Unused margin</td>
+<td>824</td>
+<td>16,384</td>
+</tr>
+</tbody>
+</table>
+<p>Replace the 512-token allowance with the tokens your application actually adds. Count the fully assembled request with the selected model's tokenizer, including the template and instructions.</p>
+<p>If the source does not fit, decide what information the answer actually requires. Retrieve relevant sections, remove repeated history or summarize completed work while preserving critical facts. Expanding the window is appropriate when the task genuinely needs the additional material and the memory budget supports it.</p>
+<h2>Set Ollama's context explicitly</h2>
+<p>Set <code>num_ctx</code> explicitly and confirm the loaded context with <code>ollama ps</code>. As of 2026-11-22, Ollama's dedicated context documentation describes hardware-dependent defaults: 4K below the 24 GiB VRAM tier, 32K for the 24 to below 48 GiB tier, and 256K for the 48 GiB tier and above. The current server implementation selects 4,096, 32,768 or 262,144 tokens, using 23 GiB and 47 GiB thresholds to accommodate reported hardware sizes. The FAQ also lists a blanket 4,096-token default; use the dedicated context documentation and loaded value when configuring your runner.</p>
+<p>Inspect the <code>CONTEXT</code> column to confirm the actual allocation for your loaded model.</p>
+<p>Inside an <code>ollama run</code> conversation, set:</p>
+<pre><code>/set parameter num_ctx 16384
+</code></pre>
+<p>For an API request, put the setting in <code>options</code>. Here the context budget is 16,384 and the answer ceiling is 2,048:</p>
+<pre><code>curl http://localhost:11434/api/generate -d '{
+  &quot;model&quot;: &quot;YOUR_LOCAL_MODEL&quot;,
+  &quot;prompt&quot;: &quot;Summarize the decisions in the supplied document.&quot;,
+  &quot;stream&quot;: false,
+  &quot;options&quot;: {&quot;num_ctx&quot;: 16384, &quot;num_predict&quot;: 2048}
+}'
+ollama ps
+</code></pre>
+<p>Replace the model name and prompt with your local model and complete test input. To set a server default from a macOS or Linux terminal, after stopping any existing server that owns the port, use <code>OLLAMA_CONTEXT_LENGTH=16384 ollama serve</code>. For the macOS application, use <code>launchctl setenv OLLAMA_CONTEXT_LENGTH 16384</code> and restart the app. A Linux systemd service needs the variable in its service environment and a restart; setting it only in a client shell does not reconfigure that running service.</p>
+<h2>Translate the window into cache memory</h2>
+<p>For a conventional full-attention transformer with equal key and value widths, the unquantized KV payload is:</p>
+<pre><code>cache bytes = 2 × layers × KV heads × head dimension
+              × bytes per element × tokens × concurrent sequences
+</code></pre>
+<p>The first factor of two accounts for keys and values. Use the KV head count when the architecture shares keys and values across query heads. The formula counts the attention payload; runtime buffers and allocation overhead require additional memory.</p>
+<p>Consider an illustrative architecture with 32 layers, eight KV heads, a head dimension of 128 and a two-byte cache element. Each token costs 2 × 32 × 8 × 128 × 2 = 131,072 bytes. A 16,384-token sequence therefore costs 131,072 × 16,384 = 2,147,483,648 bytes, or 2 GiB. Four independent sequences at that capacity require 4 × 2 = 8 GiB before weights and buffers.</p>
+<p>This example assumes full attention across the stored sequence and no cache sharing. Sliding-window or other cache architectures need their own calculation. The key budgeting lesson remains useful: choosing a larger window can consume memory that you otherwise wanted for parallel agents.</p>
+<h2>Choose useful context, then concurrency</h2>
+<p>Ollama documents that parallel requests increase context allocation. Set the smallest window that reliably contains the task, then test the number of workers you need. Four independent 16K tasks and one 16K task are different capacity plans even though they use the same weights. Agents on one local GPU share its throughput, and requests beyond its serving capacity wait in line.</p>
+<p>Give each agent a scoped job. A worker checking one function may need a small set of source files; a worker reviewing a broad design may need a different selection. Sending every worker the full repository spends context on material you have not established it needs.</p>
+<p>Keep enough evidence in each request to verify the answer. If narrowing the input removes a necessary exception, restore that section before interpreting the failure as a model weakness.</p>
+<h2>Try it on your workload</h2>
+<p>Use the opening 16,384-token budget with a document counted by your chosen tokenizer. Place an explicit fictional fact near the end, such as “The renewal deadline is June 17,” and ask for that fact plus an exception stated earlier. Reserve the answer and template allowance before assembling the final prompt.</p>
+<p>Run the request, record the loaded context, memory, prompt-processing time and answer. Repeat with the fact near the beginning and middle. If a fact disappears, inspect the actual text submitted, truncation and retrieval before enlarging the window.</p>
+<p>Then repeat with four independent requests if that is your expected workload. Keep the model and window fixed. Record whether all four run together, their finish times and whether the longest request still fits.</p>
 <h2>How to decide</h2>
-<p>Test with a fact near the end of the document. If the answer misses it, inspect truncation and retrieval before paying for a larger window.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Use the smallest window that contains the required evidence and answer reserve.</li>
+<li>Fix missing input or poor retrieval before paying the memory cost of a larger window.</li>
+<li>Increase context only when a repeatable task requires it and the concurrent workload still fits.</li>
+</ul>
+<h2>Give ten document agents their own context for about 16 cents</h2>
+<p>Ten document agents working at once on <code>deepseek/deepseek-v3.2</code> cost about 16 cents in tokens on TrustedRouter for this workload. Assign each worker the evidence its task needs, preserving your answer reserve and checking the accepted result against the source.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.274 per million input tokens and $0.401 per million output tokens. Suppose each agent uses 50,000 input and 5,000 output tokens. Input = 10 × 50,000 = 500,000; output = 10 × 5,000 = 50,000. Cost = 0.5 × $0.274 + 0.05 × $0.401 = $0.15705, about 16 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential requests. Count duplicated document text in each worker's input budget. Prices change; check <a href="/models">model details and prices</a> and <a href="/docs/agent-setup">agent setup</a>. For approved off-device documents, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Local remains better for offline documents or when a focused window already fits the workload comfortably.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/context-length">Ollama: hardware-based context tiers and allocation display</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/server/routes.go">Ollama: exact default-context thresholds</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: context overrides, platform environment settings and parallel requests</a></li>
+<li><a href="https://github.com/ollama/ollama/blob/main/api/types.go">Ollama: context and generation-limit request options</a></li>
+<li><a href="https://huggingface.co/blog/kv-cache-quantization">Hugging Face: KV payload arithmetic</a></li>
+<li><a href="https://huggingface.co/docs/transformers/kv_cache">Hugging Face: cache strategies and sliding-window behavior</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

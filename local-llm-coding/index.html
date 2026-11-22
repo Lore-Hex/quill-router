@@ -173,16 +173,67 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Is a small local coding model good enough for your repository?</h1><p>Use a real maintenance task with a testable outcome. A plausible-looking patch is a weak measure if it calls an API your project never used.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Freeze a small revision, provide the same files and ask each candidate to correct a formatting bug. Run the existing test and inspect how many unrelated lines changed. Repeat on a second language if your repository is mixed.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>A small local coding model is good enough when it produces an accepted patch on your repository with less total waiting and review than your alternative. Start with two reproducible maintenance bugs, and judge the complete edit-and-test loop rather than a single generated function.</p>
+<h2>Budget context for the complete coding session</h2>
+<p>An agent's working context includes instructions, tool definitions, source files, search results, previous edits and test output. Reserve space for the next response as well. As of November 2026, Ollama's context documentation recommends at least 64,000 tokens for agents and coding tools. Start there if your memory budget permits, then check placement and response time.</p>
+<p>Here is an illustrative 64,000-token allocation: 4,000 for instructions and tools + 30,000 for source + 12,000 for history and test output + 8,000 for the next answer = 54,000, leaving 10,000 tokens of margin. Replace them with counts from your agent's actual requests before sizing hardware.</p>
+<p>In the Ollama desktop app, change the context slider in settings. For a manually launched server on macOS or Linux, stop the existing server first and use:</p>
+<pre><code>OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+</code></pre>
+<p>In another terminal, use <code>ollama ps</code> to inspect the loaded model's context and processor placement. The environment variable applies to the server you launch; use the settings slider for an already running desktop app. Larger context requires more memory, so keep irrelevant logs and repeated file dumps out of the conversation.</p>
+<h2>Choose candidates by their job and actual artifact</h2>
+<p>The live TrustedRouter catalog on 2026-11-22 includes the following open-weight candidates. A catalog model ID identifies a hosted offering; use the corresponding Ollama tag or local artifact for local runs. Record the upstream checkpoint and quantization separately. Use your installed local model as the baseline, compare Qwen3-Coder-30B-A3B locally if its artifact fits, and use DeepSeek-V3.2 as a hosted reference unless you have hardware for its much larger weights.</p>
+<table>
+<thead>
+<tr>
+<th>Catalog model ID</th>
+<th>Why include it</th>
+<th>What to verify locally</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>qwen/qwen3-coder-30b-a3b-instruct</code></td>
+<td>Dedicated agentic coding model</td>
+<td>Its function-call template and repository task accuracy</td>
+</tr>
+<tr>
+<td><code>deepseek/deepseek-v3.2</code></td>
+<td>Larger reasoning and tool-use comparison</td>
+<td>Hosted reference unless you can fit its much larger weights</td>
+</tr>
+</tbody>
+</table>
+<p>Qwen's model card specifies 30.5 billion total parameters, 3.3 billion activated parameters and a native 262,144-token context. The activated count describes computation through the mixture of experts; use the total parameter count when estimating weight storage. Its card also documents a specialized function-call format, making template compatibility part of the coding test.</p>
+<p>DeepSeek-V3.2's publisher describes reasoning and agent training and releases the weights under MIT terms. Its repository reports approximately 685 billion parameters. Check every candidate against your installed dependency versions and project conventions.</p>
+<h2>Parallelize independent work in separate worktrees</h2>
+<p>Coding is an especially useful place to add parallel agents because maintenance work often divides into independently testable changes. One agent can fix date formatting while another repairs a command-line error message and a third investigates a failing fixture. Each gets a bounded task, a test command and its own working directory. Review and integration remain explicit steps.</p>
+<p>Git worktrees provide multiple working trees attached to one repository. Starting from your chosen baseline, these commands create two new branches and directories on macOS or Linux:</p>
+<pre><code>git worktree add -b agent-date ../agent-date HEAD
+git worktree add -b agent-cli ../agent-cli HEAD
+</code></pre>
+<p>Run each agent inside its assigned directory. Give it only the files and dependencies relevant to its task, and keep separate output paths for generated artifacts. Worktrees separate file edits; coordinate design decisions and isolate shared external databases separately.</p>
+<p>On one local GPU, concurrent agents share available throughput and queue when capacity is occupied. Ollama's FAQ also explains that parallel requests increase context allocation. Four requests configured for 64,000 tokens represent 4 × 64,000 = 256,000 context tokens under that allocation rule. Budget memory and throughput together when adding agents.</p>
+<p>For an illustrative local scheduling example, suppose four independent tasks each take 15 minutes when run alone. Serial time is 4 × 15 = 60 minutes. Four separately provisioned local machines could each run one 15-minute task, followed by review and integration. Compare that hardware requirement with your actual task volume.</p>
+<h2>Try it on your workload</h2>
+<p>Freeze a revision with a known formatting bug and an existing test that exposes it. Supply every candidate with the same issue description, relevant files and permitted commands. Require a patch, the test result and a short explanation of why the change fixes the case. Do not reveal a reference patch in the prompt.</p>
+<p>Record time to the first passing patch, total time including review, failed test runs, unrelated changed lines and invented APIs. Check a neighboring case the agent did not see. If the repository uses two languages, repeat with a second bug in the other language. A model that succeeds on Python should still earn its place on your TypeScript task.</p>
+<p>Next run the two tasks simultaneously in separate worktrees. Compare wall-clock time and accepted patches per hour against the serial run. Keep the same model, prompt and test environment so the experiment isolates scheduling rather than a simultaneous model upgrade.</p>
 <h2>How to decide</h2>
-<p>Track time to an accepted patch, including review. A faster generator can cost more developer time if its output often needs rewriting.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<p>Keep local coding for focused changes that pass tests and review within your working time budget. Improve file selection when context is crowded. Compare a stronger model when the agent sees the right evidence but repeatedly produces incorrect fixes. Rent additional capacity when independent tasks are ready and inference queues, rather than human review, delay completion.</p>
+<h2>Run ten coding agents at once for about 23 cents</h2>
+<p>Ten coding agents working at once on <code>qwen/qwen3-coder-30b-a3b-instruct</code> cost about 23 cents in tokens on TrustedRouter. In this illustrative workload, each agent consumes 100,000 input and 20,000 output tokens across its repository task. On 2026-11-22, catalog prices rounded to $0.132 per million input and $0.475 per million output tokens. Input = 10 × 100,000 = 1,000,000; output = 10 × 20,000 = 200,000. Cost = 1 × $0.132 + 0.2 × $0.475 = $0.227, about 23 cents.</p>
+<p>On one local GPU, those agents share its throughput, and requests beyond its parallel capacity wait in line; through a per-token API they can run at the same time, with the same token bill as running them one after another. Assign separate worktrees and test commands, then review and integrate each patch. Extra retries and duplicated context add tokens.</p>
+<p>TrustedRouter uses an OpenAI-compatible API. Prices change; check <a href="/models">current models</a> and <a href="/docs/agent-setup">agent configuration</a>. For approved source code, review <a href="/private-llm-api">confidential inference</a> and eligible prices in <a href="/docs/provider-routing">provider routing</a>. Local remains better for repositories that must stay on the machine or a single task that already runs well.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/context-length">Ollama: agent context recommendation and configuration</a></li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct">Qwen: coding model card, parameters and context</a></li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V3.2">DeepSeek: V3.2 model card</a></li>
+<li><a href="https://git-scm.com/docs/git-worktree">Git: creating separate working trees</a></li>
+<li><a href="https://docs.ollama.com/faq">Ollama: concurrent requests and memory allocation</a></li>
+<li><a href="https://api.trustedrouter.com/v1/models">TrustedRouter: current catalog models and prices</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

@@ -173,16 +173,101 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>Ollama or llama.cpp for a local service?</h1><p>Choose based on who will operate the service. Ollama provides model management and a local API. llama.cpp is useful when you want direct control over a compatible model file and runtime settings.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Give a colleague a clean machine and your setup notes. Ask them to install the exact model, serve a request, restart the service and reproduce the result. Record every undocumented manual step.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Choose Ollama when your team wants model management and a local API with a short operating procedure. Choose llama.cpp when the service needs direct control over a GGUF and runtime arguments; in either case, require a colleague to reproduce one successful request and one restart from your notes.</p>
+<h2>Choose the operating model you want to own</h2>
+<p>Ollama's CLI provides commands to pull, list, run, inspect and stop models. Its Modelfile describes a model source and settings. llama.cpp's server accepts a model file and explicit server arguments, including context size, device placement and parallel slots. Both can expose an OpenAI-compatible chat-completions endpoint.</p>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Ollama</th>
+<th>llama.cpp</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model identity</td>
+<td>Manage a named model; preserve its import source and configuration</td>
+<td>Point directly at a GGUF; preserve its checksum</td>
+</tr>
+<tr>
+<td>Reproducible settings</td>
+<td>Save the Modelfile and relevant server settings</td>
+<td>Save the executable build and full launch command</td>
+</tr>
+<tr>
+<td>Serving interface</td>
+<td>Native API plus supported OpenAI-compatible endpoints</td>
+<td>Server API with OpenAI-compatible chat completions</td>
+</tr>
+<tr>
+<td>Best first test</td>
+<td>Can a teammate recreate and serve the named model?</td>
+<td>Can a teammate recreate the backend and launch configuration?</td>
+</tr>
+</tbody>
+</table>
+<p>Check the configuration behind a speed comparison before selecting a runtime. A different quantization, context or prompt template can change the result. Start with one compatible instruction-tuned GGUF supported by both installations. The <a href="/notes/local-llm-gguf">artifact guide</a> explains what to record before comparing runners.</p>
+<p>Set a modest operating goal: another person should be able to start the service, send a request, locate the configuration and recover after stopping it. Add complexity only when the application requires it.</p>
+<h2>Make a repeatable Ollama service</h2>
+<p>With Ollama installed and running, create a file named <code>Modelfile</code> containing the following. Substitute the absolute path to your downloaded single-file GGUF:</p>
+<pre><code>FROM /absolute/path/model.gguf
+PARAMETER num_ctx 4096
+PARAMETER temperature 0
+</code></pre>
+<p>Import and inspect the named model:</p>
+<pre><code>ollama create local-service -f Modelfile
+ollama show --modelfile local-service
+ollama run local-service
+</code></pre>
+<p>If no Ollama server is running, start <code>ollama serve</code> in a separate terminal. Use the existing server when the desktop application or system service already provides it. Keep the Modelfile and the original artifact record together; use <code>local-service</code> as a convenient handle and the artifact record as provenance.</p>
+<p>Ollama preserves the GGUF's existing quantization during import. That makes importing the same prepared artifact a useful starting point for this comparison. Verify the generated model configuration before timing requests, especially the context and template.</p>
+<h2>Make a repeatable llama.cpp service</h2>
+<p>Use a compatible llama.cpp build. Its source-build documentation enables Metal by default on macOS; CUDA builds on NVIDIA Linux use <code>-DGGML_CUDA=ON</code>. Save the backend choice with the build version. An executable built for a different accelerator is a different test setup.</p>
+<p>From a checkout with the server built, launch the same GGUF with an explicit local address, port, context and one slot:</p>
+<pre><code>./build/bin/llama-server -m /absolute/path/model.gguf \
+  --alias local-service --host 127.0.0.1 --port 8080 \
+  -c 4096 -np 1 -ngl auto
+</code></pre>
+<p>The explicit port avoids depending on a changing default. One slot also makes the initial comparison easier to interpret. Save the startup log and confirm that the intended model and placement loaded successfully before sending traffic.</p>
+<p>Keep a copy of the full command as the service recipe. If an experiment changes context, parallelism or offload, update the recipe and label its results separately. A terminal history entry is an unreliable substitute for the configuration your teammate will use next week.</p>
+<h2>Compare the same request through both services</h2>
+<p>Send this request to llama.cpp on port 8080:</p>
+<pre><code>curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;model&quot;: &quot;local-service&quot;,
+    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Extract owner and deadline: Jules will send the report. No deadline was agreed.&quot;}],
+    &quot;temperature&quot;: 0,
+    &quot;max_tokens&quot;: 128,
+    &quot;stream&quot;: false
+  }'
+</code></pre>
+<p>Repeat with port <code>11434</code> for Ollama, keeping the body unchanged. These commands work from macOS and Linux terminals. Both answers should identify Jules and leave the deadline unknown. Use the compatible HTTP shape for these requests and check support for each additional API feature your application requires.</p>
+<p>Measure two phases separately. Time the first request after starting the service, then three requests with the model already loaded. For example, if setup takes 30 minutes and you expect ten teammates to repeat it, the team invests 30 × 10 = 300 minutes, or five hours. That illustrative operating cost can matter more than a small timing difference on one prompt.</p>
+<h2>Try it on your workload</h2>
+<p>Give a colleague a clean machine, the exact artifact identifier and your setup notes. Ask them to install the chosen runner, start the model, send the request above, stop the service and reproduce it after restarting. Record every undocumented step and every assumption about paths or running background processes.</p>
+<p>Then use five real task shapes with fictional data. Keep the checkpoint, quantization, context, template and decoding settings as close as the runners permit, and record any differences. Score correctness, cold-start time, warm response time and time spent troubleshooting.</p>
+<p>Finish by testing the intended number of simultaneous requests. Keep this as a separate service-capacity experiment. The setup that is easiest for one interactive user may require a different operating plan for a team of agents.</p>
 <h2>How to decide</h2>
-<p>Use the setup your team can reproduce. Keep the model artifact and context settings fixed when comparing runtime performance.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Use Ollama when its named models and management commands make the handoff shorter and the required API behavior works.</li>
+<li>Use llama.cpp when direct artifact and runtime control solves a concrete service requirement.</li>
+<li>Prefer the configuration your team can reproduce, recover and evaluate with the least recurring manual work.</li>
+</ul>
+<h2>Serve ten agents without adding local runners</h2>
+<p>Ten service-evaluation agents working at once on <code>qwen/qwen3.6-35b-a3b</code> cost about 7 cents in tokens on TrustedRouter for this trial. Its OpenAI-compatible API at <code>https://api.trustedrouter.com/v1</code> uses one API key and per-token billing, giving your application another deployment to evaluate.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed $0.0422 per million input tokens and approximately $0.317 per million output tokens. Suppose each agent's request fixtures use 100,000 input and 10,000 output tokens in total. Input = 10 × 100,000 = 1,000,000; output = 10 × 10,000 = 100,000. Cost = 1 × $0.0422 + 0.1 × $0.317 = $0.0739, about 7 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can run together for the same token bill as sequential requests. Keep the request fixtures when comparing deployments. Prices change; check <a href="/models">current prices</a>, <a href="/docs/simple-start">the integration quickstart</a> and <a href="/docs/agent-setup">agent setup</a>. For approved work, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider. Local remains preferable when exact artifact control or offline availability is required.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://docs.ollama.com/cli">Ollama: model management and server commands</a></li>
+<li><a href="https://docs.ollama.com/modelfile">Ollama: model sources, context and temperature settings</a></li>
+<li><a href="https://docs.ollama.com/import">Ollama: importing an existing GGUF</a></li>
+<li><a href="https://docs.ollama.com/api/openai-compatibility">Ollama: supported chat-completion requests</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md">llama.cpp: serving arguments and API</a></li>
+<li><a href="https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md">llama.cpp: platform-specific backend builds</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>

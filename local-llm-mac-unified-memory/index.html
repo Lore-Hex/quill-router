@@ -173,16 +173,83 @@ main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
 <body><nav aria-label="Primary"><div class="frame"><a class="brand" href="/">TrustedRouter</a><a href="/notes">Notes</a></div></nav>
 <header class="frame"><h1>How do you size a Mac for local inference?</h1><p>Apple silicon shares memory between the CPU, GPU and applications. Size a machine for the combined workload you intend to keep open.</p></header>
 <div class="band" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 120" width="1440" height="120" role="img" aria-label="NYTE Band, sky"><g fill="#BFE3EC"><rect x="0" y="0" width="240.5" height="2"/><rect x="240" y="0" width="240.5" height="5"/><rect x="480" y="0" width="240.5" height="8"/><rect x="720" y="0" width="240.5" height="12"/><rect x="960" y="0" width="240.5" height="17"/><rect x="1200" y="0" width="240" height="22"/><rect x="0" y="24" width="240.5" height="2"/><rect x="240" y="24" width="240.5" height="5"/><rect x="480" y="24" width="240.5" height="8"/><rect x="720" y="24" width="240.5" height="12"/><rect x="960" y="24" width="240.5" height="17"/><rect x="1200" y="24" width="240" height="22"/><rect x="0" y="48" width="240.5" height="2"/><rect x="240" y="48" width="240.5" height="5"/><rect x="480" y="48" width="240.5" height="8"/><rect x="720" y="48" width="240.5" height="12"/><rect x="960" y="48" width="240.5" height="17"/><rect x="1200" y="48" width="240" height="22"/><rect x="0" y="72" width="240.5" height="2"/><rect x="240" y="72" width="240.5" height="5"/><rect x="480" y="72" width="240.5" height="8"/><rect x="720" y="72" width="240.5" height="12"/><rect x="960" y="72" width="240.5" height="17"/><rect x="1200" y="72" width="240" height="22"/><rect x="0" y="96" width="240.5" height="2"/><rect x="240" y="96" width="240.5" height="5"/><rect x="480" y="96" width="240.5" height="8"/><rect x="720" y="96" width="240.5" height="12"/><rect x="960" y="96" width="240.5" height="17"/><rect x="1200" y="96" width="240" height="22"/></g></svg></div>
-<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><h2>Try it on your workload</h2>
-<p>Load the model while your editor, browser and document store are running. Watch memory pressure and swap during the longest conversation you expect. Compare the second and tenth answers to the first.</p>
+<main class="frame"><div class="story"><time datetime="2026-11-22">2026-11-22</time><article><p>Size a Mac for the model, its longest conversation and the applications you keep open together. Start with this planning rule: add the measured inference working set to your normal desktop usage, then keep at least 25% of that combined estimate available as headroom.</p>
+<h2>Unified memory is one shared budget</h2>
+<p>Apple silicon's CPU and GPU access the same memory pool. MLX uses that architecture so arrays can participate in CPU or GPU operations without moving between separate memory pools. A Mac advertised with 32 GB has one 32 GB pool shared by applications and the GPU.</p>
+<p>Make the budget concrete. Suppose your chosen model and context use 12 GiB while your editor, browser, document store and system use another 6 GiB. The combined workload is 12 + 6 = 18 GiB. Adding this guide's 25% planning margin gives 18 × 1.25 = 22.5 GiB. That is an illustrative sizing exercise; replace both inputs with measurements from your workload.</p>
+<p>Keep your units straight when checking a specification against a tool reporting bytes. One GiB is 1,073,741,824 bytes. Also distinguish capacity from speed: buying enough memory to hold a model answers whether it fits, while your own prompt and answer timings determine whether it is pleasant to use.</p>
+<h2>Choose from the memory tiers actually offered</h2>
+<p>These are representative current Apple silicon configurations verified on Apple's specification pages on 2026-11-22. Match the memory tier to the exact chip and GPU configuration.</p>
+<table>
+<thead>
+<tr>
+<th>Mac configuration</th>
+<th>Listed unified-memory choices</th>
+<th>Practical sizing question</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>14-inch MacBook Pro, M6, Liquid Retina XDR</td>
+<td>16, 24 or 32 GB</td>
+<td>Does the everyday model fit with your desktop?</td>
+</tr>
+<tr>
+<td>14-inch MacBook Pro, M5 Pro, 16-core GPU</td>
+<td>24 or 48 GB</td>
+<td>Is the next tier justified by a measured shortfall?</td>
+</tr>
+<tr>
+<td>MacBook Pro, M5 Pro, 20-core GPU</td>
+<td>24, 48 or 64 GB</td>
+<td>How much context and concurrent work must remain resident?</td>
+</tr>
+<tr>
+<td>MacBook Pro or Mac Studio, M5 Max</td>
+<td>36 GB with 32-core GPU; 48, 64 or 128 GB with 40-core GPU</td>
+<td>Does a larger useful model justify this configuration?</td>
+</tr>
+<tr>
+<td>Mac Studio, M5 Ultra</td>
+<td>96 GB; 256 or 512 GB with 36-core CPU and 80-core GPU</td>
+<td>Is the large working set a frequent requirement?</td>
+</tr>
+</tbody>
+</table>
+<p>Use the table to find candidates after calculating the budget. Do not begin with the largest model someone has managed to load and work backward to a purchase. A useful purchase decision includes an exact artifact, context length, number of simultaneous requests and an acceptable completion time.</p>
+<p>Storage capacity is a separate choice. Apple's specifications list SSD options separately from unified memory. Size storage for model downloads and unified memory for the running workload.</p>
+<h2>Understand the GPU memory limit</h2>
+<p>Metal exposes <code>recommendedMaxWorkingSetSize</code>, an estimate of the GPU resource footprint that can be allocated without affecting runtime performance. Use the value reported by your device as a performance threshold and budget separately for the rest of the system.</p>
+<p>Runtimes also implement their own allocation policies. In the MLX Metal allocator source checked on 2026-11-22, the initial memory limit is the smaller of 1.5 times the recommended working set and 0.95 times physical memory. Written as arithmetic, limit = min(1.5 × recommended bytes, 0.95 × physical bytes). Apply this library allocation policy within the machine's physical memory budget.</p>
+<p>For illustration, if a device reported a 24 GiB recommended set and 32 GiB physical memory, those terms would be 36 GiB and 30.4 GiB, producing a 30.4 GiB allocator limit. Your editor and operating system still need memory. Use that ceiling to diagnose allocation failures, while sizing the workload with room for your other applications.</p>
+<p>Reducing the model, context or simultaneous sessions is the first response to memory pressure. Keep the physical capacity fixed in your worksheet when changing software limits. Keep a stable configuration that works with your desktop before experimenting with allocation overrides.</p>
+<h2>Read pressure and swap together</h2>
+<p>In Activity Monitor, open the Memory tab and record Physical Memory, Memory Used, Memory Pressure and Swap Used. Apple explains that pressure incorporates free memory, swap rate, wired memory and cached files. Swap Used reports space used on the startup disk for swapping.</p>
+<p>A single low free-memory reading is therefore an incomplete diagnosis. Look for a pattern: pressure rises during the long conversation, swap grows, and later answers take longer. Compare the model run with an otherwise identical desktop session. That gives you a reason to change capacity rather than blaming every delay on the model.</p>
+<p>Record the initial swap reading as well as the final value. Subtract the initial reading from the final reading to track the change during the experiment. Keep other application activity similar across comparisons.</p>
+<h2>Try it on your workload</h2>
+<p>Open your usual editor, browser and document store. Record the baseline Memory tab values. Load the exact model you intend to use, with a fixed context and one active conversation. Ask a short question, then process the longest representative document and continue until you have ten answers.</p>
+<p>For answers one, two and ten, record first-response delay, completion time, pressure and swap. Save the outputs so you can check whether a quicker configuration simply produced a worse answer. Repeat the entire sequence with a smaller quantization or shorter context, changing only one setting.</p>
+<p>If several agents are part of normal use, repeat with that number of requests. Keep a worksheet containing the peak combined workload and the largest acceptable delay. Use those results, plus your margin, to choose the next available memory tier.</p>
 <h2>How to decide</h2>
-<p>Choose additional unified memory if the working set causes sustained swapping. More storage makes room for downloads but does not provide the same working memory.</p>
-<h2>Price an encrypted API trial</h2>
-<p>For work approved to leave your device, you can try an eligible open model on TrustedRouter
-with one API key and pay for tokens without buying a GPU. Check the specific route’s input and
-output prices in the <a href="/models">model catalog</a>. Use the
-<a href="/private-llm-api">confidential API example</a> to require encrypted provider inference
-and zero data retention. Availability and price depend on the model and provider.</p>
+<ul>
+<li>Keep the Mac you own when your real desktop and longest conversation remain responsive together.</li>
+<li>Choose more unified memory when recurring useful work exceeds the combined budget or shows sustained pressure and growing swap.</li>
+<li>For rare large jobs, compare renting inference before choosing a workstation-sized memory configuration.</li>
+</ul>
+<h2>Run five document agents without enlarging your Mac's memory</h2>
+<p>Five document-evaluation agents working at once on <code>google/gemma-4-31b-it</code> cost about 9 cents in tokens on TrustedRouter for this trial. Send approved documents to those workers while reserving your Mac's unified memory for your editor and everyday local model.</p>
+<p>On 2026-11-22, the <a href="https://api.trustedrouter.com/v1/models">live catalog</a> listed approximately $0.106 per million input tokens and $0.359 per million output tokens. Suppose each agent uses 100,000 input and 20,000 output tokens across its evaluation requests. Input = 5 × 100,000 = 500,000; output = 5 × 20,000 = 100,000. Cost = 0.5 × $0.106 + 0.1 × $0.359 = $0.0889, about 9 cents.</p>
+<p>On one local GPU, those agents share throughput, and requests beyond its parallel capacity wait in line; through a per-token API, they can work together for the same token bill as sequential requests. Compare this occasional expense with the memory tier your regular workload requires. Prices change; check <a href="/models">the catalog</a> and <a href="/docs/agent-setup">agent setup</a>. For approved sensitive work, <a href="/private-llm-api">encrypted inference and zero data retention</a> depend on model and provider; check the eligible route's price. Keep inference local when offline use is required.</p>
+<h2>Sources</h2>
+<ul>
+<li><a href="https://www.apple.com/macbook-pro/liquid-retina-xdr-display/specs/">Apple: current MacBook Pro memory configurations</a></li>
+<li><a href="https://www.apple.com/mac-studio/specs/">Apple: current Mac Studio memory configurations</a></li>
+<li><a href="https://ml-explore.github.io/mlx/build/html/usage/unified_memory.html">MLX: shared CPU and GPU memory</a></li>
+<li><a href="https://developer.apple.com/documentation/metal/mtldevice/recommendedmaxworkingsetsize">Apple Metal: recommended working-set semantics</a></li>
+<li><a href="https://github.com/ml-explore/mlx/blob/main/mlx/backend/metal/allocator.cpp">MLX: Metal allocator memory-limit calculation</a></li>
+<li><a href="https://support.apple.com/guide/activity-monitor/view-memory-usage-actmntr1004/mac">Apple: interpreting memory pressure and swap</a></li>
+</ul>
 <h2>Related local LLM decisions</h2>
 <ul>
 <li><a href="/notes/local-llm-getting-started">Should you run your first LLM locally?</a></li>
