@@ -670,19 +670,21 @@ ENV_VARS=(
   # (docs/design/fast-admission-streams.md section 13): off, log, on. A
   # gateway that authorizes a stream and then exits with no settle and no
   # refund leaves the hold until the reaper, two hours on. For a stream the
-  # gateway heartbeats, the rule gives the hold back this many seconds (and
-  # a minute's clock allowance) after the authorization when no heartbeat
-  # has reached the row. "log" runs the pass on read-only snapshots and
-  # writes what it would release, releasing nothing; it is here so the
-  # evidence the rule is judged by gathers in production first. Move it to
-  # "on" only after the runbook's gate (docs/runbook.md, Early release of
-  # unstarted holds): over at least seven days, passes that report rows
-  # under would_release, not one unstarted_release_contradiction_total line
-  # of either kind, and a recorded decision that ending a stream whose first
-  # heartbeat comes after the deadline is acceptable (the gateway has no
-  # deadline of its own before it). Literals, so no revision inherits
-  # either; "off" is the way back: the drain's statements and what it books
-  # are then as they were before the rule.
+  # gateway heartbeats, the rule gives the hold back this many seconds
+  # after its reservation was committed, by the database's clock, when no
+  # heartbeat has reached the row. "log" runs the pass on read-only
+  # snapshots and writes what it would release, releasing nothing; it is
+  # here so the evidence the rule is judged by gathers in production first.
+  # Move it to "on" only after the runbook's gate (docs/runbook.md, Early
+  # release of unstarted holds): over at least seven days, passes that
+  # report rows under would_release, not one
+  # unstarted_release_contradiction_total line of either kind, not one
+  # unstarted_release_observation_failed_total line (the evidence was
+  # gathered without a gap), and a recorded decision that ending a stream
+  # whose first heartbeat comes after the deadline is acceptable (the
+  # gateway has no deadline of its own before it). Literals, so no revision
+  # inherits either; "off" is the way back: the drain's statements and what
+  # it books are then as they were before the rule.
   "TR_UNSTARTED_HOLD_RELEASE_MODE=log"
   "TR_UNSTARTED_HOLD_RELEASE_SECONDS=900"
   # Provider benchmark events use their own best-effort durable queue. Tenant

@@ -79,38 +79,42 @@ _ACTIVITY_PARK_NOTE = "bigtable activity index pending"
 
 
 @lru_cache(maxsize=1)
+def _configured_unstarted_release_mode() -> str:
+    from trusted_router.config import get_settings
+
+    return str(get_settings().unstarted_hold_release_mode)
+
+
 def _unstarted_release_mode() -> str:
     """The early rule's switch (config.unstarted_hold_release_mode), read
     once a process: this primitive takes no settings, the switch is a deploy
     literal, and a settle must not build a Settings of its own each time. A
-    settings error reads as off, which writes nothing."""
+    settings error reads as off for this settle, is counted as an
+    observation that failed, and is not remembered."""
     try:
-        from trusted_router.config import get_settings
-
-        return str(get_settings().unstarted_hold_release_mode)
-    except Exception:  # noqa: BLE001 - evidence must never fail a settle
+        return _configured_unstarted_release_mode()
+    except Exception as exc:  # noqa: BLE001 - evidence must never fail a settle
+        unstarted_release.observation_failed("settle", exc)
         return unstarted_release.MODE_OFF
 
 
-def _boot_usage_heartbeat_declared_since(kid: str) -> str | None:
-    boot = STORE.get_gateway_boot(kid)
-    if boot is None or not boot.declares_usage_heartbeat:
-        return None
-    return boot.usage_heartbeat_declared_since
+def _boot_usage_heartbeat_declared_since(kid: str) -> Any:
+    since = getattr(STORE, "gateway_boot_declaring_since", None)
+    return since(kid) if callable(since) else None
 
 
 def _observe_unstarted_charge(auth: GatewayAuthorization) -> None:
     """Evidence for the early release of a never-started stream's hold
     (docs/design/fast-admission-streams.md section 13.5): a charging settle
     applied from its frozen intent (async settlement's handoff, the drain)
-    for a heartbeated stream with no heartbeat on its row. The settle route
-    writes the same line for a settle it applies itself. Off, or for any
-    other row, this is two attribute reads and nothing written."""
+    with a charge above zero for a heartbeated stream with no heartbeat on
+    its row. The settle route writes the same line for a settle it applies
+    itself. Off, or for any other row, nothing is read and nothing written."""
     mode = _unstarted_release_mode()
     if mode == unstarted_release.MODE_OFF:
         return
     unstarted_release.observe_settle(
-        auth, success=True, mode=mode, declared_since=_boot_usage_heartbeat_declared_since,
+        auth, charging=True, mode=mode, declared_since=_boot_usage_heartbeat_declared_since,
     )
 
 
@@ -212,7 +216,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
         return ApplyOutcome.ERROR
     if auth is None:
         return ApplyOutcome.RESERVATION_MISSING
-    if success:
+    if success and int(row.actual_cost_micro or 0) > 0:
         _observe_unstarted_charge(auth)
 
     # Decision 70: a heartbeat snapshot is already the charged winner. Resolve
@@ -532,6 +536,14 @@ def _row_age_seconds(row: SettleOutboxRow) -> float | None:
     return (dt.datetime.now(dt.UTC) - created).total_seconds()
 
 
+def _refund_intent_recorded(authorization_id: str) -> bool:
+    """Whether the settle outbox holds a refund intent for the
+    authorization: one read by the outbox's primary key."""
+    from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
+
+    return spanner_settle_outbox().get(authorization_id, "refund") is not None
+
+
 def _apply_leased(
     row: SettleOutboxRow,
     auth: GatewayAuthorization,
@@ -553,13 +565,25 @@ def _apply_leased(
     charge = fastpath_settle.charge_for(success=success, actual_cost=row.actual_cost_micro, selected_usage_type=usage_type)
     if auth.settled:
         if success and charge > 0 and str(auth.finalization_outcome or "").strip().lower() == "refunded":
-            # The row ended as a refund before this settle was made durable
-            # (the reaper, or the early release of an unstarted hold): the
-            # route answered the settle as a replay and never asked the
-            # lease, whose hold ended uncharged. That is a charge lost, and
-            # it is told as one, as the typed path tells it: the drain
-            # dead-letters the row and raises its lost-charge alert.
-            return ApplyOutcome.ALREADY_RELEASED_FREE
+            # A charging settle for a row that ended as a refund. If the
+            # gateway's own refund ended it, that is an ordinary sequence
+            # (a refund, then an old settle retried; a refund that won a
+            # race) and this row is done, as before. The gateway's refund
+            # of a leased row is always made durable as a refund intent
+            # before it is applied (the settle route), so its intent is the
+            # evidence. With no refund intent, the row was ended by the
+            # control plane itself (the reaper, or the early release of an
+            # unstarted hold): the route answered this settle as a replay
+            # and never asked the lease, whose hold ended uncharged. That
+            # is a charge lost, and it is told as one, as the typed path
+            # tells it: the drain dead-letters the row and raises its
+            # lost-charge alert.
+            try:
+                refunded_by_gateway = _refund_intent_recorded(row.authorization_id)
+            except _TRANSIENT_STORE_EXCS:
+                return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+            if not refunded_by_gateway:
+                return ApplyOutcome.ALREADY_RELEASED_FREE
         # Its records are written (by the route, or by the other kind's
         # intent that won): this row is done, with nothing more to ask.
         return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE

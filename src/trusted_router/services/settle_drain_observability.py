@@ -81,13 +81,14 @@ _ALERT_CLASSES = frozenset({"activity-repair-expired", "lost-charge", "reservati
 # Only an exact str is read: a subclass may render, hash or compare as it likes.
 # Two count holds given back with no terminal from the gateway, one line a
 # hold, by the rule that released it (settle_outbox_drain.
-# _count_released_holds), and the last a request the early rule covers that
-# turned out to be alive (trusted_router.unstarted_release);
-# infra/hold_release_alerts.tf reads all three.
+# _count_released_holds); one a request the early rule covers that turned
+# out to be alive, and the last an observation of the rule's that did not
+# complete (trusted_router.unstarted_release); infra/hold_release_alerts.tf
+# reads all four.
 _COUNTED_METRICS = frozenset({
     "key_usage_unbooked_total", "key_usage_shard_fallback_total",
     "gateway_hold_released_expired_total", "gateway_hold_released_unstarted_stream_total",
-    "unstarted_release_contradiction_total",
+    "unstarted_release_contradiction_total", "unstarted_release_observation_failed_total",
 })
 
 

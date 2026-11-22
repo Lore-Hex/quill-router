@@ -420,7 +420,6 @@ class InMemoryStore:
                 or existing.attestation_kind != record.attestation_kind
             ):
                 raise ValueError("spend-lease boot kid collision")
-            registered_at = record.registered_at
             if existing is not None:
                 record = dataclasses.replace(
                     existing,
@@ -433,7 +432,8 @@ class InMemoryStore:
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
-            record = boot_with_heartbeat_history(existing, record, registered_at=registered_at)
+            # This store keeps no commit time: a run's start is never carried.
+            record = boot_with_heartbeat_history(existing, record, existing_written_at=None)
             self.gateway_boots[record.kid] = record
             return record
 

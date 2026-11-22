@@ -1149,47 +1149,91 @@ early (`release_unstarted_holds_result`, `storage_gcp_authorize.py`), for a
 row that is all of:
 
 1. a stream the heartbeat contract can apply to, by what authorize froze on
-   the row: Stage D reason `ok`, local settlement, credits, no batch and no
-   video pricing, a boot binding, a pricing snapshot that parses with
-   candidates, the token bounds a heartbeat is checked against, and
-   `heartbeat_seq` the zero authorize writes for a row with a snapshot;
+   the row as it is stored: Stage D reason `ok`, local settlement, credits,
+   not a batch, no video pricing, a boot binding, a pricing snapshot of the
+   shape authorize writes, the token bounds a heartbeat is checked against,
+   and `heartbeat_seq` the zero authorize writes for a row with a snapshot;
 2. made while its boot was declaring usage heartbeats (below);
 3. never started: `started_at`, `heartbeat_at`, `heartbeat_hash`,
    `delivered_usage` and `selected_endpoint_id` null and `heartbeat_seq` 0;
 4. unsettled, its reservation unsettled and bound to it, with no pending or
-   dead settle intent (the outbox guard, in the scan and again under the
-   transaction);
-5. at least `unstarted_hold_release_seconds` (900 by default) plus the
-   clock skew allowance (60 s) old.
+   dead settle intent (the outbox guard, on the pass's lock-free read and
+   again under the transaction);
+5. at least `unstarted_hold_release_seconds` (900 by default) old by the
+   database's own clock (below).
 
-The rule is `trusted_router/unstarted_release.py` (`ineligibility`); the
-transaction applies it on its own strong read of the row. Every field it
-reads must be there, of the type authorize writes and with a value the rule
-knows: a snapshot that does not parse, a settlement that is missing or not
-`local`, a sequence that is null are each a reason to keep the hold
-(`malformed`). A released row is the reaper's refund: the exact recorded
-holds given back, nothing booked, outcome `refunded`.
+The rule is `trusted_router/unstarted_release.py` (`ineligibility`), and it
+is the only place the class is decided. The pass applies it twice to a row
+it releases: on a lock-free read, and again in the release transaction on
+that transaction's own strong read. A released row is the reaper's refund:
+the exact recorded holds given back, nothing booked, outcome `refunded`.
 
-**Membership is fixed by what was true when the authorization was made.**
-Stage D reason `ok` does not say the boot heartbeats: declaration
-enforcement (`stage_d_require_heartbeat_declaration`) is off, so a boot that
-does not declare still gets `ok`, streams with no heartbeat, and settles.
-And a boot's record is not fixed: the same key can register again with
-another declaration, so "this boot declares heartbeats now" says nothing
-about a row it authorized earlier. The boot record therefore keeps the
-registration time from which the key has declared `usage_heartbeat` at
-every registration without a break (`GatewayBoot.usage_heartbeat_declared_since`,
-set by every store in the transaction that writes the boot,
-`storage_models.boot_with_heartbeat_history`): a registration that does not
-declare clears it, and one that declares again starts from that
-registration. A row is of the class only if that time is at least the skew
-allowance before the row's creation. Read at any later moment, "declared
-without a break since S" covers every instant from S to the read, the row's
-creation among them; a registration after the read cannot move S back. So
-the read needs no transaction with the row. A boot record that is gone,
-cannot be read, was written before the field existed, or carries no time
-keeps the hold; a boot registered before this change gets its time at its
-next registration, and its earlier rows stay out of the class.
+**The rule judges the row as stored, not as decoded.** The decoder
+(`GatewayAuthorization`) fills a member that is missing with a default: a
+missing `settlement` reads as `local`, a missing `native_batch_eligible` as
+false, and any `usage_type` is coerced. A default is not evidence, so the
+reader hands the rule the stored row itself (the payload's own members, the
+typed columns that are not null over them, and the row's `settled` column:
+`read_gateway_authorization(..., stored=)`), and the rule requires every
+member it reads to be there, of the type authorize writes, with a value it
+knows. The only absences it accepts are the ones the serializer makes on
+purpose: `json_body` leaves out a member whose default is null when it is
+null, so `video_pricing_snapshot`, `started_at`, `heartbeat_at`,
+`heartbeat_hash`, `delivered_usage` and `selected_endpoint_id` may be absent
+and read as null (`OMITTED_WHEN_NONE`). Anything else that is missing, null
+where a value is written, or of another type keeps the hold (`malformed`).
+The pricing snapshot is checked for structure, not only for parsing:
+version 1 as a number, kind `endpoint`, and one candidate or more, each
+with an endpoint, a price history version, the four rates, its tiers, a
+request fee and a rounding rule, of the types the document writes
+(`pricing_snapshot_valid`). A row the decoder cannot decode at all is the
+pass's error, counted, and kept.
+
+**Membership is fixed by what was true when the authorization was made, on
+the database's clock.** Stage D reason `ok` does not say the boot
+heartbeats: declaration enforcement
+(`stage_d_require_heartbeat_declaration`) is off, so a boot that does not
+declare still gets `ok`, streams with no heartbeat, and settles. And a
+boot's record is not fixed: the same key can register again with another
+declaration, so "this boot declares heartbeats now" says nothing about a
+row it authorized earlier. The rule therefore needs S, the moment the
+unbroken run of declaring registrations began, and needs S to be no earlier
+than the moment the registration that began the run took effect. A time a
+caller stamps on its registration cannot be that: a registration prepared
+at one moment can commit much later, after a registration that withdrew the
+declaration and after rows authorized while nothing was declared.
+
+So S is a commit timestamp and never a caller's clock
+(`GatewayBoot.usage_heartbeat_declared_since`,
+`storage_models.boot_with_heartbeat_history`, applied in the transaction
+that writes the boot):
+
+- A registration that does not declare stores no start.
+- A registration that declares, after a row that did not (or after none),
+  stores a marker meaning "this stored row's own write". A reader resolves
+  the marker to that row's commit timestamp (`tr_entities.updated_at`, which
+  the entity write sets to the commit timestamp).
+- A registration that declares after a row that declared keeps that row's
+  start. If that row carried the marker, the transaction reads the row's
+  commit timestamp and stores it as an explicit time; an explicit time is
+  carried as it is. A retried transaction reads the row again: nothing from
+  an attempt that did not commit is kept.
+
+A row is of the class only if S is strictly before the commit timestamp of
+its reservation (`tr_reservation.created_at`), the same clock, so there is
+no allowance between them. The pass reads the boot after its scan, with a
+strong read; the boot then declares, and has without a break since S, so
+every instant from S to that read is covered, the reservation's commit
+among them, and a registration after the read cannot move S back. So the
+read needs no transaction with the row, and the pass reads each boot once.
+Only Spanner keeps and resolves the time
+(`SpannerStore.gateway_boot_declaring_since`). The memory store and the
+Postgres planes run no early release: they keep the field well-formed (the
+marker while declaring, nothing otherwise) and never carry a start. A boot
+record that is gone, cannot be read, was written before the field existed,
+or carries no time keeps the hold; a boot registered before this change
+gets its start at its next registration, and its earlier rows stay out of
+the class.
 
 The fact is on the boot's record, not on the authorization's row. Putting
 it on the row was weighed and left for a follow-up: the row's payload is
@@ -1217,11 +1261,12 @@ cap, and it has no deadline for the whole request
 no timer). One candidate is 333 s at worst with a retried authorize (28 s)
 and the heartbeat's own budget (5 s); fifty candidates that each use their
 whole 20 s reach the last one after 980 s, and the rule may release the
-hold from 960 s. Such a stream's first heartbeat then meets a terminal row, the control
-plane answers 409 `already_terminal`, and the gateway cancels the provider
-and answers its client 503. That turns a slow request that was about to
-succeed into a failure. No delivered content goes uncharged, since nothing
-was delivered; the cost is the request and the provider's work on it.
+hold from 900 s. Such a stream's first heartbeat then meets a terminal row,
+the control plane answers 409 `already_terminal`, and the gateway cancels
+the provider and answers its client 503. That turns a slow request that was
+about to succeed into a failure. No delivered content goes uncharged, since
+nothing was delivered; the cost is the request and the provider's work on
+it.
 
 So the deadline is a judgement about how rare that is, and turning the rule
 on is an explicit decision to accept it. The evidence for the decision is
@@ -1237,31 +1282,79 @@ waits are settings (`QUILL_FIRST_BYTE_TIMEOUT_SECONDS`,
 `QUILL_FINAL_FIRST_BYTE_TIMEOUT_SECONDS`). The deadline setting is bounded
 to 600 s at least and 6,900 s at most.
 
-**Clocks.** The age is the pass's clock less the row's creation time, and
-both are application clocks of control-plane instances (the authorize's
-and the drain's), as is the boot's registration time; none is a Spanner
-commit timestamp. The rule assumes they agree within 60 s
-(`CLOCK_SKEW_ALLOWANCE_SECONDS`) and makes every comparison that much
-later than it reads: a row is old enough only 60 s after the deadline, the
-scan's horizon is 60 s shorter, and a declaration counts only if it
-started 60 s before the row. A skew beyond that shortens the deadline by
-the excess, which is the availability cost above, not a money one.
+**Clocks: what is guaranteed and what is not.** Every comparison the rule
+decides by is on the database's clock. The age is the database's time when
+the scan ran (`CURRENT_TIMESTAMP()` in the scan's own statement) less the
+reservation's commit timestamp, both returned by that statement; the
+release transaction reuses the pair, which is sound because the commit
+timestamp never changes and the age only grows. The boot's start is a
+commit timestamp too. So, whatever any application clock reads:
 
-**What the scan guarantees.** The scan (`_UNSTARTED_SCAN_SQL`) reads the
-expiry index (`tr_reservation_by_expiry`) for unsettled reservations past
-the horizon and keeps only those whose authorization is of the class by its
-columns and its Stage D reason, with no settle intent freezing it, in
-expiry order; each candidate is one primary-key read of its authorization.
-A request of another class is never a candidate, so it cannot take a
-releasable row's place. Pages of 200 follow a cursor, five to a pass, so
-rows of the class that the transaction then leaves (a boot with no
-declaration to show, a malformed row) do not hide the rows behind them
-unless there are more than 1,000 of them; then the pass says `truncated`
-and the rest wait for the next. A pass runs every five minutes, after the
-reaper's. A releasable row is therefore given back by the first pass that
-starts 960 s or more after its authorize and reaches it: within 16 to 21
-minutes when the drain runs on schedule and the pass is not truncated, and
-at the reaper's two hours at the latest.
+- no hold is released less than the deadline after its reservation
+  committed;
+- no hold is released unless its boot's declaring run began before its
+  reservation committed.
+
+Application clocks decide only where the scan looks, never what is
+released. The scan's window is computed from the drain's clock and compared
+with the expiry authorize wrote from its own clock (creation plus two
+hours), widened by 300 s on each side. A row that enters the window early
+is read and left as too young. If the two clocks disagree by more than
+300 s a releasable row is found late by the excess, and if the authorize's
+clock is behind the drain's by more than 20 minutes (the window and its
+slack) it is not found at all and waits for the reaper. So what is not
+guaranteed is
+promptness: a releasable row is given back by the first pass that reads it
+at 900 s old or more, which is 15 to 20 minutes after its authorize when
+the drain runs every five minutes, the pass is not truncated and the
+clocks agree within five minutes; otherwise later, and at the reaper's two
+hours at the latest. The observers on the heartbeat and settle paths
+(§13.5) have no commit timestamp to hand and read a first heartbeat's age
+from application clocks; they call it late 60 s before the deadline
+(`CLOCK_SKEW_ALLOWANCE_SECONDS`), so they report one too many, not one too
+few.
+
+**What the scan does, and its bound.** The scan (`_UNSTARTED_SCAN_SQL`) only
+says where to look: it reads the expiry index (`tr_reservation_by_expiry`)
+for unsettled reservations whose expiry falls in a window, oldest first, at
+most `limit` of them (200), and returns each with its commit timestamp and
+the database's time. It selects no class and joins nothing, so the limit is
+on the rows the index range reads, not on the rows that survive a filter.
+Python is authoritative: every row the scan returns is judged by
+`ineligibility` on its own reads. The two can disagree in one direction
+only. A row the scan returns that is not of the class is an extra
+candidate, read and left. A row of the class the scan does not return is
+kept, never released. Nothing the statement omits can release a hold.
+
+The window is the reservations that crossed the deadline in the last 15
+minutes, with the 300 s on each side: a reservation is in it for 25
+minutes, five passes, and then never again. Progress therefore does not
+depend on what was left: a row the rule leaves (another class, a boot with
+no declaration to show, a malformed row, a pending intent) leaves the
+window with time, and cannot stay ahead of the rows behind it from pass to
+pass. There is no cursor to keep.
+
+A pass's work is bounded before it starts: one scan of at most `limit`
+index rows, each with one read of its base row; for each, three point reads
+on one read-only snapshot (the reservation, the outbox guard, the
+authorization); one read of a boot for each distinct key among the rows
+that passed every other test; and, with the rule on, one read-write
+transaction for each row released. At the limit of 200 that is at most 200
+scanned rows, 600 point reads, 200 boot reads and 200 transactions. Log
+mode opens no read-write transaction at all, and a releasing pass opens
+one only for a row its lock-free read found releasable.
+
+When more unsettled reservations of any class are in the window than a pass
+examines, the scan fills its limit and the pass says `truncated=true`. It
+read the oldest. The rows it did not reach are read by a later pass once
+the older ones have left the window; if more than a pass's budget keep
+crossing in every interval, the newest are not reached before they leave
+and are left to the reaper. A truncated pass is counted as an observation
+that did not complete (§13.5), so it holds the gate for turning the rule
+on. In a sample of production the window was empty: nearly every open
+reservation is minutes old. The statement's plan was read there too: a
+seek on both index keys, the limit applied below the read of the base
+rows, no sort and no full scan.
 
 ### 13.4 The leased hold
 
@@ -1284,10 +1377,21 @@ owner's end-of-life release is the backstop, and the only one.
 
 A settle for a released leased row is made durable as an intent before the
 route sees the row is terminal, and the drain then applies it. That intent
-used to be marked done quietly; a charging settle whose row ended as a
-refund is now told as a lost charge (dead-lettered, with the drain's
+used to be marked done quietly, so the one charge this rule can lose
+without the route seeing it left no trace. A settle with a charge above
+zero whose leased row ended as a refund with no refund intent in the settle
+outbox is now told as a lost charge (dead-lettered, with the drain's
 `settle outbox lost charge` alert), as the same case is on a synchronous
-row (`settle_outbox_apply._apply_leased`).
+row (`settle_outbox_apply._apply_leased`). The refund intent is what tells
+the two endings apart. The gateway's own refund of a leased row is always
+made durable as a refund intent before it is applied
+(`_settle_leased_authorization` enqueues before it asks the front door, and
+a terminal intent is kept for 30 days), so a refunded row with one is the
+ordinary sequence, a refund and then an old settle retried or a refund that
+won a race, and its settle intent is marked done quietly, as before. A row
+with none was ended by the control plane itself: the reaper or this rule.
+If the outbox cannot be read the intent waits; it is never called a lost
+charge on a guess.
 
 `OpenHeartbeat` is still not sent. The owner's first-heartbeat allowance
 (10 s, plus the grace: 70 s; `service/service.go:167`, `:179`) fits a
@@ -1318,9 +1422,10 @@ transactions, so they are serial:
   cannot be a charging settle unless §13.2's fact failed, which the
   evidence line below reports.
 - **Clock skew.** The gateway's clock decides nothing: `started_at` is
-  read only for being null. The clocks the rule compares are the control
-  plane's own, with the allowance of §13.3; a creation time that is ahead
-  of the pass, or cannot be read, is a row too young to release.
+  read only for being null. No application clock decides anything either:
+  the age and the boot's start are the database's (§13.3). A commit
+  timestamp that is missing or cannot be read is a row too young to
+  release.
 - **A gateway that pauses and resumes**, or is cut off and returns, sends
   its first heartbeat late: the release-first case.
 - **An authorize retried with the same idempotency key** returns the same
@@ -1330,18 +1435,36 @@ transactions, so they are serial:
   released row is a terminal row: its first heartbeat is refused.
 - **A boot that does not heartbeat** (the flag off) streams and settles
   with no heartbeat. It declares nothing, so its rows are not of the
-  class; and if the same key declares later, the declaration began after
-  those rows were made, so they still are not (§13.3).
+  class; and if the same key declares later, the declaring run began at
+  that registration's commit, after those rows were committed, so they
+  still are not (§13.3). A declaring registration that was prepared
+  earlier and commits late changes nothing: its start is its commit.
 
 What the rule cannot rule out is a gateway change that delivers a Stage D
 stream without the first heartbeat. Two lines watch for it, in log and on:
 `metric=unstarted_release_contradiction_total ... kind=late_first_heartbeat`
 (a first heartbeat that arrived after the deadline, with its age), from the
-heartbeat route, and `kind=charge_without_heartbeat` (a charging settle
-for a stream of the class with no heartbeat on its row, at any age), from
-the settle route and from the apply of a frozen settle intent
-(`apply_frozen_settle`), which is how async settlement's handoff and the
-drain apply a settle.
+heartbeat route, and `kind=charge_without_heartbeat` (a settle with a
+charge above zero for a stream of the class with no heartbeat on its row,
+at any age), from the settle route and from the apply of a frozen settle
+intent (`apply_frozen_settle`), which is how async settlement's handoff and
+the drain apply a settle. Only a charge is a contradiction: a settle that
+prices to nothing loses nothing if its hold had been released, and writes
+no line. On an open row the route knows the charge; a settle that meets a
+terminal row is answered before it is priced, so there the line is written
+when the settle reports any tokens, which can be one too many and never
+one too few.
+
+Silence is evidence only if the observations were made. So an observation
+that did not complete writes its own counter,
+`metric=unstarted_release_observation_failed_total`, with where it failed
+and the error's class: an observer that could not finish (`where=heartbeat`,
+`where=settle`: the boot could not be read, the switch could not be read,
+anything raised), and a pass that did not examine every row it was meant to
+(`where=pass`, with `errors`, `truncated`, `unguarded` and `failed`: a
+candidate it could not read or decide, a scan that filled its limit, a pass
+that could not ask the settle outbox, a pass that failed outright). In log
+mode the pass is itself the observation of what the rule would release.
 
 ### 13.6 Rollout and signals
 
@@ -1361,17 +1484,23 @@ unstarted holds"), over at least seven days of `log`:
 3. no `late_first_heartbeat` line, and the ages on the
    `slow_first_heartbeat` lines stay well short of the deadline: no live
    stream in the window would have been ended;
-4. an explicit decision, recorded with the change that sets `on`, that
+4. the evidence is whole: no `unstarted_release_observation_failed_total`
+   line of any kind (no observer failed, no pass had an error, was
+   truncated, ran unguarded or failed), and the passes ran on schedule (a
+   summary line every five minutes, each with `errors=0`, `truncated=false`
+   and `unguarded=false`). A window with a gap is not evidence, and the
+   seven days start again after it;
+5. an explicit decision, recorded with the change that sets `on`, that
    ending a stream whose first heartbeat comes after the deadline is
    acceptable, since the gateway has no deadline of its own to rule that
    out (§13.3).
 
-Every hold ended with no terminal writes one line naming its rule's counter
-and nothing else, the reaper's (`expired`) included, counted and notified
-on by `infra/hold_release_alerts.tf`; the contradiction line has its own
-policy. The reaper's count takes in a stream it ended at its last
-heartbeat's snapshot, which is charged that snapshot; every other hold is
-given back with nothing booked. The `expired` policy will notify on
-today's background of such holds, tens a week, until the gateway's exits
-are fixed: that is deliberate, since each one is a hold a customer waited
-two hours for.
+Every hold released with no terminal writes one line naming its rule's
+counter and nothing else, the reaper's (`expired`) included, counted and
+notified on by `infra/hold_release_alerts.tf`; the contradiction line and
+the observation-failed line each have their own policy. What is counted is
+a hold given back with nothing booked: a stream the reaper ended at its
+last heartbeat's snapshot is charged that snapshot and is not counted. The
+`expired` policy will notify on today's background of such holds, tens a
+week, until the gateway's exits are fixed: that is deliberate, since each
+one is a hold a customer waited two hours for.

@@ -41,11 +41,14 @@ def _audit_log(level: int, message: str, *args: Any) -> None:
 # forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
 _REAP_BURST_ALERT_THRESHOLD = 20
-# One counter for each rule that gives a hold back with no terminal from the
-# gateway: the reaper at the reservation's expiry, and the early rule
-# (trusted_router.unstarted_release). infra/hold_release_alerts.tf reads
-# these names, and a test holds the three places equal.
+# The counter of holds the reaper gave back at their expiry with nothing
+# booked: no settle and no refund came from the gateway for two hours.
+# infra/hold_release_alerts.tf reads this name, and a test holds the places
+# it is written equal.
 _RELEASED_EXPIRED_METRIC = "gateway_hold_released_expired_total"
+# The same for the early rule (trusted_router.unstarted_release): the holds
+# of heartbeated streams that never started, given back minutes after the
+# authorization.
 _RELEASED_UNSTARTED_METRIC = "gateway_hold_released_unstarted_stream_total"
 
 # Wall-clock budget for the row loop, below the 300s Cloud Run / Cloud
@@ -211,16 +214,29 @@ def _reconcile_leased(reap_result: ReapPassResult) -> dict[str, int]:
 
 
 def _count_released_holds(metric: str, count: int) -> None:
-    """One line for each hold a rule ended with no terminal from the
-    gateway, naming nothing but the rule's counter:
-    infra/hold_release_alerts.tf counts the lines and notifies on them, and
-    the settle drain worker's output boundary keeps a listed counter's name
-    (settle_drain_observability._COUNTED_METRICS). Each is nearly always a
-    gateway that authorized and sent no terminal. The reaper's count takes
-    in a stream it ended at its last heartbeat's snapshot, which is charged
-    that snapshot; every other hold is given back with nothing booked."""
-    for _ in range(max(0, int(count))):
-        logger.warning("metric=%s value=1", metric, extra={"metric": metric, "value": 1})
+    """One line for each hold released with no terminal from the gateway,
+    naming nothing but the counter: no workspace, key, authorization or
+    amount. infra/hold_release_alerts.tf counts the lines and notifies on
+    them, and the settle drain worker's output boundary keeps a listed
+    counter's name (settle_drain_observability._COUNTED_METRICS). Each is
+    nearly always a gateway that authorized and then sent no terminal.
+
+    Best effort: the pass has already committed when this runs, so a handler
+    that raises must not turn a finished pass into a failed one and lose its
+    answer and the scheduler's heartbeat."""
+    try:
+        for _ in range(max(0, int(count))):
+            logger.warning("metric=%s value=1", metric, extra={"metric": metric, "value": 1})
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _released_at_expiry(reap_result: ReapPassResult) -> int:
+    """The holds a reaper pass gave back with nothing booked. A stream the
+    reaper ended at its last heartbeat's snapshot is charged that snapshot:
+    it is not a release, and the reaper's own line counts it
+    (snapshot_bookings)."""
+    return max(0, int(reap_result.count) - int(reap_result.snapshot_bookings))
 
 
 def _refund_released_leases(authorization_ids: tuple[str, ...]) -> tuple[int, int]:
@@ -291,6 +307,7 @@ def release_unstarted_holds(now: dt.datetime, *, mode: str, after_seconds: int, 
     except Exception as exc:  # noqa: BLE001 - the early rule must never fail the drain
         # The class only: an exception's text can carry a row's identifiers.
         logger.error("gateway.unstarted_release failed mode=%s error_class=%s", mode, type(exc).__name__)
+        unstarted_release.observe_pass(mode=mode, errors=0, truncated=False, unguarded=False, failed=True)
         return None
     logger.info(
         "gateway.unstarted_release mode=%s rule=%s after_seconds=%s scanned=%s released=%s "
@@ -316,10 +333,17 @@ def release_unstarted_holds(now: dt.datetime, *, mode: str, after_seconds: int, 
         lease_refund_failures,
     )
     if result.truncated:
-        # The scan returns only rows of the class, in expiry order, and the
-        # pass reads a fixed number of pages: more rows of the class than
-        # that were past the deadline, and the rest wait for the next pass.
+        # The scan filled its limit: more unsettled reservations of any
+        # class were in its window than one pass examines. It read the
+        # oldest; the rest are read by a later pass once those have left
+        # the window, or, if as many keep crossing, are left to the reaper.
         logger.warning("gateway.unstarted_release scan truncated scanned=%s limit=%s", result.scanned, limit)
+    # A pass that did not examine every row it was meant to is an
+    # observation that did not complete: counted for the gate that turns
+    # the rule on (docs/runbook.md).
+    unstarted_release.observe_pass(
+        mode=mode, errors=result.errors, truncated=result.truncated, unguarded=result.unguarded,
+    )
     _count_released_holds(_RELEASED_UNSTARTED_METRIC, result.released)
     return result
 
@@ -434,10 +458,12 @@ def drain_settle_outbox(
             fingerprint=["gateway", "reaped-burst"],
             tags={"reaped_count": str(reap_result.count)},
         )
-    # In every mode, off included: the reaper's releases were never counted
-    # anywhere a person is told. It writes lines only; the drain's
-    # statements and what it books are as they were.
-    _count_released_holds(_RELEASED_EXPIRED_METRIC, reap_result.count)
+    # Lines only: the drain's statements and what it books are unchanged.
+    try:
+        released_at_expiry = _released_at_expiry(reap_result)
+    except Exception:  # noqa: BLE001
+        released_at_expiry = 0
+    _count_released_holds(_RELEASED_EXPIRED_METRIC, released_at_expiry)
     # After the reaper, so a hold that has expired is the reaper's and is
     # counted under its rule; the early rule sees what is left.
     release_unstarted_holds(reap_now, mode=unstarted_release_mode, after_seconds=unstarted_release_seconds)

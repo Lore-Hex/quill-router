@@ -772,6 +772,18 @@
         }
       ]
     },
+    "storage_gcp:_read_boot_written:1": {
+      "fingerprint": "4c201ad82221b33d3d37a2ceb12b9988acd28585a78f68525ad999dd9e13c8f3",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "id": "STRING",
+            "kind": "STRING"
+          }
+        }
+      ]
+    },
     "storage_gcp:_read_entity_from:1": {
       "fingerprint": "c5387f8306fe68497a9ddba801ff9caded4ffbb87c4893574f3a83e4d8e609ed",
       "scenarios": [
@@ -935,13 +947,12 @@
       ]
     },
     "storage_gcp_authorize:constants:3": {
-      "fingerprint": "74822a0950513a49edf6198e02b4d7818c7e3c1ddcb3af5c19ca75d5214b5299",
+      "fingerprint": "173f187301cb7aa7d4723a5fb4b3518bb4fafbcd4d77d19159881a65508f1f85",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "after_expiry": "TIMESTAMP",
-            "after_id": "STRING",
+            "from_expiry": "TIMESTAMP",
             "limit": "INT64",
             "now": "TIMESTAMP"
           }
@@ -2394,7 +2405,7 @@
       ]
     },
     "storage_gcp_request_records:read_gateway_authorization:1": {
-      "fingerprint": "63bc4a77b3a4a0c71c80f190e6cb62d9f35b264bba1f97b8e9c3f998d21b38c4",
+      "fingerprint": "d1c8c24b6114737bf1197bd33d6c0966ff50ec872d37d78106dd310d6e5c2f0e",
       "scenarios": [
         {
           "bindings": {},
@@ -5107,6 +5118,7 @@
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
     "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
+    "storage_gcp:SpannerStore._read_boot_written": "4c201ad82221b33d3d37a2ceb12b9988acd28585a78f68525ad999dd9e13c8f3",
     "storage_gcp:SpannerStore._read_entity_from": "c5387f8306fe68497a9ddba801ff9caded4ffbb87c4893574f3a83e4d8e609ed",
     "storage_gcp:SpannerStore._list_entities": "a3713c4e149f64cd0dd5bb64d0bd719c951683c7f2f93d33f03c709f036a0df0",
     "storage_gcp:SpannerStore.readiness_check": "4ac951f6c468ea8adee1537d86aaaf0514fb06e519e5c409ed07d11b42ca76b5",
@@ -5144,12 +5156,12 @@
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
-    "storage_gcp_authorize:release_unstarted_holds_result": "a58e8c29c7542fbe91cf53af6fed3723aaf316b1798ccadee8f2711c1d6870dc",
-    "storage_gcp_authorize:_observe_unstarted_candidate": "428ac293cdceffc1d71d455066291b02b927ee17089c229ed8d821be483d5031",
+    "storage_gcp_authorize:release_unstarted_holds_result": "56db8f9f46c0e70c2bc09447a3a2256ae100d2fb6be6816138259199cb52d9e9",
+    "storage_gcp_authorize:_observe_unstarted_candidate": "d0264e83810807ed10f43a826768c22b12052719ea60cf3283d378c2dc5f74c9",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:credit_exhaustion_precheck": "2b74957c929a595d7177fa13c738d8758ef91c89e40d2c1dfd3a307857ef739b",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "b8534290d2f75c7e83b5aeff6d5ee3412790c45862d3791e3aff01576c7ec07d",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "d12b6fe8f5b9321d46600349e32845bba36f783b7bd937b41953443b9a197c79",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
@@ -5214,7 +5226,7 @@
     "storage_gcp_request_records:mark_gateway_authorization_settled": "e889d9811b28a018f96d51a27c17d5adea64f85f03cdd65f262470e182414a7a",
     "storage_gcp_request_records:complete_gateway_authorization_retention": "e3b9c853d68ba2f1f5900a9d15e1cac6f8a526692414f5590be4c685c2b6328c",
     "storage_gcp_request_records:clear_gateway_authorization_retention": "314e768b1b786335aedac687a810f1047c91a543c951f84d1a2232d9efb0c648",
-    "storage_gcp_request_records:read_gateway_authorization": "63bc4a77b3a4a0c71c80f190e6cb62d9f35b264bba1f97b8e9c3f998d21b38c4",
+    "storage_gcp_request_records:read_gateway_authorization": "d1c8c24b6114737bf1197bd33d6c0966ff50ec872d37d78106dd310d6e5c2f0e",
     "storage_gcp_request_records:read_gateway_authorization_by_gateway_request_id": "35327f025b4c16f9c73c53adc04fb1f9d78da8dcb1cceb1edc16ada6a77baf90",
     "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
     "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",

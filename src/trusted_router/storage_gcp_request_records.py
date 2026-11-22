@@ -213,7 +213,14 @@ def read_gateway_authorization(
     reader: Any,
     param_types: Any,
     authorization_id: str,
+    *,
+    stored: dict[str, Any] | None = None,
 ) -> GatewayAuthorization | None:
+    """The authorization, decoded. A caller that must judge the row as it
+    was stored, before the decoder's defaults fill what is missing, passes
+    ``stored``: it is filled with the payload's own members, the typed
+    columns that are not NULL over them, and the row's own ``settled``
+    column, exactly as read (a row with no payload leaves it empty)."""
     rows = list(
         reader.execute_sql(
             "SELECT authorization_id, workspace_id, key_hash, reservation_id, "
@@ -245,10 +252,14 @@ def read_gateway_authorization(
         *typed_values,
     ) = rows[0]
     typed = dict(zip(AUTHORIZATION_TYPED_COLUMNS, typed_values, strict=True))
+    if stored is not None:
+        stored.clear()
     if payload:
-        authorization = _authorization_from_payload(
-            json.dumps(merge_authorization_typed_columns(json.loads(payload), typed))
-        )
+        merged_payload = merge_authorization_typed_columns(json.loads(payload), typed)
+        if stored is not None:
+            stored.update(merged_payload)
+            stored["settled"] = settled
+        authorization = _authorization_from_payload(json.dumps(merged_payload))
         authorization.settled = bool(settled)
         authorization.created_at = _timestamp_string(created_at)
         return authorization

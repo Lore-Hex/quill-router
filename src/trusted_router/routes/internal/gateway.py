@@ -796,15 +796,24 @@ def _heartbeat_gateway_sync(
     }
 
 
-def _boot_usage_heartbeat_declared_since(kid: str) -> str | None:
-    """The time since which the boot with this key id has declared, without
-    a break, that it heartbeats every Stage D stream; None when it has not.
-    Read only by the early-release evidence lines, and only for a request
-    that already looks like one of theirs."""
-    boot = STORE.get_gateway_boot(kid)
-    if boot is None or not boot.declares_usage_heartbeat:
-        return None
-    return boot.usage_heartbeat_declared_since
+def _boot_usage_heartbeat_declared_since(kid: str) -> Any:
+    """The commit time at which the boot with this key id began its unbroken
+    run of registrations declaring that it heartbeats every Stage D stream;
+    None when it has none, or on a store that keeps no such time. Read only
+    by the early-release evidence lines, and only for a request that already
+    looks like one of theirs."""
+    since = getattr(STORE, "gateway_boot_declaring_since", None)
+    return since(kid) if callable(since) else None
+
+
+def _settle_reports_usage(body: Any) -> bool:
+    """Whether a settle body reports any tokens. The settle route prices a
+    settle only after it has found the row open; for one that meets a
+    terminal row this is the nearest thing to its charge."""
+    try:
+        return int(body.input_count) + int(body.output_count) > 0
+    except Exception:  # noqa: BLE001 - a body that cannot be read reports none
+        return False
 
 
 def _forward_leased_heartbeat(
@@ -4266,16 +4275,18 @@ def _settle_gateway_authorization(
             capture_authorization(authorization)
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
-    if success and settings.unstarted_hold_release_mode != "off":
-        # Evidence for the early release of a never-started stream's hold:
-        # a charging settle for a heartbeated stream with no heartbeat on it.
-        unstarted_release.observe_settle(
-            authorization,
-            success=True,
-            mode=settings.unstarted_hold_release_mode,
-            declared_since=_boot_usage_heartbeat_declared_since,
-        )
     if authorization.settled:
+        if success and settings.unstarted_hold_release_mode != "off":
+            # Evidence for the early release of a never-started stream's
+            # hold: a settle that reports usage, for a heartbeated stream
+            # whose row is terminal with no heartbeat on it. Its charge is
+            # never priced on this path; a settle of no tokens is not one.
+            unstarted_release.observe_settle(
+                authorization,
+                charging=_settle_reports_usage(body),
+                mode=settings.unstarted_hold_release_mode,
+                declared_since=_boot_usage_heartbeat_declared_since,
+            )
         try:
             _v2_capture_hook(settings, authorization, body, None, None, replay=True)
         except Exception:  # noqa: S110 - observation entry cannot become a money failure
@@ -4890,6 +4901,16 @@ def _settle_gateway_authorization(
     # falls through to the durable two-commit settle below; the store method
     # documents why an unknown outcome is safe to follow with it. A transient
     # failure whose fallback enqueue inserts the intent goes to the drain.
+    if success and settings.unstarted_hold_release_mode != "off":
+        # Evidence for the early release of a never-started stream's hold:
+        # a settle with a charge above zero for a heartbeated stream with no
+        # heartbeat on its row. Here the charge is priced and final.
+        unstarted_release.observe_settle(
+            authorization,
+            charging=actual_cost > 0,
+            mode=settings.unstarted_hold_release_mode,
+            declared_since=_boot_usage_heartbeat_declared_since,
+        )
     if authorization.fastpath_envelope is not None and _typed_store is not None:
         # The fast path's pilot (docs/design/fast-admission-pilot.md): the
         # hold is a lease's, so the terminal goes to the front door and then

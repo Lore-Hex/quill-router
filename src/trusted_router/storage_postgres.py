@@ -1137,7 +1137,9 @@ class PostgresStore(OperationalAnalyticsReads):
                     declares_idempotency_key_source=record.declares_idempotency_key_source,
                     declares_settle_outbox=record.declares_settle_outbox,
                 )
-            merged = boot_with_heartbeat_history(existing, merged, registered_at=record.registered_at)
+            # This plane runs no early release: the field is kept well-formed,
+            # and with no commit time read here a run's start is never carried.
+            merged = boot_with_heartbeat_history(existing, merged, existing_written_at=None)
             self._write_entity_tx(conn, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 
