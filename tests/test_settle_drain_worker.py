@@ -85,6 +85,7 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     # API, lifecycle, and state assertion below.
     # The data-access and simple-start pages follow the same rule.
     for base, handler in (("/docs/byok", "byok_docs_page"),
+                          ("/docs/routing", "legacy_routing_guide"),
                           ("/who-can-see-your-data", "who_can_see_your_data"),
                           ("/docs/simple-start", "simple_start_docs")):
         for path in (base, base + "/"):

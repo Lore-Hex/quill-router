@@ -1407,6 +1407,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def simple_start_docs() -> str:
         return public_page_html(settings, "docs/simple-start")
 
+    @app.api_route("/docs/routing", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/docs/routing/", methods=["GET", "HEAD"], include_in_schema=False)
+    def legacy_routing_guide(request: Request) -> RedirectResponse:
+        query = request.url.query
+        return RedirectResponse("/docs/provider-routing" + (f"?{query}" if query else ""), status_code=301)
+
     @public_html_route("/docs/provider-routing")
     def provider_routing_docs() -> str:
         return public_page_html(settings, "docs/provider-routing")

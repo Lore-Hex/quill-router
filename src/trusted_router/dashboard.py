@@ -1808,8 +1808,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="private-llm-api.png",
         title="Private LLM API — Verifiable, Attested, Open Source",
         description=(
-            "A private LLM API where privacy is cryptographically verifiable. "
-            "Route to Claude, GPT, Gemini, DeepSeek through an attested gateway."
+            "Make a private LLM API request with the OpenAI SDK. Require encrypted provider "
+            "inference and zero data retention, then verify the gateway attestation."
         ),
     ),
     "openrouter-alternative/quickstart": PublicPage(
@@ -2690,6 +2690,12 @@ def _seo_comparison_title(left: Model, right: Model) -> str:
     left_name = " ".join(_hero_model_name(left).split())
     right_name = " ".join(_hero_model_name(right).split())
     base = f"{left_name} vs {right_name}"
+    context_title_pairs = {
+        ("openai/gpt-oss-120b", "qwen/qwen3.8-27b"),
+        ("qwen/qwen3.8-27b", "thinkingmachines/inkling"),
+    }
+    if (left.id, right.id) in context_title_pairs and left.context_length and right.context_length:
+        return f"{base}: {_compare_tokens(left.context_length)} vs {_compare_tokens(right.context_length)} context"
     detailed_suffix = ": Price, Speed & Context"
     compact_suffix = ": Price & Speed"
     if len(f"{base}{detailed_suffix}") <= SEO_TITLE_MAX_LENGTH:
@@ -6551,12 +6557,23 @@ def _model_comparison_pairs() -> tuple[tuple[Model, Model], ...]:
     covered = {model.id for pair in pairs for model in pair}
     anchors = core_models[: min(12, len(core_models))]
 
+    # For specialized models, suggest a peer that can do the same job.
+    # Use catalog order to prefer well-served peers and keep existing chat anchors.
+    specialized_peers: dict[tuple[bool, bool, tuple[str, ...]], list[Model]] = {}
+    for candidate in all_models:
+        if not candidate.supports_chat:
+            task = (candidate.supports_embeddings, candidate.supports_decide, candidate.output_modalities)
+            specialized_peers.setdefault(task, []).append(candidate)
+
     for index, model in enumerate(all_models):
         if model.id in covered or not anchors:
             continue
         anchor = anchors[index % len(anchors)]
         if anchor.id.casefold() == model.id.casefold():
             anchor = anchors[(index + 1) % len(anchors)]
+        if not model.supports_chat:
+            task = (model.supports_embeddings, model.supports_decide, model.output_modalities)
+            anchor = next((peer for peer in specialized_peers[task] if peer.id != model.id), anchor)
         pair = tuple(sorted((model, anchor), key=lambda item: item.id.casefold()))
         key = frozenset((pair[0].id.casefold(), pair[1].id.casefold()))
         if len(key) != 2 or key in seen:
