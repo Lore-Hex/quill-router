@@ -552,5 +552,15 @@ def test_successful_settle_statement_list_unchanged(monkeypatch, operations, sce
         assert result["outcome"] == SettleOutcome.SETTLED
         recorded.append(copy.deepcopy(operations))
     assert recorded[0]
-    assert recorded[1] == recorded[0]
+    # The frozen helper predates the exclusive scan on the key release: the
+    # two statement lists are the same but for that hint on each key release.
+    hint = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
+    assert [(op[0], op[1].removeprefix(hint), *op[2:]) if op[1].startswith(hint + "UPDATE tr_key_limit")
+            else op for op in recorded[1]] == recorded[0]
+    hinted = [new[1] for old, new in zip(recorded[0], recorded[1], strict=True) if old != new]
+    assert hinted and all(
+        sql.startswith("@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit SET reserved = reserved - @hold, ")
+        for sql in hinted
+    )
+    assert not any(op[1].startswith("UPDATE tr_key_limit") for op in recorded[1])
     assert not any("SELECT 1 FROM tr_key_limit" in op[1] for op in recorded[1])

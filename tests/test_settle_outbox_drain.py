@@ -623,8 +623,18 @@ def _phases(settle_operations: list[tuple[Any, str, dict[str, Any]]]) -> list[tu
                 transactions[reader] = ["t1", "t3", "t4"][len(transactions)]
             phase = transactions[reader]
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
-        observed.append((phase, sql.split()[0], table[1] if table else ""))
+        observed.append((phase, _verb(sql), table[1] if table else ""))
     return observed
+
+
+_EXCLUSIVE = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
+
+
+def _verb(sql: str) -> str:
+    """The statement's verb; "UPDATE exclusive" when it carries the exclusive-scan hint."""
+    if sql.startswith(_EXCLUSIVE):
+        return sql.removeprefix(_EXCLUSIVE).split()[0] + " exclusive"
+    return sql.split()[0]
 
 
 def test_fresh_settle_round_trip_order(
@@ -655,7 +665,7 @@ def test_fresh_settle_round_trip_order(
     # post-commit broadcast read.
     assert len(settle_operations) == 6
     batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
-    assert [len(group) for group in batches] == [12]
+    assert [len(group) for group in batches] == [13]
     assert all(set(params) == set(types) for _, params, types in batches[0])
     assert batches[0][2][0] == (
         f"INSERT INTO tr_settle_outbox ({', '.join(INSERT_COLUMNS)}) "  # noqa: S608
@@ -675,9 +685,10 @@ def test_fresh_settle_round_trip_order(
         ("t1", "UPDATE", "tr_reservation"),
         ("t1", "INSERT", "tr_generation"),
         ("t1", "INSERT", "tr_operational_analytics_outbox"),
+        ("t1", "UPDATE exclusive", "tr_credit_balance"),  # the row's lock; moves nothing
         ("t1", "UPDATE", "tr_credit_balance"),  # the no-debt check is inside it
-        ("t1", "UPDATE", "tr_key_limit"),  # current windows
-        ("t1", "UPDATE", "tr_key_limit"),  # a window to roll forward
+        ("t1", "UPDATE exclusive", "tr_key_limit"),  # current windows
+        ("t1", "UPDATE exclusive", "tr_key_limit"),  # a window to roll forward
         ("t1", "COMMIT", ""),
         ("ro", "SELECT", "tr_entities"),
     ]
@@ -723,12 +734,14 @@ def test_fresh_settle_round_trip_order(
         assert params[index] == {
             "aid": auth.id, "kind": "settle", "record_id": record_id, "now": inserted["created_at"],
         }
-    assert params[12] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert "NOT EXISTS" in statements[12]
-    assert params[13]["kh"] == key.hash and params[13]["hold"] == ESTIMATE
-    assert params[13]["actual"] == cost and params[14] == params[13]
-    assert "day_start =" not in statements[13] and " AND NOT (" in statements[14]
-    assert params[16] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
+    assert params[12] == {"hold": ESTIMATE, "ws": ws, "shard": 0}
+    assert "SET reserved = reserved, total_usage = total_usage " in statements[12]
+    assert params[13] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
+    assert "NOT EXISTS" in statements[13]
+    assert params[14]["kh"] == key.hash and params[14]["hold"] == ESTIMATE
+    assert params[14]["actual"] == cost and params[15] == params[14]
+    assert "day_start =" not in statements[14] and " AND NOT (" in statements[15]
+    assert params[17] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
     row = db.settle_outbox[(auth.id, "settle")]
     assert row["status"] == "done" and row["auto_refill_status"] == "pending"
@@ -791,7 +804,7 @@ def test_two_commit_settle_round_trip_order(
     # The done UPDATE returns the stored reservation; its dependent retention
     # and evidence writes share the next RPC. Expand batches to pin SQL order.
     final_batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
-    assert [len(group) for group in final_batches] == [3, 10]
+    assert [len(group) for group in final_batches] == [3, 11]
     settle_operations = [
         (reader, " ".join(statement.split()), values)
         for reader, sql, params in settle_operations
@@ -815,9 +828,10 @@ def test_two_commit_settle_round_trip_order(
         ("t3", "UPDATE", "tr_reservation"),
         ("t3", "INSERT", "tr_generation"),
         ("t3", "INSERT", "tr_operational_analytics_outbox"),
+        ("t3", "UPDATE exclusive", "tr_credit_balance"),
         ("t3", "UPDATE", "tr_credit_balance"),
-        ("t3", "UPDATE", "tr_key_limit"),
-        ("t3", "UPDATE", "tr_key_limit"),
+        ("t3", "UPDATE exclusive", "tr_key_limit"),
+        ("t3", "UPDATE exclusive", "tr_key_limit"),
         ("t3", "COMMIT", ""),
         ("ro", "SELECT", "tr_entities"),
     ]
@@ -830,8 +844,8 @@ def test_two_commit_settle_round_trip_order(
                 transactions[reader] = ["t1", "t3", "t4"][len(transactions)]
             phase = transactions[reader]
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
-        observed.append((phase, sql.split()[0], table[1] if table else ""))
-    assert len(settle_operations) == 19
+        observed.append((phase, _verb(sql), table[1] if table else ""))
+    assert len(settle_operations) == 20
     assert observed == expected
     params = [params for _, _, params in settle_operations]
     statements = [sql for _, sql, _ in settle_operations]
@@ -864,10 +878,14 @@ def test_two_commit_settle_round_trip_order(
     assert "lease_owner IS NULL" in statements[9]
     from trusted_router.spend_windows import window_floors
     from trusted_router.storage_gcp_counter_dml import (
+        lock_credit_release_statement,
         release_credit_no_debt_statement,
         release_key_statement,
     )
 
+    assert final_batches[-1][-4] == lock_credit_release_statement(
+        store._param_types, ws, ESTIMATE, shard=0,
+    )
     assert final_batches[-1][-3] == release_credit_no_debt_statement(
         store._param_types, ws, ESTIMATE, cost, shard=0,
     )
@@ -878,10 +896,11 @@ def test_two_commit_settle_round_trip_order(
         )
         for windows in ("current", "stale")
     ]
-    assert params[14] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert params[15]["kh"] == key.hash and params[15]["hold"] == ESTIMATE
-    assert params[15]["actual"] == cost and params[16] == params[15]
-    assert params[18] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
+    assert params[14] == {"hold": ESTIMATE, "ws": ws, "shard": 0}
+    assert params[15] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
+    assert params[16]["kh"] == key.hash and params[16]["hold"] == ESTIMATE
+    assert params[16]["actual"] == cost and params[17] == params[16]
+    assert params[19] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
 
 
@@ -1011,9 +1030,11 @@ def test_request_snapshot_loses_to_refund_after_s1(
                if sql.startswith("UPDATE tr_reservation SET settled=true")]
     assert claim[0].endswith("WHERE reservation_id=@rid AND settled=false")
     assert claim[1]["rid"] == auth.credit_reservation_id and claim[1]["actual"] > 0
-    assert not any(sql.startswith(("UPDATE tr_credit_balance", "UPDATE tr_key_limit",
-                                   "UPDATE tr_gateway_authorization SET settled=true"))
-                   for _, sql, _ in stale)
+    # The counter statements carry the exclusive-scan hint; look behind it.
+    assert not any(sql.removeprefix(_EXCLUSIVE).startswith((
+        "UPDATE tr_credit_balance", "UPDATE tr_key_limit",
+        "UPDATE tr_gateway_authorization SET settled=true",
+    )) for _, sql, _ in stale)
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == 0
     assert db.gateway_authorizations[auth.id]["finalization_outcome"] == "refunded"
     assert _typed_credit(db, ws)["total_usage"] == 0

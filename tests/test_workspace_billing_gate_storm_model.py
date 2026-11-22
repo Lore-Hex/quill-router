@@ -16,20 +16,29 @@ credit-row transactions:
 * one credit row and one key row with shared and exclusive locks and
   wound-wait: an older transaction aborts a younger holder it conflicts with
   and waits for an older one, and a freed lock goes to the oldest waiter;
-* the reserve takes the credit row exclusively at once (its scan is hinted);
-  the settle release scans each row under a shared lock and then upgrades,
-  unless ``MODEL_HINTED_SETTLE=1`` makes it exclusive at once;
+* the reserve takes the credit row exclusively at once (its scan is hinted),
+  and so does the settle release of each row, as the statements now do;
+  ``MODEL_HINTED_SETTLE=0`` gives the settle its earlier shape, a shared
+  lock on each row that it then upgrades;
 * about 10 ms a statement and 21 ms a commit, which gives the reserve and the
-  settle their measured uncontended times (about 41 ms and 55 ms);
+  settle their measured uncontended times (about 41 ms and 55 ms).
+  ``MODEL_SLOWDOWN`` multiplies both, and ``MODEL_ABORT_COST`` adds seconds
+  to every aborted attempt before it retries;
 * ``MODEL_PROCESSES`` processes, each with its own gate (and
   ``MODEL_MAX_WAITERS`` waiters per workspace in each), and
   ``MODEL_CLIENTS`` clients that send the next request as soon as the last
   one finishes: authorize, a provider call of ``MODEL_UPSTREAM`` seconds,
   then the settle, retried twice more when it misses its 2 s (each miss is a
-  503 the gateway would have been answered).
+  503 the gateway would have been answered). ``MODEL_WAIT_MS`` sets the
+  gate's per-request wait bound.
 
 It is not Spanner. The lock queue's order, the retry delays and the latencies
-are assumptions, and a real burst's numbers will differ. What it is for is
+are assumptions, and a real burst's numbers will differ. With its default
+timings it was too kind to the gate alone: it showed no settle past its two
+seconds, and the first real burst behind the gate still had them, with most
+waiters timing out behind transactions that took a second or more. The two
+calibration knobs exist to make the earlier shape as bad as it really was
+before reading what the exclusive scan changes. What the model is for is
 comparing mechanisms on the same assumptions: the gate off and on, and the
 settle release with and without the exclusive scan.
 """
@@ -68,12 +77,16 @@ PROCESSES = int(os.environ.get("MODEL_PROCESSES", "8"))
 CLIENTS = int(os.environ.get("MODEL_CLIENTS", "50"))
 SECONDS = float(os.environ.get("MODEL_SECONDS", "15"))
 UPSTREAM = float(os.environ.get("MODEL_UPSTREAM", "0.3"))
-HINTED_SETTLE = os.environ.get("MODEL_HINTED_SETTLE", "0") == "1"
+HINTED_SETTLE = os.environ.get("MODEL_HINTED_SETTLE", "1") == "1"
 MAX_WAITERS = int(os.environ.get("MODEL_MAX_WAITERS", "8"))
+WAIT_MS = int(os.environ.get("MODEL_WAIT_MS", "0"))  # 0: the setting's default
+SLOWDOWN = float(os.environ.get("MODEL_SLOWDOWN", "1"))
+ABORT_COST = float(os.environ.get("MODEL_ABORT_COST", "0"))
+CALIBRATED = SLOWDOWN != 1 or ABORT_COST != 0
 SNAPSHOT_SETTLE_BUDGET = 2.0
-STATEMENT = 0.010
-UPGRADE_GAP = 0.002
-COMMIT = 0.021
+STATEMENT = 0.010 * SLOWDOWN
+UPGRADE_GAP = 0.002 * SLOWDOWN
+COMMIT = 0.021 * SLOWDOWN
 COST = 49
 AUTHORIZE = "tr_authorize"
 SETTLES = frozenset({
@@ -198,7 +211,7 @@ def _install_row_model(patch: pytest.MonkeyPatch, stats: _Stats) -> None:
                 remaining = storage_gcp_io.shared_rpc_budget_remaining()
                 if remaining is not None and remaining <= 0:
                     raise DeadlineExceeded("model: deadline exceeded after an abort") from None
-                time.sleep(delay * _jitter(0.5, 1.5))
+                time.sleep(ABORT_COST + delay * _jitter(0.5, 1.5))
                 delay = min(delay * 1.5, 0.2)
 
     def run(database: Any, fn: Any, **kwargs: Any) -> Any:
@@ -275,6 +288,8 @@ def test_one_workspaces_burst_on_one_row(
         workspace_billing_gate_width=1 if gate_on else 0,
         workspace_billing_gate_max_waiters=MAX_WAITERS,
     )
+    if WAIT_MS:
+        store.trust_settings.workspace_billing_gate_wait_ms = WAIT_MS
     authorize_ms: list[float] = []
     settle_ms: list[float] = []
     outcomes: Counter[str] = Counter()
@@ -337,11 +352,12 @@ def test_one_workspaces_burst_on_one_row(
                 future.result(timeout=600)
         elapsed = time.monotonic() - began
 
-    gate_lines = Counter(
-        f"{record.outcome}:{record.kind}"  # type: ignore[attr-defined]
-        for record in caplog.records
+    gate_records = [
+        record for record in caplog.records
         if getattr(record, "metric", None) == "workspace_billing_gate"
-    )
+    ]
+    gate_lines = Counter(f"{record.outcome}:{record.kind}" for record in gate_records)  # type: ignore[attr-defined]
+    gate_waits = [float(record.value) for record in gate_records]  # type: ignore[attr-defined]
     settle_commits = sum(count for tag, count in stats.commits.items() if tag in SETTLES)
     settle_aborts = sum(count for tag, count in stats.aborts.items() if tag in SETTLES)
     print(
@@ -353,15 +369,21 @@ def test_one_workspaces_burst_on_one_row(
         f"  settle attempt ms p50={_percentile(settle_ms, 0.5):.0f} "
         f"p99={_percentile(settle_ms, 0.99):.0f} max={max(settle_ms):.0f}\n"
         f"  authorize ms p50={_percentile(authorize_ms, 0.5):.0f} "
-        f"p99={_percentile(authorize_ms, 0.99):.0f} max={max(authorize_ms):.0f}\n"
+        f"p99={_percentile(authorize_ms, 0.99):.0f} max={max(authorize_ms):.0f} "
+        f"of ten seconds or more={sum(ms >= 10_000 for ms in authorize_ms)}\n"
         f"  commits authorize={stats.commits[AUTHORIZE]} settle={settle_commits}; "
         f"aborts authorize={stats.aborts[AUTHORIZE]} settle={settle_aborts} "
         f"({settle_aborts / max(1, settle_commits):.2f} per settle commit)\n"
         f"  peak transactions on the rows={stats.peak} "
         f"row lock wait={stats.lock_wait_seconds / elapsed * 60:.0f} s/min\n"
-        f"  gate lines={dict(gate_lines)}"
+        f"  gate lines={dict(gate_lines)}\n"
+        f"  gate wait ms p50={_percentile(gate_waits, 0.5):.0f} p90={_percentile(gate_waits, 0.9):.0f} "
+        f"wait bound ms={WAIT_MS or 'default'} slowdown={SLOWDOWN:g} abort cost s={ABORT_COST:g}"
     )
-    assert outcomes["settled"] > 0 and outcomes["authorize_503"] == 0
+    assert outcomes["settled"] > 0
+    if CALIBRATED:
+        return  # read the numbers; the acceptance below is for the default timings
+    assert outcomes["authorize_503"] == 0
     if gate_on:
         # The acceptance: no snapshot settle misses its two seconds, and no
         # reserve sits anywhere near its twenty.

@@ -18,8 +18,9 @@ a shared lock and the write upgrades it, so N transactions on one row each hold
 the shared lock, block each other's upgrade, and wound-wait aborts all but the
 oldest: a burst of N costs on the order of N*N aborts (the 2026-11-10 incident,
 docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md). The statement hint
-makes the scan take the exclusive lock at once, so concurrent reservers of one
-row queue instead. See EXCLUSIVE_SCAN_HINT for which statements carry it.
+makes the scan take the exclusive lock at once, so concurrent writers of one
+row queue instead. The reserves carry it, and so do the settle and refund
+releases of the same rows. See EXCLUSIVE_SCAN_HINT for which statements.
 
 Standard DML only (NOT partitioned DML); these run inside ``run_in_transaction``
 so ABORTED is retried. They must NOT be mixed with Spanner mutations in the same
@@ -64,26 +65,40 @@ _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
     f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
 )
 
-# Statement hint for the authorize-side reserves: the scan takes the row's
-# exclusive lock at once instead of a shared lock it must upgrade, so writers of
-# one hot row queue rather than abort each other. It is a hint, not a mutex:
-# wound-wait still aborts a younger holder an older transaction waits on.
+# Statement hint for the writers of the two counter rows: the scan takes the
+# row's exclusive lock at once instead of a shared lock it must upgrade, so
+# writers of one hot row queue rather than abort each other. It is a hint, not
+# a mutex: wound-wait still aborts a younger holder an older transaction waits on.
 #
-# A hinted statement that matches no row still holds the exclusive lock until
-# its transaction ends. So a reserve carries the hint only where it is expected
-# to write and is the only counter row of its table the transaction touches:
-# the batch reserves (a miss rolls back at once, BYOK included), a sequential
-# reserve with one shard candidate, and a sequential or strict-budget key
-# reserve that is not BYOK. A sequential probe of several shards stays unhinted
-# (two probers that miss different shards would otherwise wait on each other),
-# and so does a sequential or strict-budget BYOK key reserve (a key that
-# excludes BYOK matches no row on every request, and the transaction commits).
+# Reserves. A hinted statement that matches no row still holds the exclusive
+# lock until its transaction ends. So a reserve carries the hint only where it
+# is expected to write and is the only counter row of its table the
+# transaction touches: the batch reserves (a miss rolls back at once, BYOK
+# included), a sequential reserve with one shard candidate, and a sequential
+# or strict-budget key reserve that is not BYOK. A sequential probe of several
+# shards stays unhinted (two probers that miss different shards would
+# otherwise wait on each other), and so does a sequential or strict-budget
+# BYOK key reserve (a key that excludes BYOK matches no row on every request,
+# and the transaction commits).
+#
+# Releases. A settle, refund or reap releases the one credit row and the one
+# key row its reservation recorded, so every release names a row it is about
+# to write, and every release of those rows carries the hint: release_credit,
+# release_key_statement in each of its window forms, and, for the folded
+# batch, lock_credit_release_statement in front of
+# release_credit_no_debt_statement. Without it, simultaneous settles of one
+# row each held the shared lock and aborted each other on the upgrade (the
+# 2026-11-21 bursts: several aborts for each settle commit while the hinted
+# reserves of the same row queued with few).
 #
 # The hint covers EVERY range its statement scans, subqueries included, and
 # cannot be scoped to one table. Only single-row statements with no subquery
 # may carry it. release_credit_no_debt_statement must not: its tr_trust_event
 # subquery scans the workspace's whole event range, and an exclusive lock there
-# would serialize every settle of the workspace across its credit shards.
+# would serialize every settle of the workspace across its credit shards and
+# make them wait on every payment event. That statement keeps its text and its
+# shared scan; the lock statement in front of it has already taken the credit
+# row exclusively, so the shared scan of that row asks for nothing new.
 EXCLUSIVE_SCAN_HINT = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
 
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
@@ -343,6 +358,9 @@ def release_credit(
 ) -> int:
     """Release the EXACT recorded credit hold and book `actual` usage.
 
+    The scan takes the row's exclusive lock at once (EXCLUSIVE_SCAN_HINT):
+    this statement names the one row it writes and has no subquery.
+
     For refund pass actual=0 (releases the hold, books no usage). Returns the
     modified-row count; the caller asserts == 1 (a 0-row release must not be
     silently accepted — it strands the hold and loses the charge).
@@ -361,7 +379,7 @@ def release_credit(
     """
     rows = list(
         transaction.execute_sql(
-            "UPDATE tr_credit_balance "
+            "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance "
             "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
             "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
             "THEN RETURN total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)",
@@ -442,6 +460,32 @@ def release_credit(
     return count
 
 
+def lock_credit_release_statement(
+    param_types: Any, workspace_id: str, hold: int, *, shard: int,
+) -> DmlStatement:
+    """Take the credit row's exclusive lock for the release that follows it.
+
+    The folded batch's release (release_credit_no_debt_statement) cannot carry
+    the hint: it would lock its tr_trust_event subquery's range too. This
+    statement goes immediately before it and does only the locking. It scans
+    the same row with the same row predicates and reads the same columns
+    (reserved, total_usage, in_debt), under the exclusive lock, and writes
+    them back unchanged. It moves no money: a row it matches is the row the
+    release is about to write, and a row it does not match (a hold the row no
+    longer covers, a row marked in debt) the release would not match either,
+    so both report the same zero and the batch rolls back to the sequential
+    path as before. One row, no subquery, no other table.
+    """
+    return (
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance "
+        "SET reserved = reserved, total_usage = total_usage "
+        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+        "AND NOT COALESCE(in_debt, FALSE)",
+        {"hold": int(hold), "ws": workspace_id, "shard": shard},
+        {"hold": param_types.INT64, "ws": param_types.STRING, "shard": param_types.INT64},
+    )
+
+
 def release_credit_no_debt_statement(
     param_types: Any, workspace_id: str, hold: int, actual: int, *, shard: int,
 ) -> DmlStatement:
@@ -453,8 +497,9 @@ def release_credit_no_debt_statement(
     it, repaying the workspace's negative rows first.
 
     No EXCLUSIVE_SCAN_HINT here: it would also lock the subquery's
-    tr_trust_event range exclusively (see the constant). Simultaneous settles
-    of one credit row therefore still take the shared lock and upgrade.
+    tr_trust_event range exclusively (see the constant). The batch puts
+    lock_credit_release_statement in front of this one, so the row is already
+    held exclusively when this statement scans it.
     """
     return (
         "UPDATE tr_credit_balance "
@@ -606,6 +651,10 @@ def release_key_statement(
 ) -> DmlStatement:
     """Exact key release SQL for the key's spend windows.
 
+    Each form scans its one row under the exclusive lock (EXCLUSIVE_SCAN_HINT):
+    a release names the key row its reservation recorded, and the forms that
+    match nothing are followed by another form of the same row.
+
     ``"current"`` matches only a key whose three windows are all current, and
     leaves their boundary columns out of the SET list; ``"stale"`` matches only
     a key with at least one window to roll forward; ``"any"`` rolls whatever
@@ -642,7 +691,7 @@ def release_key_statement(
         current_window_sql = current_window_sql.replace(f"@{window}_wamt", wamt)
         rolled_window_sql = rolled_window_sql.replace(f"@{window}_wamt", wamt)
     fast_sql = (
-        "UPDATE tr_key_limit "  # noqa: S608
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
         + current_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
@@ -653,7 +702,7 @@ def release_key_statement(
     if windows not in {"stale", "any"}:
         raise ValueError(f"unknown key window mode: {windows!r}")
     sql = (
-        "UPDATE tr_key_limit "  # noqa: S608
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
         + rolled_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"

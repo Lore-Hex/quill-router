@@ -11,13 +11,14 @@
     "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
     "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78",
     "storage_gcp_counter_dml:reserve_credit_statement": "6ec52ff48371dd7b2a85eadf767397bccee474fbea35534a2295725e6281b0c7",
-    "storage_gcp_counter_dml:release_credit_no_debt_statement": "5a6c32b33ffbed59e1237f9ad82188588578e3b41597bc6719038cd66808a5f2",
+    "storage_gcp_counter_dml:release_credit_no_debt_statement": "e89e8be6be39b8821242fb7bd5605fbbc1220a30dc1b2ab9f828eac1d2e3d032",
     "storage_gcp_counter_dml:reserve_key_statement": "6d4ae8e97d823993394d4d01ba2e87daa9894f7dd22a8146d01aa394bbd3fe6b",
-    "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+    "storage_gcp_counter_dml:release_key_statement": "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
     "storage_gcp_counter_dml:reservation_insert_statement": "3f34179db8924ac503948102e54ec4c3073af24a7fad30647e3e3a48cae7e056",
     "storage_gcp_counter_dml:claim_reservation_statement": "d060c661d91a0e5c6f29355b2872ed79059d88fc54a9e4a6e994b895c466f97b",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
+    "storage_gcp_counter_dml:lock_credit_release_statement": "caa3497f2e8cc52ed5f236bd100c5e3c25e8e3760c52c90bf77dfd5873f660f8",
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
     "storage_gcp_operational_analytics_outbox:activity_insert_statement": "d7b110b4ca24df2c42f74552e88e51766d2d78ea15c6ae38cdb114813c5a659c",
     "storage_gcp_operational_analytics_outbox:_insert_statement": "d7a1c8970c6a4cab59bf187c34dec4737ed877ab005c160f707b4b70f2ce3870",
@@ -1191,7 +1192,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_credit:1": {
-      "fingerprint": "3d3f8783cfdbb20f3444ccb6ce43390ac4ea57d44a672da9268a775fc9189356",
+      "fingerprint": "254964a7e8a6d6c48618f518e01c5fdd2731c4c20cdda4f62066b43cb2156d3d",
       "scenarios": [
         {
           "bindings": {},
@@ -1205,7 +1206,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_credit:2": {
-      "fingerprint": "3d3f8783cfdbb20f3444ccb6ce43390ac4ea57d44a672da9268a775fc9189356",
+      "fingerprint": "254964a7e8a6d6c48618f518e01c5fdd2731c4c20cdda4f62066b43cb2156d3d",
       "scenarios": [
         {
           "bindings": {},
@@ -1267,8 +1268,21 @@
         }
       ]
     },
+    "storage_gcp_counter_dml:lock_credit_release_statement:1": {
+      "fingerprint": "caa3497f2e8cc52ed5f236bd100c5e3c25e8e3760c52c90bf77dfd5873f660f8",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "shard": "INT64",
+            "ws": "STRING"
+          }
+        }
+      ]
+    },
     "storage_gcp_counter_dml:release_credit_no_debt_statement:1": {
-      "fingerprint": "5a6c32b33ffbed59e1237f9ad82188588578e3b41597bc6719038cd66808a5f2",
+      "fingerprint": "e89e8be6be39b8821242fb7bd5605fbbc1220a30dc1b2ab9f828eac1d2e3d032",
       "scenarios": [
         {
           "bindings": {},
@@ -1312,7 +1326,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_key_statement:1": {
-      "fingerprint": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+      "fingerprint": "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
       "scenarios": [
         {
           "bindings": {
@@ -1333,7 +1347,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_key_statement:2": {
-      "fingerprint": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+      "fingerprint": "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
       "scenarios": [
         {
           "bindings": {
@@ -5127,7 +5141,7 @@
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:authorize_atomic.txn": "52f74e14fd4ab55fc1f3bdddeab215cbe62797597e60d89822689419d23168bb",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "1bc4af24b1190a886a47d99d4bf169026eeaa7dd768e070c9a7e2319d5ca113d",
     "storage_gcp_authorize:key_window_limit_decision": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
@@ -5151,7 +5165,7 @@
     "storage_gcp_counter_dml:delete_entity_dml": "629ec53ffa94708b6a3e0c45ee8009294805d93fb162036e4c2d69afd3d91d84",
     "storage_gcp_counter_dml:update_entity_body_dml": "a5858b82dffd2805a5fc332072532a1227f22616a1b6821ec163f3e890df85ef",
     "storage_gcp_counter_dml:reserve_credit_with_pause": "b34bddd532fb04138962049f4e4b4b1802bcdc81321076f0bd758451aafd6142",
-    "storage_gcp_counter_dml:release_credit": "3d3f8783cfdbb20f3444ccb6ce43390ac4ea57d44a672da9268a775fc9189356",
+    "storage_gcp_counter_dml:release_credit": "254964a7e8a6d6c48618f518e01c5fdd2731c4c20cdda4f62066b43cb2156d3d",
     "storage_gcp_counter_dml:_credit_shard_count_from_rows": "7741a05cfd0cbf559c9f5dcde40502fd8650854dd6991aae43cb17bda76cd254",
     "storage_gcp_counter_dml:release_key": "9ac36570e13f469127bc4804a36cba34eef77d080e9f25e36e010a7a3b939f53",
     "storage_gcp_counter_dml:key_limit_exists": "91b8eb8029af0530303a487ff57f6e2407e243b388e98175906de69f933ead6c",

@@ -289,12 +289,14 @@ capacity.
 A workspace with one credit shard (every workspace starts with one) writes the
 same `tr_credit_balance` row on every synchronous authorize, settle and
 refund, and a capped key's `tr_key_limit` row beside it. The reserves scan
-under the exclusive lock and queue for the row. The settle and refund
-releases still scan under a shared lock and upgrade
+under the exclusive lock and queue for the row, and since 2026-11-21 so do
+the settle, refund and reap releases
 ([reserves on one row aborting each other](incidents/2026-11-10-reserve-lock-upgrade-aborts.md),
-"Not repaired here"). A burst from one such workspace therefore makes its
-releases abort each other and be aborted by older reserves, and every abort
-redoes its statements on the same row. The signature: in
+"The releases, November 21"). Until then the releases scanned under a shared
+lock and upgraded, so a burst from one such workspace made its releases
+abort each other and be aborted by older reserves, and every abort redid its
+statements on the same row. The signature of that upgrade, should an
+unhinted writer of these rows bring it back: in
 `SPANNER_SYS.TXN_STATS_TOP_MINUTE`, `tr_settle_one_commit` and `tr_finalize`
 show several aborts for each commit while `tr_authorize` shows few; authorize
 and settle both take seconds; `LOCK_STATS_TOP_MINUTE` puts the wait on one
@@ -360,9 +362,11 @@ own reserves does neither.
 
 What it is not. It is per process: the row still sees up to that many
 transactions from each instance, callers that reached a bound or are not
-gated run beside them, and releases from different instances can still
-abort each other. So it bounds the pile-up; it is not a hard limit on the
-row's concurrency and it does not remove the lock upgrade. The waiter caps
+gated run beside them, and transactions from different instances still
+meet on the row. So it bounds the pile-up; it is not a hard limit on the
+row's concurrency, and it is not what removed the lock upgrade: before the
+releases took the row exclusively, the first bursts behind the gate still
+aborted about as often and most waiters timed out. The waiter caps
 bound the queue, not the instance: a waiting request holds the request slot
 it would otherwise have held while waiting inside Spanner, and one
 workspace's holder, waiters and ungated requests can together fill an
