@@ -2094,13 +2094,25 @@ def typed_finalize_atomic(
             or settle_outbox_intent.intent_kind != ("settle" if success else "refund")
         ):
             raise ValueError("settle_outbox_intent does not describe this finalize")
+    # F1-001: a commit on the async fence that marks no durable intent (the
+    # frozen apply, from the drain or a snapshot settle) stamps retention
+    # itself with the done-mark's guarded statements. They write only this
+    # authorization's and this reservation's terminal_at, reading those rows
+    # and this authorization's tr_settle_outbox range (the range the fenced
+    # claim already reads), never a counter row.
+    fence_retention = (
+        async_fence and activity_durable and resolved_outbox_available
+        and not mark_done and not one_commit
+    )
     attempts = 0
     eligible_attempts = 0
     fallback_reason = "none"
     rollback_ms = 0.0
     fallback_outcome = "not_attempted"
 
-    def speculative_batch(transaction: Any, *, include_claim: bool, res: dict, fold_tail: bool) -> None:
+    def speculative_batch(
+        transaction: Any, *, include_claim: bool, res: dict, fold_tail: bool, fold_retention: bool,
+    ) -> None:
         nonlocal eligible_attempts
         eligible_attempts += 1
         assert authorization is not None
@@ -2148,6 +2160,21 @@ def typed_finalize_atomic(
             # One-commit only; the benchmark outbox is touched nowhere else here.
             statements.append(benchmark_statement)
             counts.append((1,))
+        if fold_retention:
+            # The fence's retention stamps ride here, ahead of the counter
+            # tail, as the one-commit intent and the done-mark do, instead of
+            # in a batch of their own after it: the counter rows are then held
+            # exclusively for the tail and the commit only, not for one more
+            # round trip. They follow the claim and the authorization mark,
+            # whose writes their predicates read, exactly as before; the tail
+            # neither reads nor writes their rows, nor they its.
+            retention = done_retention_statements(
+                pt, authorization_id=authorization_id,
+                intent_kind="settle" if success else "refund",
+                reservation_id=reservation_id, now=now,
+            )
+            statements.extend(retention)
+            counts.extend([(0, 1)] * len(retention))
 
         # These hot rows are last, credit before key. A miss rolls back ALL
         # speculative writes before recovery/rollover/deletion classification;
@@ -2226,8 +2253,15 @@ def typed_finalize_atomic(
             and user_model_payout is None and app_markup_payout is None
             and custom_model_markup_payout is None
         )
+        # Only a batch that carries the counter tail takes the retention
+        # stamps along; every other shape runs them as before, ahead of its
+        # sequential releases, so they are never under the counter locks.
+        fold_retention = fold_tail and fence_retention
         if speculate:
-            speculative_batch(transaction, include_claim=True, res=res, fold_tail=fold_tail)
+            speculative_batch(
+                transaction, include_claim=True, res=res, fold_tail=fold_tail,
+                fold_retention=fold_retention,
+            )
         else:
             won = claim_reservation(
                 transaction,
@@ -2355,11 +2389,11 @@ def typed_finalize_atomic(
             if marked != 1:
                 raise _SettleError("gateway_authorization update row-count != 1")
 
-        if (async_fence and request_record_typed and activity_durable and resolved_outbox_available
-                and not mark_done and not one_commit):
+        if fence_retention and request_record_typed and not fold_retention:
             # F1-001: fresh snapshot-sync has no durable intent to mark later.
             # Reuse the legacy done-mark's guarded stamps in the money commit.
             # Outstanding intents still defer TTL; retries never extend it.
+            # The folded batch above already carried them.
             retention = done_retention_statements(
                 pt, authorization_id=authorization_id,
                 intent_kind="settle" if success else "refund",
