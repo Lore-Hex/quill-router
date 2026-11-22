@@ -88,7 +88,7 @@ SLOW_FIRST_HEARTBEAT_SHARE = 3
 #: What a field that is not on the row reads as: never a value the rule
 #: accepts. Every read below names its field outright; the modules a
 #: request imports use no reflection by a computed name.
-_MISSING = object()
+_MISSING: Any = object()
 
 
 def class_reason(authorization: Any) -> str | None:
@@ -135,7 +135,7 @@ def start_reason(authorization: Any) -> str | None:
     nothing else a heartbeat writes is there. A sequence above zero, or any
     of those written, is a started stream; a sequence that is missing or not
     a whole number is malformed."""
-    seq = getattr(authorization, "heartbeat_seq", _MISSING)
+    seq: Any = getattr(authorization, "heartbeat_seq", _MISSING)
     written = (
         getattr(authorization, "started_at", _MISSING) is not None
         or getattr(authorization, "heartbeat_at", _MISSING) is not None
