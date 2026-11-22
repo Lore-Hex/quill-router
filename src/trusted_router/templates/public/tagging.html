@@ -121,6 +121,25 @@ GET /v1/activity?group_by=tag:team</code></pre>
   </div>
 </section>
 
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">In the console</span>
+    <h2>See tags on the Observability page.</h2>
+    <p>The <a href="/console/activity">Observability</a> page shows each request's tags as chips in the request list. Click a chip, or pick a key and a value under Tags, to filter the list to that tag. The filter stays when you change the range.</p>
+    <p>The Tags panel breaks requests, cost, tokens, and median generation time down by the values of one key. It counts every request in the selected range, not a sample. The 50 most expensive values each get a row, the rest are combined into Other, and requests without the key are shown as Untagged. Generation time is how long the server took to produce the response, not the latency your client saw. A request that fails before it produces a generation has nothing to tag, so the panel counts completed generations only.</p>
+    <p>A key with about 500,000 or more distinct values in the range, such as a request id, is not broken down. You can still filter by its values. Whenever some values are grouped in Other, which 50 are shown is a best effort for a busy key, and the panel says so. The totals in each row are exact either way.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Tags panel</span><span>example</span></div>
+    <pre><code>Break down by: team        Range: 7d
+
+Value      Requests     Cost   Median generation time
+search        1,204   $18.40                   820 ms
+ads             311    $4.12                   640 ms
+Untagged         87    $0.95                   910 ms</code></pre>
+  </div>
+</section>
+
 <section class="quote-feature" style="margin-top:48px">
   <div>
     <span class="eyebrow">Trust boundary</span>

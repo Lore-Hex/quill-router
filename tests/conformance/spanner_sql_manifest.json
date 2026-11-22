@@ -5313,7 +5313,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:usage_buckets_query:1": {
-      "fingerprint": "6bd18a89666019480ccf861c4e7509d53f6c6c9a42781748597cbf304262b2ab",
+      "fingerprint": "81cb55a5afdc60aacee74822f2dc17924f4ac21736b259947741e5f64c31e716",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_elapsed_summary:1": {
@@ -5467,6 +5467,26 @@
     "operational_analytics:route_workspaces:1": {
       "fingerprint": "8755cf00b1bd694bd8de72537255dbf48da72a80d07f4e524372be0a34cbbadf",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_keys:1": {
+      "fingerprint": "f04106d3f80b0b40233ee821e1b57b39db3f660d3cb32d4479c6ba7ab30c5e5d",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_values:1": {
+      "fingerprint": "4fa7aaa1c2991f7b0ae6291c4da48ead9734302bd379b7be17dd2d67bfc9c8f7",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_candidates:1": {
+      "fingerprint": "f36433b5c4f6e82ac7e439207193a14c6d804b9f026747e0b272ee226a6fc4ea",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_candidate_totals:1": {
+      "fingerprint": "5b28a36fac99676e2e37d54772b6bff206dfa62a5eba748677fa2a1e60f1d9d7",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_histogram:1": {
+      "fingerprint": "85d29179f96f089c4ee3ce45e8d9fc25be28e80df3e10687bdb9b82c6cf61897",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "storage_legacy_trust:recover_released_postgres:7": {
       "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",

@@ -731,6 +731,127 @@ body.console {
   border-radius: inherit;
 }
 
+/* Request tags on the Observability page. A chip shows customer text as
+   written: no uppercase transform, because tag keys and values are
+   case-sensitive. */
+.tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.tag-chip {
+  display: inline-block;
+  max-width: 240px;
+  margin: 0;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--pill-bg);
+  color: var(--pill-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tag-chip:hover {
+  border-color: var(--blue);
+}
+
+.tag-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* An empty string is a real tag value. The placeholder is drawn by CSS so the
+   chip's text, which a click reads back, stays the value itself. */
+.tag-chip [data-tag-chip-value]:empty::after {
+  content: "(empty)";
+  color: var(--muted);
+}
+
+.tag-chip-more,
+.tag-row-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tag-filter-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.tag-filter-note[hidden] {
+  display: none;
+}
+
+.tag-value-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: end;
+  margin: 0 0 14px;
+}
+
+.tag-value-note[hidden] {
+  display: none;
+}
+
+.tag-value-note label {
+  flex: 1 1 280px;
+  max-width: 520px;
+  min-width: 0;
+}
+
+.tag-value-note .btn {
+  min-height: 36px;
+}
+
+.tag-value-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--red);
+}
+
+.tag-value-error[hidden] {
+  display: none;
+}
+
+.tag-filter-note .btn {
+  min-height: 32px;
+  padding: 5px 10px;
+}
+
+.tags-controls label {
+  flex: 1 1 180px;
+  max-width: 280px;
+  min-width: 0;
+}
+
+.tags-controls .btn {
+  min-height: 36px;
+}
+
+/* .btn sets display, which would otherwise show a button marked hidden. */
+.tags-controls .btn[hidden] {
+  display: none;
+}
+
+.tags-table td:not(:first-child),
+.tags-table th:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .key-create-panel {
   background: transparent;
 }
