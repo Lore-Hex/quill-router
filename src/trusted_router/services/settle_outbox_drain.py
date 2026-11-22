@@ -214,9 +214,16 @@ def _count_released_holds(metric: str, count: int) -> None:
     amount. infra/hold_release_alerts.tf counts the lines and notifies on
     them, and the settle drain worker's output boundary keeps a listed
     counter's name (settle_drain_observability._COUNTED_METRICS). Each is
-    nearly always a gateway that authorized and then sent no terminal."""
-    for _ in range(max(0, int(count))):
-        logger.warning("metric=%s value=1", metric, extra={"metric": metric, "value": 1})
+    nearly always a gateway that authorized and then sent no terminal.
+
+    Best effort: the pass has already committed when this runs, so a handler
+    that raises must not turn a finished pass into a failed one and lose its
+    answer and the scheduler's heartbeat."""
+    try:
+        for _ in range(max(0, int(count))):
+            logger.warning("metric=%s value=1", metric, extra={"metric": metric, "value": 1})
+    except Exception:  # noqa: BLE001
+        return
 
 
 def _released_at_expiry(reap_result: ReapPassResult) -> int:
@@ -336,7 +343,11 @@ def drain_settle_outbox(
             tags={"reaped_count": str(reap_result.count)},
         )
     # Lines only: the drain's statements and what it books are unchanged.
-    _count_released_holds(_RELEASED_EXPIRED_METRIC, _released_at_expiry(reap_result))
+    try:
+        released_at_expiry = _released_at_expiry(reap_result)
+    except Exception:  # noqa: BLE001
+        released_at_expiry = 0
+    _count_released_holds(_RELEASED_EXPIRED_METRIC, released_at_expiry)
 
     if deferred:
         logger.warning(

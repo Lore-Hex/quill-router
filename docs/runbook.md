@@ -1484,8 +1484,10 @@ gcloud spanner databases execute-sql trusted-router \
 
 `reason=ok` with `started=false` is a stream that died between its authorize
 and its provider's first byte (2026-11: a request rejected while it was being
-translated, after its authorize, with no refund). `not_streaming` and the
-other reasons are requests that do not stream. Then read the gateway's logs
+translated, after its authorize, with no refund). `not_streaming` is a request
+that does not stream; the other reasons say why a request was outside the
+heartbeat class (for example its service tier or its boot) and can be streams
+too. Then read the gateway's logs
 for requests that answered an error after `authorize` with no `refund` line,
 and fix the exit in quill-cloud-proxy. A burst of 20 or more in one pass
 also raises `ALERT gateway reaper burst`.

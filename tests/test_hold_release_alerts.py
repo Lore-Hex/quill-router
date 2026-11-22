@@ -150,6 +150,54 @@ def test_the_drain_counts_what_the_reaper_released_after_its_pass(
     assert any(" gateway.reaped count=3 " in line and " snapshot_bookings=1 " in line for line in rendered.lines)
 
 
+def test_a_logging_failure_does_not_fail_the_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reaper has committed by the time the lines are written: a handler
+    that raises leaves the pass's answer as it was."""
+    from trusted_router.storage import STORE
+
+    class Outbox:
+        def claim(self, **_kwargs: Any) -> list[Any]:
+            return []
+
+        def purge_done(self) -> int:
+            return 0
+
+        def due_shard(self, **_kwargs: Any) -> list[Any]:
+            return []
+
+        _async_fence = False
+        _database = None
+
+    class Raising(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(level=logging.WARNING)
+            self.seen = 0
+
+        def emit(self, record: logging.LogRecord) -> None:
+            if "metric=gateway_hold_released_expired_total" in record.getMessage():
+                self.seen += 1
+                raise OSError("the log pipe is gone")
+
+    monkeypatch.setattr(drain, "spanner_settle_outbox", lambda: Outbox())
+    monkeypatch.setattr(drain, "_reconcile_leased", lambda _result: {})
+    monkeypatch.setattr(
+        type(cast(Any, STORE).target), "reap_expired_reservations_result",
+        lambda _self, **_kwargs: ReapPassResult(count=1, refunded=1), raising=False,
+    )
+    monkeypatch.setattr(logging, "raiseExceptions", True)
+    handler = Raising()
+    monkeypatch.setattr(logging.Handler, "handleError", lambda _self, _record: (_ for _ in ()).throw(OSError("handler failed")))
+    target = logging.getLogger(DRAIN_LOGGER)
+    target.addHandler(handler)
+    try:
+        answer = drain.drain_settle_outbox(10)
+    finally:
+        target.removeHandler(handler)
+
+    assert handler.seen == 1
+    assert answer["reaped"] == 1
+
+
 def test_the_metric_and_the_policy_read_one_filter_and_notify_hourly() -> None:
     tf = TERRAFORM.read_text(encoding="utf-8")
     assert tf.count("filter      = local.hold_release_filters[each.key]") == 1
