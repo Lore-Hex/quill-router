@@ -1437,6 +1437,59 @@ Find the previous pinned revision with `gcloud run revisions list`. Pending
 and dead rows left behind keep their holds frozen; they are safe and resolve on
 the next flip or via `release_approved`.
 
+### <a id="holds-released-without-a-terminal"></a>Holds released without a terminal
+
+Every gateway request ends in a settle or a refund. A hold with neither is
+released by the reaper at the reservation's expiry, two hours after the
+authorization, with nothing booked. Each one is nearly always a gateway exit
+that authorized and then sent no terminal. Until the release the customer's
+credit is locked: a small balance can be held whole by a handful of stranded
+requests, and its later requests are refused.
+
+The drain writes one WARNING line for each hold released, naming the counter
+and nothing else (no workspace, key, authorization or amount):
+
+`WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_expired_total `
+
+**Alert `TR Holds: released at expiry`** (`infra/hold_release_alerts.tf`)
+notifies at most once an hour while lines keep coming. The count of holds is
+the log-based metric `gateway_hold_release_expired`. Expect tens a week
+today; the policy notifies on them on purpose, since each is a hold a
+customer waited two hours for, and the count should fall to none as the
+gateway's exits are fixed.
+
+What is counted: holds given back with nothing booked. A stream that had
+started (heartbeats on its row) and then lost its gateway is ended by the
+reaper at its last heartbeat's snapshot and charged that snapshot; it is not
+counted here, and the reaper's own line says how many
+(`gateway.reaped ... snapshot_bookings=N`).
+
+What to do: find the gateway exit. The line names no customer on purpose, so
+start from the class of the released rows, an aggregate over the last hour by
+the reservation's terminal index (never a table read):
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy --priority=low \
+  --sql="SELECT IFNULL(JSON_VALUE(a.payload,'\$.stage_d_reason'),'null') reason,
+         a.started_at IS NOT NULL started, COUNT(*) n
+         FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_terminal} r
+         JOIN tr_gateway_authorization a ON a.authorization_id = r.authorization_id
+         WHERE r.settled=true AND r.actual_micro=0
+           AND r.terminal_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+           AND a.finalization_outcome='refunded'
+           AND TIMESTAMP_DIFF(r.terminal_at, r.created_at, SECOND) >= 7000
+         GROUP BY 1,2"
+```
+
+`reason=ok` with `started=false` is a stream that died between its authorize
+and its provider's first byte (2026-11: a request rejected while it was being
+translated, after its authorize, with no refund). `not_streaming` and the
+other reasons are requests that do not stream. Then read the gateway's logs
+for requests that answered an error after `authorize` with no `refund` line,
+and fix the exit in quill-cloud-proxy. A burst of 20 or more in one pass
+also raises `ALERT gateway reaper burst`.
+
 ---
 
 ## <a id="credit-ledger"></a>Credit ledger operations (single typed book)

@@ -40,6 +40,11 @@ def _audit_log(level: int, message: str, *args: Any) -> None:
 # forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
 _REAP_BURST_ALERT_THRESHOLD = 20
+# The counter of holds the reaper gave back at their expiry with nothing
+# booked: no settle and no refund came from the gateway for two hours.
+# infra/hold_release_alerts.tf reads this name, and a test holds the places
+# it is written equal.
+_RELEASED_EXPIRED_METRIC = "gateway_hold_released_expired_total"
 
 # Wall-clock budget for the row loop, below the 300s Cloud Run / Cloud
 # Scheduler request deadline so a slow batch returns a partial result instead
@@ -203,6 +208,25 @@ def _reconcile_leased(reap_result: ReapPassResult) -> dict[str, int]:
     return counts
 
 
+def _count_released_holds(metric: str, count: int) -> None:
+    """One line for each hold released with no terminal from the gateway,
+    naming nothing but the counter: no workspace, key, authorization or
+    amount. infra/hold_release_alerts.tf counts the lines and notifies on
+    them, and the settle drain worker's output boundary keeps a listed
+    counter's name (settle_drain_observability._COUNTED_METRICS). Each is
+    nearly always a gateway that authorized and then sent no terminal."""
+    for _ in range(max(0, int(count))):
+        logger.warning("metric=%s value=1", metric, extra={"metric": metric, "value": 1})
+
+
+def _released_at_expiry(reap_result: ReapPassResult) -> int:
+    """The holds a reaper pass gave back with nothing booked. A stream the
+    reaper ended at its last heartbeat's snapshot is charged that snapshot:
+    it is not a release, and the reaper's own line counts it
+    (snapshot_bookings)."""
+    return max(0, int(reap_result.count) - int(reap_result.snapshot_bookings))
+
+
 def drain_settle_outbox(
     limit: int,
     *,
@@ -311,6 +335,8 @@ def drain_settle_outbox(
             fingerprint=["gateway", "reaped-burst"],
             tags={"reaped_count": str(reap_result.count)},
         )
+    # Lines only: the drain's statements and what it books are unchanged.
+    _count_released_holds(_RELEASED_EXPIRED_METRIC, _released_at_expiry(reap_result))
 
     if deferred:
         logger.warning(

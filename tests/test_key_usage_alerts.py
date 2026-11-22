@@ -113,7 +113,9 @@ def test_the_worker_keeps_only_a_listed_counter_name() -> None:
 
     plain = f"logger={LOGGER} level=WARNING exception_class=none"
     assert settle_drain_observability._COUNTED_METRICS == {
-        "key_usage_unbooked_total", "key_usage_shard_fallback_total"}
+        "key_usage_unbooked_total", "key_usage_shard_fallback_total",
+        # A hold released at its expiry with no terminal (tests/test_hold_release_alerts.py).
+        "gateway_hold_released_expired_total"}
     assert line("key_usage_unbooked_total") == f"metric=key_usage_unbooked_total {plain}"
     for other in ("private-metric", "key_usage_unbooked_total private-suffix",
                   "async_settle_accepted", None, 7, ("key_usage_unbooked_total",),
