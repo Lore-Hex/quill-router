@@ -60,10 +60,17 @@ def test_suspension_starts_exactly_at_the_cutover(model_id: str) -> None:
 
 def test_suspension_is_scoped_to_fortanix() -> None:
     assert not provider_model_retired("fortanix", "fortanix/other", "Other-Model", at=_AT)
+    # Other providers' unrelated retirements may share the 2026-11-27 00:00
+    # UTC cutover (DeepInfra's Hy4-preview does), so select every entry at
+    # this instant that touches the suspended model, by id or native id.
     entries = [
         retirement
         for retirement in provider_retirements()
         if retirement.effective_at == FORTANIX_GLM_53_FLASH_SUSPENSION_AT
+        and (
+            NATIVE_ID in retirement.upstream_ids
+            or any(model_id in retirement.model_ids for model_id in SUSPENDED)
+        )
     ]
     assert [entry.provider for entry in entries] == ["fortanix"]
     # Not an upstream retirement with a substitute: the notice names none.
