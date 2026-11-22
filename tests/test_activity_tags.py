@@ -1341,7 +1341,8 @@ def test_a_key_with_more_values_than_candidates_is_ranked_from_the_sketches(
     assert [row["requests"] for row in from_sql["breakdown"] if row["kind"] == "other"] == (
         [folded] if folded else []
     )
-    # Which values keep a row is approximate. What the rows add up to is not.
+    # When there is an Other row, which values keep a row is a best effort.
+    # What the rows add up to is exact either way.
     for total in ("requests", "cost_microdollars", "byok_microdollars", "prompt_tokens", "completion_tokens"):
         assert sum(row[total] for row in from_sql["breakdown"]) == sum(
             row[total] for row in from_memory["breakdown"]

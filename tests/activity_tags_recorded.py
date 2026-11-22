@@ -149,10 +149,11 @@ SUMMARY_CASES: list[tuple[str, str, dict[str, Any], dict[str, int]]] = [
     ("every-default-too-many", WORKSPACE, {}, {"TAG_DISTINCT_LIMIT": 1}),
     ("usage-type-spellings", SPELLINGS_WORKSPACE, {"group_by": "team"}, {}),
 ]
-# With fewer candidates than the key has values, ClickHouse ranks only the
-# heaviest values its sketches return and says the ranking is approximate.
-# The in-memory store ranks every value, so these are recorded but compared
-# with it on totals only.
+# With fewer candidates than the key has values, ClickHouse names only the
+# values its sketches return and folds the rest into Other; the response is
+# marked approximate exactly when it has an Other row (two sketches can still
+# name every value between them, and then it is not). The in-memory store
+# ranks every value, so these are recorded but compared with it on totals only.
 APPROXIMATE_CASES: list[tuple[str, dict[str, Any], dict[str, int]]] = [
     ("fewer-candidates-than-values", {"group_by": "team"}, {"TAG_RANK_CANDIDATES": 3}),
     ("as-many-candidates-as-values", {"group_by": "team"}, {"TAG_RANK_CANDIDATES": 7}),

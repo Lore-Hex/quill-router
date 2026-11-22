@@ -474,9 +474,11 @@ OTLP attributes:
 Tag values are metadata and are exported even when content export is disabled.
 The UI and docs warn users not to place secrets, personal data, client names,
 matter names, prompts, or output in tags.
-The boundary is deliberate: TrustedRouter's own logs never contain tag values,
-while a customer's configured PostHog or OTLP destination receives tags by
-design. Key management surfaces show the same warning because key defaults are
+The boundary is deliberate: the request logs, application logs and Sentry
+events that TrustedRouter's gateway and control plane write never contain tag
+values (the one exception, ClickHouse's own query log on the analytics servers
+when a tag is used as a filter, is in section 1 and section 6.5), while a
+customer's configured PostHog or OTLP destination receives tags by design. Key management surfaces show the same warning because key defaults are
 exported on every request that uses that key.
 
 ## 8. Response routing metadata
