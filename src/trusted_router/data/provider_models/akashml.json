@@ -396,7 +396,7 @@
     }
   ],
   "source": "https://api.akashml.com/v1/models",
-  "generated_at": "2026-11-22T13:28:18Z",
+  "generated_at": "2026-11-22T15:28:31Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }
