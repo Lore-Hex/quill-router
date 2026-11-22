@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Upstream-author pass-through routes are separately classified and must not inherit the confidential or ZDR posture of phala/* routes.",
   "provider": "phala",
   "source": "https://inference.phala.com/v1/models",
-  "generated_at": "2026-11-22T09:03:06Z",
-  "model_count": 5,
+  "generated_at": "2026-11-22T11:28:42Z",
+  "model_count": 6,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -237,6 +237,43 @@
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "Z.ai: GLM-OCR",
+      "title": "zai-org/glm-ocr",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-ocr",
+      "upstream_id": "zai-org/glm-ocr",
+      "context_length": 8192,
+      "max_output_tokens": 8192,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "frequency_penalty",
+        "max_tokens",
+        "presence_penalty",
+        "seed",
+        "stop",
+        "temperature",
+        "top_p"
+      ],
+      "provider_route_class": "standard_pass_through",
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 30000,
+      "cached_input_token_price_per_m": 10000
     }
   ],
   "price_scale": "microdollars_per_million"
