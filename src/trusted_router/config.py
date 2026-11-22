@@ -756,7 +756,11 @@ class Settings(BaseSettings):
     # One wait is at most a quarter of the Spanner budget the caller has
     # left (five seconds of a reserve's twenty, a second and a quarter of a
     # one-commit settle's five, half a second of the snapshot settle's two),
-    # and all of one request's waits together are at most this.
+    # and all of one request's waits together are at most this. Not lower:
+    # a reserve that reaches it goes around into Spanner and competes with
+    # the settles for the row, and in the storm model every step below five
+    # seconds cost snapshot settles once the row was saturated
+    # (docs/spanner-reliability.md, "One workspace on one credit row").
     workspace_billing_gate_wait_ms: int = Field(default=5000, ge=1, le=5000)
     # Callers of one workspace parked at the gate in one process; one more
     # starts at once. It bounds the queue, not the instance's request slots.

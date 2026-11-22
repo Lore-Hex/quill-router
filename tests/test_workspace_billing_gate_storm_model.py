@@ -22,8 +22,10 @@ credit-row transactions:
   lock on each row that it then upgrades;
 * about 10 ms a statement and 21 ms a commit, which gives the reserve and the
   settle their measured uncontended times (about 41 ms and 55 ms).
-  ``MODEL_SLOWDOWN`` multiplies both, and ``MODEL_ABORT_COST`` adds seconds
-  to every aborted attempt before it retries;
+  ``MODEL_SLOWDOWN`` multiplies both, ``MODEL_ABORT_COST`` adds seconds
+  to every aborted attempt before it retries, and ``MODEL_UPGRADE_GAP``
+  (2 ms by default, also multiplied) is how long the earlier settle shape
+  holds a row's shared lock before it asks to upgrade it;
 * ``MODEL_PROCESSES`` processes, each with its own gate (and
   ``MODEL_MAX_WAITERS`` waiters per workspace in each), and
   ``MODEL_CLIENTS`` clients that send the next request as soon as the last
@@ -82,10 +84,10 @@ MAX_WAITERS = int(os.environ.get("MODEL_MAX_WAITERS", "8"))
 WAIT_MS = int(os.environ.get("MODEL_WAIT_MS", "0"))  # 0: the setting's default
 SLOWDOWN = float(os.environ.get("MODEL_SLOWDOWN", "1"))
 ABORT_COST = float(os.environ.get("MODEL_ABORT_COST", "0"))
-CALIBRATED = SLOWDOWN != 1 or ABORT_COST != 0
+UPGRADE_GAP = float(os.environ.get("MODEL_UPGRADE_GAP", "0.002")) * SLOWDOWN
+CALIBRATED = SLOWDOWN != 1 or ABORT_COST != 0 or UPGRADE_GAP != 0.002
 SNAPSHOT_SETTLE_BUDGET = 2.0
 STATEMENT = 0.010 * SLOWDOWN
-UPGRADE_GAP = 0.002 * SLOWDOWN
 COMMIT = 0.021 * SLOWDOWN
 COST = 49
 AUTHORIZE = "tr_authorize"
@@ -378,7 +380,8 @@ def test_one_workspaces_burst_on_one_row(
         f"row lock wait={stats.lock_wait_seconds / elapsed * 60:.0f} s/min\n"
         f"  gate lines={dict(gate_lines)}\n"
         f"  gate wait ms p50={_percentile(gate_waits, 0.5):.0f} p90={_percentile(gate_waits, 0.9):.0f} "
-        f"wait bound ms={WAIT_MS or 'default'} slowdown={SLOWDOWN:g} abort cost s={ABORT_COST:g}"
+        f"wait bound ms={WAIT_MS or 'default'} slowdown={SLOWDOWN:g} abort cost s={ABORT_COST:g} "
+        f"upgrade gap s={UPGRADE_GAP:g}"
     )
     assert outcomes["settled"] > 0
     if CALIBRATED:
