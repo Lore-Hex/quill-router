@@ -70,6 +70,10 @@ def test_deadline_removes_public_promotion_without_changing_route(client, monkey
     assert launch_tariff_matches(MODELS[MODEL_ID], endpoints_for_model(MODEL_ID)[0])
 
 
+# Live-route tests; see tests/fortanix_live.py for the 2026-11-27 suspension.
+pytestmark = pytest.mark.usefixtures("fortanix_route_live")
+
+
 def test_public_route_is_exact_zero_supplier_cost_at_existing_customer_floor():
     model = MODELS[MODEL_ID]
     routes = endpoints_for_model(MODEL_ID)

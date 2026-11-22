@@ -97,6 +97,8 @@ def test_catalog_prices_and_privacy_follow_application_view(
     assert result["homepage_data"]["migration"]["base_url"] == "https://example.test/v1"
 
 
+# The offer is live until Fortanix's 2026-11-27 suspension (tests/fortanix_live.py).
+@pytest.mark.usefixtures("fortanix_route_live")
 def test_homepage_banner_shows_the_live_glm_offer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("trusted_router.fortanix_launch._offer_window_open", lambda: True)
     settings = Settings(environment="test", storage_backend="memory")

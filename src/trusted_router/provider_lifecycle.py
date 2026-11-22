@@ -116,6 +116,11 @@ ATLAS_MINIMAX_RETIREMENT_AT = datetime(2026, 11, 14, 8, 0, tzinfo=UTC)
 # NVIDIA NIM's HTTP 410 for meta/llama-guard-4-12b states its exact end of
 # life, 2026-11-16T09:00:00Z (first seen by the route probe 2026-11-17).
 NVIDIA_NIM_LLAMA_GUARD_4_RETIREMENT_AT = datetime(2026, 11, 16, 9, 0, tzinfo=UTC)
+# Fortanix's 2026-11-21 notice suspends its GLM-5.3-Flash H200/TDX endpoint
+# "from 11/27 for 4-6 weeks" while it moves to B200 hardware (date only, so
+# 00:00 UTC). TEMPORARY: Fortanix expects to return around early January 2027;
+# re-admit the route then by deleting its _Retirement entry below.
+FORTANIX_GLM_53_FLASH_SUSPENSION_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -286,6 +291,26 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # TEMPORARY suspension, not an end of life. Fortanix suspends the
+    # GLM-5.3-Flash H200/TDX endpoint (native ID GLM-5.3-Flash, the one
+    # endpoint behind both the public fortanix/glm-5.3-flash route and the
+    # operator-only trustedrouter/fortanix-test route) from 2026-11-27 for 4-6
+    # weeks while it moves to B200 hardware. Fortanix is the only provider of
+    # fortanix/glm-5.3-flash, so that model is unroutable during the
+    # suspension; z-ai/glm-5.3-flash and its other providers are unaffected.
+    # Expected back around early January 2027: delete this entry to re-admit
+    # the routes once Fortanix confirms the B200 endpoint and a paid-path
+    # canary passes (re-check fortanix_launch's tariff, context window and
+    # location facts, which may change with the new hardware).
+    _Retirement(
+        provider="fortanix",
+        # The operator-only trustedrouter/fortanix-test route is suspended
+        # through the shared native ID; it is not named here because model_ids
+        # feed the public model_changes history.
+        model_ids=frozenset({"fortanix/glm-5.3-flash"}),
+        upstream_ids=frozenset({"GLM-5.3-Flash"}),
+        effective_at=FORTANIX_GLM_53_FLASH_SUSPENSION_AT,
+    ),
     # Databricks' date-only PAYGO retirement notice; do not silently substitute
     # its suggested GLM/Kimi replacements or retire other providers' Inkling.
     # https://docs.databricks.com/aws/en/machine-learning/retired-models-policy
