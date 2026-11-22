@@ -519,7 +519,7 @@ def test_provider_model_manifests_have_hourly_refresh_path() -> None:
     }
     hourly = set(refresh.PROVIDER_SLUGS)
 
-    # A retired provider's manifest is a frozen settlement-only archive.
+    # A retired provider keeps no refresh module.
     missing_modules = sorted(
         manifest_slugs - provider_modules - aliased_manifest_slugs - legacy_manual
         - refresh.RETIRED_PROVIDER_SLUGS

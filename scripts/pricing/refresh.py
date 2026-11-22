@@ -83,10 +83,7 @@ from trusted_router.provider_manifest_policy import (  # noqa: E402
 HELD_FOR_REVIEW_HEADING = "Held for price review (last published prices kept):"
 
 # Retiring particular models must not disable discovery for an entire provider.
-# A provider listed here has no refresher: its manifest is a frozen
-# settlement-only archive (openrouter: the closed-weight Seed 2.1 Turbo route
-# archived in CLOSED_WEIGHT_SETTLEMENT_ENDPOINTS).
-RETIRED_PROVIDER_SLUGS: frozenset[str] = frozenset({"openrouter"})
+RETIRED_PROVIDER_SLUGS: frozenset[str] = frozenset()
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"

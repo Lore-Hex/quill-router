@@ -346,7 +346,6 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "featherless",
         "sakana",
         "jina",
-        "openrouter",
     }
 )
 
@@ -1214,7 +1213,6 @@ def _supplemental_provider_models_and_endpoints(
         "krea",
         "fal",
         "meta",
-        "openrouter",
     ):
         if held_decisions_only and provider_slug not in {"decisionmodelsio", "decisionmodelsio-eu"}:
             continue
