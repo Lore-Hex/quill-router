@@ -6,6 +6,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -503,6 +504,44 @@ def test_expired_snapshot_sync_fallback_without_pending_acceptance(env):
     assert call(env, body, synchronous=True).status_code == 200
     assert not env[1].settle_outbox
     assert env[1].reservations[auth.credit_reservation_id]['actual_micro'] == 2
+
+
+@pytest.mark.parametrize('finalizer', ['snapshot_settle', 'drain'])
+def test_the_frozen_apply_carries_its_retention_stamps_ahead_of_the_counter_tail(
+    env: tuple[Any, Any, Any, Any], monkeypatch: pytest.MonkeyPatch, finalizer: str,
+) -> None:
+    """Both callers of the frozen apply: the stamps ride in the batch with the
+    counter tail, ahead of the credit lock, and nothing follows the tail in
+    that transaction before its commit (tests/test_settle_fence_retention_fold.py)."""
+    from tests.settle_release_lock_trace import LOCK
+    from tests.settle_retention_fold_trace import AUTHORIZATION_STAMP, RESERVATION_STAMP
+
+    body, auth, key = prepare(env)
+    if finalizer == 'drain':
+        assert call(env, body).status_code == 202
+    batches: list[tuple[Any, list[str]]] = []
+    original = _FakeTransaction.batch_update
+
+    def batch(tx: Any, statements: Any, **kwargs: Any) -> Any:
+        batches.append((tx, [statement[0] for statement in statements]))
+        return original(tx, statements, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, 'batch_update', batch)
+    if finalizer == 'drain':
+        assert _drain_async()['outcomes'] == {'settled_now': 1}
+    else:
+        assert call(env, body, synchronous=True).status_code == 200
+    folded = [(tx, sqls) for tx, sqls in batches if any(sql.startswith(LOCK) for sql in sqls)]
+    assert len(folded) == 1
+    tx, sqls = folded[0]
+    lock = next(index for index, sql in enumerate(sqls) if sql.startswith(LOCK))
+    assert sqls[lock - 2].startswith(AUTHORIZATION_STAMP) and sqls[lock - 1].startswith(RESERVATION_STAMP)
+    assert [sqls for other, sqls in batches if other is tx] == [sqls]
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2 and _typed_key(env[1], key.hash)['usage'] == 2
+    # Retention is armed either way: by the stamps for the snapshot settle,
+    # which has no intent, and by the drain's done-mark after its apply.
+    assert env[1].reservations[auth.credit_reservation_id]['terminal_at'] is not None
+    assert env[1].gateway_authorizations[auth.id]['terminal_at'] is not None
 
 
 @pytest.mark.parametrize('winner', ['reaper', 'sync'])

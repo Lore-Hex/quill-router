@@ -116,7 +116,7 @@ def test_payment_debt_guard_and_recovery_select(c1_database):
             )) == ([[100, 0]] if debt else [[0, 70]])
 
 
-@pytest.mark.parametrize("flow", ["two_commit", "one_commit"])
+@pytest.mark.parametrize("flow", ["two_commit", "one_commit", "fenced_apply"])
 @pytest.mark.parametrize("window", ["current", "rollover", "null-starts"])
 def test_finalize_ten_statement_native_readback(c1_database, monkeypatch, window, flow):
     database = c1_database
@@ -176,24 +176,36 @@ def test_finalize_ten_statement_native_readback(c1_database, monkeypatch, window
         auth_body_settled=json_body(authorization), generation=generation, persist_generation_record=True,
         operational_analytics_outbox=SpannerOperationalAnalyticsOutbox(database, pt),
         **({"settle_outbox_done": (aid, "settle")} if flow == "two_commit"
-           else {"settle_outbox_intent": intent, "intent_initial_delay_seconds": 60}),
+           else {"settle_outbox_intent": intent, "intent_initial_delay_seconds": 60} if flow == "one_commit"
+           # The frozen apply on the async fence (the drain, a snapshot
+           # settle): no intent to mark, so it stamps retention itself.
+           else {"async_fence": True}),
     )
-    assert result["outcome"] == "settled" and result["outbox_marked"] is True
+    assert result["outcome"] == "settled"
+    assert result["outbox_marked"] is (None if flow == "fenced_apply" else True)
     # Every window state settles in the one batch: the key's two forms are
     # complementary, so a stale or never-set window rolls forward in place.
     assert result["attempts"] == 1
     [(statements, code, counts)] = batches
     # The two-commit finalize has eleven statements; the one-commit settle
-    # adds the intent's INSERT and its two retention clears. Either way the
+    # adds the intent's INSERT and its two retention clears; the fenced apply
+    # has no outbox write, only the two retention stamps, which ride here
+    # rather than in a batch of their own after the tail. Every way the
     # counter releases are last: the credit row's lock statement, the credit
     # release, then the key's two window forms.
-    assert len(statements) == (11 if flow == "two_commit" else 13)
+    assert len(statements) == {"two_commit": 11, "one_commit": 13, "fenced_apply": 10}[flow]
     current = int(window == "current")
     # The lock statement and the release behind it both report the one row:
     # the second sees the first's unchanged write.
     assert code == 0 and counts[-4:] == [1, 1, current, 1 - current]
     if flow == "two_commit":
         assert counts == [1] * 9 + [current, 1 - current]
+    if flow == "fenced_apply":
+        # Both stamps arm their record: nothing about this authorization is outstanding.
+        assert counts == [1] * 8 + [current, 1 - current]
+        assert [sql.split(" SET ")[0] for sql, _, _ in statements[4:6]] == [
+            "UPDATE tr_gateway_authorization", "UPDATE tr_reservation"]
+        assert all("terminal_at=IF(" in sql for sql, _, _ in statements[4:6])
     assert statements[-4][0].startswith(
         "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance "
         "SET reserved = reserved, total_usage = total_usage "
@@ -219,5 +231,10 @@ def test_finalize_ten_statement_native_readback(c1_database, monkeypatch, window
                                   keyset=KeySet(keys=[[rid]]))) == [[True, 70]]
         assert list(snapshot.read("tr_gateway_authorization", columns=("settled",),
                                   keyset=KeySet(keys=[[aid]]))) == [[True]]
-        assert list(snapshot.read("tr_settle_outbox", columns=("status",),
-                                  keyset=KeySet(keys=[[aid, "settle"]]))) == [["done"]]
+        outbox_rows = list(snapshot.read("tr_settle_outbox", columns=("status",),
+                                         keyset=KeySet(keys=[[aid, "settle"]])))
+        assert outbox_rows == ([] if flow == "fenced_apply" else [["done"]])
+        if flow == "fenced_apply":
+            for table, key_value in (("tr_reservation", rid), ("tr_gateway_authorization", aid)):
+                assert list(snapshot.read(table, columns=("terminal_at",),
+                                          keyset=KeySet(keys=[[key_value]]))) == [[NOW]]

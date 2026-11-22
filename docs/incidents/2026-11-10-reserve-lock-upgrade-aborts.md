@@ -283,6 +283,58 @@ row its transaction had not taken exclusively
 (`releases_without_exclusive_lock`), and the frozen copies of the earlier
 finalize show that the count can be nonzero.
 
+## The frozen apply's retention stamps, November 22
+
+In the first burst with the hinted releases serving the control plane,
+`tr_settle_one_commit` took the two rows exclusively, but `tr_finalize` still
+showed `ReaderShared` requests on them and most of the burst's aborts. They
+came from the settle-outbox drain, whose apply also runs as `tr_finalize`:
+the deploy updates the drain worker only after every control-plane region,
+so through a deploy's canary and billing gate the drain runs the previous
+release. A `ReaderShared` request from `tr_finalize` on a counter row is
+first a sign of a process on an older release. The drain's slow applies aged
+its backlog, async admission closed for every workspace, and the bursting
+workspace's in-flight settles all went to the snapshot settle, whose two
+seconds were not enough on the row.
+
+Separately, the frozen apply (the drain's, and the snapshot settle's) held
+the counter rows one round trip longer than the other settles. On the async
+fence, with no intent to mark, it stamps retention itself
+(`done_retention_statements`, F1-001), and it ran those stamps as a batch of
+their own after the batch that ends with the counter tail. When the batch
+carries the tail, the stamps now ride in it, immediately ahead of the credit
+lock statement, as a done-mark's and a one-commit intent's stamps already
+did. Every other shape (a refund, an overrun, a payout, the sequential path)
+runs them as before, ahead of its sequential releases.
+
+- Same statements in the same transaction. They write only this
+  authorization's and this reservation's `terminal_at`, reading those rows
+  and the authorization's `tr_settle_outbox` range, which the fenced claim
+  at the head of the batch already reads. The counter tail neither reads nor
+  writes any of those, nor the stamps any of the tail's, so the order between
+  them changes nothing that commits. The stamps still follow the claim and
+  the settled-mark whose writes their predicates read.
+- A stamp that fails now stops the batch before any counter statement runs:
+  the same error and the same rollback as before, with no counter touched.
+  An aborted stamp retries the whole transaction, as before. A stamp count
+  other than 0 or 1 (a primary-key update cannot produce one) still fails
+  closed; with a counter-tail zero in the same batch it now fails at once
+  instead of after the sequential rerun, whose own stamps report the same
+  count.
+- The stamps' outbox reads now come before the counter locks, the order of
+  every other settle shape.
+
+It removes one round trip from each frozen apply's exclusive hold on the two
+rows. It does not change how many of a burst's transactions wait for the
+row, so it shortens the snapshot settle's wait without removing the case
+where two seconds are not enough.
+`tests/test_settle_fence_retention_fold.py` pins the shape and the failure
+behavior, the emulator's `fenced_apply` flow in
+`tests/conformance/test_rpc_c1_native.py` reads back the commit, and the
+frozen-main proof oracle allows exactly this move
+(`tests/settle_retention_fold_trace.py`, negative controls in
+`tests/test_settle_retention_fold_trace.py`).
+
 ## Verifying it
 
 The Spanner emulator runs one read-write transaction at a time, so no test
