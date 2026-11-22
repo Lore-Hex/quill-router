@@ -21,7 +21,7 @@ DEPLOY_DISPATCH = 'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSI
 # PATH also makes a newly introduced, unlisted command fail rather than escape.
 PUBLICATION_COMMANDS = {
     "bash": "real", "git": "wrapped", "jq": "real", "cat": "real",
-    "date": "real", "seq": "real", "mktemp": "real", "gh": "fake", "sleep": "fake",
+    "date": "real", "seq": "real", "mktemp": "real", "grep": "real", "gh": "fake", "sleep": "fake",
 }
 
 
@@ -136,6 +136,14 @@ def remove_publication_guard(script: str, guard: str) -> str:
         # Carry a snapshot whatever main changed.
         before = 'if ! git diff --quiet "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"; then'
         after = "if false; then"
+    elif guard == "no_push_retry":
+        # The single-attempt main push that GitHub's lagging hook defeated.
+        before, after = "for push_try in 1 2 3 4; do", "for push_try in 4; do"
+    elif guard == "retry_any_rejection":
+        # Retry every protection rejection, not only absent required checks.
+        start = script.index('if [ "${push_try}" -ge 4 ] || \\')
+        end = script.index("; then", script.index("(is|are) expected", start))
+        before, after = script[start:end], 'if [ "${push_try}" -ge 4 ]'
     else:
         raise AssertionError(f"Unknown mutation: {guard}")
     assert script.count(before) == 1, f"Mutation target missing or ambiguous: {guard}"
@@ -208,6 +216,9 @@ class PublicationRepo:
         status_missing_reads: int = 0,
         polls: list[list[dict[str, object]]] | None = None,
         rerun_fault: str | None = None,
+        protection_rejects: int = 0,
+        protection_message: str | None = None,
+        protection_moves_main: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
@@ -246,6 +257,11 @@ class PublicationRepo:
         if status_fault:
             scenario["status_fault"] = status_fault
         scenario["status_missing_reads"] = status_missing_reads
+        scenario["protection_rejects"] = protection_rejects
+        if protection_moves_main:
+            scenario["protection_moves_main"] = True
+        if protection_message is not None:
+            scenario["protection_message"] = protection_message
         (self.root / "scenario.json").write_text(json.dumps(scenario))
         script = remove_publication_guard(self.script, mutation) if mutation else self.script
         # Relocate only the workflow's fixed scratch paths. Gate logic and all
@@ -368,7 +384,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
 
 def assert_snapshot_published(
     repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, status_gets: int = 5,
-    rounds: int = 1, reruns: tuple[str, ...] = (),
+    rounds: int = 1, reruns: tuple[str, ...] = (), main_pushes: int = 1,
 ) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "".join(
@@ -410,21 +426,21 @@ def assert_snapshot_published(
         f'target_url={repo.env["GITHUB_SERVER_URL"]}/{repo.env["GITHUB_REPOSITORY"]}/actions/runs/1234'
         in call for call in posts
     )
-    assert_status_bridge_precedes_main_push(repo)
+    assert_status_bridge_precedes_main_push(repo, main_pushes=main_pushes)
 
 
-def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
+def assert_status_bridge_precedes_main_push(repo: PublicationRepo, *, main_pushes: int = 1) -> None:
     events = repo.events
     pushes = [i for i, event in enumerate(events)
               if event[0] == "git" and "HEAD:refs/heads/main" in event]
-    assert len(pushes) == 1, "Expected exactly one generated main push"
+    assert len(pushes) == main_pushes, f"Expected {main_pushes} generated main push attempt(s)"
     posts = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "POST" in event]
     gets = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "--method" not in event]
     assert len(posts) == 5, "Every required status needs exactly one POST"
     assert all(index < pushes[0] for index in posts + gets), (
         "All status POSTs and verifications must precede the main push"
     )
-    for status_id, (post, next_post) in enumerate(zip(posts, posts[1:] + pushes, strict=True), 1):
+    for status_id, (post, next_post) in enumerate(zip(posts, posts[1:] + pushes[:1], strict=True), 1):
         readbacks = [index for index in gets if post < index < next_post]
         assert 1 <= len(readbacks) <= 5, "Each status needs bounded verification before advancing"
         for index in readbacks:
@@ -1176,3 +1192,94 @@ def test_poll_must_select_the_exact_ci_dispatch(publication_repo: PublicationRep
     result = publication_repo.run(mutation=mutation)
     assert result.returncode != 0, result.stdout + result.stderr
     assert publication_repo.main == publication_repo.base
+
+
+def main_push_attempts(repo: PublicationRepo) -> int:
+    return sum(1 for event in repo.events if event[0] == "git" and "HEAD:refs/heads/main" in event)
+
+
+def assert_pushed_snapshot_withheld(
+    repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, attempts: int,
+) -> None:
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert repo.main == repo.base
+    output = Path(repo.env["GITHUB_OUTPUT"])
+    assert not output.exists() or "validated=true" not in output.read_text()
+    assert "branch protection rejected an exact SHA" in result.stdout
+    assert main_push_attempts(repo) == attempts
+    # Statuses are posted once; a push retry never re-posts or re-dispatches.
+    assert len([call for call in repo.calls if call[0] == "api" and "POST" in call]) == 5
+    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")]
+
+
+@pytest.mark.parametrize("rejects", [1, 3])
+def test_a_lagging_protection_hook_is_retried_for_the_same_sha(
+    publication_repo: PublicationRepo, rejects: int,
+) -> None:
+    # 2026-11-22: GitHub's hook said 'Required status check "CI" is expected'
+    # three seconds after the CI status was created and read back.
+    result = publication_repo.run(protection_rejects=rejects)
+    assert_snapshot_published(publication_repo, result, main_pushes=rejects + 1)
+    assert result.stdout.count("::warning title=Snapshot push retry::") == rejects
+
+
+def test_a_lagging_protection_hook_retry_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(protection_rejects=1, mutation="no_push_retry")
+    assert_pushed_snapshot_withheld(publication_repo, result, attempts=1)
+
+
+def test_protection_lag_retries_are_bounded(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(protection_rejects=4)
+    assert_pushed_snapshot_withheld(publication_repo, result, attempts=4)
+
+
+def test_plural_absent_required_checks_are_retried(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(
+        protection_rejects=1, protection_message="2 of 5 required status checks are expected.",
+    )
+    assert_snapshot_published(publication_repo, result, main_pushes=2)
+
+
+@pytest.mark.parametrize("message", [
+    'Required status check "CI" is failing.',
+    "2 of 5 required status checks are expected. 1 of 5 required status checks is failing.",
+    "Changes must be made through a pull request.",
+])
+@pytest.mark.parametrize("mutation", [None, "retry_any_rejection"])
+def test_other_protection_rejections_are_never_retried(
+    publication_repo: PublicationRepo, message: str, mutation: str | None,
+) -> None:
+    result = publication_repo.run(protection_rejects=1, protection_message=message, mutation=mutation)
+    if mutation is None:
+        assert_pushed_snapshot_withheld(publication_repo, result, attempts=1)
+    else:
+        # Negative control: retrying every rejection publishes past a real one.
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert main_push_attempts(publication_repo) == 2
+
+
+def test_main_moving_during_a_protection_retry_carries_the_snapshot(
+    publication_repo: PublicationRepo,
+) -> None:
+    # A rejected push re-reads main. Once main moved, the round loop carries
+    # the snapshot and checks the carried SHA from scratch: the checked SHA is
+    # never retried onto a parent it was not checked on.
+    result = publication_repo.run(
+        protection_rejects=1, protection_moves_main=True,
+        run_states=[("completed", "success"), ("completed", "success")],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    moved = (publication_repo.root / "main-moved").read_text().strip()
+    first, carried = publication_repo.dispatched_shas
+    assert first != carried
+    origin = publication_repo.root / "origin.git"
+    assert publication_repo.main == carried
+    assert publication_repo.git("rev-parse", f"{carried}^", cwd=origin) == moved
+    # Each round's statuses name only that round's exact SHA.
+    posts = [call for call in publication_repo.calls if call[0] == "api" and "POST" in call]
+    assert [call[3].rsplit("/", 1)[1] for call in posts] == [first] * 5 + [carried] * 5
+    pushes = [event for event in publication_repo.events
+              if event[0] == "git" and "HEAD:refs/heads/main" in event]
+    assert len(pushes) == 2
+    assert Path(publication_repo.env["GITHUB_OUTPUT"]).read_text().endswith("validated=true\n")
+    assert "main raced the checked snapshot push" in result.stdout
