@@ -317,14 +317,15 @@ the process.
 - A waiting settle, refund or finalize goes before a waiting reserve, and
   within each group the order is arrival order. One row cannot serve a
   burst's reserves and its settles at once. A settle completes a request
-  that already holds credit and has the short budget (two seconds for the
-  snapshot settle, which answers 503 past it); a reserve is new work with
-  twenty. So the reserves are the ones that wait, and a client that sends
+  that already holds credit and has the short budget (the snapshot settle's
+  `TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS`, five seconds deployed and two by
+  default, past which it answers 503); a reserve is new work with twenty. So the reserves are the ones that wait, and a client that sends
   requests as fast as they finish is slowed at its reserves.
 - One wait is at most a quarter of the Spanner budget the caller has left,
   inside that budget: five seconds of a reserve's twenty, a second and a
-  quarter of a one-commit settle's five, half a second of the snapshot
-  settle's two. All of one request's waits together are at most
+  quarter of a one-commit settle's five or of a five-second snapshot
+  settle, half a second of a two-second one. All of one request's waits
+  together are at most
   `TR_WORKSPACE_BILLING_GATE_WAIT_MS` (5000), however many of its
   transactions meet the gate. Then the caller starts ungated.
 - At most `TR_WORKSPACE_BILLING_GATE_MAX_WAITERS` (8) callers of one

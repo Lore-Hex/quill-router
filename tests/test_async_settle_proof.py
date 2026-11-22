@@ -187,11 +187,14 @@ def test_error_envelopes_real_http(env, monkeypatch, case):
 
 @pytest.mark.parametrize('spend', ['entry', 'handoff'])
 @pytest.mark.parametrize('mode', ['async-v1', 'sync'])
-def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode, spend):
+@pytest.mark.parametrize('sync_budget', [2.0, 5.0])
+def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode, spend, sync_budget):
     """A request whose route deadline passes before the handler's thread starts
     answers the storage 503 without running the handler, and writes nothing.
 
-    The route bounds async-v1 and sync requests with anyio.fail_after(2). The
+    The route bounds each request with anyio.fail_after, at the mode's
+    completion budget: 2 s for async-v1 and the synchronous settle's setting
+    (D2 as amended) for sync. The
     handler's thread runs shielded, so a deadline that passes once it has
     started cannot end the request. conftest lifts the deadline so runner load
     cannot spend it; this test spends it at the route's entry and at the
@@ -226,13 +229,14 @@ def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode, spen
         monkeypatch.setattr(settlements, 'run_in_threadpool', spent_at_handoff)
     storage = json.loads((ROOT/'error_envelopes_v1.json').read_text())['cases']['storage_unavailable']
     error = json.loads(storage['body_exact'])['error']
+    env[3].async_settle_sync_budget_seconds = sync_budget
     body, _, _ = prepare(env)
     before = save(env[1])
     client = _client(env[3])
     client.app.state.async_settle = env[2]
     response = client.post(storage['path'], json=body, headers={'X-TR-Settlement-Mode': mode})
     client.close()
-    assert delays == [2]
+    assert delays == [sync_budget if mode == 'sync' else 2.0]
     assert (response.status_code, response.headers.get('content-type'), response.headers.get('retry-after')) == (
         storage['status'], storage['content_type'], storage['retry_after'])
     assert response.text == json.dumps({'error': error}, separators=(',', ':'))

@@ -824,6 +824,42 @@ def test_rollout_pins_admission_refresh_without_inheritance(
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
 @pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_pins_the_sync_settle_budget_without_inheritance(
+    harness: DeployScriptHarness, region: str, no_traffic: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # D2 as amended 2026-11-22: the synchronous settle completes within 5 s.
+    # A literal, so a caller's value is never inherited; 2 is the way back.
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
+                   "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+                   "TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS": "2"},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS"] == "5"
+    monkeypatch.setenv("TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS", rendered["TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS"])
+    assert Settings(environment="test").async_settle_sync_budget_seconds == 5.0
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    assert [line.strip() for line in rollout.splitlines() if "TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS=" in line] == [
+        '"TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS=5"']
+
+
+def test_the_sync_settle_budget_defaults_to_two_seconds_and_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.delenv("TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS", raising=False)
+    assert Settings(environment="test").async_settle_sync_budget_seconds == 2.0
+    for value in ("1.9", "5.1", "0"):
+        monkeypatch.setenv("TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS", value)
+        with pytest.raises(ValidationError):
+            Settings(environment="test")
+
+
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
 def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
     no_traffic: str,

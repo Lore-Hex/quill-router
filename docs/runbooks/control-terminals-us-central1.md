@@ -125,8 +125,9 @@ rollback of the route therefore starts with the pin, in this order:
 With the route off and Europe still holding tickets, each Europe settle is
 first answered `sync_required` by the europe-west4 router and then settles
 through the snapshot-sync retry. The money is correct, but that retry does
-its Spanner work from Europe under the async route's 2 s budget and answers
-503 past it, where the plain synchronous settle has a 20 s budget. A 503 on
+its Spanner work from Europe under the synchronous settle's budget
+(`TR_ASYNC_SETTLE_SYNC_BUDGET_SECONDS`, 5 s deployed) and answers 503 past
+it, where the plain synchronous settle has a 20 s budget. A 503 on
 `/internal/gateway/settle` from a candidate revision fails that region's
 deploy (`scripts/deploy/assert_no_billing_5xx.sh`). The cost of that path
 from Europe has not been measured. For the route's current state,

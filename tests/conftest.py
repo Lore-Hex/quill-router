@@ -345,15 +345,17 @@ _SETTLE_HANDLER_BUDGET_FILES = frozenset({
 
 
 def _pin_settle_handler_budgets(monkeypatch, package='trusted_router'):
-    """The settle handler's handoff budget (0.5 s async, 2 s sync) is spent
-    only by time a test injects, never by runner load: CI run 39489912697 spent
-    840 ms of a slow shard in one async handoff and answered 503.
+    """The settle handler's budgets (0.5 s async handoff, 2 s async completion,
+    async_settle_sync_budget_seconds sync) are spent only by time a test
+    injects, never by runner load: CI run 39489912697 spent 840 ms of a slow
+    shard in one async handoff and answered 503.
 
     The handler, the route and the outbox enqueue read one fixed instant. A
     test that sets time.monotonic itself still drives all three, because the
     patched function wins over the fixed instant.
 
-    The route also bounds each request with anyio.fail_after(2), which reads
+    The route also bounds each request with anyio.fail_after (the mode's
+    completion budget), which reads
     the event loop's clock rather than that instant, so runner load can spend
     it: on main's run 42388410550 a stalled worker spent the two seconds before
     the handler ran, and an invalid ticket answered 503 instead of 401. Here

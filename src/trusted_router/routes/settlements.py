@@ -19,7 +19,12 @@ from trusted_router.auth import InferencePrincipal, Principal
 from trusted_router.errors import api_error
 from trusted_router.gateway_timing import _scope
 from trusted_router.routes.internal._shared import require_internal_gateway
-from trusted_router.services.async_settle_handler import handle, settlement, unavailable
+from trusted_router.services.async_settle_handler import (
+    completion_budget,
+    handle,
+    settlement,
+    unavailable,
+)
 from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp_io import spanner_rpc_deadline
@@ -36,8 +41,9 @@ class AsyncSettlementRoute(APIRoute):
             if not settings.async_settle_protection or modes not in (["async-v1"], ["sync"]):
                 return await legacy(request)
             started = time.monotonic()
+            synchronous = modes == ["sync"]
             try:
-                with _scope(), anyio.fail_after(2):
+                with _scope(), anyio.fail_after(completion_budget(settings, synchronous=synchronous)):
                     require_internal_gateway(request, settings)
                     authenticated = stamp()
                     raw = await request.body()
@@ -45,7 +51,7 @@ class AsyncSettlementRoute(APIRoute):
                         return await run_in_threadpool(
                             handle, raw, kind="refund" if request.url.path.endswith("/refund") else "settle",
                             runtime=getattr(request.app.state, "async_settle", None), settings=settings,
-                            started=started, synchronous=modes == ["sync"],
+                            started=started, synchronous=synchronous,
                         )
             except TimeoutError as exc:
                 raise unavailable("route_deadline") from exc

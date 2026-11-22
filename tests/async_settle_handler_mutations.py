@@ -68,8 +68,26 @@ MUTATIONS = [
          '    counts.insert(1, (1,))\n    opened: list[Any] = []'),
     ])], 'test_enqueue_batch_no_money'),
     ('silently-extend-handoff', [(HANDLER, [
-        ('started + (2 if synchronous else 0.5)', 'started + 2'),
+        ('started + (budget if synchronous else HANDOFF_BUDGET_SECONDS)', 'started + budget'),
     ])], 'test_budget_includes_admission_and_retries'),
+    # The synchronous budget must not leak into async-v1 acceptance, and the
+    # setting must reach every deadline of the synchronous settle.
+    ('async-completion-takes-sync-budget', [(HANDLER, [
+        ('    if synchronous:\n        return float(settings.async_settle_sync_budget_seconds)\n'
+         '    return ASYNC_COMPLETION_BUDGET_SECONDS',
+         '    return float(settings.async_settle_sync_budget_seconds)'),
+    ])], 'test_completion_budgets_by_mode[async-v1-5.0]'),
+    ('sync-budget-ignored', [(HANDLER, [
+        ('        return float(settings.async_settle_sync_budget_seconds)\n',
+         '        return ASYNC_COMPLETION_BUDGET_SECONDS\n'),
+    ])], 'test_completion_budgets_by_mode[sync-5.0]'),
+    ('sync-final-check-keeps-two-seconds', [(HANDLER, [
+        ('if time.monotonic() >= started + completion_budget(settings, synchronous=synchronous):',
+         'if time.monotonic() >= started + 2:'),
+    ])], 'test_a_sync_settle_that_needs_more_than_two_seconds[5.0]'),
+    ('sync-route-deadline-keeps-two-seconds', [('src/trusted_router/routes/settlements.py', [
+        ('anyio.fail_after(completion_budget(settings, synchronous=synchronous))', 'anyio.fail_after(2)'),
+    ])], 'tests/test_async_settle_proof.py::test_the_route_deadline_answers_the_storage_503[5.0-sync-entry]'),
     ('skip-status-owner-check', [('src/trusted_router/routes/settlements.py', [
         ('if row is None or row.async_version != 1 or row.workspace_id != principal.workspace.id:',
          'if row is None or row.async_version != 1:'),

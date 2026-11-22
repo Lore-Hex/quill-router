@@ -28,6 +28,19 @@ from trusted_router.storage_models import SettleOutboxRow
 
 logger = logging.getLogger(__name__)
 
+# D2 (docs/design/async-settle-outbox-v1.md): async-v1 acceptance completes
+# within two seconds and its durable handoff within 500 ms. The synchronous
+# (snapshot) settle completes within Settings.async_settle_sync_budget_seconds.
+ASYNC_COMPLETION_BUDGET_SECONDS = 2.0
+HANDOFF_BUDGET_SECONDS = 0.5
+
+
+def completion_budget(settings: Settings, *, synchronous: bool) -> float:
+    """Seconds from the request's start within which this mode must complete."""
+    if synchronous:
+        return float(settings.async_settle_sync_budget_seconds)
+    return ASYNC_COMPLETION_BUDGET_SECONDS
+
 
 def metric(event: str, *, reason: str = "", value: float = 1) -> None:
     # Aggregate structured logs follow the existing billing latency plumbing.
@@ -279,8 +292,9 @@ def finish(row: SettleOutboxRow, outbox: SpannerSettleOutbox | None) -> JSONResp
 def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Settings,
            started: float, synchronous: bool = False) -> JSONResponse:
     """The absolute deadlines start before body IO/queueing, not in this worker."""
+    budget = completion_budget(settings, synchronous=synchronous)
     try:
-        with spanner_rpc_deadline(started + 2):
+        with spanner_rpc_deadline(started + budget):
             value = parse(raw)
             if runtime is None or runtime.signer is None:
                 return sync_required("not_eligible")
@@ -372,7 +386,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
             # Sync fallback also freezes before applying: identical money primitive,
             # no catalog lookup. Expired tickets may create only synchronous work.
             timing.stop_validation()
-            deadline = started + (2 if synchronous else 0.5)
+            deadline = started + (budget if synchronous else HANDOFF_BUDGET_SECONDS)
             if memory_mode:
                 with timing.measure("enqueue_ms"):
                     result = memory.accept(row) if memory is not None else sync_required("handoff_unhealthy")
@@ -452,7 +466,7 @@ def handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Settings
         try:
             result = _handle(raw, kind=kind, runtime=runtime, settings=settings,
                              started=started, synchronous=synchronous)
-            if time.monotonic() >= started + 2:
+            if time.monotonic() >= started + completion_budget(settings, synchronous=synchronous):
                 raise unavailable("deadline_exceeded")
             return result
         except transient_store_error_types() as exc:

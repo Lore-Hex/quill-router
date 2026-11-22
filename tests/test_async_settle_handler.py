@@ -6,6 +6,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -455,7 +456,10 @@ def test_enqueue_wins_reaper_and_legacy_fence(env):
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
 
 
-def test_budget_includes_admission_and_retries(env, monkeypatch):
+@pytest.mark.parametrize('sync_budget', [2.0, 5.0])
+def test_budget_includes_admission_and_retries(env, monkeypatch, sync_budget):
+    # The 500 ms handoff of async-v1 acceptance, whatever the synchronous budget.
+    env[3].async_settle_sync_budget_seconds = sync_budget
     body, _, _ = prepare(env)
     clock = [50.0]
     monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
@@ -472,6 +476,106 @@ def test_budget_includes_admission_and_retries(env, monkeypatch):
                        settings=env[3], started=50.0)
     assert exc.value.status_code == 503
     assert not env[1].settle_outbox
+
+
+@pytest.mark.parametrize('budget', [2.0, 5.0])
+@pytest.mark.parametrize('mode', ['async-v1', 'sync'])
+def test_completion_budgets_by_mode(
+    env: tuple[Any, Any, Any, Any], monkeypatch: pytest.MonkeyPatch, mode: str, budget: float,
+) -> None:
+    """D2 as amended: the synchronous settle's Spanner deadline is its setting;
+    async-v1 acceptance keeps 2 s and its 500 ms handoff whatever the setting."""
+    env[3].async_settle_sync_budget_seconds = budget
+    body, _, _ = prepare(env)
+    monkeypatch.setattr(time, 'monotonic', lambda: 50.0)
+    deadlines: list[float] = []
+    handoffs: list[float] = []
+    rpc_deadline, enqueue_intent = handler.spanner_rpc_deadline, handler.enqueue
+
+    def record_deadline(deadline: float) -> Any:
+        deadlines.append(deadline)
+        return rpc_deadline(deadline)
+
+    def record_handoff(outbox: Any, row: Any, deadline: float) -> Any:
+        handoffs.append(deadline)
+        return enqueue_intent(outbox, row, deadline)
+
+    monkeypatch.setattr(handler, 'spanner_rpc_deadline', record_deadline)
+    monkeypatch.setattr(handler, 'enqueue', record_handoff)
+    synchronous = mode == 'sync'
+    result = handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2], settings=env[3],
+                            started=50.0, synchronous=synchronous)
+    assert result.status_code == (200 if synchronous else 202)
+    assert deadlines == [50.0 + (budget if synchronous else 2.0)]
+    assert handoffs == ([] if synchronous else [50.5])
+    assert handler.completion_budget(env[3], synchronous=synchronous) == (budget if synchronous else 2.0)
+
+
+@pytest.mark.parametrize('budget', [2.0, 5.0])
+def test_a_sync_settle_that_needs_more_than_two_seconds(
+    env: tuple[Any, Any, Any, Any], monkeypatch: pytest.MonkeyPatch, budget: float,
+) -> None:
+    """A frozen apply that waits three seconds for its row: within a 5 s budget
+    the settle answers 200; within 2 s it answers the same 503 as before, its
+    commit already made, and the gateway's retry of the same identity replays
+    it without charging twice."""
+    from trusted_router.services import settle_outbox_apply
+
+    env[3].async_settle_sync_budget_seconds = budget
+    body, auth, key = prepare(env)
+    clock = [50.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    apply = settle_outbox_apply.apply_frozen_settle
+
+    def slow_apply(row: Any) -> str:
+        outcome = apply(row)
+        clock[0] += 3.0  # the row's queue, after the commit
+        return outcome
+
+    monkeypatch.setattr(settle_outbox_apply, 'apply_frozen_settle', slow_apply)
+    if budget > 3.0:
+        assert call(env, body, synchronous=True).status_code == 200
+    else:
+        with pytest.raises(HTTPException) as exc:
+            handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2], settings=env[3],
+                           started=50.0, synchronous=True)
+        assert exc.value.status_code == 503
+        clock[0] = 100.0
+        monkeypatch.setattr(settle_outbox_apply, 'apply_frozen_settle', apply)
+        assert handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2], settings=env[3],
+                              started=100.0, synchronous=True).status_code == 200
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
+    assert _typed_key(env[1], key.hash)['usage'] == 2
+    assert env[1].reservations[auth.credit_reservation_id]['actual_micro'] == 2
+
+
+@pytest.mark.parametrize('budget', [2.0, 5.0])
+def test_the_snapshot_settles_gate_wait_is_a_quarter_of_its_budget(
+    env: tuple[Any, Any, Any, Any], monkeypatch: pytest.MonkeyPatch, budget: float,
+) -> None:
+    """The frozen apply meets the workspace billing gate with the whole
+    synchronous budget left, so its wait is bounded by a quarter of it."""
+    from trusted_router import storage_gcp
+    from trusted_router.workspace_billing_gate import wait_bound
+
+    env[3].async_settle_sync_budget_seconds = budget
+    env[3].workspace_billing_gate_width = 1
+    body, _, _ = prepare(env)
+    monkeypatch.setattr(time, 'monotonic', lambda: 50.0)
+    monkeypatch.setattr(env[0]._credit_shard_counts, 'peek', lambda workspace_id: 1)
+    seen: list[tuple[str, float]] = []
+    gate = storage_gcp.workspace_billing_gate
+
+    def record(workspace_id: str, **kwargs: Any) -> Any:
+        seen.append((kwargs['kind'], kwargs['budget_seconds']))
+        return gate(workspace_id, **kwargs)
+
+    monkeypatch.setattr(storage_gcp, 'workspace_billing_gate', record)
+    result = handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2], settings=env[3],
+                            started=50.0, synchronous=True)
+    assert result.status_code == 200
+    assert seen == [('frozen_finalize', budget)]
+    assert wait_bound(5.0, budget) == budget / 4
 
 
 def test_unknown_commit_retry_same_identity(env, monkeypatch):
