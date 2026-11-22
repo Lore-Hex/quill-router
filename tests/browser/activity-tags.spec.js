@@ -427,22 +427,35 @@ test("a typed value is sent as typed: empty, long, and outside the basic plane",
 test("an approximate ranking and an approximate value list say so", async ({ page }) => {
   const seen = [];
   await page.setViewportSize({ width: 1280, height: 1100 });
-  // What the durable stores answer for a key with more values than they rank
-  // or count exactly. The in-memory store behind the fixture never does, so
-  // the two flags are set on its answers here.
+  // What a store answers for a key with more than 50 values whose Other row
+  // outweighs the smallest named one, and for a value list it could not
+  // count exactly. The fixture's workspaces have neither, so an Other row
+  // and the two flags are put on its answers here.
   await open(page, fixture.tagged, seen, undefined, undefined, (name, body, answer) => {
     if (name !== "tags") return answer;
     const filter = answer.filter ? { ...answer.filter, values_approximate: true } : null;
-    return { ...answer, breakdown_approximate: body.group_by === "team", filter };
+    if (body.group_by !== "team") return { ...answer, filter };
+    const other = {
+      kind: "other", value: null, requests: 40, cost_microdollars: 9000000, byok_microdollars: 0,
+      prompt_tokens: 700, completion_tokens: 300, median_elapsed_ms: 650,
+    };
+    const rows = answer.breakdown.filter((row) => row.kind === "value")
+      .concat([other], answer.breakdown.filter((row) => row.kind === "untagged"));
+    return { ...answer, breakdown: rows, breakdown_approximate: true, filter };
   });
   const panel = page.locator("[data-tags-panel]");
   const message = panel.locator("[data-tags-message]");
+  const rows = panel.locator("[data-tags-rows] tr");
 
   await expect(message).toHaveText("Every request in the last 30 days is counted.");
   await panel.locator("[data-tags-group]").selectOption({ label: "team" });
   await expect(message).toHaveText(
-    "Every request in the last 30 days is counted. This key has too many values to rank exactly: the rows are approximately its most expensive ones."
+    "Every request in the last 30 days is counted. The ranking is approximate: a value counted in Other may belong among the rows shown. This is also reported when Other only holds many small values."
   );
+  // The Other row says what it adds up to and nothing about how many values
+  // that is.
+  await expect(rows).toHaveCount(5);
+  await expect(rows.nth(3).locator("td")).toHaveText(["Other", "40", "$9.00", "1,000", "650 ms"]);
   await panel.locator("[data-tags-filter-key]").selectOption({ label: "team" });
   await expect(panel.locator("[data-tags-value-note]")).toContainText(
     "This key has more values than are counted exactly, so the list is approximately its most used ones. To filter by another, type it"

@@ -5469,23 +5469,23 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_keys:1": {
-      "fingerprint": "39cad4fc37561c2beda1951840705c613c6a58744996604901b2f881b022126d",
+      "fingerprint": "f04106d3f80b0b40233ee821e1b57b39db3f660d3cb32d4479c6ba7ab30c5e5d",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_values:1": {
-      "fingerprint": "b1630baeefebfdea663d6b60ddb901165e99db72b906cd2da55bff9a1aa3e356",
+      "fingerprint": "4fa7aaa1c2991f7b0ae6291c4da48ead9734302bd379b7be17dd2d67bfc9c8f7",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_candidates:1": {
-      "fingerprint": "8ee063c2e1908ee00082d6a501e1a045d38591dcd0dd413dd5a8c32a7dcc6498",
+      "fingerprint": "b40c09809cfba8f9bf94bd7ec41e82d6cbc23a11eb033d3205f002810410d969",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_candidate_totals:1": {
-      "fingerprint": "0506255af1095c11a0724394d0ef88664a8f5017fbffdb0846aeaeabe95b1c0a",
+      "fingerprint": "5b28a36fac99676e2e37d54772b6bff206dfa62a5eba748677fa2a1e60f1d9d7",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_tag_histogram:1": {
-      "fingerprint": "cd8aee55fb82c978c9a14ba57e739d1911931b42ae1d9ab090d76d1a1e7657a5",
+      "fingerprint": "85d29179f96f089c4ee3ce45e8d9fc25be28e80df3e10687bdb9b82c6cf61897",
       "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "storage_legacy_trust:recover_released_postgres:7": {

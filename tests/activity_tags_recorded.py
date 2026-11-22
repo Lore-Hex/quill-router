@@ -50,6 +50,7 @@ RECORDING_DATABASE = "tags_recording"
 WORKSPACE = "ws-tags-a"
 OTHER_WORKSPACE = "ws-tags-b"
 EMPTY_WORKSPACE = "ws-tags-none"
+SPELLINGS_WORKSPACE = "ws-tags-spellings"
 START_AT = "2026-03-01T00:00:00Z"
 
 # id, workspace, created_at, tags, cost, usage type, prompt, completion, elapsed.
@@ -94,6 +95,40 @@ REPLACED: tuple[str, str, str, dict[str, str], int, str, int, int, int | None] =
     "g02", WORKSPACE, "2026-03-02T11:00:00.000Z", {"team": "ads"}, 111, "Credits", 7, 7, 7,
 )
 
+# Ways a stored usage type can be spelled. Writers store "Credits" or "BYOK";
+# the tag statements still have to class any spelling the way
+# ``UsageType.coerce`` does, which is "byok" in any case with any whitespace
+# that ``str.strip`` removes around it, and Credits for everything else.
+USAGE_TYPE_SPELLINGS: list[str] = [
+    "BYOK",
+    "byok",
+    "ByOk",
+    " byok ",
+    "\tBYOK\n",
+    "\u0085byok\u00a0",  # next line and no-break space: whitespace to str.strip
+    "\u3000BYOK",  # ideographic space
+    "\x1fbyok\x1c",  # separator control characters
+    "byo\u212a",  # the Kelvin sign lowercases to k
+    "Credits",
+    "",
+    "byok!",
+    "b yok",
+    "BYOKS",
+    "credits byok",
+    "\uff42\uff59\uff4f\uff4b",  # full-width letters do not lowercase to byok
+    "\u200bbyok",  # a zero-width space is not whitespace to str.strip
+]
+# One generation for each spelling in a workspace of its own, each under its
+# own tag value and with a cost no other row has, so that every row of the
+# breakdown shows which class its spelling was put in.
+SPELLING_FIXTURE: list[tuple[str, str, str, dict[str, str], int, str, int, int, int | None]] = [
+    (
+        f"u{index:02d}", SPELLINGS_WORKSPACE, f"2026-03-06T{index:02d}:00:00.000Z",
+        {"team": f"spelling-{index:02d}"}, 2**index, spelling, 3, 2, 100 + index,
+    )
+    for index, spelling in enumerate(USAGE_TYPE_SPELLINGS)
+]
+
 # Each case is one store call. ``limits`` are the module limits in force for
 # it, lowered so that a sixteen-row fixture reaches every cut.
 SUMMARY_CASES: list[tuple[str, str, dict[str, Any], dict[str, int]]] = [
@@ -112,6 +147,7 @@ SUMMARY_CASES: list[tuple[str, str, dict[str, Any], dict[str, int]]] = [
     ("too-many-values", WORKSPACE, {"group_by": "team"}, {"TAG_DISTINCT_LIMIT": 6}),
     ("default-skips-too-many", WORKSPACE, {}, {"TAG_DISTINCT_LIMIT": 6}),
     ("every-default-too-many", WORKSPACE, {}, {"TAG_DISTINCT_LIMIT": 1}),
+    ("usage-type-spellings", SPELLINGS_WORKSPACE, {"group_by": "team"}, {}),
 ]
 # With fewer candidates than the key has values, ClickHouse ranks only the
 # heaviest values its sketches return and says the ranking is approximate.
@@ -158,8 +194,13 @@ def _generation(
 
 
 def fixture_generations() -> list[Generation]:
-    """Every delivery in order: the replaced one first, so the last one wins."""
-    return [_generation(REPLACED), *(_generation(row) for row in FIXTURE)]
+    """Every delivery in order: the replaced one first, so the last one wins.
+
+    A generation holds a ``UsageType``, so the spellings reach the in-memory
+    store through ``UsageType.coerce``. ClickHouse is given the spelling
+    itself (see ``_insert_rows``).
+    """
+    return [_generation(REPLACED), *(_generation(row) for row in [*FIXTURE, *SPELLING_FIXTURE])]
 
 
 @contextlib.contextmanager
@@ -332,6 +373,9 @@ def _insert_rows(
     for row in rows:
         payload = activity_payload(_generation(row))
         payload["ingest_version"] = ingested
+        # The usage type as spelled in the fixture, not as a writer would
+        # canonicalise it: the spelling is what the SQL has to class.
+        payload["usage_type"] = row[5]
         lines.append(json.dumps(payload))
     return "\n".join(lines)
 
@@ -357,7 +401,7 @@ def record(url: str, user: str, password: str) -> None:  # pragma: no cover - ne
     # are collapsed as they are written, and FINAL would have nothing to do.
     for rows, ingested in (
         ([REPLACED], "2026-03-10 00:00:00.000000"),
-        (FIXTURE, "2026-03-10 00:00:01.000000"),
+        ([*FIXTURE, *SPELLING_FIXTURE], "2026-03-10 00:00:01.000000"),
     ):
         run(
             "INSERT INTO activity_generations FORMAT JSONEachRow\n" + _insert_rows(rows, ingested),
@@ -368,8 +412,15 @@ def record(url: str, user: str, password: str) -> None:  # pragma: no cover - ne
     stored = admin.post(
         url, params={"database": RECORDING_DATABASE}, content=b"SELECT count() FROM activity_generations"
     ).text.strip()
-    if stored != str(len(FIXTURE) + 1):
+    if stored != str(len(FIXTURE) + len(SPELLING_FIXTURE) + 1):
         raise RuntimeError(f"expected both deliveries of g02 to be stored, found {stored} rows")
+    spelled = admin.post(
+        url,
+        params={"database": RECORDING_DATABASE},
+        content=b"SELECT uniqExact(usage_type) FROM activity_generations",
+    ).text.strip()
+    if spelled != str(len(set(USAGE_TYPE_SPELLINGS))):
+        raise RuntimeError(f"expected every usage-type spelling to be stored as written, found {spelled}")
 
     exchanges: dict[str, dict[str, Any]] = {}
     network = httpx.HTTPTransport()

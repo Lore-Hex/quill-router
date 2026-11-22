@@ -500,12 +500,13 @@ def test_summary_endpoint_shape() -> None:
     ]
     assert payload["group_by"] == "team" and payload["value_limit"] == 50
     assert (payload["keys_approximate"], payload["breakdown_too_many_values"]) == (False, False)
-    # The in-memory store ranks every value: its choice of rows is never approximate.
+    # No Other row here, so nothing in these rows puts the ranking in doubt.
     assert payload["breakdown_approximate"] is False
+    assert all("values" not in row for row in payload["breakdown"])
     assert payload["distinct_limit"] == 500_000
     assert payload["breakdown"] == [
         {
-            "kind": "value", "value": "search", "values": 1, "requests": 1,
+            "kind": "value", "value": "search", "requests": 1,
             "cost_microdollars": 300, "byok_microdollars": 0, "prompt_tokens": 10,
             "completion_tokens": 5, "median_elapsed_ms": 100,
         }
@@ -580,8 +581,10 @@ def test_page_names_the_median_and_offers_a_typed_value() -> None:
     # approximate list or ranking is called approximate.
     assert "or more distinct values in" in script and "has more than" not in script
     assert "the list is approximately its most used ones" in script
-    assert "the rows are approximately its most expensive ones" in script
-    assert "Other (about ${folded} values)" in script
+    assert "The ranking is approximate: a value counted in Other may belong among the rows shown." in script
+    assert "This is also reported when Other only holds many small values." in script
+    # The Other row has a label and no count of the values in it.
+    assert 'note("Other")' in script and "Other (" not in script
 
 
 def test_page_script_follows_the_range_without_reading_the_chart() -> None:
@@ -607,7 +610,7 @@ def test_page_script_follows_the_range_without_reading_the_chart() -> None:
     assert "filterKey = null" not in change and "filterValue = null" not in change
 
 
-# --------------------------------------------------- outages and what is logged
+# ------------------------------------- outages and what the application logs
 
 
 @pytest.mark.parametrize(
@@ -636,7 +639,7 @@ def test_an_analytics_outage_is_a_retryable_503_and_a_defect_stays_a_500(
     assert client.post(path, json=body).status_code == 500
 
 
-def test_no_log_record_carries_a_tag_key_or_value(
+def test_no_application_log_record_carries_a_tag_key_or_value(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     client, workspace = _signed_in("tags-logs@example.com")

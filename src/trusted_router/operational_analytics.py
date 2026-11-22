@@ -213,21 +213,25 @@ _BOUND_VALUES_IN_BODY: ContextVar[bool] = ContextVar("clickhouse_bound_values_in
 
 
 @contextmanager
-def bound_values_stay_private() -> Iterator[None]:
-    """Run a read whose bound values must not reach a log, a trace or an error.
+def bound_values_in_the_body() -> Iterator[None]:
+    """Run a read whose bound values must stay out of what this process writes down.
 
-    Tag keys and values are customer text that must never reach a log or
-    Sentry (docs/design/request-tagging.md, section 10). ClickHouse normally
-    takes bound values as URL parameters, and a URL is written down by more
-    than one layer: httpx logs it at INFO, Sentry's httpx integration copies
-    its query string into a span and a breadcrumb, and httpx names it in an
-    ``HTTPStatusError``.
+    Tag keys and values are customer text that this service keeps out of its
+    application logs and out of Sentry (docs/design/request-tagging.md,
+    sections 6.5 and 10). ClickHouse normally takes bound values as URL
+    parameters, and a URL is written down by more than one layer: httpx logs
+    it at INFO, Sentry's httpx integration copies its query string into a
+    span and a breadcrumb, and httpx names it in an ``HTTPStatusError``.
 
     Inside this scope ``_query`` sends the statement and every bound value as
     multipart form fields instead, which the ClickHouse HTTP interface reads
     the same way, so the URL carries only the database name. The Sentry scope
     without integrations and the status error without its URL remain as a
     second line: neither has anything to leak while the first holds.
+
+    What this does not cover: ClickHouse records every statement, with its
+    parameters substituted, in its own query log on the analytics servers.
+    The values are there whichever way they were sent.
     """
     in_body = _BOUND_VALUES_IN_BODY.set(True)
     try:
@@ -915,17 +919,18 @@ FORMAT JSON
     #   keys, values   a top-K sketch with a fixed number of counters
     #   candidates     two top-K sketches and one distinct-count sketch, with
     #                  no GROUP BY
-    #   totals         one group per candidate and stored usage type, for the
-    #                  candidates named in the statement and no other value
+    #   totals         one group per candidate, for the candidates named in
+    #                  the statement and no other value
     #   histogram      at most 52 groups, each the bounded elapsed-time
     #                  histogram of ``elapsed_histogram_columns``, cut off at
     #                  TAG_ELAPSED_SLOTS slots
     #
-    # Credits and BYOK are told apart by the caller, with ``UsageType.coerce``,
-    # from the stored usage type each statement groups by: no statement takes
-    # a list of usage types that an earlier one saw. Tag keys and values are
-    # always bound, and inside ``bound_values_stay_private`` they travel in
-    # the request body.
+    # Credits and BYOK are told apart inside each statement that sums cost,
+    # by one fixed expression (``_TAG_IS_BYOK``) that makes two classes
+    # whatever is stored: no statement groups by the stored usage type or
+    # takes a list of usage types that an earlier one saw. Tag keys and
+    # values are always bound, and inside ``bound_values_in_the_body`` they
+    # travel in the request body.
 
     def activity_tag_keys(self, *, tenant_id: str, start_at: str) -> list[dict[str, Any]]:
         """Tag keys by the number of generations carrying them, unordered.
@@ -935,7 +940,7 @@ FORMAT JSON
         still returns the most frequent keys, each with the most its count
         can be too high by.
         """
-        with bound_values_stay_private():
+        with bound_values_in_the_body():
             rows = self._query(
                 """
 SELECT tupleElement(item, 1) AS tag_key, tupleElement(item, 2) AS requests, tupleElement(item, 3) AS overcount
@@ -972,7 +977,7 @@ FORMAT JSON
         with no more distinct values than that, the most frequent values with
         an ``overcount`` beyond it.
         """
-        with bound_values_stay_private():
+        with bound_values_in_the_body():
             rows = self._query(
                 """
 SELECT tupleElement(item, 1) AS tag_value, tupleElement(item, 2) AS requests, tupleElement(item, 3) AS overcount
@@ -1020,11 +1025,10 @@ FORMAT JSON
         than ``candidates`` both lists hold every value with ``error`` 0, and
         the caller's ranking is exact. With more, they hold the heaviest
         values the sketches found, and the ranking is approximate. Cost here
-        is every usage type's: the caller separates Credits from BYOK from
-        the totals read.
+        is every usage type's: the totals read separates Credits from BYOK.
         """
         where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
-        with bound_values_stay_private():
+        with bound_values_in_the_body():
             rows = self._query(
                 """
 SELECT
@@ -1068,33 +1072,33 @@ FORMAT JSON
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Text, generations and cost of the candidate values, by stored usage type.
+        """Text, generations and credit cost of the candidate values.
 
         Only values whose hash is in ``candidates`` are grouped, so this holds
-        at most one group for each candidate and usage type whatever the key
-        has become since the candidates were read. The stored usage type is a
-        grouping key, not a condition: the caller decides Credits or BYOK for
-        each stored value with ``UsageType.coerce``. Two values that shared
-        both hashes would share a group and the smaller text.
+        at most one group for each candidate whatever the key has become
+        since the candidates were read. Two values that shared the first hash
+        are still two groups here, told apart by the second; two that shared
+        both would be one group under the smaller text.
         """
         where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
-        with bound_values_stay_private():
+        with bound_values_in_the_body():
             rows = self._query(
                 """
 SELECT
   cityHash64(tags[{group_by:String}]) AS hash_a,
   sipHash64(tags[{group_by:String}]) AS hash_b,
-  usage_type,
   min(tags[{group_by:String}]) AS named_value,
   count() AS requests,
-  sum(total_cost_microdollars) AS cost_microdollars
+  sumIf(total_cost_microdollars, NOT """
+                + _TAG_IS_BYOK
+                + """) AS credit_microdollars
 FROM activity_generations FINAL
 WHERE """
                 + where
                 + """
   AND mapContains(tags, {group_by:String})
   AND cityHash64(tags[{group_by:String}]) IN {candidates:Array(UInt64)}
-GROUP BY hash_a, hash_b, usage_type
+GROUP BY hash_a, hash_b
 FORMAT JSON
 """,
                 params={**params, "group_by": group_by, "candidates": _integer_array(candidates)},
@@ -1103,10 +1107,9 @@ FORMAT JSON
             {
                 "hash_a": int(row["hash_a"]),
                 "hash_b": int(row["hash_b"]),
-                "usage_type": str(row["usage_type"]),
                 "value": str(row["named_value"]),
                 "requests": int(row["requests"]),
-                "cost_microdollars": int(row["cost_microdollars"]),
+                "credit_microdollars": int(row["credit_microdollars"]),
             }
             for row in rows
         ]
@@ -1127,9 +1130,9 @@ FORMAT JSON
         A generation belongs to the ``value`` group of its tag value when the
         value's hashes are in ``top``, to ``other`` when it has another
         value, and to ``untagged`` without the key: at most 52 groups, one
-        row each. Cost is summed by the stored usage type inside this
-        statement (``cost_by_usage_type``), so a usage type that first
-        appears after an earlier read is still told apart by the caller.
+        row each. Credits and BYOK are summed apart inside this statement, so
+        a usage type that first appears after an earlier read is still told
+        apart.
 
         Each group's elapsed times are counted with the histogram the page's
         own median uses (``elapsed_histogram_columns``): slots of 1,024 ms,
@@ -1151,13 +1154,14 @@ FORMAT JSON
         rows and not as one row for each count.
         """
         where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
-        with bound_values_stay_private():
+        with bound_values_in_the_body():
             rows = self._query(
                 """
 SELECT
   kind, hash_a, hash_b,
   sum(generations_at_value) AS requests,
-  sumMap(tupleElement(cost_at_value, 1), tupleElement(cost_at_value, 2)) AS cost_by_usage_type,
+  sum(cost_at_value) AS cost_microdollars,
+  sum(byok_at_value) AS byok_microdollars,
   sum(prompt_at_value) AS prompt_tokens,
   sum(completion_at_value) AS completion_tokens,
   groupArray(tuple(ifNull(toInt32(slot), -1), ifNull(toInt32(elapsed_value), -1), generations_at_value)) AS histogram
@@ -1179,7 +1183,12 @@ FROM
                 )
                 + """,
     count() AS generations_at_value,
-    sumMap([toString(usage_type)], [total_cost_microdollars]) AS cost_at_value,
+    sumIf(total_cost_microdollars, NOT """
+                + _TAG_IS_BYOK
+                + """) AS cost_at_value,
+    sumIf(total_cost_microdollars, """
+                + _TAG_IS_BYOK
+                + """) AS byok_at_value,
     sum(tokens_prompt) AS prompt_at_value,
     sum(tokens_completion) AS completion_at_value
   FROM activity_generations FINAL
@@ -1412,6 +1421,18 @@ def _optional_int(value: Any) -> int | None:
 
 
 _TAG_GROUP_KINDS = frozenset({"value", "other", "untagged"})
+# Whether a stored usage type is BYOK, as SQL: what ``UsageType.coerce``
+# decides, which is ``str(value).strip().lower() == "byok"``. The class of
+# blanks is the characters ``str.strip`` removes (``\pZ`` and the control
+# characters Python counts as whitespace), and the letters are every
+# character ``str.lower`` turns into b, y, o and k, the Kelvin sign among
+# them. Anything else is Credits, so a statement that uses this has two cost
+# classes whatever spellings are stored. A fixed text: nothing from a request
+# is in it.
+_TAG_BLANKS = r"[\\pZ\\t\\n\\x0b\\x0c\\r\\x1c-\\x1f\\x{85}]*"
+_TAG_IS_BYOK = (
+    "match(usage_type, '^" + _TAG_BLANKS + r"[bB][yY][oO][kK\\x{212A}]" + _TAG_BLANKS + "$')"
+)
 # The tag breakdown's histograms stop at this many slots of ELAPSED_SLOT_MS:
 # about 70 minutes. See ``activity_tag_histogram``.
 TAG_ELAPSED_SLOTS = 4_096
@@ -1471,15 +1492,13 @@ def _tag_histogram_row(row: dict[str, Any]) -> dict[str, Any]:
         (None if int(slot) < 0 else int(slot), None if int(value) < 0 else int(value), int(count))
         for slot, value, count in row.pop("histogram")
     ]
-    types, costs = row["cost_by_usage_type"]
     return {
         "kind": kind,
         "hash_a": int(row["hash_a"]),
         "hash_b": int(row["hash_b"]),
         "requests": int(row["requests"]),
-        "cost_by_usage_type": [
-            (str(usage_type), int(cost)) for usage_type, cost in zip(types, costs, strict=True)
-        ],
+        "cost_microdollars": int(row["cost_microdollars"]),
+        "byok_microdollars": int(row["byok_microdollars"]),
         "prompt_tokens": int(row["prompt_tokens"]),
         "completion_tokens": int(row["completion_tokens"]),
         "histogram": histogram,

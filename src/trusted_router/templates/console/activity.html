@@ -926,10 +926,11 @@
       if (item.kind === "value") {
         first.appendChild(chip(groupBy, String(item.value)));
       } else if (item.kind === "other") {
-        // How many values the row folds is an estimate when the key has too
-        // many to rank exactly.
-        const folded = numberFormat.format(item.values || 0);
-        first.appendChild(note(data.breakdown_approximate ? `Other (about ${folded} values)` : `Other (${folded} values)`));
+        // No count of the values folded here: values can arrive after any
+        // read that could have counted them.
+        const other = note("Other");
+        other.title = "Every value of this key that has no row of its own";
+        first.appendChild(other);
       } else {
         const untagged = note("Untagged");
         untagged.title = "Requests without this tag";
@@ -1030,7 +1031,10 @@
       parts.push(`Filtered to ${tagText(state.filterKey, state.filterValue)}.`);
     }
     if (data.breakdown_approximate) {
-      parts.push("This key has too many values to rank exactly: the rows are approximately its most expensive ones.");
+      // Set whenever Other outweighs the smallest row shown, and for a key
+      // too wide to rank every value. The first is conservative, and the
+      // page says so.
+      parts.push("The ranking is approximate: a value counted in Other may belong among the rows shown. This is also reported when Other only holds many small values.");
     }
     if (data.keys_approximate) {
       parts.push("This workspace has more tag keys than are counted exactly: the most used are listed.");

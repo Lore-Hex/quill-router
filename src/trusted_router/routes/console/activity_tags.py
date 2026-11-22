@@ -2,8 +2,9 @@
 
 Both endpoints read, and both take their input as a JSON body instead of a
 query string. Tag keys and values are customer text that must stay out of
-logs and Sentry (docs/design/request-tagging.md, section 10). A query string
-is written to the load balancer's request log and copied into Sentry's
+request logs, application logs and Sentry (docs/design/request-tagging.md,
+section 10; section 6.5 says what that covers and what it does not). A query
+string is written to the load balancer's request log and copied into Sentry's
 request context; a body is not, and the Sentry client never attaches one.
 The workspace always comes from the session, never from the body.
 """

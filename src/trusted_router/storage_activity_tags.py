@@ -35,10 +35,10 @@ TAG_EVENT_LIMIT = 50
 # refusal as "about this many or more". No read's memory depends on this
 # limit: it is a statement about usefulness, not a guard.
 TAG_DISTINCT_LIMIT = 500_000
-# How many values each of the two candidate sketches returns. A key with
-# fewer distinct values than this is ranked exactly, ties included. With more,
-# ClickHouse ranks the heaviest values its sketches found and the breakdown is
-# marked approximate.
+# How many values each of the two candidate sketches returns. With fewer
+# distinct values than this, every value is a candidate. With more, ClickHouse
+# ranks the heaviest values its sketches found and the ranking is marked
+# approximate.
 TAG_RANK_CANDIDATES = 2_000
 # When the page did not ask for a key, how many of the most used keys are
 # tried before the breakdown is reported as refused.
@@ -55,7 +55,12 @@ TagGroup = tuple[str, int, int]
 
 @dataclasses.dataclass(frozen=True)
 class TagBreakdown:
-    """A breakdown's rows, and whether the choice of its value rows is approximate."""
+    """A breakdown's rows, and whether its reads could have missed a value.
+
+    ``approximate`` is what the reads themselves know: a candidate list that
+    may be incomplete. ``tag_summary`` adds what the final numbers show (see
+    ``other_outweighs_a_named_row``).
+    """
 
     rows: TagRows
     approximate: bool = False
@@ -129,7 +134,7 @@ def break_down_by_tag(
     summed into one ``other`` row, and generations without the key into one
     ``untagged`` row. Ranking is by credit cost, then requests, then the
     value's text: the order ``clickhouse_breakdown`` uses. This store counts
-    and ranks every value, so its ranking is never approximate.
+    and ranks every value from one copy of the rows.
     """
     rows = list(generations)
     by_value: dict[str, list[Generation]] = {}
@@ -150,20 +155,13 @@ def break_down_by_tag(
             value,
         ),
     )
-    result: TagRows = [
-        {"kind": "value", "value": value, "values": 1, **totals[value]}
-        for value in ranked[:limit]
-    ]
+    result: TagRows = [{"kind": "value", "value": value, **totals[value]} for value in ranked[:limit]]
     folded = ranked[limit:]
     if folded:
         members = [gen for value in folded for gen in by_value[value]]
-        result.append(
-            {"kind": "other", "value": None, "values": len(folded), **_totals(members)}
-        )
+        result.append({"kind": "other", "value": None, **_totals(members)})
     if untagged:
-        result.append(
-            {"kind": "untagged", "value": None, "values": 0, **_totals(untagged)}
-        )
+        result.append({"kind": "untagged", "value": None, **_totals(untagged)})
     return TagBreakdown(result)
 
 
@@ -184,21 +182,24 @@ def clickhouse_breakdown(
       and names the values that could keep a row.
     * The totals read groups those candidates and nothing else, however many
       new values have arrived since, and returns their text, generations and
-      cost by stored usage type. The rows are ranked here by credit cost,
-      then generations, then text: the in-memory order.
+      credit cost. The rows are ranked here by credit cost, then generations,
+      then text: the in-memory order.
     * The histogram reads group the at most ``limit`` chosen values, every
       other value as one row and untagged generations as one row.
 
-    Credits and BYOK are told apart here, with ``UsageType.coerce``, from the
-    usage type each statement groups by, so a usage type that first appears
-    between two reads is classified like any other.
+    Credits and BYOK are told apart inside each statement that sums cost, so
+    a usage type that first appears between two reads is classified like any
+    other.
 
     With fewer distinct values than TAG_RANK_CANDIDATES the candidates are
-    every value, with exact counts, and the ranking is exact. With more, they
-    are the heaviest values by cost and by generations that the sketches
-    found, and the result is marked approximate: the totals of every row are
-    still exact for the rows the last read saw, but a value that belongs
-    among the ``limit`` may be in the ``other`` row instead.
+    every value the first read saw, with exact counts. With more, they are
+    the heaviest values by cost and by generations that the sketches found,
+    and the result is marked approximate: the totals of every row are still
+    exact for the rows the last read saw, but a value that belongs among the
+    ``limit`` may be in the ``other`` row instead. Rows also arrive between
+    the read that chooses the values and the read that totals them, which
+    this function cannot see; ``tag_summary`` judges that from the final
+    rows.
 
     Medians are the page's own (``settle_elapsed_median``), settled for each
     group apart: the first histogram read opens no slot and tells each group
@@ -227,12 +228,11 @@ def clickhouse_breakdown(
     ranked: dict[tuple[int, int], dict[str, Any]] = {}
     for row in read_candidate_totals(candidates) if candidates else []:
         pair = (int(row["hash_a"]), int(row["hash_b"]))
-        entry = ranked.setdefault(pair, {"value": str(row["value"]), "credit": 0, "requests": 0})
-        # Two values with both hashes equal would share a row; keep one name.
-        entry["value"] = min(entry["value"], str(row["value"]))
-        entry["requests"] += int(row["requests"])
-        if not _is_byok(str(row["usage_type"])):
-            entry["credit"] += int(row["cost_microdollars"])
+        ranked[pair] = {
+            "value": str(row["value"]),
+            "credit": int(row["credit_microdollars"]),
+            "requests": int(row["requests"]),
+        }
     order = sorted(
         ranked,
         key=lambda pair: (-ranked[pair]["credit"], -ranked[pair]["requests"], ranked[pair]["value"]),
@@ -267,11 +267,10 @@ def clickhouse_breakdown(
 
     def totals(group: TagGroup) -> dict[str, Any]:
         row = groups[group]
-        costs = [(_is_byok(str(usage_type)), int(cost)) for usage_type, cost in row["cost_by_usage_type"]]
         return {
             "requests": int(row["requests"]),
-            "cost_microdollars": sum(cost for byok, cost in costs if not byok),
-            "byok_microdollars": sum(cost for byok, cost in costs if byok),
+            "cost_microdollars": int(row["cost_microdollars"]),
+            "byok_microdollars": int(row["byok_microdollars"]),
             "prompt_tokens": int(row["prompt_tokens"]),
             "completion_tokens": int(row["completion_tokens"]),
             "median_elapsed_ms": medians.get(group),
@@ -282,23 +281,13 @@ def clickhouse_breakdown(
         group = ("value", *pair)
         # A value chosen above and gone by the last read has no row.
         if group in groups:
-            result.append({"kind": "value", "value": names[pair], "values": 1, **totals(group)})
+            result.append({"kind": "value", "value": names[pair], **totals(group)})
+    # How many values the other row folds is not reported: by the time it is
+    # totalled, values may have arrived that no earlier read counted.
     if ("other", 0, 0) in groups:
-        # How many values the row folds: counted when every value was a
-        # candidate, estimated otherwise.
-        distinct = len(order) if complete else max(estimate, len(order))
-        result.append(
-            {
-                "kind": "other",
-                "value": None,
-                "values": max(1, distinct - len(top)),
-                **totals(("other", 0, 0)),
-            }
-        )
+        result.append({"kind": "other", "value": None, **totals(("other", 0, 0))})
     if ("untagged", 0, 0) in groups:
-        result.append(
-            {"kind": "untagged", "value": None, "values": 0, **totals(("untagged", 0, 0))}
-        )
+        result.append({"kind": "untagged", "value": None, **totals(("untagged", 0, 0))})
     return TagBreakdown(result, approximate=not complete)
 
 
@@ -345,20 +334,52 @@ def tag_summary(
             chosen = candidate
         if breakdown is not None:
             break
+    rows = order_breakdown(breakdown.rows if breakdown is not None else [])
     return {
         "keys": [{"key": row["key"], "requests": row["requests"]} for row in keys],
         "keys_truncated": keys_truncated,
         "keys_approximate": keys_approximate,
         "group_by": chosen,
-        "breakdown": order_breakdown(breakdown.rows if breakdown is not None else []),
+        # Ordered by the totals it shows, whatever order the values were
+        # chosen in.
+        "breakdown": rows,
         "breakdown_too_many_values": breakdown is None,
-        "breakdown_approximate": breakdown is not None and breakdown.approximate,
+        "breakdown_approximate": breakdown is not None
+        and (breakdown.approximate or other_outweighs_a_named_row(rows)),
         "filter_values": [
             {"value": row["value"], "requests": row["requests"]} for row in values
         ],
         "filter_values_truncated": values_truncated,
         "filter_values_approximate": values_approximate,
     }
+
+
+def other_outweighs_a_named_row(rows: TagRows) -> bool:
+    """Whether the rows themselves fail to vouch for which values were named.
+
+    The named rows are meant to be the largest values by credit cost, then
+    generations. No single folded value can be larger than the ``other`` row
+    that sums them, so while ``other`` is no larger than the smallest named
+    row, no value inside it outweighs a named one. Once it is larger, a value
+    inside it may belong among the named rows: one that grew, or first
+    appeared, between the read that chose the values and the read that
+    totalled them.
+
+    This is deliberately conservative. An ``other`` row made of many small
+    values also outweighs the smallest named row, and is reported the same
+    way although the ranking is right.
+    """
+    named = [row for row in rows if row["kind"] == "value"]
+    other = [row for row in rows if row["kind"] == "other"]
+    if not other:
+        return False
+    if not named:
+        return True
+
+    def weight(row: dict[str, Any]) -> tuple[int, int]:
+        return int(row["cost_microdollars"]), int(row["requests"])
+
+    return weight(other[0]) > min(weight(row) for row in named)
 
 
 def order_breakdown(rows: TagRows) -> TagRows:

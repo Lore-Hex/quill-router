@@ -1,4 +1,4 @@
-"""Request tags for the console: the reads, their SQL, parity and privacy.
+"""Request tags for the console: the reads, their SQL, parity, and what this process writes down.
 
 Tag keys and values in this file are invented.
 """
@@ -21,8 +21,10 @@ from tests.activity_tags_recorded import (
     EMPTY_WORKSPACE,
     EVENT_CASES,
     OTHER_WORKSPACE,
+    SPELLINGS_WORKSPACE,
     START_AT,
     SUMMARY_CASES,
+    USAGE_TYPE_SPELLINGS,
     WORKSPACE,
     fixture_generations,
     form_fields,
@@ -36,6 +38,7 @@ from tests.activity_tags_recorded import (
 )
 from trusted_router import storage_activity_tags
 from trusted_router.operational_analytics import (
+    _TAG_IS_BYOK,
     ELAPSED_CEILING_MS,
     ELAPSED_LAST_SLOT,
     ELAPSED_SLOT_MS,
@@ -45,7 +48,7 @@ from trusted_router.operational_analytics import (
     _cell_array,
     _integer_array,
     _tuple_array,
-    bound_values_stay_private,
+    bound_values_in_the_body,
     is_analytics_unavailable,
     log_analytics_unavailable,
     settle_elapsed_median,
@@ -65,6 +68,7 @@ from trusted_router.storage_activity_tags import (
     tag_summary,
 )
 from trusted_router.storage_operational_analytics import analytics_surrogate
+from trusted_router.types import UsageType
 
 # One name for each statement shape the tag reads send: the five reads, and
 # the three breakdown reads again with a key filter and with a tag filter.
@@ -91,12 +95,12 @@ def _window() -> list[Any]:
     return generations_in_window(fixture_generations(), workspace_id=WORKSPACE, start_at=START_AT)
 
 
-def _row(kind: str, value: str | None, values: int, *numbers: Any) -> dict[str, Any]:
+def _row(kind: str, value: str | None, *numbers: Any) -> dict[str, Any]:
     names = (
         "requests", "cost_microdollars", "byok_microdollars", "prompt_tokens",
         "completion_tokens", "median_elapsed_ms",
     )
-    return {"kind": kind, "value": value, "values": values, **dict(zip(names, numbers, strict=True))}
+    return {"kind": kind, "value": value, **dict(zip(names, numbers, strict=True))}
 
 
 # ------------------------------------------------------------ pure functions
@@ -146,7 +150,9 @@ def test_window_keeps_one_workspace_from_the_start_and_matches_tags_exactly() ->
         )
         return [gen.id for gen in found]
 
-    assert len(generations) == 17
+    # Sixteen rows and the replaced delivery of one of them, beside the
+    # spellings workspace's rows.
+    assert len(generations) == 17 + len(USAGE_TYPE_SPELLINGS)
     assert sorted(matching(tag_key="environment")) == ["g01", "g02", "g03", "g05", "g10"]
     assert sorted(matching(tag_key="team", tag_value="search")) == ["g01", "g02", "g03", "g04"]
     # Case-sensitive, and an empty value is a value, not a missing key.
@@ -182,14 +188,14 @@ def test_breakdown_folds_the_tail_into_other_and_keeps_untagged_apart() -> None:
     rows = order_breakdown(found.rows)
 
     assert rows == [
-        _row("value", "search", 1, 4, 1350, 0, 190, 85, 400),
+        _row("value", "search", 4, 1350, 0, 190, 85, 400),
         # The cut is by cost: "billing" (800, one request) keeps its row and
         # "ads" (700 in credits, two requests) does not. Its one elapsed time
         # is at the ceiling, so it has no median.
-        _row("value", "billing", 1, 1, 800, 0, 80, 40, None),
+        _row("value", "billing", 1, 800, 0, 80, 40, None),
         # BYOK spend is reported apart from credit cost, as the usage chart does.
-        _row("other", None, 5, 7, 750, 500, 145, 66, 800),
-        _row("untagged", None, 0, 2, 100, 0, 17, 7, 45_150),
+        _row("other", None, 7, 750, 500, 145, 66, 800),
+        _row("untagged", None, 2, 100, 0, 17, 7, 45_150),
     ]
     # Nothing is lost: the rows add up to the window.
     assert sum(row["requests"] for row in rows) == len(window) == 14
@@ -197,10 +203,10 @@ def test_breakdown_folds_the_tail_into_other_and_keeps_untagged_apart() -> None:
 
 
 @pytest.mark.parametrize(
-    ("limit", "kept", "folded"),
+    ("limit", "kept", "folded_requests"),
     [
         # Cost decides before requests: billing over ads.
-        (2, ["search", "billing"], 5),
+        (2, ["search", "billing"], 7),
         # At equal cost, more requests first: zeta over Search and delta.
         (5, ["search", "billing", "ads", "", "zeta"], 2),
         # At equal cost and requests the in-memory store orders by text.
@@ -209,14 +215,19 @@ def test_breakdown_folds_the_tail_into_other_and_keeps_untagged_apart() -> None:
     ],
 )
 def test_the_values_that_keep_a_row_are_the_most_expensive(
-    limit: int, kept: list[str], folded: int
+    limit: int, kept: list[str], folded_requests: int
 ) -> None:
     found = break_down_by_tag(_memory_window(), group_by="team", limit=limit)
     assert found is not None
     rows = order_breakdown(found.rows)
 
     assert [row["value"] for row in rows if row["kind"] == "value"] == kept
-    assert [row["values"] for row in rows if row["kind"] == "other"] == ([folded] if folded else [])
+    assert [row["requests"] for row in rows if row["kind"] == "other"] == (
+        [folded_requests] if folded_requests else []
+    )
+    # A row says what it is and what it adds up to. How many values the
+    # other row folds is not part of it.
+    assert all("values" not in row for row in rows)
 
 
 def _memory_window() -> list[Any]:
@@ -363,33 +374,31 @@ Group = tuple[str, int, int]
 
 def _histogram_reads(
     snapshots: list[dict[Group, list[int | None]]],
-    costs: dict[Group, list[tuple[str, int]]] | None = None,
+    costs: dict[Group, tuple[int, int]] | None = None,
 ) -> tuple[Any, list[tuple[list[tuple[int, int]], list[tuple[str, int, int, int]]]]]:
     """A histogram read over fake rows. Each read sees the next snapshot, then the last.
 
-    A group costs three for each generation, all Credits, unless ``costs``
-    gives its cost by stored usage type.
+    A group costs three credits for each generation and no BYOK, unless
+    ``costs`` gives its ``(credits, byok)``.
     """
     asked: list[tuple[list[tuple[int, int]], list[tuple[str, int, int, int]]]] = []
 
     def read(top: list[tuple[int, int]], opened: list[tuple[str, int, int, int]]) -> list[dict[str, Any]]:
         groups = snapshots[min(len(asked), len(snapshots) - 1)]
         asked.append((top, opened))
-        return [
-            {
+        rows = []
+        for (kind, hash_a, hash_b), elapsed in groups.items():
+            credit, byok = (costs or {}).get((kind, hash_a, hash_b), (3 * len(elapsed), 0))
+            rows.append({
                 "kind": kind, "hash_a": hash_a, "hash_b": hash_b,
-                "requests": len(elapsed),
-                "cost_by_usage_type": (costs or {}).get(
-                    (kind, hash_a, hash_b), [("Credits", 3 * len(elapsed))]
-                ),
+                "requests": len(elapsed), "cost_microdollars": credit, "byok_microdollars": byok,
                 "prompt_tokens": 5 * len(elapsed),
                 "completion_tokens": len(elapsed),
                 "histogram": _histogram(
                     elapsed, {cell[3] for cell in opened if cell[:3] == (kind, hash_a, hash_b)}
                 ),
-            }
-            for (kind, hash_a, hash_b), elapsed in groups.items()
-        ]
+            })
+        return rows
 
     return read, asked
 
@@ -415,10 +424,10 @@ def _breakdown_of(snapshots: list[dict[Group, list[int | None]]]) -> tuple[Any, 
     return found.rows, [opened for _top, opened in asked]
 
 
-def _totals_row(digest: int, value: str, usage_type: str, requests: int, cost: int) -> dict[str, Any]:
+def _totals_row(digest: int, value: str, requests: int, credit: int) -> dict[str, Any]:
     # The second hash is the first plus one: enough for a fake.
-    return {"hash_a": digest, "hash_b": digest + 1, "usage_type": usage_type, "value": value,
-            "requests": requests, "cost_microdollars": cost}
+    return {"hash_a": digest, "hash_b": digest + 1, "value": value, "requests": requests,
+            "credit_microdollars": credit}
 
 
 def test_breakdown_ranks_the_candidates_by_credit_cost_then_requests_then_text() -> None:
@@ -427,9 +436,7 @@ def test_breakdown_ranks_the_candidates_by_credit_cost_then_requests_then_text()
     def candidates(count: int) -> dict[str, Any]:
         asked.append(("candidates", count))
         return {
-            # The estimate is one too high. With every value listed, the
-            # count of the list is used and not the estimate.
-            "distinct_values": 6,
+            "distinct_values": 5,
             # Most generations first, then most cost: the two lists overlap.
             "by_requests": [(40, 9, 0), (10, 4, 0), (20, 2, 0), (30, 2, 0), (50, 1, 0)],
             "by_cost": [(40, 900, 0), (10, 12, 0), (20, 6, 0), (30, 6, 0), (50, 6, 0)],
@@ -438,15 +445,14 @@ def test_breakdown_ranks_the_candidates_by_credit_cost_then_requests_then_text()
     def totals(digests: list[int]) -> list[dict[str, Any]]:
         asked.append(("totals", digests))
         return [
-            _totals_row(10, "search", "Credits", 4, 12),
+            _totals_row(10, "search", 4, 12),
             # Equal in credit cost: more generations first, then the text.
-            _totals_row(20, "beta", "Credits", 2, 6),
-            _totals_row(30, "alpha", "Credits", 2, 6),
-            _totals_row(50, "solo", "Credits", 1, 6),
-            # The most cost of all, none of it credits: " byok " and "BYOK"
-            # are BYOK by the rule a generation is billed under.
-            _totals_row(40, "own-keys", "BYOK", 5, 500),
-            _totals_row(40, "own-keys", " byok ", 4, 400),
+            _totals_row(20, "beta", 2, 6),
+            _totals_row(30, "alpha", 2, 6),
+            _totals_row(50, "solo", 1, 6),
+            # The most cost and the most generations of all, none of it
+            # credits: BYOK cost does not rank a value.
+            _totals_row(40, "own-keys", 9, 0),
         ]
 
     groups: dict[Group, list[int | None]] = {
@@ -472,11 +478,10 @@ def test_breakdown_ranks_the_candidates_by_credit_cost_then_requests_then_text()
     assert [top for top, _opened in reads] == [[(10, 11), (30, 31), (20, 21)]] * 2
     assert found == TagBreakdown(
         [
-            _row("value", "search", 1, 4, 12, 0, 20, 4, 400),
-            _row("value", "alpha", 1, 2, 6, 0, 10, 2, 225),
-            _row("value", "beta", 1, 2, 6, 0, 10, 2, 300),
-            # Five values, three with a row: two folded, counted exactly.
-            _row("other", None, 2, 10, 30, 0, 50, 10, 700),
+            _row("value", "search", 4, 12, 0, 20, 4, 400),
+            _row("value", "alpha", 2, 6, 0, 10, 2, 225),
+            _row("value", "beta", 2, 6, 0, 10, 2, 300),
+            _row("other", None, 10, 30, 0, 50, 10, 700),
         ],
         approximate=False,
     )
@@ -496,43 +501,41 @@ def test_a_wide_key_is_ranked_from_what_the_sketches_found_and_says_so(
 
         def totals(digests: list[int]) -> list[dict[str, Any]]:
             asked.append(digests)
-            return [_totals_row(digest, f"value-{digest}", "Credits", 1, 100 - digest) for digest in digests]
+            return [_totals_row(digest, f"value-{digest}", 1, 100 - digest) for digest in digests]
 
         return clickhouse_breakdown(
             read_candidates=lambda _count: facts, read_candidate_totals=totals, read_histogram=read, limit=1,
         )
 
     # A requests list as long as it was allowed to be may have left values
-    # out: the ranking is approximate, and the folded values are estimated.
+    # out: the ranking is approximate.
     full = breakdown({"distinct_values": 40, **listed})
     assert full is not None and full.approximate is True
     # The candidates are the heaviest by generations and the heaviest by
     # cost, each once: a value heavy in cost alone is still ranked.
     assert asked == [[10, 20, 30]]
-    assert [(row["kind"], row["value"], row["values"]) for row in full.rows] == [
-        ("value", "value-10", 1), ("other", None, 39),
-    ]
+    assert [(row["kind"], row["value"]) for row in full.rows] == [("value", "value-10"), ("other", None)]
     # So may a list whose counts the sketch could not vouch for.
     doubtful = breakdown({"distinct_values": 1, "by_requests": [(10, 4, 3)], "by_cost": []})
     assert doubtful is not None and doubtful.approximate is True
-    # A shorter list with exact counts is every value.
+    # A shorter list with exact counts is every value the read saw.
     exact = breakdown({"distinct_values": 1, "by_requests": [(10, 4, 0)], "by_cost": [(10, 12, 0)]})
     assert exact is not None and exact.approximate is False
 
 
 def test_values_that_arrive_after_the_candidates_are_folded_and_never_ranked() -> None:
-    """The reviewer's interleaving: one value when the candidates are read,
-    a million more before the next statement."""
+    """One value when the candidates are read, a million more before the
+    next statement."""
     asked: list[list[int]] = []
 
     def totals(digests: list[int]) -> list[dict[str, Any]]:
         asked.append(digests)
-        return [_totals_row(10, "search", "Credits", 1, 100)]
+        return [_totals_row(10, "search", 1, 100)]
 
     arrived = 1_000_000
     read, reads = _histogram_reads(
         [{("value", 10, 11): [200], ("other", 0, 0): [300] * 3}],
-        costs={("other", 0, 0): [("Credits", arrived)]},
+        costs={("other", 0, 0): (arrived, 0)},
     )
 
     found = clickhouse_breakdown(
@@ -550,33 +553,35 @@ def test_values_that_arrive_after_the_candidates_are_folded_and_never_ranked() -
     assert [top for top, _opened in reads] == [[(10, 11)]] * 2
     assert found is not None
     assert found.rows == [
-        _row("value", "search", 1, 1, 3, 0, 5, 1, 200),
-        # Everything that arrived is in one row.
-        _row("other", None, 1, 3, arrived, 0, 15, 3, 300),
+        _row("value", "search", 1, 3, 0, 5, 1, 200),
+        # Everything that arrived is in one row, which says what it adds up
+        # to and makes no claim about how many values that is.
+        _row("other", None, 3, arrived, 0, 15, 3, 300),
     ]
+    assert "values" not in found.rows[1]
 
 
-def test_a_byok_generation_that_arrives_between_reads_is_counted_as_byok() -> None:
-    """The reviewer's interleaving: the candidates and their totals see one
-    Credits generation costing 100; the tenant's first BYOK generation,
-    costing 900 with the same tag, arrives before the histogram is read."""
+def test_the_split_between_credits_and_byok_is_the_last_reads_own() -> None:
+    """The candidates and their totals see one Credits generation costing
+    100; the tenant's first BYOK generation, costing 900 with the same tag,
+    arrives before the histogram is read. The statement that sums cost tells
+    the two apart itself, so nothing an earlier read saw decides the split."""
     read, _reads = _histogram_reads(
-        [{("value", 10, 11): [200, 400]}],
-        costs={("value", 10, 11): [("BYOK", 900), ("Credits", 100)]},
+        [{("value", 10, 11): [200, 400]}], costs={("value", 10, 11): (100, 900)},
     )
 
     found = clickhouse_breakdown(
         read_candidates=lambda _count: {
             "distinct_values": 1, "by_requests": [(10, 1, 0)], "by_cost": [(10, 100, 0)],
         },
-        read_candidate_totals=lambda _digests: [_totals_row(10, "search", "Credits", 1, 100)],
+        read_candidate_totals=lambda _digests: [_totals_row(10, "search", 1, 100)],
         read_histogram=read,
         limit=50,
     )
 
     # What a fresh read gives: 100 of credits and 900 of BYOK, not 1,000 of credits.
     assert found is not None
-    assert found.rows == [_row("value", "search", 1, 2, 100, 900, 10, 2, 300)]
+    assert found.rows == [_row("value", "search", 2, 100, 900, 10, 2, 300)]
 
 
 def test_a_candidate_gone_before_the_totals_or_the_histogram_keeps_no_row() -> None:
@@ -588,9 +593,7 @@ def test_a_candidate_gone_before_the_totals_or_the_histogram_keeps_no_row() -> N
         },
         # The first candidate's rows were replaced away before this read, and
         # the third's before the histogram.
-        read_candidate_totals=lambda _digests: [
-            _totals_row(20, "ads", "Credits", 1, 5), _totals_row(30, "billing", "Credits", 1, 9),
-        ],
+        read_candidate_totals=lambda _digests: [_totals_row(20, "ads", 1, 5), _totals_row(30, "billing", 1, 9)],
         read_histogram=read,
         limit=50,
     )
@@ -598,6 +601,97 @@ def test_a_candidate_gone_before_the_totals_or_the_histogram_keeps_no_row() -> N
     assert [top for top, _opened in reads] == [[(30, 31), (20, 21)]] * 2
     assert found is not None
     assert [(row["kind"], row["value"]) for row in found.rows] == [("value", "ads"), ("untagged", None)]
+
+
+# ------------------------------------------- what the final rows can vouch for
+
+
+def _summary_of(found: TagBreakdown) -> dict[str, Any]:
+    return tag_summary(
+        read_keys=lambda: [{"key": "team", "requests": 1, "overcount": 0}],
+        read_values=lambda _key: [],
+        read_breakdown=lambda _key, _limit: found,
+        group_by="team",
+        tag_key=None,
+    )
+
+
+def test_a_ranking_that_drifted_after_it_was_chosen_is_reported_approximate() -> None:
+    """The reviewer's reproduction: 51 values costing 10 each; after the
+    totals choose 50, another generation of the 51st, costing 1,000, arrives
+    before the histogram totals them."""
+    chosen = [(index, index + 1) for index in range(100, 150)]
+    groups: dict[Group, list[int | None]] = {("value", a, b): [100] for a, b in chosen}
+    groups["other", 0, 0] = [100, 100]
+    costs = {group: (10, 0) for group in groups}
+    costs["other", 0, 0] = (1_010, 0)
+    read, _reads = _histogram_reads([groups], costs=costs)
+
+    found = clickhouse_breakdown(
+        read_candidates=lambda _count: {
+            "distinct_values": 51, "by_requests": [(index, 1, 0) for index in range(100, 151)], "by_cost": [],
+        },
+        read_candidate_totals=lambda digests: [
+            _totals_row(digest, f"value-{digest}", 1, 10) for digest in digests
+        ],
+        read_histogram=read,
+        limit=50,
+    )
+
+    # Nothing the reads know says the candidates were incomplete.
+    assert found is not None and found.approximate is False
+    summary = _summary_of(found)
+    # The final rows do: Other holds 1,010 and the smallest named row 10, so
+    # a value inside Other may belong among the named ones.
+    assert [row["cost_microdollars"] for row in summary["breakdown"]] == [10] * 50 + [1_010]
+    assert summary["breakdown_approximate"] is True
+
+
+@pytest.mark.parametrize(
+    ("other", "approximate"),
+    [
+        # No single folded value can outweigh the sum of them all: while that
+        # sum is no larger than the smallest named row, the cut is right.
+        ((5, 9), False),
+        ((10, 2), False),
+        # Larger in credit cost, or equal in it with more generations.
+        ((11, 1), True),
+        ((10, 3), True),
+        # The conservative side of the rule: many small values add up too.
+        ((40, 40), True),
+    ],
+)
+def test_the_ranking_is_vouched_for_while_other_is_no_larger_than_a_named_row(
+    other: tuple[int, int], approximate: bool
+) -> None:
+    rows = [
+        _row("value", "search", 5, 90, 0, 1, 1, None),
+        _row("value", "ads", 2, 10, 500, 1, 1, None),
+        _row("other", None, other[1], other[0], 7_000, 1, 1, None),
+        _row("untagged", None, 99, 9_999, 0, 1, 1, None),
+    ]
+
+    assert storage_activity_tags.other_outweighs_a_named_row(rows) is approximate
+    # BYOK cost and the untagged row are not part of the ranking.
+    assert _summary_of(TagBreakdown(rows))["breakdown_approximate"] is approximate
+    # What the reads know still counts when the rows have nothing to say.
+    assert _summary_of(TagBreakdown(rows, approximate=True))["breakdown_approximate"] is True
+
+
+def test_rows_are_ordered_by_the_totals_they_show_and_no_other_row_means_exact() -> None:
+    # Chosen in one order, totalled later in another.
+    drifted = TagBreakdown([
+        _row("value", "first", 1, 10, 0, 1, 1, None),
+        _row("value", "second", 1, 70, 0, 1, 1, None),
+        _row("untagged", None, 5, 500, 0, 1, 1, None),
+    ])
+
+    summary = _summary_of(drifted)
+
+    assert [row["value"] for row in summary["breakdown"]] == ["second", "first", None]
+    assert summary["breakdown_approximate"] is False
+    # An other row with no named row beside it vouches for nothing.
+    assert storage_activity_tags.other_outweighs_a_named_row([_row("other", None, 1, 1, 0, 1, 1, None)]) is True
 
 
 def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_known() -> None:
@@ -616,12 +710,9 @@ def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_kno
             "by_cost": [(11, 12, 0), (21, 6, 0), (31, 1, 0)],
         },
         read_candidate_totals=lambda _digests: [
-            {"hash_a": 11, "hash_b": 12, "usage_type": "Credits", "value": "search",
-             "requests": 4, "cost_microdollars": 12},
-            {"hash_a": 21, "hash_b": 22, "usage_type": "Credits", "value": "ads",
-             "requests": 2, "cost_microdollars": 6},
-            {"hash_a": 31, "hash_b": 32, "usage_type": "Credits", "value": "zzz",
-             "requests": 6, "cost_microdollars": 1},
+            {"hash_a": 11, "hash_b": 12, "value": "search", "requests": 4, "credit_microdollars": 12},
+            {"hash_a": 21, "hash_b": 22, "value": "ads", "requests": 2, "credit_microdollars": 6},
+            {"hash_a": 31, "hash_b": 32, "value": "zzz", "requests": 6, "credit_microdollars": 1},
         ],
         read_histogram=read,
         limit=2,
@@ -629,12 +720,12 @@ def test_breakdown_opens_each_groups_own_middle_slots_and_stops_when_all_are_kno
 
     assert found is not None
     assert found.rows == [
-        _row("value", "search", 1, 4, 12, 0, 20, 4, 400),
-        _row("value", "ads", 1, 2, 6, 0, 10, 2, 225),
+        _row("value", "search", 4, 12, 0, 20, 4, 400),
+        _row("value", "ads", 2, 6, 0, 10, 2, 225),
         # Three values, two with a row: one folded. Six elapsed times: the
         # middle two are 900 and 1100, in two slots.
-        _row("other", None, 1, 6, 18, 0, 30, 6, 1000),
-        _row("untagged", None, 0, 2, 6, 0, 10, 2, 45_150),
+        _row("other", None, 6, 18, 0, 30, 6, 1000),
+        _row("untagged", None, 2, 6, 0, 10, 2, 45_150),
     ]
     # Two reads: one that opens nothing, one that opens each group's own
     # middle slots and no other group's.
@@ -708,8 +799,8 @@ def test_a_group_whose_middle_moved_is_read_again_and_the_others_stay_settled() 
         [("other", 0, 0, 0), ("untagged", 0, 0, 4)],
     ]
     assert rows == [
-        _row("other", None, 1, 2, 6, 0, 10, 2, 200),
-        _row("untagged", None, 0, 7, 21, 0, 35, 7, 4200),
+        _row("other", None, 2, 6, 0, 10, 2, 200),
+        _row("untagged", None, 7, 21, 0, 35, 7, 4200),
     ]
 
 
@@ -732,7 +823,7 @@ def test_too_many_values_is_decided_by_the_candidates_read_itself() -> None:
     # At the limit the breakdown goes ahead.
     read, _reads = _histogram_reads([{("value", 10, 11): [100]}])
     at_limit = breakdown(
-        limit, totals=lambda _digests: [_totals_row(10, "search", "Credits", 1, 5)], histogram=read,
+        limit, totals=lambda _digests: [_totals_row(10, "search", 1, 5)], histogram=read,
     )
     assert at_limit is not None and [row["value"] for row in at_limit.rows] == ["search"]
 
@@ -750,8 +841,8 @@ def test_breakdown_gives_up_on_a_median_that_keeps_moving() -> None:
     # group's median is absent.
     assert len(asked) == TAG_HISTOGRAM_READS == 4
     assert rows == [
-        _row("other", None, 1, 2, 6, 0, 10, 2, 200),
-        _row("untagged", None, 0, 5, 15, 0, 25, 5, None),
+        _row("other", None, 2, 6, 0, 10, 2, 200),
+        _row("untagged", None, 5, 15, 0, 25, 5, None),
     ]
 
 
@@ -825,9 +916,12 @@ def test_tag_reads_bind_every_value_and_cover_the_whole_window(name: str) -> Non
         assert sql.index("groupArray(") < sql.index("FROM\n(\n") < sql.index("FROM activity_generations FINAL")
     else:
         assert "groupArray(" not in sql
-    # No statement is told which usage types are BYOK: each groups by the
-    # stored usage type and the caller decides.
-    assert "byok" not in sql.lower() and "byok" not in bound
+    # No statement is told which usage types are BYOK, and none groups by
+    # the stored usage type: the two that sum cost split it in two with one
+    # fixed expression.
+    uses = {"totals": 1, "histogram": 2}.get(name.split("-")[0], 0)
+    assert sql.count(_TAG_IS_BYOK) == uses and "byok" not in bound
+    assert "usage_type" not in sql.replace(_TAG_IS_BYOK, "")
     if name in {"keys", "values"}:
         assert "topK(" in sql and "'counts'" in sql and "GROUP BY" not in sql
     if name.startswith("candidates"):
@@ -839,12 +933,12 @@ def test_tag_reads_bind_every_value_and_cover_the_whole_window(name: str) -> Non
         assert "topK({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}])) AS by_requests" in sql
         assert bound["candidates"] == "2000"
     if name.startswith("totals"):
-        # Only the named candidates are grouped, by hashes and usage type.
+        # Only the named candidates are grouped, by the two hashes alone.
         assert "AND cityHash64(tags[{group_by:String}]) IN {candidates:Array(UInt64)}\n" in sql
-        assert "GROUP BY hash_a, hash_b, usage_type\n" in sql
+        assert "GROUP BY hash_a, hash_b\n" in sql
         assert bound["candidates"] == "[1,3]"
     if name.startswith("histogram"):
-        assert "sumMap([toString(usage_type)], [total_cost_microdollars]) AS cost_at_value" in sql
+        assert "sumMap" not in sql
         # The helper's own grouping, with the tag group in front, then one
         # row a group.
         assert "  GROUP BY kind, hash_a, hash_b, slot, elapsed_value\n)\nGROUP BY kind, hash_a, hash_b\n" in sql
@@ -874,11 +968,11 @@ def test_reader_rows_are_typed_whatever_the_profile_quotes() -> None:
             "candidates": [{"distinct_values": "7",
                             "by_cost": [["18446744073709551615", "12", "0"]],
                             "by_requests": [["18446744073709551615", "4", "0"], [11, 2, 1]]}],
-            "totals": [{"hash_a": "18446744073709551615", "hash_b": 2, "usage_type": "BYOK",
-                        "named_value": "search", "requests": "4", "cost_microdollars": "12"}],
+            "totals": [{"hash_a": "18446744073709551615", "hash_b": 2, "named_value": "search",
+                        "requests": "4", "credit_microdollars": "12"}],
             # A packed histogram: -1 stands for NULL, and 64-bit counts are quoted.
             "histogram": [{"kind": "other", "hash_a": "0", "hash_b": "0", "requests": "6",
-                           "cost_by_usage_type": [["BYOK", "Credits"], ["4", "7"]],
+                           "cost_microdollars": "7", "byok_microdollars": "4",
                            "prompt_tokens": "5", "completion_tokens": "2",
                            "histogram": [[-1, -1, "1"], [3, -1, "2"], [4, 4100, "3"]]}],
         }
@@ -897,12 +991,12 @@ def test_reader_rows_are_typed_whatever_the_profile_quotes() -> None:
         "by_requests": [(18446744073709551615, 4, 0), (11, 2, 1)],
     }
     assert client.activity_tag_candidate_totals(group_by="team", candidates=[11], **window) == [
-        {"hash_a": 18446744073709551615, "hash_b": 2, "usage_type": "BYOK", "value": "search",
-         "requests": 4, "cost_microdollars": 12}
+        {"hash_a": 18446744073709551615, "hash_b": 2, "value": "search", "requests": 4,
+         "credit_microdollars": 12}
     ]
     assert client.activity_tag_histogram(group_by="team", top=[], opened=[], **window) == [{
         "kind": "other", "hash_a": 0, "hash_b": 0, "requests": 6,
-        "cost_by_usage_type": [("BYOK", 4), ("Credits", 7)],
+        "cost_microdollars": 7, "byok_microdollars": 4,
         "prompt_tokens": 5, "completion_tokens": 2,
         "histogram": [(None, None, 1), (3, None, 2), (4, 4100, 3)],
     }]
@@ -914,17 +1008,6 @@ def test_reader_refuses_answers_it_does_not_know() -> None:
 
     with pytest.raises(RuntimeError, match="unknown row kind"):
         _client(unknown_kind).activity_tag_histogram(
-            tenant_id="t", group_by="team", start_at=START_AT, top=[], opened=[],
-        )
-
-    def lopsided(_request: httpx.Request) -> httpx.Response:
-        row = {"kind": "other", "hash_a": 0, "hash_b": 0, "requests": 1, "prompt_tokens": 1,
-               "completion_tokens": 1, "histogram": [], "cost_by_usage_type": [["BYOK", "Credits"], [4]]}
-        return httpx.Response(200, json={"data": [row]})
-
-    # A cost without its usage type could not be told apart: an error, not a guess.
-    with pytest.raises(ValueError):
-        _client(lopsided).activity_tag_histogram(
             tenant_id="t", group_by="team", start_at=START_AT, top=[], opened=[],
         )
 
@@ -953,14 +1036,13 @@ class _FakeAnalytics:
 
     def activity_tag_candidate_totals(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append(("totals", kwargs))
-        return [{"hash_a": 11, "hash_b": 12, "usage_type": "Credits", "value": "search",
-                 "requests": 3, "cost_microdollars": 9}]
+        return [{"hash_a": 11, "hash_b": 12, "value": "search", "requests": 3, "credit_microdollars": 9}]
 
     def activity_tag_histogram(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append(("histogram", kwargs))
         return [{
-            "kind": "value", "hash_a": 11, "hash_b": 12, "requests": 3,
-            "cost_by_usage_type": [("Credits", 9)], "prompt_tokens": 30, "completion_tokens": 15,
+            "kind": "value", "hash_a": 11, "hash_b": 12, "requests": 3, "cost_microdollars": 9,
+            "byok_microdollars": 0, "prompt_tokens": 30, "completion_tokens": 15,
             "histogram": [(None, None, 3)],
         }]
 
@@ -986,7 +1068,7 @@ def test_store_reads_one_tenant_and_passes_the_filter_to_every_breakdown_read() 
         ("totals", {"group_by": "team", "candidates": [11], **window, **tag}),
         ("histogram", {"group_by": "team", "top": [(11, 12)], "opened": [], **window, **tag}),
     ]
-    assert summary["breakdown"] == [_row("value", "search", 1, 3, 9, 0, 30, 15, None)]
+    assert summary["breakdown"] == [_row("value", "search", 3, 9, 0, 30, 15, None)]
     for _name, kwargs in fake.calls:
         assert WORKSPACE not in kwargs.values()
 
@@ -1067,19 +1149,19 @@ def test_the_agreed_default_summary_is_the_expected_one() -> None:
         "keys_approximate": False,
         "group_by": "team",
         "breakdown": [
-            _row("value", "search", 1, 4, 1350, 0, 190, 85, 400),
-            _row("value", "billing", 1, 1, 800, 0, 80, 40, None),
+            _row("value", "search", 4, 1350, 0, 190, 85, 400),
+            _row("value", "billing", 1, 800, 0, 80, 40, None),
             # The delivery of g02 that was replaced is not counted: FINAL in
             # ClickHouse, the last write in memory. Counted, it would make
             # three "ads" requests costing 811.
-            _row("value", "ads", 1, 2, 700, 500, 130, 55, 225),
-            _row("value", "", 1, 1, 20, 0, 5, 5, 1000),
-            _row("value", "zeta", 1, 2, 10, 0, 4, 3, 850),
-            _row("value", "Search", 1, 1, 10, 0, 2, 1, 700),
+            _row("value", "ads", 2, 700, 500, 130, 55, 225),
+            _row("value", "", 1, 20, 0, 5, 5, 1000),
+            _row("value", "zeta", 2, 10, 0, 4, 3, 850),
+            _row("value", "Search", 1, 10, 0, 2, 1, 700),
             # One millisecond below the tag histogram's ceiling; "billing",
             # exactly at it, has no median.
-            _row("value", "delta", 1, 1, 10, 0, 4, 2, 4_194_303),
-            _row("untagged", None, 0, 2, 100, 0, 17, 7, 45_150),
+            _row("value", "delta", 1, 10, 0, 4, 2, 4_194_303),
+            _row("untagged", None, 2, 100, 0, 17, 7, 45_150),
         ],
         "breakdown_too_many_values": False,
         "breakdown_approximate": False,
@@ -1100,25 +1182,25 @@ def test_the_agreed_cut_and_filtered_summaries_are_the_expected_ones() -> None:
     with limits({"TAG_VALUE_LIMIT": 2}):
         by_cost = store.activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
     assert by_cost["breakdown"] == [
-        _row("value", "search", 1, 4, 1350, 0, 190, 85, 400),
-        _row("value", "billing", 1, 1, 800, 0, 80, 40, None),
-        _row("other", None, 5, 7, 750, 500, 145, 66, 800),
-        _row("untagged", None, 0, 2, 100, 0, 17, 7, 45_150),
+        _row("value", "search", 4, 1350, 0, 190, 85, 400),
+        _row("value", "billing", 1, 800, 0, 80, 40, None),
+        _row("other", None, 7, 750, 500, 145, 66, 800),
+        _row("untagged", None, 2, 100, 0, 17, 7, 45_150),
     ]
     with limits({"TAG_VALUE_LIMIT": 5}):
         by_requests = store.activity_tag_summary(WORKSPACE, start_at=START_AT, group_by="team")
     assert by_requests["breakdown"][-2:] == [
-        _row("other", None, 2, 2, 20, 0, 6, 3, 2_097_501),
-        _row("untagged", None, 0, 2, 100, 0, 17, 7, 45_150),
+        _row("other", None, 2, 20, 0, 6, 3, 2_097_501),
+        _row("untagged", None, 2, 100, 0, 17, 7, 45_150),
     ]
 
     filtered = store.activity_tag_summary(
         WORKSPACE, start_at=START_AT, group_by="environment", tag_key="team", tag_value="search"
     )
     assert filtered["breakdown"] == [
-        _row("value", "production", 1, 2, 1200, 0, 140, 70, 300),
-        _row("value", "staging", 1, 1, 100, 0, 30, 10, 600),
-        _row("untagged", None, 0, 1, 50, 0, 20, 5, None),
+        _row("value", "production", 2, 1200, 0, 140, 70, 300),
+        _row("value", "staging", 1, 100, 0, 30, 10, 600),
+        _row("untagged", None, 1, 50, 0, 20, 5, None),
     ]
     # The value list describes the whole window, not the filtered rows.
     assert filtered["filter_values"] == [
@@ -1142,6 +1224,30 @@ def test_the_agreed_cut_and_filtered_summaries_are_the_expected_ones() -> None:
     assert store.activity_tag_summary(EMPTY_WORKSPACE, start_at=START_AT)["keys"] == []
 
 
+def test_every_spelling_of_the_usage_type_is_classed_as_coerce_classes_it() -> None:
+    # What UsageType.coerce decides, spelled out, so that the cases cannot
+    # all fall on one side unnoticed.
+    byok = [UsageType.coerce(spelling).is_byok() for spelling in USAGE_TYPE_SPELLINGS]
+    assert byok == [True] * 9 + [False] * 8
+
+    from_sql = sql_store(recorded_client([])).activity_tag_summary(
+        SPELLINGS_WORKSPACE, start_at=START_AT, group_by="team"
+    )
+
+    # One row for each spelling, each with a cost no other row has: the SQL
+    # put it under BYOK exactly when coerce does, and under credits otherwise.
+    rows = {row["value"]: row for row in from_sql["breakdown"]}
+    assert len(rows) == len(USAGE_TYPE_SPELLINGS) == 17
+    for index, is_byok in enumerate(byok):
+        row = rows[f"spelling-{index:02d}"]
+        split = (row["cost_microdollars"], row["byok_microdollars"])
+        assert split == ((0, 2**index) if is_byok else (2**index, 0)), repr(USAGE_TYPE_SPELLINGS[index])
+    # The in-memory store, which holds what coerce returned, agrees row for row.
+    assert from_sql == _memory_store().activity_tag_summary(
+        SPELLINGS_WORKSPACE, start_at=START_AT, group_by="team"
+    )
+
+
 def test_a_tie_at_the_cut_is_decided_by_text_in_both_stores() -> None:
     # Six rows of seven values: "Search" and "delta" are equal in cost and in
     # requests, and the last row goes to the one that sorts first.
@@ -1153,7 +1259,9 @@ def test_a_tie_at_the_cut_is_decided_by_text_in_both_stores() -> None:
 
     kept = [row["value"] for row in from_sql["breakdown"] if row["kind"] == "value"]
     assert kept == ["search", "billing", "ads", "", "zeta", "Search"]
-    assert from_sql["breakdown"][6] == _row("other", None, 1, 1, 10, 0, 4, 2, 4_194_303)
+    assert from_sql["breakdown"][6] == _row("other", None, 1, 10, 0, 4, 2, 4_194_303)
+    # Other is no larger than the smallest named row, so the rows themselves
+    # vouch for the cut.
     assert from_sql == from_memory and from_sql["breakdown_approximate"] is False
 
 
@@ -1161,7 +1269,8 @@ def test_a_tie_at_the_cut_is_decided_by_text_in_both_stores() -> None:
     ("kwargs", "overrides", "kept", "folded"),
     [
         # Three candidates by requests (search, ads, zeta) and three by cost
-        # (search, ads, billing): four values keep a row and three are folded.
+        # (search, ads, billing): four values keep a row and the other
+        # three, with one generation each, are folded.
         (APPROXIMATE_CASES[0][1], APPROXIMATE_CASES[0][2], ["search", "billing", "ads", "zeta"], 3),
         # A list as long as it was allowed to be is not known to be complete,
         # even when, as here, it does hold every value.
@@ -1181,7 +1290,7 @@ def test_a_key_with_more_values_than_candidates_is_ranked_approximately(
 
     assert (from_sql["breakdown_approximate"], from_memory["breakdown_approximate"]) == (True, False)
     assert [row["value"] for row in from_sql["breakdown"] if row["kind"] == "value"] == kept
-    assert [row["values"] for row in from_sql["breakdown"] if row["kind"] == "other"] == (
+    assert [row["requests"] for row in from_sql["breakdown"] if row["kind"] == "other"] == (
         [folded] if folded else []
     )
     # Which values keep a row is approximate. What the rows add up to is not.
@@ -1220,7 +1329,7 @@ def test_memory_and_clickhouse_agree_on_tagged_requests(
     assert from_sql.truncated is truncated
 
 
-# -------------------------------------------------------------------- privacy
+# ----------------------------------- what this process writes down, and where
 
 
 def test_tag_reads_send_every_bound_value_in_the_body_not_the_url() -> None:
@@ -1253,7 +1362,7 @@ def test_a_read_outside_the_private_scope_keeps_its_url_parameters() -> None:
 
     client = _client(handler)
     client.activity_generations(tenant_id="t", tag_key="team", limit=1)
-    with bound_values_stay_private():
+    with bound_values_in_the_body():
         client.activity_generations(tenant_id="t", tag_key="team", limit=1)
     client.activity_generations(tenant_id="t", limit=1)
 
@@ -1266,13 +1375,15 @@ def test_a_read_outside_the_private_scope_keeps_its_url_parameters() -> None:
 
 
 @pytest.mark.parametrize("level", [logging.INFO, logging.DEBUG])
-def test_no_log_record_carries_tag_text_even_with_http_client_logging_on(
+def test_no_application_log_record_carries_tag_text_even_with_http_client_logging_on(
     level: int, caplog: pytest.LogCaptureFixture
 ) -> None:
     """httpx logs every request's URL at INFO and httpcore traces at DEBUG.
 
     Production runs both loggers above those levels, but the promise is that
-    tag text is never logged, so this turns them on and reads every record.
+    this process logs no tag text, so this turns them on and reads every
+    record. ClickHouse's own query log is outside this process and outside
+    this test: it does record the values.
     """
     store = sql_store(recorded_client([]))
 

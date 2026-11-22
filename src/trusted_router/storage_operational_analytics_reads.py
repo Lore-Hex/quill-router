@@ -8,7 +8,7 @@ from typing import Any
 
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
-    bound_values_stay_private,
+    bound_values_in_the_body,
 )
 from trusted_router.storage_activity import (
     ActivityResult,
@@ -199,7 +199,7 @@ class OperationalAnalyticsReads:
     ) -> Any:
         normalized_limit = max(1, min(limit, TAG_EVENT_LIMIT))
         tenant_id = analytics_surrogate("workspace", workspace_id)
-        with bound_values_stay_private():
+        with bound_values_in_the_body():
             rows = self._require_operational_analytics().activity_generations(
                 tenant_id=tenant_id,
                 tag_key=tag_key,
