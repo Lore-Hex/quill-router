@@ -11,7 +11,12 @@ from types import SimpleNamespace
 import pytest
 
 from tests.shadow_observation_diagnostics import NativeLiveness
-from tests.shadow_observation_fixtures import NATIVE_RPC_SECONDS, native_rpc_deadlines
+from tests.shadow_observation_fixtures import (
+    NATIVE_RPC_SECONDS,
+    PROVISIONING_RPC_SECONDS,
+    native_rpc_deadlines,
+    provisioning_deadlines,
+)
 from tests.shadow_observation_gate import CommitGate
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation_r11 import SocketPairListener
@@ -105,6 +110,19 @@ def test_rpc_deadlines_include_default_admin_and_data_calls(timeout):
     assert 0 < calls[1]["timeout"] <= NATIVE_RPC_SECONDS
     call()
     assert "timeout" not in calls[-1]  # Scope restoration.
+
+
+def test_provisioning_ceiling_is_scoped_to_schema_setup():
+    from google.api_core.gapic_v1.method import _GapicCallable
+    calls = []
+    call = _GapicCallable(lambda **kw: calls.append(kw), retry=None, timeout=None, compression=None)
+    with native_rpc_deadlines():
+        with provisioning_deadlines():
+            call()
+            call(timeout=600)
+        call()  # The code under test keeps the native ceiling.
+    assert [c["timeout"] for c in calls] == [PROVISIONING_RPC_SECONDS, PROVISIONING_RPC_SECONDS, NATIVE_RPC_SECONDS]
+    assert NATIVE_RPC_SECONDS < PROVISIONING_RPC_SECONDS < 30  # Below the native module's test watchdog.
 
 
 def test_operation_polling_has_total_deadline():
