@@ -183,16 +183,26 @@ def test_finalize_ten_statement_native_readback(c1_database, monkeypatch, window
     # complementary, so a stale or never-set window rolls forward in place.
     assert result["attempts"] == 1
     [(statements, code, counts)] = batches
-    # The two-commit finalize has ten statements; the one-commit settle adds
-    # the intent's INSERT and its two retention clears. Either way the counter
-    # releases are last: the credit, then the key's two window forms.
-    assert len(statements) == (10 if flow == "two_commit" else 12)
+    # The two-commit finalize has eleven statements; the one-commit settle
+    # adds the intent's INSERT and its two retention clears. Either way the
+    # counter releases are last: the credit row's lock statement, the credit
+    # release, then the key's two window forms.
+    assert len(statements) == (11 if flow == "two_commit" else 13)
     current = int(window == "current")
-    assert code == 0 and counts[-3:] == [1, current, 1 - current]
+    # The lock statement and the release behind it both report the one row:
+    # the second sees the first's unchanged write.
+    assert code == 0 and counts[-4:] == [1, 1, current, 1 - current]
     if flow == "two_commit":
-        assert counts == [1] * 8 + [current, 1 - current]
-    assert "UPDATE tr_credit_balance" in statements[-3][0]
-    assert "UPDATE tr_key_limit" in statements[-2][0] and "UPDATE tr_key_limit" in statements[-1][0]
+        assert counts == [1] * 9 + [current, 1 - current]
+    assert statements[-4][0].startswith(
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance "
+        "SET reserved = reserved, total_usage = total_usage "
+    )
+    assert statements[-3][0].startswith("UPDATE tr_credit_balance SET reserved = reserved - @hold")
+    assert all(
+        statements[index][0].startswith("@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit")
+        for index in (-2, -1)
+    )
     # A fresh snapshot after commit proves rejected batch writes were rolled
     # back: the fallback releases and charges exactly once even after rollover.
     with database.snapshot(multi_use=True) as snapshot:

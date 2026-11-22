@@ -1427,18 +1427,33 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     # A typed miss can stage the guarded counters, but discards the whole batch
     # before the fresh sequential attempt. Both attempts retain credit/key order.
     assert db.rollback_calls - rollbacks_before == expected_attempts - 1
+    hint = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
+    lock = (
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance "
+        "SET reserved = reserved, total_usage = total_usage "
+    )
+    folded_release = "UPDATE tr_credit_balance SET reserved = reserved - @hold, "
     for txn in finalize_txns:
         counter_sql = [sql for t, sql in calls if t == txn and (
-            sql.startswith("UPDATE tr_credit_balance") or sql.startswith("UPDATE tr_key_limit")
+            sql.removeprefix(hint).startswith(("UPDATE tr_credit_balance", "UPDATE tr_key_limit"))
         )]
-        assert counter_sql[0].startswith("UPDATE tr_credit_balance")
-        assert all(sql.startswith("UPDATE tr_key_limit") for sql in counter_sql[1:])
+        # The first touch of the credit row takes it exclusively: the batch's
+        # lock statement, with its unhinted release next, or the sequential
+        # release, which carries the hint itself. Every key release is hinted.
+        assert counter_sql[0].startswith(hint + "UPDATE tr_credit_balance")
+        credit_statements = 2 if counter_sql[0].startswith(lock) else 1
+        if credit_statements == 2:
+            assert counter_sql[1].startswith(folded_release) and "NOT EXISTS" in counter_sql[1]
+        else:
+            assert counter_sql[0].startswith(hint + folded_release)
+        assert len(counter_sql) > credit_statements
+        assert all(sql.startswith(hint + "UPDATE tr_key_limit") for sql in counter_sql[credit_statements:])
     statements = [sql for txn, sql in calls if txn == finalize_txn]
     key_release = next(
-        i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_key_limit")
+        i for i, sql in enumerate(statements) if sql.startswith(hint + "UPDATE tr_key_limit")
     )
     credit_release = next(
-        i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_credit_balance")
+        i for i, sql in enumerate(statements) if sql.startswith(hint + "UPDATE tr_credit_balance")
     )
     # Credit then key, both in the SAME transaction as the claim, after
     # authorization, outbox, generation and activity writes.
@@ -1446,11 +1461,16 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     before = statements[:credit_release]
     assert any(sql.startswith("UPDATE tr_gateway_authorization SET settled=true") for sql in before)
     assert not any("tr_key_limit" in sql or "tr_credit_balance" in sql for sql in before)
-    # Only key releases and the debt-indicator read may follow the credit lock.
+    # Only the batch's own credit release (behind its lock statement), key
+    # releases and the debt-indicator read may follow the credit lock.
     after_first_release = statements[credit_release + 1 :]
-    releases = [sql for sql in after_first_release if sql.startswith("UPDATE tr_key_limit")]
-    reads = [sql for sql in after_first_release if "FROM tr_trust_event" in sql]
-    assert len(releases) + len(reads) == len(after_first_release), after_first_release
+    folded = [sql for sql in after_first_release if sql.startswith(folded_release)]
+    assert len(folded) == int(statements[credit_release].startswith(lock))
+    assert after_first_release[:len(folded)] == folded
+    releases = [sql for sql in after_first_release if sql.startswith(hint + "UPDATE tr_key_limit")]
+    reads = [sql for sql in after_first_release
+             if "FROM tr_trust_event" in sql and sql not in folded]
+    assert len(folded) + len(releases) + len(reads) == len(after_first_release), after_first_release
     assert len(reads) <= 1
     assert statements[-1] == releases[-1], "key release is the last DML"
     # Money unchanged by the reorder.

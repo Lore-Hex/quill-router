@@ -15,10 +15,26 @@ from tests.fakes.spanner import _FakeTransaction
 
 StatementCalls = list[tuple[Any, str]]
 
-# The authorize-side reserves start with the exclusive-scan statement hint, as
-# recorded here: whitespace-normalized and lower-cased. The releases do not.
+# The authorize-side reserves and the settle-side releases start with the
+# exclusive-scan statement hint, as recorded here: whitespace-normalized and
+# lower-cased. The one release that cannot carry it (the folded batch's credit
+# release, which has a subquery) follows a hinted statement that only locks.
+HINT = "@{lock_scanned_ranges=exclusive} "
 RESERVE_CREDIT = "@{lock_scanned_ranges=exclusive} update tr_credit_balance set reserved = reserved + @est "
 RESERVE_KEY = "@{lock_scanned_ranges=exclusive} update tr_key_limit set reserved = reserved + @est "
+LOCK_CREDIT_RELEASE = (
+    "@{lock_scanned_ranges=exclusive} update tr_credit_balance "
+    "set reserved = reserved, total_usage = total_usage "
+)
+RELEASE_CREDIT_NO_DEBT = (
+    "update tr_credit_balance set reserved = reserved - @hold, total_usage = total_usage + @actual "
+)
+RELEASE_KEY = "@{lock_scanned_ranges=exclusive} update tr_key_limit set reserved = reserved - @hold, "
+
+
+def unhinted(sql: str) -> str:
+    """A recorded statement without its leading exclusive-scan hint."""
+    return sql.removeprefix(HINT)
 
 
 def record_statements(monkeypatch: pytest.MonkeyPatch) -> StatementCalls:
@@ -73,10 +89,14 @@ def no_counter_mutations(statements: list[str]) -> None:
 
 def credit_before_key(
     statements: list[str], *, key_last: bool = False, require_both: bool = True,
+    exclusive: bool = True,
 ) -> None:
     """Hot billing DML: no credit/recovery/pause access follows the first key.
 
-    Release paths additionally require the key UPDATE to be the final statement.
+    Release paths additionally require the key UPDATE to be the final statement,
+    and (exclusive, the default) that a transaction which releases a hold takes
+    each counter row exclusively at first touch. Only statement lists recorded
+    from a frozen copy of an older finalize pass exclusive=False.
     Failed transactions may exit before either table; require_both=False still
     checks the order of every access that actually happened.
     Authorize only requires credit before key: request INSERTs follow the key.
@@ -97,7 +117,24 @@ def credit_before_key(
         assert max(credit) < min(key), statements
     if key_last:
         assert key[-1] == len(statements) - 1, statements
-        assert statements[-1].startswith("update tr_key_limit"), statements
+        assert unhinted(statements[-1]).startswith("update tr_key_limit"), statements
+    if exclusive:
+        exclusive_first_touch(statements)
+
+
+def exclusive_first_touch(statements: list[str]) -> None:
+    """A transaction that writes a counter row takes it exclusively at first touch.
+
+    The first statement to name tr_credit_balance, and the first to name
+    tr_key_limit, in a transaction that releases a hold must carry the
+    exclusive-scan hint: a shared first touch is the lock upgrade that makes
+    simultaneous writers of one row abort each other.
+    """
+    for table in ("tr_credit_balance", "tr_key_limit"):
+        touching = [sql for sql in statements if f"update {table} " in sql or f"from {table} " in sql]
+        if not any(f"{table} set reserved = reserved - @hold" in sql for sql in touching):
+            continue
+        assert touching[0].startswith(HINT), touching[0]
 
 
 def authorize_credit_before_key(statements: list[str]) -> None:

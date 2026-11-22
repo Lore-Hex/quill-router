@@ -32,6 +32,7 @@ from tests.fakes.frozen_package import (
 from tests.fakes.requested_model_extension import compare_with_requested_model
 from tests.fakes.spanner import _FakeBatch, _FakeSnapshot, _FakeTransaction
 from tests.settle_drain_trace import normalize_legacy_drain_trace
+from tests.settle_release_lock_trace import normalize_release_lock_trace
 from tests.test_async_settle_handler import SUPPORTED, env, prepare
 from tests.test_async_settle_proof import catalog, legacy_body, restore, save
 from tests.test_settle_outbox_drain import _client
@@ -413,6 +414,12 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
     trace, counts = normalize_legacy_drain_trace(
         outputs[1][4], outputs[1][5], expected_recovery_reads=16, parameter_types=store._param_types,
     )
+    # Every release takes its counter row exclusively at the scan, which
+    # frozen main's releases do not: each case releases a credit hold and a
+    # key hold, and only those statements' hint and the folded batch's lock
+    # statement are taken out (tests/settle_release_lock_trace.py).
+    trace, changed = normalize_release_lock_trace(trace, parameter_types=store._param_types)
+    assert changed['key_hint'] and (changed['credit_hint'] or changed['lock']), changed
     outputs[1] = (*outputs[1][:4], trace, counts)
     from trusted_router.storage_models import generation_id_for_authorization
     compare_with_requested_model(

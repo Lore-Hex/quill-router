@@ -3,12 +3,14 @@
 Every synchronous authorize, settle and refund of a workspace with one credit
 shard writes the same ``tr_credit_balance`` row and, for a capped key, the
 same ``tr_key_limit`` row. A burst from one workspace puts dozens of those
-transactions inside Spanner at once. The reserves queue for the row (they
-scan it under the exclusive lock), but the settle and refund releases scan
-under a shared lock and upgrade, so they abort each other and are aborted by
-older reserves, and every abort redoes its statements on the same row
-(docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md, "Not repaired
-here"). The row then serves a fraction of what it can.
+transactions inside Spanner at once. The reserves, and since 2026-11-21 the
+settle and refund releases too, scan the row under the exclusive lock and
+queue for it (docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md, "The
+releases, November 21"). Before that the releases took a shared lock and
+upgraded, so they aborted each other and were aborted by older reserves, and
+every abort redid its statements on the same row. Queued or not, dozens of
+them then wait inside Spanner behind one another, each spending its own
+deadline.
 
 This gate lets ``width`` of a workspace's credit-row transactions from this
 process be inside Spanner at a time. The rest wait here for a bounded time

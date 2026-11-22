@@ -289,12 +289,14 @@ capacity.
 A workspace with one credit shard (every workspace starts with one) writes the
 same `tr_credit_balance` row on every synchronous authorize, settle and
 refund, and a capped key's `tr_key_limit` row beside it. The reserves scan
-under the exclusive lock and queue for the row. The settle and refund
-releases still scan under a shared lock and upgrade
+under the exclusive lock and queue for the row, and since 2026-11-21 so do
+the settle, refund and reap releases
 ([reserves on one row aborting each other](incidents/2026-11-10-reserve-lock-upgrade-aborts.md),
-"Not repaired here"). A burst from one such workspace therefore makes its
-releases abort each other and be aborted by older reserves, and every abort
-redoes its statements on the same row. The signature: in
+"The releases, November 21"). Until then the releases scanned under a shared
+lock and upgraded, so a burst from one such workspace made its releases
+abort each other and be aborted by older reserves, and every abort redid its
+statements on the same row. The signature of that upgrade, should an
+unhinted writer of these rows bring it back: in
 `SPANNER_SYS.TXN_STATS_TOP_MINUTE`, `tr_settle_one_commit` and `tr_finalize`
 show several aborts for each commit while `tr_authorize` shows few; authorize
 and settle both take seconds; `LOCK_STATS_TOP_MINUTE` puts the wait on one
@@ -347,22 +349,84 @@ whole request), and a transaction that needed more than what is left fails
 on its deadline where, ungated, it would have finished: a reserve answers
 the storage 503 the gateway retries, a one-commit settle defers to the
 drain, the snapshot settle answers its 503. During a burst the reserves of
-that workspace are slower by design: in the model that ships with the gate
-(`tests/test_workspace_billing_gate_storm_model.py`), fifty clients on one
-row have their reserve's median go from about two seconds to about four and
-its 99th percentile from about two to five, while no snapshot settle misses
-its two seconds where more than a hundred did, and the workspace's requests
-complete about half again as fast. The gateway waits 25 seconds for the
-response and retries a reserve only on a 5xx, so a reserve that waited is a
-slow 200, not a retry. That exchange is the point of the gate: the settle's
-503 pages and rolls deploys back; a few seconds on the bursting workspace's
-own reserves does neither.
+that workspace are slower by design, and by how much depends on how long
+each transaction holds its turn. While the releases still upgraded their
+lock a turn took a second or more: in the first bursts behind the gate many
+waiting reserves reached the five-second bound and went around it, most
+waiting settles reached theirs, and the snapshot settle's 503s fell but did
+not stop. With the releases taking the row exclusively a turn should be
+tens of milliseconds. The gateway waits 25 seconds for the response and
+retries a reserve only on a 5xx, so a reserve that waited is a slow 200, not
+a retry. That exchange is the point of the gate: the settle's 503 pages and
+rolls deploys back; a few seconds on the bursting workspace's own reserves
+does neither.
+
+The model that ships with the gate
+(`tests/test_workspace_billing_gate_storm_model.py`) compares these
+mechanisms. It is a model, not Spanner: the lock queue's order (wound-wait,
+a freed lock to the oldest waiter), the statement, commit and retry timings
+and the clients' behaviour are assumptions, and its default timings were too
+kind to the gate alone. Read its numbers as a comparison of mechanisms on
+the same assumptions, not as a forecast. Fifty clients over eight processes,
+gate on:
+
+- Set so that the earlier shape is as bad as it was (`MODEL_UPSTREAM=5`, a
+  five-second provider call; `MODEL_ABORT_COST=0.4`; `MODEL_UPGRADE_GAP=0.02`,
+  a 20 ms shared-lock window before the upgrade) and with the earlier
+  releases (`MODEL_HINTED_SETTLE=0`), it shows that shape: about six settle
+  aborts for each settle commit and more than three hundred snapshot settle
+  503s in forty seconds, with the bound at two seconds or at five.
+- The same settings with the hinted releases, two runs: a gate wait of about
+  a third of a second at the median and 1.35 seconds at the 90th percentile,
+  at most two waits in a run reaching their bound, at most about one settle
+  abort in a hundred settle commits and no snapshot settle past its two
+  seconds.
+
+Why the reserve's bound stays at five seconds. After the first bursts with
+the gate on, lowering `TR_WORKSPACE_BILLING_GATE_WAIT_MS` to two seconds was
+proposed: many waiting reserves reached the five-second bound, and
+successful billing calls of ten seconds or more began to page with the gate.
+With the hinted releases the model says not to. The bound decides where a
+saturated row's queue waits. A reserve that reaches it goes around the gate
+into Spanner, where it competes with the settles for the row and wound-wait
+favours the older transaction, so a lower bound moves the wait from the
+reserves (a slow 200) back onto the settles (a 503). Gate on, hinted
+releases, two runs each (four at two and five seconds in the first setting):
+
+| Setting | Bound | Snapshot settle 503s | Settle attempt p50, p99 | Reserve p99 | Gate waits that reached their bound |
+|---|---|---|---|---|---|
+| Saturated: default timings, 0.3 s provider call | 2 s | 0 | 1.2 to 1.4 s, 1.6 to 1.7 s | 3.1 to 3.2 s | about 240 |
+| | 3 s | 0 | 0.7 s, 1.1 to 1.2 s | 3.7 to 3.8 s | about 120 |
+| | 4 s | 0 | 0.36 s, 0.7 s | 4.3 to 4.4 s | 2 to 4 |
+| | 5 s | 0 | 0.36 s, 0.4 to 0.7 s | 4.4 s | 0 |
+| Slower: the same with `MODEL_SLOWDOWN=2` | gate off | 205 to 209 | 2.0 s, 2.07 s | 3.9 s | |
+| | 2 s | 182 to 192 | 2.0 s, 2.07 s | 5.0 to 5.1 s | about 280 |
+| | 3 s | 101 to 163 | 1.9 to 2.0 s, 2.05 to 2.07 s | 4.9 to 5.0 s | about 225 |
+| | 4 s | 68 to 72 | 1.8 s, 2.07 s | 5.9 to 6.0 s | about 180 |
+| | 5 s | 19 to 25 | 1.55 s, 2.03 to 2.04 s | 6.6 s | about 125 |
+| Calibrated, as above | 2 s | 0 | 0.1 s, 0.7 to 0.8 s | 2.1 s | 2 to 4 |
+| | 5 s | 0 | 0.1 s, 0.7 s | 2.1 s | 0 to 2 |
+
+In the calibrated setting the bound makes no difference. Wherever the row is
+saturated, each step down from five seconds costs settles: in the first
+setting the settles slow toward their budget and the model's own acceptance
+check (no more transactions on the rows at once than twice the number of
+processes) fails at two and three seconds; in the slower one the snapshot
+settle's 503s rise at every step, and at two seconds they are about what no
+gate gives. No modelled reserve took ten seconds at any bound; the longest
+took 6.7 seconds, at five seconds in the slower setting. The live
+ten-second calls came from bursts before the hinted releases, in which each
+turn took a second or more, so the first thing to read after they ship is
+whether those calls remain. If they do, a lower bound would trade them for
+settle 503s, by this model's account.
 
 What it is not. It is per process: the row still sees up to that many
 transactions from each instance, callers that reached a bound or are not
-gated run beside them, and releases from different instances can still
-abort each other. So it bounds the pile-up; it is not a hard limit on the
-row's concurrency and it does not remove the lock upgrade. The waiter caps
+gated run beside them, and transactions from different instances still
+meet on the row. So it bounds the pile-up; it is not a hard limit on the
+row's concurrency, and it is not what removed the lock upgrade: before the
+releases took the row exclusively, the first bursts behind the gate still
+aborted about as often and most waiters timed out. The waiter caps
 bound the queue, not the instance: a waiting request holds the request slot
 it would otherwise have held while waiting inside Spanner, and one
 workspace's holder, waiters and ungated requests can together fill an

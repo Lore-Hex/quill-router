@@ -2051,6 +2051,7 @@ def typed_finalize_atomic(
     from trusted_router.storage_gcp_counter_dml import (
         claim_reservation,
         insert_entity_dml_at,
+        lock_credit_release_statement,
         read_reservation,
         release_credit,
         release_credit_no_debt_statement,
@@ -2155,21 +2156,34 @@ def typed_finalize_atomic(
         sampled_floors = window_floors(utcnow()) if fold_tail else None
         if fold_tail:
             assert sampled_floors is not None
+            # The credit row's exclusive lock, taken where its release is
+            # about to scan it: the release keeps its tr_trust_event subquery
+            # and so cannot carry the hint itself (EXCLUSIVE_SCAN_HINT).
+            statements.append(lock_credit_release_statement(
+                pt, res["workspace_id"], res["credit_reserved_micro"],
+                shard=res["credit_shard"],
+            ))
             statements.append(release_credit_no_debt_statement(
                 pt, res["workspace_id"], res["credit_reserved_micro"], book_actual,
                 shard=res["credit_shard"],
             ))
             # The key's release in both window forms: the current one, which
-            # leaves the boundary columns unlocked (#1083), and the rolling one
-            # for a key with a window to roll forward. Exactly one matches.
+            # leaves the boundary columns out of its SET list (#1083), and the
+            # rolling one for a key with a window to roll forward. Exactly one
+            # matches. Both are hinted, so each takes the cells it scans
+            # exclusively, the boundary columns its predicate reads included,
+            # and the form that matches nothing keeps its lock (on the row, or
+            # on its key if the row is missing) until the transaction ends.
             for windows in ("current", "stale"):
                 statements.append(release_key_statement(
                     pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
                     book_to_byok=book_to_byok, window_floors=sampled_floors,
                     shard=res["key_shard"], windows=windows,
                 ))
-            counts.extend([(1,), (0, 1), (0, 1)])
-            reasons.extend(["credit_release_zero", None, None])
+            counts.extend([(1,), (1,), (0, 1), (0, 1)])
+            # The lock statement misses exactly where the release would (a
+            # hold the row no longer covers, a row marked in debt).
+            reasons.extend(["credit_release_zero", "credit_release_zero", None, None])
 
         def check_prefix(row_counts: Sequence[int]) -> None:
             for count, reason, allowed in zip(row_counts, reasons, counts, strict=False):
