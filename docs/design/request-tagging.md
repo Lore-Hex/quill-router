@@ -18,7 +18,12 @@ TrustedRouter needs two related but distinct metadata contracts:
    cost center, or other non-sensitive business dimensions.
 
 Tags are metadata only. They never enter a prompt, provider request, model
-context, durable log message, Sentry event, or public analytics page.
+context or public analytics page, and the gateway and the control plane never
+write them to a request log, an application log or Sentry. One place outside
+those services does record them: a tag key or value used as a filter in an
+analytics read appears in ClickHouse's own query log on the analytics servers,
+which only administrators can read and which is kept for 30 days. Section 6.5
+says why and names the follow-up.
 
 ## 2. Source compatibility
 
@@ -137,7 +142,8 @@ effective set must not exceed 50. Updating an API key changes only future
 requests; historical generations remain immutable.
 
 The key list/get responses return default tags. Raw API keys and tag values are
-never included in logs.
+never included in the request logs, application logs or Sentry events that the
+gateway and the control plane write.
 
 ### 3.3 Idempotency
 
@@ -345,17 +351,16 @@ The bounds have five visible consequences:
   When the page did not ask for a key, the three most used keys are tried in
   turn, so a request id on every request does not make the first view a
   refusal.
-- Approximate ranking. The response says the ranking is approximate in two
-  cases. One is a key with 2,000 or more distinct values, where ClickHouse
-  ranks the heaviest values its sketches found and not every value. The other
-  is read off the final rows by both stores: the Other row holds more credit
-  cost (then generations) than the smallest named row. No single folded value
-  can outweigh the row that sums them, so while Other is no larger, no value
-  in it outweighs a named row; once it is larger, a value that grew or first
-  appeared after the 50 were chosen may belong among them. That rule is conservative:
-  an Other row made of many small values is reported the same way although
-  the ranking is right, and the page says so. Every row's totals are exact
-  either way, and the rows are ordered by the totals they show.
+- Approximate choice. The response says the choice of rows is approximate
+  exactly when it contains an Other row, in both stores. When every value the
+  final totals saw is named, there is no cut to get wrong. When anything is
+  grouped into Other, which values were named was decided from an earlier
+  read, and by sketches for a key with 2,000 or more values, while rows keep
+  arriving, so it is a best effort. No attempt is made to certify the cut.
+  The statement the rows come from puts every value it was not told to name
+  into Other, so a value that was there when it ran is either named or in
+  Other: no Other row means no value was left out. Every row's totals are
+  exact either way, and the rows are ordered by the totals they show.
 - The Other row has no count of the values in it. By the time it is totalled,
   values may have arrived that no earlier read counted.
 - Medians. The median is generation time as the server measured it
@@ -508,7 +513,9 @@ Native Messages requests receive the equivalent Anthropic-shaped 400 error.
 
 - Never log tag maps or individual tag values in Sentry, Axiom, Cloud Logging,
   panic output, or request-start/request-end logs.
-- Logging may include only `tag_count` and validation error class.
+- Request logs, application logs and Sentry, as written by the gateway and the
+  control plane, may include only `tag_count` and validation error class.
+  ClickHouse's own query log is the exception stated in sections 1 and 6.5.
 - Tags never enter provider payloads, including OpenAI-compatible providers.
 - Tags are never public and are never included in provider/model leaderboards.
 - Management and activity endpoints remain workspace-authorized.
