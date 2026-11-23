@@ -49,7 +49,7 @@ from trusted_router.receipt_keys import (
     receipt_key_kid_collides,
     with_receipt_attestation_sha256,
 )
-from trusted_router.refill_claim import RefillClaim, decide_claim, record_result
+from trusted_router.refill_claim import RefillClaim, decide_claim, record_result, refill_now
 from trusted_router.routable_payouts import (
     EARNINGS_CASHOUT_EXTERNAL_KIND,
     EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
@@ -4962,7 +4962,7 @@ class SpannerStore(OperationalAnalyticsReads):
             reason, claim = decide_claim(
                 account, expected, self._refill_balance_from(transaction, ws, account), current,
                 candidate=candidate, used=used is not None, payload_hash=payload_hash,
-                now=dt.datetime.now(dt.UTC),
+                now=refill_now(),
             )
             if claim:
                 self._write_entity_tx(transaction, "refill_claim", ws, claim)

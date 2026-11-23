@@ -37,7 +37,7 @@ from trusted_router.receipt_keys import (
     receipt_key_kid_collides,
     with_receipt_attestation_sha256,
 )
-from trusted_router.refill_claim import RefillClaim, decide_claim, record_result
+from trusted_router.refill_claim import RefillClaim, decide_claim, record_result, refill_now
 from trusted_router.routable_payouts import (
     ROUTABLE_PAID_STATUSES,
     ROUTABLE_PENDING_STATUSES,
@@ -3118,7 +3118,7 @@ class InMemoryStore:
             reason, claim = decide_claim(
                 account, expected, balance, self.refill_claims.get(ws), candidate=candidate,
                 used=candidate in self.refill_trigger_keys, payload_hash=payload_hash,
-                now=dt.datetime.now(dt.UTC),
+                now=refill_now(),
             )
             if claim:
                 self.refill_claims[ws] = claim

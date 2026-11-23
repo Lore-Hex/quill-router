@@ -17,6 +17,10 @@ class RefillClaim:
     state: str = "sending"
 
 
+def refill_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def recent_block(account: CreditAccount, now: datetime) -> str | None:
     status = account.last_auto_refill_status or ""
     if not account.last_auto_refill_at or not (status == "pending" or status.startswith("failed:")):
@@ -26,7 +30,7 @@ def recent_block(account: CreditAccount, now: datetime) -> str | None:
     except ValueError:
         return "reconcile_required"
     elapsed = now - (last if last.tzinfo else last.replace(tzinfo=UTC))
-    if status == "pending" and elapsed < timedelta(minutes=30):
+    if status == "pending" and elapsed < timedelta(minutes=5):
         return "pending"
     if status.startswith("failed:") and elapsed < timedelta(minutes=5):
         return "rate_limited"
@@ -56,7 +60,8 @@ def decide_claim(
         return blocked, None
     stamp = now.isoformat()
     if current and current.state in {"sending", "accepted"}:
-        if now - datetime.fromisoformat(current.dispatched_at) < timedelta(minutes=30):
+        interval = timedelta(minutes=30 if current.state == "accepted" else 5)
+        if now - datetime.fromisoformat(current.dispatched_at) < interval:
             return "pending", None
         # An accepted intent needs its webhook, not another charge. Stripe may
         # prune keys after 24h, so stop automatic retries well before then.

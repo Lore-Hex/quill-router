@@ -20,11 +20,10 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.config import Settings
-from trusted_router.refill_claim import recent_block
+from trusted_router.refill_claim import recent_block, refill_now
 from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
@@ -92,7 +91,7 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="above_threshold")
     if not account.stripe_customer_id or not account.stripe_payment_method_id:
         return AutoRefillOutcome(fired=False, reason="no_payment_method")
-    recent_attempt_reason = recent_block(account, datetime.now(UTC))
+    recent_attempt_reason = recent_block(account, refill_now())
     if recent_attempt_reason is not None:
         return AutoRefillOutcome(fired=False, reason=recent_attempt_reason, retryable=True)
     if not settings.stripe_secret_key:
