@@ -137,7 +137,7 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 610000,
+      "input_token_price_per_m": 650000,
       "output_token_price_per_m": 3550000,
       "cached_input_token_price_per_m": 170000
     },
@@ -319,7 +319,7 @@
       "routable": true,
       "input_token_price_per_m": 170000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "DeepSeek V4.1 Flash 1017",
@@ -369,6 +369,6 @@
       "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-11-23T12:28:06Z",
+  "generated_at": "2026-11-23T14:32:07Z",
   "model_count": 8
 }
