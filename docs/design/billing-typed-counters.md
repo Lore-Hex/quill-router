@@ -57,12 +57,14 @@ The authorize-side reserves therefore carry the statement hint
 `@{LOCK_SCANNED_RANGES=EXCLUSIVE}`
 (`storage_gcp_counter_dml.EXCLUSIVE_SCAN_HINT`): the scan takes the exclusive
 lock at once, so reservers of one row queue for it and the loser re-evaluates
-the predicate against committed state. Two limits apply:
+the predicate against committed state. Since 2026-11-21 the settle, refund
+and reap releases of the same two rows carry it too. Two limits apply:
 
 - The hint covers every range its statement scans, subqueries included, so
-  only single-row statements with no subquery may carry it. The settle and
-  refund releases do not carry it yet (the one-commit credit release has a
-  `tr_trust_event` subquery) and still upgrade from a shared lock.
+  only single-row statements with no subquery may carry it. The one-commit
+  credit release has a `tr_trust_event` subquery, so it stays unhinted and a
+  hinted statement that writes the row back unchanged
+  (`lock_credit_release_statement`) takes the row immediately before it.
 - A hinted statement that matches no row still holds the exclusive lock until
   its transaction ends. So a reserve carries the hint only where it is
   expected to write and is the only counter row of its table the transaction
@@ -272,7 +274,8 @@ wait totaled 6.7–9.4 thousand seconds/hour: 68–80% on one workspace's credit
 balances (64 evenly loaded shards), 20–31% on its key-limit windows. Conditional
 read/write UPDATEs acquire Exclusive locks on `reserved`/`total_usage` and key
 window cells (by upgrading a shared lock; since 2026-11-10 most reserves take
-the exclusive lock at the scan, see section 2). C1 already reduced lock wait from 8,974 to 6,817 seconds/hour and
+the exclusive lock at the scan, and since 2026-11-21 the releases do, see
+section 2). C1 already reduced lock wait from 8,974 to 6,817 seconds/hour and
 settle aborts to 3.08% by putting hot releases last in its batch; settle is
 unchanged here.
 

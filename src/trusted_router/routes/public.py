@@ -170,6 +170,7 @@ from trusted_router.receipt_keys import (
 )
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
+from trusted_router.routes.notes import register_notes
 from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.reserved_tokens import (
@@ -1098,6 +1099,7 @@ def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
+    register_notes(app)
     app.mount(
         "/static",
         _CachedStaticFiles(directory=STATIC_DIR, release=settings.release),
@@ -1385,6 +1387,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def migrate_from_openrouter() -> str:
         return public_page_html(settings, "docs/migrate-from-openrouter")
 
+    @public_html_route("/docs/migrate-from-openai")
+    def migrate_from_openai() -> str:
+        return public_page_html(settings, "docs/migrate-from-openai")
+
     @public_html_route("/docs/agent-setup")
     def agent_setup() -> str:
         return public_page_html(settings, "docs/agent-setup")
@@ -1392,6 +1398,24 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/tagging")
     def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
+
+    @public_html_route("/docs/byok")
+    def byok_docs_page() -> str:
+        return public_page_html(settings, "docs/byok")
+
+    @public_html_route("/who-can-see-your-data")
+    def who_can_see_your_data() -> str:
+        return public_page_html(settings, "who-can-see-your-data")
+
+    @public_html_route("/docs/simple-start")
+    def simple_start_docs() -> str:
+        return public_page_html(settings, "docs/simple-start")
+
+    @app.api_route("/docs/routing", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/docs/routing/", methods=["GET", "HEAD"], include_in_schema=False)
+    def legacy_routing_guide(request: Request) -> RedirectResponse:
+        query = request.url.query
+        return RedirectResponse("/docs/provider-routing" + (f"?{query}" if query else ""), status_code=301)
 
     @public_html_route("/docs/provider-routing")
     def provider_routing_docs() -> str:
@@ -3037,6 +3061,7 @@ def _json_body(payload: dict[str, Any]) -> bytes:
 
 def _unserved_routes_json_body() -> bytes:
     from trusted_router.synthetic.route_health import (
+        UNAVAILABLE_MIN_SPAN,
         UNSERVED_MAX_AGE,
         UNSERVED_MAX_PROBE_GAP,
         UNSERVED_MIN_SAMPLES,
@@ -3053,6 +3078,7 @@ def _unserved_routes_json_body() -> bytes:
         "policy": {
             "min_consecutive_samples": UNSERVED_MIN_SAMPLES,
             "min_span_seconds": int(UNSERVED_MIN_SPAN.total_seconds()),
+            "min_unavailable_span_seconds": int(UNAVAILABLE_MIN_SPAN.total_seconds()),
             "max_age_seconds": int(UNSERVED_MAX_AGE.total_seconds()),
             "max_probe_gap_seconds": int(UNSERVED_MAX_PROBE_GAP.total_seconds()),
             "sibling_success_window_seconds": int(UNSERVED_SIBLING_SUCCESS_WINDOW.total_seconds()),
@@ -3065,6 +3091,7 @@ def _unserved_routes_json_body() -> bytes:
                 "first_failure_at": route.first_failure_at,
                 "last_failure_at": route.last_failure_at,
                 "error_types": list(route.error_types),
+                "kind": route.kind,
             }
             for route in routes
         ],

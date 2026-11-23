@@ -14,6 +14,9 @@ import pytest
 
 from tests.fakes.spanner import _FakeSnapshot, _KeySet, _ParamTypes
 from tests.fakes.spanner_order import (
+    LOCK_CREDIT_RELEASE,
+    RELEASE_CREDIT_NO_DEBT,
+    RELEASE_KEY,
     RESERVE_CREDIT,
     authorize_credit_before_key,
     credit_before_key,
@@ -203,15 +206,23 @@ def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
     assert result["outbox_marked"] is True
     statements = transaction_statements(calls)
     [batch_sql] = batches
-    assert len(batch_sql) == 10
+    assert len(batch_sql) == 11
     (claim, typed, done_sql, auth_retention, reservation_retention, generation, activity,
-     credit, key_current, key_stale) = batch_sql
-    assert credit.startswith("update tr_credit_balance") and "not exists" in credit
+     credit_lock, credit, key_current, key_stale) = batch_sql
+    # The credit row is taken exclusively by a statement that writes its two
+    # columns back unchanged; the release behind it keeps its subquery and so
+    # carries no hint of its own.
+    assert credit_lock.startswith(LOCK_CREDIT_RELEASE) and "select" not in credit_lock
+    assert credit_lock.endswith(
+        "where workspace_id=@ws and shard=@shard and reserved >= @hold "
+        "and not coalesce(in_debt, false)"
+    )
+    assert credit.startswith(RELEASE_CREDIT_NO_DEBT) and "not exists" in credit
     # The key's two releases: current windows (boundaries left out of the SET
     # list), then the rolling form for a key with a window to roll forward.
-    assert key_current.startswith("update tr_key_limit") and "day_start =" not in key_current
-    assert key_stale.startswith("update tr_key_limit") and " and not (" in key_stale
-    assert statements[-3:] == [credit, key_current, key_stale]
+    assert key_current.startswith(RELEASE_KEY) and "day_start =" not in key_current
+    assert key_stale.startswith(RELEASE_KEY) and " and not (" in key_stale
+    assert statements[-4:] == [credit_lock, credit, key_current, key_stale]
     assert claim.startswith("update tr_reservation set settled=true")
     assert typed.startswith("update tr_gateway_authorization set settled=true")
     assert "and reservation_id=@rid" in done_sql

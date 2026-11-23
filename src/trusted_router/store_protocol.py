@@ -10,7 +10,6 @@ instead of a 4-AM AttributeError.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -267,6 +266,7 @@ class Store(Protocol):
         deleted: bool | None = ...,
         billing_paused: bool | None = ...,
         billing_pause_reason: str | None = ...,
+        origin_policy: str | None = ...,
     ) -> Workspace | None: ...
     def transfer_workspace_ownership(
         self, workspace_id: str, new_owner_user_id: str
@@ -609,13 +609,6 @@ class Store(Protocol):
         key_hint: str | None,
         encrypted_secret: EncryptedSecretEnvelope | None = ...,
     ) -> ByokProviderConfig: ...
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig: ...
-    def mutate_byok_provider(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None: ...
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]: ...
     def get_byok_provider(self, workspace_id: str, provider: str) -> ByokProviderConfig | None: ...
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool: ...
@@ -1087,6 +1080,13 @@ class Store(Protocol):
         per_route_limit: int,
         limit: int,
     ) -> list[ProviderBenchmarkSample]: ...
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]: ...
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None: ...
     def synthetic_probe_samples(
         self,
@@ -1159,6 +1159,26 @@ class Store(Protocol):
         limit: int = ...,
         tag_key: str | None = ...,
         tag_value: str | None = ...,
+    ) -> Any: ...
+    # Console tag panel: keys seen since ``start_at``, a breakdown by one
+    # key's values, and the newest generations carrying one tag.
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+    ) -> dict[str, Any]: ...
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = ...,
+        limit: int = ...,
     ) -> Any: ...
     def usage_series(
         self,
@@ -1272,6 +1292,7 @@ class TypedBillingStore(Protocol):
         fastpath_envelope: str | None = ...,
         fastpath_end_of_life: str | None = ...,
         lease_headroom_503: bool = ...,
+        lease_headroom_floor: int = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

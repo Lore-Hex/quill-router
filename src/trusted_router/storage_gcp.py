@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import datetime as dt
@@ -18,7 +19,7 @@ from trusted_router import storage_gcp_credit_transfer as spanner_credit_transfe
 from trusted_router.creator_identity import local_creator_username, validate_creator_username
 from trusted_router.credit_refusal_read import HEAL as HEAL_READ
 from trusted_router.credit_refusal_read import REBALANCE as REBALANCE_READ
-from trusted_router.credit_refusal_read import CreditRefusalRead
+from trusted_router.credit_refusal_read import CreditRefusalRead, LeaseUnderFloor
 from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
@@ -259,6 +260,7 @@ from trusted_router.trust_reconciliation import (
 )
 from trusted_router.trust_tiers import compute_trust_tier, payment_or_grant_event
 from trusted_router.types import IdentityVerificationStatus, UsageType
+from trusted_router.workspace_billing_gate import GatePass, ungated, workspace_billing_gate
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
@@ -1239,9 +1241,10 @@ class SpannerStore(OperationalAnalyticsReads):
         deleted: bool | None = None,
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         return self._run_in_transaction(lambda transaction: self._update_workspace_tx(
-            transaction, workspace_id, name=name, deleted=deleted,
+            transaction, workspace_id, name=name, deleted=deleted, origin_policy=origin_policy,
             billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
         ))
 
@@ -1249,6 +1252,7 @@ class SpannerStore(OperationalAnalyticsReads):
         self, transaction: Any, workspace_id: str, *, name: str | None = None,
         deleted: bool | None = None, billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
         if workspace is None:
@@ -1320,6 +1324,8 @@ class SpannerStore(OperationalAnalyticsReads):
                 )
         if name is not None:
             workspace.name = name
+        if origin_policy is not None:
+            workspace.origin_policy = origin_policy
         if deleted is not None:
             workspace.deleted = deleted
         if billing_paused is not None:
@@ -2019,6 +2025,71 @@ class SpannerStore(OperationalAnalyticsReads):
             self._credit_shard_count_loader(workspace_id),
         )
         return randomized_credit_shards(count)
+
+    def _credit_row_gate(
+        self, workspace_id: str | None, kind: str, *, writes_credit_row: bool,
+    ) -> contextlib.AbstractContextManager[GatePass]:
+        """The workspace's process-local turn for one credit-row transaction.
+
+        Applies only when all of these hold; otherwise the body runs at once:
+
+        * the gate is on (``workspace_billing_gate_width``);
+        * the transaction writes the workspace's credit row. A BYOK-only
+          reserve holds no credit and neither does its settle, so two of
+          them have no row to take turns on;
+        * this process knows the workspace to have exactly one credit shard,
+          so the row is the one every such transaction writes. The count is
+          only peeked, never loaded. A sharded workspace spreads its
+          transactions over rows by design, and a count this process has
+          not loaded is not guessed: its settles would otherwise take turns
+          across rows and spend each other's budget. The settle does not
+          know its shard before it reads the reservation, so the count is
+          what there is to go on; the workspace's next reserve loads it;
+        * the caller has a Spanner deadline to wait inside (every request
+          path; not the settle-outbox drain, whose applies already take
+          turns).
+
+        The caller's transaction is the body of the ``with`` and runs the
+        same with or without a slot (workspace_billing_gate.py).
+        """
+        settings = self.trust_settings
+        width = getattr(settings, "workspace_billing_gate_width", 0)
+        wait_ms = getattr(settings, "workspace_billing_gate_wait_ms", 0)
+        max_waiters = getattr(settings, "workspace_billing_gate_max_waiters", 0)
+        if (
+            not workspace_id
+            or not writes_credit_row
+            or type(width) is not int or width <= 0
+            or type(wait_ms) is not int or wait_ms <= 0
+            or type(max_waiters) is not int or max_waiters <= 0
+        ):
+            return ungated()
+        if self._credit_shard_counts.peek(workspace_id) != 1:
+            return ungated()
+        from trusted_router.storage_gcp_io import shared_rpc_budget_remaining
+
+        budget_seconds = shared_rpc_budget_remaining()
+        if budget_seconds is None:
+            return ungated()
+        return workspace_billing_gate(
+            workspace_id,
+            width=width,
+            max_waiters=max_waiters,
+            wait_seconds=wait_ms / 1000,
+            budget_seconds=budget_seconds,
+            kind=kind,
+            # A settle, refund or finalize completes a request that already
+            # holds credit, and has the shorter budget: it goes before a
+            # waiting reserve, which is new work.
+            first=kind != "authorize",
+        )
+
+    @staticmethod
+    def _holds_credit(authorization: Any) -> bool:
+        """Whether this authorization's settle writes the credit row: its
+        hold is on credit (any credit candidate), not BYOK-only."""
+        usage_type = getattr(authorization, "usage_type", None)
+        return usage_type is not None and UsageType.coerce(usage_type) == UsageType.CREDITS
 
     def _heal_stale_debt_mark(
         self,
@@ -2994,17 +3065,6 @@ class SpannerStore(OperationalAnalyticsReads):
             key_hint=key_hint,
             encrypted_secret=encrypted_secret,
         )
-
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        return self.byok_store.save(config)
-
-    def mutate_byok_provider(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        return self.byok_store.mutate(workspace_id, provider, change)
 
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         return self.byok_store.list_for_workspace(workspace_id)
@@ -5099,7 +5159,12 @@ class SpannerStore(OperationalAnalyticsReads):
         )
         if getattr(self.trust_settings, "async_settle_protection", False):
             kwargs.setdefault("async_fence", True)
-        return typed_finalize_atomic(self._database, self._param_types, **kwargs)
+        frozen = kwargs.get("authorization")
+        with self._credit_row_gate(
+            getattr(frozen, "workspace_id", None), "frozen_finalize",
+            writes_credit_row=self._holds_credit(frozen),
+        ):
+            return typed_finalize_atomic(self._database, self._param_types, **kwargs)
 
     def typed_finalize_gateway_authorization(
         self,
@@ -5184,37 +5249,42 @@ class SpannerStore(OperationalAnalyticsReads):
         async_options: dict[str, Any] = (
             {"async_fence": True} if getattr(self.trust_settings, "async_settle_protection", False) else {}
         )
-        spanner_start = time.perf_counter()
-        result = typed_finalize_atomic(
-            self._database,
-            self._param_types,
-            **async_options,
-            reservation_id=authorization.credit_reservation_id,
-            authorization_id=authorization_id,
-            success=success,
-            actual_micro=actual_microdollars,
-            settled_usage_type=str(actual_usage_type),
-            now=dt.datetime.now(dt.UTC),
-            authorization=authorization,
-            auth_body_settled=_json_body(authorization),
-            generation_writes=generation_writes,
-            generation=generation,
-            persist_generation_record=getattr(
-                self,
-                "_generation_records_enabled",
-                False,
-            ),
-            operational_analytics_outbox=getattr(
-                self,
-                "_operational_analytics_outbox",
-                None,
-            ),
-            user_model_payout=user_model_payout,
-            app_markup_payout=app_markup_payout,
-            custom_model_markup_payout=custom_model_markup_payout,
-            settle_outbox_done=settle_outbox_done,
-        )
-        spanner_ms = (time.perf_counter() - spanner_start) * 1000
+        # The gate's wait is before the clock: spanner_ms stays time in Spanner.
+        with self._credit_row_gate(
+            authorization.workspace_id, "finalize",
+            writes_credit_row=self._holds_credit(authorization),
+        ):
+            spanner_start = time.perf_counter()
+            result = typed_finalize_atomic(
+                self._database,
+                self._param_types,
+                **async_options,
+                reservation_id=authorization.credit_reservation_id,
+                authorization_id=authorization_id,
+                success=success,
+                actual_micro=actual_microdollars,
+                settled_usage_type=str(actual_usage_type),
+                now=dt.datetime.now(dt.UTC),
+                authorization=authorization,
+                auth_body_settled=_json_body(authorization),
+                generation_writes=generation_writes,
+                generation=generation,
+                persist_generation_record=getattr(
+                    self,
+                    "_generation_records_enabled",
+                    False,
+                ),
+                operational_analytics_outbox=getattr(
+                    self,
+                    "_operational_analytics_outbox",
+                    None,
+                ),
+                user_model_payout=user_model_payout,
+                app_markup_payout=app_markup_payout,
+                custom_model_markup_payout=custom_model_markup_payout,
+                settle_outbox_done=settle_outbox_done,
+            )
+            spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
             raise RuntimeError("typed finalize failed: release row-count != 1")
         if result["outcome"] == SettleOutcome.SETTLED:
@@ -5684,8 +5754,11 @@ class SpannerStore(OperationalAnalyticsReads):
         ):
             return None
 
+        gate_wait_seconds = 0.0
+
         @spanner_rpc_budget(ONE_COMMIT_SETTLE_BUDGET_SECONDS)
         def attempt() -> dict[str, Any] | None:
+            nonlocal gate_wait_seconds
             if not _outbox_table_available(self._database, self._param_types):
                 return None
             actual_usage_type = UsageType.coerce(selected_usage_type)
@@ -5705,35 +5778,42 @@ class SpannerStore(OperationalAnalyticsReads):
             async_options: dict[str, Any] = (
                 {"async_fence": True} if getattr(self.trust_settings, "async_settle_protection", False) else {}
             )
-            return cast(dict[str, Any], typed_finalize_atomic(
-                self._database,
-                self._param_types,
-                **async_options,
-                reservation_id=str(authorization.credit_reservation_id),
-                authorization_id=authorization_id,
-                success=success,
-                actual_micro=actual_microdollars,
-                settled_usage_type=str(actual_usage_type),
-                now=dt.datetime.now(dt.UTC),
-                outbox_available=True,
-                authorization=authorization,
-                auth_body_settled=_json_body(authorization),
-                # The one-commit shape never takes the legacy-record branch.
-                generation_writes=[],
-                generation=generation,
-                persist_generation_record=getattr(self, "_generation_records_enabled", False),
-                operational_analytics_outbox=activity_outbox,
-                user_model_payout=user_model_payout,
-                app_markup_payout=app_markup_payout,
-                custom_model_markup_payout=custom_model_markup_payout,
-                settle_outbox_intent=settle_intent,
-                intent_initial_delay_seconds=intent_initial_delay_seconds,
-                benchmark_statement=(
-                    benchmark_outbox.enqueue_statement(benchmark)
-                    if benchmark is not None and benchmark_outbox is not None
-                    else None
-                ),
-            ))
+            # Waiting for the workspace's turn spends this attempt's budget,
+            # never more than a quarter of it; the commit is the same either way.
+            with self._credit_row_gate(
+                authorization.workspace_id, "settle_one_commit",
+                writes_credit_row=self._holds_credit(authorization),
+            ) as turn:
+                gate_wait_seconds = turn.wait_seconds
+                return cast(dict[str, Any], typed_finalize_atomic(
+                    self._database,
+                    self._param_types,
+                    **async_options,
+                    reservation_id=str(authorization.credit_reservation_id),
+                    authorization_id=authorization_id,
+                    success=success,
+                    actual_micro=actual_microdollars,
+                    settled_usage_type=str(actual_usage_type),
+                    now=dt.datetime.now(dt.UTC),
+                    outbox_available=True,
+                    authorization=authorization,
+                    auth_body_settled=_json_body(authorization),
+                    # The one-commit shape never takes the legacy-record branch.
+                    generation_writes=[],
+                    generation=generation,
+                    persist_generation_record=getattr(self, "_generation_records_enabled", False),
+                    operational_analytics_outbox=activity_outbox,
+                    user_model_payout=user_model_payout,
+                    app_markup_payout=app_markup_payout,
+                    custom_model_markup_payout=custom_model_markup_payout,
+                    settle_outbox_intent=settle_intent,
+                    intent_initial_delay_seconds=intent_initial_delay_seconds,
+                    benchmark_statement=(
+                        benchmark_outbox.enqueue_statement(benchmark)
+                        if benchmark is not None and benchmark_outbox is not None
+                        else None
+                    ),
+                ))
 
         spanner_start = time.perf_counter()
         try:
@@ -5761,7 +5841,8 @@ class SpannerStore(OperationalAnalyticsReads):
             "typed finalize timing authorization_id=%s spanner_ms=%.1f "
             "index_ms=%.1f attempts=%d",
             authorization_id,
-            (time.perf_counter() - spanner_start) * 1000,
+            # Time in Spanner: the wait for the workspace's turn is not part.
+            (time.perf_counter() - spanner_start - gate_wait_seconds) * 1000,
             0.0,
             result.get("attempts", 1),
         )
@@ -5826,6 +5907,7 @@ class SpannerStore(OperationalAnalyticsReads):
         fastpath_envelope: str | None = None,
         fastpath_end_of_life: str | None = None,
         lease_headroom_503: bool = False,
+        lease_headroom_floor: int = 0,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -5844,7 +5926,16 @@ class SpannerStore(OperationalAnalyticsReads):
         snapshot, which re-reads the rows and the leases on every hit and
         answers 503 while leases hold the shortfall, 402 once the balance is
         exhausted, and lets the request through once the headroom is back.
-        Off, nothing is read for it and every answer is as before."""
+        Off, nothing is read for it and every answer is as before.
+
+        `lease_headroom_floor` (fastpath_lease_headroom_503_floor_micro, the
+        fast path nodes' floor) keeps lease_headroom for a workspace the fast
+        path can still fund: one whose headroom, counting what its leases
+        hold, is under the floor is answered insufficient_credits, as with
+        `lease_headroom_503` off, and the verdict carries the amounts read
+        (AuthorizeVerdict.lease_under_floor). Zero compares nothing. It
+        changes which refusal is returned and nothing else: both write no
+        row and hold nothing, and both keep the workspace remembered."""
         from trusted_router.storage_gcp_authorize import (
             EXHAUSTED,
             HEADROOM,
@@ -6026,17 +6117,21 @@ class SpannerStore(OperationalAnalyticsReads):
                 estimate=hold,
                 idempotency_scope=scope,
                 lease_aware=lease_headroom_503,
+                lease_floor=lease_headroom_floor,
             )
             if credit_verdict == EXHAUSTED:
                 from trusted_router.storage_gcp_authorize import AuthorizeVerdict
 
                 # With the snapshot the refusal stands on, for the edge's
-                # decide shadow (credit_refusal_read.py).
+                # decide shadow (credit_refusal_read.py), and, when leases
+                # hold the shortfall of a workspace under the nodes' floor,
+                # that snapshot's lease-aware amounts.
                 return (
                     AuthorizeVerdict(
                         AuthorizeOutcome.INSUFFICIENT_CREDITS,
                         rate_limit=window_decision,
                         credit_read=getattr(credit_verdict, "credit_read", None),
+                        lease_under_floor=getattr(credit_verdict, "lease_under_floor", None),
                     ),
                     None,
                 )
@@ -6060,35 +6155,43 @@ class SpannerStore(OperationalAnalyticsReads):
 
         def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
             def invoke() -> dict[str, Any]:
-                return authorize_atomic(
-                    self._database,
-                    self._param_types,
-                    workspace_id=workspace_id,
-                    key_hash=key_hash,
-                    estimate=estimate,
-                    reservation=reservation,
-                    trust_settings=self.trust_settings,
-                    has_credit_candidate=has_credit_candidate,
-                    reservation_usage_type=str(usage),
-                    idempotency_scope=scope,
-                    idempotency_fingerprint=idempotency_fingerprint,
-                    expires_at=expires_at,
-                    created_at=created_at,
-                    build_authorization=build_authorization,
-                    build_auth_body=build_body,
-                    request_record_write_mode=self.request_record_write_mode,
-                    # Retain `candidates` in full outside this transaction for the
-                    # lock-free aggregate check and cold rebalance below. A depleted
-                    # workspace must never make one rejected transaction lock every
-                    # configured shard.
-                    credit_shard_candidates=bounded_credit_shard_candidates(candidates),
-                    key_shard_candidates=key_shard_candidates,
-                    skip_key_limit=skip_key_limit,
-                    speculate_key_limit=speculate_key_limit,
-                    strict_budget=strict_budget,
-                    enforce_strict_windows=not strict_budget_alert_only,
-                    authorization_id=authorization_id,
-                )
+                # The workspace's turn for its credit row. A BYOK-only
+                # reserve writes no credit row. A strict-budget authorize
+                # already takes turns on its key's own slot and holds it
+                # here; it is not made to wait a second time.
+                with self._credit_row_gate(
+                    workspace_id, "authorize",
+                    writes_credit_row=has_credit_candidate and not strict_budget,
+                ):
+                    return authorize_atomic(
+                        self._database,
+                        self._param_types,
+                        workspace_id=workspace_id,
+                        key_hash=key_hash,
+                        estimate=estimate,
+                        reservation=reservation,
+                        trust_settings=self.trust_settings,
+                        has_credit_candidate=has_credit_candidate,
+                        reservation_usage_type=str(usage),
+                        idempotency_scope=scope,
+                        idempotency_fingerprint=idempotency_fingerprint,
+                        expires_at=expires_at,
+                        created_at=created_at,
+                        build_authorization=build_authorization,
+                        build_auth_body=build_body,
+                        request_record_write_mode=self.request_record_write_mode,
+                        # Retain `candidates` in full outside this transaction for the
+                        # lock-free aggregate check and cold rebalance below. A depleted
+                        # workspace must never make one rejected transaction lock every
+                        # configured shard.
+                        credit_shard_candidates=bounded_credit_shard_candidates(candidates),
+                        key_shard_candidates=key_shard_candidates,
+                        skip_key_limit=skip_key_limit,
+                        speculate_key_limit=speculate_key_limit,
+                        strict_budget=strict_budget,
+                        enforce_strict_windows=not strict_budget_alert_only,
+                        authorization_id=authorization_id,
+                    )
 
             try:
                 return invoke()
@@ -6111,8 +6214,8 @@ class SpannerStore(OperationalAnalyticsReads):
         # authorize transaction, so a read from before a retried transaction
         # never speaks for that transaction's refusal. None when the last
         # refusal was followed by none, and then the 402 names no read. The
-        # lease read after a final refusal (_lease_held_after_refusal) is not
-        # one it names.
+        # lease read after a final refusal (_lease_verdict_after_refusal) is
+        # not one it names.
         credit_read: CreditRefusalRead | None = None
 
         def note_credit_read(read: CreditRefusalRead | None) -> None:
@@ -6413,6 +6516,9 @@ class SpannerStore(OperationalAnalyticsReads):
         outcome = result["outcome"]
         if outcome == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and not skip_key_limit:
             self._lifetime_cap_exhausted_keys.add(key_hash)
+        # The lease-aware amounts of a 402 that leases would have made the
+        # 503 were the workspace not under the nodes' floor; None otherwise.
+        lease_under_floor: LeaseUnderFloor | None = None
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             # Final here: a multi-shard miss without proven aggregate exhaustion
             # raised StoreUnavailable above instead of returning a 402.
@@ -6420,21 +6526,25 @@ class SpannerStore(OperationalAnalyticsReads):
             # precheck's lock-free snapshot, which tells an exhausted balance
             # (402) from one held in leases (503) on every hit.
             self._insufficient_credit_workspaces.add(workspace_id)
-            if lease_headroom_503 and self._lease_held_after_refusal(
-                workspace_id, hold, strict_deadline,
-            ):
+            if lease_headroom_503:
                 # One snapshot, on the refusal path alone: the rows still
-                # cannot cover the hold and live leases hold the rest. Any
-                # other verdict, a read failure included, keeps today's 402.
-                from trusted_router.storage_gcp_authorize import AuthorizeVerdict
-
-                return (
-                    AuthorizeVerdict(
-                        AuthorizeOutcome.LEASE_HEADROOM,
-                        rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
-                    ),
-                    None,
+                # cannot cover the hold and live leases hold the rest, for a
+                # workspace at or above the nodes' floor. Any other verdict,
+                # a read failure included, keeps today's 402.
+                lease_verdict = self._lease_verdict_after_refusal(
+                    workspace_id, hold, strict_deadline, lease_headroom_floor,
                 )
+                if lease_verdict == LEASE_HELD:
+                    from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+                    return (
+                        AuthorizeVerdict(
+                            AuthorizeOutcome.LEASE_HEADROOM,
+                            rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
+                        ),
+                        None,
+                    )
+                lease_under_floor = getattr(lease_verdict, "lease_under_floor", None)
         authorization: GatewayAuthorization | None = None
         if outcome == AuthorizeOutcome.ACCEPTED:
             # authorize_atomic stamps one client timestamp onto both the object
@@ -6452,19 +6562,25 @@ class SpannerStore(OperationalAnalyticsReads):
             outcome,
             rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
             credit_read=credit_read if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS else None,
+            lease_under_floor=(
+                lease_under_floor if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS else None
+            ),
         )
         return verdict, authorization
 
-    def _lease_held_after_refusal(
-        self, workspace_id: str, hold: int, strict_deadline: float | None,
-    ) -> bool:
-        """Whether a refused hold's shortfall sits in the fast path's leases
-        (fastpath_lease_headroom_503): the lease-aware precheck's snapshot,
-        under a strict key's budget when the transaction ran under one (its
-        deadline, not a fresh one). False on any failure: today's 402."""
+    def _lease_verdict_after_refusal(
+        self, workspace_id: str, hold: int, strict_deadline: float | None, lease_floor: int = 0,
+    ) -> str:
+        """The lease-aware precheck's verdict on a refused hold
+        (fastpath_lease_headroom_503): LEASE_HELD when its shortfall sits in
+        the fast path's leases of a workspace at or above `lease_floor`;
+        EXHAUSTED with the amounts read when only the floor keeps it from
+        that. One snapshot, under a strict key's budget when the transaction
+        ran under one (its deadline, not a fresh one). DEFER on any failure.
+        Every verdict but LEASE_HELD keeps today's 402."""
         from contextlib import nullcontext
 
-        from trusted_router.storage_gcp_authorize import LEASE_HELD, credit_exhaustion_precheck
+        from trusted_router.storage_gcp_authorize import DEFER, credit_exhaustion_precheck
         from trusted_router.storage_gcp_io import spanner_rpc_deadline
 
         try:
@@ -6475,14 +6591,15 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     estimate=hold,
                     lease_aware=True,
-                ) == LEASE_HELD
+                    lease_floor=lease_floor,
+                )
         except Exception:
             log.warning(
                 "lease headroom read failed after a refusal; keeping the 402 workspace=%s",
                 workspace_id,
                 exc_info=True,
             )
-            return False
+            return DEFER
 
     def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
         from trusted_router.storage_gcp_authorize import (
@@ -6839,6 +6956,17 @@ class SpannerStore(OperationalAnalyticsReads):
             cutoff=cutoff,
             per_route_limit=per_route_limit,
             limit=limit,
+        )
+
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self._require_operational_analytics().account_refusal_samples(
+            cutoff=cutoff, per_route_limit=per_route_limit, limit=limit,
         )
 
     def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:
@@ -7637,18 +7765,7 @@ class SpannerStore(OperationalAnalyticsReads):
         )
         if not rows:
             return None
-        data = json.loads(rows[0][0])
-        if cls is dict:
-            return data
-        if dataclasses.is_dataclass(cls):
-            known = {f.name for f in dataclasses.fields(cls)}
-            unknown = data.keys() - known
-            if unknown:
-                # Forward/back-compat: newer releases may persist fields this
-                # class does not know yet; drop extras instead of 500ing.
-                data = {key: value for key, value in data.items() if key in known}
-            return cls(**data)
-        return cls(**data)
+        return _entity_from_body(json.loads(rows[0][0]), cls)
 
     def _list_entities(
         self,
@@ -7683,7 +7800,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 params=params,
                 param_types=param_types,
             )
-            return [cls(**json.loads(row[0])) for row in rows]
+            return [_entity_from_body(json.loads(row[0]), cls) for row in rows]
 
     def _write_entity(self, kind: str, entity_id: str, value: Any) -> None:
         with self._database.batch() as batch:
@@ -7715,3 +7832,19 @@ class SpannerStore(OperationalAnalyticsReads):
             self.entity_table,
             self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
         )
+
+
+def _entity_from_body(data: Any, cls: type[T]) -> T:
+    """Build an entity from its stored JSON body.
+
+    Forward/back-compat: a row may carry fields this release's class does not
+    know (written by a newer release, or by a removed feature, such as the
+    multi-key BYOK fields `default_key_id` and `additional_keys`). Extras are
+    dropped instead of failing the read; point reads and lists agree."""
+    if cls is dict:
+        return cast(T, data)
+    if dataclasses.is_dataclass(cls):
+        known = {f.name for f in dataclasses.fields(cls)}
+        if data.keys() - known:
+            data = {key: value for key, value in data.items() if key in known}
+    return cls(**data)

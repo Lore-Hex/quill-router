@@ -6,7 +6,6 @@ import datetime as dt
 import hmac
 import threading
 import uuid
-from collections.abc import Callable
 from typing import Any, cast
 
 from trusted_router import credit_transfer, phone_verification
@@ -866,6 +865,7 @@ class InMemoryStore:
         deleted: bool | None = None,
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
+        origin_policy: str | None = None,
     ) -> Workspace | None:
         with self._lock:
             workspace = self.workspaces.get(workspace_id)
@@ -873,6 +873,8 @@ class InMemoryStore:
                 return None
             if name is not None:
                 workspace.name = name
+            if origin_policy is not None:
+                workspace.origin_policy = origin_policy
             if deleted is not None:
                 inventory_key = (workspace.owner_user_id, workspace.id)
                 if workspace.deleted and not deleted:
@@ -1724,17 +1726,6 @@ class InMemoryStore:
             key_hint=key_hint,
             encrypted_secret=encrypted_secret,
         )
-
-    def save_byok_provider(self, config: ByokProviderConfig) -> ByokProviderConfig:
-        return self.byok_store.save(config)
-
-    def mutate_byok_provider(
-        self,
-        workspace_id: str,
-        provider: str,
-        change: Callable[[ByokProviderConfig | None], ByokProviderConfig | None],
-    ) -> ByokProviderConfig | None:
-        return self.byok_store.mutate(workspace_id, provider, change)
 
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         return self.byok_store.list_for_workspace(workspace_id)
@@ -3610,6 +3601,17 @@ class InMemoryStore:
             limit=limit,
         )
 
+    def provider_account_refusal_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self.generation_store.account_refusal_samples(
+            cutoff=cutoff, per_route_limit=per_route_limit, limit=limit,
+        )
+
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         self.synthetic_store.record(sample)
 
@@ -3736,6 +3738,40 @@ class InMemoryStore:
             limit=limit,
             tag_key=tag_key,
             tag_value=tag_value,
+        )
+
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        return self.generation_store.activity_tag_summary(
+            workspace_id,
+            start_at=start_at,
+            group_by=group_by,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        return self.generation_store.activity_tag_events(
+            workspace_id,
+            start_at=start_at,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            limit=limit,
         )
 
     def usage_series(

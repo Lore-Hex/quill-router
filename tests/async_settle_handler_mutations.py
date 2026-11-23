@@ -486,11 +486,18 @@ MUTATIONS += [
 
 
 # F1-001: production retention must be complete, atomic, and clock-correct.
+# The stamps are written in two places: in the batch with the counter tail
+# when the batch carries it (a settle within its hold), and as a batch of
+# their own otherwise (a refund, an overrun, the sequential path). Each
+# mutation changes both, so it reaches whichever one its witness runs.
 FINALIZE = 'src/trusted_router/storage_gcp_authorize.py'
 RETENTION_WRITE = '            execute_batch_dml(transaction, retention, [(0, 1)] * len(retention))'
+FOLDED_RETENTION_WRITE = '            statements.extend(retention)\n            counts.extend([(0, 1)] * len(retention))'
 MUTATIONS += [
     ('F1-001-drop-terminal-' + kind, [(FINALIZE, [
         (RETENTION_WRITE, '            if ' + condition + ':\n    ' + RETENTION_WRITE),
+        (FOLDED_RETENTION_WRITE, '            if ' + condition + ':\n'
+         '                statements.extend(retention)\n                counts.extend([(0, 1)] * len(retention))'),
     ])], 'tests/test_async_settle_proof.py::test_fresh_snapshot_sync_completes_retention[reservation-' + kind + ']')
     for kind, condition in [('settle', 'not success'), ('refund', 'success')]
 ]
@@ -499,10 +506,32 @@ MUTATIONS += [
         (RETENTION_WRITE,
          '            database.run_in_transaction(\n'
          '                lambda separate: execute_batch_dml(separate, retention, [(0, 1)] * len(retention)))'),
+        (FOLDED_RETENTION_WRITE,
+         '            database.run_in_transaction(\n'
+         '                lambda separate: execute_batch_dml(separate, retention, [(0, 1)] * len(retention)))'),
     ])], 'tests/test_async_settle_proof_faults.py::test_F1_001_retention_money_transaction[False-settle]'),
     ('F1-001-terminal-wrong-clock', [(FINALIZE, [
         ('reservation_id=reservation_id, now=now,\n            )\n' + RETENTION_WRITE,
          'reservation_id=reservation_id, now=res["expires_at"],\n            )\n' + RETENTION_WRITE),
+        ('reservation_id=reservation_id, now=now,\n            )\n' + FOLDED_RETENTION_WRITE,
+         'reservation_id=reservation_id, now=res["expires_at"],\n            )\n' + FOLDED_RETENTION_WRITE),
+    ])], 'tests/test_async_settle_proof.py::test_fresh_snapshot_sync_completes_retention[reservation-settle]'),
+]
+# The same three, on the folded stamps alone: the separate batch left as it
+# is, each still kills, so the witnesses cover the folded site itself.
+MUTATIONS += [
+    ('F1-001-folded-drop-terminal-settle', [(FINALIZE, [
+        (FOLDED_RETENTION_WRITE, '            if not success:\n'
+         '                statements.extend(retention)\n                counts.extend([(0, 1)] * len(retention))'),
+    ])], 'tests/test_async_settle_proof.py::test_fresh_snapshot_sync_completes_retention[reservation-settle]'),
+    ('F1-001-folded-terminal-outside-money-transaction', [(FINALIZE, [
+        (FOLDED_RETENTION_WRITE,
+         '            database.run_in_transaction(\n'
+         '                lambda separate: execute_batch_dml(separate, retention, [(0, 1)] * len(retention)))'),
+    ])], 'tests/test_async_settle_proof_faults.py::test_F1_001_retention_money_transaction[False-settle]'),
+    ('F1-001-folded-terminal-wrong-clock', [(FINALIZE, [
+        ('reservation_id=reservation_id, now=now,\n            )\n' + FOLDED_RETENTION_WRITE,
+         'reservation_id=reservation_id, now=res["expires_at"],\n            )\n' + FOLDED_RETENTION_WRITE),
     ])], 'tests/test_async_settle_proof.py::test_fresh_snapshot_sync_completes_retention[reservation-settle]'),
 ]
 

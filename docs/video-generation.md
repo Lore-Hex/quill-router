@@ -15,8 +15,6 @@ actual usage. TrustedRouter does not send video requests through OpenRouter.
 | `bytedance/seedance-2.0` | Seedance 2.0 | 5 seconds, 720p |
 | `lightricks/ltx-2.3-fast` | LTX 2.3 Fast | 6 seconds, 1080p |
 | `lightricks/ltx-2.3` | LTX 2.3 | 6 seconds, 1080p |
-| `minimax/hailuo-3` | MiniMax Hailuo 3, also called H3 | 5 seconds, 2K |
-| `minimax/h3-max` | MiniMax H3 Max on fal | 5 seconds, 768p |
 
 `GET /v1/videos/models` is the source of truth for currently enabled models and
 their supported parameters.
@@ -24,8 +22,7 @@ their supported parameters.
 ## Direct BytePlus Seedance
 
 Seedance 2.5, 2.0 and 2.0 Fast are available directly through BytePlus ModelArk.
-Select `"provider": {"only": ["byteplus"]}` to require BytePlus without routing
-through Venice. These routes support text or a first-frame image, 4-15 seconds,
+Seedance is closed-weight, so BytePlus is its only route. These routes support text or a first-frame image, 4-15 seconds,
 and 480p or 720p. Seedance 2.5 and 2.0 also support 1080p on the direct BytePlus
 route with the resolution-aware enclave upgrade; 2.0 Fast stops at 720p.
 Video/audio references, last-frame input, reference-image sets, and 4K are not
@@ -52,13 +49,6 @@ A conservative credit reservation is released at settlement;
 only the completed task's actual output tokens are charged. Polling a completed
 job does not charge again. Its response includes the final token usage and cost.
 
-The separate Venice route for Seedance 2.5 supports text, first/last-frame image, and
-image/audio-reference input. It accepts 4-30 seconds, 480p/720p/1080p, and an
-optional `generate_audio` switch. Image-to-video inherits the source image's
-aspect ratio. Prompts may contain up to 15,000 characters. Video references
-are not enabled on this route. Pricing is quoted live per job, not per text
-token; the route is neither ZDR nor confidential.
-
 ## Create and download
 
 ```bash
@@ -67,12 +57,11 @@ curl https://api.trustedrouter.com/v1/videos \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: launch-video-001" \
   -d '{
-    "model": "minimax/hailuo-3",
+    "model": "bytedance/seedance-2.5",
     "prompt": "A camera glides through a quiet neon city at night",
     "duration": 5,
-    "resolution": "2K",
-    "aspect_ratio": "16:9",
-    "generate_audio": true
+    "resolution": "720p",
+    "aspect_ratio": "16:9"
   }'
 ```
 

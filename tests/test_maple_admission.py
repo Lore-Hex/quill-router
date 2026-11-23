@@ -124,14 +124,15 @@ def test_maple_checkpoint_names_its_weights_author_not_host():
     ("eu-west-1", True), ("eu-west-3", True), ("uaenorth", True), ("australiaeast", True),
     ("us-central1", True), ("aws-eu-west-3", True), ("azure-uaenorth", True),
 ])
-def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted):
+@pytest.mark.parametrize("privacy", ["confidential", "trusted"])
+def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted, privacy):
     from trusted_router.authorize_candidates import CandidateRequest, plan_route, resolve_candidates
     from trusted_router.config import Settings
 
     request = CandidateRequest(
         route_type="chat.completions", route_model_id=MAPLE_MODEL_ID,
         routing_body={"model": MAPLE_MODEL_ID, "provider": {
-            "only": ["maple"], "allow_fallbacks": False, "min_privacy": "confidential",
+            "only": ["maple"], "allow_fallbacks": False, "min_privacy": privacy,
         }},
         body_region=origin,
     )

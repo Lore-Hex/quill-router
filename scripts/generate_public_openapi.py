@@ -130,7 +130,7 @@ def _describe_for_agents(schema: dict[str, Any]) -> None:
     info["title"] = "TrustedRouter API"
     info["summary"] = "OpenAI-compatible AI router with an attested prompt path."
     info["description"] = (
-        "TrustedRouter is an OpenAI-compatible API for hundreds of models across many "
+        "TrustedRouter is an OpenAI-compatible API for 600+ models across 100+ "
         "providers, with provider fallback, zero-retention routing, and an attested "
         "gateway whose running source commit and image digest can be verified.\n\n"
         "Inference base URL: https://api.trustedrouter.com/v1\n"

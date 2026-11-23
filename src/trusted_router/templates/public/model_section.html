@@ -44,7 +44,7 @@
             <td><a href="{{ s.about_url }}">{{ s.label }}</a>{% if s.config_note %}<div class="lb-note">{{ s.config_note }}</div>{% endif %}</td>
             <td>{{ s.category }}</td>
             <td>{{ s.display }}</td>
-            <td><a href="{{ s.source_url }}" rel="nofollow noopener">{{ s.source_name }}</a>{% if s.reproducible %} <span class="lb-badge">replay</span>{% endif %}{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
+            <td><a href="{{ s.source_url }}" rel="{{ s.source_url|provider_link_rel }}">{{ s.source_name }}</a>{% if s.reproducible %} <span class="lb-badge">replay</span>{% endif %}{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -258,9 +258,9 @@ with client.audio.speech.with_streaming_response.create(
     model="{{ model.id }}",
     input="Hello from TrustedRouter.",
     voice="{{ model.speech.supported_voices[0] }}",
-    response_format="{{ model.speech.default_response_format }}",
+    response_format="{{ model.speech.example_response_format }}",
 ) as response:
-    response.stream_to_file("speech.{{ model.speech.default_response_format }}")</code></pre>
+    response.stream_to_file("speech.{{ model.speech.example_response_format }}")</code></pre>
     {% elif section == "api" and not model.supports_chat and model.supports_decide %}
     <p class="muted-copy">A decision model answers <span class="mono">POST {{ decide_path }}</span>: one state, a set of typed questions, a verified answer to each. It does not take chat requests. <a href="/docs/decide">The API, the models, the numbers</a>.</p>
     <pre class="code-block"><code>{{ decide_curl(model.id, api_base_url) }}</code></pre>

@@ -6,12 +6,12 @@
 {% block hero %}
 <section class="models-page-hero">
   <div>
-    <div class="kicker">Public catalog · {{ total_model_count }} models · {{ total_provider_count }} providers</div>
+    <div class="kicker">Public catalog · 600+ models · 100+ providers</div>
     <h1>Find the right model.</h1>
-    <p class="models-hero-lead">Hundreds of models, searchable by name, family, or provider. Compare input and output prices, inspect cached-input rates, and open every provider route without leaving the page.</p>
+    <p class="models-hero-lead">600+ models, searchable by name, family, or provider. Compare input and output prices, inspect cached-input rates, and open every provider route without leaving the page.</p>
     <div class="models-page-hero-cta">
-      <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
-      <p class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</p>
+      <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
+      {% from "_free_tokens.html" import free_tokens_line %}<p class="cta-note hero-free-note">{{ free_tokens_line() }}</p>
     </div>
   </div>
   {% include "public/_price_bars.html" %}
@@ -46,10 +46,17 @@
     <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
     {% endfor %}
   </nav>
-  <p class="catalog-privacy-legend"><strong>Trusted</strong> = Confidential routes from Tinfoil or Privatemode, selected for operator physical security and reliability history. <strong>Confidential</strong> = verified provider compute + E2EE + explicit ZDR. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#trusted-tier">Privacy routing</a></p>
+  <div class="catalog-privacy-legend">
+    <dl>
+      <div><dt>Trusted</dt><dd>Confidential routes from operators selected for operator physical security and reliability history.</dd></div>
+      <div><dt>Confidential</dt><dd>Verified provider compute + E2EE + explicit ZDR.</dd></div>
+      <div><dt>ZDR</dt><dd>Zero data retention.</dd></div>
+    </dl>
+    <p>Labels describe available provider routes, not every route. <a href="/docs#trusted-tier">Privacy routing</a></p>
+  </div>
 
   <div class="model-explorer-status">
-    <p><strong data-model-result-count role="status">{{ models|length }} models</strong><span data-model-result-detail> in the public catalog</span></p>
+    <p><strong data-model-result-count role="status">600+ models</strong><span data-model-result-detail> in the public catalog</span></p>
     <button class="model-clear-button" type="button" data-model-clear hidden>Clear search</button>
   </div>
 

@@ -334,7 +334,7 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
         assert region in {*attested, billing_failover}, (
             f"{region} has a min-instances entry but serves neither an enclave nor billing failover"
         )
-    assert 'TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"' in library
+    assert 'TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-16}"' in library
     assert 'TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"' in library
     assert '--concurrency "$TR_CLOUD_RUN_CONCURRENCY"' in rollout
     assert '--min "$min_instances"' in rollout

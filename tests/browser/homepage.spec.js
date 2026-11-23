@@ -8,13 +8,20 @@ delete phone.defaultBrowserType;
 
 const scenarios = () => {
 
-  test("offer banner is visible, fits and opens the GLM offer page", async ({ page }, testInfo) => {
+  test("homepage banner fits and links to the active promotion", async ({ page }, testInfo) => {
     await page.goto("/?utm_source=homepage-browser-test");
-    const banner = page.locator('[data-glm-offer-banner]');
+    const expired = Date.now() >= Date.parse("2026-11-28T00:00:00-08:00");
+    const banner = page.locator(expired ? '[data-token-exchange-banner]' : '[data-glm-offer-banner]');
     await expect(banner).toBeVisible();
     expect(await banner.boundingBox()).toMatchObject({x:0});
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({path:testInfo.outputPath('offer-banner.png')});
+    if (expired) {
+      await expect(banner).toHaveAttribute("href", /^https:\/\/nytokenexchange\.com\//);
+      await expect(page.locator('[data-glm-offer-banner]')).toHaveCount(0);
+      return;
+    }
+    await expect(banner).toContainText("Ends Nov 27, 2026");
     await banner.click();
     await expect(page).toHaveURL(/\/models\/fortanix\/glm-5\.3-flash$/);
   });
@@ -62,7 +69,7 @@ const scenarios = () => {
       await expect(page.locator("#homepage-nav")).not.toBeVisible();
       await expect(page.locator(".trnav .signin")).toBeVisible();
       await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText("Search models", { useInnerText: true });
-      await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search \d+ models/);
+      await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search 600\+ models/);
       await page.locator(".trnav .search").click();
       await expect(page.getByRole("dialog", { name: "Find a model" })).toBeVisible();
       await page.getByRole("searchbox").press("Escape");
@@ -97,8 +104,8 @@ test.describe("smallest phones", () => {
   test("header keeps Sign in and a short search label at 320px", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".trnav .signin")).toBeVisible();
-    await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText(/^models$/i, { useInnerText: true }); // capitalised by CSS
-    await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search \d+ models/);
+    await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText("Models", { useInnerText: true }); // capitalised by CSS, as on /models
+    await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search 600\+ models/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 });

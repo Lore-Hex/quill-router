@@ -50,15 +50,24 @@ IMPORT_ROOTS: tuple[str, ...] = ("", "src")
 #   * src/trusted_router/data/: every catalog file the refresh reads,
 #     carries forward or rewrites (snapshot, manifests, model changes,
 #     routing evidence, lifecycle data).
-#   * src/trusted_router/static/: social cards and the logos and fonts
-#     scripts/generate_provider_og.py renders them from.
+#   * src/trusted_router/static/{og/providers,provider-logos,fonts}/: the
+#     social cards and the logos and fonts scripts/generate_provider_og.py
+#     renders them from, the only static files any refresh step reads or
+#     writes. The rest of static/ (pages, CSS, JS, the public OpenAPI
+#     document) changes on most busy days and never reaches a snapshot;
+#     listing the whole directory made every such merge force a
+#     recomputation (runs 44782888255 and 44800370604, 2026-11-20).
+#     tests/test_refresh_inputs.py fails if a closure module starts reading
+#     another static path.
 #   * fastpath/testdata/model_alias_vectors_v1.json: a refresh output.
 #   * pyproject.toml, uv.lock: the interpreter environment the scripts ran in.
 #   * The workflow: the steps, their order and arguments.
 STATIC_INPUTS: tuple[str, ...] = (
     "scripts/pricing/",
     "src/trusted_router/data/",
-    "src/trusted_router/static/",
+    "src/trusted_router/static/og/providers/",
+    "src/trusted_router/static/provider-logos/",
+    "src/trusted_router/static/fonts/",
     "fastpath/testdata/model_alias_vectors_v1.json",
     "pyproject.toml",
     "uv.lock",

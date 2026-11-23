@@ -97,6 +97,8 @@ DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 # Tencent TokenHub decommissions hy4-preview from 00:00:00 Beijing Time (UTC+8) on
 # 7 Dec 2026, i.e. 2026-12-06 16:00 UTC; the notice recommends migrating to hy4.
 TENCENT_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 12, 6, 16, 0, tzinfo=UTC)
+# DeepInfra deprecates tencent/Hy4-preview on 27 Nov 2026 (date only) and redirects it to Hy4.
+DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -116,6 +118,11 @@ ATLAS_MINIMAX_RETIREMENT_AT = datetime(2026, 11, 14, 8, 0, tzinfo=UTC)
 # NVIDIA NIM's HTTP 410 for meta/llama-guard-4-12b states its exact end of
 # life, 2026-11-16T09:00:00Z (first seen by the route probe 2026-11-17).
 NVIDIA_NIM_LLAMA_GUARD_4_RETIREMENT_AT = datetime(2026, 11, 16, 9, 0, tzinfo=UTC)
+# Fortanix's 2026-11-21 notice suspends its GLM-5.3-Flash H200/TDX endpoint
+# "from 11/27 for 4-6 weeks" while it moves to B200 hardware (date only, so
+# 00:00 UTC). TEMPORARY: Fortanix expects to return around early January 2027;
+# re-admit the route then by deleting its _Retirement entry below.
+FORTANIX_GLM_53_FLASH_SUSPENSION_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -144,6 +151,13 @@ NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 # https://docs.nscale.com/docs/ai-services/models (read 2026-11-16): "These
 # changes take effect on 11 December 2026", date only, so 00:00 UTC as above.
 NSCALE_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
+# Mistral Large 3 was due to leave Nscale serverless with the two above, but
+# Nscale began refusing it early: from 2026-11-23 00:39 UTC TR's serverless
+# key got HTTP 401 "Invalid or expired token" for this model alone (three
+# consecutive refusals) while GLM 5.3 and Qwen3.8-27B kept serving on the same
+# key. The public page (read 2026-11-23) still says 11 December, so stop at
+# the first observed refusal rather than wait for it.
+NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT = datetime(2026, 11, 23, 0, 39, tzinfo=UTC)
 # Enforcement starts at the public-doc observation; the exact earlier
 # Scaleway end-of-life dates are not recorded in this repository.
 SCALEWAY_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 7, 0, 0, tzinfo=UTC)
@@ -286,6 +300,26 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # TEMPORARY suspension, not an end of life. Fortanix suspends the
+    # GLM-5.3-Flash H200/TDX endpoint (native ID GLM-5.3-Flash, the one
+    # endpoint behind both the public fortanix/glm-5.3-flash route and the
+    # operator-only trustedrouter/fortanix-test route) from 2026-11-27 for 4-6
+    # weeks while it moves to B200 hardware. Fortanix is the only provider of
+    # fortanix/glm-5.3-flash, so that model is unroutable during the
+    # suspension; z-ai/glm-5.3-flash and its other providers are unaffected.
+    # Expected back around early January 2027: delete this entry to re-admit
+    # the routes once Fortanix confirms the B200 endpoint and a paid-path
+    # canary passes (re-check fortanix_launch's tariff, context window and
+    # location facts, which may change with the new hardware).
+    _Retirement(
+        provider="fortanix",
+        # The operator-only trustedrouter/fortanix-test route is suspended
+        # through the shared native ID; it is not named here because model_ids
+        # feed the public model_changes history.
+        model_ids=frozenset({"fortanix/glm-5.3-flash"}),
+        upstream_ids=frozenset({"GLM-5.3-Flash"}),
+        effective_at=FORTANIX_GLM_53_FLASH_SUSPENSION_AT,
+    ),
     # Databricks' date-only PAYGO retirement notice; do not silently substitute
     # its suggested GLM/Kimi replacements or retire other providers' Inkling.
     # https://docs.databricks.com/aws/en/machine-learning/retired-models-policy
@@ -435,20 +469,28 @@ _RETIREMENTS = (
     # "Retired from serverless" and Mistral-Large-3-675B-Instruct-2512-NVFP4
     # "Moves to dedicated models". Every Nscale route here is serverless, so
     # all three stop. No specific replacement is named, and none is
-    # substituted; GLM 5.3 and Qwen3.8-27B remain.
+    # substituted; GLM 5.3 and Qwen3.8-27B remain. Mistral Large 3 stopped
+    # early and has its own entry below.
     _Retirement(
         provider="nscale",
         model_ids=frozenset({
             "qwen/qwen3.8-flash-next-fp8",
             "qwen/qwen3-embedding-8b",
-            "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
         }),
         upstream_ids=frozenset({
             "Qwen/Qwen3.8-Flash-Next-FP8",
             "Qwen/Qwen3-Embedding-8B",
-            "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
         }),
         effective_at=NSCALE_DECEMBER_2026_RETIREMENT_AT,
+    ),
+    # Mistral Large 3 "Moves to dedicated models" on the same page, but Nscale
+    # refused it on serverless ahead of 11 December (evidence at the constant).
+    # Only Nscale's route retires; no replacement is named or substituted.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({"mistralai/mistral-large-3-675b-instruct-2512-nvfp4"}),
+        upstream_ids=frozenset({"mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4"}),
+        effective_at=NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT,
     ),
     _Retirement(
         provider="streamlake",
@@ -1393,6 +1435,17 @@ _RETIREMENTS = (
         model_ids=frozenset({"tencent/hy4-preview"}),
         upstream_ids=frozenset({"hy4-preview"}),
         effective_at=TENCENT_HY4_PREVIEW_RETIREMENT_AT,
+        replacement_model_ids=("tencent/hy4",),
+    ),
+    # DeepInfra's November 22 notice: "Model tencent/Hy4-preview is being
+    # deprecated on 2026-11-27" (date only, so 00:00 UTC) and requests are then
+    # redirected to tencent/Hy4, a different model. Retire the identity rather
+    # than substitute; only DeepInfra's route, other hosts' hy4-preview stays.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"tencent/hy4-preview"}),
+        upstream_ids=frozenset({"tencent/Hy4-preview"}),
+        effective_at=DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT,
         replacement_model_ids=("tencent/hy4",),
     ),
     # Databricks' November 10 Foundation Model retirement notice: "The GLM 5.2

@@ -1951,7 +1951,13 @@ _fortanix_endpoint = ModelEndpoint(
     price_tiers=_fortanix_tiers,
     published_price_tiers=_fortanix_tiers,
 )
-MODEL_ENDPOINTS[_fortanix_endpoint.id] = _fortanix_endpoint
+# Like video and speech routes, these honor scheduled lifecycle entries at
+# import (Fortanix's temporary GLM-5.3-Flash suspension from 2026-11-27);
+# endpoints_for_model applies the same entry at request time.
+if not provider_model_retired(
+    "fortanix", _fortanix_endpoint.model_id, _fortanix_endpoint.upstream_id, at=CATALOG_RESOLVED_AT
+):
+    MODEL_ENDPOINTS[_fortanix_endpoint.id] = _fortanix_endpoint
 
 # A separate public ID keeps historical operator-only requests and benchmarks private.
 _fortanix_public_model = replace(
@@ -1970,10 +1976,10 @@ _fortanix_public_model = replace(
     documentation=ModelDocumentation(
         description=(
             "GLM 5.3 Flash hosted by Fortanix in Santa Clara, California "
-            "(operator-declared location). Managed-route ZDR. Introductory pricing: "
+            "(operator-declared location). Managed-route ZDR. "
+            f"Introductory pricing through {fortanix_launch.OFFER_END_LABEL}: "
             "$0.01 per million input tokens and $0.01 per million output tokens. "
-            "The standard $0.000001 minimum per billed request and rounding apply. "
-            "Limited-time offer; no end date announced. Pricing may change."
+            "The standard $0.000001 minimum per billed request and rounding apply."
         ),
         input_format="OpenAI-compatible chat completions with text messages; JSON or streaming.",
         output_format="Chat completion or server-sent events with token usage.",
@@ -1994,4 +2000,10 @@ _fortanix_public_endpoint = replace(
     price_tiers=fortanix_launch.TIERS,
     published_price_tiers=fortanix_launch.TIERS,
 )
-MODEL_ENDPOINTS[_fortanix_public_endpoint.id] = _fortanix_public_endpoint
+if not provider_model_retired(
+    "fortanix",
+    _fortanix_public_endpoint.model_id,
+    _fortanix_public_endpoint.upstream_id,
+    at=CATALOG_RESOLVED_AT,
+):
+    MODEL_ENDPOINTS[_fortanix_public_endpoint.id] = _fortanix_public_endpoint

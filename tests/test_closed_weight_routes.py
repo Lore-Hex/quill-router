@@ -4,7 +4,8 @@ Reseller catalogs list a maker's public ids (GMI: Gemini 4 Argon, GPT-6 Sol,
 Claude; atlas-cloud: Gemini 3.8 Flash, Grok 4.6; novita: GPT-6.2). Listing an
 id is not an admission, for Credits or BYOK, and the hourly refresh must not
 be able to restore such a route. Open weights in the same namespace (Gemma,
-gpt-oss, Whisper large) remain hostable by anyone.
+gpt-oss, Whisper large, Seed-OSS, UI-TARS, MiniMax M-series) remain hostable by
+anyone, as do open video weights from other makers (Wan, LTX).
 """
 
 from dataclasses import replace
@@ -19,6 +20,10 @@ AUTHORIZED = {
     "openai": ("openai", "azure"),
     "anthropic": ("anthropic", "google-vertex", "amazon-bedrock"),
     "x-ai": ("grok", "azure"),
+    "bytedance": ("byteplus",),
+    "bytedance-seed": ("byteplus",),
+    "minimax": ("minimax",),
+    "runway": ("runway",),
 }
 CLOSED_MODELS = (
     "google/gemini-4-argon",
@@ -39,19 +44,46 @@ CLOSED_MODELS = (
     "x-ai/grok4.6",
     "x-ai/grok4.7",
     "x-ai/grok-2-1212",
+    # ByteDance Seed and Doubao text, and Seedance video (venice, atlas-cloud,
+    # deepinfra and openrouter list them).
+    "bytedance/seed-1.8",
+    "bytedance/seed-2.0-pro",
+    "bytedance/doubao-seed-2.1-pro-260628",
+    "bytedance/seedance-2.0",
+    "bytedance/seedance-2.5",
+    "bytedance-seed/seed-2-1-turbo",
+    # MiniMax Hailuo video, including its H3 spellings.
+    "minimax/hailuo-3",
+    "minimax/h3-max",
+    "minimax/video-01",
+    "runway/gen-4.5",
 )
 # Not listed by any manifest, so no other filter can drop the direct routes.
 UNLISTED_CLOSED_MODELS = (
     "google/gemini-future", "google/veo-future", "openai/gpt-future", "openai/o9",
     "openai/sora-future", "anthropic/claude-future", "x-ai/grok-future",
+    "bytedance/seed-future", "bytedance/seedance-future", "bytedance-seed/seed-future",
+    "minimax/hailuo-future", "runway/gen-future",
 )
-RESELLERS = ("gmi", "atlas-cloud", "deepinfra", "novita", "venice", "boundless", "future-reseller")
+RESELLERS = (
+    "gmi", "atlas-cloud", "deepinfra", "novita", "venice", "boundless", "fal", "openrouter",
+    "future-reseller",
+)
 OPEN_WEIGHT_LOOKALIKES = (
     "google/gemma-4-31b-it",
     "google/embeddinggemma-300m",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-safeguard-20b",
     "openai/whisper-large-v3",
+    "bytedance/ui-tars-1.5-7b",
+    "bytedance-seed/seed-oss-36b-instruct",
+    "ByteDance-Seed/Seed-Coder-8B-Instruct",
+    "minimax/minimax-m3",
+    "minimax/minimax-m2.5",
+    "minimaxai/minimax-m1-80k",
+    "alibaba/wan-2.7",
+    "lightricks/ltx-2.3",
+    "lightricks/ltx-2.3-fast",
 )
 
 
@@ -128,6 +160,16 @@ def test_catalog_has_no_unauthorized_closed_weight_route() -> None:
     "x-ai/grok-4.6@atlas-cloud/prepaid",
     "x-ai/grok4.6@gmi/byok",
     "x-ai/grok4.7@gmi/byok",
+    "bytedance/seed-1.8@deepinfra/byok",
+    "bytedance/seed-2.0-pro@deepinfra/prepaid",
+    "bytedance/doubao-seed-2.1-pro-260628@atlas-cloud/prepaid",
+    "bytedance-seed/seed-2-1-turbo@openrouter/prepaid",
+    "bytedance/seedance-2.0@venice/prepaid",
+    "bytedance/seedance-2.5@venice/prepaid",
+    "minimax/hailuo-3@atlas-cloud/prepaid",
+    "minimax/hailuo-3@venice/prepaid",
+    "minimax/h3-max@fal/prepaid",
+    "runway/gen-4.5@venice/prepaid",
 ])
 def test_known_reseller_routes_are_absent(endpoint_id: str) -> None:
     assert endpoint_id not in MODEL_ENDPOINTS
@@ -141,6 +183,15 @@ def test_known_reseller_routes_are_absent(endpoint_id: str) -> None:
     "x-ai/grok-4.6@grok/prepaid",
     "openai/gpt-oss-120b@deepinfra/prepaid",
     "google/gemma-4-31b-it@parasail/prepaid",
+    "bytedance/seed-2-0-pro-260328@byteplus/prepaid",
+    "bytedance/seedance-2.0@byteplus/prepaid",
+    "bytedance/seedance-2.5@byteplus/prepaid",
+    "runway/gen-4.5@runway/prepaid",
+    "bytedance/ui-tars-1.5-7b@parasail/byok",
+    "minimax/minimax-m3@novita/prepaid",
+    "minimax/minimax-m2.5@gmi/byok",
+    "alibaba/wan-2.7@venice/prepaid",
+    "lightricks/ltx-2.3@venice/prepaid",
 ])
 def test_direct_and_open_weight_routes_remain(endpoint_id: str) -> None:
     assert endpoint_id in MODEL_ENDPOINTS

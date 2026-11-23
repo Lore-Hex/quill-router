@@ -309,3 +309,34 @@ def test_published_int64_maximum_is_exactly_the_runtime_integer_bound(model_name
         integer = next(part for part in field["anyOf"] if part["type"] == "integer") if "anyOf" in field else field
         assert type(integer["maximum"]) is int
         assert integer["maximum"] == runtime_bound
+
+
+@pytest.mark.parametrize("source", ["generated", "published"])
+def test_byok_workspace_and_security_documentation(source: str) -> None:
+    schema = _generator().build_public_schema() if source == "generated" else json.loads(JSON_PATH.read_bytes())
+    scheme = schema["components"]["securitySchemes"]["BearerAuth"]
+    assert scheme["type"] == "http"
+    assert scheme["scheme"] == "bearer"
+    for path, item in schema["paths"].items():
+        if path.startswith("/v1/byok/providers") or path in {
+            "/v1/workspaces", "/v1/workspaces/{id}",
+            "/v1/workspaces/{id}/members/add", "/v1/workspaces/{id}/members/remove",
+        }:
+            for operation in item.values():
+                assert operation["summary"] != "Stub"
+                assert operation["description"]
+                assert operation["security"] == [{"BearerAuth": []}]
+                assert operation["servers"] == [{"url": "https://trustedrouter.com"}]
+        if path in {"/v1/byok", "/v1/byok/{id}"}:
+            for operation in item.values():
+                assert "Unsupported" in operation["summary"]
+                assert "/v1/byok/providers" in operation["description"]
+    body = schema["paths"]["/v1/workspaces"]["post"]["requestBody"]
+    assert body["content"]["application/json"]["schema"]["properties"]["name"]["default"] == "Workspace"
+    for path, method in (("/v1/keys", "get"), ("/v1/chat/completions", "post"),
+                         ("/v1/credits/summary", "get"), ("/v1/client-events", "post")):
+        assert schema["paths"][path][method]["security"] == [{"BearerAuth": []}]
+    for path in ("/v1/models", "/v1/providers"):
+        assert not schema["paths"][path]["get"].get("security")
+    for path, method in (("/v1/byok/providers/{provider}", "put"),):
+        assert schema["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"]["$ref"]

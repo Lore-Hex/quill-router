@@ -5,7 +5,9 @@ Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
 enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
 since WS3, the required tier lowered to 1 with the lower tiers' allowances
 since 2026-11-13 ((b), amended), `max_rank` 100 and the $30 join balance
-since 2026-11-13. This is
+since 2026-11-13, and since 2026-11-20 the nodes' floor at $2, then the
+join balance at $3 and the leave balance at $2 with `max_rank` raised past
+the workspaces that could be eligible ((b), amended). This is
 the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
@@ -135,9 +137,9 @@ reconciler rather than at workspaces, the enabler raises
 | Allowance, tier 2 | 250,000,000 microdollars ($250) since 2026-11-13 (0 until then) | `-allowance-tier2` (metadata `fastpath-allowance-tier2`) |
 | Allowance, tier 1 | 100,000,000 microdollars ($100) since 2026-11-13 (0 until then) | `-allowance-tier1` (metadata `fastpath-allowance-tier1`) |
 | Allowance, tier 0 | none, always: no flag | |
-| Floor | 20,000,000 microdollars ($20) | `-floor` (new) |
-| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $30 since 2026-11-13 ($100 until then) | enabler setting |
-| Enabler's balance to disable | unspent credit under $5 since 2026-11-13 ($40 until then) | enabler setting |
+| Floor | 2,000,000 microdollars ($2) since 2026-11-20 (20,000,000, $20, from WS0 until then) | `-floor` (new) |
+| Enabler's balance to enable | unspent credit (`total_credits - total_usage`) at least $3 since 2026-11-20 ($30 from 2026-11-13, $100 until then) | enabler setting |
+| Enabler's balance to disable | unspent credit under $2 since 2026-11-20 ($5 from 2026-11-13, $40 until then) | enabler setting |
 
 **Why.**
 
@@ -253,6 +255,65 @@ reconciler rather than at workspaces, the enabler raises
   a lease holding the rest gets 402 until PR 7's 503 is on
   (`fastpath_lease_headroom_503`), and 503 after it; PR 7 went on before
   WS5's $30 join balance for that reason.
+  - **Amended 2026-11-20: $2.** Joseph lowered the floor
+    (`fastpath_floor = "2000000"`). The floor is headroom for the
+    workspace's own synchronous requests and never was a fraud control:
+    the required tier and the allowances are, and a lease's holds are
+    reserved from the same balance as before ("Why that is accepted"
+    above). What it cost at $20 was traffic. A grant is all or nothing,
+    refused unless the headroom is at least the floor plus the lease asked
+    (`store/grant.go`, `RefusedFloor`), and an ask is about a minute of the
+    shard's spend, at least $0.01 and at most $10 (`owner/shard.go`,
+    `TopUps`), so no balance under about $20 was ever leased. Read on
+    2026-11-20 over seven days, from the request analytics and the credit
+    rows by key: 55 workspaces at tier 1 or above with traffic were out
+    for their balance alone, about 20% of all requests, and most of that
+    from balances under $5. The largest ordinary hold each could make (its
+    largest prompt and 16,384 output tokens at its models' highest credit
+    rates) was at most $0.50 for 51 of them, at most $1 for 53 and above
+    $2 for one; their largest charge was $1.54.
+  - **The catalog rule is one hold, not four.** At four holds the floor
+    could not go under $5.19 (four times $1.296, the figure above at
+    2026-11-20), over what those workspaces hold. The test now fails when
+    one hold's output, 16,384 tokens at the highest credit rate, passes
+    the floor: $1.296 against $2.00. What a hold above the floor meets is
+    the 503 of PR 7, not a loss: a synchronous request of a workspace near
+    the end of its credit is answered 503 with `Retry-After: 1` while
+    leases hold the rest, and nothing is admitted or charged wrongly. That
+    503 can reach the client: a lease gives its unused allocation back
+    only once it stops admitting (ten minutes idle, an hour old, or its
+    workspace off), not as its holds settle, so the headroom may not be
+    back within the enclave's retries. For a small spender the leases hold
+    about one request's hold, so this is the last request or two before
+    its credit runs out.
+  - **Amended 2026-11-21: under the floor the answer is the 402.** The
+    floor is also what gives a stale lease time to close before a balance
+    runs out: no lease is topped up once the headroom is under the floor
+    plus the amount asked, and what a lease still holds comes back only
+    when it closes. With a $2 floor a fast spender reaches the bottom
+    first, so "the last request or two" understated it. On 2026-11-21 a
+    fast-spending workspace within cents of empty, with a lease still
+    holding part of what was left, was answered the 503 on every request
+    (each failing after the enclave's three authorize attempts) until it
+    bought credit. No retry
+    could have succeeded, and before the floor change it would have been
+    answered 402, which is true and can be acted on. The 503 is now
+    answered only while the workspace's headroom, counting what its live
+    leases hold, is at least the nodes' floor
+    (`fastpath_lease_headroom_503_floor_micro`; `rollout.sh` sets
+    `TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO=2000000`, and
+    `tests/test_fastpath_lease_headroom_floor.py` holds it equal to
+    `fastpath_floor`). Under it the answer is the insufficient-credits
+    402, the same as with the 503 off, and the app writes
+    `billing.lease_under_floor_402` beside it. Only which refusal is
+    returned changes; nothing is admitted, held or charged differently. 0
+    is the way back.
+  - **How it is taken, and the way back.** The apply changes metadata
+    only; each node takes `-floor` when its unit starts again, one at a
+    time (`fastpath-deploy.md`, "Lowering the floor"), and the enabler's
+    balances follow only after both run it (next item). The way back is
+    `"20000000"` written again, the enabler's balances first; removing the
+    attribute would leave no floor at all.
 - **$100 and $40 (amended 2026-11-13: $30 and $5).** Below about $40 a
   grant leaves at most $20 for leases past the floor, so most leases are
   refused and each request pays a front door hop to be passed. The gap
@@ -267,6 +328,48 @@ reconciler rather than at workspaces, the enabler raises
   a front door hop per request. Near-floor balances bring the case
   above (a hold meeting a lease holding the rest), so the 503 for headroom
   in leases (PR 7) went on first; WS5 rather than WS6 now admits them.
+  - **Amended 2026-11-20: the balances follow the $2 floor, in their own
+    change.** "$30 is the least balance from which a grant can succeed"
+    overstated it: $30 is the least from which a grant of the largest
+    top-up succeeds, and a small ask succeeds from just above the floor.
+    Once both nodes run the $2 floor the join balance goes to the floor
+    and a dollar, $3, and the leave balance to the floor, $2, which
+    removes the band under the floor where a workspace that is on can
+    never lease (the $5 to $20 band above, a front door hop a request and
+    a refused grant a second). It promises no lease above the floor: the
+    floor plus the whole amount asked must fit in the headroom, which
+    reservations lower, so a balance a little over the floor is still
+    refused any ask larger than the difference. Two
+    rules hold the order, in `tests/test_fastpath_enabler_deploy.py`: the
+    join balance is at least a dollar above the nodes' floor, and the
+    leave balance no lower than it. Both hold at $30 and $5 over a $2
+    floor, so the floor lands first, and neither would hold if the
+    balances came down before it. $2 is still under the least auto-refill
+    threshold. That change followed once both nodes ran the $2 floor: $3
+    and $2 in `scripts/deploy/fastpath_enabler_job.sh`. It raised
+    `max_rank` with them, past the workspaces that could then be eligible
+    (the enabler's report counted 39 eligible and 159 out for their
+    balance alone): the rank is by lifetime usage, so at 100 the smaller
+    of the newly eligible would have stayed out and, past the margin,
+    workspaces already on would have left for their rank. A workspace
+    that spends its credit down and buys more now leaves and joins once
+    a cycle. Every eligible workspace joins in the first run after the
+    deploy, since a run enables up to 500 (`MAX_ENABLES`); a dry run that
+    day counted 114. The enabler cannot take that run back, since its
+    guarded disables are capped (§5.3): the way back for that step is the
+    pause and then `fastpathctl disable` for each workspace on the run's
+    `fastpath_enabler.list enable=` log line (`fastpath-deploy.md`,
+    "Lowering the floor"). The way back for the lines is the pause, then
+    both lines up again, the leave line in steps small enough for the
+    mass-disable guard, and only then the floor.
+    A band of refusals remains just above the floor: a workspace at
+    exactly the leave balance stays on and cannot fund the least ask;
+    reservations lower the headroom a grant reads but not the unspent
+    credit the enabler reads; and the floor plus the whole amount asked
+    must fit. While such a workspace has traffic its owner asks again at
+    most once a second for each admission shard (one by default), each
+    ask reading all of the workspace's credit rows and writing nothing
+    when refused.
 
 ### (c) The exclusion set
 
@@ -284,7 +387,8 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
-| Unspent credit under $5 (under $30 to join; $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
+| Credit rows that break the debt rules (`fast-admission-and-batched-settlement.md` §4.7): a shard negative with none marked, marks that differ, or a mark over a signed sum that is not negative | enabler; counted in the report as `debt_rules` | the rule the fleet audit's `identity` check ends with (`store.CheckIdentity`), read the same way from each shard's credit less its usage and reservations. The grant does not refuse such a workspace (it reads the mark and the signed sum), so before this exclusion the enabler enabled it and the audit raised `fleet_audit_fault` on it every pass. Every writer since the debt rules (2026-10-07) keeps them; a shard a synchronous settle overran before them stays negative until money comes into its workspace, a later settle squares its rows, or `scripts/settle_negative_shards.py` covers it. Rows with any mark are counted `in_debt` first |
+| Unspent credit under $2 (under $3 to join; $5 and $30 until 2026-11-20, $40 and $100 until 2026-11-13) | enabler; grant (`RefusedFloor`) | (b) |
 | Deleted workspaces | enabler (the entity's deletion); edge `workspace.deleted` | |
 | BYOK candidates | request (`funding`; `candidates.byok`) | per request: the same workspace's credit requests stay in |
 | Non-credit funding: partner billing, custom or user-provided models, priced extras | request (`pricing`; `body.priced_extra`, `body.custom_model`) | |
@@ -463,12 +567,18 @@ needs no analytics read; the largest spenders carry most of the traffic
   it is disabled as latched; a mass latch never reaches the guard below
   and never raises `fastpath_enabler_mass_disable`. The guard and the pace
   count only workspaces whose every cause is capped. For any other cause
-  that came from a change of facts (tier below the required tier, balance under the leave threshold, a
+  that came from a change of facts (tier below the required tier, balance under the leave threshold,
+  credit rows that break the debt rules, a
   federated home, a deletion, a probe, a bypass), the cap is a guard: when
   a run would disable more than 10% of the enabled set or 20 workspaces,
   whichever is larger, for those causes, it disables none of them that run
   and raises `fastpath_enabler_mass_disable`, since a sudden mass change
-  of facts is more likely a reading defect than a fact. A rank past the
+  of facts is more likely a reading defect than a fact. Rows that break
+  the debt rules ((c)) are in this group, not the uncapped one, because the
+  grant does not refuse them: unlike a latch, a pause or a mark, their
+  disable is a real change, and the audit's `fleet_audit_fault` already
+  names each one to an operator. A few leave at the next run; a mass of
+  them at once is a writer or a reading gone wrong. A rank past the
   margin of §5.2 is not guarded but paced: each run disables at most the
   same number, lowest rank first, and raises nothing, since a large rank
   change comes from the operator lowering `max_rank` and a small one from
@@ -486,6 +596,16 @@ would enable and would disable by reason, excluded by each reason of (c),
 held, frozen, capped, `bypass`, enabled rows outside the include list, and
 in apply mode the commit times. The lists of workspaces to enable and
 disable go in the job's own log, which only operators read.
+
+A workspace is counted in `excluded` under its first cause alone, in the
+order uncapped, whole, guarded (`PRECEDENCE`). `excluded.debt_rules` leads
+the tier and the balance, so it counts every workspace whose rows break
+the debt rules and that no cause before it (a latch, a pause, a mark, a
+hold, an exclude entry, incomplete rows) already keeps out, whatever its
+tier or balance: workspaces `scripts/settle_negative_shards.py` has yet
+to settle. In apply mode an
+enable whose own transaction finds such rows is counted under `writes` as
+`ineligible:debt_rules`.
 
 The report also counts `unheld_disabled`: every `enabled = false` row of
 `tr_fastpath_workspace` with no hold of its own, fleet-wide, whatever its
@@ -907,7 +1027,9 @@ counts from before it do not count.
    counted and each explained by a fact the enabler had not yet seen. (The
    owner does not count refused grants yet, so this is read from the
    enabler's reports and the edge's `owner.busy`; with the $30 join a
-   workspace spending below its last top-up can still meet the floor.)
+   workspace spending below its last top-up can still meet the floor, and
+   with the $3 join over the $2 floor, since 2026-11-20, one whose last
+   minute's spend is more than its credit above the floor does.)
 6. W3's ceilings: Spanner CPU, every subscription's backlog, pending work
    overdue, none crossed.
 7. The enabler: no `fastpath_enabler_mass_disable` or
@@ -1498,6 +1620,10 @@ step.
    leases hold a positive amount that with the rows' signed headroom
    covers it, is outcome `lease_headroom`, answered 503 with `Retry-After:
    1` and type `service_unavailable`; anything else keeps today's answer.
+   Since 2026-11-21 that total must also be at least the nodes' floor
+   (`fastpath_lease_headroom_503_floor_micro`, (b) above); under it the
+   outcome is today's `insufficient_credits`, and the verdict carries the
+   amounts read for the route's `billing.lease_under_floor_402` line.
    What the leases hold is section 4.7's term, each open or draining
    lease's donors' `allocation - consumed`, read by
    `credit_exhaustion_precheck` (`lease_aware`) in the snapshot that reads
@@ -1535,7 +1661,13 @@ step.
    the shortfall, 402 to 503, never the reverse and never to an admission;
    the precheck's memory, lock-free on every hit, through a lease's return
    and a lease's spending; the route's 503, `Retry-After` and type against
-   today's 402) and
+   today's 402),
+   `tests/test_fastpath_lease_headroom_floor.py` (the same matrix at a
+   sweep of floors: against no floor the answers differ only where the
+   total is under the floor, 503 to 402, with the rows, reservations and
+   memory unchanged; the 2026-11-21 case; retries and the idempotent
+   replay as for today's 402; `rollout.sh`'s floor equal to the nodes')
+   and
    `tests/conformance/test_fastpath_lease_headroom_native.py` (the
    statement on the emulator: live states, closed leases, neighbouring
    workspaces, the debt mark).

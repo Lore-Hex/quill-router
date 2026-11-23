@@ -621,12 +621,16 @@ unit. The attribute is set only with a pinned release that takes
 last two in microdollars, and the startup script passes each only when
 the instance's metadata names it: `fastpath-required-tier`,
 `fastpath-allowance`, `fastpath-floor`. With none of them a node runs
-the release's defaults, today's values: tier 1, the allowance `1 << 50`,
-no floor. The script refuses a value the release would refuse (the tier
+the release's defaults: tier 1, the allowance `1 << 50`, no floor, which
+is why no attribute is removed to go back (the end of this section). The
+script refuses a value the release would refuse (the tier
 0 to 3; the allowance 10000000 to 1125899906842624; the floor 0 or
 1000000 to 1125899906842624), so the unit keeps what it had. The design's
-values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
-20000000 ($20). In this order, each step done before the next starts:
+values at WS0 were tier 3, an allowance of 1000000000 ($1,000) and a floor
+of 20000000 ($20), and the steps below are WS0's, with those values. The
+tier is 1 since 2026-11-13 ("Lowering the required tier") and the floor
+2000000 ($2) since 2026-11-20 ("Lowering the floor"). In this order, each
+step done before the next starts:
 
 1. **The release and the script.** A release that takes `-allowance` and
    `-floor` is pinned and every node runs it ("Taking a pinned release");
@@ -694,8 +698,12 @@ values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
    may still be made at today's values, so WS0's gate (section 8.2 of the
    design) counts from the last node's restart.
 
-The way back is the attributes removed and each node taken the same way,
-which returns it to today's values.
+The way back is each value written back as it was before the change and
+each node taken the same way, never an attribute removed: a node without
+`fastpath-floor` runs with no floor at all, and one without
+`fastpath-allowance` with the release's `1 << 50`, which bounds nothing.
+(When this section was written the nodes ran the release's defaults, so
+removing the three was the way back to them. It is not since.)
 
 ## Lowering the required tier: the lower tiers' allowances
 
@@ -723,7 +731,8 @@ Tier 0 never takes a lease. In this order, each step done before the next:
    script stops at the download. On each new node, read the running arguments
    back (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`);
    they must end in
-   `-required-tier 1 -allowance 1000000000 -floor 20000000 -allowance-tier2 250000000 -allowance-tier1 100000000 -fleet-audit`.
+   `-required-tier 1 -allowance 1000000000 -floor 2000000 -allowance-tier2 250000000 -allowance-tier1 100000000 -fleet-audit`
+   (`-floor 20000000` until the floor was lowered on 2026-11-20, below).
    Then run the infrastructure apply once more so the edge instance groups
    list them, and wait for `HEALTHY` in
    `gcloud compute backend-services get-health tr-fastpath-edge-backend --global`.
@@ -736,7 +745,7 @@ Tier 0 never takes a lease. In this order, each step done before the next:
    workspace reads as refused (`RefusedTierAllowance`):
 
    ```bash
-   /opt/fastpath/fastpathctl -database $DB ready $WS -required-tier 1 -floor 20000000 -allowance-tier2 250000000 -allowance-tier1 100000000
+   /opt/fastpath/fastpathctl -database $DB ready $WS -required-tier 1 -floor 2000000 -allowance-tier2 250000000 -allowance-tier1 100000000
    ```
 
 4. **Only then the enabler.** A separate change lowers
@@ -747,6 +756,147 @@ Tier 0 never takes a lease. In this order, each step done before the next:
 
 The way back is the required tier at 3 again (the lower allowances are then
 not read), taken by each node the same way, and the enabler's tier first.
+
+## Lowering the floor
+
+`docs/design/fast-admission-widening.md` (b), amended 2026-11-20. The floor
+is the headroom a grant leaves outside leases for the same workspace's
+synchronous requests. It is not a fraud control: the required tier and the
+allowances are. A grant is all or nothing, refused (`RefusedFloor`) unless
+the workspace's headroom is at least the floor plus the lease asked, and an
+ask is about a minute of the shard's spend, at least $0.01 and at most $10.
+At $20 no balance under about $20 was ever leased. Since 2026-11-20 the
+floor is $2, 2000000. It needs no release: the pinned release takes
+`-floor` and nodes 15 and 16 run the script that reads `fastpath-floor`.
+In this order, each step done before the next:
+
+1. **The value.** One change in `infra/fastpath.tf` sets
+   `fastpath_floor = "2000000"`. `tests/test_fastpath_money_settings.py`
+   holds it to the catalog: the largest ordinary hold's output (16,384
+   tokens at the highest credit rate, about $1.30 on 2026-11-20) fits under
+   it once. The infrastructure apply changes the instances' metadata only:
+   no node restarts, and each keeps the arguments its unit started with.
+   The same change writes the value to
+   `TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO` in
+   `scripts/deploy/rollout.sh`, which holds the authorize 503 for headroom
+   in leases to the floor (below);
+   `tests/test_fastpath_lease_headroom_floor.py` fails until the two are
+   equal. The control plane takes it at its next deploy, and either one
+   running ahead of the other is safe: it decides only which refusal a
+   request already refused is answered.
+2. **Each node, one at a time, the other serving**, as the money settings'
+   step 5 says: mark it leaving, wait for its leases and the balancer, stop
+   the unit, run `sudo google_metadata_script_runner startup`, and read
+   the running arguments from the process
+   (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`).
+   They must end in
+
+   ```
+   -required-tier 1 -allowance 1000000000 -floor 2000000 -allowance-tier2 250000000 -allowance-tier1 100000000 -fleet-audit
+   ```
+
+   before the next node is touched. Until both nodes are taken a grant is
+   made at whichever floor its owner runs, $20 or $2, which is safe either
+   way.
+3. **Readiness at the new floor**, for a workspace about to join, from a
+   node:
+
+   ```bash
+   /opt/fastpath/fastpathctl -database $DB ready $WS -required-tier 1 -floor 2000000 -allowance-tier2 250000000 -allowance-tier1 100000000
+   ```
+
+   `ready` takes the floor it is given, not the nodes': at `-floor 20000000`
+   it reports a workspace under $20 as refused that the nodes now lease.
+4. **Only then the enabler's balances.** A separate change lowers
+   `TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO` and
+   `TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO` in
+   `scripts/deploy/fastpath_enabler_job.sh`: the join balance to the floor
+   and a dollar ($3), the leave balance to the floor ($2), which removes
+   the band under the floor where a workspace that is on can never lease.
+   A lease is still not promised just above the floor: the floor plus the
+   whole amount asked must fit in the headroom, which reservations lower.
+   `tests/test_fastpath_enabler_deploy.py` holds both to the nodes' floor:
+   the join balance at least a dollar above it, the leave balance no lower
+   than it. Lowered before the nodes, the enabler would turn on workspaces
+   every grant still refuses, which costs each of their requests a
+   front door hop. The same change raises `TR_FASTPATH_ENABLER_MAX_RANK`
+   past the workspaces that become eligible: the rank is by lifetime
+   usage, and a rank short of them leaves the smaller ones out and, past
+   its margin, turns off workspaces already on. Read the enabler's next
+   report: a run enables up to 500, so the first run after the deploy
+   should turn on every eligible workspace (a dry run on 2026-11-20
+   counted 114 to enable). That report's `enabled` is counted before its
+   writes, so it still shows the old figure: read `writes.enabled` there,
+   or `eligible` equal to `enabled` in the run after it, with nothing
+   under `would_disable` for `rank`.
+   Workspaces whose trust watermark is stale that run are counted
+   `frozen` and join at a later one.
+
+What to watch once the enabler's balances are down: the authorize 503s for
+headroom in leases (`trustedrouter_gateway_lease_headroom_503`,
+`docs/spanner-reliability.md`), the edge's `owner.busy` passes
+(`fastpath-edge-decide.md`), and the enabler's report (`eligible`,
+`would_enable`, `excluded.balance`). A synchronous hold above the headroom
+a grant left, while leases hold the rest, is answered that 503 with
+`Retry-After: 1`. A lease gives its unused allocation back only once it
+stops admitting (ten minutes idle, an hour old, or its workspace off), so
+the 503 can outlast the enclave's authorize retries and reach the client,
+which may retry it.
+
+The floor is also what gives a stale lease time to close before a balance
+runs out, and with a $2 floor a fast spender can reach the bottom first
+(2026-11-21: 13 requests of one workspace answered the 503 over three
+minutes, until it bought credit). So the 503 is answered only while the
+workspace's headroom, counting what its leases hold, is at least the floor
+(`TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO` in `rollout.sh`). Under it no
+lease is topped up, a retry cannot help, and the answer is the
+insufficient-credits 402, as with the 503 off. Each such 402 has a line
+beside its `billing.insufficient_credits` one, which counts them and
+carries the amounts read together (the headroom outside leases, what the
+leases hold, and the floor their sum is under):
+
+```
+INFO trusted_router.routes.internal.gateway billing.lease_under_floor_402 workspace_id=WS key_id=K request_id=R reserved_microdollars=N estimated_microdollars=N available_microdollars=N lease_held_microdollars=N floor_microdollars=2000000
+```
+
+A workspace answered the 503 for minutes with its balance under the floor
+means that setting is 0 or the control plane predates it. Setting it to 0
+answers every such refusal the 503 again.
+
+To take the first run's enables back, the enabler is no help: for a
+changed fact it disables at most the larger of 20 and a tenth of the
+enabled set in a run, and past that it disables none and alerts. So:
+`fastpathctl enabler pause`, then `fastpathctl disable WS` for each
+workspace on that run's own log line,
+
+```
+INFO trusted_router.fastpath_enabler fastpath_enabler.list enable=WS,WS,...
+```
+
+which names every workspace the run set out to enable. The same run's
+`fastpath_enabler.report` line counts under `writes` how many of them it
+did enable; one it did not is only held by the `disable`. Each `disable`
+revokes the workspace's leases and holds it, reason `operator`, so the
+enabler leaves it off; once the enabler is resumed, `fastpathctl release
+WS` hands one back.
+
+The way back, in this order. First `fastpathctl enabler pause`, so the
+enabler writes nothing while its balances move. Then the enabler's
+`TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO` and
+`TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO` back up, the leave balance in
+steps: a run that finds more workspaces to disable for their balance than
+its guard allows (the larger of 20 and a tenth of the enabled set) disables
+none of them and alerts `fastpath_enabler_mass_disable`, so raise the line
+far enough for at most that many each run, resume, and repeat. Only then
+`fastpath_floor = "20000000"` written out again in `infra/fastpath.tf`, by
+reverting the change that lowered it (the tests that hold the enabler's
+balances to the floor go back with it: at $20 the leave balance cannot be
+both at the floor and under the least auto-refill threshold), and each
+node taken as in step 2. Never the attribute removed: a node without
+`fastpath-floor` runs with no floor at all. Raising the floor alone is
+safe for money at any time, since a higher floor only refuses more grants,
+and costs each affected request a front door hop until the enabler's
+balances follow.
 
 ## Streams on the lease: the release order
 

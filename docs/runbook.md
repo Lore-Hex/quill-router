@@ -1437,6 +1437,61 @@ Find the previous pinned revision with `gcloud run revisions list`. Pending
 and dead rows left behind keep their holds frozen; they are safe and resolve on
 the next flip or via `release_approved`.
 
+### <a id="holds-released-without-a-terminal"></a>Holds released without a terminal
+
+Every gateway request ends in a settle or a refund. A hold with neither is
+released by the reaper at the reservation's expiry, two hours after the
+authorization, with nothing booked. Each one is nearly always a gateway exit
+that authorized and then sent no terminal. Until the release the customer's
+credit is locked: a small balance can be held whole by a handful of stranded
+requests, and its later requests are refused.
+
+The drain writes one WARNING line for each hold released, naming the counter
+and nothing else (no workspace, key, authorization or amount):
+
+`WARNING trusted_router.services.settle_outbox_drain metric=gateway_hold_released_expired_total `
+
+**Alert `TR Holds: released at expiry`** (`infra/hold_release_alerts.tf`)
+notifies at most once an hour while lines keep coming. The count of holds is
+the log-based metric `gateway_hold_release_expired`. Expect tens a week
+today; the policy notifies on them on purpose, since each is a hold a
+customer waited two hours for, and the count should fall to none as the
+gateway's exits are fixed.
+
+What is counted: holds given back with nothing booked. A stream that had
+started (heartbeats on its row) and then lost its gateway is ended by the
+reaper at its last heartbeat's snapshot and charged that snapshot; it is not
+counted here, and the reaper's own line says how many
+(`gateway.reaped ... snapshot_bookings=N`).
+
+What to do: find the gateway exit. The line names no customer on purpose, so
+start from the class of the released rows, an aggregate over the last hour by
+the reservation's terminal index (never a table read):
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy --priority=low \
+  --sql="SELECT IFNULL(JSON_VALUE(a.payload,'\$.stage_d_reason'),'null') reason,
+         a.started_at IS NOT NULL started, COUNT(*) n
+         FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_terminal} r
+         JOIN tr_gateway_authorization a ON a.authorization_id = r.authorization_id
+         WHERE r.settled=true AND r.actual_micro=0
+           AND r.terminal_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+           AND a.finalization_outcome='refunded'
+           AND TIMESTAMP_DIFF(r.terminal_at, r.created_at, SECOND) >= 7000
+         GROUP BY 1,2"
+```
+
+`reason=ok` with `started=false` is a stream that died between its authorize
+and its provider's first byte (2026-11: a request rejected while it was being
+translated, after its authorize, with no refund). `not_streaming` is a request
+that does not stream; the other reasons say why a request was outside the
+heartbeat class (for example its service tier or its boot) and can be streams
+too. Then read the gateway's logs
+for requests that answered an error after `authorize` with no `refund` line,
+and fix the exit in quill-cloud-proxy. A burst of 20 or more in one pass
+also raises `ALERT gateway reaper burst`.
+
 ---
 
 ## <a id="credit-ledger"></a>Credit ledger operations (single typed book)
@@ -2030,9 +2085,23 @@ representable in UTC, keeps a NULL `indexed_at` and is skipped.
 
 ### Decide async settlement
 
-To disable decide async admission, set the config-as-code pin
-`TR_ASYNC_SETTLE_DECIDE_ROUTE=false`. Rows already accepted keep draining;
-snapshot-sync retries retain their frozen price. Do not roll the router or
-the drain worker back to a release older than decide async support while
-decide rows are pending: older releases do not support the decide async
-ticket and terminal-envelope contract.
+A router release from before decide async support answers 400 to a decide
+terminal envelope, on the async route and on the snapshot-sync retry alike.
+The enclave does not fall back to the ordinary settle after that answer, so
+the call fails and its hold waits for expiry. Three rules follow.
+
+To turn it on: set the config-as-code pin `TR_ASYNC_SETTLE_DECIDE_ROUTE=true`
+only once every router region already runs a release with decide async
+support. A region that runs such a release with the pin still off answers
+`sync_required` and takes the snapshot-sync retry at the frozen price, so the
+pin itself may roll out region by region.
+
+To turn it off: set the pin to `false`. Rows already accepted keep draining,
+and snapshot-sync retries keep their frozen price.
+
+To roll the router back past decide async support: first turn the pin off in
+every region, then wait until every decide call authorized before the pin
+went off has finished and until the pending decide rows have drained. The
+ticket's lifetime does not bound that wait: a call that outlives its ticket
+still presents it on the snapshot-sync retry. The drain worker's apply path does not read the route, so
+an older drain worker applies decide rows correctly; the limit is the router.

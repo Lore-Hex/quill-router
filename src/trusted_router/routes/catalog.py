@@ -45,6 +45,7 @@ from trusted_router.image_generation import (
     image_pricing_by_resolution,
     image_supported_parameters,
 )
+from trusted_router.media_discovery import dedicated_video_row
 from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.model_changes import last_route_changes, timestamp
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
@@ -479,6 +480,13 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
             "byok_available": endpoint.usage_type == "BYOK",
         },
     }
+
+
+def public_video_models() -> dict[str, Any]:
+    return {"data": [
+        dedicated_video_row(row) for row in _current_catalog_payload().shapes
+        if "supported_durations" in row and not row["trustedrouter"].get("internal_only")
+    ]}
 
 
 def register_catalog_routes(router: APIRouter) -> None:

@@ -6,9 +6,9 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
   await expect(page.locator("#top .hero-promises li")).toHaveCount(4);
   await expect(page.locator("#top .hero .sub")).toHaveText(
-    "Access hundreds of models confidentially through a single OpenAI-compatible API.",
+    "Access 600+ models confidentially through a single OpenAI-compatible API.",
   );
-  await expect(page.locator("#top .hero .button-primary")).toHaveText("Create my API key");
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Start building");
   await expect(page.locator("#top .cta-note")).toContainText("No card required");
   await expect(page.locator("body")).toHaveCSS("font-size", "16px");
 
@@ -69,7 +69,7 @@ test("paid search quickstart copies runnable code and opens key creation", async
   expect(copied).toContain("import os");
   expect(copied).toContain('model="trustedrouter/cheap"');
 
-  await page.getByRole("button", { name: "Create my API key" }).first().click();
+  await page.getByRole("button", { name: "Start building" }).first().click();
   await expect(page.locator("#signinModal")).toBeVisible();
 });
 
@@ -390,7 +390,7 @@ test("model picker applies privacy to exact provider routes", async ({ page }) =
   const trustedRouteLabels = await picker.locator(".provider-route").allTextContents();
   expect(trustedRouteLabels.length).toBeGreaterThan(0);
   expect(trustedRouteLabels.every((label) =>
-    /^(Tinfoil|Privatemode) · .* · Trusted$/.test(label),
+    /^(Tinfoil|Privatemode|Maple) · .* · Trusted$/.test(label),
   )).toBe(true);
 
   await picker.locator("#privacy").selectOption("2");
@@ -415,6 +415,35 @@ test("model picker triangle is keyboard adjustable", async ({ page }) => {
   await expect(page.locator("#qualityWeight")).toHaveText("33");
   await expect(page.locator("#costWeight")).toHaveText("33");
   await expect(page.locator("#speedWeight")).toHaveText("33");
+});
+
+test("model picker keeps catalog claims stable and evaluated and matching counts exact", async ({ page }) => {
+  let matchingCount;
+  await page.route("**/choose/catalog.json", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    matchingCount = payload.models.length;
+    Object.assign(payload, {
+      catalog_model_count: 466,
+      catalog_provider_count: 84,
+      catalog_route_count: 1722,
+      evaluated_model_count: 37,
+    });
+    await route.fulfill({ json: payload });
+  });
+  await page.goto("/static/choose-app.html");
+  await expect(page.locator("#liveCount")).toHaveText("600+");
+  await expect(page.locator("#providerCount")).toHaveText("100+");
+  await expect(page.locator("#evaluatedCount")).toHaveText("37");
+  await expect(page.locator("#loadText")).toHaveText(
+    "37 independently scored models matched against a catalog of 600+ models across 100+ providers.",
+  );
+  await page.getByRole("button", { name: /Simple/ }).click();
+  await page.getByRole("button", { name: /Any/ }).click();
+  await expect(page.locator(".model-card").first()).toBeVisible();
+  await expect(page.locator("#resultsTitle")).toHaveText(
+    `Matches · ${matchingCount} independently scored model${matchingCount === 1 ? "" : "s"}`,
+  );
 });
 
 test("model picker Confidential requires ZDR even when compute and E2EE are verified", async ({ page }) => {

@@ -9,8 +9,10 @@ several providers have no inference credential in the refresh at all.
 
 The control plane already observes the failure: configured-route probes
 classify the responses as ``unsupported_route``. ``/route-health/unserved.json``
-publishes the routes whose newest probes form a long model-not-served streak
-(see ``trusted_router.synthetic.route_health.evaluate_unserved_routes``). This
+publishes the routes whose newest probes form a long model-not-served streak,
+or have failed every probe for six hours (a sustained per-route outage, such
+as Chutes answering 502 for one model while serving the rest), see
+``trusted_router.synthetic.route_health.evaluate_unserved_routes``. This
 step, run after the provider refresh, applies that evidence to the committed
 manifests:
 
@@ -37,9 +39,9 @@ carries them forward until this step lifts them.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
-from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -49,18 +51,24 @@ import httpx
 from trusted_router.provider_manifest_policy import (
     UNSERVED_ROUTE_HELD_AT_FIELD,
     UNSERVED_ROUTE_HOLD_REASON,
-    provider_manifest_row_price_is_valid,
+)
+from trusted_router.unserved_route_hold_plan import (
+    HOLD_HOURS,
+    MAX_CLOCK_SKEW,
+    MAX_PROVIDER_FRACTION,
+    MAX_ROUTES,
+    lift_expired_unserved_holds,
+    plan_unserved_route_holds,
 )
 
 SOURCE = "https://trustedrouter.com/route-health/unserved.json"
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "src/trusted_router/data/provider_models"
 HELD_AT_FIELD = UNSERVED_ROUTE_HELD_AT_FIELD
-HOLD_HOURS = 24
 MAX_EVIDENCE_AGE = timedelta(hours=2)
-# The server stamps generated_at when it builds; tolerate runner/server skew.
-MAX_CLOCK_SKEW = timedelta(minutes=5)
-MAX_ROUTES = 25
-MAX_PROVIDER_FRACTION = 0.5
+__all__ = [
+    "HOLD_HOURS", "MAX_CLOCK_SKEW", "MAX_PROVIDER_FRACTION", "MAX_ROUTES",
+    "apply_unserved_route_holds", "parse_evidence",
+]
 
 Route = tuple[str, str]
 
@@ -107,40 +115,6 @@ def fetch_evidence(source: str) -> set[Route]:
     return parse_evidence(response.json(), now=datetime.now(UTC))
 
 
-def _routable(row: dict[str, Any]) -> bool:
-    return row.get("routable") is not False
-
-
-def _lift_expired(rows: Iterable[Any], *, now: datetime) -> list[str]:
-    lifted = []
-    for row in rows:
-        if not isinstance(row, dict) or row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
-            continue
-        held_at = _parse_time(row.get(HELD_AT_FIELD))
-        # A missing, malformed or future-dated stamp cannot prove the hold is
-        # young; lift it rather than risk a hold that never expires.
-        if held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS):
-            continue
-        row.pop(HELD_AT_FIELD, None)
-        # While held, discovery could not record its own state (the hold
-        # outranks it). Never lift into a delisted or unpriced routable row:
-        # one such row expires the provider's whole manifest.
-        # Judge the price as the row would be published once lifted: some
-        # validators accept fields only on a row that is not routable.
-        as_lifted = {key: value for key, value in row.items() if key not in {"routable", "routable_reason"}}
-        if row.get("missing_since"):
-            row["routable"] = False
-            row["routable_reason"] = "delisted-upstream"
-        elif not provider_manifest_row_price_is_valid(as_lifted):
-            row["routable"] = False
-            row["routable_reason"] = "price-unavailable"
-        else:
-            row.pop("routable", None)
-            row.pop("routable_reason", None)
-        lifted.append(str(row.get("id")))
-    return lifted
-
-
 def _load(path: Path) -> dict[str, Any] | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -154,79 +128,44 @@ def apply_unserved_route_holds(
     *,
     manifest_dir: Path = MANIFEST_DIR,
     now: datetime | None = None,
+    frozen: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """Lift expired holds, then hold the evidenced routes. Returns notes."""
+    """Lift expired holds, then hold the evidenced routes. Returns notes.
+
+    ``frozen`` names manifests (by file stem) this step must leave byte for
+    byte: a quarantined provider's committed manifest (scripts/pricing/
+    quarantine.py). Lifting an expired hold there would re-enable a route
+    the quarantine is keeping exactly as published.
+    """
     now = now or datetime.now(UTC)
     notes: list[str] = []
-    by_provider: dict[str, set[str]] = {}
-    if evidence is None:
-        notes.append("unserved-route evidence unavailable; holding nothing")
-    elif len(evidence) > MAX_ROUTES:
-        notes.append(f"{len(evidence)} unserved routes exceed the {MAX_ROUTES}-route cap; holding nothing")
-    else:
-        for provider, model in evidence:
-            by_provider.setdefault(provider, set()).add(model)
-        for provider in sorted(set(by_provider) - {path.stem for path in manifest_dir.glob("*.json")}):
-            notes.append(f"{provider}: no provider manifest; not held")
-
+    manifest_stems = [path.stem for path in manifest_dir.glob("*.json")]
     manifests: list[tuple[Path, dict[str, Any], bool]] = []
+    frozen_held = 0
     for path in sorted(manifest_dir.glob("*.json")):
         raw = _load(path)
+        if path.stem in frozen:
+            notes.append(f"{path.stem}: quarantined; manifest left as published")
+            # Its holds still count against the global route cap.
+            frozen_held += sum(
+                1 for row in (raw or {}).get("models", [])
+                if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+            )
+            continue
         if raw is None:
             continue
-        lifted = _lift_expired(raw["models"], now=now)
+        lifted = lift_expired_unserved_holds(raw["models"], now=now)
         if lifted:
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")
         manifests.append((path, raw, bool(lifted)))
 
-    planned: list[tuple[int, dict[str, Any]]] = []
-    for index, (path, raw, _) in enumerate(manifests):
-        wanted = by_provider.get(path.stem, set())
-        if not wanted:
-            continue
-        rows = raw["models"]
-        routable_rows = {
-            row["id"]: row for row in rows
-            if isinstance(row, dict) and isinstance(row.get("id"), str) and _routable(row)
-        }
-        targets = sorted(wanted & set(routable_rows))
-        already_held = {
-            row.get("id") for row in rows
-            if isinstance(row, dict) and isinstance(row.get("id"), str)
-            and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
-        }
-        for model in sorted(wanted - set(routable_rows) - already_held):
-            notes.append(f"{path.stem}: {model} is not a routable manifest row; not held")
-        # Rows this step already holds count on both sides, so the cap
-        # cannot ratchet a provider down one partial run at a time.
-        unserved = len(targets) + len(already_held)
-        candidates = len(routable_rows) + len(already_held)
-        if targets and (
-            unserved > MAX_PROVIDER_FRACTION * candidates
-            or len(targets) >= len(routable_rows)
-        ):
-            notes.append(
-                f"{path.stem}: {unserved} of {candidates} rows unserved; "
-                "provider-wide problem, holding none"
-            )
-            targets = []
-        planned.extend((index, routable_rows[model]) for model in targets)
-
-    # Held routes stop being probed and drop out of the evidence, so the
-    # route cap must count the holds already in place: otherwise it bounds
-    # only each hourly run and a rolling problem accumulates without limit.
-    held_total = sum(
-        1
-        for _, raw, _ in manifests
-        for row in raw["models"]
-        if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+    planned, plan_notes = plan_unserved_route_holds(
+        evidence,
+        [(path.stem, raw["models"]) for path, raw, _ in manifests],
+        manifest_stems=manifest_stems,
+        extra_held=frozen_held,
     )
-    if planned and held_total + len(planned) > MAX_ROUTES:
-        notes.append(
-            f"{held_total} held + {len(planned)} new unserved routes exceed the "
-            f"{MAX_ROUTES}-route cap; holding nothing new"
-        )
-        planned = []
+    notes.extend(plan_notes)
 
     changed = {index for index, (_, _, lifted) in enumerate(manifests) if lifted}
     for index, row in planned:
@@ -239,6 +178,22 @@ def apply_unserved_route_holds(
         path, raw, _ = manifests[index]
         path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return notes
+
+
+def quarantined_manifests() -> frozenset[str]:
+    """Manifest stems of the providers quarantined for this run."""
+    from scripts.pricing.quarantine import quarantined_providers
+
+    stems: set[str] = set()
+    for slug in quarantined_providers():
+        try:
+            module = importlib.import_module(f"scripts.pricing.providers.{slug}")
+        except ImportError:
+            stems.add(slug)
+            continue
+        manifest = getattr(module, "MANIFEST_PATH", None)
+        stems.add(Path(manifest).stem if manifest is not None else slug)
+    return frozenset(stems)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -257,7 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - any failure means no evidence, never "all healthy"
         print(f"unserved-route evidence unavailable ({type(exc).__name__})", file=sys.stderr)
         evidence = None
-    for note in apply_unserved_route_holds(evidence, manifest_dir=args.manifest_dir, now=now):
+    frozen = quarantined_manifests()
+    for note in apply_unserved_route_holds(evidence, manifest_dir=args.manifest_dir, now=now, frozen=frozen):
         print(note)
     return 0
 

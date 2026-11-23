@@ -122,3 +122,11 @@ import {
   to = google_secret_manager_secret.price_refresh_dispatch_token
   id = "projects/quill-cloud-proxy/secrets/trustedrouter-price-refresh-dispatch-token"
 }
+
+# Created by the operator with gcloud, with the first version of the private
+# reader list, before the change that reads it merged; adopted without
+# recreating it (infra/confidential_secret_readers.tf).
+import {
+  to = google_secret_manager_secret.confidential_secret_readers
+  id = "projects/quill-cloud-proxy/secrets/tr-confidential-secret-readers"
+}

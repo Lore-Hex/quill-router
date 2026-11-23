@@ -11,13 +11,14 @@
     "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
     "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78",
     "storage_gcp_counter_dml:reserve_credit_statement": "6ec52ff48371dd7b2a85eadf767397bccee474fbea35534a2295725e6281b0c7",
-    "storage_gcp_counter_dml:release_credit_no_debt_statement": "5a6c32b33ffbed59e1237f9ad82188588578e3b41597bc6719038cd66808a5f2",
+    "storage_gcp_counter_dml:release_credit_no_debt_statement": "e89e8be6be39b8821242fb7bd5605fbbc1220a30dc1b2ab9f828eac1d2e3d032",
     "storage_gcp_counter_dml:reserve_key_statement": "6d4ae8e97d823993394d4d01ba2e87daa9894f7dd22a8146d01aa394bbd3fe6b",
-    "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+    "storage_gcp_counter_dml:release_key_statement": "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
     "storage_gcp_counter_dml:reservation_insert_statement": "3f34179db8924ac503948102e54ec4c3073af24a7fad30647e3e3a48cae7e056",
     "storage_gcp_counter_dml:claim_reservation_statement": "d060c661d91a0e5c6f29355b2872ed79059d88fc54a9e4a6e994b895c466f97b",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
+    "storage_gcp_counter_dml:lock_credit_release_statement": "caa3497f2e8cc52ed5f236bd100c5e3c25e8e3760c52c90bf77dfd5873f660f8",
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
     "storage_gcp_operational_analytics_outbox:activity_insert_statement": "d7b110b4ca24df2c42f74552e88e51766d2d78ea15c6ae38cdb114813c5a659c",
     "storage_gcp_operational_analytics_outbox:_insert_statement": "d7a1c8970c6a4cab59bf187c34dec4737ed877ab005c160f707b4b70f2ce3870",
@@ -773,7 +774,7 @@
       ]
     },
     "storage_gcp:_read_entity_from:1": {
-      "fingerprint": "1e9b79e7eeb9f4a9c42223ce9d37c71a34abd3bcf3c3cf08eae96a7316236ed9",
+      "fingerprint": "c5387f8306fe68497a9ddba801ff9caded4ffbb87c4893574f3a83e4d8e609ed",
       "scenarios": [
         {
           "bindings": {},
@@ -785,7 +786,7 @@
       ]
     },
     "storage_gcp:_list_entities:1": {
-      "fingerprint": "0d51ca2b76f1edd118b7b084e59f0af0f47d03b841aa83cb4a6e68dbac36d8b6",
+      "fingerprint": "a3713c4e149f64cd0dd5bb64d0bd719c951683c7f2f93d33f03c709f036a0df0",
       "scenarios": [
         {
           "bindings": {
@@ -1191,7 +1192,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_credit:1": {
-      "fingerprint": "3d3f8783cfdbb20f3444ccb6ce43390ac4ea57d44a672da9268a775fc9189356",
+      "fingerprint": "254964a7e8a6d6c48618f518e01c5fdd2731c4c20cdda4f62066b43cb2156d3d",
       "scenarios": [
         {
           "bindings": {},
@@ -1205,7 +1206,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_credit:2": {
-      "fingerprint": "3d3f8783cfdbb20f3444ccb6ce43390ac4ea57d44a672da9268a775fc9189356",
+      "fingerprint": "254964a7e8a6d6c48618f518e01c5fdd2731c4c20cdda4f62066b43cb2156d3d",
       "scenarios": [
         {
           "bindings": {},
@@ -1267,8 +1268,21 @@
         }
       ]
     },
+    "storage_gcp_counter_dml:lock_credit_release_statement:1": {
+      "fingerprint": "caa3497f2e8cc52ed5f236bd100c5e3c25e8e3760c52c90bf77dfd5873f660f8",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "shard": "INT64",
+            "ws": "STRING"
+          }
+        }
+      ]
+    },
     "storage_gcp_counter_dml:release_credit_no_debt_statement:1": {
-      "fingerprint": "5a6c32b33ffbed59e1237f9ad82188588578e3b41597bc6719038cd66808a5f2",
+      "fingerprint": "e89e8be6be39b8821242fb7bd5605fbbc1220a30dc1b2ab9f828eac1d2e3d032",
       "scenarios": [
         {
           "bindings": {},
@@ -1312,7 +1326,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_key_statement:1": {
-      "fingerprint": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+      "fingerprint": "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
       "scenarios": [
         {
           "bindings": {
@@ -1333,7 +1347,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_key_statement:2": {
-      "fingerprint": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+      "fingerprint": "6c8dbe4b2008257aba213b1662a9b1bc53a577813441ede612f893d49a15fbeb",
       "scenarios": [
         {
           "bindings": {
@@ -3852,7 +3866,7 @@
       ]
     },
     "storage_gcp_authorize:credit_exhaustion_precheck:1": {
-      "fingerprint": "a8053e59666f589afdd515b93b101b367ba26d5d48cfcec78e0dbe6dd8460e1c",
+      "fingerprint": "2b74957c929a595d7177fa13c738d8758ef91c89e40d2c1dfd3a307857ef739b",
       "scenarios": [
         {
           "bindings": {},
@@ -3863,7 +3877,7 @@
       ]
     },
     "storage_gcp_authorize:credit_exhaustion_precheck:2": {
-      "fingerprint": "a8053e59666f589afdd515b93b101b367ba26d5d48cfcec78e0dbe6dd8460e1c",
+      "fingerprint": "2b74957c929a595d7177fa13c738d8758ef91c89e40d2c1dfd3a307857ef739b",
       "scenarios": [
         {
           "bindings": {},
@@ -4907,7 +4921,7 @@
       ]
     },
     "storage_gcp:_update_workspace_tx:1": {
-      "fingerprint": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
+      "fingerprint": "084fabe0d5fa54816eb8d78dec6dfb8534abf3e0244fbac65ee87bf9d9cfd6b5",
       "scenarios": [
         {
           "bindings": {},
@@ -5093,8 +5107,8 @@
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
     "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
-    "storage_gcp:SpannerStore._read_entity_from": "1e9b79e7eeb9f4a9c42223ce9d37c71a34abd3bcf3c3cf08eae96a7316236ed9",
-    "storage_gcp:SpannerStore._list_entities": "0d51ca2b76f1edd118b7b084e59f0af0f47d03b841aa83cb4a6e68dbac36d8b6",
+    "storage_gcp:SpannerStore._read_entity_from": "c5387f8306fe68497a9ddba801ff9caded4ffbb87c4893574f3a83e4d8e609ed",
+    "storage_gcp:SpannerStore._list_entities": "a3713c4e149f64cd0dd5bb64d0bd719c951683c7f2f93d33f03c709f036a0df0",
     "storage_gcp:SpannerStore.readiness_check": "4ac951f6c468ea8adee1537d86aaaf0514fb06e519e5c409ed07d11b42ca76b5",
     "storage_gcp:SpannerStore.has_credit_grant": "936d17a630cfae5293b90e54ecc73bfaa5a17f5055b0602bbb35e1c7fb076f66",
     "storage_gcp:SpannerStore._owner_workspace_ids_tx": "01c4b505591a72db1602ba44de83da6ba0b0cc648a5fc4f4bc1d5fb3ca75e32a",
@@ -5127,12 +5141,12 @@
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:authorize_atomic.txn": "52f74e14fd4ab55fc1f3bdddeab215cbe62797597e60d89822689419d23168bb",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "4c88d92021617b2ef1e5b02f1b26d9a43352428336111e57f3c811894f096a55",
     "storage_gcp_authorize:key_window_limit_decision": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "784b7c9c322868db1c3f6af5bbec9eedea3ac395f8e8dcbb3bb226717051f2f3",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:credit_exhaustion_precheck": "a8053e59666f589afdd515b93b101b367ba26d5d48cfcec78e0dbe6dd8460e1c",
+    "storage_gcp_authorize:credit_exhaustion_precheck": "2b74957c929a595d7177fa13c738d8758ef91c89e40d2c1dfd3a307857ef739b",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "723d80374d0900f279e715644b2f048621f14f642d66e23a6bce7dcc2ee4d2c4",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
@@ -5151,7 +5165,7 @@
     "storage_gcp_counter_dml:delete_entity_dml": "629ec53ffa94708b6a3e0c45ee8009294805d93fb162036e4c2d69afd3d91d84",
     "storage_gcp_counter_dml:update_entity_body_dml": "a5858b82dffd2805a5fc332072532a1227f22616a1b6821ec163f3e890df85ef",
     "storage_gcp_counter_dml:reserve_credit_with_pause": "b34bddd532fb04138962049f4e4b4b1802bcdc81321076f0bd758451aafd6142",
-    "storage_gcp_counter_dml:release_credit": "3d3f8783cfdbb20f3444ccb6ce43390ac4ea57d44a672da9268a775fc9189356",
+    "storage_gcp_counter_dml:release_credit": "254964a7e8a6d6c48618f518e01c5fdd2731c4c20cdda4f62066b43cb2156d3d",
     "storage_gcp_counter_dml:_credit_shard_count_from_rows": "7741a05cfd0cbf559c9f5dcde40502fd8650854dd6991aae43cb17bda76cd254",
     "storage_gcp_counter_dml:release_key": "9ac36570e13f469127bc4804a36cba34eef77d080e9f25e36e010a7a3b939f53",
     "storage_gcp_counter_dml:key_limit_exists": "91b8eb8029af0530303a487ff57f6e2407e243b388e98175906de69f933ead6c",
@@ -5256,7 +5270,7 @@
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
     "storage_account_closure:close_spanner.txn.rows": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
-    "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
+    "storage_gcp:SpannerStore._update_workspace_tx": "084fabe0d5fa54816eb8d78dec6dfb8534abf3e0244fbac65ee87bf9d9cfd6b5",
     "storage_gcp:SpannerStore.reserved_resale_position_page": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa",
     "storage_gcp:SpannerStore.extend_reservation_expiry.extend": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714",
     "fastpath_enabler:_apply": "6a8a00147c9134c0d51066f76a698952ebd94f2846ebf1afc25f53cf998a53a6",
@@ -5300,12 +5314,24 @@
       "fingerprint": "6980cf1ddbab84bdd422faf6f4ffbc7508ce71750bb3a6458e58077673646dcc",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
+    "operational_analytics:account_refusal_samples:1": {
+      "fingerprint": "d0cf069add24115043c8ce05e3ece999283a862e07cdcde2b69a4c7a66312db9",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
     "operational_analytics:route_benchmark_samples:1": {
       "fingerprint": "23d1f29ac267551463bfdac8354e9ce16b13d91aabd3d45c26c67907567ecb9e",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_generations:1": {
       "fingerprint": "4508099392c3e46d092285baed3b402730b8a8ba63cdf44be64735aed0f451bf",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:usage_buckets_query:1": {
+      "fingerprint": "81cb55a5afdc60aacee74822f2dc17924f4ac21736b259947741e5f64c31e716",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_elapsed_summary:1": {
+      "fingerprint": "6e1d5c0c93391d8428e7e762f01f5019c9ff9f921fdc8a693aff2b8a511e941d",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:routing_traffic:1": {
@@ -5455,6 +5481,26 @@
     "operational_analytics:route_workspaces:1": {
       "fingerprint": "8755cf00b1bd694bd8de72537255dbf48da72a80d07f4e524372be0a34cbbadf",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_keys:1": {
+      "fingerprint": "f04106d3f80b0b40233ee821e1b57b39db3f660d3cb32d4479c6ba7ab30c5e5d",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_values:1": {
+      "fingerprint": "4fa7aaa1c2991f7b0ae6291c4da48ead9734302bd379b7be17dd2d67bfc9c8f7",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_candidates:1": {
+      "fingerprint": "f36433b5c4f6e82ac7e439207193a14c6d804b9f026747e0b272ee226a6fc4ea",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_candidate_totals:1": {
+      "fingerprint": "5b28a36fac99676e2e37d54772b6bff206dfa62a5eba748677fa2a1e60f1d9d7",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
+    },
+    "operational_analytics:activity_tag_histogram:1": {
+      "fingerprint": "85d29179f96f089c4ee3ce45e8d9fc25be28e80df3e10687bdb9b82c6cf61897",
+      "reason": "Bounded read-only ClickHouse request-tag aggregates, sent to the HTTP analytics client"
     },
     "storage_legacy_trust:recover_released_postgres:7": {
       "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",

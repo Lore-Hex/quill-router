@@ -17,6 +17,9 @@ _CONFIRMED_UNAVAILABLE_ROUTES = [
     ("morph", "minimax/minimax-m3"),
     ("nextbit", "gryphe/mythomax-l2-13b"),
     ("inceptron", "minimax/minimax-m2.5"),
+    # Inceptron dropped zai-org/GLM-5.2 from /v1/models; every request 4xx'd
+    # (Sentry QUILL-ROUTER-E1) while a held price review kept the row routable.
+    ("inceptron", "z-ai/glm-5.2"),
     ("phala", "z-ai/glm-5.3"),
     ("phala", "z-ai/glm-5.3-flash"),
 ]

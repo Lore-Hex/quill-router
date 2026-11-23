@@ -20,6 +20,14 @@ from trusted_router.storage_activity import (
     summarize_activity_result,
     usage_bucket_key,
 )
+from trusted_router.storage_activity_tags import (
+    TAG_EVENT_LIMIT,
+    break_down_by_tag,
+    count_tag_keys,
+    count_tag_values,
+    generations_in_window,
+    tag_summary,
+)
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
@@ -83,6 +91,35 @@ class InMemoryGenerations:
             ]
         rows.sort(key=lambda sample: sample.created_at, reverse=True)
         return rows[:limit]
+
+    def account_refusal_samples(
+        self, *, cutoff: str, per_route_limit: int, limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        with self._lock:
+            organic = [
+                sample
+                for sample in self.provider_benchmarks
+                if sample.source in {"organic", "synthetic"}
+                and sample.usage_type == "Credits"
+                and sample.created_at >= cutoff
+            ]
+        refused = {
+            (sample.provider, sample.model)
+            for sample in organic
+            if sample.error_status in {401, 403}
+        }
+        organic.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
+        counts: dict[tuple[str, str], int] = {}
+        selected: list[ProviderBenchmarkSample] = []
+        for sample in organic:
+            route = (sample.provider, sample.model)
+            if route not in refused or counts.get(route, 0) >= max(1, per_route_limit):
+                continue
+            counts[route] = counts.get(route, 0) + 1
+            selected.append(sample)
+            if len(selected) >= max(1, limit):
+                break
+        return selected
 
     def route_benchmark_samples(
         self,
@@ -199,6 +236,64 @@ class InMemoryGenerations:
             )
         events = generation_events(rows, limit=limit)
         return ActivityResult(data=events, scanned=len(rows))
+
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            window = generations_in_window(
+                self.generations.values(), workspace_id=workspace_id, start_at=start_at
+            )
+        # Keys and one key's values describe the whole window. Only the
+        # breakdown is narrowed by the tag filter.
+        filtered = generations_in_window(
+            window,
+            workspace_id=workspace_id,
+            start_at=start_at,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return tag_summary(
+            read_keys=lambda: count_tag_keys(window),
+            read_values=lambda key: count_tag_values(window, tag_key=key),
+            read_breakdown=lambda key, limit: break_down_by_tag(
+                filtered, group_by=key, limit=limit
+            ),
+            group_by=group_by,
+            tag_key=tag_key,
+        )
+
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = None,
+        limit: int = TAG_EVENT_LIMIT,
+    ) -> ActivityResult:
+        normalized_limit = max(1, min(limit, TAG_EVENT_LIMIT))
+        with self._lock:
+            rows = generations_in_window(
+                self.generations.values(),
+                workspace_id=workspace_id,
+                start_at=start_at,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+        events = generation_events(rows, limit=normalized_limit)
+        return ActivityResult(
+            data=events,
+            truncated=len(rows) > normalized_limit,
+            scanned=len(events),
+            scan_limit=normalized_limit,
+        )
 
     def usage_series(
         self,

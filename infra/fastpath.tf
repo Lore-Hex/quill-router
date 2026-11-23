@@ -207,7 +207,46 @@ locals {
   # observes, so nothing Go answers changes. The other fastpath/ change
   # since fab9cd893 is a catalog test vector (the 2026-11-17T23:26Z price
   # refresh). Off switch: pin fab9cd893 again. One node at a time.
-  fastpath_release        = "541e687bf8dba385338fab24d5dfaa16a72fe9be"
+  # 65e856777: brings the nodes level with what Python has answered since
+  # 2026-11-20 05:07Z. The decide shadow has differed on about 4% of
+  # comparisons since then, nearly all on openai_safety_identifier, which
+  # 541e687bf does not compose. Go changes since 541e687bf:
+  #   - #2752: an authorize that negotiates X-TR-OpenAI-Safety: v1 and has a
+  #     direct OpenAI candidate answers with the stable safety subject,
+  #     derived from the key's creator or else the workspace owner; Go now
+  #     reads the records' existing creator_user_id and owner_user_id.
+  #   - #2732: every request of a workspace with BYOK keys passes to Python
+  #     (candidates.byok), which alone reads their filters and order.
+  #   - #2717: the uncensored GLM 5.3 Flash identifier resolves.
+  # The other fastpath/ changes are test vectors and #2722's test race fix.
+  # Off switch: pin 541e687bf again. One node at a time.
+  # 5e3ebc8b7: the nodes learn hosted decision models and workspace origin
+  # policies, with nothing switched on. Go changes since 65e856777:
+  #   - #2794: the evaluator resolves an exact hosted decision model on
+  #     route decide (no context-window step, as Python's decide resolver).
+  #   - #2799: the edge reads two optional policy members,
+  #     fastpath_edge_hosted_decide and async_settle.decide_route, and with
+  #     the first may answer a hosted decide authorize itself, async-v1
+  #     additions included. Neither member is published while
+  #     TR_FASTPATH_EDGE_HOSTED_DECIDE is "off" (scripts/deploy/rollout.sh),
+  #     so on this release every hosted decide still passes to Python. Such
+  #     a pass is now labelled by the gate that made it, among them
+  #     hosted_decide.off and hosted_decide.async_unknown, where it was
+  #     evaluate.pass, and both shadows compare a hosted decide (the decide
+  #     shadow only one without the async-v1 header). A decide authorize
+  #     that needs a ticket and has no valid nonce passes to Python.
+  #   - #2797: a workspace whose origin_policy is set to anything but
+  #     unrestricted, or is malformed, passes to Python (workspace_origin),
+  #     which alone filters candidates by it. A node on an earlier release
+  #     does not read the field.
+  # This release must be on every node before the hosted decide switch
+  # leaves "off": a node on an older release refuses a policy that carries
+  # a member it does not know. The other fastpath/ changes are tests and
+  # test vectors (#2808 among them).
+  # Off switch: first set TR_FASTPATH_EDGE_HOSTED_DECIDE to "off" and let
+  # that roll out (65e856777 refuses a policy that carries either hosted
+  # decide member), then pin 65e856777 again. One node at a time.
+  fastpath_release        = "5e3ebc8b70cb1fbae57704d5cffca0ef3b9c5ca1"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -244,6 +283,14 @@ locals {
     "541e687bf8dba385338fab24d5dfaa16a72fe9be" = {
       fastpath   = "7934c7a03b12934cc9f0cfbaa3aac328d9184311d803fd6852809fb5cfb1466b"
       sha256sums = "ba630193172aae6ec8ad119d8d1ab163630f54d3cf58d41fdba1144fe18561c3"
+    }
+    "65e856777546e0d0c67f0c8d049c3d54ba63c443" = {
+      fastpath   = "ecd6ce47f1b32c40bbbc6fce69c95d552296b6f234fb8e4841c259de3eb68ade"
+      sha256sums = "2110c83771dce88b4bb57d600dba1679716534edbd60497ea3d067666f23510b"
+    }
+    "5e3ebc8b70cb1fbae57704d5cffca0ef3b9c5ca1" = {
+      fastpath   = "1519270769ced33d35a54bdc3b36ab8380b95a035bbd83b572c45c640cd8ddf4"
+      sha256sums = "dfb305a1fb69cd94f20de824dda4925e0373e77ef5a8b17163d25e1fe37c57e3"
     }
   }
   fastpath_release_sha256      = try(local.fastpath_release_digests[local.fastpath_release].fastpath, "")
@@ -325,7 +372,8 @@ locals {
   # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
   # section 8.2): a lease needs effective trust tier 3 (1 since 2026-11-13,
   # with the lower tiers' allowances below), a tier-3 workspace's
-  # allowance is $1,000 and a lease leaves at least $20 of the balance, in
+  # allowance is $1,000 and a lease leaves at least $20 of the balance ($2
+  # since 2026-11-20, at the floor below), in
   # microdollars. The startup script passes each as -required-tier,
   # -allowance and -floor (8af87998a and later take all three). A reset
   # alone keeps the unit's old arguments: each node takes them one at a
@@ -337,11 +385,38 @@ locals {
   # customer's, whose switch is off, so it takes today's path and cannot be
   # refused at the tier. Step 4: over the leases kept (seven days), the
   # largest lease under $4 and the lease spend far under a quarter of the
-  # allowance; a lease tops up at most $10. Rollback: remove the three
-  # and take each node the same way, which restores the release's defaults.
+  # allowance; a lease tops up at most $10. Rollback: each value written
+  # back as it was and each node taken the same way. Never remove an
+  # attribute to go back: a node without one runs the release's default,
+  # which for the floor is none and for the allowance bounds nothing.
   fastpath_required_tier = "1"
   fastpath_allowance     = "1000000000"
-  fastpath_floor         = "20000000"
+  # The floor, $2 since 2026-11-20 ($20 before; the design's (b), amended
+  # that day). It is the headroom a new lease must leave outside leases for
+  # the same workspace's synchronous requests, not a fraud control: the
+  # required tier and the allowances are. A lease is taken whole or not at
+  # all: the node's lease check refuses it unless the headroom is at least
+  # the floor plus the whole amount asked, and an ask is about a minute of
+  # the shard's spend, at least $0.01 and at most $10, so at $20 no balance
+  # under about $20 was ever leased. Read on 2026-11-20
+  # over seven days: of the workspaces at tier 1 or above left out for their
+  # balance alone, 55 had traffic, about 20% of all requests, most of it
+  # from balances under $5; the largest ordinary hold each could make (its
+  # largest prompt and 16,384 output tokens at its models' highest credit
+  # rates) was at most $0.50 for 51 of them and above $2 for one. A
+  # synchronous hold above the headroom left, while leases hold the rest, is
+  # answered 503 with Retry-After (TR_FASTPATH_LEASE_HEADROOM_503), which
+  # the client may retry: nothing is admitted or charged wrongly.
+  # Applying this changes the instances' metadata only. A node takes the
+  # value when its unit starts again, one node at a time, the other
+  # serving, by fastpath-deploy.md's "Lowering the floor", and until both
+  # have, a lease is checked at whichever floor its owner runs. The enabler's
+  # join and leave balances come down only after both nodes run it
+  # (tests/test_fastpath_enabler_deploy.py holds the order). The way back
+  # is "20000000" written here again, by reverting the change that lowered
+  # it, after the enabler's balances are raised; never the attribute
+  # removed, which would leave no floor at all.
+  fastpath_floor = "2000000"
   # The lower tiers' allowances (docs/design/fast-admission-widening.md
   # (b)), in microdollars, each at most the tier above's: $250 for tier 2
   # (paid, owner identity approved) and $100 for tier 1 (paid, identity not

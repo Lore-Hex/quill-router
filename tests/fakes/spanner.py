@@ -368,6 +368,14 @@ class FakeSpannerDatabase:
         self.transaction_batch_update_calls = 0
         self.rollback_calls = 0
         self.begin_calls = 0
+        # Times lock_credit_release_statement ran (hinted or not).
+        self.credit_release_locks = 0
+        # Releases of a credit or key row their transaction had not taken with
+        # an exclusive scan: the shared lock and upgrade that makes
+        # simultaneous settles of one row abort each other. The fake's own
+        # conflict model is optimistic and does not act on it; tests of the
+        # current statements require zero.
+        self.releases_without_exclusive_lock = 0
         self.now = now
 
     def current_timestamp(self) -> dt.datetime:
@@ -626,6 +634,17 @@ class _FakeTransaction:
         # read of the column itself); the fake refuses any later statement on
         # the table, the stricter rule.
         self._commit_timestamp_tables: set[str] = set()
+        # Whether the statement being executed carried the exclusive-scan
+        # hint, and the counter rows this transaction took with one.
+        self._scan_hinted = False
+        self._exclusive_rows: set[tuple[str, tuple]] = set()
+
+    def _note_release(self, table: str, pk: tuple) -> None:
+        """Count a release whose row this transaction does not hold exclusively."""
+        if self._scan_hinted:
+            self._exclusive_rows.add((table, pk))
+        elif (table, pk) not in self._exclusive_rows:
+            self.db.releases_without_exclusive_lock += 1
 
     @_holds_commit_lock
     def execute_sql(
@@ -642,6 +661,7 @@ class _FakeTransaction:
             assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self.db.transaction_execute_sql_calls += 1
         self._refuse_after_commit_timestamp(sql)
+        self._scan_hinted = sql.startswith(_EXCLUSIVE_SCAN_HINT)
         sql = _without_scan_hint(sql)
         if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
             if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
@@ -913,6 +933,9 @@ class _FakeTransaction:
             )
         self._did_dml = True
         self._refuse_after_commit_timestamp(sql)
+        if not getattr(self, "_in_returning", False):
+            # A THEN RETURN statement arrives here already stripped of its hint.
+            self._scan_hinted = sql.startswith(_EXCLUSIVE_SCAN_HINT)
         sql = _without_scan_hint(sql)
         p = params or {}
         if sql.startswith("UPDATE tr_credit_balance SET total_credits = total_credits + @delta"):
@@ -1350,10 +1373,30 @@ class _FakeTransaction:
                 )
             )
             return 1
+        if sql.startswith(
+            "UPDATE tr_credit_balance SET reserved = reserved, total_usage = total_usage "
+        ):
+            # lock_credit_release_statement: takes the row's lock for the
+            # release that follows it and writes the row back unchanged. It
+            # matches exactly the rows that release can match, apart from the
+            # release's own tr_trust_event condition.
+            what = "credit-release-lock"
+            _require_pred(sql, "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold", what)
+            _require_pred(sql, _CREDIT_NOT_MARKED, what)
+            if set(p) != {"hold", "ws", "shard"}:
+                raise AssertionError(f"{what}: unexpected parameters {sorted(p)}")
+            self.db.credit_release_locks += 1
+            if self._scan_hinted:
+                self._exclusive_rows.add(("tr_credit_balance", (p["ws"], p["shard"])))
+            rec = self._typed_current("tr_credit_balance", (p["ws"], p["shard"]))
+            if rec is None or rec["reserved"] < p["hold"] or _credit_marked(rec):
+                return 0
+            return 1
         if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
             _require_pred(
                 sql, "workspace_id=@ws AND shard=@shard AND reserved >= @hold", "credit-release"
             )
+            self._note_release("tr_credit_balance", (p["ws"], p["shard"]))
             if "NOT EXISTS" in sql:
                 _require_pred(
                     sql,
@@ -1558,6 +1601,7 @@ class _FakeTransaction:
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
             pk = (p["kh"], p["shard"])
+            self._note_release("tr_key_limit", pk)
             rec = self._typed_current("tr_key_limit", pk)
             if rec is None:
                 return 0

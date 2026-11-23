@@ -128,9 +128,11 @@ const (
 	// decision gate after the compose, beside the decide row's: the policy's
 	// edge_decide is false, so the request is composed (and compared by the
 	// shadow) but never answered.
-	PassAsyncUnpublished = "async.unpublished"
-	PassAsyncAdmission   = "policy.async_admission"
-	PassAsyncOff         = "async.off"
+	PassAsyncUnpublished         = "async.unpublished"
+	PassAsyncAdmission           = "policy.async_admission"
+	PassAsyncOff                 = "async.off"
+	PassHostedDecideOff          = "hosted_decide.off"
+	PassHostedDecideAsyncUnknown = "hosted_decide.async_unknown"
 	// PassSettlementHeader is gwauth's request reason for any other present
 	// X-TR-Settlement-Mode, named here for the watch's settlement-header
 	// pass share (only the edge uses gwauth's request side).
@@ -602,17 +604,10 @@ func Decide(in DecideInputs) Decided {
 	}
 
 	req := r.Routing
+	req.HostedDecide = true
 	req.At = at
 	req.BYOKProviders = snap.BYOKProviders(read.Facts.BYOKProviders)
-	// A workspace's BYOK keys carry routing policy the edge does not read:
-	// model filters, BYOK ahead of Credits, and no Credits fallback. Even
-	// where its routes come out Credits-only here (allow_fallbacks=false keeps
-	// the Credits route first), Python may choose the key or refuse Credits,
-	// so every request of such a workspace is Python's.
-	if len(req.BYOKProviders) > 0 {
-		return pass(PassCandidatesBYOK)
-	}
-	res := snap.Evaluate(req)
+	res := evaluateRouting(snap, req)
 	switch res.Outcome {
 	case routingsnapshot.Refused:
 		return pass(PassEvaluateRefused)
@@ -627,6 +622,9 @@ func Decide(in DecideInputs) Decided {
 			return pass(reason)
 		}
 		return pass(PassEvaluate)
+	}
+	if res.HostedDecide && r.Async.V1 && !policy.HostedDecide() && !policy.AsyncSettle.SupportsDecide() {
+		return pass(PassHostedDecideAsyncUnknown)
 	}
 	if !snap.CreditsOnly(res.Candidates) {
 		return pass(PassCandidatesBYOK)
@@ -727,10 +725,14 @@ func Decide(in DecideInputs) Decided {
 		decision.Windows = &WindowCheck{Limits: w.Limits, Shards: w.Shards}
 	}
 	out.shadowOnly = decision
-	// The decision gates, in order: a stream without the policy's
-	// fastpath_edge_streams, the policy's mode for a windowed key, the
-	// decide row, the switch copy, and async-v1's edge_decide.
+	// The decision gates, in order: hosted decide without permission,
+	// a stream without fastpath_edge_streams, the policy's mode for a
+	// windowed key, the decide row, the switch copy, and async-v1's edge_decide.
 	switch {
+	case res.HostedDecide && !policy.HostedDecide():
+		// Composed for the shadow even with an older policy; only this
+		// explicit member permits answering the hosted model arm.
+		out.DecideGate = PassHostedDecideOff
 	case darkStream:
 		// Composed for the shadow, answered by Python, even for a workspace
 		// whose decide row is on (docs/design/fast-admission-streams.md

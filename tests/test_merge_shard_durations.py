@@ -52,7 +52,7 @@ def test_profile_uses_independent_runs_and_does_not_mix_clocks(tmp_path: Path) -
     current = tmp_path / "current.json"
     current.write_text('{"unobserved": 7}')
     for run, value in enumerate((10, 12, 1000)):
-        for clock, duration in (("default", value), ("post-cutover", 1)):
+        for clock, duration in (("default", value), ("post-cutover", 1), ("oracle-default", value + 10)):
             directory = tmp_path / str(run) / f"durations-{clock}-1"
             directory.mkdir(parents=True)
             (directory / "durations-1.json").write_text(json.dumps({
@@ -63,6 +63,8 @@ def test_profile_uses_independent_runs_and_does_not_mix_clocks(tmp_path: Path) -
     assert json.loads(output.read_text()) == {"unobserved": 7, "test@conformance-postgres": 12}
     main([str(tmp_path), str(current), str(output), "--profile", "post-cutover"])
     assert json.loads(output.read_text())["test@conformance-postgres"] == 1
+    main([str(tmp_path), str(current), str(output), "--profile", "oracle-default"])
+    assert json.loads(output.read_text())["test@conformance-postgres"] == 22
 
 
 def test_profile_refuses_single_run_and_duplicate_shards(tmp_path: Path) -> None:

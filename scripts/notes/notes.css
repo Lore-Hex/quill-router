@@ -1,0 +1,36 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--cream); color: var(--ink);
+  font: 400 1.125rem/1.65 var(--font-sans); -webkit-font-smoothing: antialiased;
+}
+.frame { width: min(100% - 2.5rem, 72rem); margin-inline: auto; }
+nav, footer { background: var(--ink); color: var(--cream); }
+nav .frame, footer .frame { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; }
+nav a, footer a { color: inherit; }
+.brand { font-weight: 700; text-decoration: none; letter-spacing: -.035em; font-size: 1.3rem; }
+nav a:last-child, time, footer { font: .875rem/1.5 var(--font-mono); }
+a { color: var(--deep-purple); text-underline-offset: .19em; }
+a:hover { text-decoration-thickness: .14em; }
+a:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+header { padding-block: clamp(2.5rem, 6vw, 5rem); }
+h1, h2, h3 { line-height: 1.1; text-wrap: balance; }
+h1 { max-width: 22ch; margin: 0; font: 700 clamp(2.35rem, 6vw, 5rem)/1.02 var(--font-condensed); letter-spacing: -.045em; overflow-wrap: anywhere; }
+header p { max-width: 57ch; margin: 1rem 0 0; }
+.band { height: 48px; overflow: hidden; background: var(--ink); }
+.band svg { display: block; width: 100%; height: auto; }
+main { min-height: 45vh; padding-block: clamp(2rem, 5vw, 4rem); }
+.story { max-width: 64ch; margin-inline: auto; overflow-wrap: anywhere; }
+.story time, .listing time { color: var(--ink-2); }
+.story h2 { margin-top: 1.6em; }
+.story pre, .story table { max-width: 100%; overflow-x: auto; display: block; }
+.story pre { padding: 1rem; background: var(--gray); }
+.listing { border-top: var(--stroke-head) solid var(--ink); }
+.listing article { display: grid; grid-template-columns: 9rem 1fr; gap: 1.5rem; border-bottom: var(--stroke-rule) solid var(--stone); padding: 1.5rem 0; }
+.listing h2 { margin: 0; }
+.listing h2 a { color: var(--ink); text-decoration-color: var(--sky); text-decoration-thickness: 3px; }
+.listing p { max-width: 65ch; margin: .6rem 0 0; }
+@media (max-width: 42rem) {
+  .listing article { grid-template-columns: 1fr; gap: .5rem; }
+  .band { display: none; }
+  footer .frame { flex-wrap: wrap; }
+}

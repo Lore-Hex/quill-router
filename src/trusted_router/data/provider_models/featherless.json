@@ -1664,11 +1664,33 @@
       "routable": true,
       "input_token_price_per_m": 1450000,
       "output_token_price_per_m": 4000000
+    },
+    {
+      "display_name": "XiaomiMiMo/MiMo-V2.6-Flash-RL",
+      "title": "XiaomiMiMo/MiMo-V2.6-Flash-RL",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-flash-rl",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.6-Flash-RL",
+      "context_length": 32768,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 149000,
+      "output_token_price_per_m": 493000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-20T13:53:04Z",
+  "generated_at": "2026-11-23T02:27:52Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 67
+  "model_count": 68
 }

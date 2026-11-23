@@ -7,7 +7,7 @@ import random
 import re
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
@@ -29,7 +29,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, scrub_provider_error_message
 from trusted_router.storage_rate_limits import InMemoryRateLimits
-from trusted_router.synthetic.alerts import alert_on_failure_streak
+from trusted_router.synthetic.alerts import alert_on_failure_streak, alerts_once
 from trusted_router.synthetic.cli import rotation_pass
 from trusted_router.synthetic.client_watch import evaluate_client_watch, report_client_watch
 from trusted_router.synthetic.components import OPS_PROBE_TYPES, sample_slo_class_ids
@@ -42,14 +42,20 @@ from trusted_router.synthetic.probes import (
 )
 from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
+    evaluate_account_refusals,
     evaluate_route_health,
+    evaluate_unserved_routes,
     report_catalog_freshness,
     report_image_generation_failures,
     report_route_health,
     report_route_health_unevaluable,
+    report_route_holds,
     report_video_generation_failures,
+    split_held_flags,
+    unreported_account_refusals,
 )
 from trusted_router.types import ErrorType
+from trusted_router.unserved_route_hold_plan import pending_unserved_route_holds
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +66,9 @@ _OPERATION_LIMITS_PER_MINUTE = {
     "samples": 60,
     "benchmark": 60,
     "route_health": 6,
+    # The every-pass account-refusal scope (one small read), beside the hourly
+    # sweep: its own slot, so it can never 429 the full sweep at the hour.
+    "account_refusals": 30,
     "remediate": 2,
     "run": 2,
 }
@@ -69,6 +78,7 @@ _OPERATION_SLOTS = {
     "samples": threading.BoundedSemaphore(2),
     "benchmark": threading.BoundedSemaphore(2),
     "route_health": threading.BoundedSemaphore(1),
+    "account_refusals": threading.BoundedSemaphore(1),
     "remediate": threading.BoundedSemaphore(1),
     "run": threading.BoundedSemaphore(1),
 }
@@ -568,9 +578,32 @@ def register(router: APIRouter) -> None:
     @router.post("/internal/synthetic/route-health")
     async def synthetic_route_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        slot = _admit_operation("route_health")
+        fast = request.query_params.get("scope") == "account_refusals"
+        slot = _admit_operation("account_refusals" if fast else "route_health")
         try:
-            await run_in_threadpool(report_catalog_freshness)
+            if fast:
+                # Between hourly sweeps: only the account-refusal rule, from
+                # its own small read, so a refused provider account alerts
+                # within minutes. Analytics trouble is the full sweep's to
+                # report; here it only means no fast evidence this pass.
+                try:
+                    refusals = await run_in_threadpool(evaluate_account_refusals, STORE)
+                except Exception as exc:
+                    if not is_analytics_unavailable(exc):
+                        raise
+                    log_analytics_unavailable(log, "synthetic_account_refusals", exc)
+                    return {"data": {"flagged": [], "evaluated": False,
+                                     "reason": "analytics_unavailable"}}
+                await run_in_threadpool(
+                    _report_once, report_route_health, unreported_account_refusals(refusals),
+                )
+                return {"data": {"flagged": [asdict(flag) for flag in refusals],
+                                 "evaluated": True, "scope": "account_refusals"}}
+            # Two regional monitors post every full sweep, each to its own
+            # regional instance, and both evaluate. Every alert either raises
+            # is claimed per fingerprint and hour in this deployment's store,
+            # so each is emitted once per sweep by whichever reaches it first.
+            await run_in_threadpool(_report_once, report_catalog_freshness)
             try:
                 flags = await run_in_threadpool(evaluate_route_health, STORE)
             except Exception as exc:
@@ -579,7 +612,7 @@ def register(router: APIRouter) -> None:
                 # Blind, not healthy: no route was evaluated. Say so in the
                 # body and raise one grouped alert instead of a 500 per pass.
                 log_analytics_unavailable(log, "synthetic_route_health", exc)
-                await run_in_threadpool(report_route_health_unevaluable, exc)
+                await run_in_threadpool(_report_once, report_route_health_unevaluable, exc)
                 return {
                     "data": {
                         "flagged": [],
@@ -587,7 +620,11 @@ def register(router: APIRouter) -> None:
                         "reason": "analytics_unavailable",
                     }
                 }
-            await run_in_threadpool(report_route_health, flags)
+            held = await run_in_threadpool(_pending_route_holds)
+            paging, holding = split_held_flags(flags, held)
+            await run_in_threadpool(_report_once, report_route_health, paging)
+            if holding:
+                await run_in_threadpool(_report_once, report_route_holds, holding)
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -644,6 +681,36 @@ def register(router: APIRouter) -> None:
             response.status_code = 202
             return {"data": {"scheduled": True}}
         return await _run_with_deadline(settings, body, slot)
+
+
+def _sweep_hour(now: dt.datetime | None = None) -> str:
+    return (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).strftime("%Y-%m-%dT%H")
+
+
+def _claim_alert(fingerprint: list[str]) -> bool:
+    """True for the first instance to emit this fingerprint this hour."""
+    key = f"{'|'.join(fingerprint)}@{_sweep_hour()}"
+    return STORE.record_webhook_event_once("route-health-alert", key)
+
+
+def _report_once(report: Callable[..., Any], *args: Any) -> Any:
+    with alerts_once(_claim_alert):
+        return report(*args)
+
+
+def _pending_route_holds() -> frozenset[tuple[str, str]]:
+    """Routes the next price refresh will hold: the /route-health/unserved.json
+    evidence, less any route the refresh's provider and route caps would
+    refuse on the deployed manifests. Unreadable evidence holds nothing, so
+    every flag keeps paging."""
+    try:
+        evidence = {
+            (route.provider, route.model) for route in evaluate_unserved_routes(STORE)
+        }
+        return frozenset(pending_unserved_route_holds(evidence))
+    except Exception:  # noqa: BLE001 - no evidence means page as before, never "held"
+        log.warning("synthetic_route_health.hold_evidence_unavailable", exc_info=True)
+        return frozenset()
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:

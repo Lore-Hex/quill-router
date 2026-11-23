@@ -49,6 +49,7 @@ from trusted_router.catalog import (
     offers_chat,
 )
 from trusted_router.measured import measured_snapshot
+from trusted_router.seo_meta import provider_link_rel
 from trusted_router.storage_models import utcnow
 
 _ROUTE_IDS = (
@@ -101,7 +102,7 @@ _ROUTE_DESCRIPTIONS = {
         "Readable alias for the same verified compute, provider-E2EE and explicit-ZDR route pool."
     ),
     TRUSTED_MODEL_ID: (
-        "Confidential inference only from Tinfoil and Privatemode, selected by TrustedRouter "
+        "Confidential inference only from operators selected by TrustedRouter "
         "for operator physical security and reliability history. Every fallback stays in this tier."
     ),
     SYNTH_MODEL_ID: (
@@ -237,6 +238,7 @@ def _endpoint_row(
 ) -> dict[str, Any]:
     provider = PROVIDERS[endpoint.provider]
     tier = endpoint_privacy_tier(endpoint)
+    policy_url = endpoint_provider_policy_url(endpoint)
     performance = None
     if measured is not None:
         performance = {
@@ -255,7 +257,8 @@ def _endpoint_row(
         "zero_data_retention": endpoint_zero_data_retention(endpoint),
         "confidential_compute": endpoint_confidential_compute(endpoint),
         "e2ee": endpoint_e2ee(endpoint),
-        "provider_policy_url": endpoint_provider_policy_url(endpoint),
+        "provider_policy_url": policy_url,
+        "provider_policy_rel": provider_link_rel(policy_url),
         "prompt_price_microdollars_per_million_tokens": (
             endpoint.prompt_price_microdollars_per_million_tokens
         ),

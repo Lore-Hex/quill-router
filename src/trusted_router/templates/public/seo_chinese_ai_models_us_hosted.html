@@ -32,7 +32,7 @@ reply = client.chat.completions.create(
 </section>
 <section class="compare-matrix" aria-label="Vendor-hosted APIs vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>Vendor-hosted API (z.ai, Moonshot, Alibaba)</strong><strong>TrustedRouter</strong></div>
-  <div class="matrix-row"><span>Model access</span><span>Direct from the lab that trained the model</span><span>220+ routes across 30+ providers behind one API</span></div>
+  <div class="matrix-row"><span>Model access</span><span>Direct from the lab that trained the model</span><span>600+ models across 100+ providers behind one API</span></div>
   <div class="matrix-row"><span>Where prompts go</span><span>The vendor's own servers</span><span>An attested gateway; Confidential requests never reach the vendor</span></div>
   <div class="matrix-row"><span>Retention</span><span>Set by each vendor's policy</span><span>Real-time inference is content-stateless; ZDR routes contractually keep nothing; Batch is opt-in encrypted retention</span></div>
   <div class="matrix-row"><span>Verification</span><span>A privacy policy you read and trust</span><span>Live attestation: a CPU-vendor-signed JWT bound to your TLS session</span></div>

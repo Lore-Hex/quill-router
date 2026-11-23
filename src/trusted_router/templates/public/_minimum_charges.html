@@ -1,5 +1,6 @@
+{% from "public/_docs_topic.html" import topic with context %}
 <section id="minimum-charges" class="routing-feature-section" style="margin-top:40px">
-  <h2>Minimum charges and per-request rounding</h2>
+  <h2 id="minimum-charges-and-per-request-rounding">{{ topic("minimum-charges", "Minimum charges and per-request rounding") }}</h2>
   {% if minimum_charges_collapsed|default(false) %}
   <p class="mc-summary">On very small calls to cheap models, rounding and the request minimum can make the bill several times the raw token cost. The multiple depends on the token counts and route; the 5.5% markup alone does not explain it.</p>
   <details class="mc-rules">
@@ -16,7 +17,7 @@
   {% if minimum_charges_collapsed|default(false) %}
   </details>
   {% endif %}
-  <h3>Worked examples: tiny calls</h3>
+  <h3 id="worked-examples-tiny-calls">{{ topic("worked-examples-tiny-calls", "Worked examples: tiny calls") }}</h3>
   <p>These examples use illustrative retail rates, in the same form as the published per-million prices, with no cached tokens or request fees. The raw token cost is the listed rate times tokens, before per-component rounding and the request minimum.</p>
   <div class="model-table-wrap"><table id="billing-examples">
     <thead><tr><th>Usage</th><th>Retail rates per million</th><th>Raw token cost</th><th>Rounded components</th><th>Billed</th><th>Multiple of raw cost</th></tr></thead>

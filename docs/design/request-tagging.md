@@ -18,7 +18,12 @@ TrustedRouter needs two related but distinct metadata contracts:
    cost center, or other non-sensitive business dimensions.
 
 Tags are metadata only. They never enter a prompt, provider request, model
-context, durable log message, Sentry event, or public analytics page.
+context or public analytics page, and the gateway and the control plane never
+write them to a request log, an application log or Sentry. One place outside
+those services does record them: a tag key or value used as a filter in an
+analytics read appears in ClickHouse's own query log on the analytics servers,
+which only administrators can read and which is kept for 30 days. Section 6.5
+says why and names the follow-up.
 
 ## 2. Source compatibility
 
@@ -137,7 +142,8 @@ effective set must not exceed 50. Updating an API key changes only future
 requests; historical generations remain immutable.
 
 The key list/get responses return default tags. Raw API keys and tag values are
-never included in logs.
+never included in the request logs, application logs or Sentry events that the
+gateway and the control plane write.
 
 ### 3.3 Idempotency
 
@@ -264,6 +270,189 @@ No prompt or response content is exposed.
 `GET /v1/generation?id=...` returns the same tag and attribution fields. The
 existing `/generation/content` behavior remains `404 content_not_stored`.
 
+### 6.5 In the console
+
+The Observability page (`/console/activity`) shows tags in three places:
+
+- Request list: each request's tags as `key: value` chips. Clicking a chip
+  filters by that tag.
+- Tags panel, filter: a key and a value picked from the keys seen in the
+  selected range and that key's most used values, or a value typed in when
+  the list does not hold it. The filter narrows the request list and the
+  breakdown. It does not narrow the usage chart.
+- Tags panel, breakdown: for one key and the selected range, one row per value
+  with requests, credit cost, tokens and median generation time, ordered by
+  cost. The 50 most expensive values keep a row, the rest are summed into
+  `other`, and requests without the key are shown as `untagged`.
+
+A workspace with no tags in the range sees a short explanation and a link to
+`/docs/tagging` instead of an empty table.
+
+The panel follows the range of the usage panel: it reads that panel's
+`data-usage-range` when it starts and then its `activity:range-change` event.
+A filter is kept across range changes. A range with no request for it says so
+and keeps the filter in view; only the viewer clears it.
+
+The page reads two endpoints, both session-authorized exactly like the page's
+other JSON endpoints and both scoped to the session's workspace:
+
+- `POST /console/activity/tags.json` with `{range, group_by, tag_key,
+  tag_value}` returns the keys, the breakdown and the filter key's values.
+- `POST /console/activity/requests.json` with `{range, tag_key, tag_value}`
+  returns the newest 50 matching requests in the range.
+
+Reads are computed in ClickHouse from `activity_generations FINAL` over every
+row of the tenant since the start of the range, so they are totals and not a
+sample. They need no schema change, rollup or grant. Each read keeps a bounded
+amount of state, however many rows, values or generation times the range has,
+and each bound is in the statement that needs it: rows keep arriving between
+two statements, so none of them relies on what an earlier one saw.
+
+| Read | State it keeps |
+| --- | --- |
+| keys | a `topK` sketch with 10,000 counters |
+| one key's values | a `topK` sketch with 5,000 counters |
+| candidates | two `topK` sketches of 6,000 counters and one distinct-count sketch, with no `GROUP BY` |
+| totals | one group per candidate, for at most 4,000 candidates named in the statement |
+| histogram | at most 52 groups, each with the page's bounded elapsed-time histogram |
+
+A breakdown is the last three. The candidates read names, by a 64-bit hash,
+the 2,000 values with the most cost and the 2,000 with the most generations,
+and estimates how many distinct values the key has. The totals read returns
+the text, generations and credit cost of those candidates and of no other
+value. The 50 that keep a row are chosen from them by credit cost, then
+generations, then text, which is the order the in-memory store uses. The
+histogram read then totals those 50, every other value as one row, and
+untagged generations as one row.
+
+Credits and BYOK are told apart inside each statement that sums cost, by one
+fixed expression that reproduces `UsageType.coerce` (`byok` in any case, with
+any whitespace `str.strip` removes around it; everything else is Credits). A
+statement therefore has two cost classes whatever spellings are stored, and
+none is handed a list of usage types that an earlier one saw, so a tenant's
+first BYOK generation arriving between two reads is counted as BYOK.
+
+The bounds have five visible consequences:
+
+- More keys or values than a sketch counts exactly. The list is then
+  approximately the most frequent ones, with counts that can be too high, and
+  the panel says so. A value the list leaves out can be typed, and the empty
+  value has a control of its own. A typed value is sent as typed: its length
+  is counted in characters, as the server counts it, and a value over the
+  limit of 256 is refused on the page in words, not cut.
+- Too many values to break down. A key with more than 500,000 distinct values
+  is an identifier, not a dimension to allocate cost by, and is not broken
+  down: the panel offers another key or a shorter range, and its values can
+  still be filtered by. Each store refuses when its own count is over the
+  limit. The in-memory store counts exactly; ClickHouse estimates the count
+  within about one percent, in the candidates statement itself, so the panel
+  says "about 500,000 or more". Nothing depends on this limit for memory: with
+  it lifted, a key of twelve million values was still read in fixed space.
+  When the page did not ask for a key, the three most used keys are tried in
+  turn, so a request id on every request does not make the first view a
+  refusal.
+- Approximate choice. The response says the choice of rows is approximate
+  exactly when it contains an Other row, in both stores. When every value the
+  final totals saw is named, there is no cut to get wrong. When anything is
+  grouped into Other, which values were named was decided from an earlier
+  read, and by sketches for a key with 2,000 or more values, while rows keep
+  arriving, so it is a best effort. No attempt is made to certify the cut.
+  The statement the rows come from puts every value it was not told to name
+  into Other, so a value that was there when it ran is either named or in
+  Other: no Other row means no value was left out. Every row's totals are
+  exact either way, and the rows are ordered by the totals they show.
+- The Other row has no count of the values in it. By the time it is totalled,
+  values may have arrived that no earlier read counted.
+- Medians. The median is generation time as the server measured it
+  (`elapsed_milliseconds`), not client-observed latency. It has the definition
+  of the reliability panel's server median and is computed by the same code
+  (`elapsed_histogram_columns`, `settle_elapsed_median`): the middle value, or
+  the floor of the mean of the two middle values, read from a histogram of
+  1,024 ms slots in which only a group's middle slots are counted value by
+  value. A breakdown keeps one histogram for each of its groups, and 52 full
+  histograms of 65,536 slots ran the reader out of memory when measured, so
+  the tag histogram counts every generation time of 4,194,304 ms (about 70
+  minutes) or more in its open-ended last slot: at most 4,097 slots a group.
+  A group whose median is that long is shown without one. The reliability
+  panel's own ceiling is about 18.6 hours.
+
+Totals and medians of one breakdown come from one statement, so they describe
+one snapshot. Which values keep a row was decided by the two statements before
+it: a value that first appears after them is counted in the Other row.
+
+A value is identified by two 64-bit hashes of its text. The candidates are
+named by the first alone. Two values that collide in it are both read by the
+totals statement, which splits them again by the second hash, so each is
+ranked on its own. Two values of one key that collided in both would have
+their requests and cost attributed to one row, under the smaller text.
+
+The in-memory store computes the same answers in Python.
+`tests/test_activity_tags.py` holds the two to what ClickHouse 26.8 returned
+for the same rows: `tests/fixtures/activity_tags_clickhouse.json` is a
+recording of every statement and its answer, stored under a hash of the
+statement's exact text, so a changed statement has no answer until it is
+recorded again.
+
+Measured on ClickHouse 26.8 with the control reader's limits (1 GiB of memory,
+30 seconds) and synthetic tenants of one to twelve million generations in 90
+days: a breakdown of 200 values, a key with 495,000 values, 50,000 values of
+256 bytes and 100,000 values of 1 KiB stay under 250 MiB a statement,
+generation times that fill every slot of every group under 300 MiB, and a key
+with a million or with twelve million values is refused after two statements
+in under 100 MiB.
+
+What these queries do not bound is the cost of reading the `tags` column under
+`FINAL`, which every tag read pays, the existing activity reads included. It
+grows with the tag text per request and with the number of unmerged parts in
+the range, not with the state above. With about 2 KiB of tags on every request
+(the limit is 4 KiB) a 90-day read peaked near 430 MiB on a merged table and
+ran out of the 1 GiB with merges stopped and some twenty parts in every
+month, where 1 and 7 days still loaded. A read that fails this way is an
+error, never partial totals: the panel says the range could not be loaded and
+that a shorter one may.
+
+Only completed generations are counted. A request that fails before it
+produces a generation has no row, so the page cannot show errors by tag.
+
+Section 10 applies to these reads. What holds, and what does not:
+
+- Tag keys and values from the console do not appear in the browser URL or in
+  browser storage, in request logs, in application logs, or in Sentry.
+- They do appear in ClickHouse's own query log on the analytics servers.
+  ClickHouse records every statement with its parameters substituted, the
+  control reader's profile does not turn that off, and the log is kept for 30
+  days. It is readable only by administrators and lives on the servers that
+  store the `tags` column itself, so it is not a wider exposure than the data
+  at rest, but "never reaches a log" would be false. The same is true of the
+  existing `GET /v1/activity` tag filter.
+
+How the first holds:
+
+- Tag keys and values reach the control plane in a JSON request body, never in
+  a URL. A query string is written to the load balancer's request log and
+  copied into Sentry's request context; a body is not.
+- Console input is held to the limits of section 3.1 by the same validator as
+  the inference path. Its error messages name the rule and never the text.
+- ClickHouse normally receives bound values as URL parameters of an internal
+  request, and a URL is written down by more than one layer: httpx logs it at
+  INFO, Sentry's HTTP client integration records its query string in a span
+  and a breadcrumb, and an HTTP status error carries it in its message. The
+  console's tag reads therefore send the statement and every bound value as
+  form fields in the request body (`bound_values_in_the_body`), which the
+  ClickHouse HTTP interface reads the same way, so the URL carries only the
+  database name. A Sentry scope with no integrations and a status error
+  re-raised without its URL remain as a second line. The `GET /v1/activity`
+  tag filter predates this: it takes `tag_key` and `tag_value` as query
+  parameters and its ClickHouse read still binds them in the URL. Bringing it
+  in line is a follow-up.
+- The page writes tag text with `textContent` and template escaping only,
+  never as markup or as an attribute.
+
+Follow-up: mask or exclude tag literals in the ClickHouse query log, with
+server-side masking rules or a per-profile logging setting. That is node
+configuration across three clouds, and it applies equally to the existing
+`GET /v1/activity` tag filter.
+
 ## 7. Broadcast mapping
 
 PostHog `$ai_generation` properties:
@@ -285,9 +474,11 @@ OTLP attributes:
 Tag values are metadata and are exported even when content export is disabled.
 The UI and docs warn users not to place secrets, personal data, client names,
 matter names, prompts, or output in tags.
-The boundary is deliberate: TrustedRouter's own logs never contain tag values,
-while a customer's configured PostHog or OTLP destination receives tags by
-design. Key management surfaces show the same warning because key defaults are
+The boundary is deliberate: the request logs, application logs and Sentry
+events that TrustedRouter's gateway and control plane write never contain tag
+values (the one exception, ClickHouse's own query log on the analytics servers
+when a tag is used as a filter, is in section 1 and section 6.5), while a
+customer's configured PostHog or OTLP destination receives tags by design. Key management surfaces show the same warning because key defaults are
 exported on every request that uses that key.
 
 ## 8. Response routing metadata
@@ -324,7 +515,9 @@ Native Messages requests receive the equivalent Anthropic-shaped 400 error.
 
 - Never log tag maps or individual tag values in Sentry, Axiom, Cloud Logging,
   panic output, or request-start/request-end logs.
-- Logging may include only `tag_count` and validation error class.
+- Request logs, application logs and Sentry, as written by the gateway and the
+  control plane, may include only `tag_count` and validation error class.
+  ClickHouse's own query log is the exception stated in sections 1 and 6.5.
 - Tags never enter provider payloads, including OpenAI-compatible providers.
 - Tags are never public and are never included in provider/model leaderboards.
 - Management and activity endpoints remain workspace-authorized.

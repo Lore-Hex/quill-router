@@ -1,7 +1,7 @@
 """The catalog hero: one page-specific reason to sign up on model, comparison
 and provider pages, opening the shared dialog in sign-up mode.
 
-The "Free to start" label rests on the $0.30 starter credit, which only pays
+The "1 million free tokens" line rests on the starter credit, which only pays
 for Credits routes, so a page whose model has none says "Bring your own key"
 and makes no credit claim.
 """
@@ -35,6 +35,12 @@ def _hero(html: str) -> str:
     return match.group(0)
 
 
+def _provider_hero(html: str) -> str:
+    match = re.search(r'<section class="public-hero catalog-hero pd-hero".*?</section>', html, re.S)
+    assert match, "provider hero missing"
+    return match.group(0)
+
+
 def _credits_route_count(model_id: str) -> int:
     return len(dashboard._credits_endpoints(endpoints_for_model(model_id)))
 
@@ -54,7 +60,7 @@ def _model_hero(html: str) -> str:
     return match.group(0)
 
 
-NO_CARD = "No card required. Start with 1&nbsp;million free&nbsp;tokens."
+NO_CARD = "Up&nbsp;to 1&nbsp;million free&nbsp;tokens. No&nbsp;card&nbsp;required."
 
 
 def test_funded_model_page_is_free_to_start(client: TestClient) -> None:
@@ -63,7 +69,7 @@ def test_funded_model_page_is_free_to_start(client: TestClient) -> None:
     assert response.status_code == 200
     hero = _model_hero(response.text)
     assert CTA in hero
-    assert ">Create my API key</button>" in hero
+    assert ">Start building</button>" in hero
     assert hero.count("data-catalog-cta") == 1
     assert NO_CARD in hero
     assert GENERIC_TILE not in response.text
@@ -90,7 +96,8 @@ def test_model_section_pages_share_the_model_hero(client: TestClient) -> None:
     response = client.get(f"/models/{model_id}/pricing")
     assert response.status_code == 200
     hero = _hero(response.text)
-    assert '<div class="kicker">Free to start</div>' in hero
+    assert NO_CARD in hero
+    assert 'class="kicker"' not in hero
     assert CTA in hero
 
 
@@ -145,7 +152,7 @@ def test_comparison_page_label_follows_both_models(client: TestClient) -> None:
     both = client.get(f"/compare/models/{funded}/vs/{second}", follow_redirects=True)
     assert both.status_code == 200
     hero = _compare_hero(both.text)
-    assert "Start with 1 million free tokens." in hero
+    assert NO_CARD in hero
     assert CTA in hero
     assert hero.count("data-catalog-cta") == 1
 
@@ -153,7 +160,7 @@ def test_comparison_page_label_follows_both_models(client: TestClient) -> None:
     mixed = client.get(f"/compare/models/{funded}/vs/{byok}", follow_redirects=True)
     assert mixed.status_code == 200
     hero = _compare_hero(mixed.text)
-    assert "free tokens" not in hero
+    assert NO_CARD not in hero
     assert "Try both on us." not in hero
     assert "runs on your own provider key" in hero
 
@@ -166,11 +173,29 @@ def test_provider_page_is_free_to_start_when_it_has_credits_routes(client: TestC
     )
     response = client.get(f"/providers/{slug}")
     assert response.status_code == 200
-    hero = _hero(response.text)
-    assert '<div class="kicker">Free to start</div>' in hero
-    assert " on us. Starter credit covers your first requests" in hero
+    hero = _provider_hero(response.text)
+    assert NO_CARD in hero
+    assert " on us. One key " in hero
+    assert ">Start building</button>" in hero
+    assert "<dt>Models</dt>" in hero
     assert CTA in hero
     assert GENERIC_TILE not in response.text
+    # The model list comes straight after the hero.
+    assert response.text.index('class="model-catalog') < response.text.index('class="panel"')
+
+
+def test_provider_hero_price_skips_embedding_models(client: TestClient) -> None:
+    hero = _provider_hero(client.get("/providers/tinfoil").text)
+    figures = dict(re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", hero))
+    assert figures["Input / 1M from"] == "$0.16"
+    assert figures["Zero retention"] == "All routes"
+    assert figures["Confidential"] == "Verified"
+
+
+def test_gateway_provider_hero_shows_no_privacy_figures(client: TestClient) -> None:
+    hero = _provider_hero(client.get("/providers/trustedrouter").text)
+    assert "<dt>Zero retention</dt>" not in hero
+    assert "<dt>Confidential</dt>" not in hero
 
 
 def _provider_rows(html: str) -> list[str]:
@@ -326,12 +351,21 @@ def test_model_page_provider_details_use_labels_not_headings(client: TestClient)
     assert '<p class="md-detail-label">Weight format</p>' in details[0]
 
 
-def test_readable_no_card_note_has_its_own_class(client: TestClient) -> None:
+def test_free_tokens_note_uses_the_shared_line(client: TestClient) -> None:
     models_html = client.get("/models").text
-    assert '<p class="cta-note cta-note-readable">No card required.' in models_html
+    line = "Up&nbsp;to 1&nbsp;million free&nbsp;tokens. No&nbsp;card&nbsp;required."
+    assert f'<p class="cta-note hero-free-note">{line}</p>' in models_html
     slug = re.search(r'href="/blog/([^"]+)"', client.get("/blog").text)
     assert slug
     blog_html = client.get(f"/blog/{slug.group(1)}").text
-    assert '<span class="cta-note cta-note-readable">No card required.' in blog_html
+    assert f'<span class="cta-note hero-free-note">{line}</span>' in blog_html
     for html in (models_html, blog_html):
         assert "microcopy cta-note" not in html
+
+
+@pytest.mark.parametrize("path", ["/terms", "/privacy", "/careers", "/legal", "/legal/dpa", "/page-that-is-missing"])
+def test_legal_careers_and_error_pages_carry_no_offer_line(client: TestClient, path: str) -> None:
+    html = client.get(path).text
+    assert 'class="hero-free-note"' not in html and "free&nbsp;tokens" not in html
+    # Pages that sell the product keep it.
+    assert 'class="hero-free-note"' in client.get("/pricing").text

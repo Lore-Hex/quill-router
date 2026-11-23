@@ -272,10 +272,12 @@ def test_history_reads_overlap_but_results_keep_listing_order(monkeypatch):
             seen.append(run_id)
             active += 1
             peak = max(peak, active)
-        barrier.wait()
+        if run_id < 10 + width:
+            barrier.wait()
         if run_id == 10:
             assert later_read.wait(5)
-        if run_id == 13:
+        if run_id == 10 + width:
+            # A slow first lookup must not hold up the fifth read.
             later_read.set()
         with guard:
             active -= 1

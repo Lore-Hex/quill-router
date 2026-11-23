@@ -143,8 +143,8 @@
       "supports_reasoning": true,
       "routable": false,
       "routable_reason": "attested-enclave-qualification-pending",
-      "input_token_price_per_m": 6000000,
-      "output_token_price_per_m": 25000000,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
       "cached_input_token_price_per_m": 600000
     },
     {
@@ -277,7 +277,7 @@
   ],
   "source": "https://maple.ai/docs/proxy/models",
   "pricing_source": "https://maple.ai/pricing",
-  "generated_at": "2026-11-20T13:53:04Z",
+  "generated_at": "2026-11-23T02:27:52Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11
 }

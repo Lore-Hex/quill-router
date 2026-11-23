@@ -126,7 +126,8 @@ class ScopeRepo:
             script = script.replace(" --text ", " ")
         elif mutation == "no_widening":
             # REF is always the base, validated or not.
-            widening = 'if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ]; then\n    ref="${base}"\n  else'
+            widening = ('if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ] '
+                        '|| [ "${base_pending}" = true ]; then\n    ref="${base}"\n  else')
             assert script.count(widening) == 1
             script = script.replace(widening, 'if true; then\n    ref="${base}"\n  else')
         elif mutation is not None:
@@ -247,6 +248,59 @@ def test_a_data_only_push_on_an_unvalidated_base_runs_the_complete_matrix(
     runs = [{**run, "head_sha": a if run["head_sha"] == "A" else run["head_sha"]} for run in runs]
     assert scope_repo.run(event="push", head=c, before=a, runs=runs) == "false"
     assert "has no successful ci.yml run" in scope_repo.last.stdout
+
+
+def output_value(repo: ScopeRepo, name: str) -> str:
+    lines = [line for line in (repo.root / "github-output").read_text().splitlines()
+             if line.startswith(f"{name}=")]
+    assert len(lines) == 1, lines
+    return lines[0].split("=", 1)[1]
+
+
+def test_a_refresh_dispatch_on_a_base_whose_push_run_is_running_takes_the_data_only_skips(
+    scope_repo: ScopeRepo,
+) -> None:
+    # The price refresh carries its snapshot onto a main commit merged
+    # minutes earlier. Its skips stand on that base, and base-ci makes the run
+    # wait for the base's own push run to succeed (2026-11-20: without this
+    # the snapshot ran the complete matrix, 45-60 minutes, and lost the race).
+    a = scope_repo.shas["A"]
+    b = scope_repo.commit("B", {DOC: "notes 2\n"})
+    scope_repo.push()
+    d = scope_repo.commit("D", {SNAPSHOT: '{"v": 2}\n'})
+    scope_repo.push("automation/price-refresh-42")
+    running = [run_record(a), run_record(b, status="in_progress", conclusion=None)]
+    assert scope_repo.run(event="workflow_dispatch", head=d, runs=running) == "true"
+    assert output_value(scope_repo, "base_pending") == "true"
+    assert output_value(scope_repo, "base") == b
+    # The path-scoped jobs compare with the base itself, which base-ci checks.
+    assert f"({b}..{d})" in scope_repo.last.stdout
+    assert scope_repo.flags == CATALOG
+    # A validated base needs no wait.
+    assert scope_repo.run(event="workflow_dispatch", head=d, runs=[run_record(b)]) == "true"
+    assert output_value(scope_repo, "base_pending") == "false"
+
+
+@pytest.mark.parametrize(("event", "runs"), [
+    # A push never waits: its run is the one main's deploy gate reads.
+    ("push", [run_record("B", status="in_progress", conclusion=None)]),
+    # Only the base's own push run counts as running.
+    ("workflow_dispatch", [run_record("B", status="in_progress", conclusion=None, event="workflow_dispatch")]),
+    ("workflow_dispatch", [run_record("B", status="in_progress", conclusion=None, event="pull_request")]),
+    # Concluded without success: nothing to wait for.
+    ("workflow_dispatch", [run_record("B", conclusion="failure")]),
+])
+def test_no_data_only_skip_without_a_running_or_validated_base(
+    scope_repo: ScopeRepo, event: str, runs: list[dict[str, object]],
+) -> None:
+    b = scope_repo.commit("B", {DOC: "notes 2\n"})
+    scope_repo.push()
+    d = scope_repo.commit("D", {SNAPSHOT: '{"v": 2}\n'})
+    scope_repo.push("automation/price-refresh-42")
+    runs = [{**run, "head_sha": b} for run in runs]
+    before = b if event == "push" else ""
+    assert scope_repo.run(event=event, head=d, before=before, runs=runs) == "false"
+    assert output_value(scope_repo, "base_pending") == "false"
 
 
 def test_inherited_broken_code_on_an_unvalidated_base_is_not_skipped(scope_repo: ScopeRepo) -> None:

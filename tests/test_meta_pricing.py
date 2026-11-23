@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-from scripts.pricing import refresh
 from scripts.pricing.providers import _direct_openai, meta
 
 
@@ -139,8 +138,3 @@ def test_openrouter_key_cannot_replace_missing_meta_key(monkeypatch: pytest.Monk
     monkeypatch.setenv("OPENROUTER_API_KEY", "must-not-use")
     with pytest.raises(RuntimeError, match="META_API_KEY"):
         meta.fetch()
-
-
-def test_meta_not_classified_as_openrouter_transport() -> None:
-    assert "meta" not in refresh._OPENROUTER_BACKED_PROVIDER_SLUGS
-    assert "openrouter" in refresh._OPENROUTER_BACKED_PROVIDER_SLUGS

@@ -137,7 +137,8 @@ def test_the_deployed_negotiation_regions_name_enclave_regions():
     # The exact value is pinned by test_deploy_script_execution.py
     # (test_rollout_negotiation_regions_are_literal_and_configured). This test
     # checks two other things. A region no enclave runs in would never
-    # negotiate. An empty value would negotiate everywhere, Europe included.
+    # negotiate. An empty value would negotiate everywhere, a region added to
+    # the inventory later included.
     named = deployed_negotiation_regions()
     assert named
     assert named <= set(ENCLAVE_REGIONS)
@@ -175,6 +176,17 @@ def terminal_route_enabled() -> bool:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.terminal_route_enabled()
+
+
+def test_the_deployed_pin_turns_decide_async_settlement_on(monkeypatch):
+    # One literal, read the way the service reads it. Turning it off is an
+    # edit of this pin and of this test together, on purpose.
+    value = deployed_pin('TR_ASYNC_SETTLE_DECIDE_ROUTE')
+    assert value == 'true'
+    monkeypatch.setenv('TR_ASYNC_SETTLE_DECIDE_ROUTE', value)
+    assert Settings(environment='test', _env_file=None).async_settle_decide_route is True
+    monkeypatch.delenv('TR_ASYNC_SETTLE_DECIDE_ROUTE')
+    assert Settings(environment='test', _env_file=None).async_settle_decide_route is False
 
 
 def test_every_negotiated_region_settles_where_it_is_accepted():

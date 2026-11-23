@@ -4,9 +4,9 @@
 <section class="marketing-split" aria-label="Private LLM API">
   <div class="marketing-copy">
     <span class="eyebrow">Private LLM API</span>
-    <h2>A private LLM API where "private" means cryptographically verified.</h2>
-    <p>Every hosted LLM provider claims privacy. Almost none of them give you a way to verify it.</p>
-    <p>TrustedRouter routes to every major model — Claude, GPT, Gemini, DeepSeek, Kimi, Llama, Mistral — through a hardware-attested gateway. The code is open source. The image is hashed. You can check what runs.</p>
+    <h2>Make your first confidential API request</h2>
+    <p>Install the OpenAI Python SDK and set <code>TRUSTEDROUTER_API_KEY</code>. This example sends a fictional prompt to an eligible provider with encrypted inference and zero data retention. If no route qualifies, the request fails before inference.</p>
+    <p>Gateway attestation verifies the running gateway software. The confidential routing requirement also restricts which provider can process your prompt. <a href="/docs#confidential-api">Check the provider requirements</a>.</p>
     <p>
       <button class="btn primary" type="button" data-action="open-signin">Create key and test privately</button>
       <a class="btn" href="/chat">Try the playground</a>
@@ -15,19 +15,20 @@
     <p class="microcopy">New email signups receive starter credit. No card required.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Standard call</span><span>OpenAI SDK</span></div>
-    <pre><code>client = OpenAI(
-    base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
-)
+    <div class="code-head"><span>Confidential call</span><span>OpenAI SDK</span></div>
+    <pre><code>import os
+from openai import OpenAI
 
-resp = client.chat.completions.create(
-    model="anthropic/claude-sonnet-4.6",
-    messages=[
-        {"role": "user", "content": "your prompt"}
-    ],
+client = OpenAI(
+    base_url="https://api.confidential.trustedrouter.com/v1",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
 )
-# No logs. Source verified. Attestation on demand.</code></pre>
+reply = client.chat.completions.create(
+    model="nyte/trusted",
+    messages=[{"role": "user", "content": "Say hello."}],
+    extra_body={"provider": {"min_privacy": "confidential"}},
+)
+print(reply.choices[0].message.content)</code></pre>
   </div>
 </section>
 
@@ -73,7 +74,7 @@ resp = client.chat.completions.create(
     <span>Source</span><span>Closed</span><span>Open</span>
   </div>
   <div class="matrix-row">
-    <span>Multi-model</span><span>One provider</span><span>30+ providers, one API</span>
+    <span>Multi-model</span><span>One provider</span><span>100+ providers, one API</span>
   </div>
   <div class="matrix-row">
     <span>Provider rollover</span><span>No</span><span>Yes — automatic on failure</span>

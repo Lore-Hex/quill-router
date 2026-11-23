@@ -1237,8 +1237,6 @@ def test_the_real_write_surface_writes_exactly_v2_today() -> None:
         # UserProvidedModel's two envelope fields (endpoint key, signing secret)
         "src/trusted_router/storage_models.py",
         "src/trusted_router/storage_models.py",
-        # ByokKey: a provider row's additional keys (several keys per provider)
-        "src/trusted_router/storage_models.py",
     )
 
 
@@ -1268,7 +1266,6 @@ def test_the_probe_reports_the_format_a_real_call_produced() -> None:
     assert dict(observed.by_entry_point) == {
         "src/trusted_router/byok_crypto.py:encrypt_byok_secret": (V2,),
         "src/trusted_router/byok_crypto.py:encrypt_control_secret": (V2,),
-        "src/trusted_router/routes/byok.py:_seal_byok_secret": (V2,),
     }
 
 
@@ -1491,7 +1488,6 @@ def test_the_real_tree_has_a_probe_for_every_entry_point_it_declares() -> None:
     assert scan.entry_points == (
         "src/trusted_router/byok_crypto.py:encrypt_byok_secret",
         "src/trusted_router/byok_crypto.py:encrypt_control_secret",
-        "src/trusted_router/routes/byok.py:_seal_byok_secret",
     )
     assert set(scan.entry_points) == set(gate._WRITE_PROBES)
 

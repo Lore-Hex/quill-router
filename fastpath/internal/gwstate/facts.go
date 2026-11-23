@@ -61,6 +61,7 @@ const (
 	ReasonWorkspaceGone    = "workspace_unavailable"
 	ReasonWorkspacePaused  = "workspace_paused"
 	ReasonWorkspaceFederal = "workspace_federated"
+	ReasonWorkspaceOrigin  = "workspace_origin"
 )
 
 // Pair is one of a key's default tags.
@@ -336,6 +337,7 @@ var consultedKeyFields = map[string]string{
 }
 
 var consultedWorkspaceFields = map[string]string{
+	"origin_policy":        "non-default or malformed: hand off to Python for candidate filtering",
 	"owner_user_id":        "OwnerUserID, the fallback when the key has no creator",
 	"billing_pause_causes": "PauseCauses, workspace_paused",
 	"billing_paused":       "PauseCauses (the legacy flag)",
@@ -494,6 +496,8 @@ func ParseWorkspace(body string, found bool, keyWorkspace string) WorkspaceFacts
 	slices.Sort(causes)
 	w.PauseCauses = slices.Compact(causes)
 	w.Federated = federated != ""
+	_, originSet := f["origin_policy"]
+	origin, validOrigin := f.str("origin_policy")
 	switch {
 	case w.Deleted:
 		w.Reason = ReasonWorkspaceGone
@@ -501,6 +505,8 @@ func ParseWorkspace(body string, found bool, keyWorkspace string) WorkspaceFacts
 		w.Reason = ReasonWorkspacePaused
 	case w.Federated:
 		w.Reason = ReasonWorkspaceFederal
+	case originSet && (!validOrigin || origin != "unrestricted"):
+		w.Reason = ReasonWorkspaceOrigin
 	default:
 		w.Eligible = true
 	}

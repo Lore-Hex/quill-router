@@ -646,17 +646,16 @@
       "status": 1,
       "id": "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
       "upstream_id": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
-      "retirement_at": "2026-12-11T00:00:00Z",
+      "retirement_at": "2026-11-23T00:39:00Z",
       "context_length": 262144,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2500000
     }
   ],
   "source": "https://inference.api.nscale.com/v1/models",
   "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
-  "generated_at": "2026-11-20T13:53:04Z",
+  "generated_at": "2026-11-22T19:27:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 27
 }

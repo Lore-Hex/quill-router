@@ -26,7 +26,6 @@ from trusted_router.storage import (
     UserProvidedModel,
     Workspace,
 )
-from trusted_router.storage_models import ByokKey
 from trusted_router.user_model_rules import user_model_is_on_the_clock
 
 USER_MODEL_PRIVACY_NOTICE = (
@@ -135,8 +134,6 @@ def member_shape(member: Member) -> dict[str, Any]:
 
 
 def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
-    # The top level keeps its original fields (the default key) for existing
-    # clients; "keys" lists every key, in the order requests try them.
     return {
         "provider": config.provider,
         # A legacy alias row (gemini) has no catalog entry of its own; the
@@ -148,22 +145,6 @@ def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
         "key_hint": config.key_hint,
         "created_at": config.created_at,
         "updated_at": config.updated_at,
-        "keys": [byok_key_shape(key) for key in config.all_keys()],
-    }
-
-
-def byok_key_shape(key: ByokKey) -> dict[str, Any]:
-    return {
-        "id": key.id,
-        "label": key.label,
-        "key_hint": key.key_hint,
-        "secret_storage": "envelope" if key.encrypted_secret is not None else "external_ref",
-        "models": list(key.models),
-        "priority": key.priority,
-        "fallback_to_credits": key.fallback_to_credits,
-        "disabled": key.disabled,
-        "created_at": key.created_at,
-        "updated_at": key.updated_at,
     }
 
 

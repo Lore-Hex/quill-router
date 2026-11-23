@@ -17,6 +17,7 @@ from scripts.generate_og_card import (
     HOMEPAGE_CARD,
     MAX_BYTES,
     MAX_HEADLINE_WORDS,
+    NYTE_CARD,
     WIDTH,
     Card,
     render_html,
@@ -40,6 +41,8 @@ def test_default_card_is_the_homepage_card() -> None:
     expected = homepage.replace('<meta charset="utf-8">', '<meta charset="utf-8">' + base, 1)
     assert render_html(DEFAULT_CARD) == expected
     assert DEFAULT_CARD.words <= MAX_HEADLINE_WORDS
+    assert "Access 600+ models" in DEFAULT_CARD.subhead
+    assert f"<p>{DEFAULT_CARD.subhead}</p>" in NYTE_CARD.read_text()
 
 
 def test_other_words_are_escaped_and_nothing_else_changes() -> None:

@@ -1,7 +1,22 @@
 {% extends "public/_base.html" %}
 {% block body_attributes %}class="pricing-page"{% endblock %}
 {% block promotion %}{% include "public/_fortanix_promo.html" %}{% endblock %}
-{% block hero_aside %}{% include "public/_price_bars.html" %}{% endblock %}
+{# Pricing keeps the full hero with the price bars beside the copy. #}
+{% block hero %}
+<section class="public-hero marketing-hero">
+  <div>
+    <div class="kicker">OpenAI compatible API · Attested · Public status</div>
+    <h1>{{ heading }}</h1>
+    <p class="lead">{{ description }}</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Start building</button>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify gateway <span aria-hidden="true">→</span></a>
+    </div>
+    <p class="hero-free-note">{{ free_tokens_line() }}</p>
+  </div>
+  {% include "public/_price_bars.html" %}
+</section>
+{% endblock %}
 {% block body %}
 <section class="pricing-section" aria-labelledby="pricing-ways">
   <h2 id="pricing-ways">Ways to pay</h2>
@@ -33,7 +48,7 @@
       <tr><th scope="row">Each model and route</th><td>Input, cached-input, output, and provider-specific prices are listed on the Models page.</td></tr>
     </tbody>
   </table>
-  <p class="pricing-note">The same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% pay as you go fee on credit purchases</a></p>
+  <p class="pricing-note">The same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing" rel="nofollow">5.5% pay as you go fee on credit purchases</a></p>
 </section>
 
 <section class="pricing-section" aria-labelledby="pricing-plan">

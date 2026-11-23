@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("artifacts", type=Path, help="Directory downloaded by gh run download")
     parser.add_argument("current", type=Path, help="Current .test_durations file")
     parser.add_argument("output", type=Path, help="Explicit destination for the merged JSON")
-    parser.add_argument("--profile", choices=("default", "post-cutover"),
+    parser.add_argument("--profile", choices=("default", "post-cutover", "oracle-default"),
                         help="Use separate-clock medians from at least three run directories")
     args = parser.parse_args(argv)
     if args.profile:

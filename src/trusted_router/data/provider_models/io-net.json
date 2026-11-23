@@ -1156,10 +1156,39 @@
       "input_token_price_per_m": 834000,
       "output_token_price_per_m": 2501000,
       "cached_input_token_price_per_m": 417000
+    },
+    {
+      "display_name": "Thinking Machines: Inkling 2 Mini",
+      "title": "thinkingmachines/inkling-2-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "thinkingmachines/inkling-2-mini",
+      "upstream_id": "thinkingmachines/inkling-2-mini",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "reasoning",
+        "prompt_cache"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 20000
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-11-20T13:53:04Z",
+  "generated_at": "2026-11-23T02:27:52Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 42
+  "model_count": 43
 }

@@ -318,13 +318,14 @@ def test_oracle_sql_is_independent_and_fake_executes_arithmetic(
     assert usages == [70, 140]
 
 
-# Positions 7, 8 and 9 are the credit release and the key's two window forms.
-# A zero credit release, or anything but exactly one key form matching (a
-# forced zero beside the stale form's real zero; a forced one beside the current
-# form's real one), falls back; a count no statement can return rolls back.
+# Positions 7, 8, 9 and 10 are the credit row's lock statement, the credit
+# release and the key's two window forms. A zero from the lock statement or the
+# credit release, or anything but exactly one key form matching (a forced zero
+# beside the stale form's real zero; a forced one beside the current form's
+# real one), falls back; a count no statement can return rolls back.
 @pytest.mark.parametrize(('position', 'bad_count'), [
-    (7, 0), (8, 0), (9, 1),
-    *[(position, bad) for position in (7, 8, 9) for bad in (2, -1, 'truncated')],
+    (7, 0), (8, 0), (9, 0), (10, 1),
+    *[(position, bad) for position in (7, 8, 9, 10) for bad in (2, -1, 'truncated')],
 ])
 def test_tail_counts_require_rollback(monkeypatch: pytest.MonkeyPatch, position: int, bad_count: Any) -> None:
     db, options = prepare('ordinary', True, True)

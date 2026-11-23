@@ -38,7 +38,7 @@ from trusted_router.app_markup_billing import (
     app_markup_payout_event_id,
 )
 from trusted_router.catalog import PROVIDERS
-from trusted_router.credit_refusal_read import REMEMBERED, CreditRefusalRead
+from trusted_router.credit_refusal_read import REMEMBERED, CreditRefusalRead, LeaseUnderFloor
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
@@ -147,17 +147,24 @@ class AuthorizeOutcome:
     # The balance covers the hold but the headroom outside the fast path's
     # leases does not (docs/design/fast-admission-and-batched-settlement.md
     # section 4.4): answered 503 with Retry-After, never the 402 the enclave
-    # caches. Returned only with lease_headroom_503 on.
+    # caches. Returned only with lease_headroom_503 on, and only for a
+    # workspace whose headroom, its leases' included, is at least the fast
+    # path nodes' floor (lease_headroom_floor): under it the answer is
+    # insufficient_credits, as with lease_headroom_503 off.
     LEASE_HEADROOM = "lease_headroom"
 
 
 class AuthorizeVerdict(str):
     """String-compatible typed-authorize outcome with its window decision,
     and, on an insufficient_credits refusal, the read of the credit rows it
-    stands on (credit_refusal_read.py), None when there was none."""
+    stands on (credit_refusal_read.py), None when there was none, and the
+    lease-aware amounts of one that live leases would have made
+    lease_headroom were the workspace not under the nodes' floor
+    (LeaseUnderFloor), None for any other."""
 
     rate_limit: KeyWindowLimitDecision | None
     credit_read: CreditRefusalRead | None
+    lease_under_floor: LeaseUnderFloor | None
 
     def __new__(
         cls,
@@ -165,22 +172,35 @@ class AuthorizeVerdict(str):
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
         credit_read: CreditRefusalRead | None = None,
+        lease_under_floor: LeaseUnderFloor | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
         verdict.credit_read = credit_read
+        verdict.lease_under_floor = lease_under_floor
         return verdict
 
 
 class CreditPrecheckVerdict(str):
     """credit_exhaustion_precheck's verdict, string-compatible, with the
-    snapshot an EXHAUSTED verdict stands on (None for any other)."""
+    snapshot an EXHAUSTED verdict stands on (None for any other), and, for an
+    EXHAUSTED verdict that would have been LEASE_HELD were the workspace not
+    under the nodes' floor, that snapshot's lease-aware amounts (None for any
+    other)."""
 
     credit_read: CreditRefusalRead | None
+    lease_under_floor: LeaseUnderFloor | None
 
-    def __new__(cls, verdict: str, *, credit_read: CreditRefusalRead | None = None) -> CreditPrecheckVerdict:
+    def __new__(
+        cls,
+        verdict: str,
+        *,
+        credit_read: CreditRefusalRead | None = None,
+        lease_under_floor: LeaseUnderFloor | None = None,
+    ) -> CreditPrecheckVerdict:
         made = super().__new__(cls, verdict)
         made.credit_read = credit_read
+        made.lease_under_floor = lease_under_floor
         return made
 
 
@@ -324,6 +344,7 @@ def credit_exhaustion_precheck(
     estimate: int,
     idempotency_scope: str | None = None,
     lease_aware: bool = False,
+    lease_floor: int = 0,
 ) -> str:
     """Recheck a cached insufficient-credit verdict without locking any credit row.
 
@@ -360,6 +381,18 @@ def credit_exhaustion_precheck(
     path stays lock-free and answers today's 402; a failed credit-row read
     is DEFER, as before. Without it, no lease is read and every verdict is as
     before.
+
+    ``lease_floor`` (fastpath_lease_headroom_503_floor_micro, the fast path
+    nodes' floor) narrows LEASE_HELD to a workspace the fast path can still
+    fund: the rows' signed headroom plus what the leases hold must also be at
+    least the floor. Under it no lease can be topped up (a node refuses one
+    unless the headroom outside leases is at least the floor plus the amount
+    asked), so what the leases hold comes back only when they close, and a
+    retry cannot help before the balance runs out. The verdict is then
+    EXHAUSTED, as for these rows with no lease read, carrying the snapshot's
+    amounts (CreditPrecheckVerdict.lease_under_floor). Zero compares nothing.
+    Only a verdict that would be LEASE_HELD changes, to EXHAUSTED: no request
+    is let through, deferred or refused that was not before.
 
     An EXHAUSTED verdict carries the snapshot it stands on (its rows and read
     timestamp, CreditPrecheckVerdict.credit_read), for the internal route's
@@ -431,8 +464,18 @@ def credit_exhaustion_precheck(
                     )
                     return exhausted
                 lease_held = int(held[0][0]) if held and held[0][0] is not None else 0
-                if lease_held > 0 and sum(available) + lease_held >= estimate:
-                    return LEASE_HELD
+                outside = sum(available)
+                if lease_held > 0 and outside + lease_held >= estimate:
+                    if outside + lease_held >= lease_floor:
+                        return LEASE_HELD
+                    # Under the nodes' floor the leases are a remnant no
+                    # top-up can add to: the rows' own verdict, with the
+                    # amounts the route's line carries.
+                    return CreditPrecheckVerdict(
+                        EXHAUSTED,
+                        credit_read=exhausted.credit_read,
+                        lease_under_floor=LeaseUnderFloor(outside, lease_held, int(lease_floor)),
+                    )
             return exhausted
     except Exception:
         log.warning(
@@ -2008,6 +2051,7 @@ def typed_finalize_atomic(
     from trusted_router.storage_gcp_counter_dml import (
         claim_reservation,
         insert_entity_dml_at,
+        lock_credit_release_statement,
         read_reservation,
         release_credit,
         release_credit_no_debt_statement,
@@ -2050,13 +2094,25 @@ def typed_finalize_atomic(
             or settle_outbox_intent.intent_kind != ("settle" if success else "refund")
         ):
             raise ValueError("settle_outbox_intent does not describe this finalize")
+    # F1-001: a commit on the async fence that marks no durable intent (the
+    # frozen apply, from the drain or a snapshot settle) stamps retention
+    # itself with the done-mark's guarded statements. They write only this
+    # authorization's and this reservation's terminal_at, reading those rows
+    # and this authorization's tr_settle_outbox range (the range the fenced
+    # claim already reads), never a counter row.
+    fence_retention = (
+        async_fence and activity_durable and resolved_outbox_available
+        and not mark_done and not one_commit
+    )
     attempts = 0
     eligible_attempts = 0
     fallback_reason = "none"
     rollback_ms = 0.0
     fallback_outcome = "not_attempted"
 
-    def speculative_batch(transaction: Any, *, include_claim: bool, res: dict, fold_tail: bool) -> None:
+    def speculative_batch(
+        transaction: Any, *, include_claim: bool, res: dict, fold_tail: bool, fold_retention: bool,
+    ) -> None:
         nonlocal eligible_attempts
         eligible_attempts += 1
         assert authorization is not None
@@ -2104,6 +2160,21 @@ def typed_finalize_atomic(
             # One-commit only; the benchmark outbox is touched nowhere else here.
             statements.append(benchmark_statement)
             counts.append((1,))
+        if fold_retention:
+            # The fence's retention stamps ride here, ahead of the counter
+            # tail, as the one-commit intent and the done-mark do, instead of
+            # in a batch of their own after it: the counter rows are then held
+            # exclusively for the tail and the commit only, not for one more
+            # round trip. They follow the claim and the authorization mark,
+            # whose writes their predicates read, exactly as before; the tail
+            # neither reads nor writes their rows, nor they its.
+            retention = done_retention_statements(
+                pt, authorization_id=authorization_id,
+                intent_kind="settle" if success else "refund",
+                reservation_id=reservation_id, now=now,
+            )
+            statements.extend(retention)
+            counts.extend([(0, 1)] * len(retention))
 
         # These hot rows are last, credit before key. A miss rolls back ALL
         # speculative writes before recovery/rollover/deletion classification;
@@ -2112,21 +2183,34 @@ def typed_finalize_atomic(
         sampled_floors = window_floors(utcnow()) if fold_tail else None
         if fold_tail:
             assert sampled_floors is not None
+            # The credit row's exclusive lock, taken where its release is
+            # about to scan it: the release keeps its tr_trust_event subquery
+            # and so cannot carry the hint itself (EXCLUSIVE_SCAN_HINT).
+            statements.append(lock_credit_release_statement(
+                pt, res["workspace_id"], res["credit_reserved_micro"],
+                shard=res["credit_shard"],
+            ))
             statements.append(release_credit_no_debt_statement(
                 pt, res["workspace_id"], res["credit_reserved_micro"], book_actual,
                 shard=res["credit_shard"],
             ))
             # The key's release in both window forms: the current one, which
-            # leaves the boundary columns unlocked (#1083), and the rolling one
-            # for a key with a window to roll forward. Exactly one matches.
+            # leaves the boundary columns out of its SET list (#1083), and the
+            # rolling one for a key with a window to roll forward. Exactly one
+            # matches. Both are hinted, so each takes the cells it scans
+            # exclusively, the boundary columns its predicate reads included,
+            # and the form that matches nothing keeps its lock (on the row, or
+            # on its key if the row is missing) until the transaction ends.
             for windows in ("current", "stale"):
                 statements.append(release_key_statement(
                     pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
                     book_to_byok=book_to_byok, window_floors=sampled_floors,
                     shard=res["key_shard"], windows=windows,
                 ))
-            counts.extend([(1,), (0, 1), (0, 1)])
-            reasons.extend(["credit_release_zero", None, None])
+            counts.extend([(1,), (1,), (0, 1), (0, 1)])
+            # The lock statement misses exactly where the release would (a
+            # hold the row no longer covers, a row marked in debt).
+            reasons.extend(["credit_release_zero", "credit_release_zero", None, None])
 
         def check_prefix(row_counts: Sequence[int]) -> None:
             for count, reason, allowed in zip(row_counts, reasons, counts, strict=False):
@@ -2169,8 +2253,15 @@ def typed_finalize_atomic(
             and user_model_payout is None and app_markup_payout is None
             and custom_model_markup_payout is None
         )
+        # Only a batch that carries the counter tail takes the retention
+        # stamps along; every other shape runs them as before, ahead of its
+        # sequential releases, so they are never under the counter locks.
+        fold_retention = fold_tail and fence_retention
         if speculate:
-            speculative_batch(transaction, include_claim=True, res=res, fold_tail=fold_tail)
+            speculative_batch(
+                transaction, include_claim=True, res=res, fold_tail=fold_tail,
+                fold_retention=fold_retention,
+            )
         else:
             won = claim_reservation(
                 transaction,
@@ -2298,11 +2389,11 @@ def typed_finalize_atomic(
             if marked != 1:
                 raise _SettleError("gateway_authorization update row-count != 1")
 
-        if (async_fence and request_record_typed and activity_durable and resolved_outbox_available
-                and not mark_done and not one_commit):
+        if fence_retention and request_record_typed and not fold_retention:
             # F1-001: fresh snapshot-sync has no durable intent to mark later.
             # Reuse the legacy done-mark's guarded stamps in the money commit.
             # Outstanding intents still defer TTL; retries never extend it.
+            # The folded batch above already carried them.
             retention = done_retention_statements(
                 pt, authorization_id=authorization_id,
                 intent_kind="settle" if success else "refund",

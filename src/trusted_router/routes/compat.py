@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 
 from trusted_router.errors import error_response, not_supported
+from trusted_router.routes.catalog import public_video_models
 
 
 def register_compat_stub_routes(router: APIRouter) -> None:
@@ -113,7 +114,7 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
 
     @router.get("/videos/models")
     def video_models() -> JSONResponse:
-        return not_supported()
+        return JSONResponse(public_video_models())
 
     @router.get("/videos/{jobId}")
     def video_status(jobId: str) -> JSONResponse:  # noqa: N803
@@ -207,4 +208,19 @@ def _add_current_openrouter_stubs(router: APIRouter) -> None:
         ("/workspaces/{id}/members", "GET"),
     )
     for path, method in routes:
-        router.add_api_route(path, stub, methods=[method])
+        metadata = {}
+        if path.startswith("/byok"):
+            metadata = {
+                "summary": "Unsupported BYOK compatibility endpoint",
+                "description": (
+                    "This compatibility endpoint returns 501 and does not manage keys. "
+                    "Use /v1/byok/providers and /v1/byok/providers/{provider} on "
+                    "https://trustedrouter.com instead. See https://trustedrouter.com/docs/byok."
+                ),
+            }
+        elif path.startswith("/workspaces/"):
+            metadata = {
+                "summary": "Unsupported workspace compatibility endpoint",
+                "description": "This compatibility endpoint returns 501; it does not manage workspace budgets or members.",
+            }
+        router.add_api_route(path, stub, methods=[method], openapi_extra=metadata)

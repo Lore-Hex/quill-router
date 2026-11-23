@@ -324,10 +324,15 @@ func answering(t *testing.T, status int, body string) string {
 func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 	ctx := context.Background()
 	h := HTTPOwners{Client: &http.Client{Timeout: 2 * time.Second}, Scheme: "http"}
-	closed := httptest.NewServer(http.NotFoundHandler())
-	gone := closed.Listener.Addr().String()
-	closed.Close()
 	good := answering(t, http.StatusOK, `{"Status":"won"}`)
+	// A connected socket owns its local port but does not listen on it.
+	// Closing a test listener instead lets a later server reuse its port.
+	held, err := net.DialTimeout("tcp", good, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	gone := held.LocalAddr().String()
 	redirecting := func(to string) string {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "http://"+to+r.URL.Path, http.StatusTemporaryRedirect)

@@ -256,7 +256,10 @@ def test_round3_regional_copy_and_links() -> None:
         assert _RULE_URL in source, path
         if path.endswith(".html"):
             soup = BeautifulSoup(source, "html.parser")
-            for paragraph in soup.find_all(["p", "li"]):
+            # Settings also describes model-provider headquarters; only the phone panel states SMS eligibility.
+            scope = soup.select_one("#phone") if path.endswith("/console/settings.html") else soup
+            assert scope is not None and "most European numbers" in scope.get_text(), path
+            for paragraph in scope.find_all(["p", "li"]):
                 if "European" in paragraph.get_text():
                     assert "most European numbers" in paragraph.get_text(), path
                     assert paragraph.find("a", href=_RULE_URL), path

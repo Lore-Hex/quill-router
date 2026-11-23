@@ -1323,9 +1323,6 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured(
             "model": "moonshotai/kimi-k2.6",
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 1_000,
-            # BYOK runs first by default. An explicit provider order keeps
-            # catalog order, so the Credits route is chosen here.
-            "provider": {"order": ["kimi"]},
         },
     )
 

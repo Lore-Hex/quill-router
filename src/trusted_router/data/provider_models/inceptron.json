@@ -92,9 +92,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 475000,
-      "output_token_price_per_m": 2450000,
-      "cached_input_token_price_per_m": 97500
+      "input_token_price_per_m": 564800,
+      "output_token_price_per_m": 2788000,
+      "cached_input_token_price_per_m": 190000
     },
     {
       "display_name": "Kimi K2.7 Code",
@@ -137,9 +137,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 656200,
-      "output_token_price_per_m": 3300000,
-      "cached_input_token_price_per_m": 180000
+      "input_token_price_per_m": 610000,
+      "output_token_price_per_m": 3550000,
+      "cached_input_token_price_per_m": 170000
     },
     {
       "display_name": "GLM 5.2",
@@ -184,7 +184,10 @@
       ],
       "input_token_price_per_m": 443300,
       "output_token_price_per_m": 2741700,
-      "cached_input_token_price_per_m": 191000
+      "cached_input_token_price_per_m": 191000,
+      "missing_since": "2026-11-21",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4 Flash 0731",
@@ -227,8 +230,8 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 62000,
-      "output_token_price_per_m": 259900,
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 495000,
       "cached_input_token_price_per_m": 27000
     },
     {
@@ -270,9 +273,9 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 244500,
-      "output_token_price_per_m": 3034000,
-      "cached_input_token_price_per_m": 126200
+      "input_token_price_per_m": 1050000,
+      "output_token_price_per_m": 3250000,
+      "cached_input_token_price_per_m": 177600
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -314,11 +317,58 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 120000,
-      "output_token_price_per_m": 450000,
+      "input_token_price_per_m": 160000,
+      "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "DeepSeek V4.1 Flash 1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning",
+        "logprobs",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "frequency_penalty",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "reasoning_effort",
+        "seed",
+        "stop",
+        "temperature",
+        "top_logprobs",
+        "top_p"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 6000
     }
   ],
-  "generated_at": "2026-09-28T23:57:13Z",
-  "model_count": 7
+  "generated_at": "2026-11-23T02:27:52Z",
+  "model_count": 8
 }

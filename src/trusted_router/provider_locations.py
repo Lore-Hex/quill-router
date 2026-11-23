@@ -319,9 +319,11 @@ PROVIDER_INFERENCE_LOCATIONS = {
         provider_pinning=("GPU-instance or dedicated-deployment region selection is not evidence "
                           "of a region pin for this shared model API."),
         trustedrouter_pinning=_NO_TR_PIN,
-        declaration="Shared inference API; processing countries unconfirmed, no fixed-region commitment.",
-        evidence="Public docs and native catalog reviewed; model-specific geography unconfirmed",
-        reviewed_on="2026-10-28",
+        declaration=("Shared inference API; processing countries unconfirmed, no fixed-region commitment. "
+                     "Novita's 2026-11-21 notice said MiniMax requests (2026-05-28 to 2026-11-11) "
+                     "were forwarded to MiniMax's own API, so no US processing is assumed."),
+        evidence="Public docs, native catalog and Novita's 2026-11-21 incident notice reviewed",
+        reviewed_on="2026-11-21",
         sources=(
             ("GPU rental regions (different product)", "https://blogs.novita.ai/gpu-regions-zones/"),
             ("Native model catalog", "https://api.novita.ai/openai/v1/models"),

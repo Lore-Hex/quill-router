@@ -588,6 +588,20 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.0000004"),
             Decimal("0.000001"),
         ),
+        # Inceptron's authenticated /v1/models on 2026-11-20, USD per input token.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[inceptron:inceptron:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "prompt",
+            Decimal("6.2E-8"),
+            Decimal("1.3E-7"),
+        ),
+        (
+            "z-ai/glm-5.3 [inceptron:inceptron:zai-org/GLM-5.3]",
+            "prompt",
+            Decimal("2.445E-7"),
+            Decimal("1.05E-6"),
+        ),
         # Verified in Inceptron's authenticated catalog on 2026-09-22:
         # https://api.inceptron.io/v1/models, pricing.input_cache_reads=4E-8
         # dollars/token (0.04 USD/M). Prompt=6E-8, completion=3E-7 unchanged.

@@ -87,7 +87,11 @@ from trusted_router.catalog import (
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings, in_v2_cohort
-from trusted_router.credit_refusal_read import CreditRefusalRead, credit_refusal_read_headers
+from trusted_router.credit_refusal_read import (
+    CreditRefusalRead,
+    LeaseUnderFloor,
+    credit_refusal_read_headers,
+)
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
     USER_MODEL_OWNER_SETTLE_FIELD,
@@ -251,7 +255,6 @@ from trusted_router.storage_models import (
     AmbiguousGatewayRequestId,
     ApiKey,
     AppMarkupPayout,
-    ByokKey,
     ByokProviderConfig,
     CustomModelMarkupPayout,
     GatewayAuthorization,
@@ -289,6 +292,7 @@ from trusted_router.web_fetch import (
     FETCH_ROUTE_TYPE,
     FETCH_UPSTREAM_COST_MICRODOLLARS,
 )
+from trusted_router.workspace_origin_policy import POLICIES, eligible_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -1381,15 +1385,10 @@ def _authorize_gateway_sync_impl(
                 else effective_route_preferences.input_modalities
             ),
         )
+        _workspace_origin_candidates(workspace, api_key, settings, existing_candidates, replay=True)
         byok_configs = _byok_configs_for_candidates(
             existing_candidates, workspace.id, folded_rows=folded_byok,
         )
-        # A replay returns the authorization admitted then: one hold, one
-        # settlement, so it cannot spend past what was admitted. Its stored
-        # BYOK routes are re-checked against the keys now (a key since
-        # disabled is never sent) and, when one of those keys now forbids
-        # Credits, its stored Credits routes are dropped.
-        existing_candidates = _byok_credits_policy(existing_candidates, workspace.id, byok_configs)
         broadcast_destinations = [
             payload
             for destination in _broadcast_destinations_for_authorize(workspace.id)
@@ -1416,9 +1415,6 @@ def _authorize_gateway_sync_impl(
             credit_reservation_id=existing_authorization.credit_reservation_id,
             byok_config=byok_config,
             byok_configs=byok_configs,
-            # Read from the request itself: the early replay runs before any
-            # live routing state exists.
-            single_route=_requested_single_route(body),
             region=existing_authorization.region or region,
             settings=settings,
             broadcast_destinations=broadcast_destinations,
@@ -1523,12 +1519,14 @@ def _authorize_gateway_sync_impl(
         output_tokens=body.output_estimate,
     )
     effective_route_preferences = resolved_candidates.effective_preferences
-    endpoint_candidates = resolved_candidates.candidates
+    endpoint_candidates = _workspace_origin_candidates(
+        workspace, api_key, settings, resolved_candidates.candidates,
+    )
     byok_configs = _byok_configs_for_candidates(
         endpoint_candidates, workspace.id,
         folded_rows=folded_byok,
     )
-    endpoint_candidates = _byok_admitted_candidates(endpoint_candidates, workspace.id, byok_configs)
+    # Routing ranks the origin-filtered candidates, never the unfiltered set.
     resolved_candidates = replace(resolved_candidates, candidates=endpoint_candidates)
     byok_providers = _byok_present_providers(endpoint_candidates, workspace.id, byok_configs)
     additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
@@ -1566,7 +1564,6 @@ def _authorize_gateway_sync_impl(
             user_model_prices=None,
             partner_mode=partner_mode,
             rerank=rerank,
-            byok_order=byok_route_order(byok_configs, workspace.id, reorder=route_plan.supports_live_routing),
         )
     except NamedChainRefusal as refusal:
         if refusal.event == "filtered":
@@ -1883,6 +1880,7 @@ def _authorize_gateway_sync_impl(
                         else None
                     ),
                     lease_headroom_503=settings.fastpath_lease_headroom_503,
+                    lease_headroom_floor=settings.fastpath_lease_headroom_503_floor_micro,
                 )
         except LeasedOutcomeUnknown as exc:
             # The leased insert's outcome is unknown and could not be read
@@ -2010,7 +2008,10 @@ def _authorize_gateway_sync_impl(
             # headroom it needs (fastpath_lease_headroom_503, design section
             # 4.4). Retryable, so a 503 with Retry-After: not the
             # insufficient_credits 402 the enclave remembers for the
-            # credential, and no free-credit exhaustion is recorded.
+            # credential, and no free-credit exhaustion is recorded. Only
+            # for a workspace at or above the fast path nodes' floor
+            # (fastpath_lease_headroom_503_floor_micro): under it the store
+            # answers insufficient_credits below.
             release_after_error()
             raise _lease_headroom_error(
                 workspace, reservation=reservation, estimate=estimate, key_id=api_key.hash,
@@ -2019,6 +2020,16 @@ def _authorize_gateway_sync_impl(
             )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             record_free_credit_exhausted_safely(workspace.id)
+            lease_under_floor = getattr(outcome, "lease_under_floor", None)
+            if lease_under_floor is not None:
+                # Live leases hold the shortfall, but the workspace is under
+                # the nodes' floor, so this is the 402 and not the
+                # lease-headroom 503. The answer below is the 402's own,
+                # unchanged; this line is what counts these.
+                _log_lease_under_floor(
+                    workspace, lease_under_floor, reservation=reservation, estimate=estimate,
+                    key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
+                )
             # With the read of the credit rows the refusal stands on, this
             # internal route only: the edge's decide shadow tells a hold
             # released since Python's read from a refusal to investigate
@@ -2281,12 +2292,7 @@ def _authorize_gateway_sync_impl(
                 estimate,
                 type(conflict_exc).__name__,
             )
-            raise api_error(
-                503,
-                "Authorization contention; retry shortly.",
-                ErrorType.SERVICE_UNAVAILABLE,
-                headers={"Retry-After": "1"},
-            ) from conflict_exc
+            raise _authorize_contention_error() from conflict_exc
         except BaseException:
             raise
         if authorization.id != authorization_id:
@@ -2369,7 +2375,6 @@ def _authorize_gateway_sync_impl(
         credit_reservation_id=credit_reservation_id,
         byok_config=byok_config,
         byok_configs=byok_configs,
-        single_route=not route_plan.preferences.allow_fallbacks,
         region=region,
         settings=settings,
         broadcast_destinations=broadcast_destinations,
@@ -2381,6 +2386,45 @@ def _authorize_gateway_sync_impl(
         async_federated=bool(workspace.federated_home or api_key.federated_home),
         async_effective_at=pricing_effective_at,
     )
+
+
+def _workspace_origin_candidates(
+    workspace: Workspace, api_key: ApiKey, settings: Settings,
+    candidates: list[tuple[Model, ModelEndpoint]], *, replay: bool = False,
+) -> list[tuple[Model, ModelEndpoint]]:
+    policy = workspace.origin_policy
+    peer_checks = settings.workspace_origin_peer_checks_enabled or policy != "unrestricted"
+    if peer_checks and (workspace.federated_home or api_key.federated_home) and candidates:
+        # A shadow can be older than a settings change. All-US routes satisfy
+        # both restrictions; for other routes consult the authoritative plane.
+        us_only = eligible_candidates("us", candidates)
+        if len(us_only) != len(candidates) and isinstance(policy, str) and policy in POLICIES:
+            home, token = settings.federation_home_base_url, settings.federation_home_token
+            if home and token:
+                try:
+                    record = _federation_client(home, token).resolve(api_key.lookup_hash)
+                except FederationUnavailable:
+                    record = {}
+                if record is None or (record and (
+                    record.get("workspace_id") != workspace.id
+                    or record.get("lookup_hash") != api_key.lookup_hash
+                    or record.get("disabled") or record.get("workspace_billing_paused")
+                )):
+                    raise api_error(403, "Workspace authorization is unavailable", ErrorType.FORBIDDEN)
+                # An unreachable or older home cannot prove a permissive policy.
+                value = record.get("workspace_origin_policy", "us")
+                policy = value if isinstance(value, str) else ""
+            else:
+                policy = "us"
+    if policy == "unrestricted":
+        return candidates
+    allowed = eligible_candidates(policy, candidates)
+    if not allowed or (replay and len(allowed) != len(candidates)):
+        raise api_error(
+            403, "Workspace origin policy requires a permitted model developer and serving company",
+            ErrorType.FORBIDDEN,
+        )
+    return allowed
 
 
 def _gateway_validate_sync(
@@ -3094,7 +3138,6 @@ def _gateway_authorize_response(
     credit_reservation_id: str | None,
     byok_config: Any | None,
     byok_configs: dict[str, Any] | None = None,
-    single_route: bool = False,
     region: str,
     settings: Settings,
     broadcast_destinations: list[dict[str, Any]],
@@ -3180,7 +3223,7 @@ def _gateway_authorize_response(
             "limit_usage_type": limit_usage_type.value,
             **money_pair("estimated_cost", estimate),
             "credit_reservation_id": credit_reservation_id,
-            **_gateway_byok_payload(byok_config, workspace_id, model_id=model.id),
+            **_gateway_byok_payload(byok_config, workspace_id),
             "content_storage_enabled": False,
             "region": region,
             "regions": region_payload(settings),
@@ -3207,20 +3250,16 @@ def _gateway_authorize_response(
             "tags": dict(authorization.tags),
             # Keep the wire shape for rolling upgrades; never send creator data.
             "custom_model": None,
-            # A BYOK route appears once per usable key of its provider, in key
-            # priority order, so the gateway falls over from one key to the next.
-            # allow_fallbacks=false keeps one route, so it keeps one key too.
             "route_candidates": [
-                payload
-                for candidate_model, candidate_endpoint in endpoint_candidates
-                for payload in _gateway_candidate_payloads(
+                _gateway_candidate_payload(
                     candidate_model,
                     candidate_endpoint,
                     workspace_id,
                     region,
                     byok_configs=byok_configs,
                 )
-            ][: 1 if single_route else None],
+                for candidate_model, candidate_endpoint in endpoint_candidates
+            ],
         }
     }
 
@@ -3340,9 +3379,17 @@ def _deferred_expires_at(settings: Settings) -> str:
 
 
 #: The lease-headroom 503's message and wait (fastpath_lease_headroom_503).
-#: A lease's unused allocation goes back as its owner's holds settle, so the
-#: headroom comes back within the lease's horizon; the enclave's authorize
-#: retry reads Retry-After as the least wait between its attempts.
+#: A lease gives its unused allocation back only once it stops admitting
+#: (idle for ten minutes, an hour old, or its workspace turned off: the
+#: owner's TopUps, fastpath/internal/owner/shard.go), not as its holds
+#: settle. Before that the headroom comes back as the workspace's own
+#: synchronous holds settle or credit is added, so a retry may meet the
+#: same answer. The enclave's authorize retry reads Retry-After as the
+#: least wait between its attempts. Under the fast path nodes' floor no
+#: lease is topped up either, so a workspace there can spend the rest of
+#: its credit before a lease closes: it is answered the insufficient_credits
+#: 402 instead (fastpath_lease_headroom_503_floor_micro,
+#: _log_lease_under_floor).
 LEASE_HEADROOM_MESSAGE = (
     "This workspace's credits are held by requests in flight; retry shortly."
 )
@@ -3393,18 +3440,66 @@ def _lease_headroom_error(
     counter trustedrouter_gateway_lease_headroom_503 counts it for the
     authorize-503 alert and the rate (scripts/deploy/gateway_reliability.sh).
     Its prefix, "INFO <logger> billing.lease_headroom_unavailable ", and
-    "trace=<id>" are read by both, so a change to either is a change to them."""
+    "trace=<id>" are read by both, so a change to either is a change to them.
+
+    An ExpectedHTTPException (QUILL-ROUTER-HX): the line and its counter are
+    the signal, and the response is the same as api_error's, so Sentry's
+    before_send drops the designed, retryable answer."""
     logger.info(
         "billing.lease_headroom_unavailable workspace_id=%s key_id=%s request_id=%s "
         "reserved_microdollars=%d estimated_microdollars=%d trace=%s",
         _log_value(workspace.id), _log_value(key_id), _log_value(request_id), reservation, estimate,
         _log_value(trace_id),
     )
-    return api_error(
+    return expected_api_error(
         503,
         LEASE_HEADROOM_MESSAGE,
         ErrorType.SERVICE_UNAVAILABLE,
         headers={"Retry-After": LEASE_HEADROOM_RETRY_AFTER},
+    )
+
+
+def _log_lease_under_floor(
+    workspace: Any, read: LeaseUnderFloor, *, reservation: int, estimate: int, key_id: str,
+    request_id: str | None,
+) -> None:
+    """The mark of an insufficient_credits 402 that live leases would have
+    made the lease-headroom 503, answered 402 because the workspace's
+    headroom, counting what its leases hold, is under the fast path nodes'
+    floor (fastpath_lease_headroom_503_floor_micro). There no lease is
+    topped up, what the leases hold comes back only when they close, and the
+    workspace can spend the rest first, so a retry cannot help and the
+    truthful answer is that credit is needed.
+
+    The response and its billing.insufficient_credits line are the 402's
+    own, unchanged; this line, written before it with the same request_id,
+    is the only difference, so an operator can count these and read the
+    amounts the decision stood on: the headroom outside leases
+    (available_microdollars, signed), what the leases hold
+    (lease_held_microdollars) and the floor, beside the request's hold
+    (reserved_microdollars) and estimate. It carries no model and no
+    content."""
+    logger.info(
+        "billing.lease_under_floor_402 workspace_id=%s key_id=%s request_id=%s "
+        "reserved_microdollars=%d estimated_microdollars=%d available_microdollars=%d "
+        "lease_held_microdollars=%d floor_microdollars=%d",
+        _log_value(workspace.id), _log_value(key_id), _log_value(request_id), reservation, estimate,
+        read.available, read.lease_held, read.floor,
+    )
+
+
+def _authorize_contention_error() -> Exception:
+    """503 with Retry-After for an authorize whose escrow committed but whose
+    hold transaction exhausted its conflict retries on the workspace's hot
+    row: its own concurrent requests won. The raise site refunds the escrow
+    and logs billing.authorize_conflict_after_escrow, and the enclave retries,
+    so it is an ExpectedHTTPException that Sentry's before_send drops; the
+    response is the same as api_error's."""
+    return expected_api_error(
+        503,
+        "Authorization contention; retry shortly.",
+        ErrorType.SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "1"},
     )
 
 
@@ -5988,31 +6083,6 @@ def _is_synthetic_settlement(
     return _synthetic_metadata_enabled(metadata)
 
 
-def _gateway_candidate_payloads(
-    model: Model,
-    endpoint: ModelEndpoint,
-    workspace_id: str,
-    region: str,
-    *,
-    byok_configs: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """The wire candidates for one route: one per usable BYOK key, else one."""
-    if not UsageType.for_endpoint(endpoint).is_byok():
-        return [_gateway_candidate_payload(model, endpoint, workspace_id, region, byok_configs=byok_configs)]
-    config = _get_byok_provider(workspace_id, endpoint.provider, byok_configs)
-    keys = byok_usable_keys(config, model.id)
-    if not keys:
-        # A key disabled or narrowed since authorization (a replay) is never
-        # sent; the route is left out rather than given an ineligible key.
-        return []
-    return [
-        _gateway_candidate_payload(
-            model, endpoint, workspace_id, region, byok_configs=byok_configs, byok_key=key,
-        )
-        for key in keys
-    ]
-
-
 def _gateway_candidate_payload(
     model: Model,
     endpoint: ModelEndpoint,
@@ -6020,7 +6090,6 @@ def _gateway_candidate_payload(
     region: str,
     *,
     byok_configs: dict[str, Any] | None = None,
-    byok_key: ByokKey | None = None,
 ) -> dict[str, Any]:
     usage_type = UsageType.for_endpoint(endpoint)
     byok_config = (
@@ -6035,7 +6104,7 @@ def _gateway_candidate_payload(
         "inference_location": inference_location_metadata(endpoint.provider, model.id),
         **_gateway_provider_route_payload(endpoint),
         "usage_type": usage_type.value,
-        **_gateway_byok_payload(byok_config, workspace_id, model_id=model.id, key=byok_key),
+        **_gateway_byok_payload(byok_config, workspace_id),
         "region": region,
     }
 
@@ -6047,13 +6116,7 @@ def _gateway_provider_route_payload(endpoint: ModelEndpoint) -> dict[str, Any]:
     return {}
 
 
-def _gateway_byok_payload(
-    byok_config: Any | None,
-    workspace_id: str,
-    *,
-    model_id: str | None = None,
-    key: ByokKey | None = None,
-) -> dict[str, Any]:
+def _gateway_byok_payload(byok_config: Any | None, workspace_id: str) -> dict[str, Any]:
     if byok_config is None:
         return {
             "byok_secret_ref": None,
@@ -6062,121 +6125,18 @@ def _gateway_byok_payload(
             "byok_key_hint": None,
             "byok_provider": None,
         }
-    if key is None:
-        usable = byok_usable_keys(byok_config, model_id) if model_id else []
-        if not usable:
-            # Fail closed: no enabled key admits this model, so no credential.
-            return _gateway_byok_payload(None, workspace_id)
-        key = usable[0]
-    # Every key of a row is sealed under the row's (workspace, provider).
     envelope_provider = str(byok_config.provider)
     return {
-        "byok_secret_ref": key.secret_ref,
-        "byok_encrypted_secret": encrypted_secret_payload(key.encrypted_secret),
+        "byok_secret_ref": byok_config.secret_ref,
+        "byok_encrypted_secret": encrypted_secret_payload(byok_config.encrypted_secret),
         "byok_cache_key": byok_cache_key(
-            key.encrypted_secret,
+            byok_config.encrypted_secret,
             workspace_id=workspace_id,
             provider=envelope_provider,
         ),
-        "byok_key_hint": key.key_hint,
+        "byok_key_hint": byok_config.key_hint,
         "byok_provider": envelope_provider,
     }
-
-
-def _requested_single_route(body: Any) -> bool:
-    """Whether the request asked for no fallbacks (provider or top level)."""
-    provider = getattr(body, "provider", None)
-    values = [provider.get("allow_fallbacks") if isinstance(provider, dict) else None]
-    values.append(getattr(body, "allow_fallbacks", None))
-    return any(value is False for value in values)
-
-
-def byok_usable_keys(config: Any | None, model_id: str | None) -> list[ByokKey]:
-    """The keys of a provider row that may serve ``model_id``, in try order."""
-    if config is None or not model_id:
-        return []
-    return list(config.usable_keys((model_id,)))
-
-
-def _byok_admitted_candidates(
-    candidates: list[tuple[Model, ModelEndpoint]],
-    workspace_id: str,
-    byok_configs: dict[str, Any] | None,
-) -> list[tuple[Model, ModelEndpoint]]:
-    """Drop a BYOK route no enabled key of its provider admits by model.
-
-    Every gateway region gets the same routes. A gateway that cannot run a
-    native-cloud BYOK route (AWS Nitro) refuses it at once as its own limit,
-    so the request falls over to its next route, and a key that turns Credits
-    off still keeps Credits routes out (_byok_credits_policy), exactly as on
-    a gateway that can run it."""
-    return [
-        (model, endpoint)
-        for model, endpoint in candidates
-        if not UsageType.for_endpoint(endpoint).is_byok()
-        or byok_usable_keys(_get_byok_provider(workspace_id, endpoint.provider, byok_configs), model.id)
-    ]
-
-
-def _byok_credits_policy(
-    candidates: list[tuple[Model, ModelEndpoint]],
-    workspace_id: str,
-    byok_configs: dict[str, Any] | None,
-) -> list[tuple[Model, ModelEndpoint]]:
-    """Drop Credits routes when a key that can serve the request turns
-    fallback to Credits off. Applied to fresh and replayed authorizations
-    alike, so a replay cannot pair a no-Credits key with a stored Credits
-    route."""
-    usable = [
-        key
-        for model, endpoint in candidates
-        if UsageType.for_endpoint(endpoint).is_byok()
-        for key in byok_usable_keys(_get_byok_provider(workspace_id, endpoint.provider, byok_configs), model.id)
-    ]
-    if not usable or all(key.fallback_to_credits for key in usable):
-        return candidates
-    return [c for c in candidates if UsageType.for_endpoint(c[1]).is_byok()]
-
-
-def byok_route_order(
-    byok_configs: dict[str, Any] | None,
-    workspace_id: str,
-    *,
-    reorder: bool = True,
-) -> Callable[[list[tuple[Model, ModelEndpoint]], RoutePreferences], list[tuple[Model, ModelEndpoint]]]:
-    """Order a workspace's routes for its BYOK keys.
-
-    For each model, a BYOK route a key admits runs ahead of that model's
-    Credits routes, unless the request sets its own provider order. Routes
-    never move across models: a BYOK route never outranks another model's
-    route that sorted ahead of it. When a key that can serve the request turns fallback to Credits
-    off, Credits routes are dropped, so the request fails rather than spend
-    shared capacity."""
-
-    def order(
-        candidates: list[tuple[Model, ModelEndpoint]], preferences: RoutePreferences,
-    ) -> list[tuple[Model, ModelEndpoint]]:
-        if not any(UsageType.for_endpoint(c[1]).is_byok() for c in candidates):
-            return candidates
-        kept = _byok_credits_policy(candidates, workspace_id, byok_configs)
-        # BYOK first applies where routes are ranked at all: text generation.
-        # Images, video, embeddings and decisions keep their catalog order.
-        if preferences.order or not reorder:
-            return kept
-        # Each model's routes keep the positions they hold; within them its
-        # BYOK routes come first. No route moves across models, so a model
-        # order or a global sort (partition "none") is otherwise unchanged.
-        positions: dict[str, list[int]] = {}
-        for index, candidate in enumerate(kept):
-            positions.setdefault(candidate[0].id, []).append(index)
-        ordered = list(kept)
-        for slots in positions.values():
-            group = sorted((kept[i] for i in slots), key=lambda c: not UsageType.for_endpoint(c[1]).is_byok())
-            for slot, candidate in zip(slots, group, strict=True):
-                ordered[slot] = candidate
-        return ordered
-
-    return order
 
 
 def _authorized_user_model_pair(
@@ -6256,11 +6216,9 @@ def _byok_present_providers(
     provider is in this set.
     """
     present: set[str] = set()
-    for model, endpoint in candidates:
+    for _model, endpoint in candidates:
         usage_type = UsageType.for_endpoint(endpoint)
-        if usage_type.is_byok() and byok_usable_keys(
-            _get_byok_provider(workspace_id, endpoint.provider, byok_configs), model.id,
-        ):
+        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider, byok_configs) is not None:
             present.add(endpoint.provider)
     return frozenset(present)
 

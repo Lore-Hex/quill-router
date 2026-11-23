@@ -187,6 +187,18 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
         assert upload["with"]["retention-days"] == 7
 
 
+def test_default_oracle_uses_its_own_weights() -> None:
+    from scripts.ci.commit_scope import ORACLE_INPUTS
+
+    job = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]["proof-oracle"]
+    steps = job["steps"]
+    index = next(i for i, step in enumerate(steps) if "uv run pytest" in step.get("run", ""))
+    path = "durations-${{ matrix.shard }}.json"
+    assert steps[index - 1]["run"] == f"cp .test_durations-oracle {path}"
+    assert ".test_durations-oracle" in ORACLE_INPUTS
+    assert f"--durations-path={path}" in steps[index]["run"]
+
+
 def test_the_heavy_lane_and_the_shards_partition_the_suite() -> None:
     # Every test of the default suite runs once at the default clock: the
     # eight shards ignore exactly the files the heavy lane runs, both lists
@@ -469,12 +481,12 @@ def test_proof_oracle_ci_split(request, tmp_path):
     assert command == ['uv', 'run', 'pytest', '-q', '-n', '4', '--dist', 'loadgroup',
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
                        'tests/test_async_settle_shadow_v2_gate_window.py',
-                       '--splits', '6', '--group', '${{', 'matrix.shard', '}}',
+                       '--splits', '8', '--group', '${{', 'matrix.shard', '}}',
                        '--splitting-algorithm', 'least_duration', '--store-durations',
                        '--durations-path=durations-${{', 'matrix.shard', '}}.json', '--clean-durations']
     assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
-    assert job['strategy']['matrix'] == {'clock': ORACLE_CLOCKS, 'shard': [1, 2, 3, 4, 5, 6]}
+    assert job['strategy']['matrix'] == {'clock': ORACLE_CLOCKS, 'shard': [1, 2, 3, 4, 5, 6, 7, 8]}
     # The test files on its command are the roots commit_scope.py reads the
     # oracle's imports from.
     from scripts.ci.commit_scope import ORACLE_TESTS
@@ -585,7 +597,11 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     # The post-cutover suite reads the data: it is path-scoped, never skipped
     # for a data-only commit, and every data path sets its flag
     # (tests/test_commit_scope.py).
-    assert set(jobs) - skipped == ALWAYS_RUN_JOBS | {"test-post-cutover", "test-heavy"}
+    assert set(jobs) - skipped == ALWAYS_RUN_JOBS | {"test-post-cutover", "test-heavy", "base-ci"}
+    # base-ci runs only when the data-only skips rest on a base whose own
+    # push run had not concluded (test_base_ci_*).
+    assert jobs["base-ci"]["needs"] == "scope"
+    assert jobs["base-ci"]["if"] == "needs.scope.outputs.base_pending == 'true'"
     for name in skipped:
         needs = jobs[name]["needs"]
         assert "scope" in ([needs] if isinstance(needs, str) else needs), name
@@ -635,6 +651,8 @@ def test_path_scoped_jobs_skip_only_on_their_own_flag():
     assert workflow.count("needs.scope.outputs.run_") == len(PATH_SCOPED_JOBS)
     assert jobs["scope"]["outputs"] == {
         "data_only": "${{ steps.scope.outputs.data_only }}",
+        "base": "${{ steps.scope.outputs.base }}",
+        "base_pending": "${{ steps.scope.outputs.base_pending }}",
         "post_cutover_tests": "${{ steps.scope.outputs.post_cutover_tests }}",
         **{flag: f"${{{{ steps.scope.outputs.{flag} }}}}" for flag in PATH_FLAGS}}
     # Run unless the flag is exactly false: a missing output runs the job.
@@ -684,7 +702,7 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
 
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     scope = jobs["scope"]
-    assert set(scope["outputs"]) == {"data_only", "post_cutover_tests", *PATH_FLAGS}
+    assert set(scope["outputs"]) == {"data_only", "base", "base_pending", "post_cutover_tests", *PATH_FLAGS}
     assert scope["permissions"] == {"contents": "read", "actions": "read", "pull-requests": "read"}
     assert "needs" not in scope
     step = next(step for step in scope["steps"] if step.get("id") == "scope")
@@ -711,8 +729,14 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
                  '(.event == "push" or .event == "workflow_dispatch"))')
     assert script.count(validated) == 2
     assert 'if [ "${validated:-0}" -gt 0 ]; then' in script
-    assert script.count("data_only=true") == 1
+    # Twice: a validated base, or a dispatch whose base's own push run is
+    # still running (base_pending, which base-ci then requires to succeed).
+    assert script.count("data_only=true") == 2
     assert script.index("classify < changed-paths.txt") < script.index("data_only=true")
+    assert script.count("base_pending=true") == 1
+    assert ('[.workflow_runs[] | select(.status != "completed" and .event == "push")] | length'
+            in script)
+    assert 'if [ "${base_validated}" != true ] && [ "${EVENT_NAME}" = workflow_dispatch ]; then' in script
     assert script.count("data_only=false") == 1
     assert 'echo "data_only=${data_only}" >> "$GITHUB_OUTPUT"' in script
     # Every path that cannot be classified runs the complete matrix.
@@ -723,7 +747,8 @@ def test_scope_classifies_the_commit_against_the_commit_it_supersedes():
     # base when its own run passed, otherwise the newest of the latest
     # validated commits that is an ancestor of the base; none found, or REF
     # unfetchable, runs them all.
-    assert 'if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ]; then' in script
+    assert ('if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ] '
+            '|| [ "${base_pending}" = true ]; then') in script
     assert '"repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?status=success&per_page=50"' in script
     assert '| .head_sha] | .[:10] | .[]' in script
     assert 'relation=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${candidate}...${base}" --jq \'.status\' || true)' in script

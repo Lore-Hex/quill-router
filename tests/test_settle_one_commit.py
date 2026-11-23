@@ -260,10 +260,14 @@ def test_one_commit_is_one_ordered_dml_transaction_credit_before_key(
         ("INSERT", "tr_generation"),
         ("INSERT", "tr_operational_analytics_outbox"),
         ("INSERT", "tr_analytics_outbox"),  # PENDING_COMMIT_TIMESTAMP: its only touch
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE}", "tr_credit_balance"),  # the row's lock, moving nothing
         ("UPDATE", "tr_credit_balance"),  # the hold, with no payment debt to recover
-        ("UPDATE", "tr_key_limit"),  # current windows
-        ("UPDATE", "tr_key_limit"),  # a window to roll forward; exactly one matches
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE}", "tr_key_limit"),  # current windows
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE}", "tr_key_limit"),  # a window to roll forward; exactly one matches
     ]
+    # The lock statement names the release's row and hold, and nothing else.
+    assert only[-4][2] == {name: value for name, value in only[-3][2].items() if name != "actual"}
+    assert set(only[-3][2]) == {"hold", "actual", "ws", "shard"}
     inserted = only[2][2]
     assert (inserted["status"], inserted["attempts"], inserted["terminal_at"]) == ("done", 1, NOW_Z)
     assert inserted["settle_body"] is None and inserted["next_attempt_at"] is None
@@ -1147,7 +1151,7 @@ def test_one_commit_commit_boundary_timeout_rolls_back_before_fallback(
             _ResultSet(stats=_ResultSetStats(row_count_exact=1)) for _ in kw['request'].statements
         ])
     def last_update(**kw: Any) -> Any:
-        assert kw['request'].sql.startswith('UPDATE tr_key_limit')
+        assert kw['request'].sql.startswith('@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit')
         # Model the final successful DML returning at the five-second boundary,
         # or just before an in-flight Commit times out.
         sdk.clock[0] = 104.0 if phase == 'during_commit' else 105.001

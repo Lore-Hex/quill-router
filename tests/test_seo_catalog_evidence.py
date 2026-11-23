@@ -3,20 +3,15 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from datetime import timedelta
 
 import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
-from trusted_router.catalog import META_MODEL_IDS, MODELS, PROVIDERS, endpoints_for_model
+from trusted_router.catalog import META_MODEL_IDS, MODELS, endpoints_for_model
 from trusted_router.catalog_aliases import MODEL_LISTING_ALIASES
 from trusted_router.dashboard import PUBLIC_PAGES
-from trusted_router.provider_lifecycle import (
-    LIFECYCLE_CLOCK_OVERRIDE_ENV,
-    latest_scheduled_cutover,
-)
 from trusted_router.seo_catalog import _PAGE_FOCUS_TERMS, seo_catalog_evidence
 
 
@@ -41,37 +36,18 @@ def test_every_dedicated_seo_page_renders_current_catalog_evidence(
             assert evidence.select_one(".eyebrow") is None
         else:
             assert "Live catalog evidence" in evidence.get_text(), page_key
-        assert "configured routes" in evidence.get_text(), page_key
+        assert "600+ models" in evidence.get_text(), page_key
+        assert "100+ providers" in evidence.get_text(), page_key
         assert evidence.select_one(".seo-evidence-table tbody tr") is not None, page_key
         assert "/static/provider-logos/" in str(evidence), page_key
 
 
-def test_seo_evidence_counts_the_live_public_catalog(
-    client: TestClient,
-    monkeypatch,
-) -> None:
-    # A price-refresh run can straddle an effective-dated provider retirement.
-    # Pin both the rendered page and the independent expectation to one instant
-    # so the gate tests catalog coherence rather than the wall-clock boundary.
-    after_latest_cutover = latest_scheduled_cutover() + timedelta(days=1)
-    monkeypatch.setenv(
-        LIFECYCLE_CLOCK_OVERRIDE_ENV,
-        after_latest_cutover.isoformat(),
-    )
+def test_seo_evidence_uses_consistent_catalog_claims(client: TestClient) -> None:
     response = client.get("/openai-compatible-llm-api")
-    public_model_ids = {
-        model.id for model in MODELS.values()
-        if model.id not in META_MODEL_IDS and not model.internal_only
-        and MODEL_LISTING_ALIASES.get(model.id) not in MODELS
-    }
-    public_model_count = len(public_model_ids)
-    public_provider_count = sum(not provider.internal_only for provider in PROVIDERS.values())
-    public_route_count = sum(len(endpoints_for_model(model_id)) for model_id in public_model_ids)
-
     assert response.status_code == 200
-    assert f"<strong>{public_model_count}</strong><span>public models</span>" in response.text
-    assert f"<strong>{public_provider_count}</strong><span>providers</span>" in response.text
-    assert f"<strong>{public_route_count}</strong><span>configured routes</span>" in response.text
+    assert "<strong>600+ models</strong><span>public catalog</span>" in response.text
+    assert "<strong>100+ providers</strong><span>catalog coverage</span>" in response.text
+    assert "<span>configured routes</span>" not in response.text
 
 
 def test_seo_counts_alias_routes_once_under_the_canonical_model() -> None:

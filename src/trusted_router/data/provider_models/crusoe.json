@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-11-20T13:53:04Z",
+  "generated_at": "2026-11-23T02:27:52Z",
   "price_scale": "microdollars_per_million",
   "model_count": 22,
   "models": [
@@ -200,7 +200,7 @@
       "upstream_id": "google/gemma-4-31b-it",
       "display_name": "google/gemma-4-31b-it",
       "title": "google/gemma-4-31b-it",
-      "context_length": 262144,
+      "context_length": 259871,
       "model_type": "chat",
       "endpoints": [
         "chat/completions"
@@ -1120,7 +1120,7 @@
       "status": 1,
       "id": "z-ai/glm-5.3",
       "upstream_id": "zai-org/GLM-5.3",
-      "context_length": 1048576,
+      "context_length": 786432,
       "supported_parameters": [
         "add_generation_prompt",
         "background",

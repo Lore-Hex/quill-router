@@ -63,6 +63,13 @@ concurrency:
 # unvalidated base (a base whose run is still running or failed, or a force
 # push whose old tip differs from the new one only in data) would inherit
 # code no run checked.
+# One exception keeps the price refresh fast without weakening that: a
+# scope=paths dispatch (the refresh's publication gate) whose base's own push
+# run is still running takes the skips, and the base-ci job then waits for
+# that run to conclude success; the summary job fails the run unless it did.
+# The refresh carries its snapshot onto main commits merged minutes earlier,
+# and the complete matrix (45-60 minutes, against 13-16 data-only) lost the
+# race with main's next merge (2026-11-20).
 # An empty comparison, a missing base commit or an unvalidated base takes no
 # data-only skip; a failed classification fails `scope`, which the summary
 # job turns into a failed run.
@@ -95,6 +102,8 @@ jobs:
       pull-requests: read   # the pull request's labels, read when the job runs
     outputs:
       data_only: ${{ steps.scope.outputs.data_only }}
+      base: ${{ steps.scope.outputs.base }}
+      base_pending: ${{ steps.scope.outputs.base_pending }}
       run_fastpath: ${{ steps.scope.outputs.run_fastpath }}
       run_heavy: ${{ steps.scope.outputs.run_heavy }}
       run_post_cutover: ${{ steps.scope.outputs.run_post_cutover }}
@@ -174,6 +183,7 @@ jobs:
           fi
           data_only=false
           base_validated=false
+          base_pending=false
           if [ -n "${full}" ]; then
             echo "::notice title=CI scope::${full}; running the complete matrix"
           elif [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ]; then
@@ -197,8 +207,28 @@ jobs:
               base_validated=true
             fi
             if [ "$(python3 scripts/ci/commit_scope.py classify < changed-paths.txt)" = "true" ]; then
+              # A price refresh dispatch (scope=paths) usually sits on a main
+              # commit merged minutes earlier, whose own push run is still
+              # going. Without its success the data-only skips did not apply
+              # and the snapshot ran the complete path-scoped matrix: 45-60
+              # minutes instead of 13-16, which lost the race with main's next
+              # merge on busy days (2026-11-20). Such a run now takes the skips
+              # and the base-ci job waits for the base's push run to conclude
+              # success: the run concludes success only once the induction
+              # holds, the same guarantee as a base validated in advance.
+              running=0
+              if [ "${base_validated}" != true ] && [ "${EVENT_NAME}" = workflow_dispatch ]; then
+                running=$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${base}&per_page=100" \
+                  --jq '[.workflow_runs[] | select(.status != "completed" and .event == "push")] | length' \
+                  || echo 0)
+              fi
               if [ "${base_validated}" = true ]; then
                 data_only=true
+              elif [ "${running:-0}" -gt 0 ]; then
+                data_only=true
+                base_pending=true
+                echo "::notice title=CI scope::only catalog data changed and base ${base}'s own push run is still running; the data-only skips apply and base-ci requires that run to succeed"
               else
                 echo "::notice title=CI scope::only catalog data changed, but base ${base} has no successful ci.yml run; the data-only skips do not apply"
               fi
@@ -206,9 +236,11 @@ jobs:
           fi
           echo "data_only=${data_only}"
           echo "data_only=${data_only}" >> "$GITHUB_OUTPUT"
+          echo "base_pending=${base_pending}" >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
           ref=""
           if [ -z "${full}" ]; then
-            if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ]; then
+            if [ "${EVENT_NAME}" = pull_request ] || [ "${base_validated}" = true ] || [ "${base_pending}" = true ]; then
               ref="${base}"
             else
               candidates=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?status=success&per_page=50" \
@@ -243,6 +275,42 @@ jobs:
             python3 scripts/ci/commit_scope.py jobs --event "${EVENT_NAME}" --lines scoped-lines.patch \
               < scoped-paths.txt | tee -a "$GITHUB_OUTPUT"
           fi
+
+  base-ci:
+    # Runs only when the scope job took the data-only skips over a base whose
+    # own push run was still running (a price refresh dispatch, scope=paths).
+    # Succeeds once that run concludes success; fails if every push or
+    # dispatch run of the base concluded otherwise, or after 75 minutes. The
+    # summary job accepts its skip only when the scope job did not rely on it.
+    needs: scope
+    if: needs.scope.outputs.base_pending == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE: ${{ needs.scope.outputs.base }}
+    steps:
+      - name: Wait for the base commit's own ci.yml run to succeed
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 300); do
+            runs=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${BASE}&per_page=100" \
+              --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch") | {status, conclusion}]')
+            if jq -e 'any(.[]; .status == "completed" and .conclusion == "success")' <<<"${runs}" >/dev/null; then
+              echo "base ${BASE} has a successful ci.yml run"
+              exit 0
+            fi
+            if jq -e 'all(.[]; .status == "completed")' <<<"${runs}" >/dev/null; then
+              echo "::error title=Base CI::no ci.yml run of base ${BASE} concluded success; the data-only skips are not justified"
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error title=Base CI::base ${BASE}'s ci.yml run did not conclude within 75 minutes"
+          exit 1
 
   lint:
     runs-on: ubuntu-24.04
@@ -938,10 +1006,9 @@ jobs:
         # change never disagreed. post-cutover-daily.yml, run by hand, runs
         # the post-cutover clock.
         clock: [default]
-        # Four-group runs 38924732345 took 43 to 45+ minutes with 1,252 cases.
-        # Six groups per clock bound estimated single-worker work per group
-        # to about two thirds of the four-group work; keep the 45-minute cap.
-        shard: [1, 2, 3, 4, 5, 6]
+        # Even balanced, the six-group run 44875188622 waited 27m for its
+        # slowest runner. Use smaller groups; retain all cases and the 45m cap.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
@@ -961,12 +1028,14 @@ jobs:
           print(f"lifecycle clock pinned to {stamp}")
           '
       - name: Copy oracle split weights for recording
-        run: cp .test_durations durations-${{ matrix.shard }}.json
+        # Median non-coverage proof timings from main runs 44865658379,
+        # 44870202393 and 44870524042. Keep coverage and clock profiles separate.
+        run: cp .test_durations-oracle durations-${{ matrix.shard }}.json
       - name: Frozen-main proof matrix without coverage
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           -m proof_oracle tests/test_async_settle_proof_oracle.py tests/test_async_settle_shadow_v2_gate_window.py
-          --splits 6 --group ${{ matrix.shard }}
+          --splits 8 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload oracle durations separately from the full suites
@@ -1249,6 +1318,7 @@ jobs:
     name: CI
     needs:
       - scope
+      - base-ci
       - lint
       - spanner-emulator
       - frontend

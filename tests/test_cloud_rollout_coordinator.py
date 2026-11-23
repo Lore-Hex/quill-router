@@ -709,3 +709,140 @@ def test_short_lived_acquire_is_not_assumed_to_be_manual_owner(system, monkeypat
     lease = acquire(system, "gcp")
     assert lease["pid"] == 0
     assert not rollout.owner_stopped(lease)
+
+
+# 2026-11-21: run 44870524111 had shipped gcp when azure's only replica was
+# rescheduled (about 07:44-07:48Z). Two lease re-checks timed out reading azure's
+# evidence within a minute and the gcp lease went blocked. A holdback that gives
+# no answer is now re-probed for a bounded time; an answer that shows it
+# unhealthy, wrong or changing still refuses at once.
+def _holdback_fetch(failures):
+    """A fetch for azure that raises each of FAILURES once, then answers healthy."""
+    _, gateway = rollout.PLANES["azure"]
+    pending = list(failures)
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if pending:
+            failure = pending.pop(0)
+            if failure is not None:
+                raise failure
+        if url.endswith("/health"):
+            return {"status": "ok"}
+        return {"release": "a" * 40, "api_base_url": f"{gateway}/v1"}
+
+    return fetch, calls
+
+
+@pytest.mark.parametrize("exc", [
+    TimeoutError("The read operation timed out"),
+    ConnectionResetError("reset"),
+    urllib.error.URLError(TimeoutError("timed out")),
+    urllib.error.URLError(ConnectionRefusedError("refused")),
+    urllib.error.HTTPError("https://azure.trustedrouter.com/health", 503, "Unavailable", None, None),
+    urllib.error.HTTPError("https://azure.trustedrouter.com/health", 504, "Timeout", None, None),
+], ids=["read-timeout", "reset", "connect-timeout", "refused", "503", "504"])
+def test_a_holdback_that_gives_no_answer_is_unreachable(exc, monkeypatch):
+    fetch, _ = _holdback_fetch([exc])
+    monkeypatch.setattr(rollout, "fetch", fetch)
+    with pytest.raises(rollout.Unreachable, match=r"^azure is not a verified healthy holdback \(control-plane evidence: "):
+        rollout.probe_cloud("azure")
+
+
+@pytest.mark.parametrize("exc", [
+    urllib.error.HTTPError("https://azure.trustedrouter.com/health", 500, "Error", None, None),
+    urllib.error.HTTPError("https://azure.trustedrouter.com/health", 404, "Not Found", None, None),
+    urllib.error.URLError(rollout.ssl.SSLCertVerificationError("certificate verify failed")),
+    rollout.Redirected("cloud-local health must not redirect to another cloud"),
+    ValueError("not json"),
+], ids=["500", "404", "bad-certificate", "redirect", "not-json"])
+def test_a_holdback_that_answers_badly_is_refused_not_unreachable(exc, monkeypatch):
+    fetch, _ = _holdback_fetch([exc])
+    monkeypatch.setattr(rollout, "fetch", fetch)
+    with pytest.raises(rollout.Refused) as caught:
+        rollout.probe_cloud("azure")
+    assert not isinstance(caught.value, rollout.Unreachable)
+
+
+@pytest.mark.parametrize("problem", ["unknown", "wrong-cloud", "unhealthy", "changing", "not-string"])
+def test_fail_closed_evidence_is_never_unreachable(problem, monkeypatch):
+    count = 0
+
+    def fetch(url):
+        nonlocal count
+        if url.endswith("/health"):
+            return {"status": "down" if problem == "unhealthy" else "ok"}
+        count += 1
+        return {
+            "release": ("unknown" if problem == "unknown" else
+                        ("b" * 40 if problem == "changing" and count == 2 else "a" * 40)),
+            "api_base_url": (None if problem == "not-string" else
+                             "https://api-aws.trustedrouter.com/v1" if problem == "wrong-cloud"
+                             else "https://api-azure.trustedrouter.com/v1"),
+        }
+
+    monkeypatch.setattr(rollout, "fetch", fetch)
+    with pytest.raises(rollout.Refused) as caught:
+        rollout.probe_cloud("azure")
+    assert not isinstance(caught.value, rollout.Unreachable)
+
+
+def _coordinator_holding_gcp(monkeypatch, probe):
+    sleeps = []
+    monkeypatch.setattr(rollout.time, "sleep", sleeps.append)
+    store = MemoryStore()
+    clock = [1000]
+    healthy = rollout.Coordinator(store, lambda cloud: "a" * 40, lambda: clock[0])
+    lease = healthy.acquire("gcp", "manual:gcp", "control-plane", 3600)
+    holdback = store.record["holdback"]["cloud"]
+    return rollout.Coordinator(store, probe, lambda: clock[0]), lease, holdback, sleeps, clock
+
+
+def test_check_waits_out_a_holdback_that_briefly_gives_no_answer(monkeypatch):
+    # The real probe_cloud over a fetch that times out three whole probes running.
+    timeout = TimeoutError("The read operation timed out")
+    fetch, _ = _holdback_fetch([timeout, timeout, timeout])
+    monkeypatch.setattr(rollout, "fetch", fetch)
+    coordinator, lease, _, sleeps, _ = _coordinator_holding_gcp(
+        monkeypatch, lambda cloud: rollout.probe_cloud("azure"))
+    assert coordinator.check("gcp", lease["operation_id"])["operation_id"] == lease["operation_id"]
+    assert sleeps == list(rollout.HOLDBACK_UNREACHABLE_WAITS[:3])
+
+
+def test_check_refuses_a_holdback_that_never_answers_and_says_so(monkeypatch):
+    def probe(cloud):
+        raise rollout.Unreachable(f"{cloud} is not a verified healthy holdback "
+                                  "(control-plane evidence: TimeoutError: timed out)")
+
+    coordinator, lease, _, sleeps, _ = _coordinator_holding_gcp(monkeypatch, probe)
+    with pytest.raises(rollout.Unreachable, match=r"no answer on 5 tries over 195 s of waits$"):
+        coordinator.check("gcp", lease["operation_id"])
+    assert sleeps == list(rollout.HOLDBACK_UNREACHABLE_WAITS)
+
+
+def test_check_refuses_an_unhealthy_holdback_at_once(monkeypatch):
+    calls = []
+
+    def probe(cloud):
+        calls.append(cloud)
+        raise rollout.Refused(f"{cloud} is not a verified healthy holdback "
+                              "(gateway health: gateway unhealthy (status 'down'))")
+
+    coordinator, lease, _, sleeps, _ = _coordinator_holding_gcp(monkeypatch, probe)
+    with pytest.raises(rollout.Refused, match=r"gateway unhealthy"):
+        coordinator.check("gcp", lease["operation_id"])
+    assert len(calls) == 1 and sleeps == []
+
+
+def test_check_refuses_a_lease_that_expired_while_the_holdback_was_awaited(monkeypatch):
+    clock_box = []
+
+    def probe(cloud):
+        clock_box[0][0] += 4000  # past the 3600 s lease
+        return "a" * 40
+
+    coordinator, lease, _, _, clock = _coordinator_holding_gcp(monkeypatch, probe)
+    clock_box.append(clock)
+    with pytest.raises(rollout.Refused, match="lease expired while the holdback was checked"):
+        coordinator.check("gcp", lease["operation_id"])

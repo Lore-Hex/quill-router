@@ -5,17 +5,21 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router import phone_verification as pv
 from trusted_router.auth import SettingsDep
+from trusted_router.model_regions import country_label
 from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.console.social_rewards import _same_origin
 from trusted_router.services.notify import send_verification_code
 from trusted_router.storage import STORE
 from trusted_router.verification_gates import missing_phone_verification_requirements
+from trusted_router.workspace_origin_policy import COUNTRIES, POLICIES
 
 MAX_WORKSPACE_NAME = 120
+WESTERN_COUNTRY_NAMES = tuple(sorted(country_label(code) for code in COUNTRIES["western"]))
 
 
 def _back(query: str) -> RedirectResponse:
@@ -39,6 +43,7 @@ def register(app: FastAPI) -> None:
         error: str = "",
         sent: str = "",
         phone_saved: str = "",
+        origin_saved: str = "",
         detail: str = "",
     ) -> Response:
         # session_auth_context is one fresh strong read for every request, so
@@ -56,6 +61,9 @@ def register(app: FastAPI) -> None:
                 page_subtitle="Names, content storage, integrations.",
                 can_manage=ctx.can_manage,
                 saved=bool(saved),
+                origin_enabled=settings.workspace_origin_controls_enabled,
+                western_countries=WESTERN_COUNTRY_NAMES,
+                origin_saved=bool(origin_saved),
                 error=error,
                 phone=user.phone,
                 phone_verified=bool(user.phone_verified),
@@ -165,20 +173,29 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/settings")
     def console_update_settings(
+        request: Request,
         ctx: ConsoleDep,
+        settings: SettingsDep,
         name: str = Form(""),
+        origin_policy: str | None = Form(None),
+        origin_workspace: str = Form(""),
     ) -> Response:
-        """Rename the workspace.
-
-        This handler did not exist. The template has posted here since the page
-        was written, so every Save returned 405 "Method Not Allowed" and the
-        rename silently never worked.
-        """
+        """Update one workspace control per form."""
         # Renaming is a management action: the name appears on invoices and in
         # every member's console, so a plain member must not be able to change
         # it. Same gate the API-key management routes use.
         if not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
             return RedirectResponse(url="/console/settings?error=forbidden", status_code=303)
+
+        if origin_policy is not None:
+            _same_origin(request, settings)
+            if origin_workspace != ctx.workspace.id:
+                return _back("error=workspace")
+            if not settings.workspace_origin_controls_enabled or origin_policy not in POLICIES:
+                return _back("error=origin")
+            if STORE.update_workspace(ctx.workspace.id, origin_policy=origin_policy) is None:
+                return _back("error=missing")
+            return _back("origin_saved=1")
 
         cleaned = name.strip()
         if not cleaned:

@@ -124,7 +124,7 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
             # The homepage deliberately shares the approved, shorter hero copy.
             # Require that exact copy rather than padding it to the generated-page minimum.
             expected_description = (
-                "Access hundreds of models confidentially through a single OpenAI-compatible API."
+                "Access 600+ models confidentially through a single OpenAI-compatible API."
             )
             if parser.description != expected_description:
                 issues.append(f"{path}: description does not match the approved hero copy")
@@ -163,6 +163,11 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
 def test_seo_metadata_helpers_bound_generated_text() -> None:
     assert seo_title("Models | TrustedRouter") == "Models | TrustedRouter"
     assert seo_title("Security") == "Security | TrustedRouter"
+    assert seo_title("TrustedRouter MCP Server") == "TrustedRouter MCP Server"
+    assert seo_title("TrustedRouter MCP Server | TrustedRouter") == "TrustedRouter MCP Server"
+    assert seo_title("Confidential Computing for LLMs — TrustedRouter") == (
+        "Confidential Computing for LLMs — TrustedRouter"
+    )
     assert seo_title("A" * 80).endswith("...")
     assert len(seo_title("A" * 80)) == 60
     assert seo_meta_description("Repeated words " * 20).endswith("...")

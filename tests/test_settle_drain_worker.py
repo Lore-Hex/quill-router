@@ -67,7 +67,8 @@ def inventory_settings(surface, enabled):
 
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
-              wallet_email_verify=False, routing_evidence=False, request_billing=False, byok_keys=False):
+              wallet_email_verify=False, routing_evidence=False, request_billing=False,
+              byok_docs=False, notes=False, activity_tags=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
@@ -79,19 +80,27 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
         assert routes.count(billing_route) == int(request_billing)
         if request_billing:
             routes.remove(billing_route)
-    # Account for exactly the reviewed BYOK key routes (several keys per
-    # provider) and their /v1 aliases, only where the BYOK API is served.
-    for prefix in ("", "/v1"):
-        for path, method, name in (
-            ("/byok/providers/{provider}/keys", "GET", "list_byok_keys"),
-            ("/byok/providers/{provider}/keys", "POST", "create_byok_key"),
-            ("/byok/providers/{provider}/keys/{key_id}", "PATCH", "patch_byok_key"),
-            ("/byok/providers/{provider}/keys/{key_id}", "DELETE", "delete_byok_key"),
-        ):
-            key_route = [prefix + path, [method], f"register_byok_routes.<locals>.{name}"]
-            assert routes.count(key_route) == int(byok_keys)
-            if byok_keys:
-                routes.remove(key_route)
+    # The BYOK documentation page and its slash alias are public HTML only.
+    # Pin their identities and absence on other surfaces; retain every frozen
+    # API, lifecycle, and state assertion below.
+    # The data-access, simple-start and OpenAI migration pages follow the same rule.
+    for base, handler in (("/docs/byok", "byok_docs_page"),
+                          ("/docs/routing", "legacy_routing_guide"),
+                          ("/who-can-see-your-data", "who_can_see_your_data"),
+                          ("/docs/simple-start", "simple_start_docs"),
+                          ("/docs/migrate-from-openai", "migrate_from_openai")):
+        for path in (base, base + "/"):
+            docs_route = [path, ["GET", "HEAD"],
+                          f"register_public_routes.<locals>.{handler}"]
+            assert routes.count(docs_route) == int(byok_docs)
+            if byok_docs:
+                routes.remove(docs_route)
+    for path, handler in (("/openrouter", "openrouter_notice"), ("/notes", "notes_archive"), ("/notes/{slug}", "note"),
+                          ("/sitemap-notes.xml", "notes_sitemap")):
+        note_route = [path, ["GET", "HEAD"], f"register_notes.<locals>.{handler}"]
+        assert routes.count(note_route) == int(notes)
+        if notes:
+            routes.remove(note_route)
     evidence_route = ["/routing-evidence.json", ["GET"],
                       "register_public_routes.<locals>.model_routing_evidence"]
     assert routes.count(evidence_route) == int(routing_evidence)
@@ -122,6 +131,14 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     assert routes.count(support_route) == int(console_support)
     if console_support:
         routes.remove(support_route)
+    # Account for exactly the two request-tag reads of the Observability page,
+    # only on console surfaces and absent everywhere else.
+    for path, handler in (("/console/activity/tags.json", "console_activity_tags"),
+                          ("/console/activity/requests.json", "console_activity_tagged_requests")):
+        tag_route = [path, ["POST"], f"register.<locals>.{handler}"]
+        assert routes.count(tag_route) == int(activity_tags)
+        if activity_tags:
+            routes.remove(tag_route)
     if abliterated_page:
         # Account for exactly the reviewed landing page and its slash alias.
         # Keep the frozen inventory's other routes and lifecycle pins intact.
@@ -164,12 +181,14 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
                      abliterated_page=surface in {"combined", "public", "observer"},
+                     byok_docs=surface in {"combined", "public", "observer"},
+                     notes=surface in {"combined", "public", "observer"},
                      routing_evidence=surface in {"combined", "public", "observer"},
                      management_key=surface in {"combined", "control"},
                      console_support=surface in {"combined", "control"},
+                     activity_tags=surface in {"combined", "control"},
                      request_billing=surface in {"combined", "control"},
-                     wallet_email_verify=surface in {"combined", "control"},
-                     byok_keys=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
+                     wallet_email_verify=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):

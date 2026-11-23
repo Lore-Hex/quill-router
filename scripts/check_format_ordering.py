@@ -503,16 +503,6 @@ def _probe_byok_secret(settings: Any) -> object:
     )
 
 
-def _probe_byok_key_upload(settings: Any) -> object:
-    # The BYOK key routes seal uploads through this helper (several keys per
-    # provider). A raw key upload is the path that constructs an envelope.
-    from trusted_router.routes.byok import _seal_byok_secret
-
-    return _seal_byok_secret(
-        _PROBE_PLAINTEXT, None, None, settings=settings, workspace_id="ws-probe", provider="openai",
-    )
-
-
 def _probe_control_secret(settings: Any) -> object:
     from trusted_router.byok_crypto import encrypt_control_secret
 
@@ -533,7 +523,6 @@ def _probe_control_secret(settings: Any) -> object:
 _WRITE_PROBES: dict[str, Callable[[Any], object]] = {
     "src/trusted_router/byok_crypto.py:encrypt_byok_secret": _probe_byok_secret,
     "src/trusted_router/byok_crypto.py:encrypt_control_secret": _probe_control_secret,
-    "src/trusted_router/routes/byok.py:_seal_byok_secret": _probe_byok_key_upload,
 
 }
 

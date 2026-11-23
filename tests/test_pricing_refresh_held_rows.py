@@ -238,3 +238,13 @@ def test_real_tinker_inkling_2_small_hold_is_excluded_from_snapshot_routes() -> 
     # Pending enclave qualification is not an account hold (Maple routes
     # are prepaid-only and the runtime filter already drops them).
     assert "thinkingmachines/inkling-2-small" not in held.get("maple", frozenset())
+
+
+def test_chutes_route_unavailable_holds_are_excluded_from_snapshot_routes() -> None:
+    # Chutes still appears on OpenRouter for these models; without the
+    # exclusion the hourly refresh would re-publish the dead TEE routes (as
+    # BYOK routes) and fail its own snapshot checks.
+    held = refresh._manifest_held_routes()
+    for model_id in ("qwen/qwen3.5-397b-a17b", "qwen/qwen3.5-27b", "mistralai/mistral-nemo"):
+        assert model_id in held["chutes"]
+    assert "z-ai/glm-5.2" not in held["chutes"]

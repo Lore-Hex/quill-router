@@ -752,7 +752,7 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     assert deploy[deploy.index("--min-instances") + 1] == "2"
     # Declared autoscaling ceiling per revision (async-settle §5 fleet budget caps = 2x).
     assert deploy[deploy.index("--max-instances") + 1] == "12"
-    assert deploy[deploy.index("--concurrency") + 1] == "8"
+    assert deploy[deploy.index("--concurrency") + 1] == "16"
     assert deploy.count("--no-cpu-throttling") == 1
     assert "--cpu-throttling" not in deploy
     assert "--no-traffic" in deploy
@@ -4330,6 +4330,8 @@ def test_rollout_pins_serving_region_per_target_without_inheritance(
         rendered = _cloud_run_job_env(deploy)
         assert rendered["TR_SERVING_REGION"] == deploy[deploy.index("--region") + 1]
         assert rendered["TR_PRIMARY_REGION"] == "us-central1"
+        assert rendered["TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED"] == "true"
+        assert rendered["TR_WORKSPACE_ORIGIN_CONTROLS_ENABLED"] == "true"
         assert deploy[deploy.index("--set-env-vars") + 1].count("TR_SERVING_REGION=") == 1
 
 
@@ -4618,11 +4620,21 @@ def test_rollout_pins_dormant_drain_knobs_without_inheritance(
 
 
 def test_rollout_negotiation_regions_are_literal_and_configured(tmp_path, monkeypatch):
-    hostile = {'TR_ASYNC_SETTLE_NEGOTIATION_REGIONS': 'europe-west4'}
+    hostile = {'TR_ASYNC_SETTLE_NEGOTIATION_REGIONS': 'southamerica-east1'}
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
     run = isolated.run('scripts/deploy/rollout.sh', extra_env=hostile)
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
     rendered = _cloud_run_job_env(deploy)
-    assert rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'] == 'us-central1,us-west1,us-east4'
+    assert rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'] == 'us-central1,us-west1,us-east4,europe-west4'
     assert set(rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'].split(',')) <= set(rendered['TR_REGIONS'].split(','))
+
+
+def test_rollout_renders_the_decide_async_pin_whatever_the_caller_exports(tmp_path, monkeypatch):
+    # The pin as the deploy command carries it, not as the script spells it.
+    contrary = {'TR_ASYNC_SETTLE_DECIDE_ROUTE': 'false'}
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **contrary})
+    run = isolated.run('scripts/deploy/rollout.sh', extra_env=contrary)
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
+    assert _cloud_run_job_env(deploy)['TR_ASYNC_SETTLE_DECIDE_ROUTE'] == 'true'

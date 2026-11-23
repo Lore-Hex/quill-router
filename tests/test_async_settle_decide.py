@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from tests.test_async_settle_ticket import (
     settings,
     signer,
 )
+from tests.test_gateway_authorize_spanner_operations import _seed_typed_gateway_store
 from tests.test_settle_outbox_drain import _client
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import TicketClaims, verify_lookup_ticket
@@ -161,6 +163,87 @@ def test_ticket_and_envelope_reject_invalid_route_stream(route, stream):
         TicketClaims.model_validate(claims)
     with pytest.raises(ValueError):
         billing.TerminalEnvelope.model_validate(terminal)
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+@pytest.mark.parametrize('optin', [False, True])
+def test_decide_real_authorize_route(enabled, optin):
+    """A hosted decide authorize through the route itself."""
+    store, _, key = _seed_typed_gateway_store()
+    config = settings(async_settle_decide_route=enabled, async_settle_pilot_workspaces='ws-rpc',
+                      regions='us-central1', primary_region='us-central1', serving_region='us-central1')
+    client = _client(config)
+    client.app.state.async_settle = runtime()
+    try:
+        body = {'api_key_hash': key.hash, 'model': HOSTED.model_id, 'estimated_input_tokens': 1234,
+                'max_output_tokens': 1, 'region': 'us-central1', 'route_type': 'decide',
+                'idempotency_key': f'decide-route-{enabled}-{optin}', 'invocation_nonce': 'nonce-route'}
+        response = client.post('/v1/internal/gateway/authorize', json=body,
+                               headers={'X-TR-Settlement-Mode': 'async-v1'} if optin else {})
+        assert response.status_code == 200, response.text
+        data = response.json()['data']
+        stored = store.get_gateway_authorization(data['authorization_id'])
+        assert stored.model_id == HOSTED.model_id and data['endpoint_id'] == HOSTED.id
+        added = {name for name in ('async_eligible', 'billing_snapshot', 'billing_snapshot_hash',
+                                   'settlement_ticket', 'settlement_status_url') if name in data}
+        if not optin:
+            assert added == set()
+        elif not enabled:
+            # The answer every release before this route gave.
+            assert added == {'async_eligible'} and data['async_eligible'] is False
+        else:
+            assert added == {'async_eligible', 'billing_snapshot', 'billing_snapshot_hash',
+                             'settlement_ticket', 'settlement_status_url'}
+            assert data['async_eligible'] is True
+            claims = verify_lookup_ticket(data['settlement_ticket'], [signer().trusted], int(time.time()) + 5)
+            assert (claims.route_type, claims.streamed) == ('decide', False)
+            assert claims.authorization_id == data['authorization_id']
+            snapshot = billing.parse_snapshot(json.dumps(data['billing_snapshot']))
+            assert [c.endpoint_id for c in snapshot.candidates] == [HOSTED.id]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('streamed', [False, True])
+def test_eligibility_refuses_a_streamed_decide(streamed):
+    """The rule itself, not only the ticket and envelope validators in front of it."""
+    facts = billing.Eligibility(route_type='decide', streamed=streamed)
+    assert billing.exclusion(facts) == ('unsupported_route' if streamed else None)
+    # A retained shadow caller excludes the route whatever its stream.
+    assert billing.exclusion(facts, allow_decide=False) == 'unsupported_route'
+    # The other routes do not read the stream.
+    assert billing.exclusion(facts.model_copy(update={'route_type': 'chat.completions'})) is None
+    if streamed:
+        with pytest.raises(ValueError, match='unsupported_route'):
+            billing.require_eligible(facts)
+    else:
+        billing.require_eligible(facts)
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_decide_refund(env, enabled):
+    env[3].async_settle_decide_route = True
+    body, auth, _ = prepare(env, decide_case(), kind='refund')
+    assert body['terminal']['route_type'] == 'decide' and body['terminal']['charge_micro'] == 0
+    env[3].async_settle_decide_route = enabled
+    if enabled:
+        # A nonzero refund is not a decide refund: refused before any row exists.
+        charged = copy.deepcopy(body)
+        charged['terminal']['charge_micro'] = 1
+        with pytest.raises(HTTPException) as refused:
+            call(env, charged)
+        assert refused.value.status_code == 400 and not env[1].settle_outbox
+    reply = call(env, body)
+    if not enabled:
+        assert reply.status_code == 200
+        assert json.loads(reply.body)['data']['reason'] == 'unsupported_cohort'
+        assert not env[1].settle_outbox
+        return
+    assert reply.status_code == 202
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
+    assert env[1].settle_outbox[(auth.id, 'refund')]['actual_cost_micro'] == 0
+    stored = env[0].get_gateway_authorization(auth.id)
+    assert (stored.settled, stored.finalization_outcome, stored.finalized_cost_microdollars) == (True, 'refunded', 0)
 
 
 @pytest.mark.parametrize('ticket_route,envelope_route', [('decide', 'chat.completions'), ('chat.completions', 'decide')])

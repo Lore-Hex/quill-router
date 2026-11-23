@@ -59,7 +59,9 @@ The single switch is `terminal_c1_route_enabled = true` in
 true/false assignment; malformed, missing or duplicate assignments fail. There
 is no second default or environment override.
 
-The activation set that line to `true`; **rollback sets it to `false`**. Both
+The activation set that line to `true`; **rollback sets it to `false`**,
+after the negotiation pin has been narrowed (see "Async settle negotiation
+depends on where settles land" below for the order). Both
 changes go through review and **infra-apply.yml on merge**. The committed-state
 test `test_terminal_route_switch_is_on` pins this approval; update that pin to
 false in the rollback change. Routing behavior tests exercise both states.
@@ -106,8 +108,28 @@ If this route is rolled back, us-east4 settles land in the us-east4 router.
 That router is in `TR_ASYNC_SETTLE_ACCEPT_REGIONS` and runs the memory
 handoff too, so the settles stay async while its writer keeps up; past the
 writer's caps they fall back to synchronous settles. A region whose own
-router is not in the accept list would settle synchronously there;
-europe-west4 is such a region today. For the route's current state,
+router is not in the accept list would settle synchronously there.
+
+europe-west4 is such a region, and it has negotiated since 2026-11-21: its
+enclaves' handoffs are accepted in us-central1 through this route. A
+rollback of the route therefore starts with the pin, in this order:
+
+1. Take europe-west4 out of `TR_ASYNC_SETTLE_NEGOTIATION_REGIONS` and let
+   that deploy finish in every region.
+2. Wait until the calls authorized before then have finished. A ticket
+   lives at most 300 s, but a call that outlives its ticket still settles
+   through the snapshot-sync retry described below, so the ticket's
+   lifetime does not bound the wait.
+3. Only then turn the route off.
+
+With the route off and Europe still holding tickets, each Europe settle is
+first answered `sync_required` by the europe-west4 router and then settles
+through the snapshot-sync retry. The money is correct, but that retry does
+its Spanner work from Europe under the async route's 2 s budget and answers
+503 past it, where the plain synchronous settle has a 20 s budget. A 503 on
+`/internal/gateway/settle` from a candidate revision fails that region's
+deploy (`scripts/deploy/assert_no_billing_5xx.sh`). The cost of that path
+from Europe has not been measured. For the route's current state,
 `tests/test_async_settle_negotiation_regions.py` fails if a negotiated
 region's settles would land on a router outside the accept list.
 
@@ -259,9 +281,9 @@ terminal counters from other control traffic, even though both backends attach
 policy's limits; compare throttle/429 counts for both backends. See
 [Cloud Armor rate-limit scope](https://docs.cloud.google.com/armor/docs/rate-limiting-overview).
 
-`rollout.sh` uses `_lib.sh`'s effective default concurrency 8 and revision
-max-instances 12; us-central1's service minimum is 8. That gives 64 warm and
-96 maximum concurrent request slots per revision. `_lib.sh` later contains a
+`rollout.sh` uses `_lib.sh`'s effective default concurrency 16 (8 before
+2026-11-20) and revision max-instances 12; us-central1's service minimum is 8.
+That gives 128 warm and 192 maximum concurrent request slots per revision. `_lib.sh` later contains a
 fallback of 20, but the earlier 12 assignment already sets the variable: it
 must not be read as an effective 160-slot cap. Caller overrides and overlapping
 revisions must be checked in the serving revision before activation. Combined
@@ -289,4 +311,4 @@ propagation and recovery before declaring success.
 
 Terminal switch: **true**, enabled in source by **#2293 (`26a76af0b`)** and
 live from the infra apply completed **2026-11-04 02:10:10Z**, confirmed by the
-**02:10Z** URL map readback. **Rollback: set the switch to false.**
+**02:10Z** URL map readback. **Rollback: set the switch to false** (today, only after the negotiation pin order above).

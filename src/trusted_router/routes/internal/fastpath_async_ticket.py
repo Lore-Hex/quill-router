@@ -27,7 +27,7 @@ class EdgeTicketRequest(BaseModel):
     key_hash: str
     reservation_id: str
     invocation_nonce: str
-    route_type: Literal["chat.completions", "responses"]
+    route_type: Literal["chat.completions", "responses", "decide"]
     streamed: bool
     region: str
     candidate_endpoint_ids: Annotated[list[str], Field(min_length=1, max_length=64)]
@@ -43,6 +43,8 @@ class EdgeTicketRequest(BaseModel):
 
     @model_validator(mode="after")
     def unique_candidates(self) -> Self:
+        if self.route_type == "decide" and self.streamed:
+            raise ValueError("decide is never streamed")
         if len(set(self.candidate_endpoint_ids)) != len(self.candidate_endpoint_ids):
             raise ValueError("candidate_endpoint_ids must be unique")
         return self

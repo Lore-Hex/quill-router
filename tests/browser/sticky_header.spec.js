@@ -21,14 +21,9 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
       const search = await page.locator(".trnav .search").boundingBox();
       expect(brand.y).toBeGreaterThanOrEqual(header.y);
       expect(brand.y + brand.height).toBeLessThanOrEqual(header.y + header.height);
-      if (path === "/models" && width <= 600) {
-        expect(search.y).toBeGreaterThanOrEqual(brand.y + brand.height);
-        expect(search.width).toBeGreaterThanOrEqual(width - 40);
-        expect(search.y + search.height).toBeLessThanOrEqual(header.y + header.height);
-      } else {
-        expect(search.x).toBeGreaterThan(brand.x + brand.width);
-        expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
-      }
+      // Every page, /models included, keeps the search box in the header row beside the brand.
+      expect(search.x).toBeGreaterThan(brand.x + brand.width);
+      expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
       await page.screenshot({ path: testInfo.outputPath(`${path.slice(1) || "homepage"}.png`) });
       // A real click also checks that other positioned controls do not intercept the CTA.
       await page.locator(".trnav .signin").click();
@@ -36,6 +31,7 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
       await page.keyboard.press("Escape");
       if (path === "/models") {
         const input = page.getByRole("searchbox", { name: "Search models" });
+        await expect(input).toHaveAttribute("placeholder", width <= 360 ? "Models" : "Search models");
         await input.fill("kimi");
         await expect(input).toBeFocused();
         await expect(page.locator("#model-search")).toHaveCount(0);
@@ -59,7 +55,7 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
     expect(await target.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(headerBottom);
     // Check the pinned state before the rail reaches the end of its container.
     await page.evaluate(() => window.scrollTo(0, 900));
-    const toc = page.locator(".content-toc");
+    const toc = page.getByRole("navigation", { name: "Table of contents" });
     if (width >= 1400) {
       await expect(toc).toBeVisible();
       expect(await toc.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(headerBottom);
@@ -69,10 +65,33 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
         return target && target.getBoundingClientRect().top >= document.querySelector(".trnav").getBoundingClientRect().bottom;
       })).toBe(true);
     } else {
-      await expect(toc).toBeHidden();
+      await expect(toc.locator("summary")).toBeVisible();
+      await toc.locator("summary").click();
     }
+    const permalink = "#deidentification";
+    const privacy = toc.getByRole("list", { name: "Privacy", exact: true });
+    await privacy.getByRole("link", { name: "Deidentify", exact: true }).click();
+    await expect(page).toHaveURL(/\/docs#deidentification$/);
+    await page.reload();
+    const heading = page.locator("#deidentification h2");
+    await expect(heading.locator("a")).toHaveAttribute("href", permalink);
+    await expect.poll(() => heading.evaluate(el => {
+      const y = el.getBoundingClientRect().top;
+      return y >= document.querySelector(".trnav").getBoundingClientRect().bottom && y < innerHeight;
+    })).toBe(true);
   });
 }
+
+test.describe("docs without JavaScript", () => {
+  test.use({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  test("the grouped contents opens the Deidentify section", async ({ page }) => {
+    await page.goto("/docs");
+    const nav = page.getByRole("navigation", { name: "Table of contents" });
+    await nav.getByRole("link", { name: "Deidentify", exact: true }).click();
+    await expect(page).toHaveURL(/\/docs#deidentification$/);
+    await expect(page.locator("#deidentification h2")).toBeInViewport();
+  });
+});
 
 for (const path of ["/", "/models"]) {
   test(`landscape menu stays within the viewport on ${path}`, async ({ page }) => {

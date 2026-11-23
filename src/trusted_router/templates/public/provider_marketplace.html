@@ -1,23 +1,24 @@
 {% extends "public/_base.html" %}
 
+{% macro provider_contact(label, application=true, button=false) -%}
+<a{% if button %} class="btn primary"{% endif %} href="/support#support-inquiry" data-provider-contact="{{ 'application' if application else 'email' }}">{{ label }}</a>
+{%- endmacro %}
+
 {% block hero %}
-<section class="public-hero marketing-hero">
-  <div>
-    <div class="kicker">Provider marketplace</div>
-    <h1>List your models on TrustedRouter.</h1>
-    <p class="lead">Send us your company and integration profile. We will review your privacy commitments, validate your routes, publish working models, monitor availability, and keep pricing current.</p>
-    <div class="hero-actions">
-      <a class="btn primary" href="mailto:provider.ops@nytex.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Email provider.ops@nytex.com</a>
-      <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
+{# The shared short page header (see _base.html), with this page's own sentence and buttons. #}
+{% set header_url = canonical_url|default(site_url, true) %}
+{% set provider_title = "List your models on TrustedRouter." %}
+<section class="public-hero marketing-hero page-header" data-title-size="{{ page_header_title_size(provider_title) }}" data-phone-title-size="{{ page_header_title_size(provider_title, true) }}">
+  <div class="page-header-copy">
+    <div class="page-header-title">{{ page_header_icon(header_url) }}<h1><span class="title-full">{{ provider_title }}</span></h1></div>
+    <p class="lead"><span class="lead-full">Every new provider needs at least one model served with confidential compute that TrustedRouter can independently verify end to end. Not set up yet? <a href="#confidential-onboarding">We can help you get there.</a></span><span class="lead-short">{{ page_header_short_line(header_url) }}</span></p>
+    <div class="hero-actions provider-hero-actions">
+      {{ provider_contact("Email provider operations", button=true) }}
+      <a class="btn" href="#integration-contract">View requirements</a>
       <form action="/provider" method="get">
         <button class="btn" type="submit">Provider sign in</button>
       </form>
     </div>
-  </div>
-  <div class="public-hero-metrics" aria-label="Provider integration requirements">
-    <div><strong>Verified</strong><span>company profile</span></div>
-    <div><strong>1</strong><span>canonical catalog endpoint</span></div>
-    <div><strong>Separate</strong><span>secure key handoff</span></div>
   </div>
 </section>
 {% endblock %}
@@ -25,9 +26,33 @@
 {% block body %}
 <section class="public-proof-strip" aria-label="Provider onboarding flow">
   <div><strong>Apply</strong><span>Email your company and integration profile.</span></div>
-  <div><strong>Review</strong><span>We verify privacy, compliance, and API claims.</span></div>
+  <div><strong>Review</strong><span>We verify one confidential model route and review the rest of your catalog separately.</span></div>
   <div><strong>Connect</strong><span>Exchange a restricted key through a separate secure channel.</span></div>
   <div><strong>Publish</strong><span>We test, monitor, and list working routes.</span></div>
+</section>
+
+<section class="marketing-split" id="confidential-onboarding" aria-labelledby="confidential-onboarding-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">New provider requirement</span>
+    <h2 id="confidential-onboarding-heading">Start with one verifiable confidential model.</h2>
+    <p>Choose the exact model, endpoint and release you want us to verify. Other models may be listed without this designation. A chip name, ordinary HTTPS, or a zero-retention promise alone is not proof of confidential inference.</p>
+    <h3>Need help setting up confidential compute?</h3>
+    <p><a href="/support#support-inquiry">Talk to provider operations</a> before you apply. Tell us which model you serve, your host CPU and GPUs, and where inference runs. We can work with you to choose a supported configuration, set up attestation, and test your first endpoint together. No keys or customer data, please.</p>
+    <p>Examples of capable hardware include H200 on supported Intel TDX hosts (protected PCIe for multi-GPU Hopper), Blackwell B200 and HGX B300. See <a href="https://docs.nvidia.com/confidential-computing/containers/v1.1.0/supported-platforms">NVIDIA's supported configurations</a>. <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/">Vera Rubin NVL72</a> supports rack-scale confidential computing with Vera CPUs and Rubin GPUs. In each case we verify the deployed workload and its actual devices and connections, not the product family.</p>
+  </div>
+  <div class="marketing-copy">
+    <h3>Test the endpoint you will submit</h3>
+    <ol class="plain-list">
+      <li><strong>Publish the reference.</strong> Give us the model ID, immutable source and release, signed build measurements, and how model weights are protected when loaded. Do not use values learned from the running endpoint as your expected values.</li>
+      <li><strong>Verify before sending.</strong> Check fresh hardware-signed evidence against vendor roots and the release. Cover the CPU, every serving GPU, relevant switches and downstream hops; check production mode and bind the inference connection or encryption key to that verified workload.</li>
+      <li><strong>Prove both outcomes.</strong> Send a synthetic request through the verified client. In staging, show that stale evidence, a wrong key or release, and corrupted weights prevent inference. Never fall back to ordinary HTTPS or an unverified replica.</li>
+      <li><strong>Share a reproducible result.</strong> Provide verifier commands, versions, a dated redacted result, and evidence for all eligible replicas. We repeat the checks ourselves before listing the route as confidential.</li>
+    </ol>
+    <p><a href="https://github.com/Lore-Hex/trustedrouter-provider-check/blob/4f6d03fd9991064f172f93ed28a07b144368c631/docs/confidential-endpoint.md">Run the confidential endpoint self-check</a> from our open-source checker. <a href="https://github.com/tinfoilsh/tinfoil-python/tree/v0.16.0rc3">Tinfoil's verified client</a> is one example, not a required vendor. The ordinary API conformance suite does not attest hardware.</p>
+    <details><summary>Prompt for Claude: check my confidential endpoint</summary>
+      <p>Audit the exact production model route I name against the TrustedRouter confidential endpoint guide. Start with my independently signed release reference. Trace where the prompt is decrypted, how the client verifies the workload key, which CPUs, GPUs, switches and replicas can serve it, how weights are verified on read, and whether logs or fallback routes expose plaintext. Use the maintained verifier for this platform. Ask before sending synthetic traffic or disclosing device evidence. Test rejected cases in an isolated fixture, never against customer workloads. For each requirement report PASS, FAIL or NOT TESTED with a command and redacted evidence. Never infer a pass from a SKU, HTTP 200, or my assertions. Do not request or print secrets, grant a badge, or change production.</p>
+    </details>
+  </div>
 </section>
 
 <section class="marketing-split" aria-labelledby="featured-neurometric-heading">
@@ -38,7 +63,7 @@
     <p>TrustedRouter refreshes the catalog, runs live canaries, and monitors route availability through the same provider contract used across the marketplace.</p>
     <div class="hero-actions">
       <a class="btn primary" href="/providers/neurometric">View Neurometric AI models</a>
-      <a class="btn" href="https://www.neurometric.ai/" rel="noopener noreferrer">Visit Neurometric AI</a>
+      <a class="btn" href="https://www.neurometric.ai/" rel="nofollow noopener noreferrer">Visit Neurometric AI</a>
     </div>
   </div>
   <div class="copy-terminal" aria-label="Neurometric AI integration summary">
@@ -57,7 +82,7 @@ Confidential compute: not claimed</code></pre>
   <div class="marketing-copy">
     <span class="eyebrow">Marketplace application</span>
     <h2>Tell us who operates the service.</h2>
-    <p>Email <a href="mailto:provider.ops@nytex.com">provider.ops@nytex.com</a> from your company domain. The application must identify the legal entity, responsible contacts, privacy terms, and service being offered.</p>
+    <p>{{ provider_contact("Email provider operations", application=false) }} from your company domain. The application must identify the legal entity, responsible contacts, privacy terms, and service being offered.</p>
     <p>Complete every section below. Use <strong>Unknown</strong>, <strong>Not applicable</strong>, or <strong>Available under NDA</strong> with an explanation instead of leaving blanks. Identify which claims apply to all routes and which apply only to named models, tiers, regions, or accounts. Date your answers and link to supporting evidence.</p>
     <ul class="check-list">
       <li><strong>Service and supply chain.</strong> Describe the tasks and modalities you serve, whether you operate the inference hardware or resell another service, and every downstream inference operator.</li>
@@ -126,6 +151,9 @@ Region pinning: exact parameter, values, and guarantee:
 Actual serving region: response field or header:
 Storage, logging, cache, and backup locations:
 Confidential compute evidence:
+Required qualifying model ID, production endpoint, region and release:
+Reproducible end-to-end verification command and dated redacted results:
+Setup help requested (if needed):
 Attestation verifier, source, releases, and measurements:
 Key binding, GPU/downstream coverage, operator access:
 
@@ -382,6 +410,7 @@ curl --fail --silent --show-error \
     <h2>We verify before we list.</h2>
     <ol class="plain-list">
       <li>Validate authentication and retrieve the live model catalog.</li>
+      <li>For new providers, independently verify confidential inference on at least one named model before admission.</li>
       <li>Match model IDs to exact prices and supported capabilities.</li>
       <li>Run non-streaming and streaming probes against representative models.</li>
       <li>Publish provider and model pages only for callable routes.</li>
@@ -405,8 +434,12 @@ curl --fail --silent --show-error \
 <section class="panel">
   <div class="panel-head"><h2>Ready to connect?</h2></div>
   <div class="panel-body">
-    <p>Send the company and integration profile, without credentials, to <a href="mailto:provider.ops@nytex.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">provider.ops@nytex.com</a>. We will reply with review questions and secure key-delivery instructions.</p>
-    <a class="btn primary" href="mailto:provider.ops@nytex.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Apply to the marketplace</a>
+    <p>Send your company and integration profile, without credentials, to {{ provider_contact("our provider operations team") }}. We will reply with review questions and secure key-delivery instructions.</p>
+    {{ provider_contact("Apply to the marketplace", button=true) }}
   </div>
 </section>
+{% endblock %}
+
+{% block body_scripts %}
+  <script defer src="/static/provider-marketplace-contact.js?v={{ static_version|default('local') }}"></script>
 {% endblock %}

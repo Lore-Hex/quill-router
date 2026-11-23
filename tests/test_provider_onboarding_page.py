@@ -68,6 +68,19 @@ def test_provider_application_collects_complete_integration_and_energy_profile(
     assert "not independently verified certification" in energy.get_text()
 
 
+def test_new_providers_can_find_confidential_qualification_and_setup_help(client: TestClient) -> None:
+    soup = BeautifulSoup(client.get("/providers/marketplace").text, "html.parser")
+    assert "Every new provider needs at least one model" in soup.select_one(".lead").get_text()
+    guide = soup.select_one("#confidential-onboarding")
+    assert guide is not None
+    assert guide.select_one('a[href="/support#support-inquiry"]')
+    assert guide.select_one('a[href*="trustedrouter-provider-check"]')
+    for term in ("H200", "Intel TDX", "B200", "HGX B300", "Vera Rubin NVL72", "wrong key", "corrupted weights"):
+        assert term in guide.get_text()
+    assert "NOT TESTED" in guide.select_one("details").get_text()
+    assert "Required qualifying model ID" in soup.select_one(".provider-application-template").get_text()
+
+
 def test_provider_onboarding_page_has_machine_readable_requirements(
     client: TestClient,
 ) -> None:
@@ -75,10 +88,13 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
 
     assert response.status_code == 200
     assert "List your models on TrustedRouter." in response.text
-    assert "provider.ops@nytex.com" in response.text
+    assert "provider.ops@nytex.com" not in response.text.lower()
     assert "providers@trustedrouter.com" not in response.text
     soup = BeautifulSoup(response.text, "html.parser")
-    assert len(soup.select('a[href^="mailto:provider.ops@nytex.com"]')) == 4
+    contact = soup.select('a[data-provider-contact]')
+    assert [a["data-provider-contact"] for a in contact] == ["application", "email", "application", "application"]
+    assert all(a["href"] == "/support#support-inquiry" and a.get_text(strip=True) for a in contact)
+    assert soup.select_one('script[src^="/static/provider-marketplace-contact.js"]')
     assert "Legal company name:" in response.text
     assert "Privacy policy:" in response.text
     assert "DUNS number:" in response.text
@@ -122,10 +138,6 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "&#34;example_input&#34;" in response.text
     assert "Provider sign in" in response.text
     assert "Exclude account administration, billing, user management" in response.text
-    assert (
-        'href="mailto:provider.ops@nytex.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D"'
-        in response.text
-    )
     assert (
         '<link rel="canonical" href="https://trustedrouter.com/providers/marketplace">'
         in response.text

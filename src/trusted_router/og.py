@@ -6,7 +6,7 @@ from trusted_router.config import Settings
 
 OG_TITLE = "TrustedRouter | Every model. Privacy with proof."
 OG_DESCRIPTION = (
-    "One OpenAI-compatible API for hundreds of models on attested infrastructure, "
+    "One OpenAI-compatible API for 600+ models on attested infrastructure, "
     "with ZDR routes, provider failover, BYOK, and no prompt or output logs."
 )
 OG_IMAGE_WIDTH = 1200
@@ -20,7 +20,7 @@ _MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 def og_image_svg(_settings: Settings) -> str:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter">
   <title>TrustedRouter End-to-End Encrypted Router for AI</title>
-  <desc>Hundreds of models through one verifiable prompt path. No prompt or output logs. Always.</desc>
+  <desc>600+ models through one verifiable prompt path. No prompt or output logs. Always.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#07131f"/>
@@ -69,7 +69,7 @@ def og_image_svg(_settings: Settings) -> str:
     <text x="80" y="220" font-size="60" font-weight="850" fill="#ffffff">End-to-End</text>
     <text x="80" y="294" font-size="60" font-weight="850" fill="#ffffff">Encrypted Router</text>
     <text x="80" y="368" font-size="60" font-weight="850" fill="#7be0b1">for AI.</text>
-    <text x="82" y="424" font-size="22" font-weight="600" fill="#cfe1f1">Hundreds of models. One verifiable prompt path.</text>
+    <text x="82" y="424" font-size="22" font-weight="600" fill="#cfe1f1">600+ models. One verifiable prompt path.</text>
   </g>
 
   <!-- Proof chips -->
@@ -135,7 +135,7 @@ def og_image_svg(_settings: Settings) -> str:
     <text x="0" y="0" font-size="18" font-weight="760" fill="#cfe1f1">trustedrouter.com</text>
     <text x="176" y="0" font-size="18" font-weight="760" fill="#7be0b1">open source</text>
     <text x="304" y="0" font-size="18" font-weight="760" fill="#cfe1f1">attested</text>
-    <text x="396" y="0" font-size="18" font-weight="760" fill="#cfe1f1">hundreds of models</text>
+    <text x="396" y="0" font-size="18" font-weight="760" fill="#cfe1f1">600+ models</text>
   </g>
 </svg>
 """

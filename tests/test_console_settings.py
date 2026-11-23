@@ -11,9 +11,12 @@ These tests exercise the POST itself, which is the thing nobody was doing.
 from __future__ import annotations
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
+from trusted_router.model_regions import COUNTRY_NAMES
 from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.workspace_origin_policy import COUNTRIES
 
 
 @pytest.fixture
@@ -43,6 +46,46 @@ def test_post_is_routable_at_all(console: tuple[TestClient, str]) -> None:
     client, _ = console
     response = client.post("/console/settings", data={"name": "Anything"}, follow_redirects=False)
     assert response.status_code != 405, "the Save button posts here; it must be handled"
+
+
+def test_western_option_leads_without_changing_default(console, monkeypatch):
+    client, _ = console
+    monkeypatch.setattr(client.app.state.settings, "workspace_origin_controls_enabled", True)
+    page = BeautifulSoup(client.get("/console/settings").text, "html.parser")
+    panel = page.select_one("section.panel")
+    assert panel["id"] == "model-origin"
+    options = panel.select("select[name=origin_policy] option")
+    assert [option["value"] for option in options] == ["western", "us", "unrestricted"]
+    assert options[0].get_text(strip=True) == "Western Countries"
+    assert [option["value"] for option in options if option.has_attr("selected")] == ["unrestricted"]
+    countries = sorted(COUNTRY_NAMES[code] for code in COUNTRIES["western"])
+    assert panel.select_one("details summary").get_text(strip=True) == f"View all {len(countries)} eligible countries"
+    assert panel.select_one("details p").get_text(strip=True).removesuffix(".").split(", ") == countries
+
+
+def test_origin_control_rollout_and_permissions(console, monkeypatch):
+    client, ws = console
+    path = "/console/settings"
+    data = {"origin_policy": "western", "origin_workspace": ws}
+    headers = {"origin": str(client.base_url).rstrip("/")}
+    assert 'name="origin_policy"' not in client.get(path).text
+    client.post(path, data=data, headers=headers)
+    assert STORE.get_workspace(ws).origin_policy == "unrestricted"
+    monkeypatch.setattr(client.app.state.settings, "workspace_origin_controls_enabled", True)
+    assert client.post(path, data=data, headers={"origin": "https://example.org"}).status_code == 403
+    for policy in ("us", "western", "unrestricted"):
+        result = client.post(path, data={**data, "origin_policy": policy}, headers=headers)
+        assert "Routing policy saved" in result.text
+        assert f'value="{policy}" selected' in result.text
+        assert STORE.get_workspace(ws).origin_policy == policy
+    assert "Choose one of the available policies" in client.post(
+        path, data={**data, "origin_policy": "typo"}, headers=headers,
+    ).text
+    client.post(path, data={**data, "origin_workspace": "other-workspace"}, headers=headers)
+    assert STORE.get_workspace(ws).origin_policy == "unrestricted"
+    monkeypatch.setattr(InMemoryStore, "user_can_manage", lambda *_: False)
+    client.post(path, data=data, headers=headers)
+    assert STORE.get_workspace(ws).origin_policy == "unrestricted"
 
 
 def test_rename_persists_and_redirects(console: tuple[TestClient, str]) -> None:

@@ -504,6 +504,8 @@ ENV_VARS=(
   'TR_SPECULATION_SHADOW_IMAGES=[]'
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
+  "TR_WORKSPACE_ORIGIN_PEER_CHECKS_ENABLED=true"
+  "TR_WORKSPACE_ORIGIN_CONTROLS_ENABLED=true"
   "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
   "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
   # The legacy backend does not yet receive a trusted, edge-overwritten client
@@ -512,6 +514,14 @@ ENV_VARS=(
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
   "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
+  # One workspace's synchronous authorizes, settles and refunds on its single
+  # credit row take turns inside each process, settles first, instead of
+  # piling up in Spanner and aborting each other (docs/spanner-reliability.md,
+  # "One workspace on one credit row"). It delays when a transaction starts,
+  # by at most a quarter of the deadline the transaction already has and
+  # inside it, and nothing else. A literal, so no revision inherits it; 0 is
+  # the way back.
+  "TR_WORKSPACE_BILLING_GATE_WIDTH=1"
   "TR_RELEASE=${RELEASE_ID}"
   "TR_SOURCE_REVISION=${SOURCE_REVISION}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
@@ -531,6 +541,7 @@ ENV_VARS=(
   "TR_SOCIAL_REWARDS_ENABLED=true"
   "TR_SOCIAL_REWARDS_PLANE_ID=gcp-primary"
   "TR_SOCIAL_REWARDS_ISSUER_ID=gcp-primary"
+  "TR_SOCIAL_REWARDS_YOUTUBE_URL=https://www.youtube.com/@NYTokenExchange"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   # Owner notifications. The identifiers here are not secrets — the numbers are
   # public and the ids name resources, not authorise them — so they live in
@@ -750,6 +761,22 @@ ENV_VARS=(
   # (section 8.2: Joseph's $30 join balance), so a hold that meets a lease
   # holding the rest is retried, never refused.
   "TR_FASTPATH_LEASE_HEADROOM_503=true"
+  # The fast path nodes' floor, in microdollars, for the 503 above: the
+  # value of fastpath_floor in infra/fastpath.tf, and
+  # tests/test_fastpath_lease_headroom_floor.py holds the two equal, so a
+  # change of the nodes' floor changes this line with it. The 503 is
+  # answered only for a workspace whose headroom, counting what its leases
+  # hold, is at least this. Under it a node tops no lease up, a lease gives
+  # back what it holds only when it closes, and the workspace can spend the
+  # rest first, so a retry cannot help: the answer is the
+  # insufficient-credits 402, as before the 503 existed. On 2026-11-21,
+  # the day after the floor went from $20 to $2, a workspace within cents
+  # of empty was answered the 503 for three minutes, until it bought
+  # credit. Only which refusal is returned changes, never whether a
+  # request is refused, so a node still on another floor is safe. A
+  # literal, so no revision inherits it; 0 is the way back (every such
+  # refusal the 503 again).
+  "TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO=2000000"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md
   # section 5): off, alert, enforce. Off until Go reads the policy member and
@@ -768,6 +795,24 @@ ENV_VARS=(
   # on the decide shadow, all agree_full), both nodes on b2d12a046
   # (increments 5 and 6, #2242).
   "TR_FASTPATH_PILOT_STREAMS=true"
+  # "off" until every fast-path node runs a release that reads the members;
+  # then "shadow" until the shadow shows agreement; then "on".
+  # 2026-11-20 (Joseph): "shadow". Both nodes run 5e3ebc8b7 since 23:40Z
+  # (pinned by #2810), which reads the members. The policy now carries
+  # async_settle.decide_route, so a node composes a hosted decide
+  # authorize, async-v1 shape included, for the shadow to compare, and
+  # still passes it to Python (hosted_decide.off).
+  # A chat model on route decide that asks for async-v1 is answered with
+  # the additions Python gives, where the edge answered false-only.
+  # Way back: "off".
+  # 2026-11-21 (Joseph): "on". The policy also carries
+  # fastpath_edge_hosted_decide, so a node answers a hosted decide
+  # authorize itself, with Python's rows, hold and answer, and with the
+  # async-v1 additions when the call asks for them. Every other gate at the
+  # edge still applies, and anything outside the exact hosted shape (another
+  # spelling of the model, another route, a models list) still passes to
+  # Python. Way back: "shadow" (compose and pass) or "off".
+  "TR_FASTPATH_EDGE_HOSTED_DECIDE=on"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
   # section 12.4, PR 4): a stream whose reservation is below its estimate is
@@ -901,6 +946,14 @@ ENV_VARS=(
   # sync_required("unsupported_cohort") before opening a transaction. Add a
   # region only with measured handoff percentiles.
   "TR_ASYNC_SETTLE_ACCEPT_REGIONS=us-central1,us-east4"
+  # 2026-11-20 (Joseph): hosted typed-decision calls negotiate async
+  # settlement as chat does. On only now that every region runs a release
+  # with decide async support: an older release answers 400 to a decide
+  # envelope, and the enclave does not fall back from that answer. The way
+  # back is this one pin, set to false: accepted rows keep draining and the
+  # snapshot-sync retry keeps its frozen price (docs/runbook.md, "Decide
+  # async settlement").
+  "TR_ASYNC_SETTLE_DECIDE_ROUTE=true"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity
@@ -912,7 +965,7 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
-  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1,us-east4"
+  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1,us-east4,europe-west4"
   # Gate at authorize: 500 ms handoff budget; central p50/p99 64/103 ms,
   # east p50/p90/p99 257/308/487 ms. Europe: 139 unknown, 93 rejected,
   # 126 settle 503s tripping the deploy billing gate. West settles via central.
@@ -921,6 +974,18 @@ ENV_VARS=(
   # us-central1 (terminal route, #2293), and the memory handoff (#2296)
   # answers before any Spanner work (router p50/p99 7/11 ms). us-east4 joins
   # first; Europe follows after an hour of measured us-east4 handoffs.
+  # 2026-11-21 (Joseph): Europe joins. us-east4 has negotiated since
+  # 2026-11-04 with its settles accepted in us-central1. A europe-west4
+  # enclave's handoff is one round trip to us-central1 in place of the
+  # synchronous settle it makes there today. europe-west4's own router is
+  # not in TR_ASYNC_SETTLE_ACCEPT_REGIONS above, so this value holds only
+  # while the terminal route sends every settle to us-central1: before that
+  # route is turned off, europe-west4 leaves this list and its tickets run
+  # out (docs/runbooks/control-terminals-us-central1.md gives the order;
+  # tests/test_async_settle_negotiation_regions.py fails with the route off
+  # and europe-west4 still here). The way back is this one pin without
+  # europe-west4: tickets already issued keep settling, and new Europe
+  # authorizations get the synchronous answer.
   # E2 routing snapshot publication: the literals of the key block above.
   "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"

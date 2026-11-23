@@ -35,7 +35,7 @@ function setup(cookie) {
 test('signed-out homepage keeps its API key links with a normal navigation fallback', () => {
  const links = setup('');
  assert.equal(links.length, 3);
- assert.deepEqual(links.map(a => a.textContent), ['Create my API key', 'Create my API key', 'Create my API key']);
+ assert.deepEqual(links.map(a => a.textContent), ['Start building', 'Start building', 'Start building']);
  assert.equal(links.note.style.visibility, undefined);
 });
 test('returning visitors get API key links, retain button styles, and lose the visitor note', () => {
