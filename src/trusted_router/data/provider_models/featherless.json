@@ -1691,7 +1691,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-23T14:32:07Z",
+  "generated_at": "2026-11-23T15:20:49Z",
   "price_scale": "microdollars_per_million",
   "model_count": 68
 }
