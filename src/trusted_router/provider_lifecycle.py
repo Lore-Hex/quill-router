@@ -99,6 +99,9 @@ DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 TENCENT_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 12, 6, 16, 0, tzinfo=UTC)
 # DeepInfra deprecates tencent/Hy4-preview on 27 Nov 2026 (date only) and redirects it to Hy4.
 DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
+# DeepInfra deprecates nvidia/Nemotron-Content-Safety-3.5 on 30 Nov 2026 (date
+# only, so 00:00 UTC); its public model metadata says 02:35 UTC that day.
+DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT = datetime(2026, 11, 30, 0, 0, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
 DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
@@ -1447,6 +1450,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"tencent/Hy4-preview"}),
         effective_at=DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT,
         replacement_model_ids=("tencent/hy4",),
+    ),
+    # DeepInfra's November 23 notice: "Model nvidia/Nemotron-Content-Safety-3.5
+    # is being deprecated on 2026-11-30" (date only, so 00:00 UTC, ahead of the
+    # 02:35 UTC deprecation time in DeepInfra's public model metadata). No
+    # replacement is named. Only DeepInfra's route; NVIDIA NIM's
+    # nvidia/nemotron-3.5-content-safety is a separate route and stays.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"nvidia/nemotron-content-safety-3.5"}),
+        upstream_ids=frozenset({"nvidia/Nemotron-Content-Safety-3.5"}),
+        effective_at=DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT,
     ),
     # Databricks' November 10 Foundation Model retirement notice: "The GLM 5.2
     # model will be retired on February 4th, 2027" (Foundation Model APIs and

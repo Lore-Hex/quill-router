@@ -1732,6 +1732,7 @@
       "status": 1,
       "id": "nvidia/nemotron-content-safety-3.5",
       "upstream_id": "nvidia/Nemotron-Content-Safety-3.5",
+      "retirement_at": "2026-11-30T00:00:00Z",
       "context_length": 131072,
       "max_output_tokens": 131072,
       "input_token_price_per_m": 200000,
