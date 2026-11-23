@@ -87,6 +87,20 @@ HEALTH_PROBE_PATHS = frozenset({"/health", "/v1/health"})
 # is a 404 page render.
 CONTROL_PLANE_EVIDENCE_PATH = "/trust/control-plane.json"
 CONTROL_PLANE_EVIDENCE_SURFACES = frozenset({"combined", "public", "observer"})
+# The public status document every cloud's peer_monitor fetches
+# (synthetic/fleet.py), and the surfaces that mount it (the same
+# register_public_routes surfaces as the evidence route). It is metered in its
+# OWN bucket instead of the shared source bucket. In `untrusted` mode one
+# source bucket admits a whole deployment, so one client walking a path
+# wordlist (cheap 404s) spends it in seconds and every other request is
+# refused for the rest of the window: the AWS and Azure observers, which have
+# no front door to tell clients apart, then answer the fleet's watchers 429
+# and the cloud is reported down while serving fine. Its own bucket keeps the
+# document readable through traffic on other paths, and keeps it metered:
+# the body is served from the status response cache, and a flood of this one
+# path still exhausts only this one bucket.
+STATUS_DOCUMENT_PATH = "/status.json"
+STATUS_DOCUMENT_SURFACES = CONTROL_PLANE_EVIDENCE_SURFACES
 STATUS_HOST_EXACT_PATHS = frozenset(
     {
         "/",
@@ -613,6 +627,14 @@ async def _rate_limit_request(
             namespace = "internal_ip"
             subject = fingerprint_subject(source)
             limit = settings.rate_limit_ip_per_window
+    elif (
+        request.method == "GET"
+        and routed_path == STATUS_DOCUMENT_PATH
+        and settings.service_surface in STATUS_DOCUMENT_SURFACES
+    ):
+        namespace = "status_document"
+        subject = fingerprint_subject(source)
+        limit = settings.rate_limit_status_document_per_window
     else:
         namespace = "ip"
         subject = fingerprint_subject(source)

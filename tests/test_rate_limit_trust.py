@@ -17,6 +17,8 @@ from trusted_router.main import create_app
 from trusted_router.middleware import (
     CONTROL_PLANE_EVIDENCE_PATH,
     CONTROL_PLANE_EVIDENCE_SURFACES,
+    STATUS_DOCUMENT_PATH,
+    STATUS_DOCUMENT_SURFACES,
     _rate_limit_request,
 )
 from trusted_router.routes import public as public_routes
@@ -948,6 +950,145 @@ def test_a_healthy_holdback_serves_its_release_evidence_on_an_exhausted_shared_b
         assert refused.status_code == 429, path
         assert refused.json()["error"]["type"] == "rate_limited"
     assert client.get("/ready").status_code == 429
+
+
+# Paths that are not the status document. The last three have
+# request.url.path equal to it (urlsplit drops tab, CR and LF); the router
+# reads them as sent.
+_NOT_THE_STATUS_DOCUMENT_PATH = (
+    "/status",
+    "/status.json/",
+    "/status.jsonx",
+    "/Status.json",
+    "/v1/status.json",
+    "/fleet.json",
+    "/status/history",
+    "/sta\ttus.json",
+    "/status.json\r",
+    "/status.json\n",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", sorted(STATUS_DOCUMENT_SURFACES))
+async def test_the_status_document_has_its_own_source_bucket(surface: str) -> None:
+    settings = _surface_settings(
+        surface, rate_limit_ip_per_window=2, rate_limit_status_document_per_window=3
+    )
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+
+    # A path scan spends the shared bucket ...
+    for path in ("/admin", "/backup"):
+        assert await _admission(settings, limiter, "GET", path) is None
+    refused = await _admission(settings, limiter, "GET", "/config")
+    assert refused is not None and refused.status_code == 429
+
+    # ... and the peer monitors still read the status document,
+    for _ in range(3):
+        assert await _admission(settings, limiter, "GET", STATUS_DOCUMENT_PATH) is None
+    # which stays metered by its own allowance.
+    refused = await _admission(settings, limiter, "GET", STATUS_DOCUMENT_PATH)
+    assert refused is not None and refused.status_code == 429
+    assert refused.headers["X-RateLimit-Limit"] == "3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", sorted(STATUS_DOCUMENT_SURFACES))
+async def test_status_document_reads_leave_the_shared_bucket_alone(surface: str) -> None:
+    settings = _surface_settings(
+        surface, rate_limit_ip_per_window=2, rate_limit_status_document_per_window=1
+    )
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+
+    assert await _admission(settings, limiter, "GET", STATUS_DOCUMENT_PATH) is None
+    flooded = await _admission(settings, limiter, "GET", STATUS_DOCUMENT_PATH)
+    assert flooded is not None and flooded.status_code == 429
+    # Exhausting the status document's bucket refuses nothing else.
+    assert await _admission(settings, limiter, "GET", "/ready") is None
+    assert await _admission(settings, limiter, "GET", "/ready") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("surface", "method", "path"),
+    [
+        # Where the route is not mounted the path is a 404 render.
+        *(
+            (surface, "GET", STATUS_DOCUMENT_PATH)
+            for surface in _WEB_SURFACES
+            if surface not in STATUS_DOCUMENT_SURFACES
+        ),
+        # GET is the route's only method.
+        *(
+            ("observer", method, STATUS_DOCUMENT_PATH)
+            for method in ("HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+        ),
+        *(("observer", "GET", path) for path in _NOT_THE_STATUS_DOCUMENT_PATH),
+    ],
+)
+async def test_nothing_but_the_mounted_status_document_get_leaves_the_shared_bucket(
+    surface: str, method: str, path: str
+) -> None:
+    settings = _surface_settings(
+        surface, rate_limit_ip_per_window=1, rate_limit_status_document_per_window=100
+    )
+    limiter = InMemoryRateLimits(lock=threading.RLock())
+
+    assert await _admission(settings, limiter, "GET", "/ready") is None
+    refused = await _admission(settings, limiter, method, path)
+
+    assert refused is not None and refused.status_code == 429
+
+
+@pytest.mark.parametrize("surface", _WEB_SURFACES)
+def test_the_status_document_bucket_applies_exactly_where_the_route_is_mounted(
+    surface: str,
+) -> None:
+    app = create_app(
+        _surface_settings(surface, rate_limit_ip_per_window=1),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    # The route table decides, so a surface that gains or loses the route
+    # fails here until the bucket follows it.
+    assert _mounts(app, "GET", STATUS_DOCUMENT_PATH) == (surface in STATUS_DOCUMENT_SURFACES)
+
+
+def test_a_path_scan_does_not_take_a_peer_cloud_off_the_fleet_monitor() -> None:
+    # The Azure and AWS observers: deployed, behind no edge that overwrites
+    # the client address, so `untrusted` mode and one shared bucket for every
+    # caller. A scanner walking a wordlist spent it in seconds of every
+    # window, and the other clouds' peer_monitor fetches of /status.json were
+    # answered 429, so the cloud was reported down while serving fine.
+    settings = Settings(
+        environment="canary",
+        service_surface="observer",
+        observer_internal_token="observer-only-" + "o" * 32,
+        release="4f0c2d9e1b7a4c5386d0e2f1a9b8c7d6e5f40312",
+        trusted_domain="azure.trustedrouter.com",
+        api_base_url="https://api-azure.trustedrouter.com/v1",
+        rate_limit_enabled=True,
+        rate_limit_client_ip_mode="untrusted",
+        rate_limit_ip_per_window=3,
+    )
+    app = create_app(settings, configure_store_arg=False, init_observability=False)
+    client = TestClient(app)
+
+    for path in ("/offerlist", "/offer_rss", "/odyssey"):
+        assert client.get(path).status_code == 404
+    scanned = client.get("/odpowiedz")
+    assert scanned.status_code == 429
+    assert scanned.json()["error"]["type"] == "rate_limited"
+
+    # gcp (two monitor regions) and aws each fetch once per pass.
+    for _ in range(3):
+        peer_read = client.get(STATUS_DOCUMENT_PATH, headers={"Accept": "application/json"})
+        assert peer_read.status_code == 200
+        assert "monitor_freshness" in peer_read.json()["data"]
+
+    # The scan is still refused, and so is the human status page.
+    assert client.get("/oes").status_code == 429
+    assert client.get("/status").status_code == 429
 
 
 @pytest.mark.parametrize("environment", ["production", "canary", "staging"])
