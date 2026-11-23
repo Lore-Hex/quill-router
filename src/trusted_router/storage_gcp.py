@@ -49,6 +49,7 @@ from trusted_router.receipt_keys import (
     receipt_key_kid_collides,
     with_receipt_attestation_sha256,
 )
+from trusted_router.refill_claim import RefillClaim, decide_claim, record_result, refill_now
 from trusted_router.routable_payouts import (
     EARNINGS_CASHOUT_EXTERNAL_KIND,
     EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
@@ -4947,19 +4948,52 @@ class SpannerStore(OperationalAnalyticsReads):
 
         return self._run_in_transaction(txn)
 
+    def claim_auto_refill(
+        self, expected: CreditAccount, *, candidate: str, payload_hash: str,
+    ) -> tuple[str, str | None]:
+        ws = expected.workspace_id
+
+        def txn(transaction: Any) -> tuple[str, str | None]:
+            account = self._read_entity_tx(transaction, "credit", ws, CreditAccount)
+            if not account:
+                return "no_account", None
+            current = self._read_entity_tx(transaction, "refill_claim", ws, RefillClaim)
+            used = self._read_entity_tx(transaction, "refill_trigger", candidate, dict)
+            reason, claim = decide_claim(
+                account, expected, self._refill_balance_from(transaction, ws, account), current,
+                candidate=candidate, used=used is not None, payload_hash=payload_hash,
+                now=refill_now(),
+            )
+            if claim:
+                self._write_entity_tx(transaction, "refill_claim", ws, claim)
+                if current is None or claim.key != current.key:
+                    self._write_entity_tx(transaction, "refill_trigger", claim.key, {"workspace_id": ws})
+                account.last_auto_refill_at = claim.dispatched_at
+                account.last_auto_refill_status = "pending"
+                self._write_entity_tx(transaction, "credit", ws, account)
+            return reason, claim.key if claim else None
+
+        return self._run_in_transaction(txn)
+
     def record_auto_refill_outcome(
         self,
         workspace_id: str,
         *,
         status: str,
+        attempt_key: str | None = None,
     ) -> CreditAccount | None:
         def txn(transaction: Any) -> CreditAccount | None:
             account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
             if account is None:
                 return None
-            account.last_auto_refill_at = iso_now()
-            account.last_auto_refill_status = status
-            self._write_entity_tx(transaction, "credit", workspace_id, account)
+            current = self._read_entity_tx(transaction, "refill_claim", workspace_id, RefillClaim)
+            changed, claim = record_result(
+                account, current, key=attempt_key, status=status, stamp=iso_now(),
+            )
+            if changed:
+                if claim:
+                    self._write_entity_tx(transaction, "refill_claim", workspace_id, claim)
+                self._write_entity_tx(transaction, "credit", workspace_id, account)
             return account
 
         return self._run_in_transaction(txn)
@@ -6702,7 +6736,6 @@ class SpannerStore(OperationalAnalyticsReads):
         without a metadata account returns None. Any missing active typed shard
         is ledger corruption and fails closed; JSON money is never consulted.
         """
-        pt = self._param_types
         # This exact snapshot also feeds auto-refill decisions. Do not reuse the
         # allow-stale authorize cache here: after a split, a stale smaller count
         # could understate available credit and charge a card prematurely.
@@ -6710,15 +6743,21 @@ class SpannerStore(OperationalAnalyticsReads):
             account = self._read_entity_from(snapshot, "credit", workspace_id, CreditAccount)
             if account is None:
                 return None
-            shard_count = credit_shard_count(account)
-            rows = list(
-                snapshot.execute_sql(
-                    "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
-                    "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",
-                    params={"pk": workspace_id, "shard_count": shard_count},
-                    param_types={"pk": pt.STRING, "shard_count": pt.INT64},
-                )
+            return self._refill_balance_from(snapshot, workspace_id, account)
+
+    def _refill_balance_from(
+        self, reader: Any, workspace_id: str, account: CreditAccount,
+    ) -> tuple[int, int, int]:
+        pt = self._param_types
+        shard_count = credit_shard_count(account)
+        rows = list(
+            reader.execute_sql(
+                "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
+                "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                params={"pk": workspace_id, "shard_count": shard_count},
+                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             )
+        )
         if not rows:
             raise RuntimeError(
                 f"missing authoritative tr_credit_balance rows for workspace {workspace_id}"

@@ -6926,11 +6926,17 @@ class PostgresStore(OperationalAnalyticsReads):
     def clear_stripe_payment_method(self, workspace_id: str) -> CreditAccount | None:
         self._not_implemented("clear_stripe_payment_method")
 
+    def claim_auto_refill(
+        self, expected: CreditAccount, *, candidate: str, payload_hash: str,
+    ) -> tuple[str, str | None]:
+        self._not_implemented("claim_auto_refill")
+
     def record_auto_refill_outcome(
         self,
         workspace_id: str,
         *,
         status: str,
+        attempt_key: str | None = None,
     ) -> CreditAccount | None:
         self._not_implemented("record_auto_refill_outcome")
 
