@@ -3,26 +3,23 @@
 # Two policies, both to the security channel:
 #
 # - "ingestion volume spike (audit-log cost guard)" is the absolute ceiling on
-#   a calendar day's billed ingestion. It was made by hand in August 2026 when
-#   Data Access audit logs were turned on, and it is adopted here as it stands
-#   (the import block below), then given more headroom: organic traffic growth
-#   alone crossed the old 8 GiB line in November 2026, which is not what the
-#   guard is for. Its job is now only the cost ceiling.
+#   billed ingestion summed over one-day alignment windows. It was made by hand
+#   in August 2026 when Data Access audit logs were turned on, and it is
+#   adopted here as it stands (the import block below) with more headroom: a
+#   fixed daily line is a poor detector of sudden jumps while traffic grows, so
+#   its job is now only the cost ceiling.
 #
-# - "ingestion step change" catches what the ceiling was really meant to
-#   catch, early and at any traffic level: a sudden jump such as Data Access
-#   DATA_READ coming back on (on its own several times the rest of the
-#   project's logs), a sampling exclusion going missing, or a service starting
-#   to log every request. It compares the last six hours with the same six
-#   hours a day earlier, so steady day-to-day growth does not trip it, and it
-#   needs a floor of real volume so a quiet night cannot. Back-tested over the
-#   week before it was added, it would have fired once, on a genuine jump of
-#   about four times, and not on that week's organic growth.
+# - "ingestion step change" catches sudden jumps early and at any traffic
+#   level: Data Access DATA_READ coming back on, a sampling exclusion going
+#   missing, or a service starting to log every request. It compares the last
+#   six hours with the same six hours a day earlier, so steady day-to-day
+#   growth does not trip it, and it needs a floor of real volume so a quiet
+#   night cannot.
 #
-# scripts/deploy/gcp_security_baseline_check.sh checks both policies exist,
-# are on and have a channel, and reads the ceiling against its own expected
-# value (INGEST_THRESHOLD_BYTES); tests/test_log_ingestion_cost_guard.py keeps
-# the two in step.
+# scripts/deploy/gcp_security_baseline_check.sh requires the step-change
+# policy to be on with a channel, and reads the ceiling's threshold against its
+# own expected value (INGEST_THRESHOLD_BYTES); tests/test_log_ingestion_cost_guard.py
+# keeps the two in step.
 
 import {
   to = google_monitoring_alert_policy.log_ingestion_ceiling

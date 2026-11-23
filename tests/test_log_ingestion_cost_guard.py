@@ -11,6 +11,7 @@ with like.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,8 +93,7 @@ def test_step_change_compares_the_same_window_a_day_apart_with_a_floor() -> None
     floor = re.search(r" and " + re.escape(now) + r" > (\d+)$", query)
     assert floor, query
     factor, floor_bytes = float(ratio.group(1)), int(floor.group(1))
-    # Steady growth must not trip it; a jump that several times the project's
-    # logs (DATA_READ alone was) must.
+    # Steady day-to-day growth must not trip it; a sudden multiple must.
     assert 2.0 <= factor <= 3.0
     assert floor_bytes >= GIB
     # The condition's name states both numbers.
@@ -119,4 +119,13 @@ def test_both_guards_page_the_security_channel_and_say_where_they_live() -> None
 def test_baseline_check_requires_the_step_change_policy() -> None:
     step_name = re.search(r'display_name = "(TR Logging: ingestion step change[^"]*)"', GUARD)
     assert step_name
-    assert f'"{step_name.group(1)}"; do' in BASELINE
+    lines = BASELINE.splitlines()
+    entry = next(i for i, line in enumerate(lines) if f'"{step_name.group(1)}"; do' in line)
+    # The entry must stay inside the `for want in ...` list: every line from the
+    # loop head to it continues with a trailing backslash.
+    head = max(i for i in range(entry) if lines[i].lstrip().startswith("for want in "))
+    assert all(lines[i].rstrip().endswith("\\") for i in range(head, entry))
+
+
+def test_baseline_check_is_valid_bash() -> None:
+    subprocess.run(["bash", "-n", str(ROOT / "scripts" / "deploy" / "gcp_security_baseline_check.sh")], check=True)
