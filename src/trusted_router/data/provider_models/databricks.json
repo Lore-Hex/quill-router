@@ -140,7 +140,9 @@
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000,
-      "routable": true
+      "routable": false,
+      "routable_reason": "provider-route-unserved",
+      "unserved_held_at": "2026-11-23T08:28:42Z"
     },
     {
       "display_name": "GPT OSS 120B",
@@ -322,6 +324,6 @@
       "cached_input_token_price_per_m": 260000
     }
   ],
-  "generated_at": "2026-11-23T06:27:51Z",
+  "generated_at": "2026-11-23T08:28:41Z",
   "model_count": 11
 }
