@@ -45,11 +45,21 @@ EXCLUSIONS = re.findall(r'resource "google_logging_project_exclusion" "([a-z_]+)
 
 
 # --- A small evaluator for Cloud Logging filters -----------------------------
+#
+# Cloud Logging's precedence is NOT, then OR, then AND, so `a AND b OR c`
+# means `a AND (b OR c)`, and terms side by side are joined by an implicit
+# AND. A comparison on a field the entry does not have is false (so NOT of it
+# is true); a LogEntry field with a default, severity (DEFAULT), always
+# exists. https://cloud.google.com/logging/docs/view/logging-query-language
 
 SEVERITY = {
     "DEFAULT": 0, "DEBUG": 100, "INFO": 200, "NOTICE": 300, "WARNING": 400,
     "ERROR": 500, "CRITICAL": 600, "ALERT": 700, "EMERGENCY": 800,
 }
+# Scalar fields of a message that, when the message is present, may read as
+# their proto default rather than as absent. Entries kept whole are checked
+# both ways, so the result does not rest on which one Cloud Logging uses.
+SCALAR_DEFAULTS = {"httpRequest.status": 0}
 _TOKEN = re.compile(r'\s*(?:(\()|(\))|(,)|(=~|!~|!=|<=|>=|=|<|>|:)|("(?:[^"\\]|\\.)*")|([A-Za-z0-9_.*%/+-]+))')
 
 
@@ -86,35 +96,37 @@ class _Parser:
         return tok
 
     def parse(self) -> Any:
-        node = self.or_expr()
+        node = self.and_expr()
         assert self.peek() is None, f"unparsed tail {self.toks[self.i:]}"
         return node
 
-    def or_expr(self) -> Any:
-        nodes = [self.and_expr()]
-        while self.peek() == ("word", "OR"):
-            self.take()
-            nodes.append(self.and_expr())
-        return ("or", nodes) if len(nodes) > 1 else nodes[0]
-
     def and_expr(self) -> Any:
-        nodes = [self.unary()]
-        while self.peek() == ("word", "AND"):
-            self.take()
-            nodes.append(self.unary())
+        # Lowest precedence: explicit AND, or two terms side by side.
+        nodes = [self.or_expr()]
+        while self.peek() is not None and self.peek() != ("rp", ")"):
+            if self.peek() == ("word", "AND"):
+                self.take()
+            nodes.append(self.or_expr())
         return ("and", nodes) if len(nodes) > 1 else nodes[0]
 
+    def or_expr(self) -> Any:
+        nodes = [self.unary()]
+        while self.peek() == ("word", "OR"):
+            self.take()
+            nodes.append(self.unary())
+        return ("or", nodes) if len(nodes) > 1 else nodes[0]
+
     def unary(self) -> Any:
-        if self.peek() == ("word", "NOT"):
+        if self.peek() in (("word", "NOT"), ("word", "-")):
             self.take()
             return ("not", self.unary())
         if self.peek() == ("lp", "("):
             self.take()
-            node = self.or_expr()
+            node = self.and_expr()
             assert self.take() == ("rp", ")")
             return node
         kind, word = self.take()
-        assert kind == "word", f"expected a field, got {word!r}"
+        assert kind == "word" and word not in ("AND", "OR"), f"expected a field, got {word!r}"
         if word == "sample":
             # sample(insertId, fraction): the worst case, as if the entry were
             # in the sampled-out share. A failure must not reach this clause.
@@ -134,11 +146,19 @@ class _Parser:
         return ("cmp", word, op, [self.take()[1]])
 
 
-def _field(entry: dict[str, Any], path: str) -> Any:
+_MISSING = object()
+
+
+def _field(entry: dict[str, Any], path: str, scalar_defaults: bool) -> Any:
+    if path == "severity":
+        return entry.get("severity") or "DEFAULT"
     value: Any = entry
     for part in path.split("."):
-        if not isinstance(value, dict) or part not in value:
-            return None
+        if not isinstance(value, dict) or part not in value or value[part] is None:
+            parent = path.rsplit(".", 1)[0]
+            if scalar_defaults and path in SCALAR_DEFAULTS and _field(entry, parent, False) is not _MISSING:
+                return SCALAR_DEFAULTS[path]
+            return _MISSING
         value = value[part]
     return value
 
@@ -157,14 +177,13 @@ def _number(value: Any) -> float | None:
 def _compare(field: str, actual: Any, op: str, expected: str) -> bool:
     a: Any
     b: Any
-    if field == "severity":
-        actual = actual or "DEFAULT"
-        a, b = SEVERITY[actual], SEVERITY[expected]
-    elif actual is None:
+    if actual is _MISSING:
         return False
+    if op == ":" and expected == "*":
+        return True
+    if field == "severity":
+        a, b = SEVERITY[actual], SEVERITY[expected]
     elif op == ":":
-        if expected == "*":
-            return True
         return expected.lower() in str(actual).lower()
     elif op in ("=~", "!~"):
         found = re.search(expected, str(actual)) is not None
@@ -177,28 +196,32 @@ def _compare(field: str, actual: Any, op: str, expected: str) -> bool:
     else:
         a, b = str(actual), expected
     return {
-        "=": a == b, "!=": a != b, ":": a == b,
+        "=": a == b, "!=": a != b,
         "<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b,
     }[op]
 
 
-def _eval(node: Any, entry: dict[str, Any]) -> bool:
+def _eval(node: Any, entry: dict[str, Any], scalar_defaults: bool) -> bool:
     kind = node[0]
     if kind == "true":
         return True
     if kind == "and":
-        return all(_eval(n, entry) for n in node[1])
+        return all(_eval(n, entry, scalar_defaults) for n in node[1])
     if kind == "or":
-        return any(_eval(n, entry) for n in node[1])
+        return any(_eval(n, entry, scalar_defaults) for n in node[1])
     if kind == "not":
-        return not _eval(node[1], entry)
+        return not _eval(node[1], entry, scalar_defaults)
     _, field, op, values = node
-    actual = _field(entry, field)
+    actual = _field(entry, field, scalar_defaults)
     return any(_compare(field, actual, op, v) for v in values)
 
 
-def matches(filter_text: str, entry: dict[str, Any]) -> bool:
-    return _eval(_Parser(filter_text).parse(), entry)
+def matches(filter_text: str, entry: dict[str, Any], scalar_defaults: bool = False) -> bool:
+    return _eval(_Parser(filter_text).parse(), entry, scalar_defaults)
+
+
+def matches_either_way(filter_text: str, entry: dict[str, Any]) -> bool:
+    return matches(filter_text, entry) or matches(filter_text, entry, scalar_defaults=True)
 
 
 # --- Log entries shaped like the real ones ----------------------------------
@@ -260,8 +283,14 @@ AID = "gwa-" + "0" * 32
 SETTLE = (f"{GW}settle timing authorization_id={AID} success=True origin=typed total_ms=41.2 auth_ms=3.1 "
           "enqueue_ms=0.0 finalize_ms=30.4 mark_ms=1.2 commit_path=one_commit one_commit_ms=29.9 boot_auth=absent")
 FINALIZE = f"INFO trusted_router.storage_gcp typed finalize timing authorization_id={AID} spanner_ms=28.1 index_ms=0.0 attempts=1"
+# The speculation timing line is logged in a finally block with its fallback
+# fields still at their initial values when the transaction raises
+# (storage_gcp_authorize.py), so a FailedPrecondition or a DeadlineExceeded
+# logs exactly the routine form; none of them may be sampled.
 SPECULATION = ("INFO trusted_router.storage_gcp_authorize typed finalize speculation timing eligible_attempts=1 "
                "attempts=1 fallback_reason=none rollback_ms=0.0 remaining_ms=19000.0 fallback_outcome=not_attempted")
+SPECULATION_FAILED_PRECONDITION = SPECULATION.replace("remaining_ms=19000.0", "remaining_ms=18950.4")
+SPECULATION_DEADLINE_EXCEEDED = SPECULATION.replace("remaining_ms=19000.0", "remaining_ms=0.0")
 KEY_SOURCE = f"{GW}gateway.idempotency_key_source source=gateway declared=gateway image_digest=sha256:{'a' * 64}"
 
 # What each new exclusion is meant to sample, so the evaluator is shown to
@@ -286,9 +315,12 @@ SAMPLED = {
     ],
     "sample_control_plane_routine_lines": [
         run_line(SETTLE),
+        run_line(SETTLE.replace("total_ms=41.2", "total_ms=12.3")),
+        run_line(SETTLE.replace("total_ms=41.2", "total_ms=999.9")),
         run_line(SETTLE.replace("boot_auth=absent", "boot_auth=verified")),
+        {**run_line(SETTLE), "severity": "INFO"},
         run_line(FINALIZE),
-        run_line(SPECULATION),
+        run_line(FINALIZE.replace("spanner_ms=28.1 index_ms=0.0", "spanner_ms=999.9 index_ms=999.9")),
         run_line(f"{GW}gateway.authorize_affinity affinity=cold region=us-east4"),
         run_line(f"{GW}gateway.authorize_affinity affinity=warm_same region=us-central1"),
         run_line(KEY_SOURCE),
@@ -341,6 +373,9 @@ KEPT = {
         run_line(SETTLE, service="trusted-router-settle-drain"),
         run_line(FINALIZE.replace("attempts=1", "attempts=2")),
         run_line(FINALIZE.replace("attempts=1", "attempts=12")),
+        run_line(SPECULATION),
+        run_line(SPECULATION_FAILED_PRECONDITION),
+        run_line(SPECULATION_DEADLINE_EXCEEDED),
         run_line(SPECULATION.replace("fallback_reason=none", "fallback_reason=aborted")),
         run_line(SPECULATION.replace("fallback_outcome=not_attempted", "fallback_outcome=committed")),
         run_line(KEY_SOURCE.replace("source=gateway", "source=legacy")),
@@ -349,6 +384,16 @@ KEPT = {
                  "reason=boot_unverified image_digest=- request_id=r"),
         run_line(f"{GW}fastpath pilot passed over reason=stream.hold workspace_id=ws_x"),
         run_line(f"{GW}fastpath pilot passed over reason=stream.stage_d:stage_d_disabled workspace_id=ws_x"),
+    ],
+    # A settle or finalize of 1 s or more is kept whole, whatever its other fields.
+    "slow timing lines": [
+        run_line(SETTLE.replace("total_ms=41.2", "total_ms=20001.2")),
+        run_line(SETTLE.replace("total_ms=41.2", "total_ms=1000.0")),
+        run_line(SETTLE.replace("total_ms=41.2", "total_ms=1234.5")),
+        run_line(FINALIZE.replace("spanner_ms=28.1", "spanner_ms=20001.1")),
+        run_line(FINALIZE.replace("spanner_ms=28.1", "spanner_ms=1000.0")),
+        run_line(FINALIZE.replace("index_ms=0.0", "index_ms=1500.0")),
+        run_line(FINALIZE.replace("spanner_ms=28.1", "spanner_ms=-0.3")),
     ],
     "lines a metric, alert, gate, script or runbook reads": [
         run_line(f"INFO trusted_router.fastpath fastpath pilot terminal won authorization_id={AID} "
@@ -386,19 +431,109 @@ def test_every_exclusion_has_lines_it_samples() -> None:
 @pytest.mark.parametrize("entry", KEPT_ENTRIES)
 def test_no_exclusion_matches_a_failure_or_a_line_something_reads(entry: dict[str, Any]) -> None:
     for name in EXCLUSIONS:
-        assert not matches(_filter(name), entry), name
+        assert not matches_either_way(_filter(name), entry), name
+
+
+NEW_EXCLUSIONS = (
+    "sample_edge_lb_request_successes",
+    "sample_tdx_quote_events",
+    "sample_control_plane_access_successes",
+    "sample_control_plane_routine_lines",
+)
+HIGH_SEVERITY = [
+    pytest.param({**entry, "severity": severity}, id=f"{name}-{i}-{severity}")
+    for name in NEW_EXCLUSIONS
+    for i, entry in enumerate(SAMPLED[name])
+    for severity in ("WARNING", "ERROR", "CRITICAL")
+]
+
+
+@pytest.mark.parametrize("entry", HIGH_SEVERITY)
+def test_no_exclusion_matches_an_otherwise_sampled_entry_at_warning_or_above(entry: dict[str, Any]) -> None:
+    for name in EXCLUSIONS:
+        assert not matches_either_way(_filter(name), entry), name
+
+
+def test_the_new_exclusions_still_match_default_info_and_notice() -> None:
+    for name in ("sample_edge_lb_request_successes", "sample_control_plane_access_successes",
+                 "sample_control_plane_routine_lines"):
+        entry = SAMPLED[name][0]
+        for severity in (None, "DEFAULT", "INFO", "NOTICE"):
+            assert matches(_filter(name), {**entry, "severity": severity}), (name, severity)
+
+
+def test_the_duration_bounds_keep_one_second_and_more() -> None:
+    f = _filter("sample_control_plane_routine_lines")
+    settle = re.search(r'textPayload=~"( total_ms=[^"]+)"', f)
+    finalize = re.search(r'textPayload=~"( spanner_ms=[^"]+)"', f)
+    assert settle and finalize
+    # RE2 and Python agree on these patterns: no backslashes, classes only.
+    assert "\\" not in settle.group(1) + finalize.group(1)
+    assert re.search(settle.group(1), " total_ms=12.3 ")
+    assert re.search(settle.group(1), " total_ms=999.9 ")
+    assert not re.search(settle.group(1), " total_ms=20001.2 ")
+    assert not re.search(settle.group(1), " total_ms=1000.0 ")
+    assert re.search(finalize.group(1), " spanner_ms=12.3 index_ms=0.0 attempts=1")
+    assert not re.search(finalize.group(1), " spanner_ms=20001.1 index_ms=0.0 attempts=1")
+    assert not re.search(finalize.group(1), " spanner_ms=12.3 index_ms=1500.0 attempts=1")
+    assert not re.search(finalize.group(1), " spanner_ms=12.3 index_ms=0.0 attempts=12")
 
 
 def test_the_check_fails_a_filter_that_would_sample_failures() -> None:
-    # The edge filter without its status and latency guards samples a 504:
-    # the parametrized test above would fail on it.
-    loose = re.sub(r"\n\s*AND httpRequest\.(status|latency)<[^\n]+", "", _filter("sample_edge_lb_request_successes"))
-    assert loose != _filter("sample_edge_lb_request_successes")
-    assert matches(loose, lb(504, "8.004314s"))
-    loose = _filter("sample_control_plane_routine_lines").replace('AND textPayload:" success=True "', "")
+    # Each guard removed in turn lets a kept entry match: the tests above
+    # would fail on the loosened filter.
+    edge = _filter("sample_edge_lb_request_successes")
+    loose = re.sub(r"\n\s*AND httpRequest\.(status|latency)<[^\n]+", "", edge)
+    assert loose != edge
+    # At INFO, so only the status and latency guards stand between it and the sample.
+    assert matches(loose, {**lb(504, "8.004314s"), "severity": "INFO"})
+    assert not matches(edge, {**lb(504, "8.004314s"), "severity": "INFO"})
+    loose = edge.replace("AND severity<WARNING", "")
+    assert matches(loose, {**lb(200, "0.183s"), "severity": "ERROR"})
+    routine = _filter("sample_control_plane_routine_lines")
+    loose = routine.replace('AND textPayload:" success=True "', "")
     assert matches(loose, run_line(SETTLE.replace("success=True", "success=False")))
+    loose = re.sub(r'\n\s*AND textPayload=~" total_ms=[^\n]+', "", routine)
+    assert loose != routine
+    assert matches(loose, run_line(SETTLE.replace("total_ms=41.2", "total_ms=20001.2")))
+    loose = routine.replace("AND severity<WARNING", "")
+    assert matches(loose, {**run_line(SETTLE), "severity": "WARNING"})
     loose = _filter("sample_control_plane_access_successes").replace("[23][0-9][0-9]", "[0-9]+")
     assert matches(loose, access("503 Service Unavailable"))
+
+
+# --- The evaluator follows Cloud Logging's rules -------------------------------
+
+def test_evaluator_precedence_is_not_then_or_then_and() -> None:
+    entry = {"a": "1", "c": "1"}  # a true, b false, c true
+    # a AND (b OR c), not (a AND b) OR c
+    assert matches('a="1" AND b="1" OR c="1"', entry)
+    assert not matches('a="0" AND b="1" OR c="1"', entry)
+    # NOT binds tighter than OR: (NOT a) OR c
+    assert matches('NOT a="1" OR c="1"', entry)
+    assert not matches('NOT a="1" OR b="1"', entry)
+
+
+def test_evaluator_joins_adjacent_terms_with_and() -> None:
+    entry = {"a": "1", "b": "2"}
+    assert matches('a="1" b="2"', entry)
+    assert not matches('a="1" b="3"', entry)
+    assert matches('a="1" b="3" OR b="2"', entry)
+
+
+def test_evaluator_absent_fields_and_defaults() -> None:
+    entry = {"httpRequest": {"latency": "0.1s"}}
+    assert not matches("httpRequest.status<400", entry)
+    assert matches("NOT httpRequest.status<400", entry)
+    assert not matches("jsonPayload.x:*", entry)
+    assert matches("NOT jsonPayload.x:*", entry)
+    # The proto default reading of a scalar inside a present message.
+    assert matches("httpRequest.status<400", entry, scalar_defaults=True)
+    # severity defaults to DEFAULT and always exists.
+    assert matches("severity:*", entry)
+    assert matches("severity=DEFAULT", entry)
+    assert matches("severity<WARNING", entry)
+    assert not matches("severity>=WARNING", entry)
 
 
 def _gateway_reliability_metrics() -> dict[str, str]:
@@ -485,6 +620,7 @@ def test_every_exclusion_samples_rather_than_drops() -> None:
 def test_edge_balancer_sampling_is_scoped_to_the_edge_and_keeps_failures() -> None:
     f = _filter("sample_edge_lb_request_successes")
     assert 'resource.labels.backend_service_name="tr-fastpath-edge-backend"' in f
+    assert "AND severity<WARNING" in f
     assert "httpRequest.status<400" in f
     # 1 s, the edge's budget in docs/runbooks/fastpath-alerts.md (edge_decide_pass_slow).
     assert 'httpRequest.latency<"1s"' in f
@@ -511,6 +647,7 @@ def test_tdx_quote_sampling_keeps_every_boot_report() -> None:
 def test_access_line_sampling_keeps_only_2xx_and_3xx() -> None:
     f = _filter("sample_control_plane_access_successes")
     assert "run.googleapis.com%2Fstdout" in f
+    assert "AND severity<WARNING" in f
     assert re.search(r'textPayload=~"\^INFO: .* \[23\]\[0-9\]\[0-9\] "', f)
     assert "sample(insertId, 0.9)" in f
 
@@ -518,11 +655,15 @@ def test_access_line_sampling_keeps_only_2xx_and_3xx() -> None:
 def test_routine_line_sampling_names_only_info_lines_and_their_success_forms() -> None:
     f = _filter("sample_control_plane_routine_lines")
     assert 'resource.labels.service_name="trusted-router"' in f
+    assert "AND severity<WARNING" in f
     prefixes = re.findall(r'textPayload:"((?:INFO|WARNING|ERROR) [^"]+)"', f)
     assert prefixes and all(p.startswith("INFO trusted_router.") for p in prefixes)
-    for guard in ('" success=True "', '" commit_path=one_commit "', '" attempts=1$"',
-                  '" fallback_outcome=not_attempted"', "source=gateway declared=gateway ", "reason=key_cap "):
+    for guard in ('" success=True "', '" total_ms=[0-9]{1,3}[.][0-9] "', '" commit_path=one_commit "',
+                  '" spanner_ms=[0-9]{1,3}[.][0-9] index_ms=[0-9]{1,3}[.][0-9] attempts=1$"',
+                  "source=gateway declared=gateway ", "reason=key_cap "):
         assert guard in f, guard
+    # Its routine form is also the form it logs when the transaction raises.
+    assert "speculation" not in f
     for read_elsewhere in ("billing.", "metric=", "fastpath.", "client_observed", "terminal won", "verdict compared"):
         assert read_elsewhere not in f, read_elsewhere
     assert "sample(insertId, 0.9)" in f

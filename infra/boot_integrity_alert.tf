@@ -6,21 +6,21 @@
 # earlyBootReportEvent and a lateBootReportEvent to the
 # compute.googleapis.com/shielded_vm_integrity log, each with
 # policyEvaluationPassed. Nothing read them before this policy: no alert or
-# log metric named the log. In the 30 days to 2026-11-23 there were 751
-# boots and every report passed; the filter below matched none of them.
-# infra/logging_sampling.tf samples the log's per-quote TDX events and keeps
-# every boot report, so this policy sees all of them.
+# log metric named the log. Over the month before it was added every report
+# passed, and the filter below matched none of them while matching every
+# passing report once inverted. infra/logging_sampling.tf samples the log's
+# per-quote TDX events and keeps every boot report, so this policy sees all
+# of them.
 #
 # A report that failed, or carries no result, pages. A known change to an
-# instance's boot (a kernel or image update on a fast path or ClickHouse
-# node) fails the late boot report until the policy is learned again:
+# instance's boot (a new kernel or image on a fast path or ClickHouse node)
+# fails the late boot report until the instance relearns its policy; the
+# command is in the documentation below.
 #
-#   gcloud compute instances update INSTANCE --zone=ZONE \
-#     --shielded-learn-integrity-policy
-#
-# An enclave instance is replaced, not updated, so its new instance learns
-# its own policy at first boot and a failure there is never expected.
-# Anything unexplained is a changed boot chain on a production host.
+# An enclave instance is replaced, never changed in place, so its new
+# instance learns its own policy at first boot and a failure there is never
+# expected. Anything unexplained is a changed boot chain on a production
+# host.
 resource "google_monitoring_alert_policy" "boot_integrity_failed" {
   project      = local.gcp_project_id
   display_name = "TR Security: a VM boot did not pass its Shielded VM integrity policy"
