@@ -2,7 +2,10 @@ name: setup-uv
 description: >-
   Install a pinned uv release, verified against a SHA-256 checksum recorded
   here. Replaces astral-sh/setup-uv: no third-party action code runs, and the
-  uv binary is the official release tarball. There is no cache; uv sync
+  uv binary is the official release tarball, fetched from the GitHub release
+  (authenticated with the workflow token) or, if GitHub refuses it, from
+  Astral's own mirror of the same release assets. Whichever source serves it,
+  the archive must match the pinned checksum. There is no cache; uv sync
   downloads wheels from PyPI.
 inputs:
   version:
@@ -11,6 +14,13 @@ inputs:
   python-version:
     description: Exported as UV_PYTHON when set, as astral-sh/setup-uv did.
     default: ""
+  github-token:
+    description: >-
+      Sent only to github.com for the release download, so it counts against
+      the workflow's own limit rather than the runner IP's anonymous one.
+      curl does not forward it on the redirect to the asset host or to the
+      mirror. Needs no permissions.
+    default: ${{ github.token }}
 outputs:
   uv-version:
     description: The installed uv version.
@@ -23,6 +33,7 @@ runs:
       env:
         UV_VERSION: ${{ inputs.version }}
         UV_PYTHON_INPUT: ${{ inputs.python-version }}
+        GITHUB_DOWNLOAD_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
         case "$(uname -m)" in
@@ -40,8 +51,35 @@ runs:
         esac
         dest="${RUNNER_TEMP}/setup-uv/${UV_VERSION}"
         archive="${RUNNER_TEMP}/uv-${UV_VERSION}-${target}.tar.gz"
-        curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$archive" \
-          "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz"
+        asset="${UV_VERSION}/uv-${target}.tar.gz"
+        # The GitHub release first, then Astral's mirror of it (the host its
+        # own installer downloads from). On 2026-11-23 github.com answered
+        # 403 to every retry for ~30 s; one source's outage must not fail
+        # the job. Each source is tried with its own retries, and an archive
+        # is used only if it matches the pinned checksum.
+        fetch() {
+          local source="$1" url="$2" status
+          local -a auth=()
+          if [ "$source" = github ] && [ -n "${GITHUB_DOWNLOAD_TOKEN:-}" ]; then
+            auth=(-H "Authorization: Bearer ${GITHUB_DOWNLOAD_TOKEN}")
+          fi
+          rm -f "$archive"
+          if ! status="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 \
+              --max-time 120 -w '%{http_code}' "${auth[@]}" -o "$archive" "$url")"; then
+            echo "::warning::setup-uv: ${source} download failed (last HTTP status ${status:-none})"
+            return 1
+          fi
+          if ! echo "${sha256}  ${archive}" | sha256sum --check --strict --status -; then
+            echo "::warning::setup-uv: ${source} served an archive that does not match the pinned checksum; discarded"
+            rm -f "$archive"
+            return 1
+          fi
+          echo "Downloaded uv ${UV_VERSION} (${target}) from ${source}; checksum verified"
+        }
+        fetch github "https://github.com/astral-sh/uv/releases/download/${asset}" \
+          || fetch astral-mirror "https://releases.astral.sh/github/uv/releases/download/${asset}" \
+          || { echo "::error::setup-uv: no source served uv ${UV_VERSION} (${target}) matching the pinned checksum"; exit 1; }
+        # Verified again where it is unpacked, so no path reaches tar unchecked.
         echo "${sha256}  ${archive}" | sha256sum --check --strict -
         mkdir -p "$dest"
         tar -xzf "$archive" -C "$dest" --strip-components=1
