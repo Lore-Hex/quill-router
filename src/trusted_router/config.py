@@ -735,6 +735,10 @@ class Settings(BaseSettings):
     rate_limit_ip_per_window: int = 240
     rate_limit_key_per_window: int = 1200
     rate_limit_internal_per_window: int = 6000
+    # GET /status.json's own source bucket (middleware.STATUS_DOCUMENT_PATH).
+    # Its readers are the fleet's peer monitors, a few fetches a minute per
+    # cloud, and status-page viewers; the response is cached.
+    rate_limit_status_document_per_window: int = 240
     # A contended Spanner authorize can occupy a worker for the full RPC
     # budget. Keep one API key from filling every worker in a service instance
     # while still allowing ordinary low-latency traffic to scale horizontally.
@@ -2163,6 +2167,10 @@ class Settings(BaseSettings):
             ("TR_RATE_LIMIT_IP_PER_WINDOW", self.rate_limit_ip_per_window),
             ("TR_RATE_LIMIT_KEY_PER_WINDOW", self.rate_limit_key_per_window),
             ("TR_RATE_LIMIT_INTERNAL_PER_WINDOW", self.rate_limit_internal_per_window),
+            (
+                "TR_RATE_LIMIT_STATUS_DOCUMENT_PER_WINDOW",
+                self.rate_limit_status_document_per_window,
+            ),
             (
                 "TR_GATEWAY_AUTHORIZE_MAX_IN_FLIGHT_PER_KEY",
                 self.gateway_authorize_max_in_flight_per_key,
