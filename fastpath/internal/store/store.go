@@ -85,6 +85,9 @@ type Store struct {
 	// armChecked, nil but in a test, is called in Arm's transaction once
 	// its check has read the tables (hold.go).
 	armChecked func()
+	// markStateRead, nil but in a test, is called once MarkPackDone has
+	// read a lease that is not closed, before its transaction (close.go).
+	markStateRead func()
 }
 
 // New returns a store of the database client reads and writes.

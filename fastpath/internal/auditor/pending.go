@@ -93,7 +93,9 @@ const DefaultDropEvery = time.Minute
 // between a mark and its drop, goes once its lease retires, at a sweep at
 // most DropEvery later. Every write is idempotent on its authorization, and an outcome
 // published twice is the same message, so members that sweep at once, or a
-// sweep after a crash, do no harm. Packs share no winner, so a sweep works
+// sweep after a crash, do no harm; members that mark one lease's packs at
+// once queue for the lease's locks in Spanner rather than abort one another
+// (store.MarkPackDone). Packs share no winner, so a sweep works
 // several leases' packs at once (Workers); a lease's own packs it works one
 // at a time, in commit order, as one sweep did all of them.
 //
