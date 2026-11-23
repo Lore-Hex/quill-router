@@ -2581,11 +2581,11 @@
 
 /* /best-llm-router: the /pricing reading column (plain rules, no cards)
    for a gateway comparison table, a copy-and-code split, three route
-   notes and a short checklist. */
+   notes and a short checklist. Full content width, so the column lines
+   up with the page header above it. */
 :root[data-brand="nyte"] .router-guide-page .guide-section {
   width: 100%;
-  max-width: 1040px;
-  margin: 0 auto;
+  margin: 0;
   padding: 72px 0 0;
 }
 :root[data-brand="nyte"] .router-guide-page .guide-section:last-of-type { padding-bottom: 72px; }
