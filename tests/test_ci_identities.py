@@ -23,6 +23,7 @@ from tests.test_spanner_schema_audit_workflow import _gcp_wif_identities
 ROOT = Path(__file__).resolve().parents[1]
 GCP_WIF = ROOT / "infra/gcp_wif.tf"
 CI_IDENTITIES = ROOT / "infra/ci_identities.tf"
+GATEWAY_ROLLOUT_ROLE = ROOT / "infra/aws_gateway_rollout_role.tf"
 REFRESH_WORKFLOW = ROOT / ".github/workflows/refresh-prices.yml"
 # The attribute condition with every list of workflow refs emptied. Apart from
 # the lists, this one string is everything that decides who may exchange a
@@ -444,3 +445,71 @@ def test_owner_only_resources_are_exactly_what_the_targeted_apply_creates() -> N
     assert all(kind.endswith("_iam_member") or kind == "google_project_iam_custom_role" for kind in iam), iam
     code = "\n".join(line for line in identities.splitlines() if not line.lstrip().startswith("#"))
     assert not re.search(r'"roles/(viewer|editor|owner)"', code)
+
+
+def test_gateway_rollout_role_owner_apply_reaches_everything_ci_cannot() -> None:
+    """infra-apply's AWS role cannot make an IAM role, and its plan cannot even
+    refresh one that its own policy does not list. The one command in the
+    role file's header must therefore reach the role, its inline policy and
+    the deploy role's policy that carries the read; a target left out fails
+    the merge's plan after the owner apply, not before it."""
+    rollout = GATEWAY_ROLLOUT_ROLE.read_text()
+    resources = set(re.findall(r'^resource "(\w+)" "(\w+)"', rollout, re.MULTILINE))
+    assert resources == {
+        ("aws_iam_role", "trustedrouter_github_gateway_rollout"),
+        ("aws_iam_role_policy", "trustedrouter_github_gateway_rollout"),
+    }
+    header = rollout[: rollout.index("\nlocals {")]
+    assert all(line.startswith("#") for line in header.splitlines())
+    targets = re.findall(r"-target=(\w+)\.(\w+)", header)
+    assert sorted(targets) == sorted([*resources, ("aws_iam_role_policy", "tr_eu_role_writes")])
+    assert len(targets) == len(set(targets))
+
+    deploy = (ROOT / "infra/aws_deploy_role.tf").read_text()
+    policy = deploy[deploy.index('resource "aws_iam_role_policy" "tr_eu_role_writes"') :]
+    read = policy[policy.index('Sid    = "ReadGitHubOidcRoles"') :].split("\n      },\n", 1)[0]
+    assert re.findall(r'"(iam:\w+)"', read) == [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+    ]
+    assert '"arn:aws:iam::${local.aws_account_id}:role/trustedrouter-github-gateway-rollout"' in read
+
+
+def test_gateway_rollout_role_is_assumable_by_its_one_workflow_only() -> None:
+    rollout = GATEWAY_ROLLOUT_ROLE.read_text()
+    ref = '"${local.github_owner}/quill-cloud-proxy/.github/workflows/rollout-aws-gateway.yml@refs/heads/main"'
+    assert f"gateway_rollout_workflow_ref = {ref}" in rollout
+    trust = rollout[rollout.index("assume_role_policy = jsonencode(") :].split("\n  })\n", 1)[0]
+    assert trust.count("Effect") == 1 and "StringLike" not in trust and "*" not in trust
+    assert 'Action    = "sts:AssumeRoleWithWebIdentity"' in trust
+    assert (
+        'StringEquals = merge(local.github_oidc_trust_conditions["quill-cloud-proxy"], {\n'
+        '          "token.actions.githubusercontent.com:job_workflow_ref" = local.gateway_rollout_workflow_ref\n'
+        "        })"
+    ) in trust
+    # The same workflow is the only AWS gateway entry the Google provider admits.
+    deploy_tier = wif_tiers.tier_refs(ROOT)["quill-cloud-proxy"]["deploy"]
+    assert [entry for entry in deploy_tier if "rollout-aws-gateway" in entry] == [ref.strip('"')]
+
+
+def test_gateway_rollout_role_has_no_key_secret_or_identity_write() -> None:
+    """The statements that would let the rollout admit its own measurement,
+    read a bundle or widen itself are absent, and the session data channel is
+    bound to sessions the same principal started."""
+    rollout = GATEWAY_ROLLOUT_ROLE.read_text()
+    code = "\n".join(line for line in rollout.splitlines() if not line.lstrip().startswith("#"))
+    policy = code.split("\n  policy = jsonencode(", 1)[1]
+    lists = re.findall(r"^\s+Action\s*=\s*\[(.*?)\]", policy, re.MULTILINE | re.DOTALL)
+    assert len(lists) == policy.count("Effect ") == policy.count("Sid ")
+    actions = {action for body in lists for action in re.findall(r'"([^"]+)"', body)}
+    assert {action for action in actions if action.startswith("kms:")} == {"kms:DescribeKey", "kms:GetKeyPolicy"}
+    assert {action for action in actions if action.startswith("iam:")} == {"iam:PassRole", "iam:GetInstanceProfile"}
+    assert not {action for action in actions if action.startswith(("secretsmanager:", "route53:", "sts:"))}
+    assert not {action for action in actions if "*" in action}
+    assert "autoscaling:UpdateAutoScalingGroup" not in actions and "ec2:ModifyLaunchTemplate" not in actions
+    channel = code[code.index('Sid      = "OpenOwnSessionDataChannel"') :].split("\n      },\n", 1)[0]
+    assert 'Action   = ["ssmmessages:OpenDataChannel"]' in channel
+    assert ':session/*"]' in channel
+    assert 'StringEquals = { "ssm:resourceTag/aws:ssmmessages:session-id" = "$${aws:userid}" }' in channel

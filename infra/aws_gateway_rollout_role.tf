@@ -6,21 +6,34 @@
 # token's job_workflow_ref (AWS STS validates these GitHub claims). Every
 # other workflow in the repository, including publish-aws-eif.yml, is refused.
 #
-# Least privilege, by runbook step. What it deliberately CANNOT do:
-#   * write any KMS key policy or grant. Admission to the recipient-only keys
-#     is the key administrator's reviewed tools/aws-secrets Terraform apply;
-#     the workflow waits for it and only reads the two policies.
-#   * read any secret value, write IAM, DNS, a target group, an ASG's
-#     configuration or a launch template's default version.
-#   * launch from any launch template but the two quill-enclave-lt templates,
-#     or terminate any instance but its own quill-release-candidate hosts.
+# Scoped by runbook step. What its API permissions deliberately leave out:
+#   * any KMS write or cryptographic operation. Admission to the
+#     recipient-only keys is the key administrator's reviewed
+#     tools/aws-secrets Terraform apply; the workflow waits for it and only
+#     reads the two key policies. Those keys delegate nothing to IAM, so the
+#     read works only because their key policy names this role (the
+#     RolloutReadsPolicy statement in that module); the statement below
+#     alone would not.
+#   * Secrets Manager, IAM writes, DNS, target groups, UpdateAutoScalingGroup
+#     and ModifyLaunchTemplate (a template's default version never moves).
+#   * terminating any instance but its own quill-release-candidate hosts, and
+#     starting an instance without one of the two quill-enclave-lt templates.
 #
-# tr-router-github-deploy (infra-apply) cannot create IAM roles, so an owner
-# applies this file's two resources from the branch before it merges:
+# What that does not make it: harmless. It writes numbered template versions
+# and starts instance refreshes for hosts that carry quill-enclave-role, and
+# it registers task definitions for the two API services. Whoever can run the
+# workflow on main can therefore change what the gateway fleet runs, which is
+# the workflow's purpose; the attested keys still release only to a published
+# measurement.
+#
+# tr-router-github-deploy (infra-apply) cannot make IAM roles, and its plan
+# cannot refresh this role until its own policy lists it. So an owner applies
+# three resources from the branch before it merges:
 #
 #   terraform -chdir=infra apply \
 #     -target=aws_iam_role.trustedrouter_github_gateway_rollout \
-#     -target=aws_iam_role_policy.trustedrouter_github_gateway_rollout
+#     -target=aws_iam_role_policy.trustedrouter_github_gateway_rollout \
+#     -target=aws_iam_role_policy.tr_eu_role_writes
 #
 # infra-apply then plans no change for them. The same owner apply is needed
 # for any later change to this role or its policy (the deploy role may only
@@ -99,7 +112,7 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
       },
       {
         # The signed CI-built EIF and its manifest (publish-aws-eif.yml writes
-        # them create-only; this role never writes).
+        # each object once; this role never writes).
         Sid      = "ReadPublishedEif"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
@@ -132,8 +145,9 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
         Resource = local.gateway_launch_templates
       },
       {
-        # The standalone candidate, and the ASG's launch validation, from the
-        # two quill-enclave templates only.
+        # The standalone candidate, and the ASG's launch validation: only with
+        # one of the two quill-enclave templates. A request may still override
+        # template fields; the instance profile is held by PassEnclaveHostRole.
         Sid    = "LaunchFromGatewayTemplates"
         Effect = "Allow"
         Action = ["ec2:RunInstances"]
@@ -199,7 +213,9 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
         "arn:aws:autoscaling:${region}:${local.aws_account_id}:autoScalingGroup:*:autoScalingGroupName/quill-enclave-asg"]
       },
       {
-        # Port forwarding to 8444 on enclave hosts and candidates, nothing else.
+        # Port forwarding sessions to enclave hosts and candidates, with the
+        # port-forwarding document only (no shell document). The tools forward
+        # to 8444; IAM cannot bind the document's port parameter.
         Sid      = "ForwardToEnclaveHosts"
         Effect   = "Allow"
         Action   = ["ssm:StartSession"]
@@ -215,8 +231,20 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
         Resource = [for region in local.gateway_rollout_regions : "arn:aws:ssm:${region}::document/AWS-StartPortForwardingSession"]
       },
       {
+        # The session's data channel, which the Session Manager plugin signs
+        # since 1.2.764.0: only for sessions this same principal started.
+        Sid      = "OpenOwnSessionDataChannel"
+        Effect   = "Allow"
+        Action   = ["ssmmessages:OpenDataChannel"]
+        Resource = [for region in local.gateway_rollout_regions : "arn:aws:ssm:${region}:${local.aws_account_id}:session/*"]
+        Condition = {
+          StringEquals = { "ssm:resourceTag/aws:ssmmessages:session-id" = "$${aws:userid}" }
+        }
+      },
+      {
         # aws_kms_admission.check_keys: both recipient-only policies must equal
-        # the published set. Read-only; no Put, no grant, no crypto operation.
+        # the published set. Two reads and nothing else. Effective only with
+        # the matching statement in the keys' own policy (see the header).
         Sid      = "ReadAttestedKeyPolicies"
         Effect   = "Allow"
         Action   = ["kms:DescribeKey", "kms:GetKeyPolicy"]
@@ -240,10 +268,27 @@ resource "aws_iam_role_policy" "trustedrouter_github_gateway_rollout" {
       {
         Sid      = "RegisterControlPlaneTaskDefinitions"
         Effect   = "Allow"
-        Action   = ["ecs:RegisterTaskDefinition", "ecs:TagResource"]
+        Action   = ["ecs:RegisterTaskDefinition"]
         Resource = "*"
         Condition = {
           StringEquals = { "aws:RequestedRegion" = local.gateway_rollout_regions }
+        }
+      },
+      {
+        # A re-registered definition keeps its predecessor's tags: read them,
+        # and set them only as part of the registration itself.
+        Sid      = "ReadTaskDefinitionTags"
+        Effect   = "Allow"
+        Action   = ["ecs:ListTagsForResource"]
+        Resource = [for region in local.gateway_rollout_regions : "arn:aws:ecs:${region}:${local.aws_account_id}:task-definition/*"]
+      },
+      {
+        Sid      = "TagTaskDefinitionAtRegistrationOnly"
+        Effect   = "Allow"
+        Action   = ["ecs:TagResource"]
+        Resource = [for region in local.gateway_rollout_regions : "arn:aws:ecs:${region}:${local.aws_account_id}:task-definition/*"]
+        Condition = {
+          StringEquals = { "ecs:CreateAction" = "RegisterTaskDefinition" }
         }
       },
       {
