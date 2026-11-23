@@ -646,7 +646,7 @@
       "status": 1,
       "id": "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
       "upstream_id": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
-      "retirement_at": "2026-12-11T00:00:00Z",
+      "retirement_at": "2026-11-23T00:39:00Z",
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 1000000,

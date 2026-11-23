@@ -151,6 +151,13 @@ NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 # https://docs.nscale.com/docs/ai-services/models (read 2026-11-16): "These
 # changes take effect on 11 December 2026", date only, so 00:00 UTC as above.
 NSCALE_DECEMBER_2026_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
+# Mistral Large 3 was due to leave Nscale serverless with the two above, but
+# Nscale began refusing it early: from 2026-11-23 00:39 UTC TR's serverless
+# key got HTTP 401 "Invalid or expired token" for this model alone (three
+# consecutive refusals) while GLM 5.3 and Qwen3.8-27B kept serving on the same
+# key. The public page (read 2026-11-23) still says 11 December, so stop at
+# the first observed refusal rather than wait for it.
+NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT = datetime(2026, 11, 23, 0, 39, tzinfo=UTC)
 # Enforcement starts at the public-doc observation; the exact earlier
 # Scaleway end-of-life dates are not recorded in this repository.
 SCALEWAY_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 7, 0, 0, tzinfo=UTC)
@@ -462,20 +469,28 @@ _RETIREMENTS = (
     # "Retired from serverless" and Mistral-Large-3-675B-Instruct-2512-NVFP4
     # "Moves to dedicated models". Every Nscale route here is serverless, so
     # all three stop. No specific replacement is named, and none is
-    # substituted; GLM 5.3 and Qwen3.8-27B remain.
+    # substituted; GLM 5.3 and Qwen3.8-27B remain. Mistral Large 3 stopped
+    # early and has its own entry below.
     _Retirement(
         provider="nscale",
         model_ids=frozenset({
             "qwen/qwen3.8-flash-next-fp8",
             "qwen/qwen3-embedding-8b",
-            "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
         }),
         upstream_ids=frozenset({
             "Qwen/Qwen3.8-Flash-Next-FP8",
             "Qwen/Qwen3-Embedding-8B",
-            "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
         }),
         effective_at=NSCALE_DECEMBER_2026_RETIREMENT_AT,
+    ),
+    # Mistral Large 3 "Moves to dedicated models" on the same page, but Nscale
+    # refused it on serverless ahead of 11 December (evidence at the constant).
+    # Only Nscale's route retires; no replacement is named or substituted.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({"mistralai/mistral-large-3-675b-instruct-2512-nvfp4"}),
+        upstream_ids=frozenset({"mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4"}),
+        effective_at=NSCALE_MISTRAL_LARGE_3_RETIREMENT_AT,
     ),
     _Retirement(
         provider="streamlake",
