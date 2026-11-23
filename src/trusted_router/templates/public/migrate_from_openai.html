@@ -119,9 +119,11 @@ const response = await client.chat.completions.create({
       <div class="code-head"><span>Python</span></div>
       <pre><code>response = client.chat.completions.create(
     model="gpt-5.4-mini",
-    messages=[{"role": "user", "content": "Say hello"}],
-    extra_body={"models": ["gpt-5.4-mini",
-                           "anthropic/claude-haiku-4.5"]},
+    messages=messages,
+    extra_body={"models": [
+        "gpt-5.4-mini",
+        "anthropic/claude-haiku-4.5",
+    ]},
 )</code></pre>
     </div>
   </div>
@@ -135,7 +137,9 @@ const response = await client.chat.completions.create({
     </div>
     <div class="copy-terminal">
       <div class="code-head"><span>Python</span></div>
-      <pre><code>extra_body={"provider": {"min_privacy": "zdr"}}</code></pre>
+      <pre><code>extra_body={
+    "provider": {"min_privacy": "zdr"},
+}</code></pre>
     </div>
   </div>
 </section>

@@ -2691,7 +2691,6 @@ html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inac
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 62ch;
   margin: 0;
   padding: 24px 0 0 24px;
   border-top: 1.5px solid var(--nyte-ink, #151311);
@@ -2699,7 +2698,21 @@ html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inac
   line-height: 1.6;
   font-weight: 450;
 }
+:root[data-brand="nyte"] .migrate-openai-page .mig-checklist li { max-width: 62ch; }
 :root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-next { margin: 40px 0 0; }
+
+/* Below laptop width the code is too wide to sit beside other content:
+   Before stacks over After, and each code sample goes under its text. */
+@media (max-width: 1199px) {
+  :root[data-brand="nyte"] .migrate-openai-page .mig-diff { grid-template-columns: minmax(0, 1fr); }
+  :root[data-brand="nyte"] .migrate-openai-page .mig-col + .mig-col {
+    border-left: 0;
+    border-top: 1.5px solid var(--nyte-dark-rule, #3A3631);
+  }
+  :root[data-brand="nyte"] .migrate-openai-page .guide-split { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  :root[data-brand="nyte"] .migrate-openai-page .guide-split > p,
+  :root[data-brand="nyte"] .migrate-openai-page .guide-split > div:first-child { max-width: 62ch; }
+}
 
 @media (max-width: 760px) {
   :root[data-brand="nyte"] .router-guide-page .guide-section { padding-top: var(--tr-phone-section-space); }
@@ -2720,11 +2733,6 @@ html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inac
     margin-bottom: 4px;
     color: var(--nyte-ink-2, #57514A);
     font: 600 13px/1.4 var(--tr-font-family-sans);
-  }
-  :root[data-brand="nyte"] .migrate-openai-page .mig-diff { grid-template-columns: minmax(0, 1fr); }
-  :root[data-brand="nyte"] .migrate-openai-page .mig-col + .mig-col {
-    border-left: 0;
-    border-top: 1.5px solid var(--nyte-dark-rule, #3A3631);
   }
   :root[data-brand="nyte"] .migrate-openai-page .mig-diff pre { padding: 12px 20px 20px 36px; }
   :root[data-brand="nyte"] .migrate-openai-page .mig-add::before { left: 16px; }
