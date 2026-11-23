@@ -38,92 +38,155 @@ runs:
       run: |
         set -euo pipefail
         python3 - <<'PY'
-        import json, os, re, secrets, sys, urllib.error, urllib.parse, urllib.request
+        import json, os, random, re, secrets, sys, time, urllib.error, urllib.parse, urllib.request
+        from http.client import HTTPException
+
+        # Transient failures (GitHub's OIDC endpoint or Google STS answering 5xx or
+        # 429, a reset connection, a timeout) are retried with exponential backoff
+        # and jitter: five attempts, roughly 45 s of waiting (22-68 s). Any other
+        # HTTP status is a real denial or misconfiguration and fails at once.
+        ATTEMPTS = 5
+        BACKOFF_BASE = 3.0
+        BACKOFF_CAP = 30.0
+
 
         def fail(message):
             print(f"::error::gcp-auth: {message}")
             sys.exit(1)
 
-        provider = os.environ["WIF_PROVIDER"].strip()
-        account = os.environ["WIF_SERVICE_ACCOUNT"].strip()
-        if not re.fullmatch(r"projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+", provider):
-            fail(f"workload_identity_provider is not a provider resource name: {provider!r}")
-        match = re.fullmatch(r"[^@\s]+@([a-z][a-z0-9-]*[a-z0-9])\.iam\.gserviceaccount\.com", account)
-        if not match:
-            fail(f"service_account is not a service account email: {account!r}")
-        project = match[1]
-        request_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
-        request_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
-        if not request_url or not request_token:
-            fail("no GitHub OIDC token is available; the job needs permissions id-token: write")
-        oidc_audience = os.environ["WIF_AUDIENCE"].strip() or f"https://iam.googleapis.com/{provider}"
-        sts_audience = f"//iam.googleapis.com/{provider}"
 
-        parts = urllib.parse.urlsplit(request_url)
-        query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
-        query = [(k, v) for k, v in query if k != "audience"] + [("audience", oidc_audience)]
-        token_url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+        def retryable(error):
+            """Return a short reason when the error is transient, else None."""
+            if isinstance(error, urllib.error.HTTPError):
+                if error.code == 429 or 500 <= error.code <= 599:
+                    return f"HTTP {error.code}"
+                return None
+            if isinstance(error, urllib.error.URLError):
+                return f"network error ({type(error.reason).__name__})"
+            if isinstance(error, (OSError, HTTPException)):
+                return f"network error ({type(error).__name__})"
+            return None
 
-        # Same layout google-github-actions/auth writes: the client libraries
-        # and gcloud fetch a fresh OIDC token from the runner on every refresh.
-        credentials = {
-            "type": "external_account",
-            "audience": sts_audience,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-            "token_url": "https://sts.googleapis.com/v1/token",
-            "service_account_impersonation_url": (
-                f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{account}:generateAccessToken"
-            ),
-            "credential_source": {
-                "url": token_url,
-                "headers": {"Authorization": f"Bearer {request_token}"},
-                "format": {"type": "json", "subject_token_field_name": "value"},
-            },
-        }
 
-        # Exchange once so a token the provider rejects (attribute condition,
-        # wrong repository, wrong ref) fails here, with Google's reason.
-        try:
-            request = urllib.request.Request(token_url, headers={"Authorization": f"Bearer {request_token}"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                subject_token = json.load(response)["value"]
-        except (urllib.error.URLError, KeyError, ValueError) as error:
-            fail(f"could not fetch the GitHub OIDC token: {error}")
-        body = urllib.parse.urlencode({
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "audience": sts_audience,
-            "scope": "https://www.googleapis.com/auth/cloud-platform",
-            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
-            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-            "subject_token": subject_token,
-        }).encode()
-        try:
-            with urllib.request.urlopen(urllib.request.Request(credentials["token_url"], data=body), timeout=30) as response:
-                federated = json.load(response).get("access_token", "")
-        except urllib.error.HTTPError as error:
+        def backoff(attempt, rand=random.random):
+            """Seconds to wait after failed attempt `attempt` (1-based)."""
+            return min(BACKOFF_CAP, BACKOFF_BASE * 2 ** (attempt - 1)) * (0.5 + rand())
+
+
+        def fetch_json(label, request, opener=urllib.request.urlopen, sleep=time.sleep, attempts=ATTEMPTS):
+            """Open `request` and parse its JSON body, retrying transient failures.
+
+            The last error is re-raised once the attempts run out, or at once when it
+            is not transient. Logs name the call and the status only, never a URL,
+            header or body, so no token reaches the log.
+            """
+            for attempt in range(1, attempts + 1):
+                try:
+                    with opener(request, timeout=30) as response:
+                        return json.load(response)
+                except (OSError, HTTPException) as error:
+                    reason = retryable(error)
+                    if reason is None:
+                        raise
+                    if attempt == attempts:
+                        print(f"gcp-auth: {label} failed with {reason}; giving up after {attempts} attempts")
+                        raise
+                    delay = backoff(attempt)
+                    print(f"::warning::gcp-auth: {label} failed with {reason}; "
+                          f"retrying in {delay:.1f}s (attempt {attempt + 1}/{attempts})")
+                    if isinstance(error, urllib.error.HTTPError):
+                        error.close()
+                    sleep(delay)
+            raise AssertionError("unreachable")
+
+
+        def main():
+            provider = os.environ["WIF_PROVIDER"].strip()
+            account = os.environ["WIF_SERVICE_ACCOUNT"].strip()
+            if not re.fullmatch(r"projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+", provider):
+                fail(f"workload_identity_provider is not a provider resource name: {provider!r}")
+            match = re.fullmatch(r"[^@\s]+@([a-z][a-z0-9-]*[a-z0-9])\.iam\.gserviceaccount\.com", account)
+            if not match:
+                fail(f"service_account is not a service account email: {account!r}")
+            project = match[1]
+            request_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+            request_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+            if not request_url or not request_token:
+                fail("no GitHub OIDC token is available; the job needs permissions id-token: write")
+            oidc_audience = os.environ["WIF_AUDIENCE"].strip() or f"https://iam.googleapis.com/{provider}"
+            sts_audience = f"//iam.googleapis.com/{provider}"
+
+            parts = urllib.parse.urlsplit(request_url)
+            query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+            query = [(k, v) for k, v in query if k != "audience"] + [("audience", oidc_audience)]
+            token_url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+
+            # Same layout google-github-actions/auth writes: the client libraries
+            # and gcloud fetch a fresh OIDC token from the runner on every refresh.
+            credentials = {
+                "type": "external_account",
+                "audience": sts_audience,
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "token_url": "https://sts.googleapis.com/v1/token",
+                "service_account_impersonation_url": (
+                    f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{account}:generateAccessToken"
+                ),
+                "credential_source": {
+                    "url": token_url,
+                    "headers": {"Authorization": f"Bearer {request_token}"},
+                    "format": {"type": "json", "subject_token_field_name": "value"},
+                },
+            }
+
+            # Exchange once so a token the provider rejects (attribute condition,
+            # wrong repository, wrong ref) fails here, with Google's reason.
             try:
-                detail = json.load(error)
-                reason = f"{detail.get('error')}: {detail.get('error_description')}"
-            except ValueError:
-                reason = f"HTTP {error.code}"
-            fail(f"Google STS rejected the GitHub OIDC token for {sts_audience}: {reason}")
-        except urllib.error.URLError as error:
-            fail(f"could not reach Google STS: {error}")
-        if not federated:
-            fail("Google STS returned no access token")
-        print(f"::add-mask::{federated}")
+                request = urllib.request.Request(token_url, headers={"Authorization": f"Bearer {request_token}"})
+                subject_token = fetch_json("GitHub OIDC token request", request)["value"]
+            except (OSError, HTTPException, KeyError, TypeError, ValueError) as error:
+                fail(f"could not fetch the GitHub OIDC token: {error}")
+            print(f"::add-mask::{subject_token}")
+            body = urllib.parse.urlencode({
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "audience": sts_audience,
+                "scope": "https://www.googleapis.com/auth/cloud-platform",
+                "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "subject_token": subject_token,
+            }).encode()
+            try:
+                federated = fetch_json("Google STS token exchange",
+                                       urllib.request.Request(credentials["token_url"], data=body)).get("access_token", "")
+            except urllib.error.HTTPError as error:
+                try:
+                    detail = json.load(error)
+                    reason = f"{detail.get('error')}: {detail.get('error_description')}"
+                except (OSError, ValueError, AttributeError):
+                    reason = f"HTTP {error.code}"
+                fail(f"Google STS rejected the GitHub OIDC token for {sts_audience}: {reason}")
+            except (OSError, HTTPException, ValueError) as error:
+                fail(f"could not reach Google STS: {error}")
+            if not federated:
+                fail("Google STS returned no access token")
+            print(f"::add-mask::{federated}")
 
-        path = os.path.join(os.environ["RUNNER_TEMP"], f"gha-creds-{secrets.token_hex(8)}.json")
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w") as handle:
-            json.dump(credentials, handle)
-        print(f'Created credentials file at "{path}"')
+            path = os.path.join(os.environ["RUNNER_TEMP"], f"gha-creds-{secrets.token_hex(8)}.json")
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w") as handle:
+                json.dump(credentials, handle)
+            print(f'Created credentials file at "{path}"')
 
-        with open(os.environ["GITHUB_ENV"], "a") as env:
-            for name in ("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GHA_CREDS_PATH"):
-                env.write(f"{name}={path}\n")
-            for name in ("CLOUDSDK_CORE_PROJECT", "CLOUDSDK_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT", "GOOGLE_CLOUD_PROJECT"):
-                env.write(f"{name}={project}\n")
-        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write(f"project_id={project}\ncredentials_file_path={path}\n")
+            with open(os.environ["GITHUB_ENV"], "a") as env:
+                for name in ("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GHA_CREDS_PATH"):
+                    env.write(f"{name}={path}\n")
+                for name in ("CLOUDSDK_CORE_PROJECT", "CLOUDSDK_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT", "GOOGLE_CLOUD_PROJECT"):
+                    env.write(f"{name}={project}\n")
+            with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                output.write(f"project_id={project}\ncredentials_file_path={path}\n")
+
+
+        # tests/test_gcp_auth_action.py executes this script under another name to
+        # test the retry logic without running the exchange.
+        if __name__ == "__main__":
+            main()
         PY
