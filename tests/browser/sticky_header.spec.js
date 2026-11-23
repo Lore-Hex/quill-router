@@ -21,14 +21,9 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
       const search = await page.locator(".trnav .search").boundingBox();
       expect(brand.y).toBeGreaterThanOrEqual(header.y);
       expect(brand.y + brand.height).toBeLessThanOrEqual(header.y + header.height);
-      if (path === "/models" && width <= 600) {
-        expect(search.y).toBeGreaterThanOrEqual(brand.y + brand.height);
-        expect(search.width).toBeGreaterThanOrEqual(width - 40);
-        expect(search.y + search.height).toBeLessThanOrEqual(header.y + header.height);
-      } else {
-        expect(search.x).toBeGreaterThan(brand.x + brand.width);
-        expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
-      }
+      // Every page, /models included, keeps the search box in the header row beside the brand.
+      expect(search.x).toBeGreaterThan(brand.x + brand.width);
+      expect(Math.abs(brand.y + brand.height / 2 - search.y - search.height / 2)).toBeLessThan(1);
       await page.screenshot({ path: testInfo.outputPath(`${path.slice(1) || "homepage"}.png`) });
       // A real click also checks that other positioned controls do not intercept the CTA.
       await page.locator(".trnav .signin").click();
@@ -36,6 +31,7 @@ for (const width of [1440, 1280, 881, 880, 601, 600, 390, 320]) {
       await page.keyboard.press("Escape");
       if (path === "/models") {
         const input = page.getByRole("searchbox", { name: "Search models" });
+        await expect(input).toHaveAttribute("placeholder", width <= 360 ? "Models" : "Search models");
         await input.fill("kimi");
         await expect(input).toBeFocused();
         await expect(page.locator("#model-search")).toHaveCount(0);

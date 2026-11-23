@@ -705,7 +705,7 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert catalog.status_code == 200
     assert detail.status_code == 200
     assert "TR router attested" not in catalog.text
-    assert "verified provider compute + E2EE + explicit ZDR" in catalog.text
+    assert "Verified provider compute + E2EE + explicit ZDR" in catalog.text
     assert '<a class="md-inline-link" href="/trust">how we check privacy claims</a>' in detail.text
     assert "<th>TR router attested</th>" not in detail.text
     assert "<th>Attested</th>" not in detail.text

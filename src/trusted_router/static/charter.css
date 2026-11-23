@@ -2139,15 +2139,41 @@ body.auth.auth-shell {
   color: var(--gold);
 }
 
+/* Three label definitions, one per line, terms in their own column; the note lines up with the definitions. */
 .catalog-privacy-legend {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
   margin: 12px 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.6;
+  color: var(--text-body);
+  font-size: max(1em, 15px);
+  line-height: 1.5;
 }
 
-.catalog-privacy-legend strong {
-  color: var(--text-body);
+.catalog-privacy-legend dl,
+.catalog-privacy-legend dl > div {
+  display: contents;
+}
+
+.catalog-privacy-legend dt {
+  font-weight: 600;
+}
+
+.catalog-privacy-legend dd,
+.catalog-privacy-legend p {
+  margin: 0;
+}
+
+.catalog-privacy-legend p {
+  grid-column: 2;
+  margin-top: 4px;
+}
+
+/* Narrow phones: each term sits above its definition so the text keeps the full width. */
+@media (max-width: 360px) {
+  .catalog-privacy-legend { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .catalog-privacy-legend dd { margin-bottom: 8px; }
+  .catalog-privacy-legend p { grid-column: 1; }
 }
 
 .provider-chip.catalog-provider-chip {
@@ -2441,7 +2467,7 @@ body.auth.auth-shell {
   line-height: 1.6;
 }
 
-.public-wrap :is(p, li):is(.model-explorer-empty, .catalog-privacy-legend, .cc-platform-note, .provider-scope-note, .model-card-footer) {
+.public-wrap :is(p, li):is(.model-explorer-empty, .cc-platform-note, .provider-scope-note, .model-card-footer) {
   font-size: max(1em, 15px);
 }
 
