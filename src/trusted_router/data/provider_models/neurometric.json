@@ -721,8 +721,66 @@
       "output_token_price_per_m": 0,
       "missing_since": "2026-10-10",
       "routable_reason": "delisted-upstream"
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0731",
+      "title": "deepseek/deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek/deepseek-v4-flash-0731",
+      "context_length": 1048576,
+      "max_output_tokens": 32000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "documentation": {
+        "description": "DeepSeek V4 Flash 0731 chat served by Neurometric on Azure in South Central US.",
+        "input_format": "OpenAI-compatible chat messages with text content.",
+        "output_format": "A text answer in choices[0].message.content, or streamed chat deltas.",
+        "example_input": "{\"model\":\"deepseek/deepseek-v4-flash-0731\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word PONG.\"}]}",
+        "example_output": "PONG"
+      },
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model_region"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      },
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 90000
     }
   ],
-  "generated_at": "2026-11-21T14:28:06Z",
-  "model_count": 13
+  "generated_at": "2026-11-22T22:49:04Z",
+  "model_count": 14
 }

@@ -531,7 +531,7 @@ def _sdk_finalize_options(sdk: Any) -> dict[str, Any]:
 
     def read(**kw: Any) -> Any:
         request = kw['request']
-        if request.sql.startswith('UPDATE tr_credit_balance SET reserved = reserved - @hold'):
+        if request.sql.startswith('@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance SET reserved = reserved - @hold'):
             # release_credit returns its row's headroom and debt mark: headroom
             # left and no mark, so it reads no other credit row.
             released = PartialResultSet(metadata={'row_type': {'fields': [
@@ -609,13 +609,14 @@ def test_real_sdk_finalize_retry_and_telemetry(
     options['generation'].model_id = 'PRIVATE_PAYLOAD_SENTINEL'
     sleep = Mock()
     monkeypatch.setattr(_helpers.time, 'sleep', sleep)
-    # The last two counts are the key's two releases: current windows, then
+    # The fifth count is the credit row's lock statement, the sixth its
+    # release. The last two are the key's two releases: current windows, then
     # the rolling form. Exactly one matches.
-    responses = [_batch_response([1, 1, 1, 1, 1, 1, 0])]
+    responses = [_batch_response([1, 1, 1, 1, 1, 1, 1, 0])]
     if scenario == 'stale_windows':
-        responses = [_batch_response([1, 1, 1, 1, 1, 0, 1])]
+        responses = [_batch_response([1, 1, 1, 1, 1, 1, 0, 1])]
     elif scenario != 'clean':
-        responses = [_batch_response([0, 1, 1, 1, 1, 1, 0])]
+        responses = [_batch_response([0, 1, 1, 1, 1, 1, 1, 0])]
         if 'aborted' in scenario:
             responses.append(_batch_response(
                 [0] if scenario == 'fallback_zero_aborted' else [], code_pb2.ABORTED,
@@ -640,7 +641,23 @@ def test_real_sdk_finalize_retry_and_telemetry(
     assert all(tx.committed is None for tx in sdk.transactions[:-1])
     assert sdk.rpcs.rollback.call_count == int(attempts > 1)
     batches = [c.kwargs['request'] for c in sdk.rpcs.execute_batch_dml.call_args_list]
-    assert [len(b.statements) for b in batches] == [7] + [2] * (attempts - 1)
+    assert [len(b.statements) for b in batches] == [8] + [2] * (attempts - 1)
+    # What goes on the wire: the credit row is taken by a hinted statement
+    # that moves nothing, its release follows unhinted (it has a subquery),
+    # and both forms of the key release carry the hint.
+    hint = '@{LOCK_SCANNED_RANGES=EXCLUSIVE} '
+    credit_release = 'UPDATE tr_credit_balance SET reserved = reserved - @hold, '
+    key_release = 'UPDATE tr_key_limit SET reserved = reserved - @hold, '
+    tail = [statement.sql for statement in batches[0].statements[4:]]
+    assert tail[0].startswith(hint) and tail[0].removeprefix(hint).startswith(
+        'UPDATE tr_credit_balance SET reserved = reserved, total_usage = total_usage ')
+    assert tail[1].startswith(credit_release)
+    assert 'SELECT 1 FROM tr_trust_event' in tail[1]
+    assert all(sql.startswith(hint) and sql.removeprefix(hint).startswith(key_release) for sql in tail[2:])
+    assert [sql.count('@{') for sql in tail] == [1, 0, 1, 1]
+    assert dict(batches[0].statements[4].params) == {
+        key: value for key, value in dict(batches[0].statements[5].params).items() if key != 'actual'
+    }
     if attempts > 1:
         assert sdk.rpcs.rollback.call_args.kwargs['transaction_id'] == b'tx-1'
         assert batches[0].statements[2:4] == batches[1].statements
@@ -655,8 +672,13 @@ def test_real_sdk_finalize_retry_and_telemetry(
     # Real release DML only executes in the final successful callback.
     updates = [c.kwargs['request'].sql for c in sdk.rpcs.execute_sql.call_args_list]
     streamed = [c.kwargs['request'].sql for c in sdk.rpcs.execute_streaming_sql.call_args_list]
-    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in streamed) == int(attempts > 1)
-    assert sum(sql.startswith('UPDATE tr_key_limit') for sql in updates) == int(attempts > 1)
+    # The sequential releases carry the hint themselves.
+    assert sum(sql.startswith(hint) and sql.removeprefix(hint).startswith(credit_release)
+               for sql in streamed) == int(attempts > 1)
+    assert sum(sql.startswith(hint) and sql.removeprefix(hint).startswith(key_release)
+               for sql in updates) == int(attempts > 1)
+    assert not any('tr_credit_balance' in sql or 'tr_key_limit' in sql
+                   for sql in streamed + updates if not sql.startswith(hint))
     _assert_timing(caplog, attempts=attempts, reason='none' if attempts == 1 else 'claim_zero',
                    outcome='not_attempted' if attempts == 1 else 'settled')
 

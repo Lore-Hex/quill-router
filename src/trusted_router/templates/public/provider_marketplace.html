@@ -9,7 +9,7 @@
   <div>
     <div class="kicker">Provider marketplace</div>
     <h1>List your models on TrustedRouter.</h1>
-    <p class="lead">Send us your company and integration profile. We will review your privacy commitments, validate your routes, publish working models, monitor availability, and keep pricing current.</p>
+    <p class="lead">Every new provider needs at least one model served with confidential compute that TrustedRouter can independently verify end to end. Not set up yet? <a href="#confidential-onboarding">We can help you get there.</a></p>
     <div class="hero-actions provider-hero-actions">
       {{ provider_contact("Email provider operations", button=true) }}
       <a class="btn" href="#integration-contract">View requirements</a>
@@ -29,9 +29,33 @@
 {% block body %}
 <section class="public-proof-strip" aria-label="Provider onboarding flow">
   <div><strong>Apply</strong><span>Email your company and integration profile.</span></div>
-  <div><strong>Review</strong><span>We verify privacy, compliance, and API claims.</span></div>
+  <div><strong>Review</strong><span>We verify one confidential model route and review the rest of your catalog separately.</span></div>
   <div><strong>Connect</strong><span>Exchange a restricted key through a separate secure channel.</span></div>
   <div><strong>Publish</strong><span>We test, monitor, and list working routes.</span></div>
+</section>
+
+<section class="marketing-split" id="confidential-onboarding" aria-labelledby="confidential-onboarding-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">New provider requirement</span>
+    <h2 id="confidential-onboarding-heading">Start with one verifiable confidential model.</h2>
+    <p>Choose the exact model, endpoint and release you want us to verify. Other models may be listed without this designation. A chip name, ordinary HTTPS, or a zero-retention promise alone is not proof of confidential inference.</p>
+    <h3>Need help setting up confidential compute?</h3>
+    <p><a href="/support#support-inquiry">Talk to provider operations</a> before you apply. Tell us which model you serve, your host CPU and GPUs, and where inference runs. We can work with you to choose a supported configuration, set up attestation, and test your first endpoint together. No keys or customer data, please.</p>
+    <p>Examples of capable hardware include H200 on supported Intel TDX hosts (protected PCIe for multi-GPU Hopper), Blackwell B200 and HGX B300. See <a href="https://docs.nvidia.com/confidential-computing/containers/v1.1.0/supported-platforms">NVIDIA's supported configurations</a>. <a href="https://www.nvidia.com/en-us/data-center/solutions/confidential-computing/">Vera Rubin NVL72</a> supports rack-scale confidential computing with Vera CPUs and Rubin GPUs. In each case we verify the deployed workload and its actual devices and connections, not the product family.</p>
+  </div>
+  <div class="marketing-copy">
+    <h3>Test the endpoint you will submit</h3>
+    <ol class="plain-list">
+      <li><strong>Publish the reference.</strong> Give us the model ID, immutable source and release, signed build measurements, and how model weights are protected when loaded. Do not use values learned from the running endpoint as your expected values.</li>
+      <li><strong>Verify before sending.</strong> Check fresh hardware-signed evidence against vendor roots and the release. Cover the CPU, every serving GPU, relevant switches and downstream hops; check production mode and bind the inference connection or encryption key to that verified workload.</li>
+      <li><strong>Prove both outcomes.</strong> Send a synthetic request through the verified client. In staging, show that stale evidence, a wrong key or release, and corrupted weights prevent inference. Never fall back to ordinary HTTPS or an unverified replica.</li>
+      <li><strong>Share a reproducible result.</strong> Provide verifier commands, versions, a dated redacted result, and evidence for all eligible replicas. We repeat the checks ourselves before listing the route as confidential.</li>
+    </ol>
+    <p><a href="https://github.com/Lore-Hex/trustedrouter-provider-check/blob/4f6d03fd9991064f172f93ed28a07b144368c631/docs/confidential-endpoint.md">Run the confidential endpoint self-check</a> from our open-source checker. <a href="https://github.com/tinfoilsh/tinfoil-python/tree/v0.16.0rc3">Tinfoil's verified client</a> is one example, not a required vendor. The ordinary API conformance suite does not attest hardware.</p>
+    <details><summary>Prompt for Claude: check my confidential endpoint</summary>
+      <p>Audit the exact production model route I name against the TrustedRouter confidential endpoint guide. Start with my independently signed release reference. Trace where the prompt is decrypted, how the client verifies the workload key, which CPUs, GPUs, switches and replicas can serve it, how weights are verified on read, and whether logs or fallback routes expose plaintext. Use the maintained verifier for this platform. Ask before sending synthetic traffic or disclosing device evidence. Test rejected cases in an isolated fixture, never against customer workloads. For each requirement report PASS, FAIL or NOT TESTED with a command and redacted evidence. Never infer a pass from a SKU, HTTP 200, or my assertions. Do not request or print secrets, grant a badge, or change production.</p>
+    </details>
+  </div>
 </section>
 
 <section class="marketing-split" aria-labelledby="featured-neurometric-heading">
@@ -130,6 +154,9 @@ Region pinning: exact parameter, values, and guarantee:
 Actual serving region: response field or header:
 Storage, logging, cache, and backup locations:
 Confidential compute evidence:
+Required qualifying model ID, production endpoint, region and release:
+Reproducible end-to-end verification command and dated redacted results:
+Setup help requested (if needed):
 Attestation verifier, source, releases, and measurements:
 Key binding, GPU/downstream coverage, operator access:
 
@@ -386,6 +413,7 @@ curl --fail --silent --show-error \
     <h2>We verify before we list.</h2>
     <ol class="plain-list">
       <li>Validate authentication and retrieve the live model catalog.</li>
+      <li>For new providers, independently verify confidential inference on at least one named model before admission.</li>
       <li>Match model IDs to exact prices and supported capabilities.</li>
       <li>Run non-streaming and streaming probes against representative models.</li>
       <li>Publish provider and model pages only for callable routes.</li>

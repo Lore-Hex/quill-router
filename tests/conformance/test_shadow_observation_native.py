@@ -75,9 +75,14 @@ def native_watchdog(request, native_liveness):
 
 @pytest.fixture(scope="module")
 def native_resources_pool():
-    from tests.shadow_observation_fixtures import native_rpc_deadlines
-    with native_rpc_deadlines(), ExitStack() as stack:
-        yield stack, []
+    from tests.shadow_observation_fixtures import native_rpc_deadlines, provisioning_deadlines
+    with native_rpc_deadlines():
+        stack = ExitStack()
+        try:
+            yield stack, []
+        finally:
+            with provisioning_deadlines():
+                stack.close()
 
 
 @pytest.fixture
@@ -86,19 +91,29 @@ def shadow_emulator_resources(request, native_watchdog, native_resources_pool, p
     # a distinct database/instance; no dead-session deletion or cross-history RW
     # contention. Ordinary histories share one lazily provisioned schema.
     from tests.conformance.spanner_emulator import emulator_resources
+    from tests.shadow_observation_fixtures import provisioning_deadlines
     if "SPANNER_EMULATOR_HOST" in os.environ:
         assert os.environ.get("TR_CONFORMANCE_EMULATOR_SCHEMA") == "1", "configured emulator requires schema coverage"
     stack, shared = native_resources_pool
     try:
         if "process_restart" in request.node.name:
-            with emulator_resources() as resources:
-                try:
-                    yield resources
-                finally:
-                    resources[0].drop()
+            # The test body keeps the native ceiling; only schema setup and
+            # cleanup (drop, then the instance delete on close) are provisioning.
+            history = ExitStack()
+            with provisioning_deadlines():
+                resources = history.enter_context(emulator_resources())
+            try:
+                yield resources
+            finally:
+                with provisioning_deadlines():
+                    try:
+                        resources[0].drop()
+                    finally:
+                        history.close()
         else:
             if not shared:
-                shared.append(stack.enter_context(emulator_resources()))
+                with provisioning_deadlines():
+                    shared.append(stack.enter_context(emulator_resources()))
                 stack.callback(shared[0][0].drop)
             yield shared[0]
     except pytest.skip.Exception as error:

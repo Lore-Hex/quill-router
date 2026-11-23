@@ -60,6 +60,10 @@ class NativeLane:
         if (self.lane == 'publisher' and not self.fault.used
                 and any(row[2] == self.fault.kind for row in txn.pending_writes)):
             self.fault.used = True
+            self.fault.local.parked = True  # Deliberately expired: advance() does not wait for it.
+            with self.fault.idle:
+                self.fault.inflight -= 1
+                self.fault.idle.notify_all()
             self.fault.entered.set()
             if self.fault.mode == 'lands':
                 assert self.fault.commit(txn)
@@ -94,10 +98,27 @@ def harness(monkeypatch, mode='lands', *, unfixed=False, kind=CLAIM_KIND):
     store.clock = lambda: 100.+at[0]
     store.wall = lambda: NOW_US/1e6+at[0]
     fault = SimpleNamespace(mode=mode, kind=kind, used=False, entered=threading.Event(),
-        release=threading.Event(), commit=db._try_commit, local=threading.local())
+        release=threading.Event(), commit=db._try_commit, local=threading.local(),
+        idle=threading.Condition(), inflight=0)
     def commit(txn):
         lane = getattr(fault.local, 'lane', None)
-        return lane.spanner_api.commit(txn) if lane else fault.commit(txn)
+        if not lane:
+            return fault.commit(txn)
+        # The bounded wrapper checks its deadline again after the RPC returns
+        # and retires the lane's session on a miss. A logical clock jump inside
+        # that window expires a commit the test never meant to fault, and the
+        # lane stays unready until its 60 s recovery window (runs 44954881735
+        # and 45061142273). advance() waits until these commits have returned.
+        with fault.idle:
+            fault.inflight += 1
+        fault.local.parked = False
+        try:
+            return lane.spanner_api.commit(txn)
+        finally:
+            if not fault.local.parked:
+                with fault.idle:
+                    fault.inflight -= 1
+                    fault.idle.notify_all()
     monkeypatch.setattr(db, '_try_commit', commit)
     lanes = []
     def lane(name):
@@ -174,8 +195,13 @@ def harness(monkeypatch, mode='lands', *, unfixed=False, kind=CLAIM_KIND):
         svc.stopped.set()
     monkeypatch.setattr(svc, 'close', close)
     def advance(seconds):
-        at[0] = seconds
-        db.server_ns = int(store.wall()*1e9)
+        # Only the faulted commit is expired by a jump. Every other commit
+        # finishes on the clock it started under, as a fast RPC would in real
+        # time; commits that start after the jump see the new clock throughout.
+        with fault.idle:
+            assert fault.idle.wait_for(lambda: fault.inflight == 0, timeout=10.), 'commit never returned'
+            at[0] = seconds
+            db.server_ns = int(store.wall()*1e9)
     return svc, db, fault, ticks, reasons, advance
 
 
@@ -193,6 +219,11 @@ async def cleanup(svc, fault):
     await asyncio.sleep(.01)  # Drain abandoned worker's stale callback.
 
 
+def publisher_idle(svc):
+    # The reply clears the job; the worker flag clears just before delivery.
+    return svc.state.job is None and not svc.publisher_worker_active.is_set()
+
+
 def checkpoint(db):
     return sum(row.version for (kind, _), row in db.rows.items() if kind == COUNTER_KIND)
 
@@ -206,7 +237,11 @@ async def test_owner_progress_after_commit_deadline(monkeypatch, mode, unfixed, 
     try:
         fault.used = True
         svc.start()
-        await until(lambda: checkpoint(db) > 0 and (HEALTH_KIND, 'local/fleet') in db.rows)
+        # The health row lands before its worker returns and delivers the
+        # reply. A jump to slot two while that cycle is still pending consumes
+        # the slot (no in-slot retry), so the faulted commit never starts.
+        await until(lambda: checkpoint(db) > 0 and (HEALTH_KIND, 'local/fleet') in db.rows
+                    and publisher_idle(svc))
         before = checkpoint(db)
         fault.used = False
         advance(2.)
@@ -242,7 +277,7 @@ async def test_owner_progress_after_commit_deadline(monkeypatch, mode, unfixed, 
                 # Expiring it with a second clock jump can consume slot six
                 # while it is pending; there is deliberately no in-slot retry.
                 await until(lambda: svc.state.days[0].cursor == (NOW_US+4_000_000)//2_000_000
-                            and svc.state.job is None)
+                            and publisher_idle(svc))
             # A completed unknown cycle recovers its lane; an unreturned worker
             # is quarantined by the watchdog. Neither can obstruct other lanes.
             advance(6.)

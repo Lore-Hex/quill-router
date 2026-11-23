@@ -286,6 +286,28 @@ reconciler rather than at workspaces, the enabler raises
     back within the enclave's retries. For a small spender the leases hold
     about one request's hold, so this is the last request or two before
     its credit runs out.
+  - **Amended 2026-11-21: under the floor the answer is the 402.** The
+    floor is also what gives a stale lease time to close before a balance
+    runs out: no lease is topped up once the headroom is under the floor
+    plus the amount asked, and what a lease still holds comes back only
+    when it closes. With a $2 floor a fast spender reaches the bottom
+    first, so "the last request or two" understated it. On 2026-11-21 a
+    fast-spending workspace within cents of empty, with a lease still
+    holding part of what was left, was answered the 503 on every request
+    (each failing after the enclave's three authorize attempts) until it
+    bought credit. No retry
+    could have succeeded, and before the floor change it would have been
+    answered 402, which is true and can be acted on. The 503 is now
+    answered only while the workspace's headroom, counting what its live
+    leases hold, is at least the nodes' floor
+    (`fastpath_lease_headroom_503_floor_micro`; `rollout.sh` sets
+    `TR_FASTPATH_LEASE_HEADROOM_503_FLOOR_MICRO=2000000`, and
+    `tests/test_fastpath_lease_headroom_floor.py` holds it equal to
+    `fastpath_floor`). Under it the answer is the insufficient-credits
+    402, the same as with the 503 off, and the app writes
+    `billing.lease_under_floor_402` beside it. Only which refusal is
+    returned changes; nothing is admitted, held or charged differently. 0
+    is the way back.
   - **How it is taken, and the way back.** The apply changes metadata
     only; each node takes `-floor` when its unit starts again, one at a
     time (`fastpath-deploy.md`, "Lowering the floor"), and the enabler's
@@ -1598,6 +1620,10 @@ step.
    leases hold a positive amount that with the rows' signed headroom
    covers it, is outcome `lease_headroom`, answered 503 with `Retry-After:
    1` and type `service_unavailable`; anything else keeps today's answer.
+   Since 2026-11-21 that total must also be at least the nodes' floor
+   (`fastpath_lease_headroom_503_floor_micro`, (b) above); under it the
+   outcome is today's `insufficient_credits`, and the verdict carries the
+   amounts read for the route's `billing.lease_under_floor_402` line.
    What the leases hold is section 4.7's term, each open or draining
    lease's donors' `allocation - consumed`, read by
    `credit_exhaustion_precheck` (`lease_aware`) in the snapshot that reads
@@ -1635,7 +1661,13 @@ step.
    the shortfall, 402 to 503, never the reverse and never to an admission;
    the precheck's memory, lock-free on every hit, through a lease's return
    and a lease's spending; the route's 503, `Retry-After` and type against
-   today's 402) and
+   today's 402),
+   `tests/test_fastpath_lease_headroom_floor.py` (the same matrix at a
+   sweep of floors: against no floor the answers differ only where the
+   total is under the floor, 503 to 402, with the rows, reservations and
+   memory unchanged; the 2026-11-21 case; retries and the idempotent
+   replay as for today's 402; `rollout.sh`'s floor equal to the nodes')
+   and
    `tests/conformance/test_fastpath_lease_headroom_native.py` (the
    statement on the emulator: live states, closed leases, neighbouring
    workspaces, the debt mark).

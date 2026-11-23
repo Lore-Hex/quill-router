@@ -11,9 +11,12 @@ These tests exercise the POST itself, which is the thing nobody was doing.
 from __future__ import annotations
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
+from trusted_router.model_regions import COUNTRY_NAMES
 from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.workspace_origin_policy import COUNTRIES
 
 
 @pytest.fixture
@@ -43,6 +46,21 @@ def test_post_is_routable_at_all(console: tuple[TestClient, str]) -> None:
     client, _ = console
     response = client.post("/console/settings", data={"name": "Anything"}, follow_redirects=False)
     assert response.status_code != 405, "the Save button posts here; it must be handled"
+
+
+def test_western_option_leads_without_changing_default(console, monkeypatch):
+    client, _ = console
+    monkeypatch.setattr(client.app.state.settings, "workspace_origin_controls_enabled", True)
+    page = BeautifulSoup(client.get("/console/settings").text, "html.parser")
+    panel = page.select_one("section.panel")
+    assert panel["id"] == "model-origin"
+    options = panel.select("select[name=origin_policy] option")
+    assert [option["value"] for option in options] == ["western", "us", "unrestricted"]
+    assert options[0].get_text(strip=True) == "Western Countries"
+    assert [option["value"] for option in options if option.has_attr("selected")] == ["unrestricted"]
+    countries = sorted(COUNTRY_NAMES[code] for code in COUNTRIES["western"])
+    assert panel.select_one("details summary").get_text(strip=True) == f"View all {len(countries)} eligible countries"
+    assert panel.select_one("details p").get_text(strip=True).removesuffix(".").split(", ") == countries
 
 
 def test_origin_control_rollout_and_permissions(console, monkeypatch):

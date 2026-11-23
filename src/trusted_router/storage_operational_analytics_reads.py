@@ -6,14 +6,20 @@ import dataclasses
 import datetime as dt
 from typing import Any
 
-from trusted_router.operational_analytics import OperationalAnalyticsClient
+from trusted_router.operational_analytics import (
+    OperationalAnalyticsClient,
+    bound_values_in_the_body,
+)
 from trusted_router.storage_activity import (
     ActivityResult,
     filter_generations,
     generation_events,
-    generation_metrics,
     summarize_activity_result,
-    usage_bucket_key,
+)
+from trusted_router.storage_activity_tags import (
+    TAG_EVENT_LIMIT,
+    clickhouse_breakdown,
+    tag_summary,
 )
 from trusted_router.storage_models import Generation
 from trusted_router.storage_operational_analytics import analytics_surrogate
@@ -31,6 +37,22 @@ def create_operational_analytics_client(
         if url and password
         else None
     )
+
+
+_USAGE_METRICS = (
+    "requests",
+    "prompt_tokens",
+    "completion_tokens",
+    "reasoning_tokens",
+    "cost_micro",
+    "byok_micro",
+)
+# A newest-first read with no date filter looks at a recent window first and
+# widens only while the window holds fewer rows than were asked for. A window
+# that fills the limit already holds the newest rows of the whole history, so
+# the result is the same as the unbounded read; a busy workspace stops at the
+# first window instead of reading everything it ever sent.
+_RECENT_ACTIVITY_WINDOWS = (dt.timedelta(days=1), dt.timedelta(days=30))
 
 
 def _empty_usage_bucket(bucket: str) -> dict[str, Any]:
@@ -129,6 +151,70 @@ class OperationalAnalyticsReads:
             tag_value=tag_value,
         )
 
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        client = self._require_operational_analytics()
+        tenant_id = analytics_surrogate("workspace", workspace_id)
+        window: dict[str, Any] = {"tenant_id": tenant_id, "start_at": start_at}
+        tag: dict[str, Any] = {"tag_key": tag_key, "tag_value": tag_value}
+
+        def read_breakdown(key: str, limit: int) -> list[dict[str, Any]] | None:
+            return clickhouse_breakdown(
+                read_candidates=lambda count: client.activity_tag_candidates(
+                    group_by=key, candidates=count, **window, **tag
+                ),
+                read_candidate_totals=lambda candidates: client.activity_tag_candidate_totals(
+                    group_by=key, candidates=candidates, **window, **tag
+                ),
+                read_histogram=lambda top, opened: client.activity_tag_histogram(
+                    group_by=key, top=top, opened=opened, **window, **tag
+                ),
+                limit=limit,
+            )
+
+        return tag_summary(
+            read_keys=lambda: client.activity_tag_keys(**window),
+            read_values=lambda key: client.activity_tag_values(tag_key=key, **window),
+            read_breakdown=read_breakdown,
+            group_by=group_by,
+            tag_key=tag_key,
+        )
+
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = None,
+        limit: int = TAG_EVENT_LIMIT,
+    ) -> Any:
+        normalized_limit = max(1, min(limit, TAG_EVENT_LIMIT))
+        tenant_id = analytics_surrogate("workspace", workspace_id)
+        with bound_values_in_the_body():
+            rows = self._require_operational_analytics().activity_generations(
+                tenant_id=tenant_id,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                start_at=start_at,
+                limit=normalized_limit + 1,
+            )
+        truncated = len(rows) > normalized_limit
+        rows = filter_generations(rows[:normalized_limit], workspace_id=tenant_id)
+        return ActivityResult(
+            data=generation_events(rows, limit=normalized_limit),
+            truncated=truncated,
+            scanned=len(rows),
+            scan_limit=normalized_limit,
+        )
+
     def usage_series(
         self,
         workspace_id: str,
@@ -174,6 +260,7 @@ class OperationalAnalyticsReads:
         limit: int,
         tag_key: str | None = None,
         tag_value: str | None = None,
+        start_at: str | None = None,
     ) -> list[Generation]:
         tenant_id = analytics_surrogate("workspace", workspace_id)
         key_id = analytics_surrogate("api-key", api_key_hash) if api_key_hash is not None else None
@@ -183,12 +270,45 @@ class OperationalAnalyticsReads:
             tag_key=tag_key,
             tag_value=tag_value,
             date=date,
+            start_at=start_at,
             limit=limit,
         )
         return filter_generations(
             rows,
             workspace_id=tenant_id,
             date=date,
+        )
+
+    def _clickhouse_newest_activity_rows(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        limit: int,
+        tag_key: str | None,
+        tag_value: str | None,
+    ) -> list[Generation]:
+        """The newest ``limit`` rows of the whole history, read from recent windows first."""
+        now = dt.datetime.now(dt.UTC)
+        for window in _RECENT_ACTIVITY_WINDOWS:
+            rows = self._clickhouse_activity_rows(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=None,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                start_at=(now - window).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            if len(rows) >= limit:
+                return rows
+        return self._clickhouse_activity_rows(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=None,
+            limit=limit,
+            tag_key=tag_key,
+            tag_value=tag_value,
         )
 
     def _clickhouse_activity_result(
@@ -236,14 +356,23 @@ class OperationalAnalyticsReads:
         tag_value: str | None,
     ) -> ActivityResult:
         normalized_limit = max(1, min(limit, 1000))
-        rows = self._clickhouse_activity_rows(
-            workspace_id,
-            api_key_hash=api_key_hash,
-            date=date,
-            limit=normalized_limit + 1,
-            tag_key=tag_key,
-            tag_value=tag_value,
-        )
+        if date is None:
+            rows = self._clickhouse_newest_activity_rows(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                limit=normalized_limit + 1,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+        else:
+            rows = self._clickhouse_activity_rows(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=normalized_limit + 1,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
         truncated = len(rows) > normalized_limit
         rows = rows[:normalized_limit]
         scanned = len(rows)
@@ -272,32 +401,38 @@ class OperationalAnalyticsReads:
         tenant_id = analytics_surrogate("workspace", workspace_id)
         key_id = analytics_surrogate("api-key", api_key_hash) if api_key_hash is not None else None
         end_exclusive = (dt.date.fromisoformat(end_day) + dt.timedelta(days=1)).isoformat()
-        rows = self._require_operational_analytics().activity_generations(
+        # ClickHouse groups the range; only the grouped rows cross the wire.
+        # Reading the generations and bucketing them here capped the range at
+        # 200,000 rows and dropped the older part of a busy workspace's range.
+        rows = self._require_operational_analytics().activity_usage_buckets(
             tenant_id=tenant_id,
             key_id=key_id,
+            granularity=granularity,
             start_at=min_created_at or start_day,
             end_at=end_exclusive,
-            limit=200_001,
+            by_model=by_model,
         )
-        truncated = len(rows) > 200_000
-        rows = rows[:200_000]
         buckets: dict[str, dict[str, Any]] = {}
         by_model_buckets: dict[str, dict[str, dict[str, Any]]] = {}
-        for generation in rows:
-            bucket_id = usage_bucket_key(generation.created_at, granularity)
+        for row in rows:
+            bucket_id = row["bucket"]
+            metrics = {key: int(row[key]) for key in _USAGE_METRICS}
             bucket = buckets.setdefault(bucket_id, _empty_usage_bucket(bucket_id))
-            _add_usage_metrics(bucket, generation_metrics(generation))
+            _add_usage_metrics(bucket, metrics)
             if by_model:
+                # One query serves both views: a by-model row is one model's
+                # share of its bucket, and the bucket total is their sum.
                 model_bucket = by_model_buckets.setdefault(
-                    generation.model,
+                    row["model"],
                     {},
                 ).setdefault(bucket_id, _empty_usage_bucket(bucket_id))
-                _add_usage_metrics(model_bucket, generation_metrics(generation))
+                _add_usage_metrics(model_bucket, metrics)
         result: dict[str, Any] = {
             "granularity": granularity,
             "start_day": start_day,
             "end_day": end_day,
-            "truncated": truncated,
+            # Kept for readers of the shape. Always false: nothing is dropped.
+            "truncated": False,
             "buckets": [buckets[key] for key in sorted(buckets)],
         }
         if by_model:

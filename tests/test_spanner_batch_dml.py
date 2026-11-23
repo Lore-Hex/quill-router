@@ -558,7 +558,7 @@ def test_finalize_partial_batch_rolls_back_done_claim_and_evidence(
     assert db.commits == commits and db.rollback_calls == 1
 
 
-@pytest.mark.parametrize('index', range(10))
+@pytest.mark.parametrize('index', range(11))
 def test_finalize_batch_abort_retries_claim_done_and_all_evidence(
     monkeypatch: pytest.MonkeyPatch, index: int,
 ) -> None:
@@ -568,10 +568,10 @@ def test_finalize_batch_abort_retries_claim_done_and_all_evidence(
     result = finalize()
     assert result['outcome'] == 'settled' and result['outbox_marked'] is True
     assert db.aborts == 1 and db.commits == commits + 1
-    # Ten statements: the claim, the typed authorization, the done-mark and its
-    # two retention arms, the generation, the activity, the credit release and
-    # the key's two window forms.
-    assert len(batches) == 2 and all(len(batch) == 10 for batch in batches)
+    # Eleven statements: the claim, the typed authorization, the done-mark and
+    # its two retention arms, the generation, the activity, the credit row's
+    # lock statement, the credit release and the key's two window forms.
+    assert len(batches) == 2 and all(len(batch) == 11 for batch in batches)
     assert all(row['status'] == 'done' and row['attempts'] == 1 for row in db.settle_outbox.values())
     assert all(row['settled'] and row['actual_micro'] == 70 for row in db.reservations.values())
     assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70

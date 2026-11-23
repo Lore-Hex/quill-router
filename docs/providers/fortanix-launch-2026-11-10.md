@@ -22,7 +22,8 @@ failover behavior and a per-request location pin have not been verified.
 - Input and output: $0.01 per million tokens each, including the normal floor.
 - Standard $0.000001 minimum per billed request and component rounding apply.
 - Managed credits only; no BYOK or cache-discount claim.
-- Introductory offer with no announced end date. Pricing may change.
+- The introductory offer runs through November 27, 2026 (Pacific time). The
+  promotion expires automatically; the end date does not set a new tariff.
 - Managed-route ZDR; Santa Clara, California, US inference by operator declaration.
 
 The existing `trustedrouter/fortanix-test` ID and its historical benchmarks

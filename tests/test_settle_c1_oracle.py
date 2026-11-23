@@ -82,7 +82,7 @@ def test_entry_path_money_and_operations(
     from google.cloud.spanner_v1 import param_types
 
     from tests.fakes.spanner import _FakeTransaction
-    from tests.fakes.spanner_order import credit_before_key, record_statements
+    from tests.fakes.spanner_order import HINT, credit_before_key, record_statements, unhinted
     from tests.test_settle_c1 import debt_row, prepare
     from tests.test_settle_one_commit import _one_commit_fixture
     from tests.test_settle_speculative_batch import clone, invoke, state
@@ -209,9 +209,17 @@ def test_entry_path_money_and_operations(
         assert db.transaction_tags == [tags[label] for label, _ in expected]
         assert result['outcome'] == ('error' if underflow else 'already_settled' if replay else 'settled')
 
+        released = 0
         for label, tx in attempts:
             sqls = [sql for called_tx, sql in calls if called_tx is tx]
-            credit_before_key(sqls, require_both=False)
+            # The parent predates the exclusive scan on releases; the current
+            # finalize must take each counter row exclusively at first touch.
+            credit_before_key(sqls, require_both=False, exclusive=is_current)
+            releases = [sql for sql in sqls if 'set reserved = reserved - @hold' in sql]
+            released += len(releases)
+            assert all(sql.startswith(HINT) == (is_current and 'not exists' not in sql)
+                       for sql in releases)
+            sqls = [unhinted(sql) for sql in sqls]
             money = [sql for sql in sqls if sql.startswith(('update tr_credit_balance', 'update tr_key_limit'))]
             if label in {'enqueue', 'benchmark'} or replay:
                 assert not money
@@ -233,7 +241,9 @@ def test_entry_path_money_and_operations(
             folded = any('update tr_credit_balance' in sql
                          for batched_tx, statements in batches if batched_tx is tx for sql in statements)
             if folded:
-                expected_money = ['credit', 'key', 'key']
+                # The credit row's lock statement, its release, the key's two forms.
+                expected_money = ['credit', 'credit', 'key', 'key']
+                assert money[0].startswith('update tr_credit_balance set reserved = reserved, ')
             elif underflow:
                 expected_money = ['credit']
             else:
@@ -242,6 +252,9 @@ def test_entry_path_money_and_operations(
                 expected_money = ['credit'] * credit_count + ['key'] * key_count
             assert ['credit' if 'tr_credit_balance' in sql else 'key' for sql in money] == expected_money
 
+        # The fake counts a release of a row its transaction had not taken
+        # exclusively: every one of the parent's, none of the current finalize's.
+        assert db.releases_without_exclusive_lock == (0 if is_current else released)
         if not (underflow or replay):
             row = db.settle_outbox[(intent.authorization_id, intent.intent_kind)]
             assert row['status'] == 'done' and row['settle_body'] is None

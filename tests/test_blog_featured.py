@@ -172,3 +172,10 @@ def test_combo_launch_opens_with_venturebeat_coverage(
     assert response.text.index(coverage_url) < response.text.index(
         "<p>Many models beat one model."
     )
+
+
+def test_local_llm_guides_belong_to_notes_only(client: TestClient) -> None:
+    assert not any(slug.startswith("local-llm-") for slug in BLOG_POSTS_BY_SLUG)
+    assert client.get("/blog/local-llm-getting-started", follow_redirects=False).status_code == 404
+    assert "/blog/local-llm-" not in client.get("/sitemap-core.xml").text
+    assert 'href="/notes/local-llm-getting-started"' in client.get("/resources").text

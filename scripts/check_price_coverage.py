@@ -1259,11 +1259,6 @@ def _run_audit(
                 # Any public model/route removes this exemption and fails closed.
                 info.append(f"{slug}: internal-only test tariff; excluded from public price publication")
                 continue
-            if not any(endpoint.provider == slug for endpoint in MODEL_ENDPOINTS.values()):
-                # A retired provider kept only to settle archived routes
-                # publishes no price. Any routable route ends this exemption.
-                info.append(f"{slug}: retired; settlement-only archive with no routable routes")
-                continue
         if slug == "telluvian":
             from trusted_router.polyphemus import MODEL_ID, SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 
@@ -1288,6 +1283,15 @@ def _run_audit(
             if (public_models == {MODEL_ID} and len(public_routes) == 1
                     and launch_tariff_matches(MODELS[MODEL_ID], public_routes[0])):
                 info.append("fortanix: exact operator-confirmed zero-cost launch tariff (2026-11-10); customer $0.01/M input and output; not a live supplier quote")
+                continue
+            from trusted_router.fortanix_launch import NATIVE_ID
+            from trusted_router.provider_lifecycle import provider_model_retired
+
+            # Fortanix's temporary GLM-5.3-Flash suspension (from 2026-11-27,
+            # expected back around early January 2027) leaves nothing to bill.
+            if (public_models == {MODEL_ID} and not public_routes
+                    and provider_model_retired(slug, MODEL_ID, NATIVE_ID)):
+                info.append("fortanix: GLM-5.3-Flash suspended by the provider from 2026-11-27; no public route to price")
                 continue
             warning = "fortanix: public routes differ from the exact operator-approved launch tariff; price review required"
             warnings.append(warning)

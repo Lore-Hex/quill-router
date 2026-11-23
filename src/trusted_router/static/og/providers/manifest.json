@@ -73,10 +73,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 39,
+    "route_count": 38,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -298,19 +298,19 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 60,
+    "model_count": 61,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 60,
+    "route_count": 61,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -361,10 +361,10 @@
   },
   "greenference": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "Greenference",
     "privacy": "Zero retention",
-    "route_count": 10,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "greenference"
   },
@@ -613,10 +613,10 @@
   },
   "neurometric": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Neurometric AI",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "neurometric"
   },
@@ -631,10 +631,10 @@
   },
   "nextbit-eu": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "NextBit (EU)",
     "privacy": "Zero retention",
-    "route_count": 3,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "nextbit-eu"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -721,10 +721,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },

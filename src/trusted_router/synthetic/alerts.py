@@ -126,6 +126,7 @@ def ops_alert(
     fingerprint: list[str],
     tags: dict[str, str] | None = None,
     claim_detail: str | None = None,
+    extra: dict[str, str] | None = None,
 ) -> bool:
     """A page-worthy operational alarm: logged AND captured as a Sentry issue.
 
@@ -140,6 +141,9 @@ def ops_alert(
     issue that re-opens, and exception-swallowed so alerting can never break
     the money path it is reporting on. Returns True when the capture reached
     the Sentry SDK.
+
+    ``extra`` carries per-event values that must not become tags or fingerprint
+    parts (an upstream request ID).
 
     ``claim_detail`` distinguishes alerts that share a fingerprint but not
     their contents (a digest listing different routes) inside alerts_once.
@@ -159,6 +163,8 @@ def ops_alert(
             scope.fingerprint = ["ops-alert", *fingerprint]
             for key, value in (tags or {}).items():
                 scope.set_tag(key, value)
+            for key, value in (extra or {}).items():
+                scope.set_extra(key, value)
             sentry_sdk.capture_message(message, level="error")
     except Exception:  # noqa: BLE001 - Sentry unavailable must not break the caller
         logger.exception("ops alert capture failed")

@@ -1,12 +1,15 @@
-"""Which authorize-side reserves lock their row exclusively at the scan.
+"""Which reserves and releases lock their counter row exclusively at the scan.
 
 docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md: a conditional UPDATE
-scans under a shared lock and upgrades it, so simultaneous reserves of one row
+scans under a shared lock and upgrades it, so simultaneous writers of one row
 abort each other. The statement hint removes the upgrade, but a hinted
 statement that matches no row holds the exclusive lock until its transaction
 ends. So a reserve carries the hint only where it is expected to write and is
-the only counter row of its table the transaction touches. These tests pin
-which statements carry it, in which transaction shapes, and that no hinted
+the only counter row of its table the transaction touches. A release always
+names the one credit row and the one key row its reservation recorded, so
+every release carries it; the folded batch's credit release has a subquery
+and so follows a hinted statement that only locks. These tests pin which
+statements carry the hint, in which transaction shapes, and that no hinted
 statement has a subquery (the hint would lock the subquery's range too).
 """
 
@@ -14,7 +17,7 @@ from __future__ import annotations
 
 import ast
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,9 +28,15 @@ from google.cloud.spanner_v1 import param_types
 from tests.fakes import spanner as fake_spanner
 from tests.fakes.spanner import _FakeTransaction
 from tests.test_authorize_speculative_batch import _options
+from tests.test_settle_speculative_batch import fixture as _settle_fixture
+from tests.test_settle_speculative_batch import invoke as _settle
 from tests.test_spanner_batch_dml import NOW, _database
 from trusted_router import storage_gcp_authorize as authorize
 from trusted_router import storage_gcp_counter_dml as dml
+from trusted_router.storage_gcp_codec import json_body
+from trusted_router.storage_gcp_operational_analytics_outbox import (
+    SpannerOperationalAnalyticsOutbox,
+)
 from trusted_router.storage_gcp_strict_budget import reserve_strict_key
 
 HINT = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
@@ -102,18 +111,28 @@ def _unhinted() -> dict[str, str]:
     }
 
 
-def _releases() -> dict[str, str]:
-    floors = dict.fromkeys(("daily", "weekly", "monthly"), datetime(2026, 11, 10, tzinfo=UTC))
+_FLOORS = dict.fromkeys(("daily", "weekly", "monthly"), datetime(2026, 11, 10, tzinfo=UTC))
+NO_DEBT_RELEASE = (
+    "UPDATE tr_credit_balance "
+    "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
+    "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+    "AND NOT COALESCE(in_debt, FALSE) "
+    "AND (@hold <= @actual OR NOT EXISTS ("
+    "SELECT 1 FROM tr_trust_event "
+    "WHERE workspace_id=@ws AND kind='payment' AND unrecovered_micro>0))"
+)
+
+
+def _hinted_releases() -> dict[str, str]:
     key = {
-        f"release_key_statement[{windows}]": dml.release_key_statement(
-            PT, "kh", 5, 3, book_to_byok=False, window_floors=floors, windows=windows
+        f"release_key_statement[{windows}{'+byok' if byok else ''}]": dml.release_key_statement(
+            PT, "kh", 5, 3, book_to_byok=byok, window_floors=_FLOORS, windows=windows
         )[0]
         for windows in ("current", "stale", "any")
+        for byok in (False, True)
     }
     return {
-        "release_credit_no_debt_statement": dml.release_credit_no_debt_statement(
-            PT, "ws", 5, 3, shard=0
-        )[0],
+        "lock_credit_release_statement": dml.lock_credit_release_statement(PT, "ws", 5, shard=0)[0],
         "release_credit": _issued(lambda tx: dml.release_credit(tx, PT, "ws", 5, 3, shard=0)),
         **key,
     }
@@ -141,17 +160,59 @@ def test_the_unhinted_variant_is_the_same_statement_without_the_hint(name: str) 
     assert HINT + sql == _hinted()[name]
 
 
-@pytest.mark.parametrize("name", sorted(_releases()))
-def test_no_release_carries_the_hint(name: str) -> None:
-    # The one-commit credit release has a tr_trust_event subquery; the hint
-    # would lock a workspace's whole event range. The releases stay as they are
-    # until that statement is restructured.
-    assert "@{" not in _releases()[name]
+@pytest.mark.parametrize("name", sorted(_hinted_releases()))
+def test_a_release_scans_exclusively(name: str) -> None:
+    sql = _hinted_releases()[name]
+    assert sql.startswith(HINT + "UPDATE tr_"), sql
+    assert sql.count("@{") == 1
+    # One row, no second relation: the hint covers every range the statement scans.
+    assert "SELECT" not in sql.upper(), sql
+    # The scan is one primary key: both key columns by equality, joined to the
+    # rest of the predicate by AND, so it can never widen to a range.
+    table = sql.removeprefix(HINT + "UPDATE ").split(" ", 1)[0]
+    where = sql.split(" WHERE ", 1)[1]
+    point = {
+        "tr_credit_balance": "workspace_id=@ws AND shard=@shard AND reserved >= @hold",
+        "tr_key_limit": "key_hash=@kh AND shard=@shard AND reserved >= @hold",
+    }[table]
+    assert where.startswith(point), sql
+    assert where == point or where[len(point):].startswith((" AND ", " THEN RETURN ")), sql
 
 
-def test_the_one_commit_release_still_has_the_subquery_that_forbids_the_hint() -> None:
-    sql = dml.release_credit_no_debt_statement(PT, "ws", 5, 3, shard=0)[0]
-    assert "SELECT 1 FROM tr_trust_event" in sql
+def test_the_sequential_credit_release_is_its_statement_behind_the_hint() -> None:
+    assert _hinted_releases()["release_credit"] == HINT + (
+        "UPDATE tr_credit_balance "
+        "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
+        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+        "THEN RETURN total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)"
+    )
+
+
+def test_the_one_commit_release_keeps_its_text_its_subquery_and_no_hint() -> None:
+    # The hint would lock a workspace's whole tr_trust_event range. The
+    # statement is unchanged; the statement in front of it takes the lock.
+    sql, params, types = dml.release_credit_no_debt_statement(PT, "ws", 5, 3, shard=0)
+    assert sql == NO_DEBT_RELEASE
+    assert "@{" not in sql and "SELECT 1 FROM tr_trust_event" in sql
+    assert params == {"hold": 5, "actual": 3, "ws": "ws", "shard": 0}
+    assert set(types) == set(params)
+
+
+def test_the_lock_statement_scans_what_the_release_scans_and_moves_nothing() -> None:
+    sql, params, types = dml.lock_credit_release_statement(PT, "ws", 5, shard=2)
+    assert sql == HINT + (
+        "UPDATE tr_credit_balance "
+        "SET reserved = reserved, total_usage = total_usage "
+        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+        "AND NOT COALESCE(in_debt, FALSE)"
+    )
+    # The release's own row predicates, word for word, and nothing more: it
+    # matches every row the release can match. Its SET list is the release's
+    # two columns, each written back to itself.
+    row_predicates = NO_DEBT_RELEASE.split(" WHERE ", 1)[1].split(" AND (@hold <= @actual", 1)[0]
+    assert sql.split(" WHERE ", 1)[1] == row_predicates
+    assert params == {"hold": 5, "ws": "ws", "shard": 2}
+    assert types == {"hold": "INT64", "ws": "STRING", "shard": "INT64"}
 
 
 # Either operand order: `reserved = reserved + @est` and `reserved = @est + reserved`.
@@ -229,6 +290,179 @@ def test_every_statement_in_src_that_adds_to_reserved_is_accounted_for() -> None
         ("storage_gcp_counter_dml.py", "reserve_key_statement"): "by argument",
         ("storage_gcp_strict_budget.py", "reserve_strict_key"): "by argument",
     }
+
+
+# Either operand order is an addition; a release subtracts and has one order.
+_TAKES_FROM_RESERVED = re.compile(r"\breserved\s*=\s*reserved\s*-")
+
+
+def _release_sites() -> dict[tuple[str, str], list[bool]]:
+    """(file, function) -> whether each string in src that takes from `reserved` starts hinted."""
+    sites: dict[tuple[str, str], list[bool]] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        if "postgres" in path.name:
+            continue
+        tree = ast.parse(path.read_text())
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if not _TAKES_FROM_RESERVED.search(node.value):
+                continue
+            scope: ast.AST | None = parents[node]
+            if isinstance(scope, ast.Expr):
+                continue  # a docstring
+            while scope is not None and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+                scope = parents.get(scope)
+            key = (path.name, scope.name if scope is not None else "<module>")
+            sites.setdefault(key, []).append(node.value.startswith(HINT))
+    return sites
+
+
+def test_every_statement_in_src_that_takes_from_reserved_is_accounted_for() -> None:
+    """A new release, or one rewritten without the hint, must be decided here.
+
+    An unhinted release of a hot row brings the upgrade aborts back. The one
+    unhinted Spanner release is the folded batch's, which has a subquery and
+    runs only behind lock_credit_release_statement (pinned below). The last
+    entry is the Postgres plane's, which locks its rows another way.
+    """
+    assert _release_sites() == {
+        ("storage_gcp_counter_dml.py", "release_credit"): [True],
+        ("storage_gcp_counter_dml.py", "release_credit_no_debt_statement"): [False],
+        ("storage_gcp_counter_dml.py", "release_key_statement"): [True, True],
+        ("storage_legacy_trust.py", "reject_postgres_reservation"): [False],
+    }
+
+
+def _releases_seen(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, str, bool]]:
+    """(transaction, statement kind, hinted) for every counter-row statement a settle issues."""
+    seen: list[tuple[Any, str, bool]] = []
+
+    def record(method: str) -> None:
+        original = getattr(_FakeTransaction, method)
+
+        def call(tx: Any, sql: str, *, params: Any = None, param_types: Any = None) -> Any:
+            body = sql.removeprefix(HINT)
+            kind = next((name for name, prefix in {
+                "lock": "UPDATE tr_credit_balance SET reserved = reserved, ",
+                "credit": "UPDATE tr_credit_balance SET reserved = reserved - @hold",
+                "key": "UPDATE tr_key_limit SET reserved = reserved - @hold",
+            }.items() if body.startswith(prefix)), None)
+            if kind is not None and not getattr(tx, "_in_returning", False):
+                seen.append((tx, kind, sql.startswith(HINT)))
+            return original(tx, sql, params=params, param_types=param_types)
+
+        monkeypatch.setattr(_FakeTransaction, method, call)
+
+    record("execute_update")
+    record("execute_sql")
+    return seen
+
+
+def _per_transaction(seen: list[tuple[Any, str, bool]]) -> list[list[tuple[str, bool]]]:
+    transactions = list(dict.fromkeys(tx for tx, _, _ in seen))
+    return [[(kind, hinted) for tx, kind, hinted in seen if tx is each] for each in transactions]
+
+
+def test_the_folded_batch_locks_the_credit_row_immediately_before_its_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, options = _settle_fixture()
+    seen = _releases_seen(monkeypatch)
+    assert _settle(db, options)["outcome"] == "settled"
+    # One transaction: the lock statement, the unhinted release it locks for,
+    # then the key release in both window forms, each hinted.
+    assert _per_transaction(seen) == [
+        [("lock", True), ("credit", False), ("key", True), ("key", True)],
+    ]
+    assert db.credit_release_locks == 1
+    assert db.releases_without_exclusive_lock == 0
+    assert db.typed["tr_credit_balance"][("workspace", 0)]["total_usage"] == 70
+    assert db.typed["tr_credit_balance"][("workspace", 0)]["reserved"] == 0
+    assert db.typed["tr_key_limit"][("key", 0)]["usage"] == 70
+
+
+def test_the_fake_counts_a_folded_release_that_was_not_locked_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The check must be able to fail: without the lock statement the batch
+    # still settles the same money, and the fake reports the shared first touch.
+    db, options = _settle_fixture()
+    monkeypatch.setattr(
+        dml, "lock_credit_release_statement",
+        lambda pt, ws, hold, *, shard: (
+            "UPDATE tr_credit_balance SET total_usage = total_usage "
+            "WHERE workspace_id=@ws AND shard=@shard",
+            {"ws": ws, "shard": shard}, {"ws": pt.STRING, "shard": pt.INT64},
+        ),
+    )
+    original = _FakeTransaction.execute_update
+
+    def execute_update(tx: Any, sql: str, **kwargs: Any) -> int:
+        if sql.startswith("UPDATE tr_credit_balance SET total_usage = total_usage WHERE"):
+            return 1
+        return original(tx, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "execute_update", execute_update)
+    assert _settle(db, options)["outcome"] == "settled"
+    assert db.credit_release_locks == 0
+    assert db.releases_without_exclusive_lock == 1
+    assert db.typed["tr_credit_balance"][("workspace", 0)]["total_usage"] == 70
+
+
+@pytest.mark.parametrize("shape", ["sequential", "refund", "marked_in_debt", "reaper"])
+def test_every_other_release_path_takes_both_rows_exclusively(
+    monkeypatch: pytest.MonkeyPatch, shape: str,
+) -> None:
+    db, options = _settle_fixture()
+    if shape == "refund":
+        refunded = options["authorization"]
+        refunded.record_finalization(
+            success=False, actual_microdollars=0, selected_usage_type="Credits", generation=None,
+        )
+        options.update(
+            success=False, actual_micro=0, generation=None, generation_writes=[],
+            authorization=refunded, auth_body_settled=json_body(refunded),
+            settle_outbox_done=(options["authorization_id"], "settle"),
+        )
+    elif shape == "marked_in_debt":
+        # The batch's lock statement and release both match nothing on a
+        # marked row; the batch rolls back and the sequential release runs.
+        db.typed["tr_credit_balance"][("workspace", 0)]["in_debt"] = True
+    seen = _releases_seen(monkeypatch)
+    if shape == "reaper":
+        reaped = authorize._finalize_reaped_reservation_atomic(
+            db, param_types, reservation_id=options["reservation_id"],
+            reap_now=NOW + timedelta(minutes=6), guard_outbox=False,
+            snapshot_booking_enabled=False, operational_analytics_outbox=None,
+        )
+        assert reaped.outcome == "settled"
+    elif shape == "sequential":
+        # An outbox without the statement-building API keeps the sequential path.
+        inner = SpannerOperationalAnalyticsOutbox(db, param_types)
+        sequential = SimpleNamespace(enqueue_activity_tx=inner.enqueue_activity_tx)
+        result = authorize.typed_finalize_atomic(
+            db, param_types, operational_analytics_outbox=sequential, **options,
+        )
+        assert result["outcome"] == "settled"
+    else:
+        assert _settle(db, options)["outcome"] == "settled"
+    transactions = _per_transaction(seen)
+    final = transactions[-1]
+    # The committed transaction releases credit then key, each hinted. The
+    # key's current form may miss and be followed by the rolling form.
+    assert final[0] == ("credit", True), transactions
+    assert final[1:] and all(entry == ("key", True) for entry in final[1:]), transactions
+    if shape == "marked_in_debt":
+        # The rolled-back batch held the row exclusively from its lock statement.
+        assert transactions[0][0] == ("lock", True), transactions
+        assert len(transactions) == 2
+    else:
+        assert len(transactions) == 1, transactions
+    assert db.releases_without_exclusive_lock == 0
+    assert db.typed["tr_credit_balance"][("workspace", 0)]["reserved"] == 0
+    assert db.typed["tr_key_limit"][("key", 0)]["reserved"] == 0
 
 
 def _authorize_reserves(monkeypatch: pytest.MonkeyPatch, db: Any, **overrides: Any) -> list[tuple]:

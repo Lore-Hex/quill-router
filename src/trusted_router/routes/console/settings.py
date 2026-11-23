@@ -10,14 +10,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router import phone_verification as pv
 from trusted_router.auth import SettingsDep
+from trusted_router.model_regions import country_label
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.routes.console.social_rewards import _same_origin
 from trusted_router.services.notify import send_verification_code
 from trusted_router.storage import STORE
 from trusted_router.verification_gates import missing_phone_verification_requirements
-from trusted_router.workspace_origin_policy import POLICIES
+from trusted_router.workspace_origin_policy import COUNTRIES, POLICIES
 
 MAX_WORKSPACE_NAME = 120
+WESTERN_COUNTRY_NAMES = tuple(sorted(country_label(code) for code in COUNTRIES["western"]))
 
 
 def _back(query: str) -> RedirectResponse:
@@ -60,6 +62,7 @@ def register(app: FastAPI) -> None:
                 can_manage=ctx.can_manage,
                 saved=bool(saved),
                 origin_enabled=settings.workspace_origin_controls_enabled,
+                western_countries=WESTERN_COUNTRY_NAMES,
                 origin_saved=bool(origin_saved),
                 error=error,
                 phone=user.phone,

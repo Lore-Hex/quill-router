@@ -28,8 +28,11 @@ actual amount for an ordinary Credits overrun; C1 does not change that policy.
 
 `release_key_statement` has three modes. `current` matches only a key whose day,
 week and month windows are all current, and leaves the boundary columns out of
-its SET list, so a settle takes no exclusive lock on boundaries that did not
-move (#1083). `stale` is the rolling form guarded by `NOT` of that predicate;
+its SET list, so a settle writes no boundary that did not move (#1083). Until
+2026-11-21 that also kept the settle's exclusive locks off those boundaries;
+since then every key release carries `EXCLUSIVE_SCAN_HINT`, and the hinted scan
+takes every cell it reads exclusively, the boundary columns in its predicate
+included. `stale` is the rolling form guarded by `NOT` of that predicate;
 the predicate's `IS NOT NULL` guards keep it TRUE or FALSE, never NULL, so the
 two are exact complements. `any` is main's unguarded rolling form, used by the
 sequential path.

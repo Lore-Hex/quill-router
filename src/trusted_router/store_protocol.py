@@ -1160,6 +1160,26 @@ class Store(Protocol):
         tag_key: str | None = ...,
         tag_value: str | None = ...,
     ) -> Any: ...
+    # Console tag panel: keys seen since ``start_at``, a breakdown by one
+    # key's values, and the newest generations carrying one tag.
+    def activity_tag_summary(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        group_by: str | None = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+    ) -> dict[str, Any]: ...
+    def activity_tag_events(
+        self,
+        workspace_id: str,
+        *,
+        start_at: str,
+        tag_key: str,
+        tag_value: str | None = ...,
+        limit: int = ...,
+    ) -> Any: ...
     def usage_series(
         self,
         workspace_id: str,
@@ -1272,6 +1292,7 @@ class TypedBillingStore(Protocol):
         fastpath_envelope: str | None = ...,
         fastpath_end_of_life: str | None = ...,
         lease_headroom_503: bool = ...,
+        lease_headroom_floor: int = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

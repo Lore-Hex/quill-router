@@ -1821,7 +1821,7 @@ counts, per snapshot and policy digest:
   client keeps; without it Python names no read), the locked read with
   none; the header carries the hold the read was held to and the rows'
   count, signed sum and largest row. The later lease read after a final
-  refusal (`_lease_held_after_refusal`, `fastpath_lease_headroom_503`)
+  refusal (`_lease_verdict_after_refusal`, `fastpath_lease_headroom_503`)
   is not named. The race is confirmed when Python's read counted the rows
   the shadow's read found, Python held it to the hold the decision takes
   and neither a row nor the sum reached it, and, for a snapshot, the rows

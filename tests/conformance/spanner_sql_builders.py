@@ -269,6 +269,33 @@ def builder_cases() -> list[SQLCase]:
             seed=[seed_credit, seed_debt],
             expected_counts=[int(reserved >= hold and (hold <= actual or debt == 0))],
         ))
+        # The folded batch's pair: the lock statement, then the release it
+        # locks for. The lock statement matches wherever the release's row
+        # predicates do, whatever the workspace's recovery debt; the release
+        # after it matches exactly as it does alone.
+        lock = counters.lock_credit_release_statement(pt, "acceptance-workspace", hold, shard=0)
+        cases.append(SQLCase(
+            f"c1-credit-locked-{hold}-{actual}-{reserved}-{debt}", [lock, credit],
+            seed=[seed_credit, seed_debt],
+            expected_counts=[
+                int(reserved >= hold),
+                int(reserved >= hold and (hold <= actual or debt == 0)),
+            ],
+        ))
+    for marked in (False, True):
+        # A row marked in debt is not the folded batch's to release, and the
+        # lock statement does not match it either.
+        cases.append(SQLCase(
+            f"c1-credit-lock-marked-{marked}",
+            [counters.lock_credit_release_statement(pt, "acceptance-workspace", 100, shard=0)],
+            seed=[(
+                "INSERT INTO tr_credit_balance (workspace_id, shard, total_credits, reserved, in_debt) "
+                "VALUES (@ws, 0, 1000, 100, @marked)",
+                {"ws": "acceptance-workspace", "marked": marked},
+                {"ws": pt.STRING, "marked": pt.BOOL},
+            )],
+            expected_counts=[int(not marked)],
+        ))
     for byok in (False, True):
         capture = Capture()
         counters.release_key(capture, pt, "acceptance-key", 1, 1, book_to_byok=byok,
@@ -297,6 +324,7 @@ def builder_cases() -> list[SQLCase]:
         if include_activity:
             writes.append(activity)
         writes.extend([
+            counters.lock_credit_release_statement(pt, "acceptance-workspace", 100, shard=0),
             counters.release_credit_no_debt_statement(pt, "acceptance-workspace", 100, 70, shard=0),
             counters.release_key_statement(pt, "acceptance-key", 100, 70, book_to_byok=False,
                                            window_floors=window_floors(NOW), shard=0),

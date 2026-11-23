@@ -745,6 +745,26 @@ class Settings(BaseSettings):
     # Settlement has a wider gate because it closes already-issued holds, but
     # one hot key must not consume every Spanner session in an instance.
     settle_per_key_inflight_limit: int = 16
+    # A workspace with one credit shard writes one tr_credit_balance row on
+    # every synchronous authorize, settle and refund. This many of its
+    # credit-row transactions from one process may be inside Spanner at a
+    # time; the rest wait in the process, settles and refunds ahead of
+    # reserves and otherwise in arrival order, then start ungated. It changes
+    # when a transaction starts, and so how much of its deadline is left, and
+    # nothing else about it (workspace_billing_gate.py). 0 is off.
+    workspace_billing_gate_width: int = Field(default=0, ge=0, le=4)
+    # One wait is at most a quarter of the Spanner budget the caller has
+    # left (five seconds of a reserve's twenty, a second and a quarter of a
+    # one-commit settle's five, half a second of the snapshot settle's two),
+    # and all of one request's waits together are at most this. Not lower:
+    # a reserve that reaches it goes around into Spanner and competes with
+    # the settles for the row, and in the storm model every step below five
+    # seconds cost snapshot settles once the row was saturated
+    # (docs/spanner-reliability.md, "One workspace on one credit row").
+    workspace_billing_gate_wait_ms: int = Field(default=5000, ge=1, le=5000)
+    # Callers of one workspace parked at the gate in one process; one more
+    # starts at once. It bounds the queue, not the instance's request slots.
+    workspace_billing_gate_max_waiters: int = Field(default=8, ge=1, le=8)
     # Only front doors that overwrite X-TrustedRouter-Client-IP may opt into
     # edge_header. Public origins that cannot perform that overwrite must stay
     # on the safe default and aggregate into the untrusted_lb bucket.
@@ -1195,6 +1215,21 @@ class Settings(BaseSettings):
     # the request let through once headroom is back. Off, no lease is read and
     # every authorize answer is today's. Activation (PR 8) turns it on before WS6.
     fastpath_lease_headroom_503: bool = False
+    # The fast path nodes' floor, in microdollars (infra/fastpath.tf
+    # fastpath_floor, the node's -floor), for the 503 above: it is answered
+    # only for a workspace whose headroom, counting what its live leases
+    # hold, is at least this. Under it no lease can be topped up (a node
+    # refuses one unless the headroom outside leases is at least the floor
+    # plus the amount asked), what the leases hold comes back only when they
+    # close, and the workspace can spend the rest before that, so a retry
+    # cannot help: the answer is the insufficient_credits 402, as with the
+    # 503 off (2026-11-21: after the floor went from $20 to $2, a workspace
+    # within cents of empty was answered the 503 until it bought credit).
+    # It changes which refusal is returned, never whether a request is
+    # refused. 0, the default, compares nothing: every answer is as before
+    # this setting. Not read with the 503 off. rollout.sh carries the value;
+    # tests/test_fastpath_lease_headroom_floor.py holds it to the nodes'.
+    fastpath_lease_headroom_503_floor_micro: int = Field(default=0, ge=0)
     # The enabler (docs/design/fast-admission-widening.md section 5): a
     # Cloud Run job, trusted_router.fastpath_enabler, which turns the
     # switch (tr_fastpath_workspace) on for eligible workspaces and off for

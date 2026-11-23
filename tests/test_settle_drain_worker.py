@@ -68,7 +68,7 @@ def inventory_settings(surface, enabled):
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False, console_support=False,
               wallet_email_verify=False, routing_evidence=False, request_billing=False,
-              byok_docs=False, notes=False):
+              byok_docs=False, notes=False, activity_tags=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
@@ -85,6 +85,7 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     # API, lifecycle, and state assertion below.
     # The data-access and simple-start pages follow the same rule.
     for base, handler in (("/docs/byok", "byok_docs_page"),
+                          ("/docs/routing", "legacy_routing_guide"),
                           ("/who-can-see-your-data", "who_can_see_your_data"),
                           ("/docs/simple-start", "simple_start_docs")):
         for path in (base, base + "/"):
@@ -93,7 +94,7 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
             assert routes.count(docs_route) == int(byok_docs)
             if byok_docs:
                 routes.remove(docs_route)
-    for path, handler in (("/notes", "notes_archive"), ("/notes/{slug}", "note"),
+    for path, handler in (("/openrouter", "openrouter_notice"), ("/notes", "notes_archive"), ("/notes/{slug}", "note"),
                           ("/sitemap-notes.xml", "notes_sitemap")):
         note_route = [path, ["GET", "HEAD"], f"register_notes.<locals>.{handler}"]
         assert routes.count(note_route) == int(notes)
@@ -129,6 +130,14 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     assert routes.count(support_route) == int(console_support)
     if console_support:
         routes.remove(support_route)
+    # Account for exactly the two request-tag reads of the Observability page,
+    # only on console surfaces and absent everywhere else.
+    for path, handler in (("/console/activity/tags.json", "console_activity_tags"),
+                          ("/console/activity/requests.json", "console_activity_tagged_requests")):
+        tag_route = [path, ["POST"], f"register.<locals>.{handler}"]
+        assert routes.count(tag_route) == int(activity_tags)
+        if activity_tags:
+            routes.remove(tag_route)
     if abliterated_page:
         # Account for exactly the reviewed landing page and its slash alias.
         # Keep the frozen inventory's other routes and lifecycle pins intact.
@@ -176,6 +185,7 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
                      routing_evidence=surface in {"combined", "public", "observer"},
                      management_key=surface in {"combined", "control"},
                      console_support=surface in {"combined", "control"},
+                     activity_tags=surface in {"combined", "control"},
                      request_billing=surface in {"combined", "control"},
                      wallet_email_verify=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 

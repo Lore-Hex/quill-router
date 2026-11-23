@@ -31,6 +31,51 @@ PINS = {
 }
 
 
+# The one statement the current finalize adds to frozen main's trace: the
+# credit row's lock, in the folded batch, in front of the release it locks for
+# (storage_gcp_counter_dml.lock_credit_release_statement).
+CREDIT_RELEASE_LOCK = (
+    '@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance '
+    'SET reserved = reserved, total_usage = total_usage '
+    'WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold '
+    'AND NOT COALESCE(in_debt, FALSE)'
+)
+
+
+def _without_credit_release_lock(
+    statements: list[str], raw_calls: list[tuple[str, str, tuple, dict]],
+) -> tuple[list[str], list[tuple[str, str, tuple, dict]]]:
+    """The current trace with the lock statement taken out, after checking it.
+
+    It must sit immediately before the folded batch's credit release, name that
+    release's row and hold and nothing else, and appear nowhere else.
+    """
+    folded = [i for i, sql in enumerate(statements)
+              if sql.startswith('update tr_credit_balance set reserved = reserved - @hold')
+              and 'not exists' in sql]
+    locks = [i for i, sql in enumerate(statements) if sql == CREDIT_RELEASE_LOCK.lower()]
+    assert locks == [i - 1 for i in folded]
+    kept_statements = [sql for i, sql in enumerate(statements) if i not in locks]
+    kept_calls: list[tuple[str, str, tuple, dict]] = []
+    removed = 0
+    for cls, method, args, kwargs in raw_calls:
+        if method == 'execute_update' and args[0] == CREDIT_RELEASE_LOCK:
+            removed += 1
+            continue
+        if method == 'batch_update':
+            batch = list(args[0])
+            for index in [i for i, (sql, _, _) in enumerate(batch) if sql == CREDIT_RELEASE_LOCK]:
+                _, lock_params, lock_types = batch[index]
+                release_sql, release_params, release_types = batch[index + 1]
+                assert 'SELECT 1 FROM tr_trust_event' in release_sql
+                assert lock_params == {k: v for k, v in release_params.items() if k != 'actual'}
+                assert lock_types == {k: v for k, v in release_types.items() if k != 'actual'}
+            args = ([entry for entry in batch if entry[0] != CREDIT_RELEASE_LOCK], *args[1:])
+        kept_calls.append((cls, method, args, kwargs))
+    assert removed == len(locks)
+    return kept_statements, kept_calls
+
+
 def test_frozen_source_pins():
     # Interpreter-stable canonical AST digest (ast.dump output differs across Python versions).
     for filename, digest in PINS.items():
@@ -142,7 +187,16 @@ def test_frozen_main_effects_and_operation_trace(env, monkeypatch, scenario, suc
                             [sql for _, sql in calls], raw_calls,
                             [getattr(db, name) - before for name, before in zip(rpc_counters, rpc_before, strict=True)],
                             list(zip(db.snapshot_sql[snapshot_start:], db.snapshot_sql_params[snapshot_start:], strict=True))))
-    assert outputs[0] == outputs[1]
+    # The effects, the RPC counts and the snapshot reads are compared as they
+    # are. The statement traces are equal but for the one lock statement the
+    # current finalize puts in front of a folded credit release.
+    frozen_out, current_out = outputs
+    statements, raw_calls = _without_credit_release_lock(current_out[2], current_out[3])
+    assert frozen_out == (current_out[0], current_out[1], statements, raw_calls, *current_out[4:])
+    assert CREDIT_RELEASE_LOCK.lower() not in frozen_out[2]
+    assert (len(current_out[2]) - len(frozen_out[2])) == int(
+        success and scenario != 'unresolved'
+    )
 
 
 @pytest.mark.parametrize('scenario', ['ordinary', 'unresolved', 'refresh'])

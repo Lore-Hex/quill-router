@@ -11,7 +11,10 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import lru_cache
 from typing import Any, TypeVar
 
 import httpx
@@ -98,11 +101,183 @@ def _identifier(value: str, *, label: str) -> str:
     return value
 
 
+# The bucket label of a usage series, per granularity. Each expression yields
+# exactly the string ``storage_activity.usage_bucket_key`` cuts from an ISO
+# timestamp, always in UTC, so the SQL aggregate and the in-memory store name
+# the same buckets. Fixed constants: nothing from a request reaches the SQL.
+USAGE_BUCKET_EXPRESSIONS: dict[str, str] = {
+    "minute": "formatDateTime(created_at, '%Y-%m-%dT%H:%i', 'UTC')",
+    "5min": "formatDateTime(toStartOfFiveMinutes(created_at), '%Y-%m-%dT%H:%i', 'UTC')",
+    "hour": "formatDateTime(created_at, '%Y-%m-%dT%H', 'UTC')",
+    "day": "formatDateTime(created_at, '%Y-%m-%d', 'UTC')",
+}
+
+
+# The bounded elapsed-time histogram behind every exact median here (see
+# ``elapsed_histogram_columns`` and ``settle_elapsed_median``). Slots are
+# 1,024 ms wide and the last one is open-ended, so one group of rows holds at
+# most 65,536 slots, plus 1,024 distinct values for each slot it opens,
+# however many rows or distinct values the range has.
+ELAPSED_SLOT_MS = 1024
+ELAPSED_LAST_SLOT = 65_535
+ELAPSED_CEILING_MS = ELAPSED_LAST_SLOT * ELAPSED_SLOT_MS
+# The coarse read, the read of the middle slots, and two more for a range
+# whose middle moved between them.
+_ELAPSED_READS = 4
+
+
+def elapsed_histogram_columns(column: str, opened: str) -> str:
+    """The two SELECT expressions of the bounded elapsed-time histogram.
+
+    ``column`` is the latency expression, nullable milliseconds. ``opened`` is
+    a condition that is true for a row whose slot should be opened, which for
+    one group of rows is ``intDiv(<column>, 1024) IN (<its middle slots>)``.
+    Both are SQL text fixed in the caller's code, never request input.
+
+    The query that selects these must also select ``count() AS
+    generations_at_value`` and group by ``slot, elapsed_value`` (after any
+    key of its own, such as a tag). ``slot`` is NULL for an untimed row.
+    ``elapsed_value`` is the row's value inside an opened slot and NULL
+    elsewhere. ``settle_elapsed_median`` reads one group's rows.
+    """
+    return (
+        "  CASE\n"
+        f"    WHEN {column} IS NULL THEN NULL\n"
+        f"    WHEN {column} >= {ELAPSED_CEILING_MS} THEN {ELAPSED_LAST_SLOT}\n"
+        f"    ELSE intDiv({column}, {ELAPSED_SLOT_MS})\n"
+        "  END AS slot,\n"
+        "  CASE\n"
+        f"    WHEN {column} < {ELAPSED_CEILING_MS}\n"
+        f"      AND {opened}\n"
+        f"    THEN {column}\n"
+        "  END AS elapsed_value"
+    )
+
+
+def usage_buckets_query(*, granularity: str, by_model: bool, key_filtered: bool) -> str:
+    """The usage-series aggregate: totals per time bucket, or per bucket and model.
+
+    ClickHouse groups the rows instead of sending them to the caller, so the
+    result is small whatever the tenant's volume, and nothing is cut off.
+    Its row count does depend on how many distinct spellings of the usage
+    type are stored, normally a handful because writers canonicalise it.
+    FINAL stays: it is what counts a redelivered generation once. Every value
+    is a bound parameter; the only variable text is the bucket expression,
+    chosen from a fixed table by granularity.
+
+    The stored usage type is a grouping key, not a condition: the caller
+    decides Credits or BYOK for each stored value with ``UsageType.coerce``,
+    the same function the row-by-row aggregation used, so the two cannot
+    disagree on a value however it is spelled.
+    """
+    bucket = USAGE_BUCKET_EXPRESSIONS.get(granularity)
+    if bucket is None:
+        raise ValueError(f"unknown granularity: {granularity}")
+    group = "bucket, model, usage_type" if by_model else "bucket, usage_type"
+    # No alias repeats a column name: ClickHouse resolves a name inside an
+    # aggregate to the alias first, which would nest the aggregate in itself.
+    select = [f"{bucket} AS bucket"]
+    if by_model:
+        select.append("model")
+    select += [
+        "usage_type",
+        "count() AS requests",
+        "sum(tokens_prompt) AS prompt_tokens",
+        "sum(tokens_completion) AS completion_tokens",
+        "sum(reasoning_tokens) AS reasoning_token_total",
+        "sum(total_cost_microdollars) AS cost_total",
+    ]
+    clauses = ["tenant_id = {tenant_id:String}"]
+    if key_filtered:
+        clauses.append("key_id = {key_id:String}")
+    clauses.append("created_at >= parseDateTime64BestEffort({start_at:String}, 3)")
+    clauses.append("created_at < parseDateTime64BestEffort({end_at:String}, 3)")
+    return (
+        "\nSELECT\n  "
+        + ",\n  ".join(select)
+        + "\nFROM activity_generations FINAL\nWHERE "
+        + "\n  AND ".join(clauses)
+        + f"\nGROUP BY {group}\nORDER BY {group}\nFORMAT JSON\n"
+    )
+
+
 def _iso(value: Any) -> str:
     text = str(value)
     if text.endswith("Z") or "+" in text[10:]:
         return text
     return text.replace(" ", "T") + "Z"
+
+
+# Set while a read's bound values must stay out of the request URL.
+_BOUND_VALUES_IN_BODY: ContextVar[bool] = ContextVar("clickhouse_bound_values_in_body", default=False)
+
+
+@contextmanager
+def bound_values_in_the_body() -> Iterator[None]:
+    """Run a read whose bound values must stay out of what this process writes down.
+
+    Tag keys and values are customer text that this service keeps out of its
+    application logs and out of Sentry (docs/design/request-tagging.md,
+    sections 6.5 and 10). ClickHouse normally takes bound values as URL
+    parameters, and a URL is written down by more than one layer: httpx logs
+    it at INFO, Sentry's httpx integration copies its query string into a
+    span and a breadcrumb, and httpx names it in an ``HTTPStatusError``.
+
+    Inside this scope ``_query`` sends the statement and every bound value as
+    multipart form fields instead, which the ClickHouse HTTP interface reads
+    the same way, so the URL carries only the database name. The Sentry scope
+    without integrations and the status error without its URL remain as a
+    second line: neither has anything to leak while the first holds.
+
+    What this does not cover: ClickHouse records every statement, with its
+    parameters substituted, in its own query log on the analytics servers.
+    The values are there whichever way they were sent.
+    """
+    in_body = _BOUND_VALUES_IN_BODY.set(True)
+    try:
+        with _private_sentry_scope():
+            try:
+                yield
+            except httpx.HTTPStatusError as exc:
+                raise httpx.HTTPStatusError(
+                    f"ClickHouse answered HTTP {exc.response.status_code} "
+                    "to a read with private bound values",
+                    request=exc.request,
+                    response=exc.response,
+                ) from None
+    finally:
+        _BOUND_VALUES_IN_BODY.reset(in_body)
+
+
+@contextmanager
+def _private_sentry_scope() -> Iterator[None]:
+    try:
+        import sentry_sdk
+    except ImportError:
+        # The ClickHouse node scripts import this module without the SDK, and
+        # without the SDK there is no integration to keep the values from.
+        yield
+        return
+    with sentry_sdk.new_scope() as scope:
+        scope.set_client(_private_sentry_client())
+        scope.span = None
+        yield
+
+
+@lru_cache(maxsize=1)
+def _private_sentry_client() -> Any:
+    import sentry_sdk
+
+    # Same construction as services/resale.py: the explicitly empty DSN stops
+    # the SENTRY_DSN environment fallback, and with no integrations there is
+    # no outbound-request span, breadcrumb or SDK log to carry a query string.
+    return sentry_sdk.Client(
+        dsn="",
+        default_integrations=False,
+        auto_enabling_integrations=False,
+        enable_logs=False,
+        traces_sample_rate=0.0,
+    )
 
 
 class OperationalAnalyticsClient:
@@ -142,8 +317,10 @@ class OperationalAnalyticsClient:
                 "ClickHouse was unreachable moments ago; not trying again yet"
             )
         query_params: dict[str, str] = {"database": self._database}
-        for key, value in (params or {}).items():
-            query_params[f"param_{key}"] = str(value)
+        bound = {f"param_{key}": str(value) for key, value in (params or {}).items()}
+        in_body = _BOUND_VALUES_IN_BODY.get()
+        if not in_body:
+            query_params.update(bound)
         answered = False
 
         def note_answer(_response: httpx.Response) -> None:
@@ -160,12 +337,27 @@ class OperationalAnalyticsClient:
                 response = send_with_failover(
                     client,
                     self._endpoints,
-                    lambda endpoint: client.build_request(
-                        "POST",
-                        endpoint,
-                        params=query_params,
-                        content=sql,
-                        headers={"content-type": "text/plain; charset=utf-8"},
+                    lambda endpoint: (
+                        # Form fields without a file name: ClickHouse reads
+                        # "query" and every "param_*" field as it reads them
+                        # from the URL.
+                        client.build_request(
+                            "POST",
+                            endpoint,
+                            params=query_params,
+                            files={
+                                "query": (None, sql),
+                                **{name: (None, value) for name, value in bound.items()},
+                            },
+                        )
+                        if in_body
+                        else client.build_request(
+                            "POST",
+                            endpoint,
+                            params=query_params,
+                            content=sql,
+                            headers={"content-type": "text/plain; charset=utf-8"},
+                        )
                     ),
                     retry_read_disconnect=retry_read_disconnect,
                 )
@@ -433,6 +625,97 @@ FORMAT JSON
         )
         return [_generation(row, tenant_id=tenant_id) for row in rows]
 
+    def activity_usage_buckets(
+        self,
+        *,
+        tenant_id: str,
+        granularity: str,
+        start_at: str,
+        end_at: str,
+        key_id: str | None = None,
+        by_model: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Usage totals of ``[start_at, end_at)`` per bucket, or per bucket and model.
+
+        One row per bucket (and model when asked), in that order, carrying the
+        six integers of ``storage_activity.generation_metrics``, summed.
+        """
+        params: dict[str, str | int] = {
+            "tenant_id": tenant_id,
+            "start_at": start_at,
+            "end_at": end_at,
+        }
+        if key_id is not None:
+            params["key_id"] = key_id
+        rows = self._query(
+            usage_buckets_query(
+                granularity=granularity,
+                by_model=by_model,
+                key_filtered=key_id is not None,
+            ),
+            params=params,
+        )
+        return _usage_bucket_rows(rows, by_model=by_model)
+
+    def activity_elapsed_summary(
+        self,
+        *,
+        tenant_id: str,
+        start_at: str,
+    ) -> dict[str, int | None]:
+        """Server-side elapsed time over every generation since ``start_at``.
+
+        ``median_ms`` is the median of the rows that carry an elapsed time,
+        over the whole range rather than a newest-rows sample. For an even
+        count it is the floor of the mean of the two middle values, which is
+        what the page showed when it computed the median itself.
+
+        Memory is bounded whatever the range holds. An exact quantile function
+        keeps every row's value, and a histogram of every distinct value
+        keeps one entry per value in every thread; either runs a busy
+        tenant's range into the reader's memory limit. This reads a coarse
+        histogram instead: rows counted per slot of 1,024 ms, at most 65,536
+        slots. That locates the one or two slots the middle values fall in. A
+        second read counts the distinct values inside those slots only, at
+        most 2,048, and the median is read off the running count. Each read
+        is one statement over one snapshot and carries its own totals, so the
+        answer is exact for the rows that read saw; if rows arriving between
+        the two reads moved the middle to another slot, the read is repeated
+        for that slot.
+
+        The last slot is open-ended (about 18.6 hours and up) and is never
+        opened: a median that long is reported as absent, not approximated.
+        """
+        slots = (ELAPSED_LAST_SLOT, ELAPSED_LAST_SLOT)  # the first read opens no slot
+        for _ in range(_ELAPSED_READS):
+            rows = self._query(
+                "\nSELECT\n"
+                + elapsed_histogram_columns(
+                    "elapsed_milliseconds",
+                    "intDiv(elapsed_milliseconds, 1024)"
+                    " IN ({slot_low:UInt64}, {slot_high:UInt64})",
+                )
+                + """,
+  count() AS generations_at_value
+FROM activity_generations FINAL
+WHERE tenant_id = {tenant_id:String}
+  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+GROUP BY slot, elapsed_value
+FORMAT JSON
+""",
+                params={
+                    "tenant_id": tenant_id,
+                    "start_at": start_at,
+                    "slot_low": slots[0],
+                    "slot_high": slots[1],
+                },
+            )
+            settled = settle_elapsed_median(rows)
+            if isinstance(settled, dict):
+                return settled
+            slots = settled
+        raise RuntimeError("elapsed median did not settle: the range kept changing between reads")
+
     def routing_traffic(
         self, *, start_at: dt.datetime, end_at: dt.datetime,
     ) -> list[dict[str, Any]]:
@@ -627,6 +910,304 @@ FORMAT JSON
             ]
         return rollups
 
+    # Request tags for the console ------------------------------------------
+    # Every read covers every generation of one tenant since ``start_at``, not
+    # a sample, and holds a bounded amount of state however many rows, tag
+    # values or latencies the range has. Each bound is in the statement that
+    # needs it; none rests on what an earlier statement saw:
+    #
+    #   keys, values   a top-K sketch with a fixed number of counters
+    #   candidates     two top-K sketches and one distinct-count sketch, with
+    #                  no GROUP BY
+    #   totals         one group per candidate, for the candidates named in
+    #                  the statement and no other value
+    #   histogram      at most 52 groups, each the bounded elapsed-time
+    #                  histogram of ``elapsed_histogram_columns``, cut off at
+    #                  TAG_ELAPSED_SLOTS slots
+    #
+    # Credits and BYOK are told apart inside each statement that sums cost,
+    # by one fixed expression (``_TAG_IS_BYOK``) that makes two classes
+    # whatever is stored: no statement groups by the stored usage type or
+    # takes a list of usage types that an earlier one saw. Tag keys and
+    # values are always bound, and inside ``bound_values_in_the_body`` they
+    # travel in the request body.
+
+    def activity_tag_keys(self, *, tenant_id: str, start_at: str) -> list[dict[str, Any]]:
+        """Tag keys by the number of generations carrying them, unordered.
+
+        ``topK`` keeps 10,000 counters. With no more distinct keys than that
+        every count is exact and ``overcount`` is 0; beyond it the function
+        still returns the most frequent keys, each with the most its count
+        can be too high by.
+        """
+        with bound_values_in_the_body():
+            rows = self._query(
+                """
+SELECT tupleElement(item, 1) AS tag_key, tupleElement(item, 2) AS requests, tupleElement(item, 3) AS overcount
+FROM
+(
+  SELECT arrayJoin(topK(1000, 10, 'counts')(tag_key)) AS item
+  FROM
+  (
+    SELECT arrayJoin(mapKeys(tags)) AS tag_key
+    FROM activity_generations FINAL
+    WHERE tenant_id = {tenant_id:String}
+      AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  )
+)
+FORMAT JSON
+""",
+                params={"tenant_id": tenant_id, "start_at": start_at},
+            )
+        return [
+            {
+                "key": str(row["tag_key"]),
+                "requests": int(row["requests"]),
+                "overcount": int(row["overcount"]),
+            }
+            for row in rows
+        ]
+
+    def activity_tag_values(
+        self, *, tenant_id: str, tag_key: str, start_at: str
+    ) -> list[dict[str, Any]]:
+        """One key's values by the number of generations carrying them, unordered.
+
+        The same sketch as the keys, with 5,000 counters: exact for a key
+        with no more distinct values than that, the most frequent values with
+        an ``overcount`` beyond it.
+        """
+        with bound_values_in_the_body():
+            rows = self._query(
+                """
+SELECT tupleElement(item, 1) AS tag_value, tupleElement(item, 2) AS requests, tupleElement(item, 3) AS overcount
+FROM
+(
+  SELECT arrayJoin(topK(500, 10, 'counts')(tags[{tag_key:String}])) AS item
+  FROM activity_generations FINAL
+  WHERE tenant_id = {tenant_id:String}
+    AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+    AND mapContains(tags, {tag_key:String})
+)
+FORMAT JSON
+""",
+                params={"tenant_id": tenant_id, "tag_key": tag_key, "start_at": start_at},
+            )
+        return [
+            {
+                "value": str(row["tag_value"]),
+                "requests": int(row["requests"]),
+                "overcount": int(row["overcount"]),
+            }
+            for row in rows
+        ]
+
+    def activity_tag_candidates(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        candidates: int,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> dict[str, Any]:
+        """Which values of ``group_by`` could keep a row, from fixed-size state.
+
+        One pass with no GROUP BY, so its memory does not depend on how many
+        distinct values the key has, in this read or in any other: about how
+        many distinct values there are, the ``candidates`` values with the
+        most cost, and the ``candidates`` values with the most generations.
+        A value is named by a 64-bit hash here; its text is read by
+        ``activity_tag_candidate_totals``.
+
+        Each list holds ``(hash, weight, error)``. With fewer distinct values
+        than ``candidates`` both lists hold every value this read saw. With
+        more, they hold the heaviest values the sketches found. Cost here is
+        every usage type's: the totals read separates Credits from BYOK.
+        """
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
+        with bound_values_in_the_body():
+            rows = self._query(
+                """
+SELECT
+  distinct_values,
+  arrayMap(item -> [tupleElement(item, 1), tupleElement(item, 2), tupleElement(item, 3)], by_cost) AS by_cost,
+  arrayMap(item -> [tupleElement(item, 1), tupleElement(item, 2), tupleElement(item, 3)], by_requests) AS by_requests
+FROM
+(
+  SELECT
+    uniqCombined(cityHash64(tags[{group_by:String}])) AS distinct_values,
+    topKWeighted({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}]), toUInt64(greatest(total_cost_microdollars, 0))) AS by_cost,
+    topK({candidates:UInt32}, 3, 'counts')(cityHash64(tags[{group_by:String}])) AS by_requests
+  FROM activity_generations FINAL
+  WHERE """
+                + where
+                + """
+    AND mapContains(tags, {group_by:String})
+)
+FORMAT JSON
+""",
+                params={**params, "group_by": group_by, "candidates": max(1, candidates)},
+            )
+        row = rows[0] if rows else {}
+
+        def listed(name: str) -> list[tuple[int, int, int]]:
+            return [(int(item[0]), int(item[1]), int(item[2])) for item in row.get(name) or []]
+
+        return {
+            "distinct_values": int(row.get("distinct_values") or 0),
+            "by_cost": listed("by_cost"),
+            "by_requests": listed("by_requests"),
+        }
+
+    def activity_tag_candidate_totals(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        candidates: list[int],
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Text, generations and credit cost of the candidate values.
+
+        Only values whose hash is in ``candidates`` are grouped, so this holds
+        at most one group for each candidate whatever the key has become
+        since the candidates were read. Two values that shared the first hash
+        are still two groups here, told apart by the second; two that shared
+        both would be one group under the smaller text.
+        """
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
+        with bound_values_in_the_body():
+            rows = self._query(
+                """
+SELECT
+  cityHash64(tags[{group_by:String}]) AS hash_a,
+  sipHash64(tags[{group_by:String}]) AS hash_b,
+  min(tags[{group_by:String}]) AS named_value,
+  count() AS requests,
+  sumIf(total_cost_microdollars, NOT """
+                + _TAG_IS_BYOK
+                + """) AS credit_microdollars
+FROM activity_generations FINAL
+WHERE """
+                + where
+                + """
+  AND mapContains(tags, {group_by:String})
+  AND cityHash64(tags[{group_by:String}]) IN {candidates:Array(UInt64)}
+GROUP BY hash_a, hash_b
+FORMAT JSON
+""",
+                params={**params, "group_by": group_by, "candidates": _integer_array(candidates)},
+            )
+        return [
+            {
+                "hash_a": int(row["hash_a"]),
+                "hash_b": int(row["hash_b"]),
+                "value": str(row["named_value"]),
+                "requests": int(row["requests"]),
+                "credit_microdollars": int(row["credit_microdollars"]),
+            }
+            for row in rows
+        ]
+
+    def activity_tag_histogram(
+        self,
+        *,
+        tenant_id: str,
+        group_by: str,
+        start_at: str,
+        top: list[tuple[int, int]],
+        opened: list[tuple[str, int, int, int]],
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Totals and the elapsed-time histogram for the rows a breakdown shows.
+
+        A generation belongs to the ``value`` group of its tag value when the
+        value's hashes are in ``top``, to ``other`` when it has another
+        value, and to ``untagged`` without the key: at most 52 groups, one
+        row each. Credits and BYOK are summed apart inside this statement, so
+        a usage type that first appears after an earlier read is still told
+        apart.
+
+        Each group's elapsed times are counted with the histogram the page's
+        own median uses (``elapsed_histogram_columns``): slots of 1,024 ms,
+        and distinct values inside the slots named for that group in
+        ``opened``, as ``(kind, hash_a, hash_b, slot)``. Its ``histogram`` is
+        those counts as ``(slot, elapsed_value, generations_at_value)``, the
+        three columns ``settle_elapsed_median`` reads.
+
+        One group of the page's histogram can hold 65,536 slots, and 52 of
+        those ran the reader out of its memory when measured. Here an elapsed
+        time of TAG_ELAPSED_CEILING_MS or more is counted in the histogram's
+        open-ended last slot, so a group holds at most 4,097 slots plus 1,024
+        values for each slot it opens, whatever its range holds, and a median
+        that long is reported as absent, as the page's is past its own
+        ceiling.
+
+        The outer query only packs each group's histogram into one array, so
+        that a breakdown of many busy values crosses the wire as at most 52
+        rows and not as one row for each count.
+        """
+        where, params = _tag_window(tenant_id, start_at, tag_key, tag_value)
+        with bound_values_in_the_body():
+            rows = self._query(
+                """
+SELECT
+  kind, hash_a, hash_b,
+  sum(generations_at_value) AS requests,
+  sum(cost_at_value) AS cost_microdollars,
+  sum(byok_at_value) AS byok_microdollars,
+  sum(prompt_at_value) AS prompt_tokens,
+  sum(completion_at_value) AS completion_tokens,
+  groupArray(tuple(ifNull(toInt32(slot), -1), ifNull(toInt32(elapsed_value), -1), generations_at_value)) AS histogram
+FROM
+(
+  SELECT
+    multiIf(
+      NOT mapContains(tags, {group_by:String}), 'untagged',
+      (cityHash64(tags[{group_by:String}]), sipHash64(tags[{group_by:String}])) IN {top:Array(Tuple(UInt64, UInt64))}, 'value',
+      'other'
+    ) AS kind,
+    if(kind = 'value', cityHash64(tags[{group_by:String}]), 0) AS hash_a,
+    if(kind = 'value', sipHash64(tags[{group_by:String}]), 0) AS hash_b,
+"""
+                + elapsed_histogram_columns(
+                    _TAG_ELAPSED_COLUMN,
+                    "(kind, hash_a, hash_b, intDiv(elapsed_milliseconds, 1024))"
+                    " IN {opened:Array(Tuple(String, UInt64, UInt64, UInt64))}",
+                )
+                + """,
+    count() AS generations_at_value,
+    sumIf(total_cost_microdollars, NOT """
+                + _TAG_IS_BYOK
+                + """) AS cost_at_value,
+    sumIf(total_cost_microdollars, """
+                + _TAG_IS_BYOK
+                + """) AS byok_at_value,
+    sum(tokens_prompt) AS prompt_at_value,
+    sum(tokens_completion) AS completion_at_value
+  FROM activity_generations FINAL
+  WHERE """
+                + where
+                + """
+  GROUP BY kind, hash_a, hash_b, slot, elapsed_value
+)
+GROUP BY kind, hash_a, hash_b
+FORMAT JSON
+""",
+                params={
+                    **params,
+                    "group_by": group_by,
+                    "top": _tuple_array(top),
+                    "opened": _cell_array(opened),
+                },
+            )
+        return [_tag_histogram_row(row) for row in rows]
+
     def public_snapshot(self, name: str) -> dict[str, Any] | None:
         if name not in {
             "leaderboard",
@@ -724,6 +1305,97 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
     )
 
 
+def _usage_bucket_rows(rows: list[dict[str, Any]], *, by_model: bool) -> list[dict[str, Any]]:
+    """Fold each bucket's stored usage types into its Credits and BYOK spend.
+
+    Keys follow the usage bucket the stores return. ClickHouse may quote
+    64-bit integers in JSON, so every count goes through int().
+    """
+    merged: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for row in rows:
+        bucket = str(row["bucket"])
+        model = str(row["model"]) if by_model else None
+        totals = merged.get((bucket, model))
+        if totals is None:
+            totals = {"bucket": bucket}
+            if model is not None:
+                totals["model"] = model
+            totals.update(
+                requests=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                reasoning_tokens=0,
+                cost_micro=0,
+                byok_micro=0,
+            )
+            merged[(bucket, model)] = totals
+        totals["requests"] += int(row["requests"])
+        totals["prompt_tokens"] += int(row["prompt_tokens"])
+        totals["completion_tokens"] += int(row["completion_tokens"])
+        totals["reasoning_tokens"] += int(row["reasoning_token_total"])
+        # The same decision generation_metrics makes for one generation.
+        spend = "byok_micro" if UsageType.coerce(str(row["usage_type"])).is_byok() else "cost_micro"
+        totals[spend] += int(row["cost_total"])
+    return list(merged.values())
+
+
+def settle_elapsed_median(
+    rows: list[dict[str, Any]],
+) -> dict[str, int | None] | tuple[int, int]:
+    """Read the median off one group's elapsed-time histogram, or say which slots to open.
+
+    ``rows`` are the ``slot``, ``elapsed_value`` and ``generations_at_value``
+    of ``elapsed_histogram_columns`` for one group, in any order. Each is a
+    count of generations: untimed ones (no slot), a whole slot (no value), or
+    one distinct value inside an opened slot.
+
+    Returns ``{"generations", "samples", "median_ms"}`` when the median is
+    settled, otherwise the two slots the middle values are in, to open in the
+    next read. The median is the one a sorted list gives: the middle value
+    for an odd count of timed rows, the floor of the mean of the two middle
+    values for an even count, ``None`` when no row is timed. It is also
+    ``None`` when a middle value is in the open-ended last slot (about 18.6
+    hours and up): that slot is never opened, so such a median is reported as
+    absent rather than approximated.
+    """
+    untimed = 0
+    groups: list[tuple[int, int, int | None]] = []
+    for row in rows:
+        count = int(row["generations_at_value"])
+        if row.get("slot") is None:
+            untimed += count
+            continue
+        groups.append((int(row["slot"]), count, _optional_int(row.get("elapsed_value"))))
+    timed = sum(count for _slot, count, _value in groups)
+    summary: dict[str, int | None] = {
+        "generations": timed + untimed,
+        "samples": timed,
+        "median_ms": None,
+    }
+    if timed == 0:
+        return summary
+    # Ascending by value: an opened slot's values are all inside that slot.
+    groups.sort(key=lambda group: (group[0], -1 if group[2] is None else group[2]))
+    # 1-based ranks of the lower and upper middle. They are equal for an odd count.
+    ranks = ((timed + 1) // 2, timed // 2 + 1)
+    middle: list[tuple[int, int | None]] = []
+    position = 0
+    through = groups[0][1]
+    for rank in ranks:
+        while through < rank:
+            position += 1
+            through += groups[position][1]
+        middle.append((groups[position][0], groups[position][2]))
+    (low_slot, low), (high_slot, high) = middle
+    if high_slot >= ELAPSED_LAST_SLOT:
+        # Beyond the histogram: report no median rather than a wrong one.
+        return summary
+    if low is None or high is None:
+        return low_slot, high_slot
+    summary["median_ms"] = (low + high) // 2
+    return summary
+
+
 def _client_event(row: dict[str, Any]) -> dict[str, Any]:
     status = _optional_int(row.get("final_http_status"))
     return {
@@ -745,3 +1417,88 @@ def _client_event(row: dict[str, Any]) -> dict[str, Any]:
 
 def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
+
+
+_TAG_GROUP_KINDS = frozenset({"value", "other", "untagged"})
+# Whether a stored usage type is BYOK, as SQL: what ``UsageType.coerce``
+# decides, which is ``str(value).strip().lower() == "byok"``. The class of
+# blanks is the characters ``str.strip`` removes (``\pZ`` and the control
+# characters Python counts as whitespace), and the letters are every
+# character ``str.lower`` turns into b, y, o and k, the Kelvin sign among
+# them. Anything else is Credits, so a statement that uses this has two cost
+# classes whatever spellings are stored. A fixed text: nothing from a request
+# is in it.
+_TAG_BLANKS = r"[\\pZ\\t\\n\\x0b\\x0c\\r\\x1c-\\x1f\\x{85}]*"
+_TAG_IS_BYOK = (
+    "match(usage_type, '^" + _TAG_BLANKS + r"[bB][yY][oO][kK\\x{212A}]" + _TAG_BLANKS + "$')"
+)
+# The tag breakdown's histograms stop at this many slots of ELAPSED_SLOT_MS:
+# about 70 minutes. See ``activity_tag_histogram``.
+TAG_ELAPSED_SLOTS = 4_096
+TAG_ELAPSED_CEILING_MS = TAG_ELAPSED_SLOTS * ELAPSED_SLOT_MS
+# The latency the tag histogram counts: an elapsed time at or past the tag
+# ceiling is moved to the shared histogram's own ceiling, which puts it in
+# the open-ended last slot. Built from constants only.
+_TAG_ELAPSED_COLUMN = (
+    f"if(elapsed_milliseconds >= {TAG_ELAPSED_CEILING_MS}, {ELAPSED_CEILING_MS}, elapsed_milliseconds)"
+)
+
+
+def _tag_window(
+    tenant_id: str, start_at: str, tag_key: str | None, tag_value: str | None
+) -> tuple[str, dict[str, str | int]]:
+    """The WHERE clause every tag read shares, with its bound values."""
+    clauses = [
+        "tenant_id = {tenant_id:String}",
+        "created_at >= parseDateTime64BestEffort({start_at:String}, 3)",
+    ]
+    params: dict[str, str | int] = {"tenant_id": tenant_id, "start_at": start_at}
+    if tag_key is not None:
+        clauses.append("mapContains(tags, {tag_key:String})")
+        params["tag_key"] = tag_key
+        if tag_value is not None:
+            clauses.append("tags[{tag_key:String}] = {tag_value:String}")
+            params["tag_value"] = tag_value
+    return " AND ".join(clauses), params
+
+
+# Array parameters are written from integers and the three fixed group kinds
+# only. No customer text is ever placed in one, so nothing needs escaping.
+def _integer_array(values: list[int]) -> str:
+    return "[" + ",".join(str(int(value)) for value in values) + "]"
+
+
+def _tuple_array(pairs: list[tuple[int, int]]) -> str:
+    return "[" + ",".join(f"({int(first)},{int(second)})" for first, second in pairs) + "]"
+
+
+def _cell_array(cells: list[tuple[str, int, int, int]]) -> str:
+    parts = []
+    for kind, hash_a, hash_b, slot in cells:
+        if kind not in _TAG_GROUP_KINDS:
+            raise ValueError("unknown tag group kind")
+        parts.append(f"('{kind}',{int(hash_a)},{int(hash_b)},{int(slot)})")
+    return "[" + ",".join(parts) + "]"
+
+
+def _tag_histogram_row(row: dict[str, Any]) -> dict[str, Any]:
+    kind = str(row["kind"])
+    if kind not in _TAG_GROUP_KINDS:
+        raise RuntimeError("ClickHouse tag histogram returned an unknown row kind")
+    # -1 stands for NULL inside the packed array: an untimed generation has
+    # no slot, and only a value inside an opened slot is kept.
+    histogram = [
+        (None if int(slot) < 0 else int(slot), None if int(value) < 0 else int(value), int(count))
+        for slot, value, count in row.pop("histogram")
+    ]
+    return {
+        "kind": kind,
+        "hash_a": int(row["hash_a"]),
+        "hash_b": int(row["hash_b"]),
+        "requests": int(row["requests"]),
+        "cost_microdollars": int(row["cost_microdollars"]),
+        "byok_microdollars": int(row["byok_microdollars"]),
+        "prompt_tokens": int(row["prompt_tokens"]),
+        "completion_tokens": int(row["completion_tokens"]),
+        "histogram": histogram,
+    }
