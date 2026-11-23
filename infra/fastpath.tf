@@ -246,7 +246,26 @@ locals {
   # Off switch: first set TR_FASTPATH_EDGE_HOSTED_DECIDE to "off" and let
   # that roll out (65e856777 refuses a policy that carries either hosted
   # decide member), then pin 65e856777 again. One node at a time.
-  fastpath_release        = "5e3ebc8b70cb1fbae57704d5cffca0ef3b9c5ca1"
+  # e1ed7b362: main after #2893. Its fastpath/ changes since 5e3ebc8b7:
+  #   - #2892: a settle's full record may wait past PublishWait (250 ms)
+  #     up to PublishMax (700 ms), borrowing the spare, the peer's wait and
+  #     at most half the owner's inside the same AnswerWithin, so a slow
+  #     record topic no longer answers settles failed; a call that budget
+  #     cuts short is no evidence against its owner. Each node writes a
+  #     per-minute "fastpath front door:" line that names why any terminal
+  #     answered failed.
+  #   - #2893: a pack's done-marking takes the lock it decides on
+  #     exclusively first, so auditor members marking one lease's packs no
+  #     longer abort each other on shared-lock upgrades. Members on either
+  #     release may run together.
+  #   - #2805: the hosted decide no longer passes every BYOK workspace to
+  #     Python. With one key per provider again, the edge reads a
+  #     workspace's BYOK providers as it did before multi-key BYOK. Live,
+  #     as the hosted decide is on.
+  #   - test vectors and a test-only port fix (#2865, the price refreshes).
+  # The wire format is unchanged, so the nodes may run either release while
+  # one is replaced. Off switch: pin 5e3ebc8b7 again. One node at a time.
+  fastpath_release        = "e1ed7b362a83d74fb7a0fdf972c65f2b86ba68e2"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -264,6 +283,10 @@ locals {
   # a rollback may return to its release. b1d3dbcf9 is #2666's pin, listed
   # so that change and this one land in either order.
   fastpath_release_digests = {
+    "e1ed7b362a83d74fb7a0fdf972c65f2b86ba68e2" = {
+      fastpath   = "42eff1075063eb065ed35e86aca47b01a1a0626bc077238db35d8701f860f935"
+      sha256sums = "1b625c5550d8f96d6515a064360f2ee721cc23bfbb6038e63d205824e94f3320"
+    }
     "daedb45adc927a1e30e0d4ed41fe57c81aeccc76" = {
       fastpath   = "42e381dbe30a2380cd2bd6f6a556e09db2f2bafdeaa80b5d3dd310e3359e792a"
       sha256sums = "20d897793d7302991454cd11d5514883ce0fd529d38be91ce8bbbdb20843fd23"
