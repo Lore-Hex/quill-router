@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 PriceRow: TypeAlias = dict[str, int]
 
 MODEL_IDS = {
+    "morph-kimik3-abliterated": "morph/kimi-k3.1-pro-abliterated",
     "morph-v3-fast": "morph/morph-v3-fast",
     "morph-v3-large": "morph/morph-v3-large",
     "morph-glm52-744b": "z-ai/glm-5.2",
@@ -72,10 +73,12 @@ def parse(html: str) -> dict[str, PriceRow]:
     lines = [row.get_text(" ", strip=True) for row in table_rows] if table_rows else html.splitlines()
     for raw_line in lines:
         line = re.sub(r"\s+", " ", raw_line)
-        native_id = next((item for item in MODEL_IDS if item in line), None)
+        native_id = next((item for item in re.findall(r"\bmorph-[\w.-]+", line) if item in MODEL_IDS), None)
         if native_id is None:
             continue
-        values = _line_prices(line)
+        # This row wraps the amount separately from the currency sign. Do
+        # not change the price-source behavior of existing published routes.
+        values = _line_prices(line.replace("$ ", "$") if native_id == "morph-kimik3-abliterated" else line)
         if len(values) not in {2, 3}:
             continue
         row: PriceRow = {
@@ -107,7 +110,7 @@ def parse(html: str) -> dict[str, PriceRow]:
     # If the fetch was blocked (Vercel checkpoint / 429) or otherwise yielded
     # nothing usable, emit the published prices for Morph's own Fast Apply
     # models so downstream never sees an empty dict.
-    if not output or _checkpoint_blocked(html):
+    if not (output.keys() & FALLBACK_PRICES.keys()) or _checkpoint_blocked(html):
         for canonical, (prompt, completion, cached) in FALLBACK_PRICES.items():
             row = {
                 "prompt_micro_per_m": _micro_per_m(prompt),

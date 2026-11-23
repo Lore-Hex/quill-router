@@ -48,6 +48,9 @@ NEXTBIT_UNAVAILABLE_MODEL_IDS = frozenset({
 })
 STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
 STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
+MORPH_KIMI_ABLITERATED_ID = "morph/kimi-k3.1-pro-abliterated"
+MORPH_KIMI_ABLITERATED_NATIVE = "morph-kimik3-abliterated"
+MORPH_KIMI_ABLITERATED_HOLD = "privileged-customer-routing-unverified"
 PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
 PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
 MAKORA_MUSE_SPARK_OPEN_816B_MODEL_ID = "meta-models/muse-spark-open-816b-a42b-nvfp4"
@@ -268,6 +271,12 @@ def provider_model_operator_held(
         return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
+    # The provider approves named users and use cases. Discovery is not a
+    # grant for general customer traffic on either the managed or BYOK route.
+    if provider_slug == "morph" and (
+        model_id == MORPH_KIMI_ABLITERATED_ID or native_id == MORPH_KIMI_ABLITERATED_NATIVE
+    ):
+        return True
     # November 6: the provider removed these IDs and returns 401
     # model_not_authorized. Do not silently substitute the new dated model.
     if provider_slug == "confidential-ai" and (
