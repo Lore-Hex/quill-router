@@ -23,10 +23,10 @@ from tests.fakes.spanner import (
     _ParamTypes,
     make_fake_store,
 )
+from trusted_router import refill_claim
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
-from trusted_router.services import auto_refill as auto_refill_mod
 from trusted_router.services import auto_refill_outbox_drain as auto_refill_drain_mod
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
@@ -1191,7 +1191,7 @@ def test_inline_failure_after_stripe_then_cross_minute_drain_creates_one_payment
         def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
             return cls.current if tz is not None else cls.current.replace(tzinfo=None)
 
-    monkeypatch.setattr(auto_refill_mod, "datetime", CrossingMinute)
+    monkeypatch.setattr(refill_claim, "datetime", CrossingMinute)
     submitted_keys: list[str] = []
     created_by_key: dict[str, Any] = {}
 

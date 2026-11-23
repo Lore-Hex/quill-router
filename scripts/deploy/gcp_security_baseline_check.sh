@@ -34,7 +34,8 @@ PROJECT="${PROJECT:-quill-cloud-proxy}"
 ORG_ID="${ORG_ID:-256036015125}"
 ACME_BUCKET="${ACME_BUCKET:-quill-acme-cache}"
 ARCHIVE_BUCKET="${ARCHIVE_BUCKET:-quill-cloud-proxy-tr-clickhouse-archive}"
-INGEST_THRESHOLD_BYTES="${INGEST_THRESHOLD_BYTES:-8589934592}"   # 8 GiB/day.
+# 16 GiB/day; must equal log_ingestion_ceiling_bytes in infra/log_ingestion_cost_guard.tf.
+INGEST_THRESHOLD_BYTES="${INGEST_THRESHOLD_BYTES:-17179869184}"
 
 FAIL=0
 ok(){    printf '  ok    %s\n' "$*"; }
@@ -200,7 +201,8 @@ POLICIES='[]'
 if read_project_json POLICIES "Monitoring alert policies" \
     alpha monitoring policies list; then
   for want in "CIS: IAM configuration changes" "CIS: VPC firewall rule changes" \
-              "CIS: VPC network route changes" "CIS: Cloud SQL instance configuration changes"; do
+              "CIS: VPC network route changes" "CIS: Cloud SQL instance configuration changes" \
+              "TR Logging: ingestion step change (day over day)"; do
     if jq -e --arg d "$want" '[.[] | select(.displayName==$d and .enabled==true)] | length > 0' <<<"$POLICIES" >/dev/null 2>&1; then
       if jq -e --arg d "$want" '[.[] | select(.displayName==$d) | select((.notificationChannels // []) | length > 0)] | length > 0' <<<"$POLICIES" >/dev/null 2>&1; then
         ok "policy \"$want\""
@@ -220,10 +222,11 @@ if read_project_json POLICIES "Monitoring alert policies" \
   elif [ "${THRESH%.*}" = "$INGEST_THRESHOLD_BYTES" ]; then
     ok "ingestion cost guard at $((INGEST_THRESHOLD_BYTES/1073741824)) GiB/day"
   else
-    # Raised 5 -> 8 GiB on 2026-08-17 because steady state is ~4.1 GiB/day and
-    # 5 GiB sat only 20% above baseline. Anything that resets it to 5 has
-    # re-applied a stale snapshot.
-    note "ingestion threshold is $(( ${THRESH%.*} / 1073741824 )) GiB/day, expected $((INGEST_THRESHOLD_BYTES/1073741824)) GiB; raised 5 -> 8 on 2026-08-17 because steady state is ~4.1"
+    # The ceiling is managed in infra/log_ingestion_cost_guard.tf (raised 8 ->
+    # 16 GiB/day on 2026-11-23, when the day-over-day step-change policy took
+    # over catching sudden jumps). A different value means a hand edit or a
+    # stale apply.
+    note "ingestion threshold is $(( ${THRESH%.*} / 1073741824 )) GiB/day, expected $((INGEST_THRESHOLD_BYTES/1073741824)) GiB; managed in infra/log_ingestion_cost_guard.tf"
   fi
 fi
 

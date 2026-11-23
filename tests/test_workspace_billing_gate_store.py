@@ -178,9 +178,10 @@ class RowTraffic:
 
 def _one_request(key: Any, idempotency_key: str) -> tuple[dict[str, Any], BackgroundTasks]:
     """A reserve and then its settle. The gateway sends them as two requests,
-    and a route runs in a context of its own, so each starts with the full
-    allowance of waits; a thread that plays several requests starts each
-    one afresh here, as the gate's module asks of a loop."""
+    and each route runs in a context of its own, so the settle does not share
+    the reserve's allowance of waits either; a thread that plays several
+    requests starts each one afresh here, as the gate's module asks of a
+    loop."""
     workspace_billing_gate.forget_request_waits()
     authorized = _authorize_route(key, idempotency_key)
     workspace_billing_gate.forget_request_waits()
@@ -200,6 +201,8 @@ def _burst(
     def client(index: int) -> None:
         start.wait(timeout=10)
         for round_index in range(rounds):
+            # Each request has its own allowance of waits, as each request
+            # does in production (its own context); one thread plays several.
             data, tasks = _one_request(key, f"gate-{label}-{index}-{round_index}")
             with lock:
                 settled.append(data)
@@ -277,14 +280,16 @@ def test_one_workspaces_burst_runs_one_credit_row_transaction_at_a_time_behind_t
 
 
 # How long a waiter in the over-cap test waits for the holder before it goes
-# around. Test-only, passed to this test's own gate instance: production's
+# around. Test-only, set on this test's own gate instance: production's
 # configured bound (workspace_billing_gate_wait_ms, at most five seconds)
 # and the quarter of the caller's budget are untouched, and keep their own
 # tests (the wait-bound and near-deadline tests below, and
 # test_workspace_billing_gate.py). Here the waiter must outlast a holder
-# that the test keeps inside the store while the over-cap callers run,
-# however slowly a loaded machine runs them, so its TIMEOUT can only mean a
-# slot that was never handed on.
+# that the test keeps inside the store while the over-cap callers run, for
+# as long as a loaded machine takes to run them (the test's other bounds,
+# 30 and 60 seconds for a thread to arrive or finish and 120 for the
+# burst's clients, are far longer than that), so its TIMEOUT means a slot
+# that was never handed on, not a slow runner.
 PATIENCE_SECONDS = 60.0
 
 
@@ -306,24 +311,34 @@ def _wait_for(condition: Any, what: str) -> None:
         time.sleep(0.001)
 
 
+def _gate_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record for record in caplog.records
+        if getattr(record, "metric", None) == "workspace_billing_gate"
+    ]
+
+
 def test_a_caller_over_the_waiter_cap_runs_at_once_and_is_charged_once(
     prod_store: tuple[Any, FakeSpannerDatabase, Any],
     fresh_gate: FifoKeyedGate,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """One holder and one waiter per workspace: every caller that arrives
-    while both places are taken goes around the gate at once, exactly as it
-    runs with the gate off, and is charged once, and the waiter is handed
-    the slot when the holder leaves.
+    """One holder and one waiter per workspace, both in place before the
+    burst: every transaction of eight clients finds the waiters full and
+    goes around the gate at once, waiting nothing, exactly as it runs with
+    the gate off, and is charged once; and the waiter is handed the slot
+    when the holder leaves.
 
-    The holder stays inside its transaction until the over-cap callers are
-    done, so each of them meets a full queue whatever the machine's speed,
-    and the waiter is patient, so it times out only if the slot is never
-    handed on. Left to the clock, the holder's transaction ran beside the
-    over-cap callers, was aborted and redone by their commits on the same
-    row and starved of CPU with them; on a loaded runner it held the slot
-    for seconds, past the waiter's bound (a quarter of a settle's five
-    seconds), and the waiter's TIMEOUT read as a stall that was not one.
+    The holder is a real reserve that the test keeps inside the store until
+    the eight clients are done, and the waiter a real reserve with a
+    test-only patience, so neither outcome depends on the runner's speed.
+    When the holder and the waiter were two of the burst's own transactions,
+    the holder's transaction ran beside the callers that went around, was
+    aborted and redone by their commits on the same row and starved of CPU
+    with them; on a loaded runner it held the slot for seconds, past the
+    waiter's bound (a quarter of a settle's five seconds), and the waiter
+    went around as a timeout. That is the gate working as designed, and is
+    pinned by the wait-bound tests below.
     """
     store, db, key = prod_store
     store.trust_settings = _gate_settings(workspace_billing_gate_max_waiters=1)
@@ -337,36 +352,47 @@ def test_a_caller_over_the_waiter_cap_runs_at_once_and_is_charged_once(
         settled.append(data)
         background.append(tasks)
 
-    with pytest.MonkeyPatch.context() as patch, ThreadPoolExecutor(max_workers=2) as pool:
+    pool = ThreadPoolExecutor(max_workers=2)
+    clients: list[Any] = []
+    with pytest.MonkeyPatch.context() as patch:
         traffic.install(patch)
         _patient(fresh_gate, patch)
         try:
             # The holder: the first reserve takes the slot and stays in the store.
-            holder = pool.submit(client, "holder")
-            assert traffic.parked.wait(timeout=30)
+            clients.append(pool.submit(client, "holder"))
+            assert traffic.parked.wait(timeout=30), "the holder never reached the store"
             assert (fresh_gate.holders(WORKSPACE), fresh_gate.waiting(WORKSPACE)) == (1, 0)
             # The waiter: the next reserve takes the one place in the queue.
-            waiter = pool.submit(client, "waiter")
+            clients.append(pool.submit(client, "waiter"))
             _wait_for(lambda: fresh_gate.waiting(WORKSPACE) == 1, "the waiter never queued")
-            # Over the cap: four clients' reserves and settles, all at once.
-            over, over_background, _seconds = _burst(key, workers=4, rounds=1, label="cap-over")
-            # Every one of their transactions went around at once and none
-            # waited: they all finished while the slot was still held and
-            # the waiter still waiting.
+            # Over the cap: eight clients' reserves and settles, two rounds each.
+            over, over_background, _seconds = _burst(key, workers=8, rounds=2, label="cap")
+            # They all finished while the slot was still held and the waiter
+            # still waiting, so none of them can have had the slot.
             assert (fresh_gate.holders(WORKSPACE), fresh_gate.waiting(WORKSPACE)) == (1, 1)
+            over_cap_records = _gate_records(caplog)
             over_cap = _gate_lines(caplog)
-            assert over_cap == Counter({
-                (WAITERS_FULL, "authorize"): 4, (WAITERS_FULL, "settle_one_commit"): 4,
-            })
         finally:
             traffic.release.set()
-        holder.result(timeout=60)
-        waiter.result(timeout=60)
+            pool.shutdown(wait=False)
+            # A worker that never finishes fails here, not at pytest's timeout.
+            for future in clients:
+                future.result(timeout=60)
+    # Every gated transaction of the burst went around at once: none waited,
+    # so none could time out.
+    assert {outcome for outcome, _kind in over_cap} == {WAITERS_FULL}
+    assert {kind for _outcome, kind in over_cap} == {"authorize", "settle_one_commit"}
+    assert over_cap == Counter({
+        (WAITERS_FULL, "authorize"): 16, (WAITERS_FULL, "settle_one_commit"): 16,
+    })
+    assert all(record.value == 0 for record in over_cap_records)  # type: ignore[attr-defined]
+    assert len(over) == 16
     settled.extend(over)
     background.extend(over_background)
     for tasks in background:
         _run_background(tasks)
-    _assert_charged_exactly_once(db, key, settled, 6)
+    # The burst's sixteen requests, the holder's and the waiter's.
+    _assert_charged_exactly_once(db, key, settled, 18)
     lines = _gate_lines(caplog)
     assert sum(count for (outcome, _kind), count in lines.items() if outcome == WAITERS_FULL) > 0
     assert TIMEOUT not in {outcome for outcome, _kind in lines}

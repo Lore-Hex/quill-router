@@ -661,8 +661,8 @@
         }
       ]
     },
-    "storage_gcp:typed_credit_snapshot:1": {
-      "fingerprint": "1992b8f125168aab85e47afa8aeff792a432fabee25b594ab52268abdb3d7025",
+    "storage_gcp:_refill_balance_from:1": {
+      "fingerprint": "06f02ffc2332f23e3b3e6e571951cbfed3caf96e91703e63bc62bb2c99fac40b",
       "scenarios": [
         {
           "bindings": {},
@@ -5128,7 +5128,7 @@
     "storage_gcp:SpannerStore.custom_model_earnings_by_model": "3a2db2f528eeca5d6b3217255e086d05bbce8834342234245b8da3a5138ee4a7",
     "storage_gcp:SpannerStore.get_lifetime_topup_microdollars": "1338212b983685140271e2b4f6f4c90efdd003fbce2a29ed80b1bcf03019425d",
     "storage_gcp:SpannerStore.typed_key_usage": "d7e63be6f965eb15e793d6b63a233036604f835edc5c411b6be3004e8b5a767f",
-    "storage_gcp:SpannerStore.typed_credit_snapshot": "1992b8f125168aab85e47afa8aeff792a432fabee25b594ab52268abdb3d7025",
+    "storage_gcp:SpannerStore._refill_balance_from": "06f02ffc2332f23e3b3e6e571951cbfed3caf96e91703e63bc62bb2c99fac40b",
     "storage_gcp:SpannerStore.typed_credit_trust_snapshot": "f8eade775ad9fbd7196e47c0c12ebe0466e170abd249359d2332b18d7dd25ad0",
     "storage_gcp:SpannerStore._read_outbox_heartbeat_row": "e26606b1fe950ff99fc7aadea7d9b026e52cb2b1a1b786846dd5a106210b8e5f",
     "storage_gcp:SpannerStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
