@@ -3027,6 +3027,96 @@ def test_deterministic_apply_error_parks_without_burning_attempts(
     assert ob.has_intent(auth.id)
 
 
+_PARK_RESOLUTIONS = [
+    (ApplyOutcome.PARK_LEASED_UNDECIDED, None, "undecided leased intent",
+     "settle outbox parked undecided leased intent "),
+    (ApplyOutcome.PARK_TYPED_UNAVAILABLE, None, "typed row", "settle outbox parked typed row "),
+    (ApplyOutcome.ERROR, InvalidArgument("rejected"), "deterministic apply error",
+     "settle outbox parked deterministic apply error "),
+]
+
+
+@pytest.mark.parametrize("outcome,apply_error,what,parked_prefix", _PARK_RESOLUTIONS)
+def test_park_resolution_without_a_row_says_nothing_was_parked(
+    fake_store: tuple[Any, Any],
+    caplog: pytest.LogCaptureFixture,
+    outcome: str,
+    apply_error: Exception | None,
+    what: str,
+    parked_prefix: str,
+) -> None:
+    # A synchronous settle resolves a frozen intent it never wrote (the sync
+    # path enqueues no row): the park finds nothing, so the line must not
+    # claim a durable intent the drain will pick up.
+    store, _db = fake_store
+    ob = _outbox(store)
+    auth = _bare_authorization(f"gwa-unparked-{what.replace(' ', '-')}")
+    caplog.set_level(logging.WARNING, logger=drain_mod.logger.name)
+
+    drain_mod._resolve_row(ob, _row(auth), outcome, error_note=None, apply_error=apply_error)
+
+    assert ob.get(auth.id, "settle") is None
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any(m.startswith(parked_prefix) for m in messages)
+    assert messages == [
+        f"settle outbox did not park {what}: no pending row held by this caller "
+        f"authorization_id={auth.id} intent_kind=settle"
+    ]
+
+
+@pytest.mark.parametrize("outcome,apply_error,what,parked_prefix", _PARK_RESOLUTIONS)
+def test_park_resolution_with_a_lost_lease_says_nothing_was_parked(
+    fake_store: tuple[Any, Any],
+    caplog: pytest.LogCaptureFixture,
+    outcome: str,
+    apply_error: Exception | None,
+    what: str,
+    parked_prefix: str,
+) -> None:
+    store, _db = fake_store
+    ob = _outbox(store)
+    auth = _bare_authorization(f"gwa-lost-lease-{what.replace(' ', '-')}")
+    ob.enqueue(_row(auth), initial_delay_seconds=0)
+    claimed = ob.claim_shard(shard=_db.settle_outbox[(auth.id, "settle")]["queue_shard"], lease_seconds=30)[0]
+    caplog.set_level(logging.WARNING, logger=drain_mod.logger.name)
+
+    stale = replace(claimed, lease_owner="stale-owner")
+    drain_mod._resolve_row(ob, stale, outcome, error_note=None, apply_error=apply_error)
+
+    row = ob.get(auth.id, "settle")
+    assert row is not None and row.lease_owner == claimed.lease_owner and row.status == "pending"
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any(m.startswith(parked_prefix) for m in messages)
+    assert any(m.startswith(f"settle outbox did not park {what}: ") for m in messages)
+
+
+@pytest.mark.parametrize("outcome,apply_error,what,parked_prefix", _PARK_RESOLUTIONS)
+def test_park_resolution_with_a_held_row_parks_and_says_so(
+    fake_store: tuple[Any, Any],
+    caplog: pytest.LogCaptureFixture,
+    outcome: str,
+    apply_error: Exception | None,
+    what: str,
+    parked_prefix: str,
+) -> None:
+    store, _db = fake_store
+    ob = _outbox(store)
+    auth = _bare_authorization(f"gwa-parked-{what.replace(' ', '-')}")
+    ob.enqueue(_row(auth))
+    row = ob.get(auth.id, "settle")
+    assert row is not None
+    caplog.set_level(logging.WARNING, logger=drain_mod.logger.name)
+
+    drain_mod._resolve_row(ob, row, outcome, error_note=None, apply_error=apply_error)
+
+    parked = ob.get(auth.id, "settle")
+    assert parked is not None and parked.status == "pending" and parked.attempts == 0
+    assert parked.last_error
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith(parked_prefix) for m in messages)
+    assert not any("did not park" in m for m in messages)
+
+
 def test_transient_apply_error_keeps_the_attempt_counted_backoff(
     fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,

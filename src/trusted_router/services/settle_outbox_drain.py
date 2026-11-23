@@ -378,6 +378,24 @@ def _leased_undecided_park_seconds(row: SettleOutboxRow) -> int:
     return max(_LEASED_UNDECIDED_PARK_FLOOR_SECONDS, min(_LEASED_UNDECIDED_PARK_SECONDS, int(age)))
 
 
+def _log_not_parked(row: SettleOutboxRow, what: str) -> None:
+    """A park that found no pending row this caller holds changed nothing.
+
+    The drain's lease was lost (the new holder resolves the row), or the row
+    was never written: a synchronous settle applies its frozen intent without
+    an outbox row (async_settle_handler.finish), so its caller's retry is what
+    decides it, and the drain has nothing to pick up. Saying "parked" there
+    would claim a durable intent that does not exist.
+    """
+    logger.warning(
+        "settle outbox did not park %s: no pending row held by this caller "
+        "authorization_id=%s intent_kind=%s",
+        what,
+        row.authorization_id,
+        row.intent_kind,
+    )
+
+
 def _resolve_row(
     outbox: SpannerSettleOutbox,
     row: SettleOutboxRow,
@@ -631,12 +649,14 @@ def _resolve_row(
         activity_since_text = _activity_since_text(row.last_error)
         if activity_since_text is not None:
             note = f"{_ACTIVITY_PARK_NOTE} since={activity_since_text}"
-        outbox.park(
+        if not outbox.park(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
             note=note,
-        )
+        ):
+            _log_not_parked(row, "typed row")
+            return
         logger.warning(
             "settle outbox parked typed row authorization_id=%s intent_kind=%s",
             row.authorization_id,
@@ -645,13 +665,15 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.PARK_LEASED_UNDECIDED:
-        outbox.park(
+        if not outbox.park(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
             retry_after_seconds=_leased_undecided_park_seconds(row),
             note=_LEASED_UNDECIDED_PARK_NOTE,
-        )
+        ):
+            _log_not_parked(row, "undecided leased intent")
+            return
         logger.warning(
             "settle outbox parked undecided leased intent authorization_id=%s intent_kind=%s",
             row.authorization_id,
@@ -665,13 +687,15 @@ def _resolve_row(
             # burns the drain's budget (each replay re-takes and re-orphans
             # the same locks) and walks the row toward dead in 8 ticks. Park
             # it: status stays 'pending' (hold frozen), attempts unchanged.
-            outbox.park(
+            if not outbox.park(
                 row.authorization_id,
                 row.intent_kind,
                 lease_owner=lease_owner,
                 retry_after_seconds=_DETERMINISTIC_PARK_SECONDS,
                 note=error_note or "apply_frozen_settle error",
-            )
+            ):
+                _log_not_parked(row, "deterministic apply error")
+                return
             logger.warning(
                 "settle outbox parked deterministic apply error authorization_id=%s "
                 "intent_kind=%s error=%s",

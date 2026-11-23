@@ -26,6 +26,7 @@ from tests.test_settle_outbox_drain import (
 )
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import verify_lookup_ticket, verify_ticket
+from trusted_router.errors import ExpectedHTTPException
 from trusted_router.routes.settlements import status
 from trusted_router.services import async_settle_handler as handler
 from trusted_router.services import async_settle_memory as memory
@@ -772,6 +773,36 @@ def test_sync_fallback_does_not_impersonate_worker_lease(env):
     row = outbox.get(auth.id, 'settle')
     assert row.lease_owner == claimed.lease_owner and row.status == 'pending'
     assert outbox.mark(auth.id, 'settle', done=True, lease_owner=claimed.lease_owner) == 'done'
+
+
+def test_sync_undecided_leased_intent_is_retryable_and_writes_no_row(env, monkeypatch, caplog):
+    # The shape of a sync settle whose fast-path terminal the front door
+    # answered `failed`: the frozen apply is undecided, nothing is durable
+    # (the sync path enqueues no row), so the answer is the retryable 503 and
+    # no log line may claim the intent was parked for the drain.
+    from trusted_router.services import settle_outbox_apply as apply_mod
+
+    body, auth, _ = prepare(env)
+    real_apply = apply_mod.apply_frozen_settle
+    monkeypatch.setattr(apply_mod, 'apply_frozen_settle',
+                        lambda row: apply_mod.ApplyOutcome.PARK_LEASED_UNDECIDED)
+    caplog.set_level('WARNING', logger='trusted_router.services')
+    with pytest.raises(HTTPException) as raised:
+        call(env, body, synchronous=True)
+    assert raised.value.status_code == 503
+    assert raised.value.headers == {'Retry-After': '1'}
+    assert isinstance(raised.value, ExpectedHTTPException)
+    assert not env[1].settle_outbox
+    messages = [r.getMessage() for r in caplog.records]
+    assert 'async_settle.unavailable reason=finish_unconfirmed' in messages
+    assert not any('parked undecided leased intent' in m for m in messages)
+    assert any(m.startswith('settle outbox did not park undecided leased intent: ')
+               and f'authorization_id={auth.id} ' in m for m in messages)
+    # The caller's retry of the same identity decides it, once.
+    monkeypatch.setattr(apply_mod, 'apply_frozen_settle', real_apply)
+    assert call(env, body, synchronous=True).status_code == 200
+    assert env[1].reservations[auth.credit_reservation_id]['actual_micro'] == 2
+    assert not env[1].settle_outbox
 
 
 @pytest.fixture(scope='module')
