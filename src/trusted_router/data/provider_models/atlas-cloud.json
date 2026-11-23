@@ -2528,21 +2528,21 @@
       "upstream_id": "openai/gpt-5.6-sol",
       "context_length": 1050000,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 30000000,
-      "cached_input_token_price_per_m": 500000,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 400000,
       "price_tiers": [
         {
           "max_prompt_tokens": 272000,
-          "input_token_price_per_m": 5000000,
-          "output_token_price_per_m": 30000000,
-          "cached_input_token_price_per_m": 500000
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 20000000,
+          "cached_input_token_price_per_m": 400000
         },
         {
           "max_prompt_tokens": null,
-          "input_token_price_per_m": 10000000,
-          "output_token_price_per_m": 45000000,
-          "cached_input_token_price_per_m": 1000000
+          "input_token_price_per_m": 8000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 800000
         }
       ]
     },
@@ -3954,21 +3954,21 @@
       "upstream_id": "openai/gpt-5.6-sol-az",
       "context_length": 1050000,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 30000000,
-      "cached_input_token_price_per_m": 500000,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 400000,
       "price_tiers": [
         {
           "max_prompt_tokens": 272000,
-          "input_token_price_per_m": 5000000,
-          "output_token_price_per_m": 30000000,
-          "cached_input_token_price_per_m": 500000
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 20000000,
+          "cached_input_token_price_per_m": 400000
         },
         {
           "max_prompt_tokens": null,
-          "input_token_price_per_m": 10000000,
-          "output_token_price_per_m": 45000000,
-          "cached_input_token_price_per_m": 1000000
+          "input_token_price_per_m": 8000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 800000
         }
       ]
     },
@@ -4575,21 +4575,21 @@
       "upstream_id": "openai/gpt-5.6-sol-codex",
       "context_length": 1050000,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 30000000,
-      "cached_input_token_price_per_m": 500000,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 400000,
       "price_tiers": [
         {
           "max_prompt_tokens": 272000,
-          "input_token_price_per_m": 5000000,
-          "output_token_price_per_m": 30000000,
-          "cached_input_token_price_per_m": 500000
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 20000000,
+          "cached_input_token_price_per_m": 400000
         },
         {
           "max_prompt_tokens": null,
-          "input_token_price_per_m": 10000000,
-          "output_token_price_per_m": 45000000,
-          "cached_input_token_price_per_m": 1000000
+          "input_token_price_per_m": 8000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 800000
         }
       ]
     },
@@ -5001,7 +5001,7 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 100000
     },
     {
       "display_name": "DeepSeek V4.1 Flash 1017",
@@ -6399,6 +6399,6 @@
       "cached_input_token_price_per_m": 150000
     }
   ],
-  "generated_at": "2026-11-23T04:03:03Z",
+  "generated_at": "2026-11-23T06:27:51Z",
   "model_count": 204
 }

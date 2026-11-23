@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 78,
     "route_mode": "Prepaid + BYOK",
     "slug": "amazon-bedrock"
   },
@@ -361,10 +361,10 @@
   },
   "greenference": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "Greenference",
     "privacy": "Zero retention",
-    "route_count": 8,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "greenference"
   },
@@ -631,10 +631,10 @@
   },
   "nextbit-eu": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 3,
     "name": "NextBit (EU)",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "nextbit-eu"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 9,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
