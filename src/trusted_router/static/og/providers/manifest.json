@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 61,
+    "model_count": 62,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 61,
+    "route_count": 62,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -424,10 +424,10 @@
   },
   "io-net": {
     "card_version": 2,
-    "model_count": 41,
+    "model_count": 42,
     "name": "IO Intelligence",
     "privacy": "Policy documented",
-    "route_count": 41,
+    "route_count": 42,
     "route_mode": "Prepaid",
     "slug": "io-net"
   },

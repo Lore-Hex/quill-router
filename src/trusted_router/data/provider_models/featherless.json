@@ -1066,7 +1066,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 2500000
+      "output_token_price_per_m": 2500000,
+      "missing_since": "2026-11-23"
     },
     {
       "display_name": "moonshotai/Kimi-K2-Instruct-0905",
@@ -1091,7 +1092,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 2500000
+      "output_token_price_per_m": 2500000,
+      "missing_since": "2026-11-23"
     },
     {
       "display_name": "moonshotai/Kimi-K2-Thinking",
@@ -1686,12 +1688,36 @@
       "routable": true,
       "input_token_price_per_m": 107800,
       "output_token_price_per_m": 280000,
-      "max_output_tokens": 32768
+      "max_output_tokens": 32768,
+      "missing_since": "2026-11-23"
+    },
+    {
+      "display_name": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
+      "title": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-flash-mopd",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
+      "context_length": 1048576,
+      "max_output_tokens": 32768,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 107800,
+      "output_token_price_per_m": 280000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-23T15:20:49Z",
+  "generated_at": "2026-11-23T17:28:22Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 68
+  "model_count": 69
 }
