@@ -196,10 +196,13 @@ func undecidedRows(ctx context.Context, txn *spanner.ReadWriteTransaction, ref L
 // the other's pack as pending (2026-11-23). So each marker's transaction
 // first takes, exclusively, what it is to decide on: an open lease's
 // marker its pack's row (markOpenPack), a closed lease's marker the lease's
-// pending packs (markClosedPack). Spanner ages a transaction from its first
-// read, and wound-wait aborts only a younger holder an older transaction
-// waits for, so a marker that asks for a lock another marker holds is the
-// younger and waits. Which of the two a call runs is a strong read of the
+// pending packs (markClosedPack). That removes the shared-then-upgrade
+// conflict between markers; it is not a promise that none is ever aborted.
+// Spanner's wound-wait orders conflicting transactions by age, and a retried
+// transaction keeps its priority, so a marker that asks second is not always
+// the younger: two markers may still occasionally abort one another and
+// retry, but no longer by each holding a shared lock the other must upgrade
+// past. Which of the two a call runs is a strong read of the
 // lease's state, outside the transaction and so locking nothing; a lease
 // that closes after it is found closed in the transaction, which then
 // rolls back for markClosedPack.
@@ -226,15 +229,15 @@ func (s *Store) MarkPackDone(ctx context.Context, ref LeaseRef, version int64) (
 }
 
 // markPackDone marks one pack done, taking its row's lock exclusively as it
-// reads the row, so markers of the pack queue rather than each upgrade a
-// shared lock the other holds. It has no subquery: the hint takes every
+// reads the row, so markers of the pack contend for one exclusive lock
+// rather than each upgrade a shared lock the other holds. It has no subquery: the hint takes every
 // range a statement reads, exclusively.
 const markPackDone = `@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_lease_winners SET work_done_at = CURRENT_TIMESTAMP()
        WHERE workspace_id = @w AND lease_id = @l AND commit_version = @v AND work_done_at IS NULL`
 
 // lockPendingPacks reads a lease's packs whose work is pending, through the
 // packs' index on that time, taking their range exclusively: the packs a
-// closed lease's retire decision reads, and the lock its markers queue on.
+// closed lease's retire decision reads, and the one lock its markers contend for.
 // Only markers of a closed lease take it, and nothing else writes in that
 // range once the lease has closed: a commit adds a pack only to a lease
 // that is not closed.
