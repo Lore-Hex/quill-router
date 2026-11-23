@@ -126,5 +126,61 @@
     },
     "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
     "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/id",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/workspace_id",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/name",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/deleted",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/owner_user_id",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/federated_home",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_workspace_directory_source/created_at",
+    "attribute": "SPANNER_TYPE",
+    "production": "STRING(MAX)",
+    "fixture": "STRING(0)",
+    "reason": "Verified against production INFORMATION_SCHEMA on 2026-11-23 (local audit run, read-only metadata): the Cloud Spanner emulator reports every STRING column of a view as STRING(0); production reports STRING(MAX). The view definition and SECURITY_TYPE match exactly.",
+    "verified_against_production": true
   }
 ]
