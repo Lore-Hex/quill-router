@@ -118,10 +118,10 @@
   },
   "boundless": {
     "card_version": 2,
-    "model_count": 16,
+    "model_count": 15,
     "name": "Boundless",
     "privacy": "Policy documented",
-    "route_count": 16,
+    "route_count": 15,
     "route_mode": "Prepaid",
     "slug": "boundless"
   },
@@ -649,19 +649,19 @@
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 0,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 4,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "nscale"
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 7,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
