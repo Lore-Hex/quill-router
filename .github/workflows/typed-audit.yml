@@ -17,12 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Authenticate to GCP
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-ci-audit@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
       - name: Sync
         run: uv sync --frozen
       - name: Run typed billing audit
@@ -42,12 +42,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Authenticate to GCP
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-ci-audit@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+      - uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
       - name: Sync
         run: uv sync --frozen
       - name: Run production schema audit
