@@ -48,6 +48,8 @@ ALLOWED = {
     "storage_gcp_channel_failover.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
+    # Optional GCP-only Pub/Sub transport behind the enterprise request capture port.
+    "storage_gcp_enterprise_requests.py",
     # Opt-in v2 owns a separate native client, metadata adapter and GCS attachment transport.
     # Read-only, bounded native export adapter; no money APIs.
     "storage_gcp_shadow_v2_export.py",

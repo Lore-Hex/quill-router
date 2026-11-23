@@ -900,6 +900,7 @@ class Settings(BaseSettings):
     # Destination for TrustedOS partner-inquiry form submissions (/trustedos).
     # Falls back to ses_from_email when unset so the lead never silently drops.
     partner_inquiry_email: str | None = None
+    enterprise_request_capture_enabled: bool = False
     # Durable post-signup activation reminders. Zero keeps the in-process
     # worker disabled in local/test environments. Production runs one bounded
     # pass per minute; an atomic milestone claim prevents duplicate sends when

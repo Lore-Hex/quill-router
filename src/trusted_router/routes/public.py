@@ -173,6 +173,7 @@ from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.routes.notes import register_notes
 from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.services.email import EmailMessage, get_email_service
+from trusted_router.services.enterprise_requests import EnterpriseRequest, publish_request
 from trusted_router.services.reserved_tokens import (
     ReservationRequest,
     create_reservation_checkout,
@@ -953,6 +954,18 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         return error("delivery_unavailable", 503)
 
     page_url = f"{exchange_origin}/" if exchange_origin else f"https://trustedrouter.com{page}"
+    if settings.enterprise_request_capture_enabled:
+        record = EnterpriseRequest.new(
+            email=email, request_type="BUYER_DECK" if resource == "brochure" else "SECURITY_PACK",
+            source_site=urlparse(page_url).netloc,
+        )
+        try:
+            recorded = await run_in_threadpool(publish_request, record)
+        except Exception:  # Do not send customer data or provider error bodies to logs.
+            recorded = False
+        if not recorded:
+            log.error("enterprise_brief.capture_unavailable")
+            return error("delivery_unavailable", 503)
     campaign = exchange_site_campaign(request, payload.get("campaign")) if exchange_origin else {}
     campaign_lines = "".join(f"{name}: {value}\n" for name, value in campaign.items())
     message = EmailMessage(
