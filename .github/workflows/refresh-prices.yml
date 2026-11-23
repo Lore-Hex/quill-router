@@ -80,7 +80,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: Lore-Hex/quill-router/.github/actions/setup-uv@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+        uses: Lore-Hex/quill-router/.github/actions/setup-uv@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
 
       - name: Install dependencies
         run: uv sync --frozen
@@ -93,13 +93,13 @@ jobs:
         # credentials this workflow reads. It has no project-wide Secret
         # Manager accessor role, and its one project permission is to call
         # Vertex AI models.
-        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+        uses: Lore-Hex/quill-router/.github/actions/gcp-auth@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-ci-prices@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
+        uses: Lore-Hex/quill-router/.github/actions/setup-gcloud@b4a639784c65566218e0018ad1552d5fa1d85c60 # main 2026-11-23
 
       - name: Pull self-heal API key from Secret Manager
         # Pull at workflow runtime instead of baking into a GHA secret.
