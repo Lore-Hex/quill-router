@@ -204,9 +204,17 @@ func Defaults() Config {
 		// append's 0.15 s all fit, with 50 ms to spare; an authorize's two
 		// owners fit too (2026-11-02: an owner past its second, then a
 		// peer's 0.8 s, answered after the control plane had stopped
-		// waiting).
+		// waiting). A publish may run past its share to 0.7 s
+		// (PublishMax), taking the spare and the peer's wait, and past
+		// 0.55 s the owner's, which keeps at least 0.35 s, past the
+		// owner's own 0.25 s settle log hedge (SettleHedge); a call left
+		// less than its wait is no evidence (2026-11-23: the record
+		// topic's tail passed 0.25 s for minutes at a time, and each such
+		// settle was answered Failed though its publish succeeded and its
+		// owner answered in milliseconds).
 		FrontDoor: frontdoor.Config{OwnerWait: 500 * time.Millisecond, PublishWait: 250 * time.Millisecond,
-			PeerWait: 250 * time.Millisecond, AnswerWithin: 1200 * time.Millisecond, AppendWithin: 150 * time.Millisecond,
+			PublishMax: 700 * time.Millisecond, PeerWait: 250 * time.Millisecond,
+			AnswerWithin: 1200 * time.Millisecond, AppendWithin: 150 * time.Millisecond,
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,
@@ -1063,6 +1071,19 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		return err
 	}
 	p.run("front door", door.Run)
+	p.run("front door tally", func(ctx context.Context) error {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Print(frontDoorTallyLine(door.TakeTally()))
+				return nil
+			case <-t.C:
+				log.Print(frontDoorTallyLine(door.TakeTally()))
+			}
+		}
+	})
 	if cfg.FleetAudit {
 		fc := cfg.Fleet
 		fc.Store, fc.Members, fc.Self, fc.Clock = s, members, cfg.Address, time.Now
@@ -1471,4 +1492,21 @@ func ownerTallyLine(t owner.Tally, c settlelog.Calls) string {
 		t.Acks, avg.Milliseconds(), t.AckMax.Milliseconds(), t.AcksSlow, t.DepthMax, t.PublishFailures, t.Heartbeats,
 		t.HeartbeatMax.Milliseconds(), t.HeartbeatsSlow, t.Terminals, t.TerminalMax.Milliseconds(), t.TerminalsSlow,
 		c.Batches, c.Hedges, c.Won, c.Withheld)
+}
+
+// frontDoorTallyLine is the front door's period line: the settles whose
+// full record was acknowledged, the longest wait for one, and those past
+// the publish's share, which took from the owner's and the peer's waits;
+// the calls to owners and peers the budget left less than their wait that
+// did not answer, kept as no evidence; and the terminals answered Failed,
+// by why: the publish not acknowledged in time or failed, the gateway's
+// request ended, the owner answered Failed, the drain log's append failed,
+// or a refused append's disposition read failed.
+func frontDoorTallyLine(t frontdoor.Tally) string {
+	f := t.Failed
+	return fmt.Sprintf("fastpath front door: published=%d publish_max_ms=%d published_late=%d calls_short=%d "+
+		"failed_publish_timeout=%d failed_publish_error=%d failed_gone=%d failed_owner=%d failed_append=%d "+
+		"failed_disposition=%d",
+		t.Published, t.PublishMax.Milliseconds(), t.PublishedLate, t.Short, f.PublishTimeout, f.PublishError, f.Gone,
+		f.Owner, f.Append, f.Disposition)
 }

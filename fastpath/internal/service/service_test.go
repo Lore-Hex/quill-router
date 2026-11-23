@@ -865,9 +865,12 @@ func TestThePendingWorkIsTwoWorkersDroppingOnceAMinute(t *testing.T) {
 // waits compose to an answer within its budget, 1.2 s, which the control
 // plane's 1.5 s for a call (fastpath_front_door_timeout_seconds, its
 // connection's 0.25 s included; tests/test_fastpath_frontdoor.py holds
-// Python to it) outlasts: a settle's publish, an owner's and a peer's full
-// waits and the append's time fit in it, as do an authorize's two owners,
-// so no call is cut short but by a scheduler running late.
+// Python to it) outlasts: a settle's publish share, an owner's and a peer's
+// full waits and the append's time fit in it, as do an authorize's two
+// owners, so no call is cut short but by a publish past its share or a
+// scheduler running late. A publish may run past its share to 0.7 s, after
+// which an owner keeps more than its own settle log hedge, half its wait,
+// and the append its time; and the front door takes these waits.
 func TestTheFrontDoorAnswersWithinTheControlPlanesBudget(t *testing.T) {
 	fd := Defaults().agreed().FrontDoor
 	const controlPlane, connection = 1500 * time.Millisecond, 250 * time.Millisecond
@@ -880,6 +883,39 @@ func TestTheFrontDoorAnswersWithinTheControlPlanesBudget(t *testing.T) {
 			fd.OwnerWait, fd.PeerWait, fd.AppendWithin, fd.AnswerWithin)
 	case 2*fd.OwnerWait > fd.AnswerWithin:
 		t.Fatalf("an authorize's two owner waits of %v past the budget %v", fd.OwnerWait, fd.AnswerWithin)
+	case fd.PublishMax != 700*time.Millisecond:
+		t.Fatalf("a publish's longest wait of %v", fd.PublishMax)
+	case fd.AnswerWithin-fd.AppendWithin-fd.PublishMax <= Defaults().SettleHedge ||
+		Defaults().SettleHedge*2 != fd.OwnerWait:
+		t.Fatalf("an owner left %v after a publish's longest wait, its hedge %v of its wait %v",
+			fd.AnswerWithin-fd.AppendWithin-fd.PublishMax, Defaults().SettleHedge, fd.OwnerWait)
+	}
+	// New reads none of these; it checks the waits.
+	fd.Enabled, fd.Owners, fd.Store, fd.Records, fd.Members = func(string) bool { return true }, frontdoor.Direct{},
+		struct{ frontdoor.Store }{}, frontdoor.FromRecords(nil), struct{ frontdoor.Members }{}
+	fd.Key, fd.Shards = bytes.Repeat([]byte{1}, frontdoor.MinKeySize), func(string) int64 { return 1 }
+	if _, err := frontdoor.New(fd); err != nil {
+		t.Fatalf("the front door's waits: %v", err)
+	}
+}
+
+// TestTheFrontDoorLineStatesTheTally: the front door's period line states
+// each of its tally's figures, its longest publish in milliseconds, and the
+// terminals answered Failed by why.
+func TestTheFrontDoorLineStatesTheTally(t *testing.T) {
+	got := frontDoorTallyLine(frontdoor.Tally{Published: 90, PublishedLate: 4, PublishMax: 612 * time.Millisecond,
+		Short: 2, Failed: frontdoor.Failures{PublishTimeout: 3, PublishError: 1, Gone: 5, Owner: 6, Append: 7,
+			Disposition: 8}})
+	want := "fastpath front door: published=90 publish_max_ms=612 published_late=4 calls_short=2 " +
+		"failed_publish_timeout=3 failed_publish_error=1 failed_gone=5 failed_owner=6 failed_append=7 " +
+		"failed_disposition=8"
+	if got != want {
+		t.Fatalf("the line:\n%s\nwant\n%s", got, want)
+	}
+	if got := frontDoorTallyLine(frontdoor.Tally{}); got != "fastpath front door: published=0 publish_max_ms=0 "+
+		"published_late=0 calls_short=0 failed_publish_timeout=0 failed_publish_error=0 failed_gone=0 "+
+		"failed_owner=0 failed_append=0 failed_disposition=0" {
+		t.Fatalf("an empty period's line: %s", got)
 	}
 }
 

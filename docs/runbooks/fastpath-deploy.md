@@ -614,6 +614,56 @@ The script refuses any value but `0` or `1ms` to `9999ms` before writing the
 unit. The attribute is set only with a pinned release that takes
 `-settle-hedge` ("A flag the unit passes"); `""` leaves it off.
 
+## The front door's publish wait and its minute line
+
+A settle's full record goes to the record topic, and the front door waits
+for its acknowledgement before it sends the settle to the owner or the
+drain log (`docs/design/fast-admission-and-batched-settlement.md` §4.9).
+Until the release that added `PublishMax`, that wait was 0.25 s: a publish
+acknowledged later answered the settle `failed`, though the publish had
+succeeded, and the control plane logged `fastpath pilot terminal undecided,
+left to the drain ... why=settle: failed`. An async settle was then finished
+by the drain; a settle on the synchronous fallback answered 503
+(`async_settle.unavailable reason=finish_unconfirmed`), which pages as
+"TR Gateway: billing path 5xx". It happened whenever the record topic's p99
+publish latency passed 0.25 s, for minutes at a time, while the owners
+answered terminals in milliseconds.
+
+Since that release a publish may take up to 0.7 s, inside the same 1.2 s
+answer budget and the control plane's unchanged 1.5 s
+(`docs/design/fast-admission-pilot.md`). Past 0.25 s it takes the peer's
+wait, then part of the owner's; a call left less than its wait that does not
+answer is no evidence for a withdrawal or a revocation, and its terminal is
+appended to the drain log with the cause `budget`.
+
+Each node writes the front door's line once a minute, beside the owner's:
+
+```
+fastpath front door: published=N publish_max_ms=N published_late=N calls_short=N failed_publish_timeout=N failed_publish_error=N failed_gone=N failed_owner=N failed_append=N failed_disposition=N
+```
+
+`published` counts settles whose full record was acknowledged,
+`publish_max_ms` the longest wait for one, and `published_late` those past
+0.25 s, each a settle the release before answered `failed`. `calls_short`
+counts calls to owners and peers left less than their wait that did not
+answer. The `failed_*` fields are the terminals answered `failed`, by why: a
+publish not acknowledged within 0.7 s (`publish_timeout`) or failed
+(`publish_error`), the control plane's request ended first (`gone`), the
+owner's own `failed` (`owner`), the drain log append failed (`append`), or a
+refused append's disposition read failed (`disposition`). So the next
+`why=settle: failed` names its cause in the node's journal:
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath front door:"' \
+  --project=quill-cloud-proxy --freshness=30m --limit=20 \
+  --format='table(timestamp,labels."compute.googleapis.com/resource_name",jsonPayload.MESSAGE)'
+```
+
+`failed_publish_timeout` climbing with `publish_max_ms` near 700 means the
+record topic is slower than any wait the budget allows; compare its
+`topic_send_request_latencies`. There is no flag: going back to the 0.25 s
+wait is pinning the release before it ("Pinning a release").
+
 ## The money settings: required tier, allowance and floor
 
 `docs/design/fast-admission-widening.md`, (b) and step WS0 of section

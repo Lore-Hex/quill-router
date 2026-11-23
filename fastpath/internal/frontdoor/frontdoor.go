@@ -78,17 +78,33 @@ type Config struct {
 	// OwnerWait bounds a call to an owner: one not answered by then is an
 	// owner not reached.
 	OwnerWait time.Duration
-	// PublishWait bounds a full record's publish (§4.9).
+	// PublishWait is a settle's full record publish's share of the answer
+	// budget (§4.9): a publish acknowledged within it leaves the owner's
+	// and the peer's calls their full waits.
 	PublishWait time.Duration
+	// PublishMax is the longest a settle waits for its full record's
+	// acknowledgement, at least PublishWait; zero is PublishWait. A publish
+	// past its share takes its time from the owner's and the peer's waits:
+	// each call is then cut to what is left of the budget, and a call left
+	// less than its wait is no evidence about whom it called (hop). New
+	// takes it only when an owner called after the longest publish keeps
+	// more than half its wait, as it does the owner's own hedge of a slow
+	// settle log call (service.Defaults, SettleHedge). A publish not
+	// acknowledged within it answers the settle Failed, and runs on to its
+	// own deadline (2026-11-23: the record topic's tail passed a 250 ms
+	// wait for minutes at a time, and each such settle was answered Failed
+	// though its publish succeeded and its owner answered in milliseconds).
+	PublishMax time.Duration
 	// AnswerWithin bounds every gateway request from its arrival (budget):
 	// each is answered within it however slow its owner and peer are, so
 	// the answer reaches the control plane inside that caller's own budget
 	// for the call (fastpath_front_door_timeout_seconds), which must exceed
-	// it. New takes it only when a settle's publish, an owner's and a
+	// it. New takes it only when a settle's publish share, an owner's and a
 	// peer's full waits and the append's time fit in it with room to spare,
-	// so each call runs to its own wait, and only a scheduler that runs
-	// late leaves one less: such a call is no evidence about whom it
-	// called. Zero bounds a request only by its own context.
+	// so each call runs to its own wait, and only a publish past its share
+	// or a scheduler that runs late leaves one less: such a call is no
+	// evidence about whom it called. Zero bounds a request only by its own
+	// context.
 	AnswerWithin time.Duration
 	// AppendWithin is the end of AnswerWithin a terminal keeps for its
 	// drain log append and a refused append's disposition read: the calls
@@ -123,6 +139,15 @@ type Config struct {
 	Clock       func() time.Time
 }
 
+// publishMax is the longest a settle waits for its full record's
+// acknowledgement: PublishMax, or PublishWait when it is zero.
+func (c Config) publishMax() time.Duration {
+	if c.PublishMax == 0 {
+		return c.PublishWait
+	}
+	return c.PublishMax
+}
+
 // States sets a node's state in the ring; *ring.Node is one.
 type States interface {
 	SetState(ctx context.Context, state string) error
@@ -154,6 +179,8 @@ type FrontDoor struct {
 	lastRevoke   time.Time
 	// kick wakes Run for a state to hand the node or a lease to revoke.
 	kick chan struct{}
+
+	tally tally
 }
 
 // seen is when the front door saw a reach or a failure, by its clock and
@@ -188,10 +215,14 @@ func New(cfg Config) (*FrontDoor, error) {
 		return nil, errors.New("frontdoor: peers need this node's address and a wait, withdrawing a window and " +
 			"a probe interval, and revoking an interval and the holds' life")
 	}
+	if cfg.PublishMax != 0 && cfg.PublishMax < cfg.PublishWait {
+		return nil, errors.New("frontdoor: a publish's longest wait at least its share")
+	}
 	if cfg.AnswerWithin < 0 || cfg.AppendWithin < 0 || (cfg.AnswerWithin > 0 && (cfg.AppendWithin <= 0 ||
-		cfg.PublishWait+cfg.OwnerWait+cfg.PeerWait+cfg.AppendWithin >= cfg.AnswerWithin)) {
-		return nil, errors.New("frontdoor: an answer budget past a publish's, an owner's and a peer's full waits " +
-			"and the drain log append's")
+		cfg.PublishWait+cfg.OwnerWait+cfg.PeerWait+cfg.AppendWithin >= cfg.AnswerWithin ||
+		cfg.publishMax()+cfg.OwnerWait/2+cfg.AppendWithin >= cfg.AnswerWithin)) {
+		return nil, errors.New("frontdoor: an answer budget past a publish's share, an owner's and a peer's full " +
+			"waits and the drain log append's, and past a publish's longest wait, half an owner's and the append's")
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
@@ -279,17 +310,20 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 			// The answer budget is spent: no other shard's owner is asked.
 			break
 		}
-		octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
+		octx, cancel, full := hop(hops, f.cfg.OwnerWait)
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
 			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot, OpenHeartbeat: a.OpenHeartbeat, Ceiling: a.Ceiling})
-		short := cut(octx)
 		cancel()
 		switch {
 		case err == nil:
 			f.reached(m.Address)
-		case ctx.Err() == nil && !short:
-			// Neither the request nor its budget ended first.
+		case ctx.Err() != nil:
+		case full:
+			// Neither the request ended first nor the budget left the call
+			// less than its wait.
 			f.failedHere(m.Address)
+		default:
+			f.tally.short()
 		}
 		switch {
 		case err != nil, got.Status == Busy:
@@ -310,8 +344,8 @@ var errBudget = errors.New("frontdoor: the answer budget is spent")
 // peers and a settle's publish, ends keep before it, so what follows them,
 // a terminal's drain log append, has that long. Both end with ctx too, and
 // without AnswerWithin only with it; either ending at the budget has
-// errBudget for its cause (cut). Its clock is the process's, as every
-// call's own wait is.
+// errBudget for its cause. Its clock is the process's, as every call's own
+// wait is.
 func (f *FrontDoor) budget(ctx context.Context, keep time.Duration) (answer, hops context.Context,
 	cancel context.CancelFunc) {
 	if f.cfg.AnswerWithin <= 0 {
@@ -326,11 +360,20 @@ func (f *FrontDoor) budget(ctx context.Context, keep time.Duration) (answer, hop
 	}
 }
 
-// cut reports whether the answer budget, not the call's own wait nor its
-// callee, ended a call made under it: read before the call's own cancel.
-// Such a call is no evidence about whom it called.
-func cut(call context.Context) bool {
-	return errors.Is(context.Cause(call), errBudget)
+// hop is a call to an owner or a peer: its context, its own wait under
+// hops (budget), and whether the call has that whole wait. A call the
+// budget leaves less, after a publish past its share (PublishMax) or behind
+// a scheduler running late, is no evidence about whom it called if it does
+// not answer, however it fails: the cut may have failed it as well as its
+// callee. full is read from the deadline the call is given, before the
+// call, so it does not race that deadline: a dial whose timeout is the
+// deadline can fail before the context's own timer says the budget ended
+// it.
+func hop(hops context.Context, wait time.Duration) (call context.Context, cancel context.CancelFunc, full bool) {
+	call, cancel = context.WithTimeout(hops, wait)
+	limit, bounded := hops.Deadline()
+	end, _ := call.Deadline()
+	return call, cancel, !bounded || end.Before(limit)
 }
 
 // pick is the shard a request's own hash picks, of k.
@@ -455,14 +498,30 @@ func (f *FrontDoor) Settle(ctx context.Context, s SettleOf) TerminalAnswer {
 	// The publish may outlive the request: it publishes its own copy.
 	full := slices.Clone(s.Full)
 	digest := sha256.Sum256(full)
-	// The publish has its own wait, PublishWait, which New fits in the
-	// budget ahead of the owner's and the peer's, so they keep theirs.
+	// The publish is waited for up to PublishMax. Within its share,
+	// PublishWait, which New fits in the budget ahead of the owner's and
+	// the peer's waits, they keep theirs; past it, they have what is left,
+	// more than half an owner's wait, and a call left less than its wait is
+	// no evidence (hop). The settle goes to its owner or the drain log only
+	// once the full record is acknowledged (§4.9).
 	answer, hops, cancelBudget := f.budget(ctx, f.cfg.AppendWithin)
 	defer cancelBudget()
-	pctx, cancel := context.WithTimeout(hops, f.cfg.PublishWait)
+	pctx, cancel := context.WithTimeout(hops, f.cfg.publishMax())
+	began := time.Now()
 	_, err = f.cfg.Records.Publish(env.Auth, settlelog.FullRecord, full).Wait(pctx)
+	took, waitEnded := time.Since(began), pctx.Err() != nil
 	cancel()
-	if err != nil {
+	switch {
+	case err == nil:
+		f.tally.published(took, took > f.cfg.PublishWait)
+	case ctx.Err() != nil:
+		f.tally.failed(failedGone)
+		return TerminalAnswer{Status: Failed}
+	case waitEnded:
+		f.tally.failed(failedPublishTimeout)
+		return TerminalAnswer{Status: Failed}
+	default:
+		f.tally.failed(failedPublishError)
 		return TerminalAnswer{Status: Failed}
 	}
 	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Settle, Charge: s.Charge, Digest: digest[:]}
@@ -511,10 +570,14 @@ func (f *FrontDoor) terminal(ctx, answer, hops context.Context, env Envelope, re
 	case got.Status == Won:
 		return TerminalAnswer{Status: Won, Kind: got.Kind, Charge: got.Charge}
 	default:
+		if got.Status == Failed {
+			f.tally.failed(failedOwner)
+		}
 		return TerminalAnswer{Status: got.Status}
 	}
 	if ctx.Err() != nil {
 		// The gateway stopped waiting: it retries.
+		f.tally.failed(failedGone)
 		return TerminalAnswer{Status: Failed}
 	}
 	return f.appendTerminal(answer, env, req, recordID, money, cause)
@@ -532,10 +595,12 @@ func (f *FrontDoor) appendTerminal(ctx context.Context, env Envelope, req OwnerT
 		Charge: req.Charge, Estimate: env.Estimate, Digest: req.Digest, Money: money, Cause: cause})
 	switch {
 	case err != nil:
+		f.tally.failed(failedAppend)
 		return TerminalAnswer{Status: Failed}
 	case got.Refused != "":
 		d, err := f.cfg.Store.Disposition(ctx, env.Auth)
 		if err != nil {
+			f.tally.failed(failedDisposition)
 			return TerminalAnswer{Status: Failed}
 		}
 		return TerminalAnswer{Status: Settled, Outcome: d.Outcome, Cost: d.Cost.Int64, CostKnown: d.Cost.Valid}
