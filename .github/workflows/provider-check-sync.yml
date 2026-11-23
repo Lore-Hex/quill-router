@@ -38,7 +38,7 @@ jobs:
           # The job token carries issues: write; keep it out of git config,
           # where every later step (the check included) could read it.
           persist-credentials: false
-      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@94d14eeadf77a2014d3c981e7dcb6ef793ae7fed # main 2026-11-13
+      - uses: Lore-Hex/quill-router/.github/actions/setup-uv@bada0072c1cdc70a095bee380e6a6a7fdfb2cf8e # main 2026-11-23
         timeout-minutes: 5
       - name: Sync
         timeout-minutes: 5
