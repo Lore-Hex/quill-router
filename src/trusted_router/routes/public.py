@@ -1387,6 +1387,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def migrate_from_openrouter() -> str:
         return public_page_html(settings, "docs/migrate-from-openrouter")
 
+    @public_html_route("/docs/migrate-from-openai")
+    def migrate_from_openai() -> str:
+        return public_page_html(settings, "docs/migrate-from-openai")
+
     @public_html_route("/docs/agent-setup")
     def agent_setup() -> str:
         return public_page_html(settings, "docs/agent-setup")

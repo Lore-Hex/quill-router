@@ -138,6 +138,7 @@ SHORT_LINES: dict[str, str] = {
     "deepseek-api-privacy": "DeepSeek V4 Pro and V4 Flash through an attested gateway.",
     "docs": "Quickstarts, Python and TypeScript SDKs, and API reference.",
     "docs/agent-setup": "Set the base URL for Claude Code, Codex, Cursor, and SDK agents.",
+    "docs/migrate-from-openai": "Change the base URL and key. Keep the OpenAI SDK.",
     "docs/batch": "Submit inline batches and poll encrypted results by batch ID.",
     "docs/byok": "List, create, update, and delete upstream provider keys.",
     "docs/decide": "Typed boolean, choice, and score questions with probabilities.",

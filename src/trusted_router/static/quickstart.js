@@ -76,7 +76,11 @@
     if (copy && status && window.TRCode) {
       copy.hidden = false;
       window.TRCode.wireCopy(copy, {
-        source: () => activePanel()?.querySelector("code"),
+        // A panel holding a before/after pair copies its marked "after" side.
+        source: () => {
+          const panel = activePanel();
+          return (panel?.querySelector("[data-md-copy-source]") || panel)?.querySelector("code");
+        },
         status,
         fallback: "Text selected. Use your device's copy command.",
         resetAfter: 1600,

@@ -2621,11 +2621,11 @@
 
 /* /best-llm-router: the /pricing reading column (plain rules, no cards)
    for a gateway comparison table, a copy-and-code split, three route
-   notes and a short checklist. */
+   notes and a short checklist. Full content width, so the column lines
+   up with the page header above it. */
 :root[data-brand="nyte"] .router-guide-page .guide-section {
   width: 100%;
-  max-width: 1040px;
-  margin: 0 auto;
+  margin: 0;
   padding: 72px 0 0;
 }
 :root[data-brand="nyte"] .router-guide-page .guide-section:last-of-type { padding-bottom: 72px; }
@@ -2692,6 +2692,68 @@
 :root[data-brand="nyte"] .router-guide-page .guide-columns p { margin: 0; }
 :root[data-brand="nyte"] .router-guide-page .guide-section :is(p, td) code { font-size: .9em; }
 
+/* /docs/migrate-from-openai: before/after code pair in the shared tabbed
+   code box, changed lines marked + with their values in yellow. */
+:root[data-brand="nyte"] .migrate-openai-page .mig-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--nyte-ink, #151311);
+}
+html:not(.js-off)[data-brand="nyte"] .migrate-openai-page .mig-diff[data-md-inactive] { display: none; }
+:root[data-brand="nyte"] .migrate-openai-page .mig-col { min-width: 0; }
+:root[data-brand="nyte"] .migrate-openai-page .mig-col + .mig-col { border-left: 1.5px solid var(--nyte-dark-rule, #3A3631); }
+:root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-col-label {
+  margin: 0;
+  padding: 16px 28px 0;
+  color: var(--nyte-ink-2-dark, #B9B2A8);
+  font: 550 14px/1.4 var(--tr-font-family-sans);
+}
+:root[data-brand="nyte"] .migrate-openai-page .mig-diff pre {
+  position: relative;
+  padding: 12px 28px 24px 44px;
+}
+:root[data-brand="nyte"] .migrate-openai-page .mig-add .tr-code-s { color: var(--nyte-yellow, #FFC800); }
+:root[data-brand="nyte"] .migrate-openai-page .mig-add::before {
+  content: "+";
+  position: absolute;
+  left: 22px;
+  color: var(--nyte-yellow, #FFC800);
+}
+:root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-note {
+  margin: 16px 0 0;
+  font-size: 15px;
+  color: var(--nyte-ink-2, #57514A);
+}
+:root[data-brand="nyte"] .migrate-openai-page .mig-table code { font-size: 15px; }
+:root[data-brand="nyte"] .migrate-openai-page .mig-single { grid-template-columns: minmax(0, 62ch); }
+:root[data-brand="nyte"] .migrate-openai-page .mig-single p { margin: 0; }
+:root[data-brand="nyte"] .migrate-openai-page .mig-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 24px 0 0 24px;
+  border-top: 1.5px solid var(--nyte-ink, #151311);
+  font-size: 17px;
+  line-height: 1.6;
+  font-weight: 450;
+}
+:root[data-brand="nyte"] .migrate-openai-page .mig-checklist li { max-width: 62ch; }
+:root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-next { margin: 40px 0 0; }
+
+/* Below laptop width the code is too wide to sit beside other content:
+   Before stacks over After, and each code sample goes under its text. */
+@media (max-width: 1199px) {
+  :root[data-brand="nyte"] .migrate-openai-page .mig-diff { grid-template-columns: minmax(0, 1fr); }
+  :root[data-brand="nyte"] .migrate-openai-page .mig-col + .mig-col {
+    border-left: 0;
+    border-top: 1.5px solid var(--nyte-dark-rule, #3A3631);
+  }
+  :root[data-brand="nyte"] .migrate-openai-page .guide-split { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  :root[data-brand="nyte"] .migrate-openai-page .guide-split > p,
+  :root[data-brand="nyte"] .migrate-openai-page .guide-split > div:first-child { max-width: 62ch; }
+}
+
 @media (max-width: 760px) {
   :root[data-brand="nyte"] .router-guide-page .guide-section { padding-top: var(--tr-phone-section-space); }
   :root[data-brand="nyte"] .router-guide-page .guide-section:last-of-type { padding-bottom: var(--tr-phone-section-space); }
@@ -2712,6 +2774,9 @@
     color: var(--nyte-ink-2, #57514A);
     font: 600 13px/1.4 var(--tr-font-family-sans);
   }
+  :root[data-brand="nyte"] .migrate-openai-page .mig-diff pre { padding: 12px 20px 20px 36px; }
+  :root[data-brand="nyte"] .migrate-openai-page .mig-add::before { left: 16px; }
+  :root[data-brand="nyte"] .migrate-openai-page .guide-section .mig-col-label { padding: 16px 20px 0; }
 }
 
 /* Phones: one section rhythm for every page. Each section gets
