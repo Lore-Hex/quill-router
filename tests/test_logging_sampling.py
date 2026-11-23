@@ -48,18 +48,23 @@ EXCLUSIONS = re.findall(r'resource "google_logging_project_exclusion" "([a-z_]+)
 #
 # Cloud Logging's precedence is NOT, then OR, then AND, so `a AND b OR c`
 # means `a AND (b OR c)`, and terms side by side are joined by an implicit
-# AND. A comparison on a field the entry does not have is false (so NOT of it
-# is true); a LogEntry field with a default, severity (DEFAULT), always
-# exists. https://cloud.google.com/logging/docs/view/logging-query-language
+# AND. Missing fields
+# (https://cloud.google.com/logging/docs/view/logging-query-language#missing_fields):
+# `field:*` is true only when the entry explicitly has the field, defaulted
+# or not. A comparison on a missing field is false (so NOT of it is true),
+# except on a LogEntry field with a default value, which compares as that
+# default. severity always compares as DEFAULT when missing. For the other
+# defaulted scalars the filters compare, every entry is evaluated both ways
+# (missing compares false, and missing compares as the default), and an
+# entry that must be kept may match in neither.
 
 SEVERITY = {
     "DEFAULT": 0, "DEBUG": 100, "INFO": 200, "NOTICE": 300, "WARNING": 400,
     "ERROR": 500, "CRITICAL": 600, "ALERT": 700, "EMERGENCY": 800,
 }
-# Scalar fields of a message that, when the message is present, may read as
-# their proto default rather than as absent. Entries kept whole are checked
-# both ways, so the result does not rest on which one Cloud Logging uses.
-SCALAR_DEFAULTS = {"httpRequest.status": 0}
+ALWAYS_DEFAULTED = {"severity": "DEFAULT"}
+# The defaulted LogEntry scalars the filters compare, besides severity.
+SCALAR_DEFAULTS = {"httpRequest.status": 0, "httpRequest.latency": "0s"}
 _TOKEN = re.compile(r'\s*(?:(\()|(\))|(,)|(=~|!~|!=|<=|>=|=|<|>|:)|("(?:[^"\\]|\\.)*")|([A-Za-z0-9_.*%/+-]+))')
 
 
@@ -149,18 +154,30 @@ class _Parser:
 _MISSING = object()
 
 
-def _field(entry: dict[str, Any], path: str, scalar_defaults: bool) -> Any:
-    if path == "severity":
-        return entry.get("severity") or "DEFAULT"
+def _explicit(entry: dict[str, Any], path: str) -> Any:
+    """The field's value if the entry explicitly has it, else _MISSING."""
     value: Any = entry
     for part in path.split("."):
         if not isinstance(value, dict) or part not in value or value[part] is None:
-            parent = path.rsplit(".", 1)[0]
-            if scalar_defaults and path in SCALAR_DEFAULTS and _field(entry, parent, False) is not _MISSING:
-                return SCALAR_DEFAULTS[path]
             return _MISSING
         value = value[part]
     return value
+
+
+def _compared(entry: dict[str, Any], path: str, scalar_defaults: bool) -> Any:
+    """The value a comparison sees: a missing defaulted field reads as its default."""
+    value = _explicit(entry, path)
+    if value is _MISSING and path in ALWAYS_DEFAULTED:
+        return ALWAYS_DEFAULTED[path]
+    if value is _MISSING and scalar_defaults and path in SCALAR_DEFAULTS:
+        return SCALAR_DEFAULTS[path]
+    return value
+
+
+def _re2(pattern: str) -> str:
+    # RE2's `$` matches only at the end of the text; Python's also matches
+    # before a final newline, unless written \Z.
+    return re.sub(r"(?<!\\)\$$", r"\\Z", pattern)
 
 
 def _number(value: Any) -> float | None:
@@ -179,14 +196,12 @@ def _compare(field: str, actual: Any, op: str, expected: str) -> bool:
     b: Any
     if actual is _MISSING:
         return False
-    if op == ":" and expected == "*":
-        return True
     if field == "severity":
         a, b = SEVERITY[actual], SEVERITY[expected]
     elif op == ":":
         return expected.lower() in str(actual).lower()
     elif op in ("=~", "!~"):
-        found = re.search(expected, str(actual)) is not None
+        found = re.search(_re2(expected), str(actual)) is not None
         return found if op == "=~" else not found
     elif isinstance(actual, bool):
         a, b = actual, expected == "true"
@@ -212,7 +227,10 @@ def _eval(node: Any, entry: dict[str, Any], scalar_defaults: bool) -> bool:
     if kind == "not":
         return not _eval(node[1], entry, scalar_defaults)
     _, field, op, values = node
-    actual = _field(entry, field, scalar_defaults)
+    if op == ":" and values == ["*"]:
+        # Presence: only a field the entry explicitly has, defaulted or not.
+        return _explicit(entry, field) is not _MISSING
+    actual = _compared(entry, field, scalar_defaults)
     return any(_compare(field, actual, op, v) for v in values)
 
 
@@ -467,16 +485,20 @@ def test_the_duration_bounds_keep_one_second_and_more() -> None:
     settle = re.search(r'textPayload=~"( total_ms=[^"]+)"', f)
     finalize = re.search(r'textPayload=~"( spanner_ms=[^"]+)"', f)
     assert settle and finalize
-    # RE2 and Python agree on these patterns: no backslashes, classes only.
+    # No backslashes, only character classes and counts, which RE2 and Python
+    # read alike; the finalize pattern's trailing `$` goes through _re2, since
+    # Python's `$` alone would also match before a final newline.
     assert "\\" not in settle.group(1) + finalize.group(1)
-    assert re.search(settle.group(1), " total_ms=12.3 ")
-    assert re.search(settle.group(1), " total_ms=999.9 ")
-    assert not re.search(settle.group(1), " total_ms=20001.2 ")
-    assert not re.search(settle.group(1), " total_ms=1000.0 ")
-    assert re.search(finalize.group(1), " spanner_ms=12.3 index_ms=0.0 attempts=1")
-    assert not re.search(finalize.group(1), " spanner_ms=20001.1 index_ms=0.0 attempts=1")
-    assert not re.search(finalize.group(1), " spanner_ms=12.3 index_ms=1500.0 attempts=1")
-    assert not re.search(finalize.group(1), " spanner_ms=12.3 index_ms=0.0 attempts=12")
+    settle_re, finalize_re = _re2(settle.group(1)), _re2(finalize.group(1))
+    assert re.search(settle_re, " total_ms=12.3 ")
+    assert re.search(settle_re, " total_ms=999.9 ")
+    assert not re.search(settle_re, " total_ms=20001.2 ")
+    assert not re.search(settle_re, " total_ms=1000.0 ")
+    assert re.search(finalize_re, " spanner_ms=12.3 index_ms=0.0 attempts=1")
+    assert not re.search(finalize_re, " spanner_ms=12.3 index_ms=0.0 attempts=1\n")
+    assert not re.search(finalize_re, " spanner_ms=20001.1 index_ms=0.0 attempts=1")
+    assert not re.search(finalize_re, " spanner_ms=12.3 index_ms=1500.0 attempts=1")
+    assert not re.search(finalize_re, " spanner_ms=12.3 index_ms=0.0 attempts=12")
 
 
 def test_the_check_fails_a_filter_that_would_sample_failures() -> None:
@@ -527,13 +549,36 @@ def test_evaluator_absent_fields_and_defaults() -> None:
     assert matches("NOT httpRequest.status<400", entry)
     assert not matches("jsonPayload.x:*", entry)
     assert matches("NOT jsonPayload.x:*", entry)
-    # The proto default reading of a scalar inside a present message.
+    # Read as its default, a missing status compares as 0.
     assert matches("httpRequest.status<400", entry, scalar_defaults=True)
-    # severity defaults to DEFAULT and always exists.
-    assert matches("severity:*", entry)
-    assert matches("severity=DEFAULT", entry)
-    assert matches("severity<WARNING", entry)
-    assert not matches("severity>=WARNING", entry)
+    assert not matches("NOT httpRequest.status<400", entry, scalar_defaults=True)
+
+
+def test_evaluator_presence_needs_the_field_even_when_it_has_a_default() -> None:
+    for scalar_defaults in (False, True):
+        # severity compares as DEFAULT when missing, but is not present.
+        assert not matches("severity:*", {}, scalar_defaults)
+        assert matches("NOT severity:*", {}, scalar_defaults)
+        assert matches("severity=DEFAULT", {}, scalar_defaults)
+        assert matches("severity<WARNING", {}, scalar_defaults)
+        assert not matches("severity>=WARNING", {}, scalar_defaults)
+        assert matches("severity:*", {"severity": "DEFAULT"}, scalar_defaults)
+        assert not matches("httpRequest.status:*", {"httpRequest": {}}, scalar_defaults)
+        assert not matches("httpRequest.latency:*", {"httpRequest": {"status": 200}}, scalar_defaults)
+
+
+def test_evaluator_missing_latency_compares_as_zero_when_defaulted() -> None:
+    entry = {"httpRequest": {"status": 200}}
+    assert not matches('httpRequest.latency<"1s"', entry)
+    assert matches('NOT httpRequest.latency<"1s"', entry)
+    assert matches('httpRequest.latency<"1s"', entry, scalar_defaults=True)
+    assert not matches('httpRequest.latency>="1s"', entry, scalar_defaults=True)
+    assert matches('httpRequest.latency<"1s"', {}, scalar_defaults=True)
+    # A must-keep edge entry without latency stays out of the sample either
+    # way: it is not a response the edge sent.
+    no_latency = lb(200, "0s", "client_disconnected_before_any_response")
+    del no_latency["httpRequest"]["latency"]
+    assert not matches_either_way(_filter("sample_edge_lb_request_successes"), no_latency)
 
 
 def _gateway_reliability_metrics() -> dict[str, str]:
