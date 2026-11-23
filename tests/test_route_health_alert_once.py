@@ -18,10 +18,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.synthetic import route_health
-from trusted_router.synthetic.route_health import RouteHealthFlag
+from trusted_router.synthetic.route_health import RouteHealthFlag, UnservedRoute
 
 HEADERS = {"x-trustedrouter-internal-token": "test-observer-secret"}
 HELD = ("nextbit-eu", "google/gemma-3-27b-it")
+
+
+def _held_evidence() -> dict[tuple[str, str], UnservedRoute]:
+    qualified = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=30)
+    stamp = qualified.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {HELD: UnservedRoute(*HELD, samples=6, first_failure_at="2026-11-22T15:34:15Z",
+                                last_failure_at=stamp, error_types=("rate_limit_error",),
+                                kind="unavailable", qualified_at=stamp)}
 
 
 def _flags() -> list[RouteHealthFlag]:
@@ -94,7 +102,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, evaluations: list[Any] | None = Non
         return list(result)
 
     monkeypatch.setattr(synthetic_routes, "evaluate_route_health", evaluate)
-    monkeypatch.setattr(synthetic_routes, "_pending_route_holds", lambda: frozenset({HELD}))
+    monkeypatch.setattr(synthetic_routes, "_route_holds", lambda: (_held_evidence(), frozenset()))
     monkeypatch.setattr(synthetic_routes, "report_catalog_freshness", lambda: None)
     # The daily digest fires only in its hour; make every hour that hour.
     monkeypatch.setattr(route_health, "DEGRADATION_DIGEST_HOUR_UTC", dt.datetime.now(dt.UTC).hour)
@@ -146,9 +154,17 @@ def test_the_next_sweep_reports_again(
     assert len(alerts) == per_sweep > 0
     hour["value"] = "2026-11-21T09"
     client.post("/v1/internal/synthetic/route-health", headers=HEADERS)
-    assert len(alerts) == 2 * per_sweep
+    # Every alert reports again except the route-hold announcement, which is
+    # claimed once per hold episode (Sentry QUILL-ROUTER-HV re-fired hourly
+    # while its committed hold waited for a deploy).
+    assert len(alerts) == 2 * per_sweep - 1
+    assert sum(fingerprint[0] == "route-hold" for fingerprint in alerts) == 1
     # Every emission went through a real claim, none through the fail-open path.
-    assert {claim.rsplit("@", 1)[1] for claim in claims} == {"2026-11-21T08", "2026-11-21T09"}
+    hourly = {claim.rsplit("@", 1)[1] for claim in claims if not claim.startswith("route-hold|")}
+    assert hourly == {"2026-11-21T08", "2026-11-21T09"}
+    assert {claim for claim in claims if claim.startswith("route-hold|")} == {
+        f"route-hold|{HELD[0]}|{HELD[1]}|episode=2026-11-22T15:34:15Z;stage=0",
+    }
 
 
 def test_a_failed_claim_still_reports(
