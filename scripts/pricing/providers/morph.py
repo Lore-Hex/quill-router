@@ -18,6 +18,11 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import remember_upstream_id
+from trusted_router.provider_contracts import (
+    MORPH_KIMI_ABLITERATED_HOLD,
+    MORPH_KIMI_ABLITERATED_ID,
+    MORPH_KIMI_ABLITERATED_NATIVE,
+)
 
 SLUG = "morph"
 MODELS_URL = "https://api.morphllm.com/v1/models"
@@ -31,6 +36,7 @@ MANIFEST_PATH = (
     / "morph.json"
 )
 _NATIVE_TO_MODEL_ID = {
+    MORPH_KIMI_ABLITERATED_NATIVE: MORPH_KIMI_ABLITERATED_ID,
     "morph-glm52-744b": "z-ai/glm-5.2",
     "morph-qwen35-397b": "qwen/qwen3.5-397b-a17b",
     "morph-qwen36-27b": "qwen/qwen3.6-27b",
@@ -41,11 +47,12 @@ _NATIVE_TO_MODEL_ID = {
     "morph-v3-fast": "morph/morph-v3-fast",
     "morph-v3-large": "morph/morph-v3-large",
 }
-EXPECTED_MODELS = list(_NATIVE_TO_MODEL_ID.values())
+EXPECTED_MODELS = [mid for mid in _NATIVE_TO_MODEL_ID.values() if mid != MORPH_KIMI_ABLITERATED_ID]
 UPSTREAM_ID_MAP = {
     model_id: native_id for native_id, model_id in _NATIVE_TO_MODEL_ID.items()
 }
 _CONTEXT_LENGTHS = {
+    MORPH_KIMI_ABLITERATED_NATIVE: 1_048_576,
     "morph-glm52-744b": 1_048_576,
     "morph-qwen35-397b": 262_144,
     "morph-qwen36-27b": 131_072,
@@ -103,7 +110,7 @@ def fetch() -> ProviderPricingResult:
         discovered[model_id] = {
             "id": model_id,
             "upstream_id": native_id,
-            "display_name": native_id,
+            "display_name": "Kimi K3.1 Pro Abliterated" if model_id == MORPH_KIMI_ABLITERATED_ID else native_id,
             "context_length": _CONTEXT_LENGTHS[native_id],
             "endpoints": ["chat/completions"],
         }
@@ -116,6 +123,7 @@ def fetch() -> ProviderPricingResult:
     return ProviderPricingResult(
         slug=SLUG,
         prices=prices,
+        price_index_model_ids=frozenset(prices) - {MORPH_KIMI_ABLITERATED_ID},
         source=pricing.source,
         fetched_url="https://www.morphllm.com/pricing",
         notes=[f"intersected {len(discovered)} live chat models with official prices"],
@@ -128,4 +136,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=MODELS_URL,
+        operator_hold_reasons={MORPH_KIMI_ABLITERATED_ID: MORPH_KIMI_ABLITERATED_HOLD},
     )

@@ -4,6 +4,23 @@
   "price_scale": "microdollars_per_million",
   "models": [
     {
+      "id": "morph/kimi-k3.1-pro-abliterated",
+      "upstream_id": "morph-kimik3-abliterated",
+      "display_name": "Kimi K3.1 Pro Abliterated",
+      "title": "morph-kimik3-abliterated",
+      "model_type": "chat",
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "context_length": 1048576,
+      "status": 1,
+      "input_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 580000,
+      "output_token_price_per_m": 28000000,
+      "routable": false,
+      "routable_reason": "privileged-customer-routing-unverified"
+    },
+    {
       "display_name": "morph-dsv4flash",
       "title": "morph-dsv4flash",
       "model_type": "chat",
@@ -187,5 +204,5 @@
     }
   ],
   "generated_at": "2026-11-23T21:28:34Z",
-  "model_count": 9
+  "model_count": 10
 }
