@@ -1,4 +1,5 @@
 """Small standalone fixture reader shared with native restart children."""
+import contextvars
 import copy
 import json
 from contextlib import contextmanager
@@ -99,6 +100,25 @@ def saturate(svc, stamp):
 # Test-only ceiling below pytest's per-history watchdog. It covers GAPIC data,
 # session, admin and operations-poll RPCs, including SDK fixture cleanup calls.
 NATIVE_RPC_SECONDS = 3.
+# Disposable-schema provisioning and cleanup (instance and database create,
+# DDL batches, drop, delete) is fixture work, not code under test. Each death
+# history provisions its own instance with nine admin operations; these take
+# about 0.3 s on an idle emulator, and a loaded runner took over 3 s for one
+# (CreateInstance in runs 44967436729 and 45049701985, UpdateDatabaseDdl in
+# 44755308455). This ceiling is still below the 30 s and 60 s test watchdogs,
+# so a hung admin operation fails with its own stack.
+PROVISIONING_RPC_SECONDS = 10.
+_CEILING: contextvars.ContextVar[float] = contextvars.ContextVar("native_rpc_ceiling", default=NATIVE_RPC_SECONDS)
+
+
+@contextmanager
+def provisioning_deadlines():
+    """Inside native_rpc_deadlines: schema setup/cleanup uses the provisioning ceiling."""
+    token = _CEILING.set(PROVISIONING_RPC_SECONDS)
+    try:
+        yield
+    finally:
+        _CEILING.reset(token)
 
 
 @contextmanager
@@ -111,11 +131,13 @@ def native_rpc_deadlines():
 
     call, result = _GapicCallable.__call__, PollingFuture.result
     def bounded_call(self, *args, timeout=None, **kwargs):
-        timeout = min(timeout, NATIVE_RPC_SECONDS) if isinstance(timeout, (int, float)) else NATIVE_RPC_SECONDS
+        ceiling = _CEILING.get()
+        timeout = min(timeout, ceiling) if isinstance(timeout, (int, float)) else ceiling
         kwargs["retry"] = None
         return call(self, *args, timeout=timeout, **kwargs)
     def bounded_result(self, timeout=None, **kwargs):
-        timeout = min(timeout, NATIVE_RPC_SECONDS) if isinstance(timeout, (int, float)) else NATIVE_RPC_SECONDS
+        ceiling = _CEILING.get()
+        timeout = min(timeout, ceiling) if isinstance(timeout, (int, float)) else ceiling
         kwargs["polling"] = Retry(predicate=POLLING_PREDICATE, initial=.01, maximum=.1, multiplier=1.5, timeout=timeout)
         return result(self, timeout=timeout, **kwargs)
     with patch.object(_GapicCallable, "__call__", bounded_call), patch.object(PollingFuture, "result", bounded_result):

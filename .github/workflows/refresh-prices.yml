@@ -789,16 +789,39 @@ jobs:
               fi
             done
 
+            # GitHub's protected-branch hook can lag a status created seconds
+            # earlier: on 2026-11-22 it rejected this exact SHA with
+            # 'Required status check "CI" is expected' three seconds after
+            # the CI status was created and read back above. A rejection that
+            # names only absent ("expected") required checks is retried, the
+            # same SHA on the same unmoved parent, a bounded number of times.
+            # GitHub still enforces protection on every attempt; any other
+            # rejection, or the last attempt's, withholds the snapshot.
             push_log=$(mktemp)
-            if ! git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
+            push_outcome=""
+            for push_try in 1 2 3 4; do
+              if git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
+                push_outcome=pushed
+                break
+              fi
               cat "${push_log}" >&2
               git fetch -q origin main
               if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then
-                echo "  main raced the checked snapshot push"
-                continue
+                push_outcome=raced
+                break
               fi
-              echo "branch protection rejected an exact SHA with successful required checks"
-              exit 1
+              if [ "${push_try}" -ge 4 ] || \
+                 grep -qiE 'required status checks? .*(fail|error|pending|cancel)' "${push_log}" || \
+                 ! grep -qiE 'required status checks? .*(is|are) expected' "${push_log}"; then
+                echo "branch protection rejected an exact SHA with successful required checks"
+                exit 1
+              fi
+              echo "::warning title=Snapshot push retry::the protected-branch hook has not seen this SHA's required statuses yet; retrying push ${push_try}/3"
+              sleep $(( push_try * 10 ))
+            done
+            if [ "${push_outcome}" = raced ]; then
+              echo "  main raced the checked snapshot push"
+              continue
             fi
 
             # GITHUB_TOKEN pushes do not start push-triggered workflows, so

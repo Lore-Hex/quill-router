@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.provider_error_detail import parse_error_message
 from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     SyntheticProbeSample,
@@ -657,6 +658,32 @@ def _alert_error_message(message: str | None) -> str | None:
     return scrub_provider_error_message(message)[:_ALERT_ERROR_MESSAGE_MAX_CHARS] or None
 
 
+def _error_detail_context(message: str | None) -> tuple[dict[str, str], dict[str, str]]:
+    # Sentry QUILL-ROUTER-J1 (a 400 "That request was rejected") could not name
+    # the rejected field: only the provider's words survived. Probes now store
+    # the provider's own type/code/param and the request ID as a bounded,
+    # identifier-only prefix on the message; surface them as tags (searchable)
+    # and the request IDs as extra (per-event). Never in the fingerprint, so
+    # grouping stays per route.
+    detail, _ = parse_error_message(message)
+    tags = {
+        f"upstream_error_{name}": value
+        for name, value in (
+            ("type", detail.type), ("code", detail.code), ("param", detail.param),
+        )
+        if value
+    }
+    extra = {
+        name: value
+        for name, value in (
+            ("upstream_request_id", detail.request_id),
+            ("provider_request_id", detail.provider_request_id),
+        )
+        if value
+    }
+    return tags, extra
+
+
 def _availability_flag(
     provider: str,
     model: str,
@@ -819,11 +846,13 @@ def report_route_health(
                         "" if flag.fresh else "; no new failure since the last sweep",
                     )
                     continue
+            detail_tags, detail_extra = _error_detail_context(latest)
             ops_alert(
                 summary + "; excluded from provider uptime, not operations"
                 + (f"; latest: {latest}" if latest else ""),
                 fingerprint=["route-configuration", flag.provider, flag.model],
-                tags={"route_provider": flag.provider, "route_model": flag.model},
+                tags={"route_provider": flag.provider, "route_model": flag.model, **detail_tags},
+                extra=detail_extra or None,
             )
             continue
         if flag.kind == "degradation":
@@ -839,10 +868,12 @@ def report_route_health(
                 tags={"route_provider": flag.provider, "route_model": flag.model},
             )
             continue
+        latest_message = _alert_error_message(flag.newest_error_message)
         latest = (
-            " ".join(part for part in (flag.newest_error_type, flag.newest_error_message) if part)
+            " ".join(part for part in (flag.newest_error_type, latest_message) if part)
             or "unknown error"
         )
+        detail_tags, detail_extra = _error_detail_context(latest_message)
         message = (
             f"route-health: {flag.provider}/{flag.model} {flag.failure_rate:.0%} failure "
             f"over {flag.samples} samples (latest: {latest})"
@@ -857,6 +888,10 @@ def report_route_health(
             scope.set_tag("route_provider", flag.provider)
             scope.set_tag("route_model", flag.model)
             scope.set_tag("failure_rate", f"{flag.failure_rate:.4f}")
+            for key, value in detail_tags.items():
+                scope.set_tag(key, value)
+            for key, value in detail_extra.items():
+                scope.set_extra(key, value)
             sentry_sdk.capture_message(message, level="error")
 
 
