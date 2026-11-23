@@ -14,18 +14,21 @@ import (
 // none (peer). Both calls end with hops, the request's answer budget
 // (budget), which New fits both full waits in. It reports whether an owner
 // answered. A request that ended is no evidence that its owner is
-// unreachable, nor is a call the budget cut short (cut): the budget ran
-// out, not the owner's wait or the peer's.
+// unreachable, nor is a call the budget left less than its wait (hop): the
+// budget ran out, not the owner's wait or the peer's.
 func (f *FrontDoor) heartbeatAt(ctx, hops context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
-	octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
+	octx, cancel, full := hop(hops, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Heartbeat(octx, env.Owner, req)
-	short := cut(octx)
 	cancel()
 	if err == nil {
 		f.reached(env.Owner)
 		return got, true
 	}
-	if ctx.Err() != nil || short {
+	if ctx.Err() != nil {
+		return HeartbeatAnswer{}, false
+	}
+	if !full {
+		f.tally.short()
 		return HeartbeatAnswer{}, false
 	}
 	f.failedHere(env.Owner)
@@ -33,16 +36,19 @@ func (f *FrontDoor) heartbeatAt(ctx, hops context.Context, env Envelope, req Own
 		if hops.Err() != nil {
 			return HeartbeatAnswer{}, false
 		}
-		pctx, cancel := context.WithTimeout(hops, f.cfg.PeerWait)
+		pctx, cancel, full := hop(hops, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Heartbeat(pctx, peer, env.Owner, req)
-		short = cut(pctx)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
 			f.unreachedHere(env.Owner)
 			return got, true
 		}
-		if ctx.Err() != nil || short {
+		if ctx.Err() != nil {
+			return HeartbeatAnswer{}, false
+		}
+		if !full {
+			f.tally.short()
 			return HeartbeatAnswer{}, false
 		}
 	}
@@ -55,16 +61,19 @@ func (f *FrontDoor) heartbeatAt(ctx, hops context.Context, env Envelope, req Own
 // none (peer). Both calls end with hops, as a heartbeat's do (heartbeatAt).
 // It answers the owner's answer, or why there is none, the drain log row's
 // cause: unreachable, when no owner answered within its wait, or budget,
-// when the answer budget ran out first, which, as an ended request, is no
-// evidence that the owner is unreachable.
+// when the answer budget left a call that did not answer less than its
+// wait (hop), which, as an ended request, is no evidence that the owner is
+// unreachable: a settle's publish past its share, or a scheduler running
+// late. Such an owner call is not tried through a peer either: a peer that
+// then reached the owner would be evidence against this front door from a
+// call that did not have its wait.
 func (f *FrontDoor) terminalAt(ctx, hops context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, string) {
 	const unreachable, budget = "unreachable", "budget"
 	if hops.Err() != nil {
 		return OwnerTerminalAnswer{}, budget
 	}
-	octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
+	octx, cancel, full := hop(hops, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Terminal(octx, env.Owner, req)
-	short := cut(octx)
 	cancel()
 	if err == nil {
 		f.reached(env.Owner)
@@ -73,7 +82,8 @@ func (f *FrontDoor) terminalAt(ctx, hops context.Context, env Envelope, req Owne
 	if ctx.Err() != nil {
 		return OwnerTerminalAnswer{}, unreachable
 	}
-	if short {
+	if !full {
+		f.tally.short()
 		return OwnerTerminalAnswer{}, budget
 	}
 	f.failedHere(env.Owner)
@@ -81,9 +91,8 @@ func (f *FrontDoor) terminalAt(ctx, hops context.Context, env Envelope, req Owne
 		if hops.Err() != nil {
 			return OwnerTerminalAnswer{}, budget
 		}
-		pctx, cancel := context.WithTimeout(hops, f.cfg.PeerWait)
+		pctx, cancel, full := hop(hops, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Terminal(pctx, peer, env.Owner, req)
-		short = cut(pctx)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
@@ -93,7 +102,8 @@ func (f *FrontDoor) terminalAt(ctx, hops context.Context, env Envelope, req Owne
 		if ctx.Err() != nil {
 			return OwnerTerminalAnswer{}, unreachable
 		}
-		if short {
+		if !full {
+			f.tally.short()
 			return OwnerTerminalAnswer{}, budget
 		}
 	}

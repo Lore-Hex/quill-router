@@ -647,7 +647,7 @@ def _front_door_defaults() -> dict[str, int]:
     found = re.search(r"FrontDoor: frontdoor\.Config\{(.*?)\},\n", service, re.S)
     assert found, "the front door's defaults"
     fields = dict(re.findall(r"(\w+): ([^,]+)", found.group(1)))
-    names = ("PublishWait", "OwnerWait", "PeerWait", "AnswerWithin", "AppendWithin")
+    names = ("PublishWait", "PublishMax", "OwnerWait", "PeerWait", "AnswerWithin", "AppendWithin")
     return {name: _go_milliseconds(fields[name]) for name in names}
 
 
@@ -660,10 +660,14 @@ def test_the_control_plane_waits_longer_than_the_front_door_takes_to_answer() ->
     after the 1.5 s had passed). Whatever a deploy sets is held to it too."""
     waits = _front_door_defaults()
     # The front door's own composition (frontdoor.New and service_test.go
-    # hold it too): a settle's publish, an owner's and a peer's full waits
-    # and the append's time all fit in its answer budget.
+    # hold it too): a settle's publish share, an owner's and a peer's full
+    # waits and the append's time all fit in its answer budget; and a
+    # publish run past its share to its longest wait leaves an owner more
+    # than half its wait and the append its time, inside the same budget.
     steps = ("PublishWait", "OwnerWait", "PeerWait", "AppendWithin")
     assert waits["AppendWithin"] > 0 and sum(waits[name] for name in steps) < waits["AnswerWithin"]
+    assert waits["PublishWait"] <= waits["PublishMax"]
+    assert waits["PublishMax"] + waits["OwnerWait"] / 2 + waits["AppendWithin"] < waits["AnswerWithin"]
     default = Settings.model_fields["fastpath_front_door_timeout_seconds"].default
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text(encoding="utf-8")
     deployed = [float(value) for value in re.findall(r"TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS=([0-9.]+)", rollout)]

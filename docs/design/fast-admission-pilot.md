@@ -157,9 +157,17 @@ path has nodes elsewhere. `TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS` is the
 whole budget of one call, 1.5 s, spent inline on a customer request; past
 it the request takes today's path. The front door answers every call within
 1.2 s however slow its owner and peer are (`frontdoor.Config.AnswerWithin`,
-in which a settle's 0.25 s publish, an owner's 0.5 s, a peer's 0.25 s and a
-terminal's 0.15 s drain log append fit), so the setting is never below 1.2 s
-and the connection's 0.25 s.
+in which a settle's 0.25 s publish share, an owner's 0.5 s, a peer's 0.25 s
+and a terminal's 0.15 s drain log append fit), so the setting is never below
+1.2 s and the connection's 0.25 s. A settle's full record publish may run
+past its share to 0.7 s (`PublishMax`), still acknowledged before the settle
+goes to the owner or the drain log (§4.9 of the design): it then takes the
+peer's wait and, past 0.55 s, part of the owner's, which keeps at least
+0.35 s, more than the owner's own 0.25 s settle log hedge. A call to an owner
+or a peer left less than its wait that does not answer is no evidence for a
+withdrawal or a revocation (§4.3), and the terminal goes to the drain log
+with the cause `budget`. Before this, a publish past 0.25 s answered the
+settle `failed` though the publish succeeded (2026-11-23).
 
 ## How it turns off
 
