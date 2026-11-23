@@ -122,6 +122,7 @@ from trusted_router.gateway_processing import GATEWAY_HOP_CLAIM, gateway_process
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
+from trusted_router.model_kinds import MODEL_KINDS, model_kind_view
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.page_headers import (
@@ -4413,6 +4414,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             total_provider_count=sum(provider.slug != "trustedrouter" for provider in providers_for_display()),
             initial_page_size=MODEL_DISCOVERY_PAGE_SIZE,
             active_filter=normalized_filter,
+            model_kinds=MODEL_KINDS,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
                 {"id": "trusted", "label": "Trusted", "href": "/models?filter=trusted"},
@@ -6108,6 +6110,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         ).casefold(),
         "endpoints_url": None if is_meta else f"/v1/models/{model.id}/endpoints",
         "detail_href": f"/models/{model.id}",
+        **model_kind_view(model, endpoints),
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks"
             if model.id not in META_MODEL_IDS and scores_for_model(model.id)
