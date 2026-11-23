@@ -154,6 +154,21 @@ _TIER_2_RATE_LIMIT_REQUEST = {
     "input_tokens_per_minute": 1_000_000,
     "output_tokens_per_minute": 100_000,
 }
+# Account-level access holds. Discovery, a passing price fetch or a private
+# canary never clears one: the shared writer re-applies it at the manifest
+# boundary, and set_manifest_model_canary_states leaves it in place. Delete
+# the entry (and regenerate the manifest) only after access is restored and a
+# paid-path canary on the operator account succeeds.
+_OPERATOR_HOLD_REASONS: dict[str, str] = {
+    # 2026-11-13 onward: every configured-route probe of databricks-kimi-k3
+    # fails (Sentry QUILL-ROUTER-GK). As of 2026-11-23 the provider says
+    # "PERMISSION_DENIED: Access to this model is disabled for your
+    # workspace. Your Databricks account may require verification or
+    # additional model-access approval." Databricks' other routes still
+    # serve, so only this route is held until the account team restores
+    # model access.
+    "moonshotai/kimi-k3": "provider-access-unavailable",
+}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _LIVE_CANARY_CHECKED_MODEL_IDS: set[str] = set()
 _LIVE_CANARY_HEALTHY_MODEL_IDS: set[str] = set()
@@ -397,6 +412,7 @@ def fetch() -> ProviderPricingResult:
         prices=prices,
         source="api",
         fetched_url=PRICING_URL,
+        price_index_model_ids=frozenset(prices.keys() - _OPERATOR_HOLD_REASONS.keys()),
         notes=[
             f"matched {len(discovered)} documented pay-per-token endpoints",
             f"converted DBU prices at ${_dbu_usd()}/DBU",
@@ -417,6 +433,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=SUPPORTED_MODELS_URL,
+        operator_hold_reasons=_OPERATOR_HOLD_REASONS,
     )
     # Public hourly refreshes intentionally do not receive production
     # Databricks credentials. Preserve the last private canary state unless
