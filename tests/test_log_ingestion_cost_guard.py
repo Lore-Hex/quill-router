@@ -11,6 +11,7 @@ with like.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -45,7 +46,9 @@ def _ceiling_bytes() -> int:
 
 
 def _step_query() -> str:
-    match = re.search(r"query\s*=\s*<<-EOT\n(.*?)\n\s*EOT", _resource("log_ingestion_step_change"), re.S)
+    match = re.search(
+        r"query\s*=\s*<<-EOT\n(.*?)\n\s*EOT", _resource("log_ingestion_step_change"), re.S
+    )
     assert match, "step-change query missing"
     return " ".join(match.group(1).split())
 
@@ -53,14 +56,15 @@ def _step_query() -> str:
 def test_the_hand_made_ceiling_policy_is_adopted_not_recreated() -> None:
     code = _code(GUARD)
     assert re.search(
-        r'import\s*\{\s*to\s*=\s*google_monitoring_alert_policy\.log_ingestion_ceiling\s*'
+        r"import\s*\{\s*to\s*=\s*google_monitoring_alert_policy\.log_ingestion_ceiling\s*"
         r'id\s*=\s*"projects/quill-cloud-proxy/alertPolicies/3305751919896009722"\s*\}',
         code,
     )
     # The baseline check finds the policy by this name; keeping it makes the
     # adoption an in-place change.
-    assert 'display_name = "TR Logging: ingestion volume spike (audit-log cost guard)"' in _resource(
-        "log_ingestion_ceiling"
+    assert (
+        'display_name = "TR Logging: ingestion volume spike (audit-log cost guard)"'
+        in _resource("log_ingestion_ceiling")
     )
 
 
@@ -76,7 +80,10 @@ def test_ceiling_and_the_baseline_check_expect_the_same_threshold() -> None:
 
 def test_ceiling_sums_one_day_of_billed_bytes_for_the_whole_project() -> None:
     ceiling = _resource("log_ingestion_ceiling")
-    assert 'metric.type=\\"logging.googleapis.com/billing/bytes_ingested\\" AND resource.type=\\"global\\"' in ceiling
+    assert (
+        'metric.type=\\"logging.googleapis.com/billing/bytes_ingested\\" AND resource.type=\\"global\\"'
+        in ceiling
+    )
     assert 'alignment_period     = "86400s"' in ceiling
     assert 'per_series_aligner   = "ALIGN_SUM"' in ceiling
     assert 'cross_series_reducer = "REDUCE_SUM"' in ceiling
@@ -112,7 +119,10 @@ def test_step_change_holds_before_paging_and_closes_itself() -> None:
 def test_both_guards_page_the_security_channel_and_say_where_they_live() -> None:
     for name in ("log_ingestion_ceiling", "log_ingestion_step_change"):
         policy = _resource(name)
-        assert "notification_channels = [data.google_monitoring_notification_channel.security_alerts.name]" in policy
+        assert (
+            "notification_channels = [data.google_monitoring_notification_channel.security_alerts.name]"
+            in policy
+        )
         assert "infra/log_ingestion_cost_guard.tf" in policy
 
 
@@ -128,4 +138,5 @@ def test_baseline_check_requires_the_step_change_policy() -> None:
 
 
 def test_baseline_check_is_valid_bash() -> None:
-    subprocess.run(["bash", "-n", str(ROOT / "scripts" / "deploy" / "gcp_security_baseline_check.sh")], check=True)
+    script = ROOT / "scripts" / "deploy" / "gcp_security_baseline_check.sh"
+    subprocess.run([shutil.which("bash") or "/bin/bash", "-n", str(script)], check=True)  # noqa: S603
