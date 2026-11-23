@@ -14085,23 +14085,6 @@
           "quantization": "unknown"
         },
         {
-          "name": "databricks | moonshotai/kimi-k3",
-          "model_id": "databricks-kimi-k3",
-          "model_name": "MoonshotAI: Kimi K3",
-          "provider_name": "databricks",
-          "tag": "databricks",
-          "tr_provider_slug": "databricks",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "input_cache_read": "0.0000003"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
           "name": "arcee | moonshotai/kimi-k3",
           "model_id": "moonshotai/kimi-k3",
           "model_name": "MoonshotAI: Kimi K3",

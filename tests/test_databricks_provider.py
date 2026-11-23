@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from scripts.pricing import refresh
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import databricks
 from scripts.pricing.refresh import PROVIDER_SLUGS
@@ -355,9 +356,13 @@ def test_databricks_manifest_activates_only_models_with_passing_canaries(
     }
     for model_id in healthy:
         assert "routable_reason" not in by_id[model_id]
-    for model_id in checked - healthy:
+    held = set(databricks._OPERATOR_HOLD_REASONS)
+    for model_id in checked - healthy - held:
         assert by_id[model_id]["routable"] is False
         assert by_id[model_id]["routable_reason"] == "provider-canary-failed"
+    for model_id in held:
+        assert by_id[model_id]["routable"] is False
+        assert by_id[model_id]["routable_reason"] == databricks._OPERATOR_HOLD_REASONS[model_id]
     for model_id in (
         "moonshotai/kimi-k3",
         "thinkingmachines/inkling",
@@ -407,6 +412,110 @@ def test_databricks_canaried_manifest_routes_are_in_catalog() -> None:
         assert endpoint.usage_type == "Credits"
     for model_id in dark:
         assert f"{model_id}@databricks/prepaid" not in built
+
+
+KIMI_K3 = "moonshotai/kimi-k3"
+
+
+def test_databricks_kimi_k3_is_held_for_disabled_account_access() -> None:
+    # Since 2026-11-13 every configured-route probe fails; on 2026-11-23 the
+    # provider said access to this model is disabled for the workspace
+    # (Sentry QUILL-ROUTER-GK). Only this route is refused; the others serve.
+    assert databricks._OPERATOR_HOLD_REASONS == {KIMI_K3: "provider-access-unavailable"}
+    committed = {
+        row["id"]: row
+        for row in json.loads(databricks.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    }
+    assert committed[KIMI_K3]["routable"] is False
+    assert committed[KIMI_K3]["routable_reason"] == "provider-access-unavailable"
+    assert committed["z-ai/glm-5.2"].get("routable") is not False
+    built = catalog_vehicles.registry_endpoints()
+    assert f"{KIMI_K3}@databricks/prepaid" not in built
+    assert "z-ai/glm-5.2@databricks/prepaid" in built
+
+
+def test_databricks_kimi_k3_hold_survives_refresh_and_passing_canary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Neither a fresh public listing with a price nor a passing private canary
+    # may re-admit the route: only deleting the hold entry does.
+    manifest_path = tmp_path / "databricks.json"
+    raw = json.loads(databricks.MANIFEST_PATH.read_text(encoding="utf-8"))
+    for row in raw["models"]:
+        if row["id"] == KIMI_K3:
+            row["routable"] = True
+            row.pop("routable_reason", None)
+    manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+    prices, discovered = databricks._parse_catalog(_pricing_html(), _supported_models_html())
+    assert discovered[KIMI_K3]["routable"] is True
+    monkeypatch.setattr(databricks, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(databricks, "_DISCOVERED_MANIFEST_ROWS", discovered)
+    monkeypatch.setattr(databricks, "_LIVE_CANARY_CHECKED_MODEL_IDS", set(discovered))
+    monkeypatch.setattr(databricks, "_LIVE_CANARY_HEALTHY_MODEL_IDS", set(discovered))
+    monkeypatch.setenv("DATABRICKS_TOKEN", "token")
+    monkeypatch.setenv("DATABRICKS_HOST", "dbc-1234.cloud.databricks.com")
+
+    databricks.write_provider_manifest(
+        ProviderPricingResult(
+            slug="databricks", prices=prices, source="api", fetched_url=databricks.PRICING_URL,
+        )
+    )
+
+    by_id = {
+        row["id"]: row for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    assert by_id[KIMI_K3]["routable"] is False
+    assert by_id[KIMI_K3]["routable_reason"] == "provider-access-unavailable"
+    assert "routable_reason" not in by_id["z-ai/glm-5.2"]
+
+
+def test_databricks_kimi_k3_hold_stays_out_of_price_index_and_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            self.responses = [
+                FakeResponse(_pricing_html()),
+                FakeResponse(_supported_models_html()),
+            ]
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return self.responses.pop(0)
+
+    monkeypatch.setattr(databricks.httpx, "Client", FakeClient)
+    monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
+    monkeypatch.delenv("DATABRICKS_HOST", raising=False)
+    monkeypatch.setattr(databricks, "_DISCOVERED_MANIFEST_ROWS", {})
+
+    result = databricks.fetch()
+
+    assert KIMI_K3 in result.prices
+    assert result.price_index_model_ids is not None
+    assert KIMI_K3 not in result.price_index_model_ids
+    assert "z-ai/glm-5.2" in result.price_index_model_ids
+    # The hourly refresh drops held rows from snapshot endpoints (#2777).
+    assert KIMI_K3 in refresh._manifest_held_routes()["databricks"]
+    snapshot = json.loads(
+        (databricks.MANIFEST_PATH.parents[1] / "openrouter_snapshot.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    kimi = next(model for model in snapshot["models"] if model["id"] == KIMI_K3)
+    assert all(e.get("tr_provider_slug") != "databricks" for e in kimi["endpoints"])
 
 
 def test_provider_client_requires_workspace_host() -> None:
