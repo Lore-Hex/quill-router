@@ -177,6 +177,9 @@ def _burst(
     def client(index: int) -> None:
         start.wait(timeout=10)
         for round_index in range(rounds):
+            # Each request has its own allowance of waits, as each request
+            # does in production (its own context); one thread plays several.
+            workspace_billing_gate.forget_request_waits()
             authorized = _authorize_route(key, f"gate-{label}-{index}-{round_index}")
             data, tasks = _settle_route(authorized)
             with lock:
@@ -260,20 +263,62 @@ def test_a_caller_over_the_waiter_cap_runs_at_once_and_is_charged_once(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     store, db, key = prod_store
-    # One holder and one waiter per workspace: of eight clients, the rest go
-    # around the gate, exactly as they run with it off.
+    # One holder and one waiter per workspace, both in place before the burst:
+    # every transaction of eight clients finds the waiters full and goes
+    # around the gate at once, exactly as it runs with the gate off.
+    #
+    # The holder and the waiter are this test's, not two of the burst's own
+    # transactions. When they were, the waiter's outcome depended on the
+    # runner's speed: the holder's transaction runs beside the callers that
+    # went around and is aborted and redone by them, and on a loaded CI
+    # runner each attempt took hundreds of milliseconds, so the holder could
+    # outlast the waiter's bound (seconds) and the waiter went around as a
+    # timeout. That is the gate working as designed and is pinned by the
+    # wait-bound tests below; here nothing waits, so time decides nothing.
     store.trust_settings = _gate_settings(workspace_billing_gate_max_waiters=1)
     caplog.set_level(logging.INFO, logger=workspace_billing_gate.__name__)
+    holder, _passed = fresh_gate.acquire(WORKSPACE, width=1, max_waiters=1, wait_seconds=1)
+    assert holder is not None
+    parked: dict[str, tuple[int | None, GatePass]] = {}
+
+    def park() -> None:
+        # Served when the holder releases, below; the bound only ends the
+        # thread if the test fails before that.
+        parked["turn"] = fresh_gate.acquire(
+            WORKSPACE, width=1, max_waiters=1, wait_seconds=120,
+        )
+
+    waiter = threading.Thread(target=park, daemon=True)
+    waiter.start()
     traffic = RowTraffic()
-    with pytest.MonkeyPatch.context() as patch:
-        traffic.install(patch)
-        settled, background, _seconds = _burst(key, workers=8, rounds=2, label="cap")
+    try:
+        deadline = time.monotonic() + 10
+        while fresh_gate.waiting(WORKSPACE) != 1:
+            assert time.monotonic() < deadline, "the waiter never parked"
+            time.sleep(0.001)
+        with pytest.MonkeyPatch.context() as patch:
+            traffic.install(patch)
+            settled, background, _seconds = _burst(key, workers=8, rounds=2, label="cap")
+    finally:
+        fresh_gate.release(WORKSPACE, holder, width=1)
+        waiter.join(timeout=10)
+    token, turn = parked["turn"]
+    assert (turn.outcome, token is not None) == (WAITED, True)
+    fresh_gate.release(WORKSPACE, token, width=1)
     for tasks in background:
         _run_background(tasks)
     _assert_charged_exactly_once(db, key, settled, 16)
     lines = _gate_lines(caplog)
-    assert sum(count for (outcome, _kind), count in lines.items() if outcome == WAITERS_FULL) > 0
+    # Every gated transaction of the burst went around at once: none waited,
+    # so none could time out.
+    assert {outcome for outcome, _kind in lines} == {WAITERS_FULL}
     assert TIMEOUT not in {outcome for outcome, _kind in lines}
+    assert {kind for _outcome, kind in lines} == {"authorize", "settle_one_commit"}
+    assert all(
+        record.value == 0  # type: ignore[attr-defined]
+        for record in caplog.records
+        if getattr(record, "metric", None) == "workspace_billing_gate"
+    )
     assert traffic.peak > 1
     assert (fresh_gate.subjects(), fresh_gate.total_waiting()) == (0, 0)
 
