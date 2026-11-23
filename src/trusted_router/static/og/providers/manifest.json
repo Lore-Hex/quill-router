@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 62,
+    "model_count": 59,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 62,
+    "route_count": 59,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -685,10 +685,10 @@
   },
   "parasail": {
     "card_version": 2,
-    "model_count": 24,
+    "model_count": 25,
     "name": "Parasail",
     "privacy": "Zero retention",
-    "route_count": 48,
+    "route_count": 50,
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },
@@ -991,10 +991,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 22,
+    "model_count": 23,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 23,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },

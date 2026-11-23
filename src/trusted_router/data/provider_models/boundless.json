@@ -891,11 +891,63 @@
       "input_token_price_per_m": 240000,
       "output_token_price_per_m": 960000,
       "cached_input_token_price_per_m": 12000
+    },
+    {
+      "display_name": "Kimi K3.1 Pro Abliterated",
+      "title": "boundless/kimi-k3.1-pro-abliterated",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "boundless/kimi-k3.1-pro-abliterated",
+      "upstream_id": "boundless/kimi-k3.1-pro-abliterated",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1048576,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 2000000
+    },
+    {
+      "display_name": "moonshotai/kimi-k3.1-pro-abliterated",
+      "title": "kimi-k3.1-pro-abliterated",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro-abliterated",
+      "upstream_id": "kimi-k3.1-pro-abliterated",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-11-23"
     }
   ],
   "source": "https://api.inference.boundless.network/v1/models",
   "pricing_source": "https://inference.boundless.network/models",
-  "generated_at": "2026-11-23T17:28:22Z",
+  "generated_at": "2026-11-23T19:28:28Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 29
+  "model_count": 31
 }

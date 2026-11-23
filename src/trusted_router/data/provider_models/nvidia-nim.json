@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-11-23T17:28:22Z",
+  "generated_at": "2026-11-23T19:28:28Z",
   "model_count": 132,
   "models": [
     {
@@ -2306,10 +2306,9 @@
       "status": 1,
       "id": "minimax/minimax-m3.1-flash",
       "upstream_id": "minimaxai/minimax-m3.1-flash",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "display_name": "nvidia/nemotron-3.5-bolt-e4b",
@@ -2377,10 +2376,9 @@
       "status": 1,
       "id": "mistralai/mistral-large-4-1t-a52b",
       "upstream_id": "mistralai/mistral-large-4-1t-a52b",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "display_name": "moonshotai/kimi-k3.1-pro",
