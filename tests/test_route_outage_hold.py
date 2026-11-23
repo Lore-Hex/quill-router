@@ -204,7 +204,7 @@ def test_held_route_alerts_once_as_a_hold_not_as_route_availability(monkeypatch)
     events: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(
         "trusted_router.synthetic.alerts.ops_alert",
-        lambda message, *, fingerprint, tags=None: events.append((message, fingerprint)) or True,
+        lambda message, *, fingerprint, tags=None, **_claim: events.append((message, fingerprint)) or True,
     )
     other = ("chutes", "other/a")
     flags = [_availability_flag(), _availability_flag(other)]
@@ -283,7 +283,7 @@ def test_route_health_pass_pages_a_hold_instead_of_route_availability(monkeypatc
     events: list[list[str]] = []
     monkeypatch.setattr(
         "trusted_router.synthetic.alerts.ops_alert",
-        lambda message, *, fingerprint, tags=None: events.append(fingerprint) or True,
+        lambda message, *, fingerprint, tags=None, **_claim: events.append(fingerprint) or True,
     )
     client = _route_health_client(monkeypatch, _shift_to_now(_outage() + [_sibling_success()]), tmp_path)
     response = client.post(
@@ -299,7 +299,7 @@ def test_route_health_pass_still_pages_when_hold_evidence_is_short(monkeypatch, 
     events: list[list[str]] = []
     monkeypatch.setattr(
         "trusted_router.synthetic.alerts.ops_alert",
-        lambda message, *, fingerprint, tags=None: events.append(fingerprint) or True,
+        lambda message, *, fingerprint, tags=None, **_claim: events.append(fingerprint) or True,
     )
     short = _outage(hours=2, every=20) + [_sibling_success()]
     client = _route_health_client(monkeypatch, _shift_to_now(short), tmp_path)
@@ -320,7 +320,7 @@ def test_route_health_pass_keeps_paging_when_the_refresh_caps_refuse_the_hold(
     events: list[list[str]] = []
     monkeypatch.setattr(
         "trusted_router.synthetic.alerts.ops_alert",
-        lambda message, *, fingerprint, tags=None: events.append(fingerprint) or True,
+        lambda message, *, fingerprint, tags=None, **_claim: events.append(fingerprint) or True,
     )
     second_outage = [
         _sample(second, minutes_ago=sample_minutes)

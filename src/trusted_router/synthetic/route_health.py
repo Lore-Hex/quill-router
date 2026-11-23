@@ -287,6 +287,12 @@ class UnservedRoute:
     error_types: tuple[str, ...]
     # "unserved": a model-not-served streak; "unavailable": a sustained outage.
     kind: str = "unserved"
+    # When the route's own failures first met the rule (sample count, span and
+    # error count), judged oldest first. Fixed for the episode, unlike
+    # last_failure_at, so the route-hold alert can tell how long a hold has
+    # been due. Empty on rows built without it; readers fall back to
+    # last_failure_at.
+    qualified_at: str = ""
 
 
 def _breaks_outage_streak(sample: ProviderBenchmarkSample) -> bool:
@@ -302,6 +308,27 @@ def _breaks_outage_streak(sample: ProviderBenchmarkSample) -> bool:
         or error_type == "probe_config_error"
         or is_router_origin_error(error_type)
     )
+
+
+def _qualified_at(
+    run: list[tuple[dt.datetime, ProviderBenchmarkSample]],
+    min_span: dt.timedelta,
+    *,
+    min_errors: int = 0,
+) -> dt.datetime:
+    """The first moment the run (newest first) met the count and span rules.
+
+    The sibling-success proof is not part of it: that is judged now, from a
+    six-hour window that slides, and would move this time with it.
+    """
+    chronological = list(reversed(run))
+    start = chronological[0][0]
+    errors = 0
+    for count, (created, sample) in enumerate(chronological, start=1):
+        errors += sample.status == "error"
+        if count >= UNSERVED_MIN_SAMPLES and created - start >= min_span and errors >= min_errors:
+            return created
+    return run[0][0]
 
 
 def evaluate_unserved_routes(
@@ -407,6 +434,7 @@ def evaluate_unserved_routes(
 
         if qualifies(streak, UNSERVED_MIN_SPAN):
             evidence, kind = streak, "unserved"
+            qualified_at = _qualified_at(streak, UNSERVED_MIN_SPAN)
         elif qualifies(outage, UNAVAILABLE_MIN_SPAN) and (
             # Refusal answers may sit inside an outage, but a streak that is
             # mostly refusals is judged by the model-not-served rule above
@@ -414,6 +442,9 @@ def evaluate_unserved_routes(
             sum(sample.status == "error" for _, sample in outage) >= UNSERVED_MIN_SAMPLES
         ):
             evidence, kind = outage, "unavailable"
+            qualified_at = _qualified_at(
+                outage, UNAVAILABLE_MIN_SPAN, min_errors=UNSERVED_MIN_SAMPLES,
+            )
         else:
             continue
         unserved.append(
@@ -425,6 +456,7 @@ def evaluate_unserved_routes(
                 last_failure_at=_iso_z(evidence[0][0]),
                 error_types=tuple(sorted({str(sample.error_type) for _, sample in evidence})),
                 kind=kind,
+                qualified_at=_iso_z(qualified_at),
             )
         )
     return unserved
@@ -899,41 +931,108 @@ def report_route_health(
 # and probe setup stay observable) and degradation goes to the daily digest.
 _HOLD_SUPERSEDES_KINDS = frozenset({"availability", "structural"})
 
+# How long a route may stay routable in production after it qualified for the
+# unserved-route hold before the route-hold alert says the hold has not
+# applied. The monitor reads the DEPLOYED manifests: a hold the price refresh
+# commits reaches it only when a rollout carries that snapshot. The bound is
+# two refresh cycles to commit the hold (scheduled runs start every one to two
+# hours), plus scripts/deploy/price_snapshot_deploy.SNAPSHOT_MAX_WAIT_SECONDS
+# (4h) for a rollout to carry the snapshot, plus the rollout itself. Shorter
+# would page on every hold that is merely waiting for its deploy (Sentry
+# QUILL-ROUTER-HV re-fired hourly for two hours after its hold was committed);
+# it must stay well under the 24h hold. A test pins both sides.
+ROUTE_HOLD_APPLY_DEADLINE = dt.timedelta(hours=8)
+
 
 def split_held_flags(
-    flags: list[RouteHealthFlag], held: Iterable[tuple[str, str]],
+    flags: list[RouteHealthFlag],
+    held: Iterable[tuple[str, str]],
+    applied: Iterable[tuple[str, str]] = (),
 ) -> tuple[list[RouteHealthFlag], list[RouteHealthFlag]]:
-    """Split flags into (still paging, superseded by a pending hold)."""
+    """Split flags into (still paging, superseded by a pending hold).
+
+    ``held`` are the routes the next price refresh will hold. ``applied`` are
+    the routes the deployed manifests already hold: their superseded flags
+    are dropped, since the hold is live and is the action.
+    """
     held_routes = frozenset(held)
+    applied_routes = frozenset(applied)
     paging: list[RouteHealthFlag] = []
     holding: list[RouteHealthFlag] = []
     for flag in flags:
-        if flag.kind in _HOLD_SUPERSEDES_KINDS and (flag.provider, flag.model) in held_routes:
+        route = (flag.provider, flag.model)
+        if flag.kind in _HOLD_SUPERSEDES_KINDS and route in applied_routes:
+            continue
+        if flag.kind in _HOLD_SUPERSEDES_KINDS and route in held_routes:
             holding.append(flag)
         else:
             paging.append(flag)
     return paging, holding
 
 
-def report_route_holds(flags: list[RouteHealthFlag]) -> None:
-    """One grouped alert per route that the next price refresh will hold.
+def route_hold_overdue_stage(route: UnservedRoute, now: dt.datetime) -> int:
+    """0 while the hold may still be on its way; n once it has been due for
+    n deadlines (ROUTE_HOLD_APPLY_DEADLINE) without reaching production."""
+    qualified = _parse_created_at(route.qualified_at) or _parse_created_at(route.last_failure_at)
+    if qualified is None:
+        return 0
+    return max(0, int((now - qualified) / ROUTE_HOLD_APPLY_DEADLINE))
+
+
+def report_route_holds(
+    flags: list[RouteHealthFlag],
+    evidence: dict[tuple[str, str], UnservedRoute] | None = None,
+    *,
+    now: dt.datetime | None = None,
+) -> None:
+    """One alert per route and hold episode, not one per hour.
 
     Replaces the hourly route-availability / route-health page for a route
     already proven down long enough to hold: the hold, not another page, is
-    the action. The route leaves rotation once the hold deploys, so this
-    stops on its own; if the route still fails after the 24h hold lifts, the
-    same issue re-opens.
+    the action. The route stays routable in production, and keeps arriving
+    here, until a rollout carries the price snapshot that holds it, which can
+    take hours. So the claim carries the episode (the evidence's
+    first_failure_at), not the hour: one announcement per episode, then one
+    route-hold-not-applied alert per ROUTE_HOLD_APPLY_DEADLINE while the hold
+    is overdue. Once the hold deploys the route leaves rotation and stops
+    arriving. When the 24h hold lifts and the route still fails, the new
+    streak is a new episode and announces again.
+
+    A flag without evidence (none is expected) keeps the hourly claim.
     """
     from trusted_router.synthetic.alerts import ops_alert
 
+    now = now or dt.datetime.now(dt.UTC)
     for flag in flags:
+        route = (evidence or {}).get((flag.provider, flag.model))
+        tags = {"route_provider": flag.provider, "route_model": flag.model}
+        stage = 0 if route is None else route_hold_overdue_stage(route, now)
+        claim_detail = (
+            f"hour={now.astimezone(dt.UTC):%Y-%m-%dT%H}" if route is None
+            else f"episode={route.first_failure_at};stage={stage}"
+        )
+        if route is not None and stage > 0:
+            deadline_hours = int(ROUTE_HOLD_APPLY_DEADLINE.total_seconds() // 3600)
+            ops_alert(
+                f"route-hold-not-applied: {flag.provider}/{flag.model} qualified for the "
+                f"provider-route-unserved hold at {route.qualified_at or route.last_failure_at}, "
+                f"over {deadline_hours * stage}h ago, and is still routable in production"
+                f"{_availability_cause(flag)}; a hold should reach production within "
+                f"{deadline_hours}h. Check the price refresh's unserved-route step and whether "
+                "a rollout has carried its snapshot (scripts/deploy/price_snapshot_deploy.py)",
+                fingerprint=["route-hold-not-applied", flag.provider, flag.model],
+                tags=tags,
+                claim_detail=claim_detail,
+            )
+            continue
         ops_alert(
             f"route-hold: {flag.provider}/{flag.model} has failed every probe for hours "
             f"while {flag.provider} serves other models{_availability_cause(flag)}; the hourly "
             "price refresh holds it from routing and the catalog "
             "(provider-route-unserved) for 24h, then re-probes it",
             fingerprint=["route-hold", flag.provider, flag.model],
-            tags={"route_provider": flag.provider, "route_model": flag.model},
+            tags=tags,
+            claim_detail=claim_detail,
         )
 
 

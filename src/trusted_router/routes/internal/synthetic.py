@@ -42,6 +42,7 @@ from trusted_router.synthetic.probes import (
 )
 from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
+    UnservedRoute,
     evaluate_account_refusals,
     evaluate_route_health,
     evaluate_unserved_routes,
@@ -55,7 +56,10 @@ from trusted_router.synthetic.route_health import (
     unreported_account_refusals,
 )
 from trusted_router.types import ErrorType
-from trusted_router.unserved_route_hold_plan import pending_unserved_route_holds
+from trusted_router.unserved_route_hold_plan import (
+    applied_unserved_route_holds,
+    pending_unserved_route_holds,
+)
 
 log = logging.getLogger(__name__)
 
@@ -620,11 +624,13 @@ def register(router: APIRouter) -> None:
                         "reason": "analytics_unavailable",
                     }
                 }
-            held = await run_in_threadpool(_pending_route_holds)
-            paging, holding = split_held_flags(flags, held)
+            held, applied = await run_in_threadpool(_route_holds)
+            paging, holding = split_held_flags(flags, held, applied)
             await run_in_threadpool(_report_once, report_route_health, paging)
             if holding:
-                await run_in_threadpool(_report_once, report_route_holds, holding)
+                # Claimed per hold episode, not per hour: the route keeps
+                # arriving here until its hold deploys (report_route_holds).
+                await run_in_threadpool(_report_episode_once, report_route_holds, holding, held)
             return {"data": {"flagged": [asdict(flag) for flag in flags], "evaluated": True}}
         finally:
             slot.release()
@@ -698,19 +704,39 @@ def _report_once(report: Callable[..., Any], *args: Any) -> Any:
         return report(*args)
 
 
-def _pending_route_holds() -> frozenset[tuple[str, str]]:
-    """Routes the next price refresh will hold: the /route-health/unserved.json
-    evidence, less any route the refresh's provider and route caps would
-    refuse on the deployed manifests. Unreadable evidence holds nothing, so
-    every flag keeps paging."""
+def _claim_episode_alert(claim_key: list[str]) -> bool:
+    """True for the first instance ever to emit this claim key. The caller
+    puts the episode (and anything else that should alert again) in the key
+    through ops_alert's claim_detail; no hour is added."""
+    return STORE.record_webhook_event_once("route-health-alert", "|".join(claim_key))
+
+
+def _report_episode_once(report: Callable[..., Any], *args: Any) -> Any:
+    with alerts_once(_claim_episode_alert):
+        return report(*args)
+
+
+def _route_holds() -> tuple[dict[tuple[str, str], UnservedRoute], frozenset[tuple[str, str]]]:
+    """(routes the next price refresh will hold, with their evidence; routes
+    the deployed manifests hold now).
+
+    Pending: the /route-health/unserved.json evidence, less any route the
+    refresh's provider and route caps would refuse on the deployed manifests.
+    Unreadable evidence holds nothing, so every flag keeps paging. Applied:
+    unexpired unserved-route holds in the deployed manifests; unreadable
+    manifests count as none."""
+    held: dict[tuple[str, str], UnservedRoute] = {}
     try:
-        evidence = {
-            (route.provider, route.model) for route in evaluate_unserved_routes(STORE)
-        }
-        return frozenset(pending_unserved_route_holds(evidence))
+        evidence = {(route.provider, route.model): route for route in evaluate_unserved_routes(STORE)}
+        held = {route: evidence[route] for route in pending_unserved_route_holds(set(evidence))}
     except Exception:  # noqa: BLE001 - no evidence means page as before, never "held"
         log.warning("synthetic_route_health.hold_evidence_unavailable", exc_info=True)
-        return frozenset()
+    applied: frozenset[tuple[str, str]] = frozenset()
+    try:
+        applied = frozenset(applied_unserved_route_holds())
+    except Exception:  # noqa: BLE001 - unreadable means page as before, never "held"
+        log.warning("synthetic_route_health.applied_holds_unavailable", exc_info=True)
+    return held, applied
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:

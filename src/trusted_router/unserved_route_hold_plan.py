@@ -48,10 +48,9 @@ def lift_expired_unserved_holds(rows: Iterable[Any], *, now: datetime) -> list[s
     for row in rows:
         if not isinstance(row, dict) or row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
             continue
-        held_at = _parse_time(row.get(UNSERVED_ROUTE_HELD_AT_FIELD))
         # A missing, malformed or future-dated stamp cannot prove the hold is
         # young; lift it rather than risk a hold that never expires.
-        if held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS):
+        if _hold_is_live(row, now):
             continue
         row.pop(UNSERVED_ROUTE_HELD_AT_FIELD, None)
         # While held, discovery could not record its own state (the hold
@@ -150,6 +149,40 @@ def plan_unserved_route_holds(
     return planned, notes
 
 
+def _hold_is_live(row: Any, now: datetime) -> bool:
+    if not _held(row):
+        return False
+    held_at = _parse_time(row.get(UNSERVED_ROUTE_HELD_AT_FIELD))
+    return held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS)
+
+
+def _manifest_rows(manifest_dir: Path | None) -> list[tuple[str, list[Any]]]:
+    manifests: list[tuple[str, list[Any]]] = []
+    for path in sorted((manifest_dir or PACKAGED_MANIFEST_DIR).glob("*.json")):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(raw, dict) and isinstance(raw.get("models"), list):
+            manifests.append((path.stem, raw["models"]))
+    return manifests
+
+
+def applied_unserved_route_holds(
+    *, manifest_dir: Path | None = None, now: datetime | None = None,
+) -> set[Route]:
+    """The routes the deployed manifests hold now: an unserved-route hold
+    whose stamp has not expired (the same test lift_expired_unserved_holds
+    applies, so an expired hold is not counted as live)."""
+    now = now or datetime.now(UTC)
+    return {
+        (stem, row["id"])
+        for stem, rows in _manifest_rows(manifest_dir)
+        for row in rows
+        if _hold_is_live(row, now) and isinstance(row.get("id"), str)
+    }
+
+
 def pending_unserved_route_holds(
     evidence: set[Route], *, manifest_dir: Path | None = None, now: datetime | None = None,
 ) -> set[Route]:
@@ -158,15 +191,10 @@ def pending_unserved_route_holds(
     first. Quarantine state is not known here."""
     now = now or datetime.now(UTC)
     manifests: list[tuple[str, list[Any]]] = []
-    for path in sorted((manifest_dir or PACKAGED_MANIFEST_DIR).glob("*.json")):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(raw, dict) and isinstance(raw.get("models"), list):
-            rows = copy.deepcopy(raw["models"])
-            lift_expired_unserved_holds(rows, now=now)
-            manifests.append((path.stem, rows))
+    for stem, raw_rows in _manifest_rows(manifest_dir):
+        rows = copy.deepcopy(raw_rows)
+        lift_expired_unserved_holds(rows, now=now)
+        manifests.append((stem, rows))
     planned, _notes = plan_unserved_route_holds(
         evidence, manifests, manifest_stems=[stem for stem, _ in manifests],
     )
