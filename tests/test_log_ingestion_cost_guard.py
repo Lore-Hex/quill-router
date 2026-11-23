@@ -109,10 +109,27 @@ def test_step_change_compares_the_same_window_a_day_apart_with_a_floor() -> None
     assert f"{factor:g}x" in name.group(1) and f"{floor_bytes // GIB} GiB" in name.group(1)
 
 
-def test_step_change_holds_before_paging_and_closes_itself() -> None:
+def test_step_change_uses_what_cloud_monitoring_accepts_for_its_lookback() -> None:
+    """Cloud Monitoring refuses, at apply time only, a retest window on a
+    PromQL condition that reads data older than 25 hours, and requires an
+    evaluation interval of at least five minutes there. The query's reach is
+    its range plus its offset; the six-hour sums stand in for the hold."""
     step = _resource("log_ingestion_step_change")
-    assert 'duration            = "1800s"' in step
-    assert 'evaluation_interval = "300s"' in step
+    query = _step_query()
+    hours = {"h": 1, "d": 24}
+    reach = max(
+        int(span) * hours[unit] + (int(shift or 0) * hours[shift_unit or "h"])
+        for span, unit, shift, shift_unit in re.findall(r"\[(\d+)([hd])\](?: offset (\d+)([hd]))?", query)
+    )
+    assert reach == 30
+    durations = re.findall(r'^\s+duration\s+= "(\d+)s"$', step, re.MULTILINE)
+    intervals = re.findall(r'^\s+evaluation_interval = "(\d+)s"$', step, re.MULTILINE)
+    assert len(durations) == len(intervals) == 1
+    if reach > 25:
+        assert durations == ["0"]
+        assert int(intervals[0]) >= 300 and int(intervals[0]) % 30 == 0
+    else:
+        assert int(durations[0]) + reach * 3600 <= 25 * 3600
     assert 'auto_close = "86400s"' in step
 
 

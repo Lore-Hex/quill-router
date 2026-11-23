@@ -83,13 +83,21 @@ resource "google_monitoring_alert_policy" "log_ingestion_step_change" {
   conditions {
     display_name = "Last 6 h of ingestion is over 2.5x the same 6 h a day earlier, and over 2 GiB"
     condition_prometheus_query_language {
-      query               = <<-EOT
+      query = <<-EOT
         sum(increase(logging_googleapis_com:billing_bytes_ingested{monitored_resource="global"}[6h]))
           > 2.5 * sum(increase(logging_googleapis_com:billing_bytes_ingested{monitored_resource="global"}[6h] offset 1d))
         and
         sum(increase(logging_googleapis_com:billing_bytes_ingested{monitored_resource="global"}[6h])) > 2147483648
       EOT
-      duration            = "1800s"
+      # No retest window. The query reaches back 30 hours (a six-hour window
+      # and a one-day offset), and Cloud Monitoring refuses any retest window
+      # on a PromQL condition that reads data older than 25 hours ("Retest
+      # windows are not supported in PromQL queries with lookbacks longer than
+      # 1d1h", seen only at apply time; a plan passes). The six-hour sums move
+      # slowly enough to stand in for one: a single noisy minute cannot carry
+      # them over 2.5x and the floor. Five minutes is the shortest evaluation
+      # interval allowed for this lookback.
+      duration            = "0s"
       evaluation_interval = "300s"
     }
   }
