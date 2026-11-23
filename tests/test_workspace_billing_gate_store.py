@@ -120,10 +120,16 @@ class RowTraffic:
     """How many of the credit-row transactions are inside the fake at once.
 
     ``hold_seconds`` is spent between a transaction's statements and its
-    commit, the window in which the real transaction holds its row.
+    commit, the window in which the real transaction holds its row. With
+    ``park_first`` the first credit-row transaction to reach that window
+    stays there, inside the store, until ``release`` is set: a holder whose
+    turn ends when the test says so, not when a loaded machine gets to it.
     """
 
     hold_seconds: float = 0.002
+    park_first: bool = False
+    parked: threading.Event = field(default_factory=threading.Event)
+    release: threading.Event = field(default_factory=threading.Event)
     inside: int = 0
     peak: int = 0
     attempts: Counter[str] = field(default_factory=Counter)
@@ -144,6 +150,12 @@ class RowTraffic:
                     traffic.attempts[tag] += 1
                 result = fn(txn)
                 time.sleep(traffic.hold_seconds)
+                with traffic.lock:
+                    park = traffic.park_first and not traffic.parked.is_set()
+                    if park:
+                        traffic.parked.set()
+                if park:
+                    assert traffic.release.wait(timeout=60), "the parked holder was never released"
                 return result
 
             with traffic.lock:
@@ -164,6 +176,17 @@ class RowTraffic:
         return sum(self.attempts.values()) - sum(self.finished.values())
 
 
+def _one_request(key: Any, idempotency_key: str) -> tuple[dict[str, Any], BackgroundTasks]:
+    """A reserve and then its settle. The gateway sends them as two requests,
+    and a route runs in a context of its own, so each starts with the full
+    allowance of waits; a thread that plays several requests starts each
+    one afresh here, as the gate's module asks of a loop."""
+    workspace_billing_gate.forget_request_waits()
+    authorized = _authorize_route(key, idempotency_key)
+    workspace_billing_gate.forget_request_waits()
+    return _settle_route(authorized)
+
+
 def _burst(
     key: Any, *, workers: int, rounds: int, label: str,
 ) -> tuple[list[dict[str, Any]], list[BackgroundTasks], float]:
@@ -177,8 +200,7 @@ def _burst(
     def client(index: int) -> None:
         start.wait(timeout=10)
         for round_index in range(rounds):
-            authorized = _authorize_route(key, f"gate-{label}-{index}-{round_index}")
-            data, tasks = _settle_route(authorized)
+            data, tasks = _one_request(key, f"gate-{label}-{index}-{round_index}")
             with lock:
                 settled.append(data)
                 background.append(tasks)
@@ -254,26 +276,106 @@ def test_one_workspaces_burst_runs_one_credit_row_transaction_at_a_time_behind_t
     assert (fresh_gate.subjects(), fresh_gate.total_waiting()) == (0, 0)
 
 
+# How long a waiter in the over-cap test waits for the holder before it goes
+# around. Test-only, passed to this test's own gate instance: production's
+# configured bound (workspace_billing_gate_wait_ms, at most five seconds)
+# and the quarter of the caller's budget are untouched, and keep their own
+# tests (the wait-bound and near-deadline tests below, and
+# test_workspace_billing_gate.py). Here the waiter must outlast a holder
+# that the test keeps inside the store while the over-cap callers run,
+# however slowly a loaded machine runs them, so its TIMEOUT can only mean a
+# slot that was never handed on.
+PATIENCE_SECONDS = 60.0
+
+
+def _patient(gate: FifoKeyedGate, patch: pytest.MonkeyPatch) -> None:
+    acquire = gate.acquire
+
+    def patient(subject: str, *, wait_seconds: float, **bounds: Any) -> tuple[int | None, GatePass]:
+        return acquire(
+            subject, wait_seconds=PATIENCE_SECONDS if wait_seconds > 0 else wait_seconds, **bounds,
+        )
+
+    patch.setattr(gate, "acquire", patient)
+
+
+def _wait_for(condition: Any, what: str) -> None:
+    deadline = time.monotonic() + 30
+    while not condition():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.001)
+
+
 def test_a_caller_over_the_waiter_cap_runs_at_once_and_is_charged_once(
     prod_store: tuple[Any, FakeSpannerDatabase, Any],
     fresh_gate: FifoKeyedGate,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """One holder and one waiter per workspace: every caller that arrives
+    while both places are taken goes around the gate at once, exactly as it
+    runs with the gate off, and is charged once, and the waiter is handed
+    the slot when the holder leaves.
+
+    The holder stays inside its transaction until the over-cap callers are
+    done, so each of them meets a full queue whatever the machine's speed,
+    and the waiter is patient, so it times out only if the slot is never
+    handed on. Left to the clock, the holder's transaction ran beside the
+    over-cap callers, was aborted and redone by their commits on the same
+    row and starved of CPU with them; on a loaded runner it held the slot
+    for seconds, past the waiter's bound (a quarter of a settle's five
+    seconds), and the waiter's TIMEOUT read as a stall that was not one.
+    """
     store, db, key = prod_store
-    # One holder and one waiter per workspace: of eight clients, the rest go
-    # around the gate, exactly as they run with it off.
     store.trust_settings = _gate_settings(workspace_billing_gate_max_waiters=1)
     caplog.set_level(logging.INFO, logger=workspace_billing_gate.__name__)
-    traffic = RowTraffic()
-    with pytest.MonkeyPatch.context() as patch:
+    traffic = RowTraffic(park_first=True)
+    settled: list[dict[str, Any]] = []
+    background: list[BackgroundTasks] = []
+
+    def client(label: str) -> None:
+        data, tasks = _one_request(key, f"gate-cap-{label}")
+        settled.append(data)
+        background.append(tasks)
+
+    with pytest.MonkeyPatch.context() as patch, ThreadPoolExecutor(max_workers=2) as pool:
         traffic.install(patch)
-        settled, background, _seconds = _burst(key, workers=8, rounds=2, label="cap")
+        _patient(fresh_gate, patch)
+        try:
+            # The holder: the first reserve takes the slot and stays in the store.
+            holder = pool.submit(client, "holder")
+            assert traffic.parked.wait(timeout=30)
+            assert (fresh_gate.holders(WORKSPACE), fresh_gate.waiting(WORKSPACE)) == (1, 0)
+            # The waiter: the next reserve takes the one place in the queue.
+            waiter = pool.submit(client, "waiter")
+            _wait_for(lambda: fresh_gate.waiting(WORKSPACE) == 1, "the waiter never queued")
+            # Over the cap: four clients' reserves and settles, all at once.
+            over, over_background, _seconds = _burst(key, workers=4, rounds=1, label="cap-over")
+            # Every one of their transactions went around at once and none
+            # waited: they all finished while the slot was still held and
+            # the waiter still waiting.
+            assert (fresh_gate.holders(WORKSPACE), fresh_gate.waiting(WORKSPACE)) == (1, 1)
+            over_cap = _gate_lines(caplog)
+            assert over_cap == Counter({
+                (WAITERS_FULL, "authorize"): 4, (WAITERS_FULL, "settle_one_commit"): 4,
+            })
+        finally:
+            traffic.release.set()
+        holder.result(timeout=60)
+        waiter.result(timeout=60)
+    settled.extend(over)
+    background.extend(over_background)
     for tasks in background:
         _run_background(tasks)
-    _assert_charged_exactly_once(db, key, settled, 16)
+    _assert_charged_exactly_once(db, key, settled, 6)
     lines = _gate_lines(caplog)
     assert sum(count for (outcome, _kind), count in lines.items() if outcome == WAITERS_FULL) > 0
     assert TIMEOUT not in {outcome for outcome, _kind in lines}
+    # The holder left and the waiter got the slot. The two settles that
+    # followed found it free or waited their turn; nothing went around.
+    after = lines - over_cap
+    assert after[(WAITED, "authorize")] == 1
+    assert set(after) <= {(WAITED, "authorize"), (WAITED, "settle_one_commit")}
+    # The over-cap callers' transactions ran beside the holder's.
     assert traffic.peak > 1
     assert (fresh_gate.subjects(), fresh_gate.total_waiting()) == (0, 0)
 
