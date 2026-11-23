@@ -1493,7 +1493,20 @@ def test_tag_reads_leave_no_bound_value_in_sentry() -> None:
         auto_enabling_integrations=False,
         integrations=[HttpxIntegration()],
         traces_sample_rate=1.0,
+        # Backpressure handling starts a "sentry.monitor" thread on the first
+        # sampled transaction. close() only flags it, so it sleeps on for up
+        # to 10 s and other tests in this worker find a foreign thread.
+        enable_backpressure_handling=False,
     )
+    try:
+        _assert_tag_reads_leave_no_bound_value(sentry, store, transport)
+    finally:
+        sentry.close()
+
+
+def _assert_tag_reads_leave_no_bound_value(
+    sentry: sentry_sdk.Client, store: Any, transport: _CapturedEnvelopes
+) -> None:
     with sentry_sdk.isolation_scope() as scope:
         scope.set_client(sentry)
         with sentry_sdk.start_transaction(name="tag-reads"):
@@ -1517,7 +1530,6 @@ def test_tag_reads_leave_no_bound_value_in_sentry() -> None:
                 tenant_id="t", tag_key="team", tag_value="search", start_at=START_AT, limit=51
             )
         assert "param_tag_value=search" in "\n".join(transport.payloads)
-    sentry.close()
 
 
 @pytest.mark.parametrize("status", [500, 503])

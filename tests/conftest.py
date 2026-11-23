@@ -17,6 +17,7 @@ if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_TEMP"):
     pytest_plugins = [*globals().get("pytest_plugins", []), "scripts.ci.failure_record"]
 
 import functools
+import threading
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -100,6 +101,29 @@ def optional_executor(monkeypatch: pytest.MonkeyPatch, reset_store: None):
     yield executor
     executor.close()
     assert executor.in_flight == 0
+
+
+def _sentry_threads() -> dict[int | None, str]:
+    return {t.ident: t.name for t in threading.enumerate() if t.name.startswith("sentry")}
+
+
+@pytest.fixture(autouse=True)
+def no_sentry_thread_outlives_its_test() -> Iterator[None]:
+    """A Sentry SDK thread a test starts must be gone when the test ends.
+
+    The SDK's threads (sentry.monitor, the transport's BackgroundWorker) are
+    process-wide. One left running lands in whichever test the xdist worker
+    runs next: the async-settle oracle's execution guard rightly refuses any
+    pre-existing worker thread, so a leak here showed up there as unrelated,
+    order-dependent failures. Fail the test that started the thread instead.
+    A real client in a test should pass enable_backpressure_handling=False
+    (Client.close() only flags the monitor thread, which then sleeps for up to
+    its 10 s interval) and a transport that runs no worker, and close() it.
+    """
+    before = _sentry_threads()
+    yield
+    leaked = {ident: name for ident, name in _sentry_threads().items() if ident not in before}
+    assert not leaked, f"Sentry SDK thread(s) outlived the test: {sorted(leaked.values())}"
 
 
 @pytest.fixture(autouse=True)
