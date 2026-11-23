@@ -200,6 +200,18 @@ FIREWORKS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
 # console.sakana.ai/pricing (2026-11-07): sakana-namazu-v1.0 token prices
 # rise "From Dec 1, 2026, 10:00 JST" (01:00 UTC).
 SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT = datetime(2026, 12, 1, 1, 0, tzinfo=UTC)
+# OpenAI's 2026-11-23 email: GPT-5.6 Sol's promotional pricing "will remain
+# available through November 30, 2026"; "Starting December 1" Standard is $5
+# input, $0.50 cached input and $30 output per million tokens up to 272K input
+# tokens. The public model page (developers.openai.com/api/docs/models/
+# gpt-5.6-sol, read 2026-11-23) shows the $4 / $0.40 / $20 promotion as a 20%
+# input and 33% output reduction (from $5 / $30), "available until November
+# 30, 2026", and prices >272K-input prompts at 2x input and 1.5x output for
+# the whole request. No time or zone was given, so 00:00 UTC as for every
+# other date-only notice in this module. That is the earliest reading of
+# "December 1" (UTC midnight; Pacific midnight is 08:00 UTC), so TrustedRouter
+# never bills the promotion after OpenAI's switch.
+OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
 FIREWORKS_QWEN37_RETIREMENT_AT = datetime(2026, 9, 4, 0, 0, tzinfo=UTC)
 XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT = datetime(
     2026, 9, 8, 0, 0, tzinfo=timezone(timedelta(hours=8), "Asia/Shanghai")
@@ -279,6 +291,32 @@ _SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 _SAKANA_NAMAZU_PRICES = {
     "legacy": ProviderPrice(950_000, 4_000_000, 150_000),
     "new": ProviderPrice(1_900_000, 6_000_000, 300_000),
+}
+
+
+@dataclass(frozen=True)
+class ProviderLongContextPrice:
+    """Upstream rates for prompts above `above_prompt_tokens` input tokens.
+
+    Kept apart from ProviderPrice so the announced short-context rates keep
+    their established shape (model-change snapshots serialize ProviderPrice).
+    """
+
+    above_prompt_tokens: int
+    price: ProviderPrice
+
+
+_OPENAI_GPT56_SOL_MODEL_ID = "openai/gpt-5.6-sol"
+_OPENAI_GPT56_SOL_SHORT_CONTEXT_MAX_PROMPT_TOKENS = 272_000
+_OPENAI_GPT56_SOL_PRICES = {
+    "promotion": ProviderPrice(4_000_000, 20_000_000, 400_000),
+    "standard": ProviderPrice(5_000_000, 30_000_000, 500_000),
+}
+# >272K input: 2x input (and cached input), 1.5x output, as published for
+# both the promotion ($8 / $0.80 / $30) and Standard ($10 / $1 / $45).
+_OPENAI_GPT56_SOL_LONG_CONTEXT_PRICES = {
+    "promotion": ProviderPrice(8_000_000, 30_000_000, 800_000),
+    "standard": ProviderPrice(10_000_000, 45_000_000, 1_000_000),
 }
 
 
@@ -2172,6 +2210,7 @@ def latest_scheduled_cutover() -> datetime:
     return max(
         DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
         FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
+        OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT,
         PHALA_JULY_2026_EFFECTIVE_AT,
         SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT,
         *(retirement.effective_at for retirement in _RETIREMENTS),
@@ -2185,6 +2224,7 @@ def provider_catalog_revision() -> tuple[int, str]:
         DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
         DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT,
         FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
+        OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT,
         PHALA_JULY_2026_EFFECTIVE_AT,
         SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT,
         *(retirement.effective_at for retirement in _RETIREMENTS),
@@ -2287,6 +2327,14 @@ def _sakana_namazu_period(effective_at: datetime) -> str:
     return "legacy" if effective_at < SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT else "new"
 
 
+def _openai_gpt56_sol_period(effective_at: datetime) -> str:
+    return (
+        "promotion"
+        if effective_at < OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT
+        else "standard"
+    )
+
+
 def provider_pricing_schedule(
     provider_slug: str,
     model_id: str,
@@ -2342,6 +2390,19 @@ def provider_pricing_schedule(
             "timezone": "Asia/Tokyo",
             "effective_at": SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT.isoformat().replace("+00:00", "Z"),
             "current_period": _sakana_namazu_period(effective_at),
+            "rate_locked_at": "authorization",
+        }
+
+    if provider_slug == "openai" and model_id == _OPENAI_GPT56_SOL_MODEL_ID:
+        return {
+            "kind": "fixed_cutover",
+            "timezone": "UTC",
+            "effective_at": (
+                OPENAI_GPT56_SOL_STANDARD_PRICING_EFFECTIVE_AT.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            ),
+            "current_period": _openai_gpt56_sol_period(effective_at),
             "rate_locked_at": "authorization",
         }
 
@@ -2430,8 +2491,30 @@ def provider_price_microdollars(
     if provider_slug == "sakana" and model_id == _SAKANA_NAMAZU_MODEL_ID:
         return _SAKANA_NAMAZU_PRICES[_sakana_namazu_period(effective_at)]
 
+    if provider_slug == "openai" and model_id == _OPENAI_GPT56_SOL_MODEL_ID:
+        return _OPENAI_GPT56_SOL_PRICES[_openai_gpt56_sol_period(effective_at)]
+
     if provider_slug == "phala" and model_id == "qwen/qwen-2.5-7b-instruct":
         if effective_at < PHALA_JULY_2026_EFFECTIVE_AT:
             return ProviderPrice(40_000, 100_000)
         return ProviderPrice(100_000, 200_000)
+    return None
+
+
+def provider_long_context_price(
+    provider_slug: str,
+    model_id: str,
+    *,
+    at: datetime | str | None = None,
+) -> ProviderLongContextPrice | None:
+    """Announced rates above a prompt-size threshold, paired with
+    provider_price_microdollars so an override keeps the provider's tiers."""
+    effective_at = _effective_time(at)
+    if provider_slug == "openai" and model_id == _OPENAI_GPT56_SOL_MODEL_ID:
+        return ProviderLongContextPrice(
+            above_prompt_tokens=_OPENAI_GPT56_SOL_SHORT_CONTEXT_MAX_PROMPT_TOKENS,
+            price=_OPENAI_GPT56_SOL_LONG_CONTEXT_PRICES[
+                _openai_gpt56_sol_period(effective_at)
+            ],
+        )
     return None
