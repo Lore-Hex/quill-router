@@ -802,7 +802,8 @@
         "tools"
       ],
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-access-unavailable",
       "input_token_price_per_m": 95000,
       "output_token_price_per_m": 475000,
       "cached_input_token_price_per_m": 95000

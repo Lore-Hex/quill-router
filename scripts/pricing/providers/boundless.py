@@ -32,6 +32,19 @@ MANIFEST_STALE_FALLBACK = True
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 _ABLITERATED_SKU = "boundless/deepseek-v4.1-flash-1017-abliterated"
+# Operator route holds. Discovery, a passing price fetch or a private canary
+# never clears one: the shared writer re-applies it at the manifest boundary.
+# Delete the entry (and regenerate the manifest) only after Boundless serves
+# the route again and a paid-path canary on the operator account succeeds.
+_OPERATOR_HOLD_REASONS: dict[str, str] = {
+    # 2026-11-22 21:00Z onward: every configured-route probe fails with
+    # HTTP 400 {type=invalid_request_error code=404} "That request was
+    # rejected..." (Sentry QUILL-ROUTER-J1). As of 2026-11-23 Boundless's
+    # public /api/catalog, /models and /openapi.json still list the exact id
+    # openai/gpt-oss-120b as serving, so the upstream id has not changed.
+    # Its other probed routes still serve, so only this route is held.
+    "openai/gpt-oss-120b": "provider-access-unavailable",
+}
 _ALIASES = {
     # The legacy product page explicitly names this canonical SKU in its JSON-LD.
     "deepseek-v4.1-flash-abliterated": _ABLITERATED_SKU,
@@ -223,6 +236,7 @@ def fetch() -> ProviderPricingResult:
     _DISCOVERED_ROWS.update(rows)
     UPSTREAM_ID_MAP.update({model_id: row["upstream_id"] for model_id, row in rows.items()})
     return ProviderPricingResult(slug=SLUG, prices=prices, source="api", fetched_url=PRICING_URL,
+                                 price_index_model_ids=frozenset(prices.keys() - _OPERATOR_HOLD_REASONS.keys()),
                                  notes=[f"{len(prices)} priced models; {len(healthy)}/{len(checked)} canaries passed"])
 
 
@@ -230,4 +244,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     if not _DISCOVERED_ROWS:
         raise RuntimeError("boundless: fetch must succeed before writing manifest")
     return write_discovered_chat_manifest(result, manifest_path=MANIFEST_PATH, discovered_rows=_DISCOVERED_ROWS,
-                                         source_url=URL, pricing_source_url=PRICING_URL)
+                                         source_url=URL, pricing_source_url=PRICING_URL,
+                                         operator_hold_reasons=_OPERATOR_HOLD_REASONS)
