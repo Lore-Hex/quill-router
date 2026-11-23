@@ -68,6 +68,12 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
         "policy_url": "https://www.context.dev/privacy",
     },
     {
+        "name": "Parallel Web Systems",
+        "purpose": "Optional hosted web search when the caller explicitly selects Parallel.",
+        "data_access": "Model-generated search queries and optional domain and country filters, which can reveal prompt content. Hosted search is blocked on ZDR, E2E/confidential, and EU privacy routes.",
+        "policy_url": "https://parallel.ai/privacy-policy",
+    },
+    {
         "name": "GitHub",
         "purpose": "Source control, CI, release workflows, and public open-source repositories.",
         "data_access": "Source code, CI metadata, and release artifacts. No production prompt/output content.",

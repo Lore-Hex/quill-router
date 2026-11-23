@@ -80,6 +80,10 @@ print(response.output_text)</code></pre>
 
 <section style="margin-top:48px">
   <h2 class="section-center">Search controls</h2>
+  <h3 id="parallel">Choose Parallel Search</h3>
+  <p>On gateways configured for Parallel, select it explicitly in Chat Completions or Responses:</p>
+  <pre><code>{"type": "web_search", "engine": "parallel"}</code></pre>
+  <p>With <code>openrouter:web_search</code>, put <code>engine</code> inside <code>parameters</code>. The default remains Exa. Parallel uses Basic search with up to 10 results, at $0.005 per completed search unit plus model tokens. A missing Parallel key returns an error; no other engine is substituted.</p>
   <div class="marketing-grid three">
     <div class="marketing-card">
       <span class="card-label">Context</span>
@@ -127,7 +131,7 @@ print(response.output_text)</code></pre>
     <h2>Search is an explicit external disclosure.</h2>
   </div>
   <div>
-    <p>The model can derive search queries from your prompt. Exa receives those queries when selected; context.dev receives them when selected instead. The selected engine also receives configured filters and returns results to the enclave. Neither receives the original request body directly, but generated queries can contain prompt-derived information. context.dev's standard policy permits retention and use for model training; this integration does not claim ZDR.</p>
+    <p>The model can derive search queries from your prompt. Exa receives those queries when selected; selecting Parallel or context.dev sends them to that engine instead. The selected engine also receives configured filters and returns results to the enclave. It does not receive the original request body directly, but queries can reveal information from your prompt. context.dev's standard policy permits retention and use for model training; this integration does not claim ZDR.</p>
     <p>TrustedRouter therefore rejects hosted web search on <code>trustedrouter/zdr</code>, <code>trustedrouter/e2e</code>, <code>trustedrouter/confidential</code>, and <code>trustedrouter/eu</code> routes until the selected engine has an approved compatible posture. Do not attach <code>web_search</code> to sensitive requests unless this disclosure is acceptable.</p>
     <p><a class="btn" href="/legal/subprocessors">Review subprocessors</a> <a class="btn ghost" href="https://trust.trustedrouter.com">Verify the gateway</a></p>
   </div>
