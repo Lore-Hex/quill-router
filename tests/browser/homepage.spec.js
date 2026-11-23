@@ -104,7 +104,7 @@ test.describe("smallest phones", () => {
   test("header keeps Sign in and a short search label at 320px", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".trnav .signin")).toBeVisible();
-    await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText(/^models$/i, { useInnerText: true }); // capitalised by CSS
+    await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText("Models", { useInnerText: true }); // capitalised by CSS, as on /models
     await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search 600\+ models/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });

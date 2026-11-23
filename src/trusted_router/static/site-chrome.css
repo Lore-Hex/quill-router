@@ -357,7 +357,8 @@ html {
   .trnav .menu { margin-left: auto; }
   .trnav .search { gap: 8px; padding: 0 10px; font-size: 13px; }
   .trnav .search-verb { display: none; }
-  .trnav .search-noun { text-transform: capitalize; }
+  /* inline-block starts a new word for capitalize; inline, Chrome treats the hidden words before it as the start. */
+  .trnav .search-noun { display: inline-block; text-transform: capitalize; }
 }
 
 /* The catalog's real input stays in the header row, like the search on every other page.

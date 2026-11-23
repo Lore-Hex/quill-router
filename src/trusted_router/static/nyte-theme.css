@@ -2188,8 +2188,9 @@
   margin-top: 10px;
 }
 
-/* Provider marketplace: its three buttons share one width in a row, and on
-   phones the main action takes the first row (see .provider-hero-actions). */
+/* Provider marketplace: three equal buttons in a row at the shared button
+   size; on phones the main action takes the first row and the other two share
+   the next, and below 360px they stack. */
 :root[data-brand="nyte"] main > .public-hero.page-header .hero-actions.provider-hero-actions {
   display: inline-grid;
   grid-auto-columns: minmax(0, 1fr);
@@ -2197,8 +2198,16 @@
   gap: 10px;
 }
 
+:root[data-brand="nyte"] main > .public-hero.page-header .provider-hero-actions form {
+  display: flex;
+  margin: 0;
+}
+
 :root[data-brand="nyte"] main > .public-hero.page-header .provider-hero-actions .btn {
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
+  text-align: center;
 }
 
 @media (max-width: 680px) {
@@ -2206,6 +2215,10 @@
     display: grid;
     grid-auto-flow: row;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :root[data-brand="nyte"] main > .public-hero.page-header .provider-hero-actions > :first-child {
+    grid-column: 1 / -1;
   }
 }
 

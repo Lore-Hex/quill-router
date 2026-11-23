@@ -194,6 +194,7 @@ SHORT_LINES: dict[str, str] = {
     "private-llm-api": "Cryptographically verifiable privacy through an attested gateway.",
     "prompt-caching": "Reuse provider prompt caches and inspect cached tokens and cost.",
     "providers": "Compare AI providers by coverage, pricing, privacy, and uptime.",
+    "providers/marketplace": "Start with one model on confidential compute we can verify.",
     "rankings": "Rank AI models by price, privacy, context, and performance.",
     "resources": "Guides, comparisons, API quickstarts, SDKs, and model benchmarks.",
     "security": "Security boundaries, live attestation, and prompt handling.",

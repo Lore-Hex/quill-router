@@ -110,22 +110,6 @@ h1 { margin:16px 0 12px; font-size:48px; line-height:1.04; letter-spacing:0; max
 .lead { color:var(--muted); font-size:18px; line-height:1.55; margin:0 0 20px; max-width:760px; }
 .hero-actions { display:flex; gap:10px; flex-wrap:wrap; margin:20px 0; }
 
-/* Provider marketplace hero: three equal buttons in a row; on phones the main
-   action takes the first row and the other two share the next (three equal
-   buttons need about 600px). */
-.provider-hero-actions { display:inline-grid; grid-auto-flow:column; grid-auto-columns:minmax(0, 1fr); }
-.provider-hero-actions form { display:flex; margin:0; }
-.provider-hero-actions .btn { box-sizing:border-box; width:100%; min-height:44px; justify-content:center; text-align:center; }
-
-@media (max-width:680px) {
-  .provider-hero-actions { display:grid; grid-auto-flow:row; grid-template-columns:repeat(2, minmax(0, 1fr)); }
-  .provider-hero-actions > :first-child { grid-column:1 / -1; }
-}
-
-@media (max-width:359px) {
-  .provider-hero-actions { grid-template-columns:minmax(0, 1fr); }
-}
-
 .proof { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; margin-top:22px; }
 .proof-card { background:var(--panel); border:1px solid var(--line); border-radius:var(--tr-square, 8px); padding:12px; min-width:0; }
 .proof-card b { display:block; font-size:14px; margin-bottom:5px; color:var(--inkstrong); }

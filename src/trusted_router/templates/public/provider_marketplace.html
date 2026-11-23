@@ -11,7 +11,7 @@
 <section class="public-hero marketing-hero page-header" data-title-size="{{ page_header_title_size(provider_title) }}" data-phone-title-size="{{ page_header_title_size(provider_title, true) }}">
   <div class="page-header-copy">
     <div class="page-header-title">{{ page_header_icon(header_url) }}<h1><span class="title-full">{{ provider_title }}</span></h1></div>
-    <p class="lead"><span class="lead-full">Every new provider needs at least one model served with confidential compute that TrustedRouter can independently verify end to end. Not set up yet? <a href="#confidential-onboarding">We can help you get there.</a></span><span class="lead-short">Start with one model on confidential compute we can verify.</span></p>
+    <p class="lead"><span class="lead-full">Every new provider needs at least one model served with confidential compute that TrustedRouter can independently verify end to end. Not set up yet? <a href="#confidential-onboarding">We can help you get there.</a></span><span class="lead-short">{{ page_header_short_line(header_url) }}</span></p>
     <div class="hero-actions provider-hero-actions">
       {{ provider_contact("Email provider operations", button=true) }}
       <a class="btn" href="#integration-contract">View requirements</a>
