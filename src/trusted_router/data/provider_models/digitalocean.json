@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-11-23T19:28:28Z",
+  "generated_at": "2026-11-23T21:28:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -51,7 +51,8 @@
       "context_length": 163840,
       "max_output_tokens": 163840,
       "routable": false,
-      "routable_reason": "price-unavailable"
+      "routable_reason": "price-unavailable",
+      "missing_since": "2026-11-23"
     },
     {
       "display_name": "DeepSeek V4 Flash",
@@ -101,7 +102,8 @@
       "context_length": 1048576,
       "max_output_tokens": 384000,
       "routable": false,
-      "routable_reason": "price-unavailable"
+      "routable_reason": "price-unavailable",
+      "missing_since": "2026-11-23"
     },
     {
       "display_name": "Gemma 4",
@@ -495,7 +497,9 @@
       "input_token_price_per_m": 800000,
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 160000,
-      "missing_since": "2026-11-23"
+      "missing_since": "2026-11-23",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM 5",

@@ -532,11 +532,75 @@
       "routable": true,
       "input_token_price_per_m": 84000,
       "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models bison-1 (EU)",
+      "title": "bison-1",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/bison-1",
+      "upstream_id": "bison-1",
+      "context_length": 28672,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "bison-1: a separately selectable typed-decision model (noul/choice/score answers with probabilities). Text only; up to 3 questions per request, answered together in one model call, at most 28,672 rendered tokens per request and per packed sequence (prompt template included; never truncated). EU tier only. One request is served at a time: when the model is busy the answer is HTTP 503 capacity_limit, not billed, and there is no fallback to another model. Use a client timeout of at least 35 seconds. Billed at the s1-pro price. `bison-1` points to the current bison-1 release; to name the exact weights, use `bison-1-v1.0`.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-model-namespace-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "decision_contract_hold": "decision-model-namespace-unsupported",
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null,
+      "routable": false,
+      "routable_reason": "decision-model-namespace-unsupported",
+      "input_token_price_per_m": 84000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Decision Models bison-1-v1.0 (EU)",
+      "title": "bison-1-v1.0",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "decisionmodelsio-eu/bison-1-v1.0",
+      "upstream_id": "bison-1-v1.0",
+      "context_length": 28672,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Pinned bison-1 release v1.0 (baselabs/bison-1 revision bf8350b2c59eb6c36e95d02a2af870aec18724a7); the current target of `bison-1`. Text only; up to 3 questions per request, answered together in one model call, at most 28,672 rendered tokens per request and per packed sequence (prompt template included; never truncated). EU tier only. One request is served at a time: when the model is busy the answer is HTTP 503 capacity_limit, not billed, and there is no fallback to another model. Use a client timeout of at least 35 seconds. Billed at the s1-pro price. The pinned id always answers with the same model weights.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming. This model is not currently routable through TrustedRouter: decision-model-namespace-unsupported.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global."
+      },
+      "decision_contract_hold": "decision-model-namespace-unsupported",
+      "decision_image_input_price_per_m": null,
+      "pricing_valid_until": null,
+      "routable": false,
+      "routable_reason": "decision-model-namespace-unsupported",
+      "input_token_price_per_m": 84000,
+      "output_token_price_per_m": 0
     }
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-23T19:28:28Z",
+  "generated_at": "2026-11-23T21:28:34Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 16
+  "model_count": 18
 }
