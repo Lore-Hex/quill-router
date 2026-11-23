@@ -1687,12 +1687,10 @@
       "upstream_id": "XiaomiMiMo/MiMo-V2.6-Flash-RL",
       "context_length": 1048576,
       "supported_features": [],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 107800,
       "output_token_price_per_m": 280000,
-      "max_output_tokens": 32768,
-      "missing_since": "2026-11-23",
-      "routable_reason": "delisted-upstream"
+      "max_output_tokens": 32768
     },
     {
       "display_name": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
@@ -1720,7 +1718,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-23T21:28:34Z",
+  "generated_at": "2026-11-23T23:28:10Z",
   "price_scale": "microdollars_per_million",
   "model_count": 69
 }

@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 76,
+    "model_count": 77,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 151,
+    "route_count": 153,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 59,
+    "model_count": 60,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 59,
+    "route_count": 60,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
