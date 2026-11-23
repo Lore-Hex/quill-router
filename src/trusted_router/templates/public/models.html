@@ -101,9 +101,9 @@
       <tr>
         <td class="models-cell-model">
           <div class="models-name">
-            {% if model.publisher_slug %}<img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="" width="30" height="30" loading="lazy" decoding="async">{% endif %}
+            {% if model.publisher_slug %}<a class="models-publisher" href="/providers/{{ model.publisher_slug }}" aria-label="{{ model.provider }} provider page"><img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="{{ model.provider }} logo" width="30" height="30" loading="lazy" decoding="async"></a>{% endif %}
             <div>
-              <a href="{{ model.detail_href }}">{{ model.name }}</a>{% if model.featured_rank is not none %} <span class="model-featured-badge">Popular</span>{% endif %}
+              <h2 class="models-name-title"><a href="{{ model.detail_href }}">{{ model.name }}</a>{% if model.featured_rank is not none %} <span class="model-featured-badge">Popular</span>{% endif %}</h2>
               <code>{{ model.id }}</code>
             </div>
           </div>
@@ -130,7 +130,7 @@
       </tr>
       {% if model.endpoints_url %}
       <tr class="models-routes-panel" id="model-routes-{{ loop.index }}" hidden>
-        <td colspan="9"><div class="model-route-results" data-route-results><p class="model-route-loading">Loading current provider routes…</p></div></td>
+        <td colspan="9"><div class="model-route-results" data-route-results><div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">{% for provider in model.providers %}{{ serving_provider_chip(provider) }}{% endfor %}</div></div></td>
       </tr>
       {% endif %}
     </tbody>
