@@ -134,7 +134,7 @@
   ],
   "source": "https://api.bfl.ai/openapi.json",
   "pricing_source": "https://bfl.ai/pricing",
-  "generated_at": "2026-11-23T02:27:52Z",
+  "generated_at": "2026-11-23T04:03:03Z",
   "price_scale": "microdollars_per_million",
   "model_count": 5
 }

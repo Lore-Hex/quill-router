@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-11-23T02:27:52Z",
+  "generated_at": "2026-11-23T04:03:03Z",
   "model_count": 132,
   "models": [
     {
@@ -1241,7 +1241,7 @@
       "upstream_id": "nvidia/nemotron-3-ultra-550b-a55b",
       "display_name": "nvidia/nemotron-3-ultra-550b-a55b",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1253,7 +1253,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "nvidia/nemotron-3.5-content-safety",
@@ -2263,9 +2264,10 @@
       "status": 1,
       "id": "stepfun-ai/step-5-preview",
       "upstream_id": "stepfun-ai/step-5-preview",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "nvidia/nemotron-3.5-super-vl-120b-a12b",
@@ -2374,9 +2376,10 @@
       "status": 1,
       "id": "mistralai/mistral-large-4-1t-a52b",
       "upstream_id": "mistralai/mistral-large-4-1t-a52b",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "moonshotai/kimi-k3.1-pro",
@@ -2394,9 +2397,10 @@
       "status": 1,
       "id": "moonshotai/kimi-k3.1-pro",
       "upstream_id": "moonshotai/kimi-k3.1-pro",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "fastino/gliner2-pii",
