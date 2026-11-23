@@ -262,10 +262,10 @@
   },
   "digitalocean": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 4,
     "name": "DigitalOcean Gradient AI",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "digitalocean"
   },
@@ -685,10 +685,10 @@
   },
   "parasail": {
     "card_version": 2,
-    "model_count": 25,
+    "model_count": 24,
     "name": "Parasail",
     "privacy": "Zero retention",
-    "route_count": 50,
+    "route_count": 48,
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },
