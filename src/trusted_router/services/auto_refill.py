@@ -15,15 +15,18 @@ path that one-off Checkout uses.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from trusted_router.config import Settings
+from trusted_router.refill_claim import recent_block
 from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
-from trusted_router.storage_models import CreditAccount
 from trusted_router.typed_balance import live_credit_summary
 
 log = logging.getLogger(__name__)
@@ -35,19 +38,6 @@ log = logging.getLogger(__name__)
 # the off-session charge is restricted to them, so a bank account or wallet is
 # never debited by an automatic top-up the customer did not choose.
 AUTO_REFILL_PAYMENT_METHOD_TYPES: tuple[str, ...] = ("card", "link")
-
-# Minimum interval between failed attempts so a single bad card can't generate
-# an infinite stream of declines. 5 minutes is a balance between "user expects
-# refill within seconds" and "Stripe's per-customer rate limit".
-MIN_RETRY_INTERVAL_SECONDS = 5 * 60
-
-# A successfully created off-session PaymentIntent is marked pending until the
-# Stripe webhook credits the workspace. During that window, creating another
-# PaymentIntent can double-charge a customer even though the first charge is
-# merely waiting for webhook delivery, so block duplicate auto-refills while the
-# pending attempt is fresh. If the webhook is lost for long enough, allow a later
-# low-balance settle to try again instead of wedging auto-refill forever.
-PENDING_RETRY_INTERVAL_SECONDS = 30 * 60
 
 
 @dataclass(frozen=True)
@@ -83,6 +73,7 @@ def maybe_charge_after_settle(
     account = STORE.get_credit_account(workspace_id)
     if account is None:
         return AutoRefillOutcome(fired=False, reason="no_account")
+    account = replace(account)  # The memory backend returns a live metadata object.
     if not account.auto_refill_enabled:
         return AutoRefillOutcome(fired=False, reason="disabled")
     if account.auto_refill_amount_microdollars <= 0:
@@ -101,7 +92,7 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="above_threshold")
     if not account.stripe_customer_id or not account.stripe_payment_method_id:
         return AutoRefillOutcome(fired=False, reason="no_payment_method")
-    recent_attempt_reason = _recent_attempt_block_reason(account)
+    recent_attempt_reason = recent_block(account, datetime.now(UTC))
     if recent_attempt_reason is not None:
         return AutoRefillOutcome(fired=False, reason=recent_attempt_reason, retryable=True)
     if not settings.stripe_secret_key:
@@ -140,10 +131,7 @@ def maybe_charge_after_settle(
         minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
         fee_multiplier_basis_points=settings.stripe_paypal_fee_multiplier_basis_points,
     )
-    charge_idempotency_key = idempotency_key or (
-        f"auto-refill:{workspace_id}:{fee.charge_amount_cents}:"
-        f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
-    )
+    candidate = idempotency_key or f"auto-refill:{workspace_id}:{uuid.uuid4().hex}"
     metadata = fee.metadata(
         workspace_id=workspace_id,
         payment_method="card",
@@ -161,31 +149,28 @@ def maybe_charge_after_settle(
             "amount_microdollars": str(account.auto_refill_amount_microdollars),
         }
     )
-    try:
-        intent = stripe.PaymentIntent.create(
-            amount=fee.charge_amount_cents,
-            currency="usd",
-            customer=account.stripe_customer_id,
-            payment_method=account.stripe_payment_method_id,
-            # A bank account or wallet saved before the webhook allowlist is
-            # refused by Stripe here instead of debited off-session.
-            payment_method_types=list(AUTO_REFILL_PAYMENT_METHOD_TYPES),
-            off_session=True,
-            confirm=True,
-            description="TrustedRouter auto-refill",
-            amount_details=cast(
-                Any,
-                {"line_items": fee.payment_intent_line_items()},
-            ),
-            metadata=metadata,
-            idempotency_key=charge_idempotency_key,
+    params: dict[str, Any] = {
+        "amount": fee.charge_amount_cents, "currency": "usd", "customer": account.stripe_customer_id,
+        "payment_method": account.stripe_payment_method_id,
+        "payment_method_types": list(AUTO_REFILL_PAYMENT_METHOD_TYPES),
+        "off_session": True, "confirm": True, "description": "TrustedRouter auto-refill",
+        "amount_details": {"line_items": fee.payment_intent_line_items()}, "metadata": metadata,
+    }
+    payload_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
+    reason, key = STORE.claim_auto_refill(account, candidate=candidate, payload_hash=payload_hash)
+    if key is None:
+        return AutoRefillOutcome(
+            False, reason, retryable=reason in {"pending", "account_changed", "rate_limited", "reconcile_required"},
         )
+    metadata["refill_attempt_key"] = key
+    try:
+        intent = stripe.PaymentIntent.create(**params, idempotency_key=key)
     except stripe.CardError as exc:
-        STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{exc.code or 'card_error'}")
+        STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{exc.code or 'card_error'}", attempt_key=key)
         log.warning("auto_refill.card_error workspace=%s code=%s", workspace_id, exc.code)
         return AutoRefillOutcome(fired=False, reason=f"stripe_error:{exc.code or 'card_error'}")
     except Exception as exc:  # noqa: BLE001 - any Stripe error blocks the refill.
-        STORE.record_auto_refill_outcome(workspace_id, status="failed:network")
+        # Delivery is ambiguous. Keep the durable claim and its original Stripe key.
         log.exception("auto_refill.error workspace=%s", workspace_id)
         return AutoRefillOutcome(
             fired=False,
@@ -193,30 +178,5 @@ def maybe_charge_after_settle(
             retryable=True,
         )
 
-    STORE.record_auto_refill_outcome(workspace_id, status="pending")
+    STORE.record_auto_refill_outcome(workspace_id, status="pending", attempt_key=key)
     return AutoRefillOutcome(fired=True, reason="charged", payment_intent_id=intent.id)
-
-
-def _recent_attempt_block_reason(account: CreditAccount) -> str | None:
-    """Skip if a recent attempt is still pending or recently failed.
-
-    We don't gate successes the same way: the successful webhook advances the
-    credit balance and naturally takes the workspace out of the threshold band.
-    """
-    if not account.last_auto_refill_at:
-        return None
-    status = account.last_auto_refill_status or ""
-    if status != "pending" and not status.startswith("failed:"):
-        return None
-    try:
-        last = datetime.fromisoformat(account.last_auto_refill_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=UTC)
-    age_seconds = (datetime.now(UTC) - last).total_seconds()
-    if status == "pending" and age_seconds < PENDING_RETRY_INTERVAL_SECONDS:
-        return "pending"
-    if status.startswith("failed:") and age_seconds < MIN_RETRY_INTERVAL_SECONDS:
-        return "rate_limited"
-    return None

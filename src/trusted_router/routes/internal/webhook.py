@@ -335,7 +335,9 @@ def _handle_stripe_event(
                     amount_microdollars=amount_microdollars,
                     payment_method="stripe_auto_refill",
                 )
-            STORE.record_auto_refill_outcome(workspace_id, status="succeeded")
+            STORE.record_auto_refill_outcome(
+                workspace_id, status="succeeded", attempt_key=metadata.get("refill_attempt_key"),
+            )
             # Also persist the payment-method if Stripe surfaced one —
             # first auto-refill after a Checkout that didn't include
             # setup_future_usage might be the first time we see the PM.
@@ -419,7 +421,9 @@ def _handle_stripe_event(
         if metadata.get("auto_refill") == "true" and isinstance(workspace_id, str):
             last_error = obj.get("last_payment_error") or {}
             code = last_error.get("code") or "unknown"
-            STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{code}")
+            STORE.record_auto_refill_outcome(
+                workspace_id, status=f"failed:{code}", attempt_key=metadata.get("refill_attempt_key"),
+            )
             return {"data": {"event_id": event_id, "auto_refill_failed": True, "code": code}}
 
     # A charge.refunded delivery without any refund objects cannot provide

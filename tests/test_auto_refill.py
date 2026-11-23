@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -462,6 +464,7 @@ def test_auto_refill_exits_band_after_successful_credit(
                             "workspace_id": configured_workspace,
                             "auto_refill": "true",
                             "amount_microdollars": "20000000",
+                            "refill_attempt_key": create.call_args.kwargs["idempotency_key"],
                         },
                     }
                 },
@@ -470,6 +473,7 @@ def test_auto_refill_exits_band_after_successful_credit(
 
     account = STORE.get_credit_account(configured_workspace)
     assert account is not None
+    assert account.last_auto_refill_status == "succeeded"
     available = _credit_summary(configured_workspace)["available"]
     # $1 + $20 refill = $21, well above $5 threshold.
     assert available > account.auto_refill_threshold_microdollars
@@ -481,6 +485,12 @@ def test_auto_refill_exits_band_after_successful_credit(
     assert second.fired is False
     assert second.reason == "above_threshold"
     create.assert_not_called()
+
+    # A later, genuine threshold crossing is not suppressed by the old claim.
+    STORE.settle(STORE.reserve(configured_workspace, "k", 18_000_000).id, 18_000_000)
+    with patch("stripe.PaymentIntent.create", return_value=MagicMock(id="pi_band_2")) as later:
+        assert maybe_charge_after_settle(configured_workspace, settings=stripe_settings).fired
+    later.assert_called_once()
 
 
 def test_auto_refill_pending_payment_intent_blocks_duplicate_charge(
@@ -499,6 +509,48 @@ def test_auto_refill_pending_payment_intent_blocks_duplicate_charge(
     assert second.fired is False
     assert second.reason == "pending"
     create.assert_called_once()
+
+
+def test_lost_stripe_response_preserves_the_claim(
+    configured_workspace: str, stripe_settings: Settings,
+) -> None:
+    STORE.settle(STORE.reserve(configured_workspace, "k", 9_000_000).id, 9_000_000)
+    with patch("stripe.PaymentIntent.create", side_effect=TimeoutError) as create:
+        first = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+        second = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+    assert first.reason == "stripe_error:TimeoutError" and first.retryable
+    assert second.reason == "pending"
+    create.assert_called_once()
+
+
+def test_distinct_overlapping_settlements_send_one_refill(
+    configured_workspace: str, stripe_settings: Settings,
+) -> None:
+    reservations = [STORE.reserve(configured_workspace, "k", 4_500_000) for _ in range(2)]
+    for reservation in reservations:
+        STORE.settle(reservation.id, 4_500_000)
+    entered, release = Event(), Event()
+
+    def create(**params: Any) -> MagicMock:
+        entered.set()
+        assert release.wait(10)
+        return MagicMock(id="pi_once")
+
+    def run(key: str) -> AutoRefillOutcome:
+        return maybe_charge_after_settle(
+            configured_workspace, settings=stripe_settings, idempotency_key=key,
+        )
+
+    with patch("stripe.PaymentIntent.create", side_effect=create) as stripe_create:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(run, reservations[0].id)
+            try:
+                assert entered.wait(10)
+                assert run(reservations[1].id).reason == "pending"
+            finally:
+                release.set()
+            assert first.result(timeout=10).fired
+        stripe_create.assert_called_once()
 
 
 def test_console_credits_refuses_to_enable_without_payment_method() -> None:

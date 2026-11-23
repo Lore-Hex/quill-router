@@ -37,6 +37,7 @@ from trusted_router.receipt_keys import (
     receipt_key_kid_collides,
     with_receipt_attestation_sha256,
 )
+from trusted_router.refill_claim import RefillClaim, decide_claim, record_result
 from trusted_router.routable_payouts import (
     ROUTABLE_PAID_STATUSES,
     ROUTABLE_PENDING_STATUSES,
@@ -189,6 +190,8 @@ class InMemoryStore:
         self.members: dict[tuple[str, str], Member] = {}
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
+        self.refill_claims: dict[str, RefillClaim] = {}
+        self.refill_trigger_keys: set[str] = set()
         self.stripe_events: set[str] = set()
         self.trust_events: dict[tuple[str, str], TrustEvent] = {}
         self.trust_inbox: dict[tuple[str, str], TrustInboxRow] = {}
@@ -3103,18 +3106,44 @@ class InMemoryStore:
             account.last_auto_refill_status = "disabled:payment_method_removed"
             return account
 
+    def claim_auto_refill(
+        self, expected: CreditAccount, *, candidate: str, payload_hash: str,
+    ) -> tuple[str, str | None]:
+        ws = expected.workspace_id
+        with self._lock:
+            account = self.credits.get(ws)
+            balance = self.credit_money_snapshot(ws)
+            if not account or balance is None:
+                return "no_account", None
+            reason, claim = decide_claim(
+                account, expected, balance, self.refill_claims.get(ws), candidate=candidate,
+                used=candidate in self.refill_trigger_keys, payload_hash=payload_hash,
+                now=dt.datetime.now(dt.UTC),
+            )
+            if claim:
+                self.refill_claims[ws] = claim
+                self.refill_trigger_keys.add(claim.key)
+                account.last_auto_refill_at = claim.dispatched_at
+                account.last_auto_refill_status = "pending"
+            return reason, claim.key if claim else None
+
     def record_auto_refill_outcome(
         self,
         workspace_id: str,
         *,
         status: str,
+        attempt_key: str | None = None,
     ) -> CreditAccount | None:
         with self._lock:
             account = self.credits.get(workspace_id)
             if account is None:
                 return None
-            account.last_auto_refill_at = iso_now()
-            account.last_auto_refill_status = status
+            changed, claim = record_result(
+                account, self.refill_claims.get(workspace_id), key=attempt_key,
+                status=status, stamp=iso_now(),
+            )
+            if changed and claim:
+                self.refill_claims[workspace_id] = claim
             return account
 
     def reserve(
