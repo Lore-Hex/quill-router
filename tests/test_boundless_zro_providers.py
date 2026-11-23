@@ -493,3 +493,77 @@ def test_boundless_abliterated_legacy_id_never_becomes_the_inference_target(list
     else:
         assert sku not in prices
         assert rows[sku]["routable"] is False
+
+
+GPT_OSS_120B = "openai/gpt-oss-120b"
+# A Boundless route that still probes healthy, so it stays served.
+BOUNDLESS_CONTROL = "z-ai/glm-5.2"
+
+
+def test_boundless_gpt_oss_120b_is_held_while_the_provider_rejects_it():
+    # Since 2026-11-22 every configured-route probe fails with HTTP 400 code 404
+    # (Sentry QUILL-ROUTER-J1) although Boundless's public catalog still lists
+    # this exact id as serving. Only this route is held; the others serve.
+    from tests import catalog_vehicles
+
+    assert boundless._OPERATOR_HOLD_REASONS == {GPT_OSS_120B: "provider-access-unavailable"}
+    rows = {row["id"]: row for row in _manifest_rows("boundless")}
+    # The upstream id is the catalog id verbatim: no mapping drift to fix.
+    assert rows[GPT_OSS_120B]["upstream_id"] == GPT_OSS_120B
+    assert rows[GPT_OSS_120B]["routable"] is False
+    assert rows[GPT_OSS_120B]["routable_reason"] == "provider-access-unavailable"
+    assert rows[BOUNDLESS_CONTROL].get("routable") is not False
+    built = catalog_vehicles.registry_endpoints()
+    assert f"{GPT_OSS_120B}@boundless/prepaid" not in built
+    assert f"{BOUNDLESS_CONTROL}@boundless/prepaid" in built
+
+
+def test_boundless_gpt_oss_hold_survives_refresh_canary_and_price_index(monkeypatch, tmp_path):
+    # Neither a fresh serving listing with a price nor a passing canary may
+    # re-admit the route, and its price stays out of the index: only deleting
+    # the hold entry does.
+    from scripts.pricing import refresh
+
+    manifest = tmp_path / "boundless.json"
+    committed = {row["id"]: row for row in _manifest_rows("boundless")}
+    models = [dict(committed[model_id]) for model_id in (GPT_OSS_120B, BOUNDLESS_CONTROL)]
+    for row in models:
+        row["routable"] = True
+        row.pop("routable_reason", None)
+    manifest.write_text(json.dumps({"provider": "boundless", "models": models}))
+    catalog = {"data": [
+        {"id": model_id, "context_length": 131072, "pricing": {"input": .435, "output": .87}}
+        for model_id in (GPT_OSS_120B, BOUNDLESS_CONTROL)
+    ]}
+    monkeypatch.setattr(boundless, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(boundless, "_DISCOVERED_ROWS", {})
+    monkeypatch.setattr(boundless, "UPSTREAM_ID_MAP", {})
+    monkeypatch.setenv("BOUNDLESS_API_KEY", "fake-key")
+    monkeypatch.setattr(boundless, "fetch_json", lambda *_a, **_kw: catalog)
+    monkeypatch.setattr(boundless, "fetch_html", lambda *_a, **_kw: boundless_html(
+        boundless_product(GPT_OSS_120B), boundless_product(BOUNDLESS_CONTROL)))
+    monkeypatch.setattr(boundless, "models_requiring_canary",
+                        lambda *_a, **_kw: frozenset({GPT_OSS_120B, BOUNDLESS_CONTROL}))
+    monkeypatch.setattr(boundless, "probe_openai_chat", lambda **_kw: True)
+
+    result = boundless.fetch()
+    assert boundless._DISCOVERED_ROWS[GPT_OSS_120B]["routable"] is True
+    assert GPT_OSS_120B in result.prices
+    assert result.price_index_model_ids == frozenset({BOUNDLESS_CONTROL})
+    boundless.write_provider_manifest(result)
+
+    by_id = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert by_id[GPT_OSS_120B]["routable"] is False
+    assert by_id[GPT_OSS_120B]["routable_reason"] == "provider-access-unavailable"
+    assert by_id[GPT_OSS_120B]["upstream_id"] == GPT_OSS_120B
+    assert "routable_reason" not in by_id[BOUNDLESS_CONTROL]
+    # The hourly refresh keeps held rows out of snapshot endpoints (#2777).
+    assert GPT_OSS_120B in refresh._manifest_held_routes()["boundless"]
+
+
+def test_boundless_gpt_oss_120b_is_out_of_the_committed_snapshot():
+    snapshot = json.loads((_MANIFEST_DIR.parent / "openrouter_snapshot.json").read_text(encoding="utf-8"))
+    model = next(model for model in snapshot["models"] if model["id"] == GPT_OSS_120B)
+    providers = {e.get("tr_provider_slug") for e in model["endpoints"]}
+    assert "boundless" not in providers
+    assert providers  # Other hosts still serve it.
