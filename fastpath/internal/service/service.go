@@ -195,7 +195,12 @@ func Defaults() Config {
 			// (docs/design/fast-admission-streams.md section 12.4; pinned
 			// as RecordReapFloor was). No gateway sends a ceiling until
 			// PR 4, so no hold has one until then.
-			RecordCeiling: true},
+			RecordCeiling: true,
+			// Shadow mode for closing a starved shard's leases
+			// (docs/design/billing-503-reduction-2026-11.md, option A):
+			// each starved shard is logged, nothing is closed. -starved-leases
+			// close turns it on once the lines are read.
+			StarvedLeases: owner.StarvedLog},
 		// The control plane gives a call to a front door 1.5 s
 		// (fastpath_front_door_timeout_seconds), the connection's 0.25 s
 		// included, so the front door answers within 1.2 s, in which a

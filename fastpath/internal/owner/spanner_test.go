@@ -42,9 +42,13 @@ type fakeSpanner struct {
 	// grants that many and loses their answers.
 	grants       []store.GrantRequest
 	refuseGrants bool
-	grantGate    chan struct{}
-	deaf         bool
-	lostGrants   int
+	// grantRefusal is the refusal refuseGrants answers; empty, the
+	// allowance's. grantHeadroom is the headroom it reports.
+	grantRefusal  store.Refusal
+	grantHeadroom int64
+	grantGate     chan struct{}
+	deaf          bool
+	lostGrants    int
 	// drain is each lease's drain log, and cursors are the cursors its
 	// reads were given, in order. failReads fails that many reads; a read
 	// tells reading it began, if set, then waits for readGate to close, or,
@@ -78,7 +82,10 @@ func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.refuseGrants {
-		return store.GrantResult{Refused: store.RefusedAllowance}, nil
+		if f.grantRefusal != "" {
+			return store.GrantResult{Refused: f.grantRefusal, Headroom: f.grantHeadroom}, nil
+		}
+		return store.GrantResult{Refused: store.RefusedAllowance, Headroom: f.grantHeadroom}, nil
 	}
 	if f.lostGrants > 0 {
 		f.lostGrants--

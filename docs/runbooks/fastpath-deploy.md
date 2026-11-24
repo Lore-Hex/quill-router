@@ -614,6 +614,70 @@ The script refuses any value but `0` or `1ms` to `9999ms` before writing the
 unit. The attribute is set only with a pinned release that takes
 `-settle-hedge` ("A flag the unit passes"); `""` leaves it off.
 
+## Starved leases
+
+A shard is starved when a request finds no room under any lease that still
+admits, just after the store refused the shard a top-up for the floor or the
+allowance, that refusal read a headroom outside leases under the
+request's hold, and what the leases hold beyond what they consumed would
+make up the difference. The
+money it needs is split between a lease
+too small for it and the headroom outside leases, so the synchronous path
+answers it the
+lease-headroom 503 (`billing.lease_headroom_unavailable`), and every retry
+meets the same answer until the lease stops admitting: idle ten minutes, which
+any admission that still fits restarts, or an hour old
+(`docs/design/billing-503-reduction-2026-11.md`, option A).
+
+`-starved-leases` says what the owner does (`fastpath/internal/owner/starved.go`):
+
+- `log`, the release default: closes nothing, and writes
+  `fastpath: owner starved shard workspace=... region=... shard=... mode=log
+  leases=N free=F kept=P need=E headroom=H asked=A refused="..." admissions=K`
+  at most once a minute per shard: `free` what the leases would return now,
+  `kept` their allocation less what they consumed (open holds included),
+  `need`
+  the request's estimate and buffer, `headroom` what the refusal read outside
+  leases, `asked` the refused top-up, and `admissions` the starved requests
+  since the shard's last line.
+- `close`: the same line with `mode=close`, and the leases that refused the
+  request for room stop admitting (`Lease.Close`, the transition idleness and
+  age take). Each keeps serving its holds; its next checkpoint returns its
+  free room, and its final one ends it once no hold is open.
+- `off`: neither.
+
+**Before turning it on**, read a week of `log` lines beside the control
+plane's `billing.lease_headroom_unavailable` lines for the same workspace and
+minute. Expect every lease-headroom 503 episode to have starved lines, and
+few starved lines outside one. Starved lines with no 503s are shards where a
+close would move traffic to the synchronous path for nothing worse than a
+lease taken again.
+
+Turning it on, on a node created from the script that reads
+`fastpath-starved-leases` (check: `gcloud compute instances describe NODE
+--zone=ZONE --project=quill-cloud-proxy
+--format='value(metadata.items.startup-script)' | grep -c starved-leases` is
+not 0), with a pinned release that takes the flag
+("Taking a pinned release"): in `infra/fastpath.tf` set
+
+```hcl
+fastpath_starved_leases = "close"
+```
+
+and apply (metadata, in place), then take each node by the unit rewrite, one
+at a time, the other serving, as "The settle log's hedge" does: mark it
+leaving, wait for its leases and the balancer, stop the unit, run
+`sudo google_metadata_script_runner startup`, and read `-starved-leases close`
+back from the running process. A reset is not enough. The way back is `"log"`
+written there and each node taken the same way; `""` leaves the attribute off
+and the release's default holds.
+
+A node keeps the script it was created with (`ignore_changes =
+[metadata_startup_script]`), so one created before the script read
+`fastpath-starved-leases` never passes the flag and runs the release's
+default, `log`: it takes `close` only once replaced ("For each node
+replaced").
+
 ## The front door's publish wait and its minute line
 
 A settle's full record goes to the record topic, and the front door waits
