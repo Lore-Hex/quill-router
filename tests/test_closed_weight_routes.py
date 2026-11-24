@@ -159,7 +159,7 @@ def test_catalog_has_no_unauthorized_closed_weight_route() -> None:
     "google/gemini-2.5-pro@deepinfra/prepaid",
     "google/veo-3.1@venice/prepaid",
     "openai/gpt-5.5@gmi/byok",
-    "openai/gpt-6-sol@boundless/prepaid",
+    "openai/gpt-6-luna@boundless/prepaid",
     "openai/gpt-6.2-sol@novita/prepaid",
     "openai/sora-2@venice/prepaid",
     "anthropic/claude-opus-5@deepinfra/byok",
