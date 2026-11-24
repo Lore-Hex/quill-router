@@ -1,0 +1,16 @@
+{% macro config_example(config, generation, label, compact=false) -%}
+{% if config %}<h3>{{ label }}</h3>
+<pre data-config="{{ generation }}"><code>{% if compact %}{
+  "$schema": {{ config["$schema"]|tojson }},
+  "model": {{ config.model|tojson }},
+  "providers": {"trustedrouter": {"models": {
+{% for model_id, entry in config.providers.trustedrouter.models.items() %}    {{ model_id|tojson }}: {{ entry|tojson }}{% if not loop.last %},{% endif %}
+{% endfor %}  }}}
+}{% else %}{{ config|tojson(indent=2) }}{% endif %}</code></pre>{% endif %}
+{%- endmacro %}
+{% macro price_dates(dates) -%}
+Prices collected {% for date in dates %}{% if not loop.first %}; {{ date.providers|join(", ") }}: {% endif %}<time datetime="{{ date.timestamp }}">{{ date.label }}</time>{% endfor %}
+{%- endmacro %}
+{% macro route_range(g) -%}
+{% if g.route_count %}<p data-route-count="{{ g.route_count }}" data-low-provider="{{ g.route_low.provider }}" data-high-provider="{{ g.route_high.provider }}">{{ g.deepseek.name }} has {{ g.route_count }} prepaid provider routes. Ranked by input plus output price, the lowest is <strong>{{ g.route_low.provider_name }}</strong> at <span data-route-low-input>${{ g.route_low.input }}</span> input / <span data-route-low-output>${{ g.route_low.output }}</span> output per million tokens; the highest is <strong>{{ g.route_high.provider_name }}</strong> at <span data-route-high-input>${{ g.route_high.input }}</span> / <span data-route-high-output>${{ g.route_high.output }}</span>. These TrustedRouter retail rates include the standard markup and use the {{ "{:,}".format(g.input_tokens) }}-token context tier. {{ price_dates(g.route_dates) }}; <a href="/models/{{ g.deepseek.model_id }}">all provider routes and limits</a>.</p>{% endif %}
+{%- endmacro %}

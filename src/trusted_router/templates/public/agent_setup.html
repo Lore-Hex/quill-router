@@ -19,6 +19,7 @@
         <table data-reference-table>
           <thead><tr><th>Client</th><th>Base URL</th><th>Use when</th></tr></thead>
           <tbody>
+            <tr><td><a href="/docs/opencode">OpenCode</a></td><td><code>{{ api_base_url }}</code></td><td>Connect TrustedRouter with /connect, then select a model with /models. See the setup guide for specific models.</td></tr>
             <tr><td>OpenAI compatible</td><td><span class="mono">{{ api_base_url }}</span></td><td>Chat Completions, Responses, models, and most agents</td></tr>
             <tr><td>Anthropic compatible</td><td><span class="mono">https://api.trustedrouter.com</span></td><td>Anthropic SDK Messages calls</td></tr>
             <tr><td>EU regional</td><td><span class="mono">https://api-europe-west4.quillrouter.com/v1</span></td><td>Europe-focused gateway and routing</td></tr>
@@ -189,4 +190,5 @@ Read the full behavior at https://trustedrouter.com/docs/synth.</code></pre>
     </div>
   </section>
 </section>
+<p>See <a href="/docs/opencode-deepseek">DeepSeek in OpenCode</a> and <a href="/docs/cut-llm-api-costs">cut LLM API costs</a> for setup and savings examples.</p>
 {% endblock %}
