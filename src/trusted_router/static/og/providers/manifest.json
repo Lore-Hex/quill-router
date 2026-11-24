@@ -595,10 +595,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 23,
+    "model_count": 24,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 44,
+    "route_count": 46,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 8,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
