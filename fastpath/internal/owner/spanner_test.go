@@ -42,6 +42,9 @@ type fakeSpanner struct {
 	// grants that many and loses their answers.
 	grants       []store.GrantRequest
 	refuseGrants bool
+	// grantRefusal is the refusal refuseGrants answers; empty, the
+	// allowance's.
+	grantRefusal store.Refusal
 	grantGate    chan struct{}
 	deaf         bool
 	lostGrants   int
@@ -78,6 +81,9 @@ func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.refuseGrants {
+		if f.grantRefusal != "" {
+			return store.GrantResult{Refused: f.grantRefusal}, nil
+		}
 		return store.GrantResult{Refused: store.RefusedAllowance}, nil
 	}
 	if f.lostGrants > 0 {

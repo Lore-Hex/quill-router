@@ -50,6 +50,16 @@ func TestTheDefaultsRecordAStreamsCeiling(t *testing.T) {
 	}
 }
 
+// TestTheDefaultsOnlyLogStarvedShards: a release closes no starved lease
+// unless its node is told -starved-leases close
+// (docs/design/billing-503-reduction-2026-11.md, option A): the default
+// logs them, the shadow mode read before it is turned on.
+func TestTheDefaultsOnlyLogStarvedShards(t *testing.T) {
+	if got := Defaults().Owner.StarvedLeases; got != owner.StarvedLog {
+		t.Fatalf("the defaults' starved leases: %q", got)
+	}
+}
+
 // TestAStreamRunsPastItsHoldToItsCeiling (section 12.4, PR 3): one process
 // with both roles and the defaults' owner, its gateway's requests over
 // HTTP. Two streams are admitted with a hold of 40 and a ceiling of 100;
