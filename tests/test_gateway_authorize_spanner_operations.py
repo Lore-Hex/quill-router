@@ -989,6 +989,9 @@ def test_folded_pause_gateway_error_bytes_and_rollback(
         if not funded:
             row["total_credits"] = 0
         before = _state(database)
+        # Seeding commits (key creation is a read-write transaction); the
+        # refused authorize commits nothing.
+        commits_before = database.commits
         monkeypatch.setattr(storage_gcp_authorize, "authorize_atomic", implementation)
         with pytest.raises(HTTPException) as raised:
             gateway._authorize_gateway_sync(_request(), _lookup_body(key), Settings(environment="test"))
@@ -996,7 +999,7 @@ def test_folded_pause_gateway_error_bytes_and_rollback(
         errors.append((error.status_code, json.dumps(error.detail, separators=(",", ":")).encode(), error.headers))
         assert _state(database) == before
         assert database.rollback_calls >= 1
-        assert database.commits == 0
+        assert database.commits == commits_before
     assert errors[0] == errors[1]
     if funded:
         assert errors[1][0] == 403

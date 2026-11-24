@@ -410,3 +410,61 @@ def test_scan_paths_matches_the_detail(tmp_path: Path) -> None:
 
 def test_the_root_is_the_repository() -> None:
     assert (ROOT / "src" / "trusted_router" / "storage_key_patch.py").is_file()
+
+
+# Review round 3: writes of a limit column the previous column check missed,
+# each a positive control, with the forms that write none beside them.
+COLUMN_FORMS = [
+    ("tuple assignment", "UPDATE tr_key_limit SET (reserved, day_limit_micro) = (GREATEST(reserved - %s, 0), 5000000)"
+     " WHERE key_hash = %s", True),
+    ("tuple assignment, no limit", "UPDATE tr_key_limit SET (reserved, usage) = (0, 0) WHERE key_hash = %s", False),
+    ("schema-qualified insert", "INSERT INTO public.tr_key_limit (workspace_id, key_hash, shard, limit_micro) "
+     "VALUES (%s, %s, 0, 10)", True),
+    ("quoted schema-qualified update", 'UPDATE "public"."tr_key_limit" SET "week_limit_micro" = 1', True),
+    ("schema-qualified counter update", "UPDATE public.tr_key_limit SET reserved = 0 WHERE key_hash = %s", False),
+    ("insert without a column list, from a query", "INSERT INTO tr_key_limit SELECT * FROM restored_key_limits", True),
+    ("insert without a column list, values", "INSERT INTO tr_key_limit VALUES (%s, %s, 0, 10)", True),
+    ("qualified target through an alias", "UPDATE tr_key_limit AS k SET k.day_limit_micro = 1 WHERE k.key_hash = %s",
+     True),
+    ("a limit after a subquery", "UPDATE tr_key_limit SET reserved = (SELECT 0 FROM x), limit_micro = 5", True),
+    ("a block comment before the table", "UPDATE /* repair */ tr_key_limit SET month_limit_micro = 1", True),
+    ("upsert's update", "INSERT INTO tr_key_limit (key_hash, shard) VALUES (%s, 0) ON CONFLICT (workspace_id, "
+     "key_hash, shard) DO UPDATE SET limit_micro = 1", True),
+    ("upsert that does nothing", "INSERT INTO tr_key_limit (key_hash, shard) VALUES (%s, 0) ON CONFLICT "
+     "(workspace_id, key_hash, shard) DO NOTHING", False),
+    ("a target filled in", "UPDATE tr_key_limit SET {} WHERE key_hash = %s", True),
+    ("an expression as a target", "UPDATE tr_key_limit SET coalesce(x) = 1", True),
+    ("DML and the table, no statement on it read", "UPDATE tr_key_limit_shadow SET a = 1; SELECT 1 FROM tr_key_limit",
+     True),
+    ("a delete", "DELETE FROM tr_key_limit WHERE key_hash = %s", False),
+    ("a merge", "MERGE INTO tr_key_limit USING x ON y WHEN MATCHED THEN UPDATE SET reserved = 0", True),
+]
+
+
+@pytest.mark.parametrize(("name", "sql", "writes_limit"), COLUMN_FORMS, ids=[c[0] for c in COLUMN_FORMS])
+def test_each_way_to_write_a_limit_column_is_found(tmp_path: Path, name: str, sql: str, writes_limit: bool) -> None:
+    from tests.key_limit_writers import assigns_limit_column
+
+    assert assigns_limit_column(sql) is writes_limit, name
+    source = f"def f(conn):\n    conn.execute({sql!r})\n"
+    assert _scan_sample(tmp_path, "sample.py", source) == {("key_limit.sql", "f"): writes_limit}, name
+    assert _scan_sample(tmp_path, "sample.sql", sql + ";\n") == {("key_limit.text", "<file>"): writes_limit}, name
+
+
+def test_the_reviewers_injected_cap_write_is_caught(tmp_path: Path) -> None:
+    """The reviewer's probe: a tuple assignment of a limit column injected
+    into a listed counter writer (PostgresStore._release_key_hold_tx). The
+    column check now names that scope a limit-column writer outside the
+    chokepoints."""
+    source = (ROOT / "src/trusted_router/storage_postgres.py").read_text()
+    old = '"   reserved = GREATEST(reserved - %s, 0)"'
+    assert source.count(old) == 1
+    injected = tmp_path / "storage_postgres.py"
+    injected.write_text(source.replace(old, '"   (reserved, day_limit_micro) = (GREATEST(reserved - %s, 0), 5000000)"'))
+    writers = limit_column_writers(scan_paths_detail([injected], []))
+    assert ("storage_postgres.py", "PostgresStore._release_key_hold_tx") in writers
+    clean = tmp_path / "clean" / "storage_postgres.py"
+    clean.parent.mkdir()
+    clean.write_text(source)
+    assert ("storage_postgres.py", "PostgresStore._release_key_hold_tx") not in limit_column_writers(
+        scan_paths_detail([clean], []))

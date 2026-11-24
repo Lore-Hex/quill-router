@@ -368,3 +368,65 @@ def test_a_federated_strict_key_never_gains_a_limit_on_the_peer(store, unique, u
     assert _limits(store, key.hash) == (None, None, None, 9_000_000)
     store.upsert_federated_api_key({**limited, "limit_monthly_microdollars": 8_000_000})
     assert _limits(store, key.hash) == (None, None, None, 8_000_000)
+
+
+def test_a_postgres_create_replayed_after_it_committed_returns_the_key(
+        store, unique, user_id, workspace_id, monkeypatch):
+    """Postgres replays only a transaction that rolled back (a serialization
+    failure, a deadlock, PGAdapter's analyzer error); a commit whose result
+    is lost surfaces as an error and is not replayed. Even so, creation is
+    safe to replay after it committed: the chokepoint finds the row it made
+    (INSERT ... ON CONFLICT DO NOTHING) and writes the same limits again,
+    and the entity writes are upserts."""
+    if getattr(store, "_pool", None) is None:
+        pytest.skip("a Postgres store only; Spanner commits a named transaction once")
+    run_once = store._run_transaction
+
+    def replayed(operation):
+        run_once(operation)
+        return run_once(operation)
+
+    monkeypatch.setattr(store, "_run_transaction", replayed)
+    raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="replayed", creator_user_id=user_id, budget_strict=True,
+        limit_daily_microdollars=5_000_000,
+    )
+    monkeypatch.undo()
+    assert store.get_key_by_raw(raw).hash == key.hash
+    assert _limits(store, key.hash) == (None, 5_000_000, None, None)
+
+
+def test_a_postgres_first_write_that_loses_a_race_is_held_to_the_rule(
+        store, unique, user_id, workspace_id, monkeypatch):
+    """A first write (creation, a federated key's first copy) that read no
+    row while a concurrent one committed it: its insert does nothing (ON
+    CONFLICT DO NOTHING), and it is held to the rule against the row the
+    other wrote, as any later write is."""
+    if getattr(store, "_pool", None) is None:
+        pytest.skip("a Postgres store only")
+    import dataclasses
+
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="raced", creator_user_id=user_id, budget_strict=True,
+    )
+    store_type = type(store)
+    real = store_type._key_limit_caps_rows_tx
+    reads: list[str] = []
+
+    def read_before_the_race(conn, key_hash):
+        reads.append(key_hash)
+        return [] if len(reads) == 1 else real(conn, key_hash)
+
+    monkeypatch.setattr(store_type, "_key_limit_caps_rows_tx", staticmethod(read_before_the_race))
+    limited = dataclasses.replace(store.get_key_by_hash(key.hash), limit_daily_microdollars=5_000_000)
+    with pytest.raises(StrictKeyFirstLimit):
+        store._run_transaction(lambda conn: store._write_key_limit_caps_tx(conn, limited, create_if_missing=True))
+    assert len(reads) == 2
+    assert _mirror(store, key.hash) == (None, None, None, None)
+
+    reads.clear()
+    unchanged = store.get_key_by_hash(key.hash)
+    store._run_transaction(lambda conn: store._write_key_limit_caps_tx(conn, unchanged, create_if_missing=True))
+    assert len(reads) == 2
+    monkeypatch.undo()
+    assert _limits(store, key.hash) == (None, None, None, None)

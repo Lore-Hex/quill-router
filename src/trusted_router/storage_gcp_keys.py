@@ -155,11 +155,12 @@ class SpannerApiKeys:
             tags=dict(tags or {}),
             usage_shard_count=usage_shard_count,
         )
-        with self._io.database.batch() as batch:
-            self._io.write_entity_batch(batch, "api_key", key.hash, key)
-            # A new key's rows: an insert, which never overwrites a mirror.
+
+        def create_txn(transaction: Any) -> None:
+            # A new key's rows: an insert, which never overwrites a mirror,
+            # checked by the chokepoint before anything is buffered.
             write_key_limit_rows(
-                batch,
+                transaction,
                 self._io.param_types,
                 key_hash=key.hash,
                 columns=KEY_LIMIT_COLUMNS,
@@ -170,13 +171,21 @@ class SpannerApiKeys:
                 ),
                 mutation="insert",
             )
-            self._io.write_entity_batch(batch, "api_key_lookup", lookup_hash, {"key_id": key.hash})
-            self._io.write_entity_batch(
-                batch,
+            self._io.write_entity_tx(transaction, "api_key", key.hash, key)
+            self._io.write_entity_tx(transaction, "api_key_lookup", lookup_hash, {"key_id": key.hash})
+            self._io.write_entity_tx(
+                transaction,
                 "api_key_by_workspace",
                 _workspace_key_id(workspace_id, key.hash),
                 {"key_id": key.hash},
             )
+
+        # A read-write transaction, not a single-use batch: its commit names
+        # the transaction, so a commit the transport resends after a lost
+        # response is idempotent. A batch's commit may be applied again
+        # (CommitRequest.single_use_transaction), and the mirror's insert would
+        # then fail a create that had committed, never returning the secret.
+        run_in_transaction_with_retry(self._io.database, create_txn)
         return raw, key
 
     def get_by_hash(self, key_hash: str) -> ApiKey | None:
