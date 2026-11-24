@@ -293,3 +293,78 @@ def test_a_limitless_strict_key_never_gains_a_limit(store, unique, user_id, work
     )
     assert store.update_key(plain.hash, {"limit_daily_microdollars": 1_000_000}) is not None
     assert _limits(store, plain.hash) == (None, 1_000_000, None, None)
+
+
+def _force_entity(store, key) -> None:
+    """Write an api_key entity raw, bypassing apply_key_patch and the mirror,
+    the way an unguarded writer (a replay, a script) would."""
+    if hasattr(store, "_database") and hasattr(store, "_param_types"):
+        store._write_entity("api_key", key.hash, key)
+    else:
+        store._run_transaction(lambda conn: store._write_entity_tx(conn, "api_key", key.hash, key))
+
+
+def test_a_strict_keys_mirror_never_gains_a_limit_whatever_writes_the_entity(
+        store, unique, user_id, workspace_id):
+    """The runtime chokepoint (storage_gcp_key_limit_mirror.write_key_limit_rows
+    on Spanner, PostgresStore._write_key_limit_caps_tx on Postgres), in the
+    writing transaction: a strict key whose tr_key_limit row has no limit
+    never gains one, even when its entity was given one behind
+    apply_key_patch's back; a key that is not strict still does."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="strict-mirror", creator_user_id=user_id, budget_strict=True,
+    )
+    if _mirror(store, key.hash) is None:
+        pytest.skip("no typed counter rows on this backend; apply_key_patch is the rule")
+    forced = store.get_key_by_hash(key.hash)
+    forced.limit_daily_microdollars = 5_000_000
+    _force_entity(store, forced)
+    with pytest.raises(StrictKeyFirstLimit):
+        store.update_key(key.hash, {"include_byok_in_limit": False})
+    assert _mirror(store, key.hash) == (None, None, None, None)
+    assert store.get_key_by_hash(key.hash).include_byok_in_limit is True
+
+    _raw, plain = store.create_api_key(workspace_id=workspace_id, name="plain-mirror", creator_user_id=user_id)
+    forced = store.get_key_by_hash(plain.hash)
+    forced.limit_daily_microdollars = 5_000_000
+    _force_entity(store, forced)
+    assert store.update_key(plain.hash, {"include_byok_in_limit": False}) is not None
+    assert _mirror(store, plain.hash) == (None, 5_000_000, None, None)
+
+
+def test_a_new_key_mirrors_its_creation_limits(store, unique, user_id, workspace_id):
+    """Creation writes the mirror through the same chokepoint, as an insert
+    of a new row (Spanner) or a row created with its limits (Postgres)."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id, name="strict-created", creator_user_id=user_id, budget_strict=True,
+        limit_microdollars=7_000_000, limit_weekly_microdollars=3_000_000,
+    )
+    assert _limits(store, key.hash) == (7_000_000, None, 3_000_000, None)
+
+
+def test_a_federated_strict_key_never_gains_a_limit_on_the_peer(store, unique, user_id, workspace_id):
+    """A peer plane copies the home plane's key record; its first copy
+    creates the row with the record's limits, and a later record that would
+    give a limitless strict key a limit is refused there too."""
+    record = {
+        "lookup_hash": f"lh-strict-{unique}", "key_hash": f"kh-strict-{unique}",
+        "workspace_id": f"ws-strict-{unique}", "name": "federated-strict", "disabled": False,
+        "budget_strict": True, "include_byok_in_limit": True, "revision": "2026-11-23T00:00:00Z",
+    }
+    try:
+        key = store.upsert_federated_api_key(record)
+    except NotImplementedError:
+        pytest.skip("backend is a federation HOME plane; it does not import keys")
+    if _mirror(store, key.hash) is None:
+        pytest.skip("no typed counter rows on this backend")
+    assert _mirror(store, key.hash) == (None, None, None, None)
+    with pytest.raises(StrictKeyFirstLimit):
+        store.upsert_federated_api_key({**record, "limit_daily_microdollars": 1_000_000})
+    assert _mirror(store, key.hash) == (None, None, None, None)
+
+    limited = {**record, "key_hash": f"kh-strict2-{unique}", "lookup_hash": f"lh-strict2-{unique}",
+               "limit_monthly_microdollars": 9_000_000}
+    key = store.upsert_federated_api_key(limited)
+    assert _limits(store, key.hash) == (None, None, None, 9_000_000)
+    store.upsert_federated_api_key({**limited, "limit_monthly_microdollars": 8_000_000})
+    assert _limits(store, key.hash) == (None, None, None, 8_000_000)

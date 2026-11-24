@@ -34,6 +34,7 @@ from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_TABLE,
     key_limit_mirror_rows,
 )
+from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
 from trusted_router.storage_models import ApiKey, CreditAccount
 
 
@@ -143,14 +144,17 @@ def _seed(
     )
     store._write_entity("api_key", key.hash, key)
     with database.batch() as batch:
-        batch.insert_or_update(
-            table=KEY_LIMIT_TABLE,
+        write_key_limit_rows(
+            batch,
+            store._param_types,
+            key_hash=key.hash,
             columns=KEY_LIMIT_COLUMNS,
             values=key_limit_mirror_rows(
                 key.hash,
                 key,
                 store._spanner.COMMIT_TIMESTAMP,
             ),
+            mutation="insert",
         )
     return store, database, key
 

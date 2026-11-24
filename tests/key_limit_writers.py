@@ -1,129 +1,424 @@
-"""A structural scanner of every writer of an API key's spend configuration.
+"""A structural scanner of every writer of ``tr_key_limit``.
 
-What can change a key's limits, their ``tr_key_limit`` mirrors, or whether
-the mirror row exists, in this repository:
+``tr_key_limit``'s limit columns (limit_micro, day_limit_micro,
+week_limit_micro, month_limit_micro) are what a strict key's admission reads:
+Python's strict reserve and the fast path edge. Every write of them goes
+through one guarded function per backend, which refuses in the writing
+transaction a strict key's mirror going from every limit unset to any set
+(storage_gcp_key_limit_mirror.write_key_limit_rows on Spanner,
+PostgresStore._write_key_limit_caps_tx on Postgres). This scanner finds every
+other place that could write the table, so that claim does not rest on a
+list kept by hand:
 
-- an in-process change of an ``ApiKey``'s limit fields: an attribute
-  assignment, a ``setattr`` (a literal, an f-string, or a variable in a
-  function that spells a limit field), or ``replace(...)`` with one;
-- a write to the ``tr_entities`` table (where ``api_key`` bodies live) or to
-  ``tr_key_limit``, by any means:
-  - a Spanner mutation (``insert``, ``update``, ``insert_or_update``,
-    ``replace``, ``delete`` and their ``_map`` forms), its table a literal,
-    a constant, a local variable, an attribute such as ``entity_table``, or
-    unresolved;
-  - a mutation payload: a dict literal whose ``table`` is one of them;
-  - SQL DML in any case (``INSERT``, ``INSERT OR UPDATE``, ``UPDATE``,
-    ``MERGE``, ``UPSERT``, ``REPLACE``, ``DELETE``) in a string, an
-    f-string, a shell script, a SQL file or Go source, and DML on a table an
-    f-string fills in;
-- a call of an entity writer (a function that holds such a write, or calls
-  one, and takes a ``kind`` parameter) whose kind is ``"api_key"`` or not a
-  literal, and any write-named call given ``"api_key"``.
+- every place code names ``tr_key_limit``, in any case or quoting: in Python
+  a string (DML in any case, the bare table name, a piece of an f-string, a
+  concatenation, a %-format or a .format), or a constant or variable holding
+  one (local, module or class, and across modules by name); in a shell, SQL,
+  Terraform or YAML file, or the fast path's Go, any line that is not a
+  comment;
+- every mutation or DML whose table it cannot resolve: a mutation call (by
+  verb, through an alias, with ``**kwargs``, or any call given ``table=``)
+  whose table is not a known string, and DML whose table is filled in at run
+  time (an f-string, %-format, .format or concatenation, a shell variable, a
+  Go variable or format).
 
-Each finding is (style, path, qualified name). tests/test_key_limit_writer_inventory.py
-holds every one to a reviewed list.
+Reads (SELECT, ``FOR UPDATE`` locks, DDL) and messages that only mention the
+table are not findings. A finding is (style, path, qualified name):
+
+  key_limit.sql        DML naming the table
+  key_limit.name       the bare table name, or a constant or variable holding it
+  key_limit.text       a non-Python file naming the table
+  mutation.unresolved  a mutation whose table is not a known string
+  sql.dynamic          DML whose table is filled in at run time
+
+limit_column_writers() narrows them to the scopes that may write a limit
+column: a mutation or payload whose columns include one or are not known, or
+DML assigning one or a column filled in at run time.
+
+api_key entity writers are out of scope by design: whatever writes an entity,
+the mirror changes only through the guarded functions above.
 """
 
 from __future__ import annotations
 
 import ast
+import itertools
 import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-LIMIT_FIELDS = frozenset(
-    {"limit_microdollars", "limit_daily_microdollars", "limit_weekly_microdollars", "limit_monthly_microdollars"}
+TABLE = "tr_key_limit"
+LIMIT_COLUMNS = frozenset({"limit_micro", "day_limit_micro", "week_limit_micro", "month_limit_micro"})
+
+_TOKEN = re.compile(r"(?<![A-Za-z0-9_])tr_key_limit(?![A-Za-z0-9_])", re.IGNORECASE)
+_LOCK = re.compile(r"\bfor\s+update\b", re.IGNORECASE)
+_DML_WORD = re.compile(r"\b(?:insert|update|delete|merge|upsert|replace)\b", re.IGNORECASE)
+_READ_WORD = re.compile(r"\bselect\b|\b(?:create|alter|drop)\s+(?:table|index|unique|null_filtered)\b",
+                        re.IGNORECASE)
+_DML = (r"(?:insert\s+or\s+update(?:\s+into)?|insert\s+or\s+ignore(?:\s+into)?|insert\s+into|insert|"
+        r"update|merge(?:\s+into)?|upsert(?:\s+into)?|replace\s+into|delete\s+from|delete)")
+_HINT = r"(?:@\{[^}]*\}\s*)?"
+_PLACEHOLDER = r"""["'`]?(?:\{[^}]*\}|%s|%\(\w+\)s|\$\{?\w+\}?)["'`]?"""
+# DML whose table is filled in at run time, shaped as SQL (so a message such
+# as "could not update %s" is not one).
+_DYNAMIC = re.compile(
+    r"\b(?:update\s+" + _HINT + _PLACEHOLDER + r"\s+set\b"
+    r"|insert(?:\s+or\s+\w+)?\s+into\s+" + _HINT + _PLACEHOLDER
+    + r"|insert\s+or\s+update\s+" + _HINT + _PLACEHOLDER
+    + r"|insert\s+" + _HINT + _PLACEHOLDER + r"\s*\("
+    + r"|delete\s+from\s+" + _HINT + _PLACEHOLDER
+    + r"|delete\s+" + _HINT + _PLACEHOLDER + r"\s+where\b"
+    + r"|(?:merge|upsert)\s+(?:into\s+)?" + _HINT + _PLACEHOLDER
+    + r"|replace\s+into\s+" + _HINT + _PLACEHOLDER + r")",
+    re.IGNORECASE,
 )
-TABLES = {"tr_entities": "entities", "tr_key_limit": "key_limit"}
-# Attributes the stores hold their table names in.
-TABLE_ATTRIBUTES = {"entity_table": "tr_entities", "ENTITY_TABLE": "tr_entities", "KEY_LIMIT_TABLE": "tr_key_limit"}
-MUTATION_VERBS = frozenset(
-    {"insert", "update", "insert_or_update", "replace", "delete", "insert_map", "update_map", "replace_map",
-     "insert_or_update_map"}
-)
+# A string that is only the head of such DML ("UPDATE ", "DELETE FROM "),
+# its table appended at run time.
+_DYNAMIC_HEAD = re.compile(r"^\s*" + _HINT + _DML + r"""\s+["'`]?$""", re.IGNORECASE)
+_TABLE_REF = r"""[`"']?tr_key_limit[`"']?"""
+_SET = re.compile(r"\bset\b(.*?)(?=\bwhere\b|\bthen\s+return\b|\breturning\b|\bon\s+conflict\b|;|$)",
+                  re.IGNORECASE | re.DOTALL)
+_INSERT_COLUMNS = re.compile(r"\binsert\b(?:\s+or\s+\w+)?(?:\s+into)?\s+" + _HINT + _TABLE_REF + r"\s*\(([^)]*)\)",
+                             re.IGNORECASE)
+_STATEMENT_ON_TABLE = re.compile(r"\b" + _DML + r"\s+" + _HINT + _TABLE_REF, re.IGNORECASE)
+_GO_MUTATION = re.compile(r"spanner\.(?:Insert|Update|InsertOrUpdate|Replace|Delete)\w*\(\s*([^,\s)]+)")
+
+MUTATION_VERBS = frozenset({"insert_or_update", "insert_or_update_map", "insert_map", "update_map", "replace_map"})
+AMBIGUOUS_VERBS = {"insert": 3, "update": 3, "replace": 3, "delete": 2}
 MUTATION_KEYWORDS = frozenset({"table", "columns", "values", "keyset"})
-WRITE_WORDS = ("write", "insert", "upsert", "update", "replace", "put", "save", "store", "apply")
+MAX_RENDERINGS = 32
 
-_DML = (
-    r"(?:insert\s+or\s+update(?:\s+into)?|insert\s+(?:or\s+ignore\s+)?into|update|merge(?:\s+into)?|"
-    r"upsert(?:\s+into)?|replace\s+into|delete\s+from|delete)"
-)
-SQL_WRITE = re.compile(_DML + r"\s+(?:@\{[^}]*\}\s*)?(tr_entities|tr_key_limit)\b", re.IGNORECASE)
-SQL_DYNAMIC = re.compile(_DML + r"\s+(?:@\{[^}]*\}\s*)?\{\}", re.IGNORECASE)
-GO_MUTATION = re.compile(r"spanner\.(?:Insert|Update|InsertOrUpdate|Replace|Delete)\w*\(\s*\"(tr_entities|tr_key_limit)\"")
-
-PY_TREES = ("src/trusted_router", "scripts")
-TEXT_TREES = ("src/trusted_router", "scripts", "infra")
-TEXT_SUFFIXES = (".sh", ".sql")
+PY_EXCLUDED = ("tests", "tests-e2e", ".venv", "node_modules", ".git", "docs", "frontend")
+TEXT_SUFFIXES = (".sh", ".sql", ".tf", ".yaml", ".yml", ".go")
+TEXT_EXCLUDED = (*PY_EXCLUDED, "proofs")
 
 
-def _qualnames(tree: ast.AST) -> tuple[dict[int, str], dict[int, ast.AST], dict[int, str]]:
-    """Each node's enclosing qualified name, its innermost function, and its
-    innermost class's name."""
-    names: dict[int, str] = {}
-    scopes: dict[int, ast.AST] = {}
-    classes: dict[int, str] = {}
-
-    def visit(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                inner = f"{prefix}.{child.name}" if prefix else child.name
-                for sub in ast.walk(child):
-                    names[id(sub)] = inner
-                    if isinstance(child, ast.ClassDef):
-                        classes[id(sub)] = child.name
-                    else:
-                        scopes[id(sub)] = child
-                visit(child, inner)
-            else:
-                visit(child, prefix)
-
-    visit(tree, "")
-    return names, scopes, classes
+def _is_docstring(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
+    parent = parents.get(id(node))
+    return isinstance(parent, ast.Expr)
 
 
-def _module_constants(trees: Iterable[ast.AST]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for tree in trees:
-        for node in getattr(tree, "body", []):
-            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(
-                    node.value.value, str):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        out.setdefault(target.id, node.value.value)
-    return out
+def names_table(text: str) -> bool:
+    return _TOKEN.search(text) is not None
 
 
-def _local_constants(scope: ast.AST | None) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if scope is None:
-        return out
-    for node in ast.walk(scope):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    out[target.id] = node.value.value
-    return out
-
-
-def _literal_text(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.JoinedStr):
-        return "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in node.values)
+def classify(text: str) -> str | None:
+    """What a string naming the table is: DML (``sql``), the bare table name
+    (``name``), or None for a read, DDL or a message that mentions it."""
+    if not names_table(text):
+        return None
+    unlocked = _LOCK.sub(" ", text)
+    if _DML_WORD.search(unlocked):
+        return "sql"
+    if _READ_WORD.search(unlocked):
+        return None
+    if text.strip(" \t\r\n'\"`").lower() == TABLE:
+        return "name"
     return None
 
 
-def _is_limit_attr_name(node: ast.AST) -> bool:
-    if isinstance(node, ast.Constant):
-        return node.value in LIMIT_FIELDS
-    if isinstance(node, ast.JoinedStr):
-        text = "".join(v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str))
-        return text.startswith("limit_") and text.endswith("_microdollars")
+def _split_top_level(text: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in text:
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _column(text: str) -> str:
+    return text.strip(" \t\r\n'\"`").lower()
+
+
+def assigns_limit_column(text: str) -> bool:
+    """Whether DML naming the table may assign a limit column: one named in
+    a SET clause or an INSERT column list, a target filled in at run time, or
+    any limit column in a MERGE, UPSERT or REPLACE statement."""
+    if not names_table(text) or classify(text) != "sql":
+        return False
+    lowered = text.lower()
+    if re.search(r"\b(?:merge|upsert|replace\s+into)\b", lowered):
+        return any(re.search(rf"\b{column}\b", lowered) for column in LIMIT_COLUMNS) or "{}" in text
+    for match in _SET.finditer(text):
+        for assignment in _split_top_level(match.group(1)):
+            if "=" not in assignment:
+                # A whole assignment filled in at run time.
+                if re.search(r"\{|%s|%\(|\$", assignment):
+                    return True
+                continue
+            target = _column(assignment.split("=", 1)[0])
+            if target in LIMIT_COLUMNS or "{" in target or "%" in target or "$" in target:
+                return True
+    for match in _INSERT_COLUMNS.finditer(text):
+        columns = [_column(c) for c in match.group(1).split(",")]
+        if any(c in LIMIT_COLUMNS or "{" in c or "%" in c or "$" in c for c in columns):
+            return True
     return False
+
+
+def is_dynamic(text: str) -> bool:
+    return _DYNAMIC.search(text) is not None
+
+
+Scope = ast.AST
+
+
+class _Index:
+    """Assignments across every scanned module, by name: module and class
+    constants, ``self.x = ...`` attributes and imported names resolve through
+    it; a name assigned in several places takes every value."""
+
+    def __init__(self, trees: Iterable[ast.Module]) -> None:
+        self.globals: dict[str, list[ast.AST]] = {}
+        for tree in trees:
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    for target in targets:
+                        if isinstance(target, ast.Attribute):
+                            self.globals.setdefault(target.attr, []).append(node.value)
+            for node in tree.body:
+                self._module_assign(node)
+                if isinstance(node, ast.ClassDef):
+                    for item in node.body:
+                        self._module_assign(item)
+
+    def _module_assign(self, node: ast.AST) -> None:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    self.globals.setdefault(target.id, []).append(node.value)
+
+
+class _Module:
+    def __init__(self, path: Path, tree: ast.Module, index: _Index) -> None:
+        self.path = path
+        self.tree = tree
+        self.index = index
+        self.parents: dict[int, ast.AST] = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                self.parents[id(child)] = node
+        self.names: dict[int, str] = {}
+        self.functions: dict[int, list[ast.AST]] = {}
+        self._qualify(tree, "", [])
+        self._locals: dict[int, dict[str, list[ast.AST]]] = {}
+        self._memo: dict[int, list[str] | None] = {}
+
+    def _qualify(self, node: ast.AST, prefix: str, stack: list[ast.AST]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                inner = f"{prefix}.{child.name}" if prefix else child.name
+                inner_stack = stack + [child] if not isinstance(child, ast.ClassDef) else stack
+                for sub in ast.walk(child):
+                    self.names[id(sub)] = inner
+                    self.functions[id(sub)] = inner_stack
+                self._qualify(child, inner, inner_stack)
+            elif not prefix and isinstance(child, (ast.Assign, ast.AnnAssign)):
+                targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                label = next((t.id for t in targets if isinstance(t, ast.Name)), "")
+                for sub in ast.walk(child):
+                    self.names[id(sub)] = f"<module>.{label}" if label else "<module>"
+                    self.functions.setdefault(id(sub), [])
+            else:
+                self._qualify(child, prefix, stack)
+
+    @property
+    def relative(self) -> str:
+        return self.path.relative_to(ROOT).as_posix() if self.path.is_relative_to(ROOT) else self.path.name
+
+    def where(self, node: ast.AST) -> str:
+        return self.names.get(id(node), "<module>")
+
+    def _scope_locals(self, function: ast.AST) -> dict[str, list[ast.AST]]:
+        if id(function) not in self._locals:
+            found: dict[str, list[ast.AST]] = {}
+            for node in ast.walk(function):
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    for target in targets:
+                        for name in ast.walk(target):
+                            if isinstance(name, ast.Name):
+                                found.setdefault(name.id, []).append(
+                                    node.value if isinstance(target, ast.Name) else ast.Constant(value=None))
+                elif isinstance(node, (ast.For, ast.comprehension)):
+                    for name in ast.walk(node.target):
+                        if isinstance(name, ast.Name):
+                            found.setdefault(name.id, []).append(ast.Starred(value=node.iter))
+                elif isinstance(node, ast.NamedExpr):
+                    found.setdefault(node.target.id, []).append(node.value)
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                arguments = function.args
+                for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                            *([arguments.vararg] if arguments.vararg else []),
+                            *([arguments.kwarg] if arguments.kwarg else [])]:
+                    found.setdefault(arg.arg, []).append(ast.Name(id="<parameter>"))
+            self._locals[id(function)] = found
+        return self._locals[id(function)]
+
+    def bindings(self, node: ast.AST, name: str) -> list[ast.AST] | None:
+        for function in reversed(self.functions.get(id(node), [])):
+            local = self._scope_locals(function)
+            if name in local:
+                return local[name]
+        return self.index.globals.get(name)
+
+    # -- values --------------------------------------------------------
+
+    def values(self, node: ast.AST, seen: frozenset[int] = frozenset()) -> list[str] | None:
+        """The strings an expression may be, flattened through tuples, lists,
+        sets, dicts (their keys) and starred items, or None when one is not
+        known."""
+        if id(node) in self._memo:
+            return self._memo[id(node)]
+        if id(node) in seen:
+            return None
+        result = self._values(node, seen | {id(node)})
+        if not seen:
+            self._memo[id(node)] = result
+        return result
+
+    def _values(self, node: ast.AST, seen: frozenset[int]) -> list[str] | None:
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bytes):
+                return [node.value.decode("utf-8", "replace")]
+            return [node.value] if isinstance(node.value, str) else []
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+            elements = node.keys if isinstance(node, ast.Dict) else node.elts
+            out: list[str] = []
+            for element in elements:
+                inner = self.values(element, seen) if element is not None else None
+                if inner is None:
+                    return None
+                out.extend(inner)
+            return out
+        if isinstance(node, ast.Starred):
+            return self.values(node.value, seen)
+        if isinstance(node, ast.IfExp):
+            body, orelse = self.values(node.body, seen), self.values(node.orelse, seen)
+            return None if body is None or orelse is None else body + orelse
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and (
+                self._is_sequence(node.left, seen) or self._is_sequence(node.right, seen)):
+            left, right = self.values(node.left, seen), self.values(node.right, seen)
+            return None if left is None or right is None else left + right
+        if isinstance(node, (ast.JoinedStr, ast.BinOp)) or (
+                isinstance(node, ast.Call) and _callee(node) in _STRING_METHODS
+                and isinstance(node.func, ast.Attribute)):
+            texts = self.texts(node, seen)
+            return None if any("{}" in text for text in texts) else texts
+        if isinstance(node, ast.Name):
+            return self._bound(self.bindings(node, node.id), seen)
+        if isinstance(node, ast.Attribute):
+            return self._bound(self.index.globals.get(node.attr), seen)
+        return None
+
+    def _bound(self, bound: list[ast.AST] | None, seen: frozenset[int]) -> list[str] | None:
+        if not bound:
+            return None
+        out: list[str] = []
+        for value in bound:
+            if isinstance(value, ast.Name) and value.id == "<parameter>":
+                return None
+            inner = self.values(value, seen)
+            if inner is None:
+                return None
+            out.extend(inner)
+        return out
+
+    def _is_sequence(self, node: ast.AST, seen: frozenset[int]) -> bool:
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+            return True
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self._is_sequence(node.left, seen) or self._is_sequence(node.right, seen)
+        if isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in seen:
+            bound = (self.bindings(node, node.id) if isinstance(node, ast.Name)
+                     else self.index.globals.get(node.attr)) or []
+            return any(self._is_sequence(value, seen | {id(node)}) for value in bound)
+        return False
+
+    def texts(self, node: ast.AST, seen: frozenset[int] = frozenset()) -> list[str]:
+        """Renderings of a string expression, with ``{}`` for each part that
+        is not known (at most MAX_RENDERINGS)."""
+
+        def part(sub: ast.AST) -> list[str]:
+            resolved = self.values(sub, seen)
+            if not resolved or len(resolved) > MAX_RENDERINGS:
+                return ["{}"]
+            return resolved
+
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+            return self.values(node, seen) or [""]
+        if isinstance(node, ast.JoinedStr):
+            return _combine([part(v.value) if isinstance(v, ast.FormattedValue) else self.texts(v, seen)
+                             for v in node.values])
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return _combine([self.texts(node.left, seen), self.texts(node.right, seen)])
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            arguments = node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
+            rendered = [
+                _percent(template, list(choice))
+                for template in self.texts(node.left, seen)
+                for choice in itertools.islice(itertools.product(*(part(a) for a in arguments)), MAX_RENDERINGS)
+            ]
+            return rendered[:MAX_RENDERINGS] or ["{}"]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            method = node.func.attr
+            if method == "format":
+                positional = [part(a) for a in node.args]
+                named = {kw.arg: part(kw.value) for kw in node.keywords if kw.arg}
+                rendered = []
+                for template in self.texts(node.func.value, seen):
+                    for choice in itertools.islice(itertools.product(*positional), MAX_RENDERINGS):
+                        rendered.append(_brace(template, list(choice), {k: v[0] for k, v in named.items()}))
+                return rendered[:MAX_RENDERINGS] or ["{}"]
+            if method in ("upper", "lower", "strip", "lstrip", "rstrip"):
+                return [getattr(text, method)() for text in self.texts(node.func.value, seen)]
+        resolved = self.values(node, seen)
+        return resolved if resolved else ["{}"]
+
+
+_STRING_METHODS = frozenset({"format", "upper", "lower", "strip", "lstrip", "rstrip"})
+
+
+def _brace(template: str, positional: list[str], named: dict[str, str]) -> str:
+    def substitute(match: re.Match[str]) -> str:
+        field = match.group(1)
+        if field == "":
+            return positional.pop(0) if positional else "{}"
+        if field.isdigit():
+            index = int(field)
+            return positional[index] if index < len(positional) else "{}"
+        return named.get(field, "{}")
+
+    return re.sub(r"\{(\w*)[^}]*\}", substitute, template)
+
+
+def _combine(pieces: list[list[str]]) -> list[str]:
+    out = []
+    for choice in itertools.islice(itertools.product(*pieces), MAX_RENDERINGS):
+        out.append("".join(choice))
+    return out or [""]
+
+
+def _percent(template: str, arguments: list[str]) -> str:
+    def substitute(match: re.Match[str]) -> str:
+        if match.group(0) == "%%":
+            return "%"
+        return arguments.pop(0) if arguments else "{}"
+
+    return re.sub(r"%%|%(?:\(\w+\))?[sdr]", substitute, template)
 
 
 def _callee(call: ast.Call) -> str:
@@ -131,218 +426,229 @@ def _callee(call: ast.Call) -> str:
     return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
 
 
-class _Module:
-    def __init__(self, path: Path, constants: dict[str, str]) -> None:
-        self.path = path
-        self.tree = ast.parse(path.read_text(encoding="utf-8"))
-        self.names, self.scopes, self.classes = _qualnames(self.tree)
-        self.constants = constants
-        self._locals: dict[int, dict[str, str]] = {}
-
-    def where(self, node: ast.AST) -> str:
-        return self.names.get(id(node), "<module>")
-
-    def resolve(self, node: ast.AST) -> str | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        if isinstance(node, ast.Name):
-            scope = self.scopes.get(id(node))
-            if id(scope) not in self._locals:
-                self._locals[id(scope)] = _local_constants(scope)
-            return self._locals[id(scope)].get(node.id, self.constants.get(node.id))
-        if isinstance(node, ast.Attribute):
-            return TABLE_ATTRIBUTES.get(node.attr, self.constants.get(node.attr))
-        return None
-
-
-def _table_writes(m: _Module) -> Iterator[tuple[str, ast.AST]]:
-    """The module's writes to tr_entities or tr_key_limit: (style, node).
-    A style is mutation.<table> or sql.<table>, with _delete for a delete;
-    mutation.unresolved for a mutation whose table is not a literal, a
-    constant or a known attribute; sql.dynamic for DML on a table an
-    f-string fills in."""
+def _top_level_strings(m: _Module) -> Iterator[ast.AST]:
+    """Each string expression not inside a larger one, docstrings aside."""
     for node in ast.walk(m.tree):
-        if isinstance(node, ast.Call) and _callee(node) in MUTATION_VERBS:
-            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-            table = keywords.get("table", node.args[0] if node.args else None)
-            value = m.resolve(table) if table is not None else None
-            delete = "_delete" if _callee(node) == "delete" else ""
-            if value in TABLES:
-                yield "mutation." + TABLES[value] + delete, node
-            elif MUTATION_KEYWORDS & keywords.keys() and value is None and "table" in keywords:
-                yield "mutation.unresolved", node
-        elif isinstance(node, ast.Dict):
-            # A mutation payload carries values; a read request carries a
-            # key set and is no write.
-            keys = {m.resolve(key) for key in node.keys if key is not None}
-            for key, value in zip(node.keys, node.values, strict=True):
-                table = m.resolve(value) if key is not None and m.resolve(key) == "table" else None
-                if table in TABLES and "values" in keys:
-                    yield "mutation." + TABLES[table], node
-        text = _literal_text(node)
-        if text is not None:
-            for match in SQL_WRITE.finditer(text):
-                delete = "_delete" if match.group(0).lower().startswith("delete") else ""
-                yield "sql." + TABLES[match.group(1).lower()] + delete, node
-            if isinstance(node, ast.JoinedStr) and SQL_DYNAMIC.search(text):
-                yield "sql.dynamic", node
+        if not (isinstance(node, (ast.JoinedStr, ast.BinOp)) or (
+                isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes))) or (
+                isinstance(node, ast.Call) and _callee(node) == "format")):
+            continue
+        parent = m.parents.get(id(node))
+        grandparent = m.parents.get(id(parent)) if parent is not None else None
+        if isinstance(parent, (ast.JoinedStr, ast.FormattedValue)) or (
+                isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Add, ast.Mod))) or (
+                isinstance(parent, ast.Attribute) and isinstance(grandparent, ast.Call)
+                and _callee(grandparent) == "format"):
+            continue
+        if isinstance(node, ast.BinOp) and not isinstance(node.op, (ast.Add, ast.Mod)):
+            continue
+        if isinstance(node, ast.Constant) and _is_docstring(node, m.parents):
+            continue
+        yield node
 
 
-Function = ast.FunctionDef | ast.AsyncFunctionDef
+class _Finding:
+    __slots__ = ("limit", "node", "style")
+
+    def __init__(self, style: str, node: ast.AST, limit: bool) -> None:
+        self.style, self.node, self.limit = style, node, limit
 
 
-def _kind_position(fn: Function) -> int | None:
-    params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
-    if params and params[0] in ("self", "cls"):
-        params = params[1:]
-    if "kind" in params:
-        return params.index("kind")
-    if any(a.arg == "kind" for a in fn.args.kwonlyargs):
-        return -1
-    return None
-
-
-def _kind_arguments(call: ast.Call, positions: set[int]) -> list[ast.AST]:
-    out = [kw.value for kw in call.keywords if kw.arg == "kind"]
-    out.extend(call.args[p] for p in positions if 0 <= p < len(call.args))
-    return out
-
-
-# Method names an I/O object also has (a file's write, a dict's update): an
-# attribute call of one matches an entity writer only through self or cls,
-# in the writer's own class.
-AMBIGUOUS_METHODS = frozenset({"write", "read", "get", "update", "delete", "insert", "add", "put", "set", "run",
-                               "execute", "append", "extend", "replace", "close", "flush"})
-
-Writer = tuple[str, str | None]
-
-
-def _call_targets(m: _Module, call: ast.Call, writers: dict[Writer, set[int]]) -> list[Writer]:
-    """The entity writers a call may reach: a bare name a plain function, an
-    attribute through self or cls a method of the caller's class, any other
-    attribute any writer method of that name but an ambiguous one."""
+def _mutation_parts(m: _Module, call: ast.Call) -> tuple[ast.AST | None, ast.AST | None, bool] | None:
+    """(table, columns, is_delete) of a call that is a mutation, else None.
+    A missing part (None) is one that is not known."""
     name = _callee(call)
-    if not isinstance(call.func, ast.Attribute):
-        return [(name, None)] if (name, None) in writers else []
-    receiver = call.func.value
-    if isinstance(receiver, ast.Name) and receiver.id in ("self", "cls"):
-        own = (name, m.classes.get(id(call)))
-        return [own] if own in writers else []
-    if name in AMBIGUOUS_METHODS:
-        return []
-    return [w for w in writers if w[0] == name and w[1] is not None]
+    if isinstance(call.func, ast.Name):
+        for value in m.bindings(call, name) or []:
+            if isinstance(value, ast.Attribute):
+                name = value.attr
+    keywords: dict[str, ast.AST] = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+    spread = [kw.value for kw in call.keywords if kw.arg is None]
+    payloads = [_dict_fields(m, value) for value in spread]
+    signature = AMBIGUOUS_VERBS.get(name)
+    # insert/update/replace/delete are also list, dict and str methods: one
+    # is a mutation when it is called like one (mutation keywords, a spread
+    # dict with a table, or a mutation's positional shape: columns a
+    # sequence of names, or a key set to delete).
+    is_mutation = (
+        name in MUTATION_VERBS
+        or (signature is not None and (
+            MUTATION_KEYWORDS & keywords.keys()
+            or any("table" in payload for payload in payloads)
+            or (len(call.args) == signature and _positional_shape(m, name, call.args))))
+        or ("table" in keywords and (MUTATION_KEYWORDS - {"table"}) & keywords.keys())
+    )
+    if not is_mutation:
+        return None
+    for payload in payloads:
+        for key, item in payload.items():
+            keywords.setdefault(key, item)
+        if not payload:
+            return None, None, name == "delete"
+    table = keywords.get("table", call.args[0] if call.args else None)
+    columns = keywords.get("columns", call.args[1] if len(call.args) > 1 and name != "delete" else None)
+    return table, columns, name == "delete"
 
 
-def _entity_writers(modules: list[_Module]) -> dict[Writer, set[int]]:
-    """(function name, its class or None) -> the positions its kind
-    parameter takes, for every function that takes a kind parameter and
-    writes tr_entities itself (a delete aside), or passes its own kind on to
-    such a function; to a fixed point."""
-    functions: list[tuple[_Module, Function, Writer, list[ast.Call]]] = []
-    for m in modules:
-        for fn in ast.walk(m.tree):
-            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call) and m.scopes.get(id(c)) is fn]
-                cls = m.classes.get(id(fn.body[0])) if fn.body else None
-                in_class = cls is not None and m.classes.get(id(fn)) == cls
-                functions.append((m, fn, (fn.name, cls if in_class else None), calls))
-    writing = {
-        id(m.scopes.get(id(node))) for m in modules for style, node in _table_writes(m)
-        if style in ("mutation.entities", "sql.entities")
-    }
-    writers: dict[Writer, set[int]] = {}
-    changed = True
-    while changed:
-        changed = False
-        for m, fn, writer, calls in functions:
-            position = _kind_position(fn)
-            if position is None or position in writers.get(writer, set()):
-                continue
-            passes_kind = any(
-                isinstance(arg, ast.Name) and arg.id == "kind"
-                for call in calls
-                for target in _call_targets(m, call, writers)
-                for arg in _kind_arguments(call, writers[target])
-            )
-            if id(fn) in writing or passes_kind:
-                writers.setdefault(writer, set()).add(position)
-                changed = True
-    return writers
+def _positional_shape(m: _Module, name: str, args: list[ast.expr]) -> bool:
+    if name == "delete":
+        keys = args[1]
+        label = _callee(keys) if isinstance(keys, ast.Call) else (
+            keys.id if isinstance(keys, ast.Name) else keys.attr if isinstance(keys, ast.Attribute) else "")
+        return "keyset" in label.lower().replace("_", "")
+    return m._is_sequence(args[1], frozenset()) and bool(m.values(args[1]))
 
 
-def _python_findings(modules: list[_Module]) -> Iterator[tuple[str, str, str]]:
-    writers = _entity_writers(modules)
-    for m in modules:
-        relative = m.path.relative_to(ROOT).as_posix() if m.path.is_relative_to(ROOT) else m.path.name
-        for style, node in _table_writes(m):
-            yield style, relative, m.where(node)
-        for node in ast.walk(m.tree):
-            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if any(isinstance(sub, ast.Attribute) and sub.attr in LIMIT_FIELDS
-                       for target in targets for sub in ast.walk(target)):
-                    yield "assign", relative, m.where(node)
-            if not isinstance(node, ast.Call):
-                continue
-            name = _callee(node)
-            if name == "setattr" and len(node.args) >= 2:
-                scope = m.scopes.get(id(node))
-                spelled = scope is not None and any(_is_limit_attr_name(sub) for sub in ast.walk(scope))
-                if _is_limit_attr_name(node.args[1]) or (not isinstance(node.args[1], ast.Constant) and spelled):
-                    yield "setattr", relative, m.where(node)
-            if name == "replace" and any(kw.arg in LIMIT_FIELDS for kw in node.keywords):
-                yield "replace", relative, m.where(node)
-            targets = _call_targets(m, node, writers)
-            if targets:
-                positions = set().union(*(writers[target] for target in targets))
-                scope = m.scopes.get(id(node))
-                own_kind = isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and _kind_position(
-                    scope) is not None
-                for argument in _kind_arguments(node, positions):
-                    kind = m.resolve(argument)
-                    if kind == "api_key":
-                        yield "entity.api_key", relative, m.where(node)
-                    elif kind is None and not (own_kind and isinstance(argument, ast.Name)
-                                               and argument.id == "kind"):
-                        yield "entity.unresolved", relative, m.where(node)
-            elif any(word in name.lower() for word in WRITE_WORDS) and any(
-                    m.resolve(a) == "api_key" for a in [*node.args, *(kw.value for kw in node.keywords)]):
-                yield "entity.api_key", relative, m.where(node)
+def _dict_fields(m: _Module, node: ast.AST) -> dict[str, ast.AST]:
+    """The literal fields of a dict a ``**`` spreads: a dict display or
+    dict(...) bound to the name, and ``name['key'] = value`` after it."""
+    fields: dict[str, ast.AST] = {}
+    sources = m.bindings(node, node.id) or [] if isinstance(node, ast.Name) else [node]
+    for source in sources:
+        if isinstance(source, ast.Dict):
+            for key, value in zip(source.keys, source.values, strict=True):
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    fields[key.value] = value
+        elif isinstance(source, ast.Call) and _callee(source) == "dict":
+            fields.update({kw.arg: kw.value for kw in source.keywords if kw.arg})
+    if isinstance(node, ast.Name):
+        for function in m.functions.get(id(node), [])[-1:]:
+            for sub in ast.walk(function):
+                if isinstance(sub, ast.Assign):
+                    for target in sub.targets:
+                        if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                                and target.value.id == node.id and isinstance(target.slice, ast.Constant)
+                                and isinstance(target.slice.value, str)):
+                            fields[target.slice.value] = sub.value
+    return fields
 
 
-def _text_findings(path: Path) -> Iterator[tuple[str, str, str]]:
-    relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.name
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for match in SQL_WRITE.finditer(text):
-        delete = "_delete" if match.group(0).lower().startswith("delete") else ""
-        yield "sql." + TABLES[match.group(1).lower()] + delete, relative, "<file>"
+def _writes_limit_columns(m: _Module, columns: ast.AST | None) -> bool:
+    if columns is None:
+        return True
+    resolved = m.values(columns)
+    return resolved is None or any(c.lower() in LIMIT_COLUMNS for c in resolved)
+
+
+def _python_findings(m: _Module) -> Iterator[_Finding]:
+    strings = list(_top_level_strings(m))
+    for node in strings:
+        for text in m.texts(node):
+            kind = classify(text)
+            if kind is not None:
+                yield _Finding("key_limit." + kind, node, kind == "sql" and assigns_limit_column(text))
+            if _DYNAMIC.search(text) or _DYNAMIC_HEAD.match(text):
+                yield _Finding("sql.dynamic", node, True)
+    inside_strings = {id(sub) for node in strings for sub in ast.walk(node) if sub is not node}
+    for node in ast.walk(m.tree):
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) and (
+                id(node) not in inside_strings):
+            resolved = m.values(node)
+            if resolved and any(classify(value) == "name" for value in resolved):
+                yield _Finding("key_limit.name", node, False)
+        if isinstance(node, ast.Call):
+            parts = _mutation_parts(m, node)
+            if parts is not None:
+                table, columns, delete = parts
+                resolved = m.values(table) if table is not None else None
+                limit = not delete and _writes_limit_columns(m, columns)
+                if resolved is None:
+                    yield _Finding("mutation.unresolved", node, limit)
+                elif any(names_table(value) for value in resolved):
+                    yield _Finding("key_limit.name", node, limit)
+        if isinstance(node, ast.Dict):
+            fields: dict[str | None, ast.AST] = {}
+            for key, value in zip(node.keys, node.values, strict=True):
+                names = m.values(key) if key is not None else None
+                fields[names[0] if names else None] = value
+            table = fields.get("table")
+            if table is not None and "values" in fields:
+                resolved = m.values(table)
+                if resolved is None:
+                    yield _Finding("mutation.unresolved", node, _writes_limit_columns(m, fields.get("columns")))
+                elif any(names_table(value) for value in resolved):
+                    yield _Finding("key_limit.name", node, _writes_limit_columns(m, fields.get("columns")))
+
+
+def _strip_comments(path: Path, text: str) -> str:
+    markers = {".go": ("//",), ".sql": ("--",), ".tf": ("#", "//")}.get(path.suffix, ("#",))
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(markers))
+
+
+def _text_findings(path: Path) -> Iterator[tuple[str, bool]]:
+    text = _strip_comments(path, path.read_text(encoding="utf-8", errors="replace"))
+    if names_table(text):
+        limit = False
+        for match in _STATEMENT_ON_TABLE.finditer(text):
+            statement = text[match.start():].split(";", 1)[0]
+            limit = limit or assigns_limit_column(statement)
+        if path.suffix == ".go" and _GO_MUTATION.search(text):
+            limit = limit or any(re.search(rf'"{column}"', text) for column in LIMIT_COLUMNS)
+        yield "key_limit.text", limit
+    if _DYNAMIC.search(text):
+        yield "sql.dynamic", True
     if path.suffix == ".go":
-        for match in GO_MUTATION.finditer(text):
-            yield "mutation." + TABLES[match.group(1)], relative, "<file>"
+        for match in _GO_MUTATION.finditer(text):
+            if not match.group(1).startswith('"'):
+                yield "mutation.unresolved", True
 
 
-def scan_paths(python: Iterable[Path], text: Iterable[Path]) -> set[tuple[str, str, str]]:
+Finding = tuple[str, str, str]
+
+
+def scan_paths_detail(python: Iterable[Path], text: Iterable[Path]) -> dict[Finding, bool]:
+    """Every finding, with whether its scope may write a limit column."""
     python = list(python)
     trees = [ast.parse(p.read_text(encoding="utf-8")) for p in python]
-    constants = _module_constants(trees)
-    modules = [_Module(p, constants) for p in python]
-    found = set(_python_findings(modules))
+    index = _Index(trees)
+    found: dict[Finding, bool] = {}
+    for path, tree in zip(python, trees, strict=True):
+        m = _Module(path, tree, index)
+        for finding in _python_findings(m):
+            key = (finding.style, m.relative, m.where(finding.node))
+            found[key] = found.get(key, False) or finding.limit
     for path in text:
-        found.update(_text_findings(path))
+        relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.name
+        for style, limit in _text_findings(path):
+            key = (style, relative, "<file>")
+            found[key] = found.get(key, False) or limit
     return found
 
 
+def scan_paths(python: Iterable[Path], text: Iterable[Path]) -> set[Finding]:
+    return set(scan_paths_detail(python, text))
+
+
+def limit_column_writers(detail: dict[Finding, bool]) -> set[tuple[str, str]]:
+    """The (path, scope)s that name tr_key_limit and may write a limit
+    column. An unresolved or dynamic finding is listed with the table it
+    does write."""
+    return {(path, where) for (style, path, where), limit in detail.items()
+            if limit and style.startswith("key_limit.")}
+
+
+def _excluded(path: Path, excluded: tuple[str, ...]) -> bool:
+    """Tests (any tests directory), virtualenvs, dependencies and docs."""
+    parts = path.relative_to(ROOT).parts
+    return bool(parts) and parts[0] in excluded or any(
+        p in (".venv", "node_modules", ".git", "tests") for p in parts)
+
+
 def repository_paths() -> tuple[list[Path], list[Path]]:
-    python = [p for top in PY_TREES for p in sorted((ROOT / top).rglob("*.py"))]
-    text = [p for top in TEXT_TREES for p in sorted((ROOT / top).rglob("*")) if p.suffix in TEXT_SUFFIXES]
-    text += [p for p in sorted((ROOT / "fastpath").rglob("*.go")) if not p.name.endswith("_test.go")]
+    python = [p for p in sorted(ROOT.rglob("*.py")) if not _excluded(p, PY_EXCLUDED)]
+    text = [p for p in sorted(ROOT.rglob("*")) if p.suffix in TEXT_SUFFIXES and p.is_file()
+            and not _excluded(p, TEXT_EXCLUDED) and not p.name.endswith("_test.go")]
     return python, text
 
 
-def scan_repository() -> set[tuple[str, str, str]]:
-    return scan_paths(*repository_paths())
+def scan_repository_detail() -> dict[Finding, bool]:
+    return scan_paths_detail(*repository_paths())
+
+
+def scan_repository() -> set[Finding]:
+    return set(scan_repository_detail())
 
 
 if __name__ == "__main__":
-    for finding in sorted(scan_repository()):
-        print(finding)
+    for finding, limit in sorted(scan_repository_detail().items()):
+        print(finding, "LIMIT" if limit else "")

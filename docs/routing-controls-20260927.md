@@ -89,16 +89,28 @@ set. A limitless strict key is one Python's strict reserve can never refuse for
 its budget; this rule is what lets the Go fast path edge decide such a key
 without a key hold, since no limit can later appear that would need the holds
 it admitted counted (fast-admission-and-batched-settlement.md §4.6 otherwise
-needs the key-status fence for a limit added under a lease). Two operator tools
-hold to it as well: the key reshard (`storage_gcp_key_shard_admin`) refuses a
-strict key before writing anything, and the orphan-write replay
-(`scripts/deploy/replay_orphan_writes.py`) never writes an api_key record that
-would change the spend configuration of a key the target holds. The writer
-inventory `tests/test_key_limit_writer_inventory.py` scans `src/` and `scripts/`
-(Python, shell and SQL) and the fast path's Go for every write that could
-change a key's limits, the api_key entity, or tr_key_limit (an attribute
-change, a mutation or payload, DML in any case, an entity writer called with
-api_key or a computed kind) and fails on any one not reviewed and listed.
+needs the key-status fence for a limit added under a lease).
+
+The mirror holds the rule on its own, whatever writes the entity. Every write
+of `tr_key_limit`'s limit columns goes through one guarded function per backend
+(`storage_gcp_key_limit_mirror.write_key_limit_rows` on Spanner,
+`PostgresStore._write_key_limit_caps_tx` on Postgres), which in the writing
+transaction reads the key's rows and refuses (`StrictKeyFirstLimit`) to take a
+strict key's rows from every limit unset to any set, or to put a limit on rows
+a deleted key left behind (Spanner keeps them). Key creation writes new rows
+only (an insert on Spanner, a row created with its limits on Postgres). Two
+operator tools hold to it as well: the key reshard
+(`storage_gcp_key_shard_admin`) refuses a strict key before writing anything,
+and the orphan-write replay (`scripts/deploy/replay_orphan_writes.py`) writes a
+key's records only into a target that holds no trace of the key (no api_key
+entity, no `tr_key_limit` row, no lookup or workspace-index record), so it can
+never bring back a deleted key or its credential. The writer inventory
+`tests/test_key_limit_writer_inventory.py` finds every place that names
+`tr_key_limit` (in any case, quoting or string construction, or through a
+constant or variable) or writes a table it cannot resolve, in Python, shell,
+SQL, Terraform, YAML and the fast path's Go, fails on any one not reviewed and
+listed, and holds the writers of the limit columns to the two guarded functions
+and two documented exceptions, each pinned by a test.
 
 The native GoogleSQL checks are `tests/conformance/test_strict_budget_native.py`,
 which CI's spanner-emulator job runs against the Spanner emulator on the

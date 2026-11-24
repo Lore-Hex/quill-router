@@ -4,8 +4,11 @@ The rule (``storage_key_patch.StrictKeyFirstLimit``) makes a strict key's four
 limit fields monotonic: never from all unset to any set. The Go fast path edge
 relies on it to decide a limitless strict key without a key hold, so this file
 pins the rule itself, the property, every route that can set a limit, the
-reshard refusal and the replay tool's guard; tests/test_key_limit_writer_inventory.py
-inventories every writer.
+runtime chokepoint that holds it on tr_key_limit's mirror whatever writes the
+entity (storage_gcp_key_limit_mirror on Spanner; the Postgres one is in
+tests/conformance/test_key_management.py), the reshard refusal and the replay
+tool's no-trace rule; tests/test_key_limit_writer_inventory.py inventories every
+writer of tr_key_limit.
 """
 
 from __future__ import annotations
@@ -347,83 +350,209 @@ def _replay_module() -> Any:
     return module
 
 
-def _body(**fields: Any) -> str:
-    base = {"hash": "kh", "name": "key", "budget_strict": False, "include_byok_in_limit": True,
-            "usage_shard_count": 1, **dict.fromkeys(KEY_LIMIT_FIELDS)}
-    return json.dumps({**base, **fields})
+def _body(**fields: Any) -> dict[str, Any]:
+    base = {"hash": "kh", "name": "key", "lookup_hash": "lh", "workspace_id": "ws", "budget_strict": False,
+            "budget_alert_only": False, "include_byok_in_limit": True, "usage_shard_count": 1,
+            **dict.fromkeys(KEY_LIMIT_FIELDS)}
+    return {**base, **fields}
 
 
 @pytest.mark.parametrize(
-    ("target", "replayed", "reason"),
+    ("held", "target", "replayed", "reason"),
     [
-        (None, _body(budget_strict=True, limit_daily_microdollars=5), None),
-        (_body(budget_strict=True), _body(budget_strict=True, limit_daily_microdollars=5), "strict_first_limit"),
-        (_body(budget_strict=True), _body(budget_strict=True, limit_microdollars=5), "strict_first_limit"),
-        (_body(budget_strict=True), _body(budget_strict=True, name="renamed"), None),
-        (_body(budget_strict=True, limit_monthly_microdollars=9), _body(budget_strict=True, limit_monthly_microdollars=8),
-         "config_differs"),
-        (_body(limit_daily_microdollars=5), _body(limit_daily_microdollars=6), "config_differs"),
-        (_body(), _body(include_byok_in_limit=False), "config_differs"),
-        (_body(), _body(usage_shard_count=4), "config_differs"),
-        (_body(), _body(budget_strict=True), "config_differs"),
-        (_body(), _body(name="renamed", disabled=True), None),
-        ("not json", _body(), "unreadable"),
-        (_body(), "[]", "unreadable"),
+        ([], None, _body(budget_strict=True, limit_daily_microdollars=5), None),
+        (["tr_key_limit rows"], None, _body(budget_strict=True, limit_daily_microdollars=5),
+         "target holds tr_key_limit rows"),
+        (["api_key_lookup"], None, _body(), "target holds api_key_lookup"),
+        (["api_key", "tr_key_limit rows"], _body(budget_strict=True), _body(budget_strict=True, name="renamed"),
+         "target holds api_key, tr_key_limit rows"),
+        (["api_key"], _body(budget_strict=True), _body(budget_strict=True, limit_microdollars=5),
+         "target holds api_key; would change limit_microdollars"),
+        (["api_key"], _body(limit_daily_microdollars=5), _body(budget_alert_only=True),
+         "target holds api_key; would change budget_alert_only, limit_daily_microdollars"),
+        (["api_key"], _body(), _body(include_byok_in_limit=False, usage_shard_count=4),
+         "target holds api_key; would change include_byok_in_limit, usage_shard_count"),
+        (["api_key"], "not json", _body(), "target holds api_key; would change " + ", ".join(
+            ("budget_alert_only", "budget_strict", "include_byok_in_limit", "limit_daily_microdollars",
+             "limit_microdollars", "limit_monthly_microdollars", "limit_weekly_microdollars", "usage_shard_count"))),
+        ([], None, None, "unreadable"),
+        (["api_key"], _body(), None, "unreadable"),
     ],
 )
-def test_the_replay_refuses_what_a_raw_write_would_break(target: str | None, replayed: str, reason: str | None) -> None:
-    assert _replay_module().api_key_replay_refusal(target, replayed) == reason
+def test_the_replay_writes_only_a_key_the_target_holds_no_trace_of(
+    held: list[str], target: Any, replayed: dict[str, Any] | None, reason: str | None,
+) -> None:
+    target_body = json.dumps(target) if isinstance(target, dict) else target
+    assert _replay_module().api_key_replay_refusal(held, target_body, replayed) == reason
 
 
-def test_the_replay_cannot_give_a_limitless_strict_key_its_limit_back() -> None:
-    """The reviewer's case on the real Spanner store fake: a strict key with a
-    daily limit has its last limit removed; replaying its older body is
-    refused in the transaction that would write it, the key stays limitless,
-    and a later include_byok_in_limit patch mirrors no limit. A key the target
-    lacks, and a metadata-only change, are written."""
-    from tests.fakes.spanner import make_fake_store
+@pytest.mark.parametrize(
+    ("body", "index_rows", "readable"),
+    [
+        (_body(), [("api_key_lookup", "lh"), ("api_key_by_workspace", "ws#kh")], True),
+        (_body(), [], True),
+        (_body(hash="other"), [], False),
+        (_body(lookup_hash=""), [], False),
+        (_body(workspace_id=None), [], False),
+        (_body(), [("api_key_lookup", "another-lookup")], False),
+        (_body(), [("api_key_by_workspace", "other-ws#kh")], False),
+        ("[]", [], False),
+        ("not json", [], False),
+    ],
+)
+def test_the_replay_checks_only_a_body_it_can_read(body: Any, index_rows: list[tuple[str, str]],
+                                                   readable: bool) -> None:
+    replay = _replay_module()
+    raw = json.dumps(body) if isinstance(body, dict) else body
+    records = replay.KeyRecords("kh", ("api_key", "kh", raw, None),
+                                tuple((kind, entity_id, json.dumps({"key_id": "kh"}), None)
+                                      for kind, entity_id in index_rows))
+    assert (replay._replayed_key(records) is not None) == readable
+
+
+def test_index_records_travel_with_their_key_or_not_at_all() -> None:
+    replay = _replay_module()
+    key = ("api_key", "kh", json.dumps(_body()), None)
+    lookup = ("api_key_lookup", "lh", json.dumps({"key_id": "kh"}), None)
+    stray = ("api_key_lookup", "lh-2", json.dumps({"key_id": "kh-gone"}), None)
+    broken = ("api_key_by_workspace", "ws#x", "not json", None)
+    workspace = ("workspace", "ws", "{}", None)
+    keys, others, refused = replay.group_key_records([key, lookup, stray, broken, workspace])
+    assert keys == [replay.KeyRecords("kh", key, (lookup,))]
+    assert others == [workspace]
+    assert refused == [("api_key_lookup", "lh-2", "index_without_key"),
+                       ("api_key_by_workspace", "ws#x", "unreadable")]
+
+
+def _entity(database: Any, kind: str, entity_id: str) -> str | None:
+    rows = database.run_in_transaction(lambda txn: list(txn.execute_sql(
+        "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id", params={"kind": kind, "id": entity_id})))
+    return rows[0][0] if rows else None
+
+
+def _key_rows(database: Any, key_hash: str) -> dict[int, dict[str, Any]]:
     from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
+
+    return {pk[1]: dict(row) for pk, row in database.typed.get(KEY_LIMIT_TABLE, {}).items() if pk[0] == key_hash}
+
+
+_MIRROR = ("limit_micro", "day_limit_micro", "week_limit_micro", "month_limit_micro")
+
+
+def test_the_replay_cannot_resurrect_a_deleted_strict_key() -> None:
+    """The reviewer's case on the Spanner store fake: a strict key with a
+    daily limit has the limit removed, is disabled and deleted; deletion
+    keeps its tr_key_limit rows. Replaying its older body with its lookup and
+    workspace records is refused (the target still holds its rows), so its
+    credential does not come back. Even with the body forced back by a raw
+    write, the next ordinary patch that rewrites the mirror is refused by the
+    chokepoint and the mirror stays limitless."""
+    from tests.fakes.spanner import make_fake_store
+
+    store, database = make_fake_store()
+    raw, key = store.api_keys.create(workspace_id="ws-replay", name="strict", creator_user_id=None,
+                                     budget_strict=True, limit_daily_microdollars=5_000_000)
+    older = json.dumps(dataclasses.asdict(key))
+    lookup = _entity(database, "api_key_lookup", key.lookup_hash)
+    by_workspace = _entity(database, "api_key_by_workspace", f"ws-replay#{key.hash}")
+    assert lookup is not None and by_workspace is not None
+    assert store.update_key(key.hash, {"limit_daily_microdollars": None}) is not None
+    assert store.update_key(key.hash, {"disabled": True}) is not None
+    assert store.delete_key(key.hash)
+    assert all(row[c] is None for row in _key_rows(database, key.hash).values() for c in _MIRROR)
+
+    replay = _replay_module()
+    refused = replay.replay_api_keys(database, [
+        ("api_key", key.hash, older, None),
+        ("api_key_lookup", key.lookup_hash, lookup, None),
+        ("api_key_by_workspace", f"ws-replay#{key.hash}", by_workspace, None),
+    ])
+    assert refused == [(key.hash, "target holds tr_key_limit rows")]
+    assert store.get_key_by_raw(raw) is None
+    assert _entity(database, "api_key", key.hash) is None
+    assert _entity(database, "api_key_lookup", key.lookup_hash) is None
+
+    # An unguarded writer forces the entity, limit and all, back.
+    with database.batch() as batch:
+        batch.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
+                               values=[("api_key", key.hash, older, None)])
+    with pytest.raises(StrictKeyFirstLimit):
+        store.update_key(key.hash, {"include_byok_in_limit": False})
+    assert all(row[c] is None for row in _key_rows(database, key.hash).values() for c in _MIRROR)
+
+
+def test_the_replay_never_changes_a_held_keys_alert_policy() -> None:
+    """The reviewer's second case: a replayed body that turns a held key's
+    window limits into alerts is refused and reported, and the key keeps
+    enforcing."""
+    from tests.fakes.spanner import make_fake_store
 
     store, database = make_fake_store()
     _raw, key = store.api_keys.create(workspace_id="ws-replay", name="strict", creator_user_id=None,
                                       budget_strict=True, limit_daily_microdollars=5_000_000)
-    rows_before = list(database.run_in_transaction(lambda txn: list(txn.execute_sql(
-        "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id", params={"kind": "api_key", "id": key.hash}))))
-    older = rows_before[0][0]
-    assert store.update_key(key.hash, {"limit_daily_microdollars": None}) is not None
-    assert not has_spend_limit(store.get_key_by_hash(key.hash))
+    changed = json.dumps({**dataclasses.asdict(key), "budget_alert_only": True})
+    refused = _replay_module().replay_api_keys(database, [("api_key", key.hash, changed, None)])
+    assert refused == [(key.hash, "target holds api_key, api_key_lookup, api_key_by_workspace, tr_key_limit rows; "
+                                  "would change budget_alert_only")]
+    assert not store.get_key_by_hash(key.hash).budget_alert_only
 
+
+def test_the_replay_writes_a_key_new_to_the_target_with_its_index_records() -> None:
+    from tests.fakes.spanner import make_fake_store
+
+    store, database = make_fake_store()
+    body = _body(hash="kh-new", lookup_hash="lh-new", workspace_id="ws-new", limit_monthly_microdollars=9)
+    rows = [
+        ("api_key", "kh-new", json.dumps(body), None),
+        ("api_key_lookup", "lh-new", json.dumps({"key_id": "kh-new"}), None),
+        ("api_key_by_workspace", "ws-new#kh-new", json.dumps({"key_id": "kh-new"}), None),
+        ("api_key_lookup", "lh-stray", json.dumps({"key_id": "kh-absent"}), None),
+    ]
     replay = _replay_module()
-    _raw, other = store.api_keys.create(workspace_id="ws-replay", name="plain", creator_user_id=None)
-    renamed = json.dumps({**dataclasses.asdict(store.get_key_by_hash(other.hash)), "name": "renamed"})
-    missing = json.dumps({**dataclasses.asdict(store.get_key_by_hash(other.hash)), "hash": "kh-missing", "name": "new"})
-    refused = replay.replay_api_keys(database, [
-        ("api_key", key.hash, older, None),
-        ("api_key", other.hash, renamed, None),
-        ("api_key", "kh-missing", missing, None),
-    ])
-    assert refused == [(key.hash, "strict_first_limit")]
-    assert not has_spend_limit(store.get_key_by_hash(key.hash))
-    assert store.get_key_by_hash(other.hash).name == "renamed"
-    assert store.get_key_by_hash("kh-missing") is not None
-    with pytest.raises(ValueError, match="api_key records only"):
+    assert replay.replay_api_keys(database, rows) == [("lh-stray", "api_key_lookup: index_without_key")]
+    assert json.loads(_entity(database, "api_key", "kh-new") or "{}")["limit_monthly_microdollars"] == 9
+    assert _entity(database, "api_key_lookup", "lh-new") is not None
+    assert _entity(database, "api_key_by_workspace", "ws-new#kh-new") is not None
+    assert _entity(database, "api_key_lookup", "lh-stray") is None
+    with pytest.raises(ValueError, match="api_key and key index records only"):
         replay.replay_api_keys(database, [("workspace", "ws-replay", "{}", None)])
-    # The next ordinary patch that rewrites the mirror finds no limit to copy.
-    assert store.update_key(key.hash, {"include_byok_in_limit": False}) is not None
-    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
-    assert all(row[column] is None for column in ("limit_micro", "day_limit_micro", "week_limit_micro",
-                                                  "month_limit_micro"))
+
+
+def test_the_replay_names_what_decides_which_limits_are_enforced() -> None:
+    """KEY_CONFIG_FIELDS is derived from the code that enforces limits, not
+    listed by hand: it holds budget_alert_only, and every key field the
+    gateway's typed authorize reads to choose how a key's limits apply."""
+    from trusted_router.storage_key_patch import key_enforcement_fields
+
+    fields = _replay_module().KEY_CONFIG_FIELDS
+    assert fields == key_enforcement_fields()
+    assert {"budget_alert_only", "budget_strict", "include_byok_in_limit", "usage_shard_count",
+            *KEY_LIMIT_FIELDS} <= set(fields)
+    source = (ROOT / "src/trusted_router/routes/internal/gateway.py").read_text()
+    calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == "authorize_gateway_typed"]
+    assert calls
+    limit_keywords = {"strict_budget", "strict_budget_alert_only", "skip_key_limit", "speculate_key_limit"}
+    read = {
+        sub.attr for call in calls for keyword in call.keywords if keyword.arg in limit_keywords
+        for sub in ast.walk(keyword.value)
+        if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) and sub.value.id == "api_key"
+    }
+    assert {"budget_strict", "budget_alert_only"} <= read
+    assert read <= set(fields), read - set(fields)
 
 
 def test_the_replay_writes_api_keys_only_through_its_guard() -> None:
-    import ast as _ast
-
     source = (ROOT / "scripts" / "deploy" / "replay_orphan_writes.py").read_text()
-    tree = _ast.parse(source)
-    main = next(n for n in tree.body if isinstance(n, _ast.FunctionDef) and n.name == "main")
-    text = _ast.unparse(main)
+    tree = ast.parse(source)
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    text = ast.unparse(main)
+    assert "keys, other_rows, refused_indexes = group_key_records(replay_rows)" in text
     assert "replay_api_keys(target" in text
-    assert "other_rows = [r for r in replay_rows if r[0] != 'api_key']" in text
+    batch_writes = [n for n in ast.walk(main) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "insert_or_update"]
+    assert len(batch_writes) == 1 and "values=batch" in ast.unparse(batch_writes[0])
+    assert "batch = other_rows[i:i + BATCH]" in text
 
 
 # --- the reshard tool -----------------------------------------------------
@@ -460,3 +589,212 @@ def test_a_strict_key_is_never_resharded() -> None:
     assert store.get_key_by_hash(key.hash).usage_shard_count == 1
     after = {k: dict(v) for k, v in database.typed[KEY_LIMIT_TABLE].items() if k[0] == key.hash}
     assert after == before
+
+
+def test_the_reshard_transaction_refuses_a_strict_key_past_its_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the preflight forced to pass, the reshard transaction's own guard
+    still refuses a strict key: nothing is written and its count stays 1."""
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router import storage_gcp_key_shard_admin as admin
+    from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+    from trusted_router.storage_models import CreditAccount, Workspace
+
+    store, database = make_fake_store()
+    store._write_entity("workspace", "ws-forced", Workspace(
+        id="ws-forced", name="w", owner_user_id="owner", billing_paused=True))
+    store._write_entity("credit", "ws-forced", CreditAccount(workspace_id="ws-forced"))
+    database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[("ws-forced", 0)] = {
+        "workspace_id": "ws-forced", "shard": 0, "total_credits": 1_000_000, "total_usage": 0,
+        "reserved": 0, "source_updated_at": None, "updated_at": None,
+    }
+    _raw, key = store.api_keys.create(workspace_id="ws-forced", name="strict", creator_user_id=None,
+                                      budget_strict=True, limit_daily_microdollars=1_000_000)
+    before = _key_rows(database, key.hash)
+    real_inspect = admin.inspect_key_usage_reshard
+    calls: list[int] = []
+
+    def forced(store_: Any, key_hash: str, target: int, **kwargs: Any) -> Any:
+        calls.append(target)
+        if len(calls) == 1:
+            return admin.KeyUsageReshardResult(key_hash=key_hash, workspace_id="ws-forced",
+                                               target_shard_count=target, current_shard_count=1)
+        return real_inspect(store_, key_hash, target, **kwargs)
+
+    monkeypatch.setattr(admin, "inspect_key_usage_reshard", forced)
+    status = admin.reshard_key_usage(store, key.hash, 4, apply=True)
+    assert not status.applied
+    assert any("preconditions changed" in reason for reason in status.reasons)
+    assert json.loads(_entity(database, "api_key", key.hash) or "{}")["usage_shard_count"] == 1
+    assert _key_rows(database, key.hash) == before
+
+
+# --- the runtime chokepoint ------------------------------------------------
+
+
+def _create(store: Any, database: Any, **fields: Any) -> Any:
+    _raw, key = store.api_keys.create(workspace_id="ws-mirror", name="k", creator_user_id=None, **fields)
+    return key
+
+
+def _write(database: Any, key_hash: str, limit: int | None, *, mutation: str = "insert_or_update") -> None:
+    from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
+
+    def txn(transaction: Any) -> None:
+        write_key_limit_rows(transaction, database_param_types(), key_hash=key_hash,
+                             columns=("key_hash", "shard", "day_limit_micro"), values=[(key_hash, 0, limit)],
+                             mutation=mutation)
+
+    database.run_in_transaction(txn)
+
+
+def database_param_types() -> Any:
+    from tests.fakes.spanner import _ParamTypes
+
+    return _ParamTypes()
+
+
+@pytest.mark.parametrize("mutation", ["insert_or_update", "update"])
+def test_the_spanner_chokepoint_refuses_a_strict_keys_first_mirrored_limit(mutation: str) -> None:
+    from tests.fakes.spanner import make_fake_store
+
+    store, database = make_fake_store()
+    key = _create(store, database, budget_strict=True)
+    with pytest.raises(StrictKeyFirstLimit):
+        _write(database, key.hash, 5, mutation=mutation)
+    assert all(row[c] is None for row in _key_rows(database, key.hash).values() for c in _MIRROR)
+    _write(database, key.hash, None, mutation=mutation)  # writing no limit is fine
+
+
+def test_the_spanner_chokepoint_refuses_a_limit_on_a_deleted_keys_rows() -> None:
+    from tests.fakes.spanner import make_fake_store
+
+    store, database = make_fake_store()
+    key = _create(store, database)
+    assert store.delete_key(key.hash)
+    assert _key_rows(database, key.hash)
+    with pytest.raises(StrictKeyFirstLimit):
+        _write(database, key.hash, 5)
+
+
+@pytest.mark.parametrize("body", ["not json", json.dumps(["a list"])])
+def test_the_spanner_chokepoint_refuses_when_the_key_does_not_read(body: str) -> None:
+    from tests.fakes.spanner import make_fake_store
+
+    store, database = make_fake_store()
+    key = _create(store, database)
+    with database.batch() as batch:
+        batch.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
+                               values=[("api_key", key.hash, body, None)])
+    with pytest.raises(StrictKeyFirstLimit):
+        _write(database, key.hash, 5)
+
+
+def test_the_spanner_chokepoint_lets_every_other_key_change_its_limits() -> None:
+    """A key that is not strict (or whose body predates budget_strict) gains
+    a first limit; a strict key with a limit changes or removes it."""
+    from tests.fakes.spanner import make_fake_store
+
+    store, database = make_fake_store()
+    plain = _create(store, database)
+    _write(database, plain.hash, 5)
+    assert _key_rows(database, plain.hash)[0]["day_limit_micro"] == 5
+    legacy = _create(store, database)
+    body = {k: v for k, v in dataclasses.asdict(legacy).items() if k != "budget_strict"}
+    with database.batch() as batch:
+        batch.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
+                               values=[("api_key", legacy.hash, json.dumps(body), None)])
+    _write(database, legacy.hash, 7)
+    limited = _create(store, database, budget_strict=True, limit_daily_microdollars=9)
+    _write(database, limited.hash, 3)
+    _write(database, limited.hash, None)
+    assert _key_rows(database, limited.hash)[0]["day_limit_micro"] is None
+    with pytest.raises(StrictKeyFirstLimit):
+        _write(database, limited.hash, 3)
+
+
+def test_a_batch_only_inserts_new_rows_through_the_chokepoint() -> None:
+    from google.api_core.exceptions import AlreadyExists
+
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
+
+    store, database = make_fake_store()
+    key = _create(store, database, budget_strict=True)
+    pt = database_param_types()
+    with pytest.raises(ValueError, match="only inserts"), database.batch() as batch:
+        write_key_limit_rows(batch, pt, key_hash=key.hash, columns=("key_hash", "shard", "limit_micro"),
+                             values=[(key.hash, 0, 5)], mutation="insert_or_update")
+    with pytest.raises(ValueError, match="shard 0 among them"), database.batch() as batch:
+        write_key_limit_rows(batch, pt, key_hash=key.hash, columns=("key_hash", "shard", "limit_micro"),
+                             values=[(key.hash, 1, 5)], mutation="insert")
+    with pytest.raises(AlreadyExists), database.batch() as batch:
+        write_key_limit_rows(batch, pt, key_hash=key.hash, columns=("key_hash", "shard", "limit_micro"),
+                             values=[(key.hash, 0, 5)], mutation="insert")
+    assert all(row[c] is None for row in _key_rows(database, key.hash).values() for c in _MIRROR)
+    with pytest.raises(StrictKeyFirstLimit):
+        _write(database, key.hash, 5, mutation="insert")
+
+
+def test_a_transaction_insert_of_a_new_shard_is_checked_too() -> None:
+    """A new shard row with a limit would give a limitless strict key's
+    mirror its first limit as surely as an update of shard 0."""
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
+
+    store, database = make_fake_store()
+    key = _create(store, database, budget_strict=True)
+
+    def insert_shard(transaction: Any) -> None:
+        write_key_limit_rows(transaction, database_param_types(), key_hash=key.hash,
+                             columns=("key_hash", "shard", "month_limit_micro"), values=[(key.hash, 1, 5)],
+                             mutation="insert")
+
+    with pytest.raises(StrictKeyFirstLimit):
+        database.run_in_transaction(insert_shard)
+    assert set(_key_rows(database, key.hash)) == {0}
+
+
+@pytest.mark.parametrize(
+    ("columns", "values", "mutation", "message"),
+    [
+        (("shard", "key_hash", "limit_micro"), [(0, "kh", 1)], "update", "lead with key_hash"),
+        (("key_hash", "shard", "limit_micro"), [("kh", 0)], "update", "lead with key_hash"),
+        (("key_hash", "shard", "limit_micro"), [("other", 0, 1)], "update", "one key's rows"),
+        (("key_hash", "shard", "limit_micro"), [("kh", 0, 1)], "replace", "unknown tr_key_limit mutation"),
+    ],
+)
+def test_the_chokepoint_validates_its_rows(columns: tuple[str, ...], values: list[tuple[Any, ...]],
+                                           mutation: str, message: str) -> None:
+    from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
+
+    with pytest.raises(ValueError, match=message):
+        write_key_limit_rows(object(), database_param_types(), key_hash="kh", columns=columns, values=values,
+                             mutation=mutation)
+
+
+# --- the documented limit-column exceptions --------------------------------
+
+
+def test_shard_expansion_refuses_a_strict_key() -> None:
+    """scripts/expand_billing_shards.py writes window caps into new shard
+    rows; it never reaches a strict key."""
+    from scripts.expand_billing_shards import make_plan
+
+    workspace = {"id": "ws"}
+    key = {"workspace_id": "ws", "budget_strict": True, "limit_daily_microdollars": 1}
+    with pytest.raises(ValueError, match="strict keys require"):
+        make_plan(workspace, {"workspace_id": "ws"}, key, [], [], {}, {}, 2, allow_window_caps=True)
+
+
+def test_the_leased_usage_backfill_assigns_no_limit_column() -> None:
+    import datetime as dt
+
+    from scripts.backfill_leased_key_usage import update_sql
+    from tests.key_limit_writers import LIMIT_COLUMNS, assigns_limit_column
+
+    sql = update_sql({"key_hash": "kh_1", "usage": 3, "day": 1, "week": 2, "month": 3},
+                     now=dt.datetime(2026, 11, 23, tzinfo=dt.UTC))
+    assert sql.startswith("UPDATE tr_key_limit SET ")
+    assert not assigns_limit_column(sql)
+    assert not any(f"{column} =" in sql for column in LIMIT_COLUMNS)
+    assert assigns_limit_column(sql.replace("usage = usage + 3", "limit_micro = 1"))

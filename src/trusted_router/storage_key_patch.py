@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import Any
 
 from trusted_router.money import dollars_to_microdollars
@@ -61,6 +62,43 @@ def has_spend_limit(key: ApiKey) -> bool:
         or key.limit_weekly_microdollars is not None
         or key.limit_monthly_microdollars is not None
     )
+
+
+def key_enforcement_fields() -> tuple[str, ...]:
+    """The ApiKey fields that decide which spend limits a key enforces, as
+    the code that enforces them reads them, not listed by hand.
+
+    A key that records every field read is run through each reader, in limit
+    mode and in alert mode: the windows that block
+    (spend_windows.enforced_window_limits), the mirror the strict reserve and
+    the fast path edge read (storage_gcp_counters.key_limit_mirror_rows: the
+    limits, BYOK inclusion and shard count, which budget_strict constrains),
+    and has_spend_limit. The gateway's strict path takes budget_strict and
+    budget_alert_only from the key; a test holds every key field its typed
+    authorize reads for a limit to this set.
+    """
+    from trusted_router.spend_windows import enforced_window_limits
+    from trusted_router.storage_gcp_counters import key_limit_mirror_rows
+
+    fields = {field.name for field in dataclasses.fields(ApiKey)}
+    seen: set[str] = set()
+
+    class _Recording(ApiKey):
+        def __getattribute__(self, name: str) -> Any:
+            if name in fields:
+                seen.add(name)
+            return object.__getattribute__(self, name)
+
+    for alert_only in (False, True):
+        key = _Recording(
+            hash="k", salt="", secret_hash="", lookup_hash="", name="", label="", workspace_id="",
+            creator_user_id=None, limit_microdollars=1, limit_daily_microdollars=1,
+            limit_weekly_microdollars=1, limit_monthly_microdollars=1, budget_alert_only=alert_only,
+        )
+        enforced_window_limits(key)
+        key_limit_mirror_rows("k", key, None)
+        has_spend_limit(key)
+    return tuple(sorted(seen))
 
 
 def apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:

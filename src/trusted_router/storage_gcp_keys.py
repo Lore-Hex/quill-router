@@ -28,11 +28,11 @@ from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_COLUMNS,
-    KEY_LIMIT_TABLE,
     key_limit_mirror_rows,
     key_usage_shard_count,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
+from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
 from trusted_router.storage_key_patch import TYPED_LIMIT_PATCH_FIELDS, apply_key_patch
 from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_models import (
@@ -157,14 +157,18 @@ class SpannerApiKeys:
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "api_key", key.hash, key)
-            batch.insert_or_update(
-                table=KEY_LIMIT_TABLE,
+            # A new key's rows: an insert, which never overwrites a mirror.
+            write_key_limit_rows(
+                batch,
+                self._io.param_types,
+                key_hash=key.hash,
                 columns=KEY_LIMIT_COLUMNS,
                 values=key_limit_mirror_rows(
                     key.hash,
                     key,
                     self._io.spanner_module.COMMIT_TIMESTAMP,
                 ),
+                mutation="insert",
             )
             self._io.write_entity_batch(batch, "api_key_lookup", lookup_hash, {"key_id": key.hash})
             self._io.write_entity_batch(
@@ -371,10 +375,13 @@ class SpannerApiKeys:
             # concurrent reserve can commit between that read and this write.
             counters = {int(row[0]): tuple(row[1:]) for row in usage_rows}
             self._io.write_entity_tx(transaction, "api_key", current.hash, current)
-            transaction.insert_or_update(
-                table=KEY_LIMIT_TABLE,
+            write_key_limit_rows(
+                transaction,
+                pt,
+                key_hash=current.hash,
                 columns=KEY_LIMIT_COLUMNS + KEY_LIMIT_COUNTER_COLUMNS,
                 values=[config + counters[int(config[1])] for config in config_rows],
+                mutation="insert_or_update",
             )
             return current
 

@@ -112,7 +112,12 @@ from trusted_router.storage_gcp_codec import (
     workspace_key_id,
 )
 from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
-from trusted_router.storage_key_patch import TYPED_LIMIT_PATCH_FIELDS, apply_key_patch
+from trusted_router.storage_key_patch import (
+    TYPED_LIMIT_PATCH_FIELDS,
+    StrictKeyFirstLimit,
+    apply_key_patch,
+    has_spend_limit,
+)
 from trusted_router.storage_key_usage import (
     CHAT_BROWSER_KEY_INDEX_KIND,
     api_key_from_json,
@@ -3285,21 +3290,49 @@ class PostgresStore(OperationalAnalyticsReads):
 
     # API keys ---------------------------------------------------------------
 
-    def _write_key_limit_caps_tx(self, conn: Any, key: ApiKey) -> None:
-        """Write cap configuration only for the one supported shard layout.
+    def _write_key_limit_caps_tx(
+        self, conn: Any, key: ApiKey, *, create_if_missing: bool = False
+    ) -> None:
+        """The one writer of tr_key_limit's limit columns on Postgres.
 
         Postgres key-limit rows are single-shard by construction. Keeping all
         cap writes here makes a future or damaged multi-shard layout fail
         closed instead of replicating a full cap across shards or updating no
         row while reporting success.
+
+        It also holds the strict-key rule against the stored row, in the same
+        transaction: a budget_strict key whose row has no limit never gains
+        one (StrictKeyFirstLimit), whatever wrote the entity. With
+        ``create_if_missing`` (key creation, a federated key's first write) a
+        key with no row gets one, inserted with its limits.
         """
-        rows = conn.execute(
-            "SELECT workspace_id, shard FROM tr_key_limit"
-            " WHERE key_hash = %s ORDER BY workspace_id, shard FOR UPDATE",
-            (key.hash,),
-            prepare=False,
-        ).fetchall()
-        layout = [(str(workspace_id), int(shard)) for workspace_id, shard in rows]
+        rows = self._key_limit_caps_rows_tx(conn, key.hash)
+        if not rows and create_if_missing:
+            inserted = conn.execute(
+                "INSERT INTO tr_key_limit"
+                " (workspace_id, key_hash, shard, limit_micro, include_byok,"
+                " day_limit_micro, week_limit_micro, month_limit_micro,"
+                " source_updated_at, updated_at)"
+                " VALUES (%s, %s, 0, %s::bigint, %s, %s::bigint, %s::bigint, %s::bigint,"
+                " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                " ON CONFLICT (workspace_id, key_hash, shard) DO NOTHING",
+                (
+                    key.workspace_id,
+                    key.hash,
+                    _int8_param(key.limit_microdollars),
+                    key.include_byok_in_limit,
+                    _int8_param(key.limit_daily_microdollars),
+                    _int8_param(key.limit_weekly_microdollars),
+                    _int8_param(key.limit_monthly_microdollars),
+                ),
+                prepare=False,
+            )
+            if inserted.rowcount == 1:
+                return
+            # A concurrent first write inserted the row: hold this write to
+            # the rule against what it wrote.
+            rows = self._key_limit_caps_rows_tx(conn, key.hash)
+        layout = [(str(row[0]), int(row[1])) for row in rows]
         expected = [(key.workspace_id, 0)]
         if layout != expected:
             shards = [shard for _workspace_id, shard in layout]
@@ -3309,6 +3342,9 @@ class PostgresStore(OperationalAnalyticsReads):
                 "shard 0 is required; distributing a cap across shards is not "
                 "implemented on this backend"
             )
+        stored_limit = any(value is not None for value in rows[0][2:])
+        if key.budget_strict and not stored_limit and has_spend_limit(key):
+            raise StrictKeyFirstLimit()
         cursor = conn.execute(
             "UPDATE tr_key_limit SET"
             " limit_micro = %s::bigint, include_byok = %s,"
@@ -3333,6 +3369,20 @@ class PostgresStore(OperationalAnalyticsReads):
                 f"cannot write caps for key_hash={key.hash}: cap UPDATE affected "
                 f"{cursor.rowcount} rows; exactly one row at shard 0 is required"
             )
+
+    @staticmethod
+    def _key_limit_caps_rows_tx(conn: Any, key_hash: str) -> list[Any]:
+        """A key's tr_key_limit rows (workspace, shard, then its four limits),
+        locked for this transaction."""
+        return list(
+            conn.execute(
+                "SELECT workspace_id, shard, limit_micro, day_limit_micro,"
+                " week_limit_micro, month_limit_micro FROM tr_key_limit"
+                " WHERE key_hash = %s ORDER BY workspace_id, shard FOR UPDATE",
+                (key_hash,),
+                prepare=False,
+            ).fetchall()
+        )
 
     def create_api_key(
         self,
@@ -3396,13 +3446,7 @@ class PostgresStore(OperationalAnalyticsReads):
                 workspace_key_id(workspace_id, key.hash),
                 {"key_id": key.hash},
             )
-            conn.execute(
-                "INSERT INTO tr_key_limit "
-                "(workspace_id, key_hash, shard, source_updated_at, updated_at) "
-                "VALUES (%s, %s, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                (workspace_id, key.hash),
-            )
-            self._write_key_limit_caps_tx(conn, key)
+            self._write_key_limit_caps_tx(conn, key, create_if_missing=True)
 
         self._run_transaction(create)
         return raw, key
@@ -3448,14 +3492,7 @@ class PostgresStore(OperationalAnalyticsReads):
             # fail-closes with KEY_MISSING when a key has a JSON entity but
             # no typed row, which would 402 every federated user. Limits come
             # from the home record; usage and reserved start at zero.
-            conn.execute(
-                "INSERT INTO tr_key_limit"
-                " (workspace_id, key_hash, shard) VALUES (%s, %s, 0)"
-                " ON CONFLICT (workspace_id, key_hash, shard) DO NOTHING",
-                (key.workspace_id, key.hash),
-                prepare=False,
-            )
-            self._write_key_limit_caps_tx(conn, key)
+            self._write_key_limit_caps_tx(conn, key, create_if_missing=True)
             return key
 
         return self._run_transaction(upsert)

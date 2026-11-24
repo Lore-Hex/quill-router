@@ -2444,6 +2444,28 @@ class _FakeTransaction:
                     ("upsert_typed", table, *_with_emulator_resets(table, columns, value_tuple, existing))
                 )
 
+    def insert(
+        self, *, table: str, columns: tuple[str, ...], values: list[tuple]
+    ) -> None:
+        """An INSERT mutation on a typed table: new rows only. Real Spanner
+        fails the commit with ALREADY_EXISTS when a row is there; the fake
+        reads each row (recording its version, so a concurrent insert aborts
+        this transaction and the retry sees the row) and raises here."""
+        if self._did_dml:
+            raise RuntimeError("mutation after DML in the same transaction")
+        key_columns = _TYPED_PRIMARY_KEYS[table]
+        seen: set[tuple] = set()
+        for value in values:
+            record = dict(zip(columns, value, strict=True))
+            pk = tuple(record[column] for column in key_columns)
+            if pk in seen or self._typed_current(table, pk) is not None:
+                raise FakeAlreadyExists(f"{table}/{pk}")
+            seen.add(pk)
+        self._did_mutation = True
+        self.pending_writes.extend(
+            ("upsert_typed", table, columns, value) for value in values
+        )
+
     def update(
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
     ) -> None:
@@ -2562,6 +2584,16 @@ class _FakeBatch:
         if exc_type is not None:
             return None
         with self.db._commit_lock:
+            inserted: set[tuple] = set()
+            for op in self.pending_writes:
+                if op[0] != "insert_typed":
+                    continue
+                _, table, columns, value_tuple = op
+                record = dict(zip(columns, value_tuple, strict=True))
+                pk = tuple(record[column] for column in _TYPED_PRIMARY_KEYS[table])
+                if (table, pk) in inserted or pk in self.db.typed.get(table, {}):
+                    raise FakeAlreadyExists(f"{table}/{pk}")
+                inserted.add((table, pk))
             self.db._global_version += 1
             new_version = self.db._global_version
             for op in self.pending_writes:
@@ -2576,7 +2608,7 @@ class _FakeBatch:
                     _, _table, kind, entity_id = op
                     self.db.rows.pop((kind, entity_id), None)
                     self.db.entity_kind_versions[kind] = new_version
-                elif op[0] == "upsert_typed":
+                elif op[0] in ("upsert_typed", "insert_typed"):
                     _, table, columns, value_tuple = op
                     _apply_upsert_typed(
                         self.db.typed,
@@ -2609,6 +2641,16 @@ class _FakeBatch:
                 self.pending_writes.append(
                     ("upsert_typed", table, *_with_emulator_resets(table, columns, value_tuple, existing))
                 )
+
+    def insert(
+        self, *, table: str, columns: tuple[str, ...], values: list[tuple]
+    ) -> None:
+        """An INSERT mutation on a typed table, checked at commit: a row
+        already there fails the whole batch with ALREADY_EXISTS."""
+        _TYPED_PRIMARY_KEYS[table]  # a typed table, or KeyError
+        self.pending_writes.extend(
+            ("insert_typed", table, tuple(columns), tuple(value)) for value in values
+        )
 
     def delete(self, table: str, keyset: _KeySet) -> None:
         for entry in keyset.keys:

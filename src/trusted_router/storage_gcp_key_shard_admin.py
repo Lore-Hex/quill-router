@@ -18,6 +18,7 @@ from trusted_router.storage_gcp_counters import (
     key_usage_shard_count,
     partition_key_limit,
 )
+from trusted_router.storage_gcp_key_limit_mirror import write_key_limit_rows
 from trusted_router.storage_gcp_legacy_reservations import (
     legacy_reservation_snapshot,
 )
@@ -335,8 +336,11 @@ def reshard_key_usage(
             include_byok=key.include_byok_in_limit,
         )
         commit_timestamp = store._spanner.COMMIT_TIMESTAMP
-        transaction.insert_or_update(
-            table=KEY_LIMIT_TABLE,
+        write_key_limit_rows(
+            transaction,
+            pt,
+            key_hash=key_hash,
+            mutation="insert_or_update",
             columns=_KEY_RESHARD_COLUMNS,
             values=[
                 (
