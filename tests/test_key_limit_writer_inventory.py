@@ -355,8 +355,15 @@ def test_reads_and_mentions_are_not_writes(tmp_path: Path, name: str, source: st
 
 
 @pytest.mark.parametrize(("name", "suffix", "source", "expected"), [
-    ("shell DML", ".sh", "gcloud spanner databases execute-sql db --sql=\"UPDATE TR_KEY_LIMIT SET reserved=0\"\n",
+    # A shell argument's quoting is not SQL's: DML in one counts as writing
+    # every column until listed. A heredoc is SQL as written.
+    ("shell DML in an argument", ".sh",
+     "gcloud spanner databases execute-sql db --sql=\"UPDATE TR_KEY_LIMIT SET reserved=0\"\n",
+     {("key_limit.text", "<file>"): True}),
+    ("shell heredoc DML", ".sh", "psql <<'SQL'\nUPDATE tr_key_limit SET reserved = 0 WHERE key_hash = 'k;';\nSQL\n",
      {("key_limit.text", "<file>"): False}),
+    ("shell heredoc limit", ".sh", "psql <<'SQL'\nUPDATE tr_key_limit SET reserved = 0, limit_micro = 1;\nSQL\n",
+     {("key_limit.text", "<file>"): True}),
     ("SQL file delete", ".sql", "delete from tr_key_limit where key_hash = 'k';\n",
      {("key_limit.text", "<file>"): False}),
     ("SQL upsert of a limit", ".sql", "INSERT OR UPDATE tr_key_limit (key_hash, shard, day_limit_micro) "
@@ -438,6 +445,38 @@ COLUMN_FORMS = [
      True),
     ("a delete", "DELETE FROM tr_key_limit WHERE key_hash = %s", False),
     ("a merge", "MERGE INTO tr_key_limit USING x ON y WHEN MATCHED THEN UPDATE SET reserved = 0", True),
+    # Review round 4: a boundary inside quotes or a comment is none. The
+    # reviewer's statement, then each quoting form.
+    ("a semicolon in a string (the reviewer's)", "UPDATE tr_key_limit SET reserved = GREATEST(reserved - %s, "
+     "length(';') - 1), day_limit_micro = 5000000 WHERE key_hash = %s", True),
+    ("a semicolon in a string, no limit", "UPDATE tr_key_limit SET reserved = length(';') WHERE key_hash = 'a;b'",
+     False),
+    ("a doubled quote", "UPDATE tr_key_limit SET reserved = length('it''s; where'), day_limit_micro = 1", True),
+    ("a doubled quote, no limit", "UPDATE tr_key_limit SET reserved = length('it''s; where') WHERE key_hash = %s",
+     False),
+    ("double quotes", 'UPDATE tr_key_limit SET reserved = length("a; from b"), week_limit_micro = 1', True),
+    ("backticks", "UPDATE tr_key_limit SET reserved = length(`x;`), month_limit_micro = 1", True),
+    ("a dollar quote", "UPDATE tr_key_limit SET reserved = length($$; where $$), limit_micro = 1", True),
+    ("a tagged dollar quote", "UPDATE tr_key_limit SET reserved = length($q$; where $q$), limit_micro = 1", True),
+    # The same with the quoted boundary at the top of the SET list, where
+    # only the tokenizer keeps it from ending the list.
+    ("a top-level semicolon in a string", "UPDATE tr_key_limit SET reserved = CASE WHEN key_hash = ';' THEN 0 "
+     "ELSE reserved END, day_limit_micro = 1", True),
+    ("a top-level boundary in double quotes", 'UPDATE tr_key_limit SET reserved = CASE WHEN key_hash = "; where" '
+     'THEN 0 ELSE reserved END, week_limit_micro = 1', True),
+    ("a top-level boundary in a dollar quote", "UPDATE tr_key_limit SET reserved = CASE WHEN key_hash = $$; where$$ "
+     "THEN 0 ELSE reserved END, limit_micro = 1", True),
+    ("a top-level boundary in a tagged dollar quote", "UPDATE tr_key_limit SET reserved = CASE WHEN key_hash = "
+     "$k$; where$k$ THEN 0 ELSE reserved END, month_limit_micro = 1", True),
+    ("a line comment", "UPDATE tr_key_limit SET reserved = 0 -- ; where\n, day_limit_micro = 1", True),
+    ("a block comment", "UPDATE tr_key_limit SET reserved = 0 /* ; where */, day_limit_micro = 1", True),
+    ("an unterminated quote", "UPDATE tr_key_limit SET reserved = 'open, day_limit_micro = 1", True),
+    ("UPDATE ONLY, schema-qualified", "UPDATE ONLY public.tr_key_limit SET day_limit_micro = 5 WHERE key_hash = %s",
+     True),
+    ("a CTE before the update", "WITH x AS (SELECT 5 AS cap) UPDATE public.tr_key_limit SET (reserved, "
+     "day_limit_micro) = (0, (SELECT cap FROM x)) WHERE key_hash = %s", True),
+    ("an update inside a CTE", "WITH u AS (UPDATE tr_key_limit SET reserved = 0 RETURNING key_hash) "
+     "SELECT * FROM u", False),
 ]
 
 
@@ -451,16 +490,19 @@ def test_each_way_to_write_a_limit_column_is_found(tmp_path: Path, name: str, sq
     assert _scan_sample(tmp_path, "sample.sql", sql + ";\n") == {("key_limit.text", "<file>"): writes_limit}, name
 
 
-def test_the_reviewers_injected_cap_write_is_caught(tmp_path: Path) -> None:
-    """The reviewer's probe: a tuple assignment of a limit column injected
-    into a listed counter writer (PostgresStore._release_key_hold_tx). The
-    column check now names that scope a limit-column writer outside the
-    chokepoints."""
+@pytest.mark.parametrize("assignment", [
+    '"   (reserved, day_limit_micro) = (GREATEST(reserved - %s, 0), 5000000)"',  # review round 3
+    '"   reserved = GREATEST(reserved - %s, length(\';\') - 1), day_limit_micro = 5000000"',  # review round 4
+], ids=["tuple assignment", "semicolon in a string"])
+def test_the_reviewers_injected_cap_write_is_caught(tmp_path: Path, assignment: str) -> None:
+    """The reviewers' probes: a limit column written from a listed counter
+    writer (PostgresStore._release_key_hold_tx). The column check names that
+    scope a limit-column writer outside the chokepoints."""
     source = (ROOT / "src/trusted_router/storage_postgres.py").read_text()
     old = '"   reserved = GREATEST(reserved - %s, 0)"'
     assert source.count(old) == 1
     injected = tmp_path / "storage_postgres.py"
-    injected.write_text(source.replace(old, '"   (reserved, day_limit_micro) = (GREATEST(reserved - %s, 0), 5000000)"'))
+    injected.write_text(source.replace(old, assignment))
     writers = limit_column_writers(scan_paths_detail([injected], []))
     assert ("storage_postgres.py", "PostgresStore._release_key_hold_tx") in writers
     clean = tmp_path / "clean" / "storage_postgres.py"
