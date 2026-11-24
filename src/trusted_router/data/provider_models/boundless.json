@@ -17,6 +17,7 @@
       "status": 1,
       "id": "anthropic/claude-fable-5.1",
       "upstream_id": "anthropic/claude-fable-5.1",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -47,6 +48,7 @@
       "status": 1,
       "id": "anthropic/claude-opus-5",
       "upstream_id": "anthropic/claude-opus-5",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -140,6 +142,7 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-pro-0813",
       "upstream_id": "deepseek/deepseek-v4-pro-0813",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -269,6 +272,7 @@
       "status": 1,
       "id": "nvidia/nemotron-3-super",
       "upstream_id": "nemotron3-super",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -301,6 +305,7 @@
       "status": 1,
       "id": "openai/gpt-5.6-luna",
       "upstream_id": "openai/gpt-5.6-luna",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -331,6 +336,7 @@
       "status": 1,
       "id": "openai/gpt-5.6-sol",
       "upstream_id": "openai/gpt-5.6-sol",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -393,6 +399,7 @@
       "status": 1,
       "id": "openai/gpt-6-sol",
       "upstream_id": "openai/gpt-6-sol",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -683,6 +690,7 @@
       "status": 1,
       "id": "minimax/minimax-m3.1-flash",
       "upstream_id": "minimax/minimax-m3.1-flash",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -714,6 +722,7 @@
       "status": 1,
       "id": "google/gemma-4-31b-it",
       "upstream_id": "google/gemma-4-31b-it",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -775,6 +784,7 @@
       "status": 1,
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "upstream_id": "nvidia/nemotron-3-super-120b-a12b",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",
@@ -805,6 +815,7 @@
       "status": 1,
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
+      "retirement_at": "2026-11-26T23:59:00Z",
       "supported_features": [
         "chat",
         "completion",

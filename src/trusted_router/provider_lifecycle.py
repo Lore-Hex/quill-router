@@ -102,8 +102,8 @@ DEEPINFRA_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 27, 0, 0, tzinfo=UTC)
 # DeepInfra deprecates nvidia/Nemotron-Content-Safety-3.5 on 30 Nov 2026 (date
 # only, so 00:00 UTC); its public model metadata says 02:35 UTC that day.
 DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT = datetime(2026, 11, 30, 0, 0, tzinfo=UTC)
-# Boundless's November 24 notice stops serving 18 models on Thursday 26 Nov
-# 2026 at 23:59 UTC; it names eight of them (the rest are not yet known).
+# Boundless's November 24 notices stop serving 18 models on Thursday 26 Nov
+# 2026 at 23:59 UTC (the first named eight; the follow-up lists all 18).
 BOUNDLESS_NOV_26_RETIREMENT_AT = datetime(2026, 11, 26, 23, 59, tzinfo=UTC)
 # Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
 # 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
@@ -1503,14 +1503,12 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"nvidia/Nemotron-Content-Safety-3.5"}),
         effective_at=DEEPINFRA_NEMOTRON_CONTENT_SAFETY_35_RETIREMENT_AT,
     ),
-    # Boundless's November 24 notice: these models stop serving on Thursday
-    # 26 November 2026 at 23:59 UTC. The notice names eight of the 18 retiring
-    # models by Boundless short name (mapped here through each manifest row's
-    # title to its upstream_id); the other ten are not listed, and Boundless's
-    # public /api/catalog, /models and /openapi.json still show every model as
-    # serving with no Deprecation or Sunset marker (checked 2026-11-24 17:47
-    # UTC), so only the eight named routes are retired. Only Boundless's
-    # routes; every one of these models stays on other providers.
+    # Boundless's November 24 notices: these 18 models stop serving on
+    # Thursday 26 November 2026 at 23:59 UTC. The first notice named eight;
+    # the follow-up (21:10 UTC) lists all 18 (13 open, 5 frontier) by
+    # Boundless name, mapped here through the Boundless adapter's aliases and
+    # each manifest row's title to its upstream_id. Only Boundless's routes;
+    # every one of these models stays on other providers.
     # Replacements are Boundless's suggestions where they are a like-for-like
     # or newer model; replacements are quoted, never substituted.
     _Retirement(
@@ -1553,6 +1551,58 @@ _RETIREMENTS = (
             "z-ai/glm-5.2",
             "z-ai/glm-5.3",
             "minimax/minimax-m3",
+        }),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
+    ),
+    # The follow-up notice's remaining open models. Boundless's lineup after
+    # the cutoff has no NVIDIA, Gemma, MiniMax or gpt-oss model, and its only
+    # DeepSeek survivor is a Flash model, which is not a like-for-like swap
+    # for V4 Pro, so no replacement is quoted. nemotron3-super is the legacy
+    # upstream id of the 120B card; it also retires the delisted
+    # nvidia/nemotron-3-super manifest row by upstream id alone (naming that
+    # legacy model id here would add it to the public catalog). gemma4-31b is
+    # the short id of google/gemma-4-31b-it.
+    # openai/gpt-oss-120b also stays under its operator hold in the Boundless
+    # pricing adapter until the cutoff (the provider already rejects it).
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({
+            "deepseek/deepseek-v4-pro-0813",
+            "google/gemma-4-31b-it",
+            "minimax/minimax-m3.1-flash",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "openai/gpt-oss-120b",
+        }),
+        upstream_ids=frozenset({
+            "deepseek/deepseek-v4-pro-0813",
+            "gemma4-31b",
+            "google/gemma-4-31b-it",
+            "minimax/minimax-m3.1-flash",
+            "nemotron3-super",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "openai/gpt-oss-120b",
+        }),
+        effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
+    ),
+    # The follow-up notice's frontier models. TrustedRouter does not route
+    # them through Boundless (closed weights are maker-only), but Boundless
+    # still lists them, so the cutoff keeps a later refresh or rule change
+    # from admitting them. No replacement is quoted for an unserved route.
+    _Retirement(
+        provider="boundless",
+        model_ids=frozenset({
+            "anthropic/claude-fable-5.1",
+            "anthropic/claude-opus-5",
+            "openai/gpt-5.6-luna",
+            "openai/gpt-5.6-sol",
+            "openai/gpt-6-sol",
+        }),
+        upstream_ids=frozenset({
+            "anthropic/claude-fable-5.1",
+            "anthropic/claude-opus-5",
+            "openai/gpt-5.6-luna",
+            "openai/gpt-5.6-sol",
+            "openai/gpt-6-sol",
         }),
         effective_at=BOUNDLESS_NOV_26_RETIREMENT_AT,
     ),
