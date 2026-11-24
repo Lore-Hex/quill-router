@@ -81,6 +81,11 @@ const (
 	// cached body does not carry), or + gwstate.StrictRowUnread (no row was
 	// read for it).
 	PassKeyBudgetStrictRow = "key.budget_strict_row."
+	// PassKeyBudgetStrictShards is a limitless strict key, under mode
+	// enforce, whose usage_shard_count is not 1: Python's authorize answers
+	// it 500 (key_usage_shard_count requires one shard for a strict key), a
+	// state only a reshard that failed after its commit could leave.
+	PassKeyBudgetStrictShards = "key.budget_strict_shards"
 	// PassKeyShape: the key's stored body is not one Go reads exactly
 	// (gwstate's key_shape:<field>), such as a usage_shard_count Python's
 	// re-validation would refuse.
@@ -1049,21 +1054,26 @@ func keyWindowsGate(mode string, w gwstate.KeyWindows) string {
 // row Python's strict reserve would not match as limitless
 // (gwstate.Facts.StrictRowReason) passes too, as PassKeyBudgetStrict under
 // shadow (every pass of a strict key reads as before the mode) and as
-// PassKeyBudgetStrictRow and its reason under enforce.
+// PassKeyBudgetStrictRow and its reason under enforce; so does a
+// usage_shard_count other than 1, PassKeyBudgetStrictShards under enforce.
 func strictKeyPass(mode string, facts gwstate.Facts) string {
 	switch mode {
 	case routingsnapshot.StrictKeysShadow, routingsnapshot.StrictKeysEnforce:
 	default:
 		return PassKeyBudgetStrict
 	}
-	why := facts.StrictRowReason()
-	switch {
-	case why == "":
-		return ""
-	case mode == routingsnapshot.StrictKeysShadow:
+	// Python reads the shard count before the reserve reads the row.
+	pass := ""
+	if why := facts.StrictRowReason(); why != "" {
+		pass = PassKeyBudgetStrictRow + why
+	}
+	if facts.Key.Shards != 1 {
+		pass = PassKeyBudgetStrictShards
+	}
+	if pass != "" && mode == routingsnapshot.StrictKeysShadow {
 		return PassKeyBudgetStrict
 	}
-	return PassKeyBudgetStrictRow + why
+	return pass
 }
 
 // workspacePass is an ineligible workspace's §3 reason.

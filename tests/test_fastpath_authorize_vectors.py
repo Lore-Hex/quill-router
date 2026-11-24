@@ -383,6 +383,11 @@ def test_the_strict_key_cases_record_pythons_strict_path() -> None:
         assert case["expect"]["reason"] == "key.budget_strict"
         assert case["expect"]["python"] == {"leased": False, "status": 402, "type": "key_limit_exceeded"}
         assert "shadow" not in case["expect"]
+    sharded = cases["pass:key.budget_strict:two_shards"]
+    assert json.loads(sharded["key"]["key_body"])["usage_shard_count"] == 2
+    assert sharded["expect"]["reason"] == "key.budget_strict"
+    assert sharded["expect"]["python"] == {"leased": False, "status": 500, "type": None}
+    assert sharded["key_limit_row"] == limitless["key_limit_row"] and "shadow" not in sharded["expect"]
     capped = cases["pass:key.key_cap:strict"]
     assert capped["expect"]["reason"] == "key.key_cap" and capped["key_limit_row"]["limit_micro"] == 10_000_000
     # Only strict keys carry the row.

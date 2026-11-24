@@ -1176,6 +1176,16 @@ func TestTheStrictKeysModeGatesALimitlessStrictKey(t *testing.T) {
 		{"enforce, no row read", strict, enforce, "", strictRowUnread, nil,
 			PassKeyBudgetStrictRow + gwstate.StrictRowUnread, "", false},
 		{"absent, no row", strict, "", "", strictRowMissing, nil, PassKeyBudgetStrict, "", false},
+		// A strict key with two usage shards, which Python's authorize
+		// answers 500, whatever its row says; the shard count first.
+		{"enforce, two shards", map[string]any{"budget_strict": true, "usage_shard_count": 2}, enforce, "",
+			strictRowOK, nil, PassKeyBudgetStrictShards, "", false},
+		{"enforce, two shards, no row", map[string]any{"budget_strict": true, "usage_shard_count": 2}, enforce, "",
+			strictRowMissing, nil, PassKeyBudgetStrictShards, "", false},
+		{"shadow, two shards", map[string]any{"budget_strict": true, "usage_shard_count": 2}, shadow, "",
+			strictRowOK, nil, PassKeyBudgetStrict, "", false},
+		{"absent, sixty-four shards", map[string]any{"budget_strict": true, "usage_shard_count": 64}, "", "",
+			strictRowOK, nil, PassKeyBudgetStrict, "", false},
 		// A later gate: its own reason under enforce, the mode's under shadow.
 		{"shadow, paused", strict, shadow, "", strictRowOK, paused, PassKeyBudgetStrict, "", false},
 		{"enforce, paused", strict, enforce, "", strictRowOK, paused, PassWorkspacePaused, "", false},

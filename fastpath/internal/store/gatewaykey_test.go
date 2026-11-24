@@ -13,6 +13,7 @@ import (
 	"cloud.google.com/go/spanner"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
+	"github.com/Lore-Hex/quill-router/fastpath/schema"
 )
 
 func entity(kind, id, body string) *spanner.Mutation {
@@ -205,6 +206,61 @@ func TestAStrictKeysCounterRowIsReadWithIt(t *testing.T) {
 	}
 	if limit, err := s.readStrictKeyLimit(expired, "kh"); err == nil || limit.Read {
 		t.Fatalf("an expired strict read: %+v %v", limit, err)
+	}
+}
+
+// TestAFailedStrictRowReadLeavesTheRowUnread: when only the second read
+// fails (here a database with no tr_key_limit table, so the key-context
+// query answers and the point read of the strict row errors), the key's
+// context is still found, its facts read, and its strict row unread
+// (Read false), which passes the key under enforce; the first read failing
+// fails the whole context, as before.
+func TestAFailedStrictRowReadLeavesTheRowUnread(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	statements, err := schema.Statements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := statements[:0:0]
+	for _, s := range statements {
+		if !strings.Contains(s, " tr_key_limit (") {
+			kept = append(kept, s)
+		}
+	}
+	if len(kept) != len(statements)-1 {
+		t.Fatalf("fastpath.sql makes tr_key_limit %d times", len(statements)-len(kept))
+	}
+	db, err := emulator.Database(ctx, storetest.UniqueID("nolimit"), kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	s, err := New(db, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, lookup, keyHash := storetest.UniqueID("ws"), storetest.UniqueID("lh"), storetest.UniqueID("kh")
+	body := `{"hash":"` + keyHash + `","lookup_hash":"` + lookup + `","workspace_id":"` + ws + `","budget_strict":true}`
+	if _, err := db.Apply(ctx, []*spanner.Mutation{
+		entity("api_key_lookup", lookup, `{"key_id":"`+keyHash+`"}`),
+		entity("api_key", keyHash, body),
+		entity("workspace", ws, `{"id":"`+ws+`"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The control: the second read alone does fail here.
+	if _, err := s.readStrictKeyLimit(ctx, keyHash); err == nil {
+		t.Fatal("the strict row read did not fail without its table")
+	}
+	got, found, err := s.ReadKeyContext(ctx, lookup)
+	if err != nil || !found {
+		t.Fatalf("the key context with only the strict read failing: %v %v", found, err)
+	}
+	if got.KeyBody != body || !got.WorkspaceFound || got.StrictLimit != (StrictKeyLimit{}) {
+		t.Fatalf("the context: %+v", got)
 	}
 }
 

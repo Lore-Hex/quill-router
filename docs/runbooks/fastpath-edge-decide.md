@@ -729,7 +729,8 @@ limitless strict key for the shadow and still passes it `key.budget_strict`;
 any limit passes under every setting, as before. Under `enforce` a limitless
 strict key whose `tr_key_limit` shard 0 the key's read found missing,
 mirroring a limit, or not read passes `key.budget_strict_row.missing`,
-`.limited` or `.unread`, and Python answers it.
+`.limited` or `.unread`, one whose `usage_shard_count` is not 1 passes
+`key.budget_strict_shards`, and Python answers it.
 
 The shadow line's `strict` map counts the classes of these keys' decisions.
 `fastpathwatch edge` gives `strict_compared`, `strict_agree_full`,

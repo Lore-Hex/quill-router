@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"cloud.google.com/go/spanner"
-	"google.golang.org/grpc/codes"
 )
 
 // The gateway's key metadata, read as production's authorize reads it
@@ -124,7 +123,9 @@ func (s *Store) readStrictKeyLimit(ctx context.Context, keyHash string) (StrictK
 	defer ro.Close()
 	row, err := ro.ReadRowWithOptions(ctx, "tr_key_limit", spanner.Key{keyHash, int64(0)},
 		strictLimitColumns, &spanner.ReadOptions{RequestTag: tag("read-strict-key-limit")})
-	if spanner.ErrCode(err) == codes.NotFound {
+	// Only the row's absence is a missing row: another NotFound (no such
+	// table) is a failed read, which leaves the row unread.
+	if errors.Is(err, spanner.ErrRowNotFound) {
 		return StrictKeyLimit{Read: true}, nil
 	}
 	if err != nil {

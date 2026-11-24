@@ -105,6 +105,11 @@ type KeyFacts struct {
 	// would not find or would find limited (Facts.StrictRow). A strict key
 	// with any limit stays out here, key_limit or key_budget_strict.
 	StrictLimitless bool
+	// Shards is the key's usage_shard_count (1 to 64), kept for an eligible
+	// key: Python's authorize refuses a strict key whose count is not 1
+	// (storage_gcp_counters.key_usage_shard_count raises, a 500), so a
+	// limitless strict key with another count passes (edge/decide.go).
+	Shards int
 }
 
 // KeyWindows are a key's configured spend windows as Python's authorize
@@ -269,7 +274,7 @@ func ParseKey(body string) KeyFacts {
 			k.Reason = ReasonKeyBudgetStrict
 			break
 		}
-		k.Eligible, k.Tags, k.StrictLimitless = true, tags, strict
+		k.Eligible, k.Tags, k.StrictLimitless, k.Shards = true, tags, strict, int(shards)
 	}
 	return k
 }

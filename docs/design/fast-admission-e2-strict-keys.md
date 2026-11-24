@@ -84,7 +84,12 @@ window `StrictLimitless`, and eligible:
 - a strict key with a lifetime limit stays `key_limit`;
 - one with any window stays `key_budget_strict`, with `Windows`;
 - `PilotAt` still gives a limitless strict key `key_budget_strict`, Python's
-  pilot reason, so `gateway_key_vectors_v1.json` is unchanged.
+  pilot reason, so `gateway_key_vectors_v1.json` is unchanged;
+- the key keeps its `usage_shard_count` (`Shards`). Python's authorize
+  refuses a strict key whose count is not 1 with a 500
+  (`key_usage_shard_count`), so the edge passes such a key. Only a key
+  reshard that failed after its commit could leave one; #2902 makes the
+  reshard refuse strict keys before writing.
 
 ### 4.2 The counter row, read with the key and cached
 
@@ -93,23 +98,27 @@ the entity, and answers 402 when the row is missing. So for a key whose
 body says `budget_strict` true, `store.ReadKeyContext` makes a second read
 after the key-context query: a strong point read of `(key_hash, 0)`, its
 four mirrored limits only (`store.StrictKeyLimit`). No other key reads the
-counter table. If that read fails, the row is left unread. Under enforce
-the key then passes as `key.budget_strict_row.unread` until the next
-refresh, and the key's other facts stay fresh.
+counter table. Only the row's absence (`spanner.ErrRowNotFound`) reads as a
+missing row; any other failure, a missing table included, leaves the row
+unread. Under enforce the key then passes as `key.budget_strict_row.unread`
+until the next refresh, and the key's other facts stay fresh.
 
 The answer is cached with the key: a 5 s refresh and 15 s maximum age, as for
 every key fact. No per-request read is needed:
 
 - a strict key's mirrors never go from NULL to set (§3);
 - a key's rows are never deleted while the key exists on GCP: key deletion
-  keeps them, and reshards refuse strict keys;
+  keeps them, and the reshard refuses strict keys (#2902);
 - so a cached "present and limitless" can only become out of date by the
   key's deletion or disabling, which every key fact already has (decision
   17's maximum age);
 - a stale "missing" or "limited" only passes more.
 
 Cost: one point read per strict key per refresh, about 0.2 a second per
-strict key in use.
+strict key in use. The read is made whatever the switch says, `off`
+included, and a limitless strict key is eligible in the cache under every
+mode, so its workspace's credit facts are read and kept warm too, as for
+any eligible key. Neither changes a decision under `off`.
 
 ### 4.3 The decision
 
@@ -134,7 +143,8 @@ the in-flight slot). There are three differences:
 - **Every strict key with a lifetime limit or a window** (cohort B). Its
   reserve counts in-flight holds, so the edge would need the key hold e2-key-windows §9
   describes. That is a design of its own.
-- **A limitless strict key whose row is missing or mirrors a limit.**
+- **A limitless strict key whose row is missing or mirrors a limit, or
+  whose `usage_shard_count` is not 1.**
 - **Every strict key when the edge passes.** This includes `owner.busy`,
   `budget.spent`, a cold cache, and a stream. Python answers on its strict
   path, with its slot and its key hold.
@@ -159,9 +169,9 @@ What the edge does in each mode:
 |---|---|
 | off (absent) | passes as `key.budget_strict` at the key's place in the fact order, today's answer, composed for no shadow |
 | shadow | goes on through every gate. `key.budget_strict` is its decision gate, so the full shadow compares the answer Go would give. Any pass after the key's facts reads `key.budget_strict`, so the pass mix is unchanged |
-| enforce | decided. A row Python's reserve would not match passes as `key.budget_strict_row.missing`, `.limited` or `.unread` |
+| enforce | decided. A row Python's reserve would not match passes as `key.budget_strict_row.missing`, `.limited` or `.unread`; a shard count other than 1 as `key.budget_strict_shards` |
 
-Under shadow, those row passes read `key.budget_strict`.
+Under shadow, those row and shard passes read `key.budget_strict`.
 
 ## 6. Shadow accounting and the gate
 
@@ -189,7 +199,8 @@ a strict key, its `tr_key_limit` shard 0 as Python's world held it
 (`key_limit_row`). They also record:
 
 - for the limitless key, Python's own strict-path 200 and rows (`shadow`);
-- the same key with no row, and with a mirrored lifetime limit (both 402);
+- the same key with no row, and with a mirrored lifetime limit (both 402),
+  and with two usage shards (500);
 - a strict key with a lifetime limit (`key.key_cap`).
 
 `TestTheStrictGoldensUnderEachMode` checks:

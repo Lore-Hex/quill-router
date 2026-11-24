@@ -59,12 +59,13 @@ func withStrictMode(c authorizeCase, mode string) authorizeCase {
 // reservation, fingerprint and scope), while Python's reservation row holds
 // the key's estimate on the key (its strict hold) and Go's holds nothing on
 // it. The key Python 402s for a missing row or a mirrored limit passes under
-// every mode, as does a strict key with a lifetime limit.
+// every mode, as do the key with two usage shards Python answers 500 and a
+// strict key with a lifetime limit.
 func TestTheStrictGoldensUnderEachMode(t *testing.T) {
 	f := authorizeGoldens(t)
 	shadow, enforce := routingsnapshot.StrictKeysShadow, routingsnapshot.StrictKeysEnforce
-	const limitless, noRow, mirrored, capped = "pass:key.budget_strict", "pass:key.budget_strict:no_row",
-		"pass:key.budget_strict:mirror_limit", "pass:key.key_cap:strict"
+	const limitless, noRow, mirrored, capped, sharded = "pass:key.budget_strict", "pass:key.budget_strict:no_row",
+		"pass:key.budget_strict:mirror_limit", "pass:key.key_cap:strict", "pass:key.budget_strict:two_shards"
 	for _, v := range []struct {
 		name, mode, pass string
 		decided          bool
@@ -78,6 +79,9 @@ func TestTheStrictGoldensUnderEachMode(t *testing.T) {
 		{mirrored, "", PassKeyBudgetStrict, false},
 		{mirrored, shadow, PassKeyBudgetStrict, false},
 		{mirrored, enforce, PassKeyBudgetStrictRow + gwstate.StrictRowLimited, false},
+		{sharded, "", PassKeyBudgetStrict, false},
+		{sharded, shadow, PassKeyBudgetStrict, false},
+		{sharded, enforce, PassKeyBudgetStrictShards, false},
 		{capped, "", PassKeyCap, false},
 		{capped, shadow, PassKeyCap, false},
 		{capped, enforce, PassKeyCap, false},

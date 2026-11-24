@@ -609,6 +609,10 @@ def build_world(world: dict[str, Any], policy: dict[str, Any]) -> tuple[Any, Any
     # The stored key as the case gives it, created at a fixed instant.
     store._write_entity("api_key", created.hash, dataclasses.replace(
         created, disabled=key["disabled"], federated_home=key["federated_home"], created_at="2026-10-01T00:00:00Z",
+        # A shard count the store would refuse to create (a strict key with
+        # two shards, which a reshard that failed after its commit could
+        # leave), written behind its back.
+        **({"usage_shard_count": key["usage_shard_count"]} if "usage_shard_count" in key else {}),
     ))
     # A strict key's counter row as the case gives it: "missing" removes
     # shard 0 (Python's strict reserve then answers KEY_MISSING), a mapping
@@ -1667,6 +1671,11 @@ def cases() -> list[dict[str, Any]]:
         world={"key": {"budget_strict": True}, "key_limit_row": "missing"})
     add("pass:key.budget_strict:mirror_limit", "key.budget_strict",
         world={"key": {"budget_strict": True}, "key_limit_row": {"limit_micro": 1}})
+    # A strict key with no limit and two usage shards: Python's authorize
+    # answers it 500 (key_usage_shard_count), and the edge passes it under
+    # every mode.
+    add("pass:key.budget_strict:two_shards", "key.budget_strict",
+        world={"key": {"budget_strict": True, "usage_shard_count": 2}})
     # A strict key with a lifetime limit: key.key_cap, whatever the mode.
     add("pass:key.key_cap:strict", "key.key_cap",
         world={"key": {"budget_strict": True, "limit_microdollars": 10_000_000}})

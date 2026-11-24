@@ -452,6 +452,10 @@ func TestOnlyAStrictKeyWithNoLimitIsStrictLimitless(t *testing.T) {
 		windowsPresent bool
 	}{
 		{"limitless", `,"budget_strict":true`, true, true, "", ReasonKeyBudgetStrict, false},
+		// Python's authorize refuses a strict key with another shard count
+		// (a 500); the key keeps it, and the edge passes it (decide.go).
+		{"limitless, two shards", `,"budget_strict":true,"usage_shard_count":2`, true, true, "",
+			ReasonKeyBudgetStrict, false},
 		{"limitless, nulls", `,"budget_strict":true,"limit_microdollars":null,"limit_daily_microdollars":null,` +
 			`"limit_weekly_microdollars":null,"limit_monthly_microdollars":null`, true, true, "",
 			ReasonKeyBudgetStrict, false},
@@ -487,6 +491,10 @@ func TestOnlyAStrictKeyWithNoLimitIsStrictLimitless(t *testing.T) {
 		}
 		if ok, reason := k.PilotAt(now); ok != (v.pilot == "") || reason != v.pilot {
 			t.Errorf("%s: PilotAt %v %q, want %q", v.name, ok, reason, v.pilot)
+		}
+		if want := map[bool]int{true: 2, false: 1}[strings.Contains(v.extra, "usage_shard_count")]; k.Eligible &&
+			k.Shards != want {
+			t.Errorf("%s: shards %d, want %d", v.name, k.Shards, want)
 		}
 	}
 }
